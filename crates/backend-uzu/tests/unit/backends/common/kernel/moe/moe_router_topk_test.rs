@@ -198,3 +198,55 @@ fn test_router_topk_fused_matches_reference() {
         }
     });
 }
+
+/// A NaN weight row must never be selected: its logit is sanitized to
+/// -inf, so valid experts fill every winning slot on both backends.
+#[uzu_test]
+fn test_router_topk_nan_weight_row_is_never_selected() {
+    let (t, d_model, e, k) = (2, 64, 8, 4);
+    let mut rng = StdRng::seed_from_u64(99);
+    let input: Vec<bf16> = (0..t * d_model).map(|_| bf16::from_f32(rng.random_range(-1.0..1.0))).collect();
+    let mut weight: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-1.0..1.0))).collect();
+    for idx in 0..d_model {
+        weight[3 * d_model + idx] = bf16::from_f32(f32::NAN);
+    }
+
+    for_each_non_cpu_backend!(|B| {
+        let (ids_ref, probs_ref) =
+            get_output::<Cpu, bf16>(&input, &weight, None, None, None, t, d_model, e, k, false, None, None);
+        let (ids_gpu, probs_gpu) =
+            get_output::<B, bf16>(&input, &weight, None, None, None, t, d_model, e, k, false, None, None);
+        assert_eq!(ids_gpu, ids_ref, "NaN-row ids mismatch");
+        for token in 0..t {
+            for slot in 0..k {
+                let id = ids_gpu[token * k + slot];
+                assert_ne!(id, 3, "NaN weight row was selected");
+                assert!(id >= 0, "valid logits must produce valid ids");
+                assert!(probs_gpu[token * k + slot].to_f32().is_finite());
+            }
+        }
+    });
+}
+
+/// With entirely nonfinite input every slot is still written: id -1 and
+/// zero weight, identically on CPU and GPU, with no stale buffer leakage.
+#[uzu_test]
+fn test_router_topk_all_nonfinite_input_writes_every_slot() {
+    let (t, d_model, e, k) = (2, 64, 8, 4);
+    let input: Vec<bf16> = (0..t * d_model).map(|_| bf16::from_f32(f32::NAN)).collect();
+    let weight: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(0.5)).collect();
+
+    for_each_non_cpu_backend!(|B| {
+        for renorm in [false, true] {
+            let (ids_ref, probs_ref) =
+                get_output::<Cpu, bf16>(&input, &weight, None, None, None, t, d_model, e, k, renorm, None, None);
+            let (ids_gpu, probs_gpu) =
+                get_output::<B, bf16>(&input, &weight, None, None, None, t, d_model, e, k, renorm, None, None);
+            assert_eq!(ids_gpu, ids_ref, "all-nonfinite ids mismatch (renorm={})", renorm);
+            for i in 0..t * k {
+                assert_eq!(ids_gpu[i], -1, "nonfinite winner must yield id -1 at slot {}", i);
+                assert_eq!(probs_gpu[i].to_f32(), 0.0, "nonfinite winner must yield zero weight at slot {}", i);
+            }
+        }
+    });
+}

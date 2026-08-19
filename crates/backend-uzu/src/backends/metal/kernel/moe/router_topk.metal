@@ -105,6 +105,15 @@ PUBLIC KERNEL(MoeRouterTopK)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
+  // Sanitize nonfinite logits so the selection below always sees defined
+  // values; a NaN can never win a comparison and poison a slot silently.
+  for (uint row = lid; row < e; row += ROUTER_THREADS_PER_THREADGROUP) {
+    if (!isfinite(logits_shared[row])) {
+      logits_shared[row] = NEG_INF;
+    }
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
   const uint effective_k = min(k, ROUTER_MAX_SELECTED_EXPERTS);
   for (uint sel = 0; sel < effective_k; ++sel) {
     float local_best = NEG_INF;
@@ -138,36 +147,56 @@ PUBLIC KERNEL(MoeRouterTopK)(
 
     uint winner_idx = shared_best_idx[0];
     float winner_val = shared_best_val[0];
-    if (lid == 0 && winner_idx < ROUTER_MAX_EXPERTS) {
-      if (!renorm && has_per_expert_scales) {
-        winner_val *= float(per_expert_scale[winner_idx]);
+    // Every slot is written unconditionally: a missing or nonfinite winner
+    // yields id -1 and weight 0 instead of leaking stale buffer contents.
+    if (lid == 0) {
+      const bool winner_valid = winner_idx < ROUTER_MAX_EXPERTS && isfinite(winner_val);
+      if (winner_idx < ROUTER_MAX_EXPERTS) {
+        logits_shared[winner_idx] = NEG_INF;
       }
-      logits_shared[winner_idx] = NEG_INF;
-      topk_ids[token_idx * k + sel] = int(winner_idx);
-      topk_probs[token_idx * k + sel] = static_cast<ScalarT>(winner_val);
+      if (winner_valid) {
+        if (!renorm && has_per_expert_scales) {
+          winner_val *= float(per_expert_scale[winner_idx]);
+        }
+        topk_ids[token_idx * k + sel] = int(winner_idx);
+        topk_probs[token_idx * k + sel] = static_cast<ScalarT>(winner_val);
+      } else {
+        topk_ids[token_idx * k + sel] = -1;
+        topk_probs[token_idx * k + sel] = static_cast<ScalarT>(0.0f);
+      }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
   if (lid == 0 && renorm && effective_k > 0) {
     device ScalarT* out_probs = topk_probs + token_idx * k;
+    const device int* out_ids = topk_ids + token_idx * k;
+    // Invalid slots (id -1, prob 0) stay at zero weight and are excluded
+    // from the softmax normalization.
     float max_logit = -INFINITY;
     for (uint i = 0; i < effective_k; ++i) {
-      max_logit = fmax(max_logit, float(out_probs[i]));
+      if (out_ids[i] >= 0) {
+        max_logit = fmax(max_logit, float(out_probs[i]));
+      }
     }
     float sum_exp = 0.0f;
     for (uint i = 0; i < effective_k; ++i) {
-      sum_exp += exp(float(out_probs[i]) - max_logit);
+      if (out_ids[i] >= 0) {
+        sum_exp += exp(float(out_probs[i]) - max_logit);
+      }
     }
-    float default_prob = 1.0f / float(effective_k);
-    float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : default_prob;
+    float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : 0.0f;
     for (uint i = 0; i < effective_k; ++i) {
-      float prob = (sum_exp > 0.0f) ? exp(float(out_probs[i]) - max_logit) * inv_sum : default_prob;
-      const int expert_id = topk_ids[token_idx * k + i];
-      const float expert_scale = (has_per_expert_scales && expert_id >= 0) ? float(per_expert_scale[expert_id]) : 1.0f;
+      const int expert_id = out_ids[i];
+      if (expert_id < 0) {
+        continue;
+      }
+      const float prob = exp(float(out_probs[i]) - max_logit) * inv_sum;
+      const float expert_scale = has_per_expert_scales ? float(per_expert_scale[expert_id]) : 1.0f;
       out_probs[i] = static_cast<ScalarT>(prob * expert_scale);
     }
     for (uint i = effective_k; i < k; ++i) {
+      topk_ids[token_idx * k + i] = -1;
       out_probs[i] = static_cast<ScalarT>(0.0f);
     }
   }

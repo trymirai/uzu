@@ -86,7 +86,12 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
             let mut best_ids = vec![-1i32; k];
             let row = &logits[token * e..(token + 1) * e];
             for expert in 0..e {
-                let v = row[expert];
+                // Sanitize nonfinite logits exactly like the Metal kernel does.
+                let v = if row[expert].is_finite() {
+                    row[expert]
+                } else {
+                    f32::NEG_INFINITY
+                };
                 let mut insert_pos = None;
                 for j in (0..k).rev() {
                     if v > best_vals[j] || (v == best_vals[j] && (best_ids[j] < 0 || (expert as i32) < best_ids[j])) {
@@ -102,39 +107,60 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
                     best_ids[pos] = expert as i32;
                 }
             }
+            // A slot with a nonfinite winner is invalid: id -1, zero weight.
+            for kk in 0..k {
+                if !best_vals[kk].is_finite() {
+                    best_ids[kk] = -1;
+                    best_vals[kk] = 0.0;
+                }
+            }
             let base = token * k;
             for kk in 0..k {
                 *topk_ids.add(base + kk) = best_ids[kk];
             }
             let expert_scale = |id: i32| {
-                if has_per_expert_scales {
+                if has_per_expert_scales && id >= 0 {
                     (*per_expert_scale.unwrap().add(id as usize)).to_f32().unwrap()
                 } else {
                     1.0
                 }
             };
             if renorm {
-                let max_v = best_vals.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                let max_v = best_vals
+                    .iter()
+                    .zip(best_ids.iter())
+                    .filter(|(_, id)| **id >= 0)
+                    .map(|(v, _)| *v)
+                    .fold(f32::NEG_INFINITY, f32::max);
                 let mut exps = vec![0.0f32; k];
                 let mut sum = 0.0f32;
                 for kk in 0..k {
-                    exps[kk] = (best_vals[kk] - max_v).exp();
-                    sum += exps[kk];
-                }
-                if sum > 0.0 {
-                    for kk in 0..k {
-                        *topk_probs.add(base + kk) =
-                            ScalarT::from(exps[kk] / sum * expert_scale(best_ids[kk])).unwrap();
+                    if best_ids[kk] >= 0 {
+                        exps[kk] = (best_vals[kk] - max_v).exp();
+                        sum += exps[kk];
                     }
+                }
+                let inv_sum = if sum > 0.0 {
+                    1.0 / sum
                 } else {
-                    let uniform = 1.0f32 / k as f32;
-                    for kk in 0..k {
-                        *topk_probs.add(base + kk) = ScalarT::from(uniform * expert_scale(best_ids[kk])).unwrap();
+                    0.0
+                };
+                for kk in 0..k {
+                    if best_ids[kk] >= 0 {
+                        *topk_probs.add(base + kk) =
+                            ScalarT::from(exps[kk] * inv_sum * expert_scale(best_ids[kk])).unwrap();
+                    } else {
+                        *topk_probs.add(base + kk) = ScalarT::from(0.0).unwrap();
                     }
                 }
             } else {
                 for kk in 0..k {
-                    *topk_probs.add(base + kk) = ScalarT::from(best_vals[kk] * expert_scale(best_ids[kk])).unwrap();
+                    let prob = if best_ids[kk] >= 0 {
+                        best_vals[kk] * expert_scale(best_ids[kk])
+                    } else {
+                        0.0
+                    };
+                    *topk_probs.add(base + kk) = ScalarT::from(prob).unwrap();
                 }
             }
         }

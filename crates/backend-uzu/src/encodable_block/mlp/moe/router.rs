@@ -94,7 +94,8 @@ impl<B: Backend> MoeRouter<B> {
         checked_route_count(token_count, routes_per_token).expect("MoE route count must fit in u32");
         let mut expert_ids = encoder.allocate_scratch_for_shape(&[token_count, routes_per_token], DataType::I32)?;
         let mut route_weights = encoder.allocate_scratch_for_shape(&[token_count, routes_per_token], self.data_type)?;
-        encoder.encode_fill(&mut expert_ids, 0xFF);
+        // No prefill of `expert_ids`: the TopK kernels write every slot
+        // unconditionally (invalid winners become id -1 with weight 0).
         self.kernel.encode(
             input,
             &self.weights,

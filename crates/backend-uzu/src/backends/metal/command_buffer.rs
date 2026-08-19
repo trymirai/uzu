@@ -7,7 +7,7 @@ use std::{
 use itertools::Itertools;
 use metal::{
     MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferStatus,
-    MTLCommandEncoder, MTLCommandEncoderExt, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLCommandEncoder, MTLCommandEncoderExt, MTLComputeCommandEncoder,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -255,24 +255,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
     type CommandBuffer = MetalCommandBuffer;
 
     fn submit(self) -> MetalCommandBufferPending {
-        let cmd_queue = self.command_buffer.command_queue();
-        let wait_value = self.context.timeline_get_and_increment();
-
-        {
-            let cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
-            cmd_buffer.set_label(Some("sync (wait)"));
-            cmd_buffer.encode_wait_for_event_value(self.context.timeline_event(), wait_value);
-            cmd_buffer.commit();
-        }
-
-        self.command_buffer.commit();
-
-        {
-            let cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
-            cmd_buffer.set_label(Some("sync (signal)"));
-            cmd_buffer.encode_signal_event_value(self.context.timeline_event(), wait_value + 1);
-            cmd_buffer.commit();
-        }
+        self.context.submit_compute(&self.command_buffer);
 
         MetalCommandBufferPending {
             command_buffer: self.command_buffer,
