@@ -58,7 +58,8 @@ pub fn bench_quant_gemm_shapes(bits: u32) -> impl Iterator<Item = Shape> {
     } else {
         256
     };
-    let ms = &[4u32, 5, 6, 7, 8, 16, 32, 48, 64];
+    // The tile policy only differs for m that is not a multiple of 8, so keep 4..16 contiguous.
+    let ms = &[4u32, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 32, 48, 64];
     BENCH_NK
         .iter()
         .filter(move |&&(n, k)| n % 32 == 0 && k % block_size == 0)
