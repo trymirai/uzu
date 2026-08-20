@@ -13,7 +13,7 @@ use shoji::types::{
 use tokenizers::Tokenizer;
 
 fn test_data_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("workspace").join("data")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("..").join("workspace").join("data")
 }
 
 fn configs_path() -> PathBuf {

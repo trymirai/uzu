@@ -1,24 +1,25 @@
 [workspace]
 members = [
-    "crates/proc-macros",
-    "crates/bindings-types",
-    "crates/bindings",
-    "crates/shoji",
     "crates/backend-uzu",
-    "crates/backend-remote",
-    "crates/json-transform",
-    "crates/token-stream-parser",
-    "crates/hanashi",
-    "crates/nagare",
-    "crates/download-manager",
-    "crates/mock-registry",
-    "crates/uzu",
-    "crates/cli",
-    "crates/cli-tools",
-    "crates/test-runner",
-    "crates/keisoku",
-    "crates/kanka",
-    "crates/kiban",
+    # --- to be rewritten
+    "crates/legacy/proc-macros",
+    "crates/legacy/bindings-types",
+    "crates/legacy/bindings",
+    "crates/legacy/shoji",
+    "crates/legacy/backend-remote",
+    "crates/legacy/json-transform",
+    "crates/legacy/token-stream-parser",
+    "crates/legacy/hanashi",
+    "crates/legacy/nagare",
+    "crates/legacy/download-manager",
+    "crates/legacy/mock-registry",
+    "crates/legacy/uzu",
+    "crates/legacy/cli",
+    "crates/legacy/cli-tools",
+    "crates/legacy/test-runner",
+    "crates/legacy/keisoku",
+    "crates/legacy/kanka",
+    "crates/legacy/kiban",
 ]
 resolver = "3"
 
@@ -44,23 +45,23 @@ keywords = [
 ]
 
 [workspace.dependencies]
-proc-macros = { path = "crates/proc-macros" }
-test-runner = { path = "crates/test-runner" }
-bindings-types = { path = "crates/bindings-types", default-features = false }
-bindings = { path = "crates/bindings", default-features = false }
-shoji = { path = "crates/shoji", default-features = false }
+proc-macros = { path = "crates/legacy/proc-macros" }
+test-runner = { path = "crates/legacy/test-runner" }
+bindings-types = { path = "crates/legacy/bindings-types", default-features = false }
+bindings = { path = "crates/legacy/bindings", default-features = false }
+shoji = { path = "crates/legacy/shoji", default-features = false }
 backend-uzu = { path = "crates/backend-uzu", default-features = false }
-backend-remote = { path = "crates/backend-remote", default-features = false }
-json-transform = { path = "crates/json-transform", default-features = false }
-token-stream-parser = { path = "crates/token-stream-parser", default-features = false }
-hanashi = { path = "crates/hanashi", default-features = false }
-nagare = { path = "crates/nagare", default-features = false }
-download-manager = { path = "crates/download-manager", default-features = false }
-mock-registry = { path = "crates/mock-registry", default-features = false }
-keisoku = { path = "crates/keisoku", default-features = false }
-kanka = { path = "crates/kanka", default-features = false }
-kiban = { path = "crates/kiban", default-features = false }
-uzu = { path = "crates/uzu", default-features = false }
+backend-remote = { path = "crates/legacy/backend-remote", default-features = false }
+json-transform = { path = "crates/legacy/json-transform", default-features = false }
+token-stream-parser = { path = "crates/legacy/token-stream-parser", default-features = false }
+hanashi = { path = "crates/legacy/hanashi", default-features = false }
+nagare = { path = "crates/legacy/nagare", default-features = false }
+download-manager = { path = "crates/legacy/download-manager", default-features = false }
+mock-registry = { path = "crates/legacy/mock-registry", default-features = false }
+keisoku = { path = "crates/legacy/keisoku", default-features = false }
+kanka = { path = "crates/legacy/kanka", default-features = false }
+kiban = { path = "crates/legacy/kiban", default-features = false }
+uzu = { path = "crates/legacy/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", tag = "0.2.3", features = ["tokenizers"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"
