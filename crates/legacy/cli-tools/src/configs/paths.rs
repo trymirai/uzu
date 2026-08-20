@@ -17,6 +17,8 @@ impl Paths {
             .context(error_message)?
             .parent()
             .context(error_message)?
+            .parent()
+            .context(error_message)?
             .to_path_buf();
         Ok(Self {
             root_path,
@@ -71,7 +73,7 @@ impl Paths {
         &self,
         name: &str,
     ) -> PathBuf {
-        self.crates_path().join(name)
+        self.crates_path().join("legacy").join(name)
     }
 
     pub fn crate_manifest_path(
