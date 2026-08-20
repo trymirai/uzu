@@ -2,6 +2,7 @@
 
 #include "arguments.h"
 #include "quant_chunk.h"
+#include "quant_metadata.h"
 #include "tile.h"
 
 namespace uzu {
@@ -54,20 +55,14 @@ private:
   static_assert(VALUES_PER_LANE % SLICE_VALUES == 0, "a lane loads complete group slices");
 
   uint4 weights[Tile::ROWS_PER_LANE][SLICE_WORDS];
-  float scale[Tile::ROWS_PER_LANE];
-  float origin[Tile::ROWS_PER_LANE];
-  float bias[Tile::ROWS_PER_LANE];
 
 public:
-  METAL_FUNC void load(
+  METAL_FUNC void load_weights(
       const thread Position& position,
       const device uint8_t* weights_base,
       const thread uint (&weight_row_indices)[Tile::ROWS_PER_LANE],
       uint row_stride,
-      uint groups,
-      uint zp_stride,
-      uint group_offset,
-      const thread GemvOperands<AT, BT, DT>& ops
+      uint group_offset
   ) thread {
     const uint k = position.group * GROUP_SIZE + group_offset + position.slice * SLICE_VALUES;
     const uint offset_bytes = k * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
@@ -88,21 +83,6 @@ public:
           load_words<true>(weights[R], source, valid_bytes);
         }
       }
-      scale[R] = float(ops.scales[row * groups + position.group]);
-      if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
-        constexpr uint ZERO_POINTS_PER_BYTE = QuantChunk<BITS>::BITS_PER_BYTE / BITS;
-        const uint byte_index = position.group / ZERO_POINTS_PER_BYTE;
-        const uint8_t packed = ops.zero_points[row * zp_stride + byte_index];
-        origin[R] = QuantChunk<BITS>::MANTISSA_BASE + float(decode_zero_point<BITS>(packed, position.group));
-        bias[R] = 0.0f;
-      } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant) {
-        origin[R] = QuantChunk<BITS>::MANTISSA_BASE + float(symmetric_zero_point<BITS>());
-        bias[R] = 0.0f;
-      } else {
-        static_assert(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant);
-        origin[R] = QuantChunk<BITS>::MANTISSA_BASE;
-        bias[R] = float(ops.biases[row * groups + position.group]);
-      }
     });
   }
 
@@ -113,7 +93,8 @@ public:
       const thread GemvParams& params,
       const thread Tile& tile,
       uint group_offset,
-      uint batch_remaining
+      uint batch_remaining,
+      const thread QuantMetadata<Tile, AT, BT, DT, B_PROLOGUE, BITS>& metadata
   ) const thread {
     float partial[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
     float input_sum[Tile::INPUT_ROWS] = {0};
@@ -122,7 +103,7 @@ public:
       float weight_values[Tile::ROWS_PER_LANE][CHUNK_VALUES];
       Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
         constexpr uint R = decltype(output_index)::value;
-        QuantChunk<BITS>::decode(weights[R], chunk, weight_values[R], origin[R], params.signed_codes);
+        metadata.decode(weights[R], chunk, R, params.signed_codes, weight_values[R]);
       });
       Tile::for_each_input_row([&](auto input_index) UZU_ALWAYS_INLINE {
         constexpr uint I = decltype(input_index)::value;
@@ -152,10 +133,7 @@ public:
       constexpr uint I = decltype(input_index)::value;
       Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
         constexpr uint R = decltype(output_index)::value;
-        result[I][R] = fma(scale[R], partial[I][R], result[I][R]);
-        if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-          result[I][R] = fma(bias[R], input_sum[I], result[I][R]);
-        }
+        result[I][R] = metadata.finish(result[I][R], partial[I][R], input_sum[I], R);
       });
     });
   }

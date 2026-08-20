@@ -20,6 +20,7 @@ template <
 struct QuantBSource {
   using U = float;
   using Slice = QuantSlice<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED>;
+  using Metadata = QuantMetadata<Tile, AT, BT, DT, B_PROLOGUE, BITS>;
 
 private:
   UZU_CONST uint VALUES_PER_LANE = GROUP_SIZE / Tile::GROUP_LANES;
@@ -32,7 +33,6 @@ public:
       const thread Tile& tile
   ) {
     const uint groups = (params.in_vec_size + GROUP_SIZE - 1) / GROUP_SIZE;
-    const uint zp_stride = zero_point_row_stride<BITS>(groups);
     const uint row_stride = params.in_vec_size * BITS / 8;
     const uint group_slot = tile.reduction_lane / Tile::GROUP_LANES;
     const uint group_offset = (tile.reduction_lane % Tile::GROUP_LANES) * VALUES_PER_LANE;
@@ -54,25 +54,36 @@ public:
     if constexpr (!PREFETCHED) {
       Slice current;
       while (position.valid(groups)) {
-        current.load(position, weights, weight_row_indices, row_stride, groups, zp_stride, group_offset, ops);
-        current.accumulate(result, position, ops, params, tile, group_offset, batch_remaining);
-        position.advance();
+        Metadata metadata;
+        metadata.load(position.group, groups, weight_row_indices, ops);
+        METAL_PRAGMA_UNROLL
+        for (uint slice = 0; slice < Slice::SLICES_PER_LANE; slice++) {
+          const typename Slice::Position slice_position = {position.group, slice};
+          current.load_weights(slice_position, weights, weight_row_indices, row_stride, group_offset);
+          current.accumulate(result, slice_position, ops, params, tile, group_offset, batch_remaining, metadata);
+        }
+        position.group += Tile::GROUPS_PER_STEP;
       }
       return;
     }
 
     Slice current;
     Slice next;
-    current.load(position, weights, weight_row_indices, row_stride, groups, zp_stride, group_offset, ops);
+    Metadata metadata;
+    metadata.load(position.group, groups, weight_row_indices, ops);
+    current.load_weights(position, weights, weight_row_indices, row_stride, group_offset);
     while (position.valid(groups)) {
       typename Slice::Position next_position = position;
       next_position.advance();
       if (next_position.valid(groups)) {
-        next.load(next_position, weights, weight_row_indices, row_stride, groups, zp_stride, group_offset, ops);
+        next.load_weights(next_position, weights, weight_row_indices, row_stride, group_offset);
       }
-      current.accumulate(result, position, ops, params, tile, group_offset, batch_remaining);
+      current.accumulate(result, position, ops, params, tile, group_offset, batch_remaining, metadata);
       if (next_position.valid(groups)) {
         current = next;
+        if (next_position.group != position.group) {
+          metadata.load(next_position.group, groups, weight_row_indices, ops);
+        }
       }
       position = next_position;
     }
