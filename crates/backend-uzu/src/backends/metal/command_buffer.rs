@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     iter::{chain, once},
     sync::{Arc, LazyLock},
     time::Duration,
@@ -13,7 +14,7 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::backends::{
     common::{
-        AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+        AccessFlags, Allocation, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
         CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
     },
     metal::{Metal, MetalContext, error::MetalError},
@@ -58,6 +59,7 @@ impl CommandBufferInitial for MetalCommandBufferInitial {
             command_buffer: self.command_buffer,
             encoding_state: MetalCommandBufferEncodingEncodingState::None,
             debug_group_stack: vec![],
+            route_plans: HashMap::new(),
             context: self.context,
         }
     }
@@ -69,14 +71,65 @@ enum MetalCommandBufferEncodingEncodingState {
     Blit(Retained<ProtocolObject<dyn MTLBlitCommandEncoder>>),
 }
 
+/// Identity of direct routes whose backend-private grouping is reusable in one command buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct MetalRoutePlanKey {
+    expert_ids_allocation: usize,
+    route_count: u32,
+    expert_count: u32,
+    routes_per_token: u32,
+}
+
+impl MetalRoutePlanKey {
+    pub(super) fn new(
+        expert_ids: &Allocation<Metal>,
+        route_count: u32,
+        expert_count: u32,
+        routes_per_token: u32,
+    ) -> Self {
+        Self {
+            expert_ids_allocation: expert_ids.allocation_id(),
+            route_count,
+            expert_count,
+            routes_per_token,
+        }
+    }
+}
+
+/// One-shot Metal route grouping handed from W13 to W2 for the same immutable IDs.
+///
+/// Unconsumed plans may live to the end of encoding. Allocation identities keep
+/// them distinct even when the scratch allocator recycles the same GPU address.
+pub(super) struct MetalRoutePlan {
+    pub(super) offsets: Allocation<Metal>,
+    pub(super) grouped_routes: Allocation<Metal>,
+}
+
 pub struct MetalCommandBufferEncoding {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     encoding_state: MetalCommandBufferEncodingEncodingState,
     debug_group_stack: Vec<String>,
+    route_plans: HashMap<MetalRoutePlanKey, MetalRoutePlan>,
     context: Arc<MetalContext>,
 }
 
 impl MetalCommandBufferEncoding {
+    pub(super) fn take_route_plan(
+        &mut self,
+        key: MetalRoutePlanKey,
+    ) -> Option<MetalRoutePlan> {
+        self.route_plans.remove(&key)
+    }
+
+    pub(super) fn insert_route_plan(
+        &mut self,
+        key: MetalRoutePlanKey,
+        plan: MetalRoutePlan,
+    ) {
+        let replaced = self.route_plans.insert(key, plan);
+        debug_assert!(replaced.is_none(), "route plan inserted twice without being taken");
+    }
+
     fn ensure_none(&mut self) {
         let encoder: &ProtocolObject<dyn MTLCommandEncoder> = match &self.encoding_state {
             MetalCommandBufferEncodingEncodingState::None => return,

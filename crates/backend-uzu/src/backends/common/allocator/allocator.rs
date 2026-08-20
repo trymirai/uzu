@@ -14,16 +14,24 @@ use crate::backends::common::{
     allocator::{RangeAllocationType, RangeAllocator},
 };
 
+static NEXT_ALLOCATION_ID: AtomicUsize = AtomicUsize::new(1);
+
 pub struct Allocation<B: Backend> {
     allocator: Arc<Allocator<B>>,
     buffer: Arc<B::DenseBuffer>,
     range: Range<usize>,
     allocation_type: RangeAllocationType,
+    allocation_id: usize,
 }
 
 impl<B: Backend> Allocation<B> {
     pub fn size(&self) -> usize {
         self.range.len()
+    }
+
+    /// Process-unique identity for this allocation lifetime, independent of recycled storage.
+    pub(crate) fn allocation_id(&self) -> usize {
+        self.allocation_id
     }
 
     pub fn as_slice_mut<T: NoUninit + AnyBitPattern>(&mut self) -> &mut [T] {
@@ -175,11 +183,16 @@ impl<B: Backend> Allocator<B> {
             (buffer, range)
         };
 
+        let allocation_id = NEXT_ALLOCATION_ID
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
+            .expect("allocation identity space exhausted");
+
         Ok(Allocation {
             allocator: self.clone(),
             buffer,
             range,
             allocation_type,
+            allocation_id,
         })
     }
 

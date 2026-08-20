@@ -3,6 +3,7 @@
 #include "../common/dsl.h"
 #include "../common/soft_cap.h"
 #include "../generated/gemm.h"
+#include "common/defines.h"
 #include "common/microfloat.h"
 
 using namespace metal;
@@ -12,6 +13,12 @@ using namespace uzu::gemm;
 #define ROUTED_SIMDGROUPS 4
 #define ROUTED_COLUMNS 16
 #define ROUTED_ROWS 4
+
+/// Four scalar-addressable values without imposing vector alignment on a routed row.
+template <typename T>
+METAL_FUNC float4 load_unaligned_float4(const device T* values) {
+  return float4(float(values[0]), float(values[1]), float(values[2]), float(values[3]));
+}
 
 template <typename AT, typename BT, typename DT, bool MICROFLOAT, uint GROUP_SIZE, bool EXPERT_ROUTED>
 VARIANTS(AT, half, bfloat, float)
@@ -105,7 +112,7 @@ KERNEL(RoutedGemm)(
         }
         const device AT* input = a + ulong(input_rows[row]) * k + inner;
         if (inner + 4 <= k) {
-          input_values[row] = static_cast<float4>(*reinterpret_cast<const device vec<AT, 4>*>(input));
+          input_values[row] = load_unaligned_float4(input);
           continue;
         }
         for (uint offset = 0; offset < k - inner; ++offset) {
@@ -134,7 +141,7 @@ KERNEL(RoutedGemm)(
           );
         } else if (inner + 4 <= k) {
           const device BT* weights = full_precision_weights + bank_row * k + inner;
-          weight = static_cast<float4>(*reinterpret_cast<const device vec<BT, 4>*>(weights));
+          weight = load_unaligned_float4(weights);
         } else {
           weight = float4(0.0f);
           const device BT* weights = full_precision_weights + bank_row * k + inner;

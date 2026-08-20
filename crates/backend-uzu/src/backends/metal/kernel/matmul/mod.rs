@@ -8,7 +8,7 @@ pub use self::gemm::GemmKernel;
 use self::{
     gemm::{GemmPlan, GemmProblem},
     gemv::{GemvDispatch, GemvSpecialization, Mxfp4ExpertDecodeGemvDispatch, Mxfp4ExpertDecodeGemvSpec},
-    routed::RoutedGemm,
+    routed::RowTiledGemm,
 };
 use crate::{
     backends::{
@@ -30,7 +30,7 @@ use crate::{
 
 pub struct MatmulMetalKernel {
     gemv: GemvDispatch,
-    routed_gemm: RoutedGemm,
+    row_tiled_gemm: RowTiledGemm,
     mxfp4_expert_decode: Mxfp4ExpertDecodeGemvDispatch,
     pub gemm: GemmKernel,
     weights_data_type: DataType,
@@ -147,13 +147,13 @@ impl MatmulKernel for MatmulMetalKernel {
 
         let gemm = GemmKernel::new(context, weights_data_type, input_data_type, output_data_type)?;
         let gemv = GemvDispatch::new(weights_data_type, input_data_type, output_data_type);
-        let routed_gemm = RoutedGemm::new(context, weights_data_type, input_data_type, output_data_type)?;
+        let row_tiled_gemm = RowTiledGemm::new(context, weights_data_type, input_data_type, output_data_type)?;
         let mxfp4_expert_decode =
             Mxfp4ExpertDecodeGemvDispatch::new(weights_data_type, input_data_type, output_data_type);
 
         Ok(Self {
             gemv,
-            routed_gemm,
+            row_tiled_gemm,
             mxfp4_expert_decode,
             gemm,
             weights_data_type,
@@ -407,7 +407,7 @@ impl MatmulKernel for MatmulMetalKernel {
         }
 
         if arguments.routing.expert_routes().is_some() || shape.b_microfloat.is_some() {
-            return self.routed_gemm.encode(arguments, encoder).map_err(MetalError::from);
+            return self.row_tiled_gemm.encode(arguments, encoder).map_err(MetalError::from);
         }
         // TODO: remove after GatherGEMM is supported
         if arguments.routing.sparse_readout_rows().is_some() {

@@ -16,7 +16,7 @@ use crate::{
     },
     data_type::DataType,
     tests::{
-        assert::assert_eq_float,
+        assert::{assert_eq_float, assert_eq_float_with_relative},
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
     },
 };
@@ -375,6 +375,7 @@ fn backends_reject_invalid_input_and_output_storage() {
 #[uzu_test]
 fn direct_expert_matmul_is_not_limited_by_router_capacity() {
     const EXPERT_COUNT: usize = 513;
+    const ROUTES: usize = 33;
     const K: usize = 3;
     const N: usize = 2;
 
@@ -383,33 +384,83 @@ fn direct_expert_matmul_is_not_limited_by_router_capacity() {
     weights[last_expert] = 1.0;
     weights[last_expert + K + 1] = 1.0;
     let biases = vec![0.0; EXPERT_COUNT * N];
-    let expected = [1.0, 2.0];
+    let input = [1.0, 2.0, 3.0].repeat(ROUTES);
+    let expert_ids = vec![(EXPERT_COUNT - 1) as i32; ROUTES];
+    let expected = [1.0, 2.0].repeat(ROUTES);
 
-    let actual = run::<Cpu>(
-        &[1.0, 2.0, 3.0],
-        &weights,
-        &[(EXPERT_COUNT - 1) as i32],
-        &biases,
-        ExpertInput::Tokens,
-        1,
-        EXPERT_COUNT as u32,
-        K,
-        N,
-    );
+    let actual = run::<Cpu>(&input, &weights, &expert_ids, &biases, ExpertInput::Tokens, 1, EXPERT_COUNT as u32, K, N);
     assert_eq_float(&expected, &actual, 1e-6, "CPU direct route beyond router capacity");
     for_each_non_cpu_backend!(|B| {
-        let actual = run::<B>(
-            &[1.0, 2.0, 3.0],
-            &weights,
-            &[(EXPERT_COUNT - 1) as i32],
-            &biases,
-            ExpertInput::Tokens,
-            1,
-            EXPERT_COUNT as u32,
-            K,
-            N,
-        );
+        let actual =
+            run::<B>(&input, &weights, &expert_ids, &biases, ExpertInput::Tokens, 1, EXPERT_COUNT as u32, K, N);
         assert_eq_float(&expected, &actual, 1e-6, "Metal direct route beyond router capacity");
+    });
+}
+
+fn run_unaligned_bf16_grouped<B: Backend>() -> Vec<bf16> {
+    const EXPERTS: usize = 5;
+    const ROUTES: usize = 33;
+    const K: usize = 37;
+    const N: usize = 17;
+
+    let input: Vec<bf16> = (0..ROUTES * K).map(|index| bf16::from_f32((index % 31) as f32 * 0.009 - 0.12)).collect();
+    let weights: Vec<bf16> =
+        (0..EXPERTS * N * K).map(|index| bf16::from_f32((index % 29) as f32 * 0.007 - 0.09)).collect();
+    let biases: Vec<bf16> = (0..EXPERTS * N).map(|index| bf16::from_f32((index % 11) as f32 * 0.013)).collect();
+    let mut expert_ids: Vec<i32> = (0..ROUTES).map(|route| ((route * 7 + 1) % 4) as i32).collect();
+    expert_ids[19] = -1;
+
+    let context = B::Context::new().expect("create backend context");
+    let input = alloc_allocation_with_data::<B, bf16>(context.as_ref(), &input);
+    let weights = alloc_allocation_with_data::<B, bf16>(context.as_ref(), &weights);
+    let biases = alloc_allocation_with_data::<B, bf16>(context.as_ref(), &biases);
+    let expert_ids = alloc_allocation_with_data::<B, i32>(context.as_ref(), &expert_ids);
+    let mut output = alloc_allocation::<B, bf16>(context.as_ref(), ROUTES * N);
+    let mut kernel =
+        <B::Kernels as Kernels>::MatmulKernel::new(context.as_ref(), DataType::BF16, DataType::BF16, DataType::BF16)
+            .expect("create matmul");
+    let mut encoder = Encoder::<B>::new(context.as_ref()).expect("create encoder");
+
+    kernel
+        .encode(
+            MatmulArguments {
+                a: MatmulA::FullPrecision {
+                    values: &input,
+                    offset: 0,
+                },
+                b: MatmulB::FullPrecision {
+                    b: &weights,
+                },
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut output,
+                d_transform: MatmulDOps {
+                    per_matrix_bias: Some(&biases),
+                    ..MatmulDOps::none()
+                },
+                routing: MatmulRouting::Experts(ExpertRoutes {
+                    expert_ids: &expert_ids,
+                    routes_per_token: NonZeroU32::new(1).unwrap(),
+                    expert_count: NonZeroU32::new(EXPERTS as u32).unwrap(),
+                    input: ExpertInput::Routes,
+                }),
+                m: ROUTES as u32,
+                n: N as u32,
+                k: K as u32,
+            },
+            &mut encoder,
+        )
+        .expect("encode grouped BF16 routes");
+    encoder.end_encoding().submit().wait_until_completed().expect("execute grouped BF16 routes");
+    allocation_to_vec::<B, bf16>(&output)
+}
+
+#[uzu_test]
+fn grouped_prefill_supports_unaligned_bf16_rows() {
+    let expected = run_unaligned_bf16_grouped::<Cpu>();
+    for_each_non_cpu_backend!(|B| {
+        let actual = run_unaligned_bf16_grouped::<B>();
+        assert_eq_float_with_relative(&expected, &actual, 0.02, 0.01, "unaligned BF16 grouped routes");
     });
 }
 
