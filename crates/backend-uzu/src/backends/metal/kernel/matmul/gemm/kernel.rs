@@ -295,6 +295,15 @@ impl GemmKernel {
                     encoder,
                 );
             },
+            MatmulB::Microfloat {
+                ..
+            } => {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "Gemm",
+                    reason: "microfloat Metal execution is not implemented",
+                }
+                .into());
+            },
             quant_b @ (MatmulB::ScaleBiasDequant {
                 ..
             }

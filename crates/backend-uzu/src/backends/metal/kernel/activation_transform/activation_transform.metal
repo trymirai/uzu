@@ -16,7 +16,7 @@ using namespace uzu::activation_transform;
 #define EMITS_GROUP_SUMS (ops == ActivationTransformOp::QuantizeWithGroupSums)
 
 template <typename T>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(ActivationTransform)(
     const device T* input OPTIONAL(!in_place),
     device T* fp_out OPTIONAL(!QUANTIZED),

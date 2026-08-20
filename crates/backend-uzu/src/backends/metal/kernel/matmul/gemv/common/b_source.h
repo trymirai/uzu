@@ -2,6 +2,7 @@
 
 #include "../../../generated/gemm.h"
 #include "full_precision_b_source.h"
+#include "microfloat_b_source.h"
 #include "quantized_b_source.h"
 
 namespace uzu {
@@ -16,7 +17,8 @@ template <
     uint BITS,
     uint K_SPLIT,
     uint RESULTS_PER_SIMDGROUP,
-    bool INPUT_ALIGNED>
+    bool INPUT_ALIGNED,
+    bool MICROFLOAT>
 struct BSource {
   static METAL_FUNC void accumulate(
       thread U (&result)[RESULTS_PER_SIMDGROUP],
@@ -24,6 +26,7 @@ struct BSource {
       const device BT* scales,
       const device uint8_t* zero_points,
       const device BT* biases,
+      const device BT* global_scales,
       const device AT* a,
       const device uint* gather_indices,
       bool gathered,
@@ -37,7 +40,25 @@ struct BSource {
       uint k_slice,
       const bool signed_codes
   ) {
-    if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
+    if constexpr (MICROFLOAT) {
+      MicrofloatBSource<BT, AT, U, GROUP_SIZE, K_SPLIT, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED>::accumulate(
+          result,
+          b,
+          reinterpret_cast<const device uint8_t*>(scales),
+          global_scales,
+          a,
+          gather_indices,
+          gathered,
+          in_vec_size,
+          out_vec_size,
+          out_row,
+          assignment_idx,
+          a_row,
+          matrix_idx,
+          simd_lane,
+          k_slice
+      );
+    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
       FullPrecisionBSource<BT, AT, U, RESULTS_PER_SIMDGROUP, K_SPLIT, INPUT_ALIGNED>::accumulate(
           result,
           b,

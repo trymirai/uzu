@@ -39,6 +39,7 @@ pub(crate) struct GemvSpecialization {
     k_split: u32,
     results_per_simdgroup: u32,
     num_simdgroups: u32,
+    microfloat: bool,
     gathered: bool,
     expert_routed: bool,
     expert_bias: bool,
@@ -57,6 +58,7 @@ impl GemvSpecialization {
             return None;
         }
         let is_quant = shape.is_quant();
+        let microfloat = shape.b_microfloat.is_some();
         let bad_leading_dimension = if is_quant {
             shape.b_leading_dimension.is_some()
         } else {
@@ -71,7 +73,13 @@ impl GemvSpecialization {
         if shape.d_transform.contains(GemmDTransform::RHT) && !shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) {
             return None;
         }
-        if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > max_gemv_batch_threshold() {
+        if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP {
+            return None;
+        }
+        // Sparse MXFP4 readout has no gathered GEMM arm. Keep it on the only
+        // implementation that honors its physical B-row map at every M.
+        let sparse_microfloat_readout = shape.sparse_readout && microfloat;
+        if shape.m > max_gemv_batch_threshold() && !sparse_microfloat_readout {
             return None;
         }
         if !is_quant {
@@ -111,7 +119,8 @@ impl GemvSpecialization {
             k_split: tile.k_split,
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
-            gathered: shape.gathered,
+            microfloat,
+            gathered: shape.sparse_readout,
             expert_routed: shape.expert_routed,
             expert_bias: shape.expert_bias,
             signed_codes: shape.signed_codes,
@@ -168,6 +177,7 @@ impl GemvDispatch {
                     specialization.input_aligned,
                     specialization.results_per_simdgroup,
                     specialization.num_simdgroups,
+                    specialization.microfloat,
                     specialization.output_transform,
                     specialization.gathered,
                     specialization.expert_routed,
@@ -241,6 +251,38 @@ impl GemvDispatch {
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    (a, a_offset),
+                    &mut *d,
+                    output_bias,
+                    rht_factors,
+                    gather_indices,
+                    expert_ids,
+                    expert_biases,
+                    k,
+                    n,
+                    m,
+                    ab_scale,
+                    group_count_x,
+                    routes_per_token,
+                    expert_count,
+                    route_inputs,
+                    soft_cap,
+                    encoder,
+                );
+            },
+            MatmulB::Microfloat {
+                codes,
+                scales,
+                global_scales,
+                ..
+            } => {
+                pipeline.encode(
+                    codes,
+                    Some(scales),
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    Some(global_scales),
                     (a, a_offset),
                     &mut *d,
                     output_bias,
@@ -289,6 +331,9 @@ impl GemvDispatch {
                     } => (w, scales, None, None),
                     MatmulB::FullPrecision {
                         ..
+                    }
+                    | MatmulB::Microfloat {
+                        ..
                     } => unreachable!(),
                 };
                 pipeline.encode(
@@ -296,6 +341,7 @@ impl GemvDispatch {
                     Some(scales),
                     zero_points,
                     biases,
+                    None::<&Allocation<Metal>>,
                     (a, a_offset),
                     &mut *d,
                     output_bias,

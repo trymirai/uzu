@@ -47,7 +47,11 @@ impl MatmulMetalKernel {
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> bool {
-        if shape.gathered || shape.expert_routed || plan.engine != gemm::GemmEngine::Mxu {
+        if shape.sparse_readout
+            || shape.expert_routed
+            || shape.b_microfloat.is_some()
+            || plan.engine != gemm::GemmEngine::Mxu
+        {
             return false;
         }
         match (shape.m, shape.n == shape.k, (weights_data_type, input_data_type, output_data_type)) {
@@ -117,7 +121,7 @@ impl MatmulKernel for MatmulMetalKernel {
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
-            if !matches!(data_type, DataType::BF16 | DataType::F32) {
+            if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
                 return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
             }
         }
@@ -203,6 +207,34 @@ impl MatmulKernel for MatmulMetalKernel {
             .into());
         }
         if let Some(routes) = arguments.expert_routes {
+            if matches!(
+                &arguments.b,
+                crate::backends::common::kernel::matmul::MatmulB::ScaleBiasDequant { .. }
+                    | crate::backends::common::kernel::matmul::MatmulB::ScaleZeroPointDequant { .. }
+                    | crate::backends::common::kernel::matmul::MatmulB::ScaleSymmetricDequant { .. }
+            ) {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "quantized weight banks are not supported with direct expert routes",
+                }
+                .into());
+            }
+            if routes.expert_biases.is_some()
+                && arguments.d_transform.mask().contains(crate::backends::common::gpu_types::gemm::GemmDTransform::RHT)
+            {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "expert bias banks cannot be combined with output RHT",
+                }
+                .into());
+            }
+            if routes.expert_count.get() > 512 {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "expert routing supports at most 512 experts",
+                }
+                .into());
+            }
             if routes.expert_ids.size() < arguments.m as usize * size_of::<i32>() {
                 return Err(MatmulError::UnsupportedRouting {
                     path: "MetalMatmul",
@@ -229,6 +261,73 @@ impl MatmulKernel for MatmulMetalKernel {
                 }
                 .into());
             }
+            if let crate::backends::common::kernel::matmul::MatmulB::FullPrecision {
+                b,
+            } = &arguments.b
+            {
+                let leading_dimension = arguments.b_leading_dimension.unwrap_or(if arguments.b_transpose {
+                    arguments.k
+                } else {
+                    arguments.n
+                });
+                let major_dimension = if arguments.b_transpose {
+                    arguments.n
+                } else {
+                    arguments.k
+                };
+                let minimum_leading_dimension = if arguments.b_transpose {
+                    arguments.k
+                } else {
+                    arguments.n
+                };
+                let required_bytes = (routes.expert_count.get() as usize)
+                    .checked_mul(major_dimension as usize)
+                    .and_then(|size| size.checked_mul(leading_dimension as usize))
+                    .and_then(|size| size.checked_mul(self.weights_data_type.size_in_bytes()));
+                if leading_dimension < minimum_leading_dimension
+                    || required_bytes.is_none_or(|required| (*b).into_parts().2 < required)
+                {
+                    return Err(MatmulError::UnsupportedRouting {
+                        path: "MetalMatmul",
+                        reason: "full-precision weight bank layout or storage does not cover every expert matrix",
+                    }
+                    .into());
+                }
+            }
+        }
+        if let crate::backends::common::kernel::matmul::MatmulB::Microfloat {
+            codes,
+            scales,
+            global_scales,
+            metadata,
+        } = &arguments.b
+        {
+            let matrix_count = arguments.expert_routes.map_or(1, |routes| routes.expert_count.get());
+            let rows_match = arguments.gather_indices.is_some() || metadata.rows() == arguments.n;
+            if !arguments.b_transpose
+                || arguments.b_leading_dimension.is_some()
+                || metadata.matrix_count() < matrix_count
+                || !rows_match
+                || metadata.columns() != arguments.k
+                || codes.size() < metadata.required_code_bytes()
+                || scales.size() < metadata.required_scale_bytes()
+                || global_scales.size() < metadata.matrix_count() as usize * self.weights_data_type.size_in_bytes()
+            {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "microfloat storage does not match the requested matrix operand",
+                }
+                .into());
+            }
+        }
+        if arguments.expert_routes.is_none()
+            && [self.weights_data_type, self.input_data_type, self.output_data_type].contains(&DataType::F16)
+        {
+            return Err(MatmulError::UnsupportedRouting {
+                path: "MetalMatmul",
+                reason: "F16 Metal matmul is supported only for direct expert routes",
+            }
+            .into());
         }
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, encoder.context()) {
@@ -239,6 +338,9 @@ impl MatmulKernel for MatmulMetalKernel {
         };
 
         if arguments.expert_routes.is_some() {
+            return self.routed_gemm.encode(arguments, encoder).map_err(MetalError::from);
+        }
+        if shape.b_microfloat.is_some() {
             return self.routed_gemm.encode(arguments, encoder).map_err(MetalError::from);
         }
         // TODO: remove after GatherGEMM is supported

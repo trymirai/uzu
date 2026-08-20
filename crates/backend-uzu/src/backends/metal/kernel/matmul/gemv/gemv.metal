@@ -18,10 +18,11 @@ template <
     uint K_SPLIT,
     bool INPUT_ALIGNED,
     uint RESULTS_PER_SIMDGROUP,
-    uint NUM_SIMDGROUPS>
-VARIANTS(AT, bfloat, float)
-VARIANTS(BT, bfloat, float)
-VARIANTS(DT, bfloat, float)
+    uint NUM_SIMDGROUPS,
+    bool MICROFLOAT>
+VARIANTS(AT, half, bfloat, float)
+VARIANTS(BT, half, bfloat, float)
+VARIANTS(DT, half, bfloat, float)
 CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
 VARIANTS(
     B_PROLOGUE,
@@ -35,8 +36,11 @@ VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
 VARIANTS(RESULTS_PER_SIMDGROUP, 1, 2, 4, 8)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
-CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
-CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
+VARIANTS(MICROFLOAT, false, true)
+CONSTRAINT(MICROFLOAT || (B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
+CONSTRAINT(MICROFLOAT || (BITS == 0) == (GROUP_SIZE == 0))
+CONSTRAINT(!MICROFLOAT || (B_PROLOGUE == GemmBPrologueKind::FullPrecision && BITS == 4))
+CONSTRAINT(!MICROFLOAT || GROUP_SIZE == 16 || GROUP_SIZE == 32)
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
 CONSTRAINT(K_SPLIT <= NUM_SIMDGROUPS)
@@ -51,11 +55,12 @@ CONSTRAINT(
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales
-        OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision),
+        OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision || MICROFLOAT),
     const device uint8_t* zero_points
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
     const device BT* biases
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
+    const device BT* global_scales OPTIONAL(MICROFLOAT),
     const device AT* a,
     device DT* d,
     const device BT* output_bias
@@ -108,12 +113,13 @@ KERNEL(Gemv)(
       OutputTile<K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::make(out_block_idx, simd_group, out_vec_size);
   d += batch_idx * out_vec_size + tile.out_row;
 
-  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED>::accumulate(
+  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED, MICROFLOAT>::accumulate(
       result,
       b,
       scales,
       zero_points,
       biases,
+      global_scales,
       a,
       gather_indices,
       gathered,
