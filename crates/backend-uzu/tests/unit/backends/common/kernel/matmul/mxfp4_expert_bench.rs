@@ -33,11 +33,46 @@ type MetalKernels = <Metal as Backend>::Kernels;
 struct Mxfp4Shape {
     label: &'static str,
     routes: u32,
+    routes_per_token: u32,
     experts: u32,
     n: u32,
     k: u32,
     group_size: u32,
     input_is_bf16: bool,
+}
+
+#[derive(Clone, Copy)]
+enum Mxfp4RouteDistribution {
+    Uniform,
+    FourHot,
+    OneHot,
+    ManyEmpty,
+}
+
+impl Mxfp4RouteDistribution {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Uniform => "uniform",
+            Self::FourHot => "four_hot",
+            Self::OneHot => "one_hot",
+            Self::ManyEmpty => "many_empty",
+        }
+    }
+
+    fn expert_ids(
+        self,
+        route_count: u32,
+        expert_count: u32,
+    ) -> Vec<i32> {
+        (0..route_count)
+            .map(|route| match self {
+                Self::Uniform => (route % expert_count) as i32,
+                Self::FourHot => (route % 4) as i32,
+                Self::OneHot => 0,
+                Self::ManyEmpty => ((route * 7 + 3) % 8) as i32,
+            })
+            .collect()
+    }
 }
 
 fn mxfp4_expert_bytes(shape: &Mxfp4Shape) -> u64 {
@@ -72,13 +107,13 @@ fn bench_mxfp4_expert_projection(
     .unwrap();
     let expert_ids = alloc_allocation_with_data::<Metal, i32>(context, expert_ids_value);
     let mut output = alloc_allocation::<Metal, u8>(context, routes * n * 4);
-    let routes_per_token = NonZeroU32::new(shape.routes).unwrap();
+    let routes_per_token = NonZeroU32::new(shape.routes_per_token).unwrap();
     let expert_count = NonZeroU32::new(shape.experts).unwrap();
 
     let label = format!("{}_{}", shape.label, ids_label);
     group.throughput(Throughput::Bytes(mxfp4_expert_bytes(shape)));
     if shape.input_is_bf16 {
-        let input = alloc_allocation::<Metal, bf16>(context, k);
+        let input = alloc_allocation::<Metal, bf16>(context, routes / shape.routes_per_token as usize * k);
         let mut matmul = <MetalKernels as Kernels>::MatmulKernel::new(
             context,
             bf16::data_type(),
@@ -182,6 +217,7 @@ fn bench_mxfp4_expert_decode_production(c: &mut Criterion) {
     const W13: Mxfp4Shape = Mxfp4Shape {
         label: "W13_N5760_K2880_G16",
         routes: 4,
+        routes_per_token: 4,
         experts: 32,
         n: 5760,
         k: 2880,
@@ -191,6 +227,7 @@ fn bench_mxfp4_expert_decode_production(c: &mut Criterion) {
     const W2: Mxfp4Shape = Mxfp4Shape {
         label: "W2_N2880_K2880_G32",
         routes: 4,
+        routes_per_token: 4,
         experts: 32,
         n: 2880,
         k: 2880,
@@ -283,6 +320,51 @@ fn bench_mxfp4_expert_decode_production(c: &mut Criterion) {
                     .expect("fused mxfp4 routed matmul");
             });
         });
+    }
+}
+
+#[uzu_bench]
+fn bench_mxfp4_expert_prefill_production(c: &mut Criterion) {
+    let context = &*shared_metal_context();
+    let mut group = c.benchmark_group(format!("{}/Kernel/Matmul/Mxfp4ExpertPrefill", type_short_name::<Metal>()));
+
+    const W13: Mxfp4Shape = Mxfp4Shape {
+        label: "W13_T71_R284_N5760_K2880_G16",
+        routes: 284,
+        routes_per_token: 4,
+        experts: 32,
+        n: 5760,
+        k: 2880,
+        group_size: 16,
+        input_is_bf16: true,
+    };
+    const W2: Mxfp4Shape = Mxfp4Shape {
+        label: "W2_T71_R284_N2880_K2880_G32",
+        routes: 284,
+        routes_per_token: 4,
+        experts: 32,
+        n: 2880,
+        k: 2880,
+        group_size: 32,
+        input_is_bf16: false,
+    };
+
+    for distribution in [
+        Mxfp4RouteDistribution::Uniform,
+        Mxfp4RouteDistribution::FourHot,
+        Mxfp4RouteDistribution::OneHot,
+        Mxfp4RouteDistribution::ManyEmpty,
+    ] {
+        let expert_ids = distribution.expert_ids(W13.routes, W13.experts);
+        for shape in [&W13, &W2] {
+            bench_mxfp4_expert_projection(
+                &mut group,
+                context,
+                shape,
+                &expert_ids,
+                distribution.label(),
+            );
+        }
     }
 }
 

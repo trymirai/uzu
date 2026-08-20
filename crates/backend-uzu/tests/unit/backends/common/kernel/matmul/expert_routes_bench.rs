@@ -31,6 +31,40 @@ use crate::{
 
 type MetalKernels = <Metal as Backend>::Kernels;
 
+#[derive(Clone, Copy)]
+enum RouteDistribution {
+    Uniform,
+    FourHot,
+    OneHot,
+    ManyEmpty,
+}
+
+impl RouteDistribution {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Uniform => "uniform",
+            Self::FourHot => "four_hot",
+            Self::OneHot => "one_hot",
+            Self::ManyEmpty => "many_empty",
+        }
+    }
+
+    fn expert_ids(
+        self,
+        route_count: u32,
+        expert_count: u32,
+    ) -> Vec<i32> {
+        (0..route_count)
+            .map(|route| match self {
+                Self::Uniform => (route % expert_count) as i32,
+                Self::FourHot => (route % 4) as i32,
+                Self::OneHot => 0,
+                Self::ManyEmpty => ((route * 7 + 3) % 8) as i32,
+            })
+            .collect()
+    }
+}
+
 fn bench_shape(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     context: &MetalContext,
@@ -40,6 +74,7 @@ fn bench_shape(
     n: u32,
     k: u32,
     microfloat: bool,
+    distribution: RouteDistribution,
 ) {
     let route_count = token_count * routes_per_token;
     let input = alloc_allocation::<Metal, bf16>(context, token_count as usize * k as usize);
@@ -57,7 +92,7 @@ fn bench_shape(
             .unwrap();
     let route_token_ids: Vec<u32> = (0..route_count).map(|route| route / routes_per_token).collect();
     let route_token_ids = alloc_allocation_with_data::<Metal, u32>(context, &route_token_ids);
-    let expert_ids: Vec<i32> = (0..route_count).map(|route| (route % expert_count) as i32).collect();
+    let expert_ids = distribution.expert_ids(route_count, expert_count);
     let expert_ids = alloc_allocation_with_data::<Metal, i32>(context, &expert_ids);
     let mut expanded_input = alloc_allocation::<Metal, bf16>(context, route_count as usize * k as usize);
     let mut output = alloc_allocation::<Metal, bf16>(context, route_count as usize * n as usize);
@@ -73,7 +108,7 @@ fn bench_shape(
     } else {
         "BF16"
     };
-    let shape = format!("{storage}_T{token_count}_R{route_count}_N{n}_K{k}");
+    let shape = format!("{storage}_T{token_count}_R{route_count}_N{n}_K{k}_{}", distribution.label());
 
     group.throughput(Throughput::Elements(2 * u64::from(route_count) * u64::from(k) * u64::from(n)));
     group.bench_function(BenchmarkId::new("direct", &shape), |bencher| {
@@ -164,8 +199,14 @@ fn bench_direct_expert_routes(c: &mut Criterion) {
     let context = shared_metal_context();
     let mut group = c.benchmark_group(format!("{}/Kernel/Matmul/ExpertRoutes", type_short_name::<Metal>()));
     for microfloat in [false, true] {
-        for token_count in [1, 32] {
-            bench_shape(&mut group, &context, token_count, 4, 16, 1024, 1024, microfloat);
+        bench_shape(&mut group, &context, 1, 4, 32, 1024, 1024, microfloat, RouteDistribution::Uniform);
+        for distribution in [
+            RouteDistribution::Uniform,
+            RouteDistribution::FourHot,
+            RouteDistribution::OneHot,
+            RouteDistribution::ManyEmpty,
+        ] {
+            bench_shape(&mut group, &context, 71, 4, 32, 1024, 1024, microfloat, distribution);
         }
     }
 }
