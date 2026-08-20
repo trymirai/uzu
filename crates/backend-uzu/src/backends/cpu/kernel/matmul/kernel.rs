@@ -68,6 +68,34 @@ impl MatmulKernel for MatmulCpuKernel {
             .into());
         }
         if let Some(routes) = arguments.expert_routes {
+            if routes.expert_count.get() > 512 {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "CpuMatmul",
+                    reason: "expert routing supports at most 512 experts",
+                }
+                .into());
+            }
+            if matches!(
+                &arguments.b,
+                MatmulB::ScaleBiasDequant { .. }
+                    | MatmulB::ScaleZeroPointDequant { .. }
+                    | MatmulB::ScaleSymmetricDequant { .. }
+            ) {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "CpuMatmul",
+                    reason: "quantized weight banks are not supported with direct expert routes",
+                }
+                .into());
+            }
+            if routes.expert_biases.is_some()
+                && arguments.d_transform.mask().contains(crate::backends::common::gpu_types::gemm::GemmDTransform::RHT)
+            {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "CpuMatmul",
+                    reason: "expert bias banks cannot be combined with output RHT",
+                }
+                .into());
+            }
             if routes.expert_ids.size() < arguments.m as usize * size_of::<i32>() {
                 return Err(MatmulError::UnsupportedRouting {
                     path: "CpuMatmul",
@@ -89,6 +117,64 @@ impl MatmulKernel for MatmulCpuKernel {
                 return Err(MatmulError::UnsupportedRouting {
                     path: "CpuMatmul",
                     reason: "expert bias bank must contain expert_count * N values",
+                }
+                .into());
+            }
+            if let MatmulB::FullPrecision {
+                b,
+            } = &arguments.b
+            {
+                let leading_dimension = arguments.b_leading_dimension.unwrap_or(if arguments.b_transpose {
+                    arguments.k
+                } else {
+                    arguments.n
+                });
+                let major_dimension = if arguments.b_transpose {
+                    arguments.n
+                } else {
+                    arguments.k
+                };
+                let minimum_leading_dimension = if arguments.b_transpose {
+                    arguments.k
+                } else {
+                    arguments.n
+                };
+                let required_bytes = (routes.expert_count.get() as usize)
+                    .checked_mul(major_dimension as usize)
+                    .and_then(|size| size.checked_mul(leading_dimension as usize))
+                    .and_then(|size| size.checked_mul(self.weights_data_type.size_in_bytes()));
+                if leading_dimension < minimum_leading_dimension
+                    || required_bytes.is_none_or(|required| (*b).into_parts().2 < required)
+                {
+                    return Err(MatmulError::UnsupportedRouting {
+                        path: "CpuMatmul",
+                        reason: "full-precision weight bank layout or storage does not cover every expert matrix",
+                    }
+                    .into());
+                }
+            }
+        }
+        if let MatmulB::Microfloat {
+            codes,
+            scales,
+            global_scales,
+            metadata,
+        } = &arguments.b
+        {
+            let matrix_count = arguments.expert_routes.map_or(1, |routes| routes.expert_count.get());
+            let rows_match = arguments.gather_indices.is_some() || metadata.rows() == arguments.n;
+            if !arguments.b_transpose
+                || arguments.b_leading_dimension.is_some()
+                || metadata.matrix_count() < matrix_count
+                || !rows_match
+                || metadata.columns() != arguments.k
+                || codes.size() < metadata.required_code_bytes()
+                || scales.size() < metadata.required_scale_bytes()
+                || global_scales.size() < metadata.matrix_count() as usize * self.weights_data_type.size_in_bytes()
+            {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "CpuMatmul",
+                    reason: "microfloat storage does not match the requested matrix operand",
                 }
                 .into());
             }
@@ -136,7 +222,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 offset,
             } => {
                 let range = values.as_buffer_range_ref();
-                let byte_offset = range.range().start + offset * input_data_type.size_in_bytes();
+                let byte_offset = range.range().start + offset;
                 AData::FullPrecision(SendPtr(unsafe { &*range.buffer().get() }.as_ptr().wrapping_byte_add(byte_offset)))
             },
             MatmulA::Int8Symmetric {
@@ -243,6 +329,9 @@ impl MatmulKernel for MatmulCpuKernel {
                     Some((num_groups_k, zero_point_stride, pack_factor))
                 },
                 WeightData::FullPrecision {
+                    ..
+                }
+                | WeightData::Microfloat {
                     ..
                 } => None,
             };
@@ -358,6 +447,28 @@ impl MatmulKernel for MatmulCpuKernel {
                                         -scale * midpoint
                                     };
                                     scale * quantized_value + bias_term
+                                },
+                                WeightData::Microfloat {
+                                    codes,
+                                    scales,
+                                    global_scales,
+                                    metadata,
+                                } => {
+                                    let code_index = matrix * metadata.code_matrix_stride()
+                                        + b_col * metadata.code_row_stride()
+                                        + inner / 2;
+                                    let packed = *codes.as_ptr().add(code_index);
+                                    let code = if inner.is_multiple_of(2) {
+                                        packed & 0x0f
+                                    } else {
+                                        packed >> 4
+                                    };
+                                    let scale_index = matrix * metadata.scale_matrix_stride()
+                                        + b_col * metadata.scale_row_stride()
+                                        + inner / metadata.group_size() as usize;
+                                    let exponent = *scales.as_ptr().add(scale_index);
+                                    let global_scale = read_f32(global_scales.as_ptr(), weights_data_type, matrix);
+                                    crate::backends::common::microfloat::decode_mxfp4(code, exponent, global_scale)
                                 },
                             };
                             accumulator += a_value * b_value;

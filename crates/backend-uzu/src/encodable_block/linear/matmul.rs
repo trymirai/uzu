@@ -163,9 +163,12 @@ impl<B: Backend> LinearMatmul<B> {
             b_prologue: b.b_prologue(),
             b_bits: b.bits_per_b(),
             b_group_size: b.group_size(),
+            b_microfloat: b.microfloat_metadata(),
             signed_codes: b.signed_codes(),
             a_full_precision,
-            gathered: false,
+            sparse_readout: false,
+            expert_routed: false,
+            expert_bias: false,
             d_transform: self.d_ops().mask(),
         }
     }

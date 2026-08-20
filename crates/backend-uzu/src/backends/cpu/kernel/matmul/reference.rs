@@ -24,6 +24,12 @@ pub(super) enum WeightData {
         group_size: usize,
         signed_codes: bool,
     },
+    Microfloat {
+        codes: SendPtr<u8>,
+        scales: SendPtr<u8>,
+        global_scales: SendPtr<u8>,
+        metadata: crate::backends::common::microfloat::MicrofloatMetadata,
+    },
 }
 
 impl WeightData {
@@ -57,6 +63,17 @@ impl WeightData {
                     leading_dimension,
                     transpose: b_transpose,
                 }
+            },
+            MatmulB::Microfloat {
+                codes,
+                scales,
+                global_scales,
+                metadata,
+            } => WeightData::Microfloat {
+                codes: alloc_ptr(codes),
+                scales: alloc_ptr(scales),
+                global_scales: alloc_ptr(global_scales),
+                metadata,
             },
             MatmulB::ScaleBiasDequant {
                 b: weights,
