@@ -1,4 +1,4 @@
-use std::num::NonZeroU32;
+use std::{mem::size_of, num::NonZeroU32};
 
 use proc_macros::uzu_test;
 
@@ -28,6 +28,33 @@ fn run<B: Backend>(
     k: usize,
     n: usize,
 ) -> Vec<f32> {
+    run_with_offset::<B>(
+        input,
+        0,
+        weights,
+        expert_ids,
+        expert_biases,
+        input_layout,
+        routes_per_token,
+        expert_count,
+        k,
+        n,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_with_offset<B: Backend>(
+    input: &[f32],
+    input_byte_offset: usize,
+    weights: &[f32],
+    expert_ids: &[i32],
+    expert_biases: &[f32],
+    input_layout: ExpertInput,
+    routes_per_token: u32,
+    expert_count: u32,
+    k: usize,
+    n: usize,
+) -> Vec<f32> {
     let routes = expert_ids.len();
     let context = B::Context::new().expect("create backend context");
     let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), input);
@@ -45,7 +72,7 @@ fn run<B: Backend>(
             MatmulArguments {
                 a: MatmulA::FullPrecision {
                     values: &input,
-                    offset: 0,
+                    offset: input_byte_offset,
                 },
                 b: MatmulB::FullPrecision {
                     b: &weights,
@@ -71,6 +98,117 @@ fn run<B: Backend>(
         .expect("encode routed matmul");
     encoder.end_encoding().submit().wait_until_completed().expect("execute routed matmul");
     allocation_to_vec::<B, f32>(&output)
+}
+
+fn rejection<B: Backend>(
+    weight_count: usize,
+    expert_count: u32,
+    b_transpose: bool,
+    b_leading_dimension: Option<u32>,
+) -> String {
+    let context = B::Context::new().expect("create backend context");
+    let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), &[1.0, 2.0, 3.0]);
+    let weights = alloc_allocation_with_data::<B, f32>(context.as_ref(), &vec![0.0; weight_count]);
+    let expert_ids = alloc_allocation_with_data::<B, i32>(context.as_ref(), &[0]);
+    let mut output = alloc_allocation::<B, f32>(context.as_ref(), 2);
+    let mut kernel =
+        <B::Kernels as Kernels>::MatmulKernel::new(context.as_ref(), DataType::F32, DataType::F32, DataType::F32)
+            .unwrap();
+    let mut encoder = Encoder::<B>::new(context.as_ref()).unwrap();
+    kernel
+        .encode(
+            MatmulArguments {
+                a: MatmulA::FullPrecision {
+                    values: &input,
+                    offset: 0,
+                },
+                b: MatmulB::FullPrecision {
+                    b: &weights,
+                },
+                b_leading_dimension,
+                b_transpose,
+                d: &mut output,
+                d_transform: MatmulDOps::none(),
+                gather_indices: None,
+                expert_routes: Some(ExpertRoutes {
+                    expert_ids: &expert_ids,
+                    routes_per_token: NonZeroU32::new(1).unwrap(),
+                    expert_count: NonZeroU32::new(expert_count).unwrap(),
+                    input: ExpertInput::Tokens,
+                    expert_biases: None,
+                }),
+                m: 1,
+                n: 2,
+                k: 3,
+            },
+            &mut encoder,
+        )
+        .expect_err("invalid full-precision route contract was accepted")
+        .to_string()
+}
+
+#[uzu_test]
+fn backends_reject_invalid_full_precision_banks() {
+    for (weight_count, leading_dimension) in [(6, None), (12, Some(2))] {
+        let error = rejection::<Cpu>(weight_count, 2, true, leading_dimension);
+        assert!(error.contains("full-precision weight bank layout or storage"), "{error}");
+        for_each_non_cpu_backend!(|B| {
+            let error = rejection::<B>(weight_count, 2, true, leading_dimension);
+            assert!(error.contains("full-precision weight bank layout or storage"), "{error}");
+        });
+    }
+}
+
+#[uzu_test]
+fn backends_reject_oversized_expert_banks() {
+    let error = rejection::<Cpu>(513 * 2 * 3, 513, true, None);
+    assert!(error.contains("at most 512 experts"), "{error}");
+    for_each_non_cpu_backend!(|B| {
+        let error = rejection::<B>(513 * 2 * 3, 513, true, None);
+        assert!(error.contains("at most 512 experts"), "{error}");
+    });
+}
+
+#[uzu_test]
+fn metal_rejects_unsupported_grouped_weight_layouts() {
+    for_each_non_cpu_backend!(|B| {
+        let error = rejection::<B>(3 * 2 * 3, 3, false, None);
+        assert!(error.contains("contiguous output-input weights"), "{error}");
+    });
+}
+
+#[uzu_test]
+fn full_precision_input_offsets_are_bytes() {
+    let input = [99.0, 88.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let expected = [4.0, 8.0, 1.1, 2.2, 7.0, 17.0, 0.0, 0.0];
+    let cpu = run_with_offset::<Cpu>(
+        &input,
+        2 * size_of::<f32>(),
+        &weights(),
+        &[1, 0, 1, -1],
+        &[0.1, 0.2, 1.0, 2.0, 10.0, 20.0],
+        ExpertInput::Tokens,
+        2,
+        3,
+        3,
+        2,
+    );
+    assert_eq_float(&expected, &cpu, 1e-6, "CPU byte-offset routes");
+    for_each_non_cpu_backend!(|B| {
+        let actual = run_with_offset::<B>(
+            &input,
+            2 * size_of::<f32>(),
+            &weights(),
+            &[1, 0, 1, -1],
+            &[0.1, 0.2, 1.0, 2.0, 10.0, 20.0],
+            ExpertInput::Tokens,
+            2,
+            3,
+            3,
+            2,
+        );
+        assert_eq_float(&expected, &actual, 1e-6, "Metal byte-offset routes");
+    });
 }
 
 fn weights() -> Vec<f32> {

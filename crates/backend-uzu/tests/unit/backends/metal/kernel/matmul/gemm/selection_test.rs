@@ -26,9 +26,10 @@ fn shape(
         b_prologue: GemmBPrologueKind::FullPrecision,
         b_bits: None,
         b_group_size: None,
+        b_microfloat: None,
         signed_codes: false,
         a_full_precision: true,
-        gathered: false,
+        sparse_readout: false,
         expert_routed: false,
         expert_bias: false,
         d_transform: GemmDTransform::empty(),
@@ -192,8 +193,14 @@ fn gemv_gemm_route_boundaries_are_preserved() {
         let plan = GemmProblem::new(shape, data_type, data_type, true, LEGACY_PROFILE).select_plan();
         assert_eq!(MatmulMetalKernel::prefer_gemm_over_gemv(shape, plan, data_type, data_type, data_type), prefer_gemm);
     }
-    let mut gathered = shape(4, 4096, 8192);
-    gathered.gathered = true;
-    let plan = problem(gathered, DataType::BF16).select_plan();
-    assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16, DataType::BF16,));
+    let mut sparse_readout = shape(4, 4096, 8192);
+    sparse_readout.sparse_readout = true;
+    let plan = problem(sparse_readout, DataType::BF16).select_plan();
+    assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(
+        sparse_readout,
+        plan,
+        DataType::BF16,
+        DataType::BF16,
+        DataType::BF16,
+    ));
 }
