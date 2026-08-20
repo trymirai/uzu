@@ -57,7 +57,7 @@ impl GemvSpecialization {
         if !shape.b_transpose || !shape.a_full_precision {
             return None;
         }
-        let is_quant = shape.is_integer_quantized();
+        let is_quant = shape.is_quant();
         let microfloat = shape.b_microfloat.is_some();
         let bad_leading_dimension = if is_quant {
             shape.b_leading_dimension.is_some()

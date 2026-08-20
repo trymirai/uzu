@@ -60,8 +60,13 @@ pub(crate) fn validate_matmul_storage<'a, 'b, 'd, B: Backend, TB: BufferArg<'b, 
         }
     }
 
+    let output_width = if arguments.d_transform.gate_act.is_some() {
+        arguments.n / 2
+    } else {
+        arguments.n
+    };
     let required_output = (arguments.m as usize)
-        .checked_mul(arguments.n as usize)
+        .checked_mul(output_width as usize)
         .and_then(|size| size.checked_mul(output_data_type.size_in_bytes()));
     if required_output.is_none_or(|required| arguments.d.size() < required) {
         return Err(MatmulStorageError {

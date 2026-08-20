@@ -131,7 +131,7 @@ impl MatmulShape {
         }
     }
 
-    pub fn is_integer_quantized(&self) -> bool {
+    pub fn is_quant(&self) -> bool {
         self.b_prologue != GemmBPrologueKind::FullPrecision
     }
 }

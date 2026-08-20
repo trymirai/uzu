@@ -69,6 +69,13 @@ impl MatmulKernel for MatmulCpuKernel {
             }
             .into());
         }
+        if arguments.d_transform.gate_act.is_some() {
+            return Err(MatmulError::UnsupportedDOp {
+                bit: crate::backends::common::gpu_types::gemm::GemmDTransform::GATE_ACT_MUL,
+                path: "CpuMatmul",
+            }
+            .into());
+        }
         if let Some(routes) = arguments.routing.expert_routes() {
             if matches!(
                 &arguments.b,

@@ -26,6 +26,7 @@ struct GemmDTransform {
   static constant constexpr uint32_t BIAS = 1 << 2;
   static constant constexpr uint32_t RHT = 1 << 3;
   static constant constexpr uint32_t SOFT_CAP = 1 << 4;
+  static constant constexpr uint32_t GATE_ACT_MUL = 1 << 5;
   constexpr bool contains(uint32_t flag) const thread { return (raw_value & flag) != 0; }
   constexpr bool contains(uint32_t flag) const constant { return (raw_value & flag) != 0; }
   constexpr uint32_t bits() const thread { return raw_value; }

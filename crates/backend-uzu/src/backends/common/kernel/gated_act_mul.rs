@@ -33,6 +33,9 @@ bitflags! {
     struct GatedActMulOptions: u8 {
         const INTERLEAVED = 1 << 0;
         const HADAMARD = 1 << 1;
+        const CUSTOM_ALPHA = 1 << 2;
+        const CLIP_ACT = 1 << 3;
+        const CLIP_VALUE = 1 << 4;
     }
 }
 
@@ -50,10 +53,16 @@ impl<B: Backend> GatedActMul<B> {
         data_type: DataType,
         interleaved: bool,
         use_hadamard: bool,
+        custom_activation_alpha: bool,
+        clip_act: bool,
+        clip_value: bool,
     ) -> Result<Self, B::Error> {
         let mut options = GatedActMulOptions::empty();
         options.set(GatedActMulOptions::INTERLEAVED, interleaved);
         options.set(GatedActMulOptions::HADAMARD, use_hadamard);
+        options.set(GatedActMulOptions::CUSTOM_ALPHA, custom_activation_alpha);
+        options.set(GatedActMulOptions::CLIP_ACT, clip_act);
+        options.set(GatedActMulOptions::CLIP_VALUE, clip_value);
         Self::new(
             context,
             data_type,
@@ -98,6 +107,9 @@ impl<B: Backend> GatedActMul<B> {
             options.contains(GatedActMulOptions::HADAMARD),
             activation_group_size,
             sum_group_size,
+            options.contains(GatedActMulOptions::CUSTOM_ALPHA),
+            options.contains(GatedActMulOptions::CLIP_ACT),
+            options.contains(GatedActMulOptions::CLIP_VALUE),
         )?;
         Ok(Self {
             kernel,
@@ -119,6 +131,11 @@ impl<B: Backend> GatedActMul<B> {
         value_offset: u32,
         value_row_stride: u32,
         act_type: ActivationType,
+        activation_alpha: Option<f32>,
+        act_clip_min: Option<f32>,
+        act_clip_max: Option<f32>,
+        value_clip_min: Option<f32>,
+        value_clip_max: Option<f32>,
         encoder: &mut Encoder<B>,
     ) {
         assert_eq!(self.ops, GatedActMulOp::FullPrecision);
@@ -141,6 +158,11 @@ impl<B: Backend> GatedActMul<B> {
             value_offset,
             value_row_stride,
             act_type,
+            activation_alpha,
+            act_clip_min,
+            act_clip_max,
+            value_clip_min,
+            value_clip_max,
             encoder,
         );
     }
@@ -179,6 +201,11 @@ impl<B: Backend> GatedActMul<B> {
             0,
             0,
             act_type,
+            None,
+            None,
+            None,
+            None,
+            None,
             encoder,
         );
     }

@@ -1,5 +1,15 @@
 use crate::backends::common::{Allocation, Backend, gpu_types::gemm::GemmDTransform};
 
+/// Fused gated-activation epilogue parameters for [GemmDTransform::GATE_ACT_MUL].
+///
+/// Only SiLU is supported; `activation_alpha` overrides the default alpha.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GateActMulDOps {
+    pub activation_alpha: Option<f32>,
+    pub gate_clipping: Option<(f32, f32)>,
+    pub value_clipping: Option<(f32, f32)>,
+}
+
 pub struct MatmulDOps<'a, B: Backend> {
     pub ab_scale: f32,
     pub accumulate: bool,
@@ -8,6 +18,7 @@ pub struct MatmulDOps<'a, B: Backend> {
     pub per_matrix_bias: Option<&'a Allocation<B>>,
     pub rht_factors: Option<&'a Allocation<B>>,
     pub soft_cap: Option<f32>,
+    pub gate_act: Option<GateActMulDOps>,
 }
 
 impl<'a, B: Backend> MatmulDOps<'a, B> {
@@ -19,6 +30,7 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
             per_matrix_bias: None,
             rht_factors: None,
             soft_cap: None,
+            gate_act: None,
         }
     }
 
@@ -38,6 +50,9 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
         }
         if self.soft_cap.is_some() {
             m |= GemmDTransform::SOFT_CAP;
+        }
+        if self.gate_act.is_some() {
+            m |= GemmDTransform::GATE_ACT_MUL;
         }
         m
     }
@@ -76,6 +91,11 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
                 None
             } else {
                 self.soft_cap
+            },
+            gate_act: if bits.contains(GemmDTransform::GATE_ACT_MUL) {
+                None
+            } else {
+                self.gate_act
             },
         }
     }

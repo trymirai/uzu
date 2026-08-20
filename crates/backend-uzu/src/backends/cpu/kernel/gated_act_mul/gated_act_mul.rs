@@ -64,24 +64,23 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
                 let value_index = batch * value_row_stride as usize + value_offset as usize + gated;
                 (batch * gated_dim + gated, unsafe { *value_operand.unwrap().add(value_index) })
             };
-            let gate = unsafe { *act_operand.add(act_index) }.to_f32().unwrap();
+            let gate = unsafe { *act_operand.add(act_index) };
             let gate = if clip_act {
-                gate.clamp(act_clip_min.unwrap(), act_clip_max.unwrap())
+                T::from(gate.to_f32().unwrap().clamp(act_clip_min.unwrap(), act_clip_max.unwrap())).unwrap()
             } else {
                 gate
             };
-            let activated = if custom_activation_alpha && act_type == ActivationType::SILU {
+            let activated: T = if custom_activation_alpha && act_type == ActivationType::SILU {
                 activation_silu_alpha(gate, activation_alpha.unwrap())
             } else {
                 act_type.activate(gate)
             };
-            let value = value.to_f32().unwrap();
             let value = if clip_value {
-                value.clamp(value_clip_min.unwrap(), value_clip_max.unwrap())
+                T::from(value.to_f32().unwrap().clamp(value_clip_min.unwrap(), value_clip_max.unwrap())).unwrap()
             } else {
                 value
             };
-            let result = value * activated;
+            let result = (value * activated).to_f32().unwrap();
             if let Some(transformed) = transformed.as_mut() {
                 transformed[gated] = result;
             } else {

@@ -26,6 +26,7 @@ bitflags! {
         const BIAS       = 1 << 2;
         const RHT        = 1 << 3;
         const SOFT_CAP   = 1 << 4;
+        const GATE_ACT_MUL = 1 << 5;
     }
 }
 

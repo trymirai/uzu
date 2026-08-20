@@ -40,4 +40,14 @@ pub trait MatmulKernel: Sized + Send + Sync {
     ) -> ActivationFormat {
         ActivationFormat::Bf16
     }
+
+    /// Whether `encode` accepts [super::d_ops::MatmulDOps::gate_act] for
+    /// `shape`, fusing the gated activation into the projection and halving
+    /// the output width.
+    fn supports_fused_gate_act(
+        &self,
+        _shape: &MatmulShape,
+    ) -> bool {
+        false
+    }
 }
