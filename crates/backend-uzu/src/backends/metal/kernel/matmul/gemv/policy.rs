@@ -142,7 +142,9 @@ pub(crate) fn fp_tile(
 
     // R1 won most single-row FP sweeps; Large devices only switch back to R4
     // for deep-K rows, while legacy wide rows keep R4.
-    let results_per_simdgroup = if is_small_g13 && m == 1 && n >= SMALL_G13_WIDE_ROW_N {
+    let results_per_simdgroup = if n < DEFAULT_RESULTS_PER_SIMDGROUP {
+        1
+    } else if is_small_g13 && m == 1 && n >= SMALL_G13_WIDE_ROW_N {
         DEFAULT_RESULTS_PER_SIMDGROUP
     } else if m == 1 && (k <= DEEP_K || size != DeviceSize::Large) {
         1

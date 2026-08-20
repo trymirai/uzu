@@ -117,7 +117,7 @@ impl RoutedGemm {
                 reason: "grouped expert routes require contiguous output-input weights",
             });
         }
-        let routes = arguments.expert_routes;
+        let routes = arguments.routing.expert_routes();
         let MatmulA::FullPrecision {
             values: input,
             offset: input_offset,
@@ -128,7 +128,7 @@ impl RoutedGemm {
                 reason: "prepared int8 activations are not supported",
             });
         };
-        let (weights, scales, global_scales, microfloat_group_size): (
+        let (weights, scales, outer_scales, microfloat_group_size): (
             RoutedBufferSlice<'b>,
             Option<RoutedBufferSlice<'b>>,
             Option<RoutedBufferSlice<'b>>,
@@ -148,12 +148,12 @@ impl RoutedGemm {
             MatmulB::Microfloat {
                 codes,
                 scales,
-                global_scales,
+                outer_scales,
                 metadata,
             } => (
                 RoutedBufferSlice::from_arg(codes),
                 Some(RoutedBufferSlice::from_arg(scales)),
-                Some(RoutedBufferSlice::from_arg(global_scales)),
+                Some(RoutedBufferSlice::from_arg(outer_scales)),
                 Some(metadata.group_size()),
             ),
             _ => {
@@ -191,7 +191,7 @@ impl RoutedGemm {
 
         let specialization = RoutedGemmSpecialization {
             output_transform,
-            expert_bias: routes.is_some_and(|routes| routes.expert_biases.is_some()),
+            expert_bias: arguments.d_transform.per_matrix_bias.is_some(),
             microfloat_group_size,
             expert_routed: routes.is_some(),
         };
@@ -201,11 +201,11 @@ impl RoutedGemm {
         pipeline.encode(
             weights,
             scales,
-            global_scales,
+            outer_scales,
             (input, input_offset),
             &mut *arguments.d,
             arguments.d_transform.bias,
-            routes.and_then(|routes| routes.expert_biases),
+            arguments.d_transform.per_matrix_bias,
             offsets.as_ref(),
             grouped_routes.as_ref(),
             route_count,

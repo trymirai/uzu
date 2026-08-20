@@ -30,17 +30,24 @@ struct FullPrecisionBSource {
     const uint k_stride = K_SPLIT * block_size;
     const uint k_start = k_slice * block_size;
     const uint thread_k = simd_lane * values_per_thread + k_start;
-    const device AT* input = a + a_row * in_vec_size + thread_k;
+    const device AT* input = a + size_t(a_row) * size_t(in_vec_size) + size_t(thread_k);
 
     // One advancing weight pointer per output row; base row = out_row (dense) or gather index.
-    const uint base_row = matrix_idx * out_vec_size + (gathered ? 0u : out_row);
+    const size_t base_row = size_t(matrix_idx) * size_t(out_vec_size) + size_t(gathered ? 0u : out_row);
     const device BT* weights = reinterpret_cast<const device BT*>(b);
-    weights += base_row * in_vec_size + thread_k;
+    weights += base_row * size_t(in_vec_size) + size_t(thread_k);
     thread const device BT* weight_rows[RESULTS_PER_SIMDGROUP];
+    thread bool active_rows[RESULTS_PER_SIMDGROUP];
     METAL_PRAGMA_UNROLL
     for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-      const uint addr_row = gathered ? gather_indices[assignment_idx * out_vec_size + out_row + row] : row;
-      weight_rows[row] = weights + addr_row * in_vec_size;
+      active_rows[row] = out_row + row < out_vec_size;
+      if (!active_rows[row]) {
+        weight_rows[row] = nullptr;
+        continue;
+      }
+      const size_t gather_index = size_t(assignment_idx) * size_t(out_vec_size) + size_t(out_row) + size_t(row);
+      const uint addr_row = gathered ? gather_indices[gather_index] : row;
+      weight_rows[row] = weights + size_t(addr_row) * size_t(in_vec_size);
     }
 
     uint k = k_start;
@@ -48,6 +55,9 @@ struct FullPrecisionBSource {
       float4 input_values = static_cast<float4>(*reinterpret_cast<const device I4*>(input));
       METAL_PRAGMA_UNROLL
       for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+        if (!active_rows[row]) {
+          continue;
+        }
         result[row] += dot(static_cast<float4>(*reinterpret_cast<const device W4*>(weight_rows[row])), input_values);
         weight_rows[row] += k_stride;
       }
@@ -62,6 +72,9 @@ struct FullPrecisionBSource {
       if (remaining > 0) {
         METAL_PRAGMA_UNROLL
         for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+          if (!active_rows[row]) {
+            continue;
+          }
           for (int index = 0; index < remaining; index++) {
             result[row] += static_cast<U>(weight_rows[row][index]) * static_cast<U>(input[index]);
           }

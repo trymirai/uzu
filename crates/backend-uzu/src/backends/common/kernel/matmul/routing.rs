@@ -38,8 +38,6 @@ pub struct ExpertRoutes<'a, B: Backend> {
     pub routes_per_token: NonZeroU32,
     pub expert_count: NonZeroU32,
     pub input: ExpertInput,
-    /// Optional `[expert_count, N]` bias bank in the weights data type.
-    pub expert_biases: Option<&'a Allocation<B>>,
 }
 
 impl<B: Backend> Copy for ExpertRoutes<'_, B> {}
@@ -47,6 +45,47 @@ impl<B: Backend> Copy for ExpertRoutes<'_, B> {}
 impl<B: Backend> Clone for ExpertRoutes<'_, B> {
     fn clone(&self) -> Self {
         *self
+    }
+}
+
+/// Mutually exclusive row and matrix selection modes for matmul.
+pub enum MatmulRouting<'a, B: Backend> {
+    /// Ordinary dense matmul.
+    Dense,
+    /// Select one B row for every output element.
+    SparseReadout {
+        b_rows: &'a Allocation<B>,
+    },
+    /// Select one B matrix for every output row.
+    Experts(ExpertRoutes<'a, B>),
+}
+
+impl<B: Backend> Copy for MatmulRouting<'_, B> {}
+
+impl<B: Backend> Clone for MatmulRouting<'_, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'a, B: Backend> MatmulRouting<'a, B> {
+    pub fn sparse_readout_rows(&self) -> Option<&'a Allocation<B>> {
+        match self {
+            Self::SparseReadout {
+                b_rows,
+            } => Some(*b_rows),
+            Self::Dense | Self::Experts(_) => None,
+        }
+    }
+
+    pub fn expert_routes(&self) -> Option<ExpertRoutes<'a, B>> {
+        match self {
+            Self::Experts(routes) => Some(*routes),
+            Self::Dense
+            | Self::SparseReadout {
+                ..
+            } => None,
+        }
     }
 }
 
@@ -85,14 +124,14 @@ impl MatmulShape {
             b_microfloat: arguments.b.microfloat_metadata(),
             signed_codes: arguments.b.signed_codes(),
             a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
-            sparse_readout: arguments.gather_indices.is_some(),
-            expert_routed: arguments.expert_routes.is_some(),
-            expert_bias: arguments.expert_routes.is_some_and(|routes| routes.expert_biases.is_some()),
+            sparse_readout: arguments.routing.sparse_readout_rows().is_some(),
+            expert_routed: arguments.routing.expert_routes().is_some(),
+            expert_bias: arguments.d_transform.per_matrix_bias.is_some(),
             d_transform: arguments.d_transform.mask(),
         }
     }
 
-    pub fn is_quant(&self) -> bool {
+    pub fn is_integer_quantized(&self) -> bool {
         self.b_prologue != GemmBPrologueKind::FullPrecision
     }
 }

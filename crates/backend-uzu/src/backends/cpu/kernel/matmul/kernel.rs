@@ -8,7 +8,9 @@ use crate::{
             gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{ExpertInput, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
+                matmul::{
+                    ExpertInput, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel, validate_matmul_storage,
+                },
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError},
@@ -60,21 +62,14 @@ impl MatmulKernel for MatmulCpuKernel {
         arguments: MatmulArguments<'a, 'b, 'd, Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), CpuError> {
-        if arguments.gather_indices.is_some() && arguments.expert_routes.is_some() {
+        if arguments.d_transform.per_matrix_bias.is_some() && arguments.routing.expert_routes().is_none() {
             return Err(MatmulError::UnsupportedRouting {
                 path: "CpuMatmul",
-                reason: "sparse readout and expert routing cannot be combined",
+                reason: "per-matrix bias requires direct expert routes",
             }
             .into());
         }
-        if let Some(routes) = arguments.expert_routes {
-            if routes.expert_count.get() > 512 {
-                return Err(MatmulError::UnsupportedRouting {
-                    path: "CpuMatmul",
-                    reason: "expert routing supports at most 512 experts",
-                }
-                .into());
-            }
+        if let Some(routes) = arguments.routing.expert_routes() {
             if matches!(
                 &arguments.b,
                 MatmulB::ScaleBiasDequant { .. }
@@ -87,7 +82,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 }
                 .into());
             }
-            if routes.expert_biases.is_some()
+            if arguments.d_transform.per_matrix_bias.is_some()
                 && arguments.d_transform.mask().contains(crate::backends::common::gpu_types::gemm::GemmDTransform::RHT)
             {
                 return Err(MatmulError::UnsupportedRouting {
@@ -96,7 +91,8 @@ impl MatmulKernel for MatmulCpuKernel {
                 }
                 .into());
             }
-            if routes.expert_ids.size() < arguments.m as usize * size_of::<i32>() {
+            let required_ids = (arguments.m as usize).checked_mul(size_of::<i32>());
+            if required_ids.is_none_or(|required| routes.expert_ids.size() < required) {
                 return Err(MatmulError::UnsupportedRouting {
                     path: "CpuMatmul",
                     reason: "expert_ids must contain at least M entries",
@@ -110,10 +106,14 @@ impl MatmulKernel for MatmulCpuKernel {
                 }
                 .into());
             }
-            if routes.expert_biases.is_some_and(|biases| {
-                biases.size()
-                    < routes.expert_count.get() as usize * arguments.n as usize * self.weights_data_type.size_in_bytes()
-            }) {
+            let required_biases = (routes.expert_count.get() as usize)
+                .checked_mul(arguments.n as usize)
+                .and_then(|size| size.checked_mul(self.weights_data_type.size_in_bytes()));
+            if arguments
+                .d_transform
+                .per_matrix_bias
+                .is_some_and(|biases| required_biases.is_none_or(|required| biases.size() < required))
+            {
                 return Err(MatmulError::UnsupportedRouting {
                     path: "CpuMatmul",
                     reason: "expert bias bank must contain expert_count * N values",
@@ -157,12 +157,12 @@ impl MatmulKernel for MatmulCpuKernel {
         if let MatmulB::Microfloat {
             codes,
             scales,
-            global_scales,
+            outer_scales,
             metadata,
         } = &arguments.b
         {
-            let matrix_count = arguments.expert_routes.map_or(1, |routes| routes.expert_count.get());
-            let rows_match = arguments.gather_indices.is_some() || metadata.rows() == arguments.n;
+            let matrix_count = arguments.routing.expert_routes().map_or(1, |routes| routes.expert_count.get());
+            let rows_match = arguments.routing.sparse_readout_rows().is_some() || metadata.rows() == arguments.n;
             if !arguments.b_transpose
                 || arguments.b_leading_dimension.is_some()
                 || metadata.matrix_count() < matrix_count
@@ -170,7 +170,9 @@ impl MatmulKernel for MatmulCpuKernel {
                 || metadata.columns() != arguments.k
                 || codes.size() < metadata.required_code_bytes()
                 || scales.size() < metadata.required_scale_bytes()
-                || global_scales.size() < metadata.matrix_count() as usize * self.weights_data_type.size_in_bytes()
+                || (metadata.matrix_count() as usize)
+                    .checked_mul(self.weights_data_type.size_in_bytes())
+                    .is_none_or(|required| outer_scales.size() < required)
             {
                 return Err(MatmulError::UnsupportedRouting {
                     path: "CpuMatmul",
@@ -179,10 +181,19 @@ impl MatmulKernel for MatmulCpuKernel {
                 .into());
             }
         }
+        if let Err(error) = validate_matmul_storage(&arguments, self.input_data_type, self.output_data_type) {
+            return Err(MatmulError::InvalidStorage {
+                path: "CpuMatmul",
+                operand: error.operand,
+                reason: error.reason,
+            }
+            .into());
+        }
 
         let output_scale = arguments.d_transform.ab_scale;
         let accumulate = arguments.d_transform.accumulate;
         let bias_alloc = arguments.d_transform.bias;
+        let per_matrix_bias_alloc = arguments.d_transform.per_matrix_bias;
         let post_rht = arguments.d_transform.rht_factors;
         let soft_cap = arguments.d_transform.soft_cap;
 
@@ -195,10 +206,11 @@ impl MatmulKernel for MatmulCpuKernel {
             m,
             n,
             k,
-            gather_indices,
-            expert_routes,
+            routing,
             ..
         } = arguments;
+        let gather_indices = routing.sparse_readout_rows();
+        let expert_routes = routing.expert_routes();
 
         let m_u = m as usize;
         let n_u = n as usize;
@@ -285,7 +297,7 @@ impl MatmulKernel for MatmulCpuKernel {
         }
         let expert_route_data = expert_routes.map(|routes| {
             let ids = routes.expert_ids.as_buffer_range_ref();
-            let biases = routes.expert_biases.map(|biases| {
+            let biases = per_matrix_bias_alloc.map(|biases| {
                 let range = biases.as_buffer_range_ref();
                 SendPtr(unsafe { &*range.buffer().get() }.as_ptr().wrapping_byte_add(range.range().start))
             });
@@ -451,7 +463,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                 WeightData::Microfloat {
                                     codes,
                                     scales,
-                                    global_scales,
+                                    outer_scales,
                                     metadata,
                                 } => {
                                     let code_index = matrix * metadata.code_matrix_stride()
@@ -467,8 +479,8 @@ impl MatmulKernel for MatmulCpuKernel {
                                         + b_col * metadata.scale_row_stride()
                                         + inner / metadata.group_size() as usize;
                                     let exponent = *scales.as_ptr().add(scale_index);
-                                    let global_scale = read_f32(global_scales.as_ptr(), weights_data_type, matrix);
-                                    crate::backends::common::microfloat::decode_mxfp4(code, exponent, global_scale)
+                                    let outer_scale = read_f32(outer_scales.as_ptr(), weights_data_type, matrix);
+                                    crate::backends::common::microfloat::decode_mxfp4(code, exponent, outer_scale)
                                 },
                             };
                             accumulator += a_value * b_value;

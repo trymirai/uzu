@@ -22,8 +22,8 @@ METAL_FUNC float decode_e8m0(uint exponent) {
   return as_type<float>(exponent << 23u);
 }
 
-METAL_FUNC float decode_mxfp4(uint code, uint exponent, float global_scale) {
-  return decode_e2m1(code) * decode_e8m0(exponent) * global_scale;
+METAL_FUNC float decode_mxfp4(uint code, uint exponent, float outer_scale) {
+  return decode_e2m1(code) * decode_e8m0(exponent) * outer_scale;
 }
 
 } // namespace gemm

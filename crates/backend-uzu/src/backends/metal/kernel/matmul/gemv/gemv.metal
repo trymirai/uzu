@@ -44,13 +44,15 @@ CONSTRAINT(!MICROFLOAT || GROUP_SIZE == 16 || GROUP_SIZE == 32)
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
 CONSTRAINT(K_SPLIT <= NUM_SIMDGROUPS)
+CONSTRAINT(!MICROFLOAT || NUM_SIMDGROUPS == 8)
+CONSTRAINT(!MICROFLOAT || RESULTS_PER_SIMDGROUP == 1 || RESULTS_PER_SIMDGROUP == 4)
 // Only selector-reachable tiles are instantiated (fleet-tuned tables): fp
 // always runs 8 simdgroups with 1 or 4 rows each; non-default quantized
 // tiles exist for bf16 IO only. Widen locally when sweeping new configs.
 CONSTRAINT(BITS != 0 || NUM_SIMDGROUPS == 8)
 CONSTRAINT(BITS != 0 || RESULTS_PER_SIMDGROUP == 1 || RESULTS_PER_SIMDGROUP == 4)
 CONSTRAINT(
-    BITS == 0 || (NUM_SIMDGROUPS == 8 && RESULTS_PER_SIMDGROUP == 4) ||
+    MICROFLOAT || BITS == 0 || (NUM_SIMDGROUPS == 8 && RESULTS_PER_SIMDGROUP == 4) ||
     (AT == "bfloat" && DT == "bfloat"))
 KERNEL(Gemv)(
     const device uint32_t* b,
@@ -60,7 +62,7 @@ KERNEL(Gemv)(
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
     const device BT* biases
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
-    const device BT* global_scales OPTIONAL(MICROFLOAT),
+    const device BT* outer_scales OPTIONAL(MICROFLOAT),
     const device AT* a,
     device DT* d,
     const device BT* output_bias
@@ -77,7 +79,7 @@ KERNEL(Gemv)(
     const constant uint& group_count_x,
     const constant uint& routes_per_token,
     const constant uint& expert_count,
-    const constant bool& route_inputs,
+    const constant bool& input_is_route_major,
     const constant float& soft_cap
         OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
     const GemmDTransform output_transform SPECIALIZE,
@@ -93,46 +95,52 @@ KERNEL(Gemv)(
 ) {
   typedef float U;
   thread U result[RESULTS_PER_SIMDGROUP] = {0};
+  OutputTile<K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP> tile =
+      OutputTile<K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::make(out_block_idx, simd_group, out_vec_size);
 
   uint matrix_idx = 0;
   uint a_row = batch_idx;
   if (expert_routed) {
     const int expert = expert_ids[batch_idx];
     if (expert < 0 || uint(expert) >= expert_count) {
-      const uint thread_index = simd_group * 32 + simd_lane;
-      for (uint column = thread_index; column < out_vec_size; column += NUM_SIMDGROUPS * 32) {
-        d[batch_idx * out_vec_size + column] = DT(0);
+      if (tile.writer && simd_lane == 0) {
+        METAL_PRAGMA_UNROLL
+        for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+          const uint column = tile.logical_out_row + row;
+          if (column < out_vec_size) {
+            d[size_t(batch_idx) * size_t(out_vec_size) + size_t(column)] = DT(0);
+          }
+        }
       }
       return;
     }
     matrix_idx = uint(expert);
-    a_row = route_inputs ? batch_idx : batch_idx / routes_per_token;
+    a_row = input_is_route_major ? batch_idx : batch_idx / routes_per_token;
   }
 
-  OutputTile<K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP> tile =
-      OutputTile<K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::make(out_block_idx, simd_group, out_vec_size);
-  d += batch_idx * out_vec_size + tile.out_row;
+  d += size_t(batch_idx) * size_t(out_vec_size) + size_t(tile.out_row);
 
-  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED, MICROFLOAT>::accumulate(
-      result,
-      b,
-      scales,
-      zero_points,
-      biases,
-      global_scales,
-      a,
-      gather_indices,
-      gathered,
-      matrix_idx,
-      in_vec_size,
-      out_vec_size,
-      tile.out_row,
-      batch_idx,
-      a_row,
-      simd_lane,
-      tile.k_slice,
-      signed_codes
-  );
+  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, RESULTS_PER_SIMDGROUP, INPUT_ALIGNED, MICROFLOAT>::
+      accumulate(
+          result,
+          b,
+          scales,
+          zero_points,
+          biases,
+          outer_scales,
+          a,
+          gather_indices,
+          gathered,
+          matrix_idx,
+          in_vec_size,
+          out_vec_size,
+          tile.out_row,
+          batch_idx,
+          a_row,
+          simd_lane,
+          tile.k_slice,
+          signed_codes
+      );
 
   Reduce<U, K_SPLIT, NUM_SIMDGROUPS, RESULTS_PER_SIMDGROUP>::run(
       result,
@@ -147,7 +155,7 @@ KERNEL(Gemv)(
       result,
       d,
       output_bias,
-      expert_bias ? expert_biases + matrix_idx * out_vec_size : nullptr,
+      expert_bias ? expert_biases + size_t(matrix_idx) * size_t(out_vec_size) : nullptr,
       hadamard_factors,
       shared_results,
       ab_scale,

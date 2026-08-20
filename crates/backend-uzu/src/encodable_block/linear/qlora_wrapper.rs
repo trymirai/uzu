@@ -7,7 +7,7 @@ use crate::{
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationTransform, Kernels,
-            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulRouting},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::IncoherenceProcessingMode, low_rank_spec::LowRankSpec},
@@ -194,8 +194,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                     b_transpose: true,
                     d: &mut intermediate,
                     d_transform: MatmulDOps::none(),
-                    gather_indices: None,
-                    expert_routes: None,
+                    routing: MatmulRouting::Dense,
                     m: batch_dim,
                     n: self.lora_rank,
                     k: self.input_dim,
@@ -233,8 +232,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                         accumulate: true,
                         ..MatmulDOps::none()
                     },
-                    gather_indices: None,
-                    expert_routes: None,
+                    routing: MatmulRouting::Dense,
                     m: batch_dim,
                     n: self.output_dim,
                     k: self.lora_rank,

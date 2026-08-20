@@ -98,8 +98,8 @@ impl MicrofloatMetadata {
             rows,
             columns,
         };
-        metadata.code_matrix_stride().checked_mul(matrix_count as usize).ok_or(MicrofloatError::SizeOverflow)?;
-        metadata.scale_matrix_stride().checked_mul(matrix_count as usize).ok_or(MicrofloatError::SizeOverflow)?;
+        metadata.checked_required_code_bytes().ok_or(MicrofloatError::SizeOverflow)?;
+        metadata.checked_required_scale_bytes().ok_or(MicrofloatError::SizeOverflow)?;
         Ok(metadata)
     }
 
@@ -140,19 +140,35 @@ impl MicrofloatMetadata {
     }
 
     pub fn code_matrix_stride(self) -> usize {
-        self.rows as usize * self.code_row_stride()
+        self.checked_code_matrix_stride().expect("MicrofloatMetadata validates code storage size")
     }
 
     pub fn scale_matrix_stride(self) -> usize {
-        self.rows as usize * self.scale_row_stride()
+        self.checked_scale_matrix_stride().expect("MicrofloatMetadata validates scale storage size")
     }
 
     pub fn required_code_bytes(self) -> usize {
-        self.matrix_count as usize * self.code_matrix_stride()
+        self.checked_required_code_bytes().expect("MicrofloatMetadata validates code storage size")
     }
 
     pub fn required_scale_bytes(self) -> usize {
-        self.matrix_count as usize * self.scale_matrix_stride()
+        self.checked_required_scale_bytes().expect("MicrofloatMetadata validates scale storage size")
+    }
+
+    fn checked_code_matrix_stride(self) -> Option<usize> {
+        (self.rows as usize).checked_mul(self.code_row_stride())
+    }
+
+    fn checked_scale_matrix_stride(self) -> Option<usize> {
+        (self.rows as usize).checked_mul(self.scale_row_stride())
+    }
+
+    fn checked_required_code_bytes(self) -> Option<usize> {
+        self.checked_code_matrix_stride()?.checked_mul(self.matrix_count as usize)
+    }
+
+    fn checked_required_scale_bytes(self) -> Option<usize> {
+        self.checked_scale_matrix_stride()?.checked_mul(self.matrix_count as usize)
     }
 }
 
@@ -175,9 +191,9 @@ pub fn decode_e8m0(exponent: u8) -> f32 {
 pub fn decode_mxfp4(
     code: u8,
     exponent: u8,
-    global_scale: f32,
+    outer_scale: f32,
 ) -> f32 {
-    decode_e2m1(code) * decode_e8m0(exponent) * global_scale
+    decode_e2m1(code) * decode_e8m0(exponent) * outer_scale
 }
 
 #[cfg(test)]

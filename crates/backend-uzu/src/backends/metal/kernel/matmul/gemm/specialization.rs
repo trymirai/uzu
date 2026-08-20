@@ -37,7 +37,7 @@ impl GemmSpecialization {
         a_prologue: GemmAPrologueKind,
         a_group_size: Option<u32>,
     ) -> Result<Self, GemmSpecializationError> {
-        let use_tuned_addressing = shape.is_quant() || plan.split_k > 1;
+        let use_tuned_addressing = shape.is_integer_quantized() || plan.split_k > 1;
         let specialization = Self {
             weights_data_type,
             tiling: plan.tiling,

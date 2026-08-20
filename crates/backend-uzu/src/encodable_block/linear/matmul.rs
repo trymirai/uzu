@@ -9,7 +9,7 @@ use crate::{
             Kernels,
             matmul::{
                 A8ActivationPlan, ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
-                MatmulShape,
+                MatmulRouting, MatmulShape,
             },
         },
     },
@@ -136,8 +136,7 @@ impl<B: Backend> LinearMatmul<B> {
                 b_transpose: true,
                 d: &mut output,
                 d_transform: self.d_ops(),
-                gather_indices: None,
-                expert_routes: None,
+                routing: MatmulRouting::Dense,
                 m: batch_dim,
                 n: self.output_dim,
                 k: self.input_dim,

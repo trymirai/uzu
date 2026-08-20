@@ -4,6 +4,8 @@ pub struct MatmulDOps<'a, B: Backend> {
     pub ab_scale: f32,
     pub accumulate: bool,
     pub bias: Option<&'a Allocation<B>>,
+    /// Optional `[matrix_count, N]` bias bank selected by expert routing.
+    pub per_matrix_bias: Option<&'a Allocation<B>>,
     pub rht_factors: Option<&'a Allocation<B>>,
     pub soft_cap: Option<f32>,
 }
@@ -14,6 +16,7 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
             ab_scale: 1.0,
             accumulate: false,
             bias: None,
+            per_matrix_bias: None,
             rht_factors: None,
             soft_cap: None,
         }
@@ -58,6 +61,11 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
                 None
             } else {
                 self.bias
+            },
+            per_matrix_bias: if bits.contains(GemmDTransform::BIAS) {
+                None
+            } else {
+                self.per_matrix_bias
             },
             rht_factors: if bits.contains(GemmDTransform::RHT) {
                 None

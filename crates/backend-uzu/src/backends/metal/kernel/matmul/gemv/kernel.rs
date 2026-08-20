@@ -57,7 +57,7 @@ impl GemvSpecialization {
         if !shape.b_transpose || !shape.a_full_precision {
             return None;
         }
-        let is_quant = shape.is_quant();
+        let is_quant = shape.is_integer_quantized();
         let microfloat = shape.b_microfloat.is_some();
         let bad_leading_dimension = if is_quant {
             shape.b_leading_dimension.is_some()
@@ -198,6 +198,7 @@ impl GemvDispatch {
     ) -> Result<(), MatmulError<Metal>> {
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
+        let per_matrix_bias = arguments.d_transform.per_matrix_bias;
         let rht_factors = arguments.d_transform.rht_factors;
         let soft_cap = arguments.d_transform.soft_cap;
 
@@ -208,8 +209,7 @@ impl GemvDispatch {
             m,
             n,
             k,
-            gather_indices,
-            expert_routes,
+            routing,
             ..
         } = arguments;
         let MatmulA::FullPrecision {
@@ -231,15 +231,15 @@ impl GemvDispatch {
 
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;
-        let (expert_ids, expert_biases, routes_per_token, expert_count, route_inputs) = match expert_routes {
+        let gather_indices = routing.sparse_readout_rows();
+        let (expert_ids, routes_per_token, expert_count, input_is_route_major) = match routing.expert_routes() {
             Some(routes) => (
                 Some(routes.expert_ids),
-                routes.expert_biases,
                 routes.routes_per_token.get(),
                 routes.expert_count.get(),
                 routes.input == ExpertInput::Routes,
             ),
-            None => (None, None, 1, 1, false),
+            None => (None, 1, 1, false),
         };
 
         match b {
@@ -258,7 +258,7 @@ impl GemvDispatch {
                     rht_factors,
                     gather_indices,
                     expert_ids,
-                    expert_biases,
+                    per_matrix_bias,
                     k,
                     n,
                     m,
@@ -266,7 +266,7 @@ impl GemvDispatch {
                     group_count_x,
                     routes_per_token,
                     expert_count,
-                    route_inputs,
+                    input_is_route_major,
                     soft_cap,
                     encoder,
                 );
@@ -274,7 +274,7 @@ impl GemvDispatch {
             MatmulB::Microfloat {
                 codes,
                 scales,
-                global_scales,
+                outer_scales,
                 ..
             } => {
                 pipeline.encode(
@@ -282,14 +282,14 @@ impl GemvDispatch {
                     Some(scales),
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
-                    Some(global_scales),
+                    Some(outer_scales),
                     (a, a_offset),
                     &mut *d,
                     output_bias,
                     rht_factors,
                     gather_indices,
                     expert_ids,
-                    expert_biases,
+                    per_matrix_bias,
                     k,
                     n,
                     m,
@@ -297,7 +297,7 @@ impl GemvDispatch {
                     group_count_x,
                     routes_per_token,
                     expert_count,
-                    route_inputs,
+                    input_is_route_major,
                     soft_cap,
                     encoder,
                 );
@@ -348,7 +348,7 @@ impl GemvDispatch {
                     rht_factors,
                     gather_indices,
                     expert_ids,
-                    expert_biases,
+                    per_matrix_bias,
                     k,
                     n,
                     m,
@@ -356,7 +356,7 @@ impl GemvDispatch {
                     group_count_x,
                     routes_per_token,
                     expert_count,
-                    route_inputs,
+                    input_is_route_major,
                     soft_cap,
                     encoder,
                 );

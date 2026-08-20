@@ -18,7 +18,7 @@ struct MicrofloatBSource {
       thread U (&result)[RESULTS_PER_SIMDGROUP],
       const device uint32_t* b,
       const device uint8_t* scales,
-      const device BT* global_scales,
+      const device BT* outer_scales,
       const device AT* a,
       const device uint* gather_indices,
       bool gathered,
@@ -39,7 +39,7 @@ struct MicrofloatBSource {
     const uint code_row_stride = in_vec_size / 2;
     const uint scale_row_stride = in_vec_size / GROUP_SIZE;
     const device uint8_t* codes = reinterpret_cast<const device uint8_t*>(b);
-    const U global_scale = static_cast<U>(global_scales[matrix]);
+    const U outer_scale = static_cast<U>(outer_scales[matrix]);
 
     uint k = k_start;
     for (; k + block_size <= in_vec_size; k += k_stride) {
@@ -61,7 +61,7 @@ struct MicrofloatBSource {
           const uint inner = column + index;
           const uint packed = row_codes[inner / 2];
           const uint code = (inner & 1u) == 0u ? packed & 0x0fu : packed >> 4u;
-          result[row] += static_cast<U>(input[index]) * static_cast<U>(decode_mxfp4(code, exponent, global_scale));
+          result[row] += static_cast<U>(input[index]) * static_cast<U>(decode_mxfp4(code, exponent, outer_scale));
         }
       }
     }
@@ -88,7 +88,7 @@ struct MicrofloatBSource {
             const uint inner = column + static_cast<uint>(index);
             const uint packed = row_codes[inner / 2];
             const uint code = (inner & 1u) == 0u ? packed & 0x0fu : packed >> 4u;
-            result[row] += static_cast<U>(input[index]) * static_cast<U>(decode_mxfp4(code, exponent, global_scale));
+            result[row] += static_cast<U>(input[index]) * static_cast<U>(decode_mxfp4(code, exponent, outer_scale));
           }
         }
       }
