@@ -6,7 +6,7 @@
 namespace uzu {
 namespace gemm {
 
-template <typename Tile, typename AT, typename BT, typename DT, bool INPUT_ALIGNED>
+template <typename Tile, typename AT, typename BT, typename DT, bool INPUT_ALIGNED, bool FULL_TILE>
 struct FullPrecisionBSource {
   using U = float;
 
@@ -14,7 +14,7 @@ struct FullPrecisionBSource {
       thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
       const thread GemvOperands<AT, BT, DT>& ops,
       const thread GemvParams& params,
-      const thread Tile& tile
+      const thread OutputTile<Tile, FULL_TILE>& tile
   ) {
     static_assert(Tile::INPUT_ROWS == 1, "full-precision GEMV uses one input row");
     constexpr uint VALUES_PER_THREAD = 4;
@@ -33,7 +33,7 @@ struct FullPrecisionBSource {
     METAL_PRAGMA_UNROLL
     for (uint output_index = 0; output_index < Tile::ROWS_PER_LANE; output_index++) {
       const uint global_row = tile.row0 + output_index;
-      const uint lookup_row = Tile::FULL_TILE ? global_row : min(global_row, last_row);
+      const uint lookup_row = FULL_TILE ? global_row : min(global_row, last_row);
       const uint weight_row =
           params.gathered ? ops.gather_indices[input_row * params.out_vec_size + lookup_row] : lookup_row;
       weight_rows[output_index] =
@@ -46,7 +46,7 @@ struct FullPrecisionBSource {
       METAL_PRAGMA_UNROLL
       for (uint output_index = 0; output_index < Tile::ROWS_PER_LANE; output_index++) {
         const uint global_row = tile.row0 + output_index;
-        if (Tile::FULL_TILE || global_row < params.out_vec_size) {
+        if (FULL_TILE || global_row < params.out_vec_size) {
           result[0][output_index] +=
               dot(static_cast<float4>(*reinterpret_cast<const device W4*>(weight_rows[output_index])), input_values);
         }
@@ -65,7 +65,7 @@ struct FullPrecisionBSource {
         METAL_PRAGMA_UNROLL
         for (uint output_index = 0; output_index < Tile::ROWS_PER_LANE; output_index++) {
           const uint global_row = tile.row0 + output_index;
-          if (Tile::row_in_range(global_row, params.out_vec_size)) {
+          if (OutputTile<Tile, FULL_TILE>::row_in_range(global_row, params.out_vec_size)) {
             for (int index = 0; index < remaining; index++) {
               result[0][output_index] +=
                   static_cast<U>(weight_rows[output_index][index]) * static_cast<U>(input[index]);

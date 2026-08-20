@@ -5,14 +5,14 @@
 namespace uzu {
 namespace gemm {
 
-template <typename Tile>
+template <typename Tile, bool FULL_TILE>
 struct Reduce {
   using U = float;
 
   static METAL_FUNC void run(
       thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
       threadgroup U* shared_results,
-      const thread Tile& tile
+      const thread OutputTile<Tile, FULL_TILE>& tile
   ) {
     Tile::for_each_input_row([&](auto input_index) UZU_ALWAYS_INLINE {
       constexpr uint I = decltype(input_index)::value;

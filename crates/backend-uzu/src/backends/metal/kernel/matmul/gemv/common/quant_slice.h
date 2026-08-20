@@ -16,7 +16,8 @@ template <
     GemmBPrologueKind B_PROLOGUE,
     uint GROUP_SIZE,
     uint BITS,
-    bool INPUT_ALIGNED>
+    bool INPUT_ALIGNED,
+    bool FULL_TILE>
 struct QuantSlice {
   using U = float;
 
@@ -91,7 +92,7 @@ public:
       const thread Position& position,
       const thread GemvOperands<AT, BT, DT>& ops,
       const thread GemvParams& params,
-      const thread Tile& tile,
+      const thread OutputTile<Tile, FULL_TILE>& tile,
       uint group_offset,
       uint batch_remaining,
       const thread QuantMetadata<Tile, AT, BT, DT, B_PROLOGUE, BITS>& metadata
@@ -107,7 +108,7 @@ public:
       });
       Tile::for_each_input_row([&](auto input_index) UZU_ALWAYS_INLINE {
         constexpr uint I = decltype(input_index)::value;
-        const uint source_row = Tile::FULL_TILE ? I : min(I, batch_remaining - 1);
+        const uint source_row = FULL_TILE ? I : min(I, batch_remaining - 1);
         const uint k =
             position.group * GROUP_SIZE + group_offset + position.slice * SLICE_VALUES + chunk * CHUNK_VALUES;
         const uint input_row = tile.input_row + source_row;

@@ -16,10 +16,11 @@ template <
     uint GROUP_SIZE,
     uint BITS,
     bool INPUT_ALIGNED,
+    bool FULL_TILE,
     bool PREFETCHED>
 struct QuantBSource {
   using U = float;
-  using Slice = QuantSlice<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED>;
+  using Slice = QuantSlice<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FULL_TILE>;
   using Metadata = QuantMetadata<Tile, AT, BT, DT, B_PROLOGUE, BITS>;
 
 private:
@@ -30,7 +31,7 @@ public:
       thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
       const thread GemvOperands<AT, BT, DT>& ops,
       const thread GemvParams& params,
-      const thread Tile& tile
+      const thread OutputTile<Tile, FULL_TILE>& tile
   ) {
     const uint groups = (params.in_vec_size + GROUP_SIZE - 1) / GROUP_SIZE;
     const uint row_stride = params.in_vec_size * BITS / 8;
@@ -56,7 +57,6 @@ public:
       while (position.valid(groups)) {
         Metadata metadata;
         metadata.load(position.group, groups, weight_row_indices, ops);
-        METAL_PRAGMA_UNROLL
         for (uint slice = 0; slice < Slice::SLICES_PER_LANE; slice++) {
           const typename Slice::Position slice_position = {position.group, slice};
           current.load_weights(slice_position, weights, weight_row_indices, row_stride, group_offset);

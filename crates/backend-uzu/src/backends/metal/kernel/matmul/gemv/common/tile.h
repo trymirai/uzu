@@ -14,8 +14,7 @@ template <
     uint REDUCTION_LANES_,
     uint GROUP_LANES_,
     uint NUM_SIMDGROUPS_,
-    uint K_SPLIT_,
-    bool FULL_TILE_>
+    uint K_SPLIT_>
 struct GemvTile {
   // Compile-time geometry.
   UZU_CONST uint INPUT_ROWS = INPUT_ROW_TILE_;
@@ -28,7 +27,6 @@ struct GemvTile {
   UZU_CONST uint SIMDGROUP_OUTPUT_ROWS = OUTPUT_ROWS / (NUM_SIMDGROUPS / K_SPLIT);
   UZU_CONST uint ROWS_PER_LANE = SIMDGROUP_OUTPUT_ROWS / ROW_BLOCKS;
   UZU_CONST uint GROUPS_PER_STEP = REDUCTION_LANES / GROUP_LANES;
-  UZU_CONST bool FULL_TILE = FULL_TILE_;
 
   static_assert(INPUT_ROWS > 0 && OUTPUT_ROWS > 0, "GEMV tiles must be non-empty");
   static_assert(
@@ -50,8 +48,10 @@ struct GemvTile {
   static METAL_FUNC void for_each_output_row(Fn fn) {
     const_for_loop<0, ROWS_PER_LANE, 1>(fn);
   }
+};
 
-  // Runtime thread position.
+template <typename Tile, bool FULL_TILE>
+struct OutputTile {
   uint simd_group;
   uint simd_lane;
   uint reduction_lane;
@@ -64,25 +64,25 @@ struct GemvTile {
   bool writer;
   bool clamped;
 
-  static METAL_FUNC GemvTile
+  static METAL_FUNC OutputTile
   make(uint output_tile_idx, uint input_tile_idx, uint simd_group, uint simd_lane, uint out_vec_size) {
-    const uint row_group = simd_group / K_SPLIT;
-    const uint k_slice = simd_group % K_SPLIT;
-    const uint row_block = simd_lane / REDUCTION_LANES;
-    const uint local_row = row_group * SIMDGROUP_OUTPUT_ROWS + row_block * ROWS_PER_LANE;
-    const uint unclamped = output_tile_idx * OUTPUT_ROWS + local_row;
-    const uint last = out_vec_size > ROWS_PER_LANE ? out_vec_size - ROWS_PER_LANE : 0;
-    GemvTile tile;
+    const uint row_group = simd_group / Tile::K_SPLIT;
+    const uint k_slice = simd_group % Tile::K_SPLIT;
+    const uint row_block = simd_lane / Tile::REDUCTION_LANES;
+    const uint local_row = row_group * Tile::SIMDGROUP_OUTPUT_ROWS + row_block * Tile::ROWS_PER_LANE;
+    const uint unclamped = output_tile_idx * Tile::OUTPUT_ROWS + local_row;
+    const uint last = out_vec_size > Tile::ROWS_PER_LANE ? out_vec_size - Tile::ROWS_PER_LANE : 0;
+    OutputTile tile;
     tile.simd_group = simd_group;
     tile.simd_lane = simd_lane;
-    tile.reduction_lane = simd_lane % REDUCTION_LANES;
+    tile.reduction_lane = simd_lane % Tile::REDUCTION_LANES;
     tile.row_group = row_group;
     tile.k_slice = k_slice;
-    tile.input_row = input_tile_idx * INPUT_ROWS;
-    tile.tile_row = output_tile_idx * OUTPUT_ROWS;
+    tile.input_row = input_tile_idx * Tile::INPUT_ROWS;
+    tile.tile_row = output_tile_idx * Tile::OUTPUT_ROWS;
     tile.local_row = local_row;
     tile.row0 = FULL_TILE ? unclamped : min(unclamped, last);
-    tile.writer = K_SPLIT == 1 || k_slice == 0;
+    tile.writer = Tile::K_SPLIT == 1 || k_slice == 0;
     tile.clamped = !FULL_TILE && unclamped > last;
     return tile;
   }

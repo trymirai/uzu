@@ -8,7 +8,7 @@
 namespace uzu {
 namespace gemm {
 
-template <typename Tile, typename AT, typename BT, typename DT>
+template <typename Tile, typename AT, typename BT, typename DT, bool FULL_TILE>
 struct Epilogue {
   using U = float;
 
@@ -16,7 +16,7 @@ struct Epilogue {
       thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
       const thread GemvOperands<AT, BT, DT>& ops,
       const thread GemvParams& params,
-      const thread Tile& tile,
+      const thread OutputTile<Tile, FULL_TILE>& tile,
       threadgroup U* shared_results
   ) {
     const bool use_hadamard =
@@ -43,8 +43,7 @@ struct Epilogue {
         const uint output_block = job % OUTPUT_BLOCKS;
         const uint input_row = tile.input_row + input_index;
         const uint global_row = tile.tile_row + output_block * METAL_SIMD_SIZE + tile.simd_lane;
-        if ((Tile::FULL_TILE || input_row < params.batch_size) &&
-            (Tile::FULL_TILE || global_row < params.out_vec_size)) {
+        if ((FULL_TILE || input_row < params.batch_size) && (FULL_TILE || global_row < params.out_vec_size)) {
           DT value = simdgroup_output_random_hadamard_transform(
               static_cast<ushort>(tile.simd_lane),
               static_cast<DT>(
@@ -67,20 +66,20 @@ private:
       thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
       const thread GemvOperands<AT, BT, DT>& ops,
       const thread GemvParams& params,
-      const thread Tile& tile,
+      const thread OutputTile<Tile, FULL_TILE>& tile,
       threadgroup U* shared_results
   ) {
     Tile::for_each_input_row([&](auto input_index) UZU_ALWAYS_INLINE {
       constexpr uint I = decltype(input_index)::value;
       const uint input_row = tile.input_row + I;
-      if (!(Tile::FULL_TILE || input_row < params.batch_size)) {
+      if (!(FULL_TILE || input_row < params.batch_size)) {
         return;
       }
       device DT* output = ops.d + input_row * params.out_vec_size + tile.row0;
       Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
         constexpr uint R = decltype(output_index)::value;
         const uint global_row = tile.row0 + R;
-        if (!Tile::row_in_range(global_row, params.out_vec_size)) {
+        if (!OutputTile<Tile, FULL_TILE>::row_in_range(global_row, params.out_vec_size)) {
           return;
         }
         if (tile.clamped && params.output_transform.contains(GemmDTransform::ACCUMULATE)) {
