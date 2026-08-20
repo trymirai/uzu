@@ -21,6 +21,10 @@ impl Device {
         }
     }
 
+    pub fn os_version(&self) -> String {
+        self.sources.os_version()
+    }
+
     pub fn chip(&self) -> String {
         self.sources.chip()
     }

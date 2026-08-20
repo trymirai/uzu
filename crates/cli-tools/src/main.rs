@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::{Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand};
 use cli_tools::{
@@ -9,6 +11,12 @@ use cli_tools::{
     sync::run_sync,
     types::{Capability, Command, Configuration, Language},
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+enum CollectMetricsSourceMode {
+    Registry,
+    Local,
+}
 
 #[derive(Parser)]
 #[command(name = "uzu-tools", bin_name = "uzu-tools")]
@@ -62,6 +70,23 @@ enum Commands {
     Release {
         version: String,
     },
+    /// Measure per-model power, energy, and DRAM traffic across a prefill/generate sweep (macOS only)
+    CollectMetrics {
+        #[arg(long, default_value = "metrics.csv")]
+        output: PathBuf,
+        #[arg(long, value_enum, default_value_t = CollectMetricsSourceMode::Registry)]
+        source: CollectMetricsSourceMode,
+        #[arg(long)]
+        storage: Option<PathBuf>,
+        #[arg(long = "model-id")]
+        model_ids: Vec<String>,
+        #[arg(long, value_delimiter = ',', default_value = "1,2,4,6,8,10,12,16,32,64,128,256")]
+        prefill: Vec<usize>,
+        #[arg(long, value_delimiter = ',', default_value = "32,128")]
+        generate: Vec<usize>,
+        #[arg(long, default_value_t = 6)]
+        iterations: usize,
+    },
 }
 
 fn run_setup(include_platform_specific: bool) -> Result<()> {
@@ -94,6 +119,47 @@ fn run_verify(config: &PlatformsConfig) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "collect-metrics")]
+async fn run_collect_metrics(
+    output: PathBuf,
+    source: CollectMetricsSourceMode,
+    storage: Option<PathBuf>,
+    model_ids: Vec<String>,
+    prefill: Vec<usize>,
+    generate: Vec<usize>,
+    iterations: usize,
+) -> Result<()> {
+    let source = match source {
+        CollectMetricsSourceMode::Registry => cli_tools::collect_metrics::SourceMode::Registry,
+        CollectMetricsSourceMode::Local => cli_tools::collect_metrics::SourceMode::Local,
+    };
+    cli_tools::collect_metrics::run(cli_tools::collect_metrics::Options {
+        source,
+        storage,
+        output,
+        model_ids,
+        prefill,
+        generate,
+        iterations,
+    })
+    .await
+}
+
+#[cfg(not(feature = "collect-metrics"))]
+async fn run_collect_metrics(
+    _output: PathBuf,
+    _source: CollectMetricsSourceMode,
+    _storage: Option<PathBuf>,
+    _model_ids: Vec<String>,
+    _prefill: Vec<usize>,
+    _generate: Vec<usize>,
+    _iterations: usize,
+) -> Result<()> {
+    Err(anyhow!(
+        "this binary was built without the `collect-metrics` feature; rebuild with `--features collect-metrics` on macOS"
+    ))
+}
+
 fn language_backend(
     language: Language,
     config: PlatformsConfig,
@@ -106,8 +172,23 @@ fn language_backend(
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if let Some(Commands::CollectMetrics {
+        output,
+        source,
+        storage,
+        model_ids,
+        prefill,
+        generate,
+        iterations,
+    }) = cli.command
+    {
+        return run_collect_metrics(output, source, storage, model_ids, prefill, generate, iterations).await;
+    }
+
     let config = PlatformsConfig::load()?;
     let host_target = config.host_target()?;
 
@@ -154,6 +235,9 @@ fn main() -> Result<()> {
         Some(Commands::Release {
             version,
         }) => run_release(&version)?,
+        Some(Commands::CollectMetrics {
+            ..
+        }) => unreachable!("handled above"),
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;
