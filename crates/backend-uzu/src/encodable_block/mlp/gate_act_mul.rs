@@ -4,7 +4,7 @@ use crate::{
         Allocation, Backend, Encoder,
         gpu_types::ActivationType,
         kernel::{
-            GatedActMul,
+            GatedActMul, GatedActMulSettings,
             matmul::{A8ActivationPlan, ActivationFormat},
         },
     },
@@ -28,14 +28,24 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         context: &B::Context,
         data_type: DataType,
         activation: AnyActivation,
+        gate_clipping: Option<(Option<f32>, Option<f32>)>,
+        value_clipping: Option<(Option<f32>, Option<f32>)>,
         hidden_dim: u32,
         input_preparation: Option<LinearInputPreparation<B>>,
     ) -> Result<Self, B::Error> {
         let (hadamard_factors, a8_plan) = input_preparation
             .map_or((None, None), |preparation| (Some(preparation.input_factors), preparation.a8_plan));
-        let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some())?;
+        let activation_alpha = activation.alpha();
+        let settings = GatedActMulSettings {
+            activation_alpha: (activation_alpha != 1.0).then_some(activation_alpha),
+            gate_clipping: Self::clipping_bounds(gate_clipping),
+            value_clipping: Self::clipping_bounds(value_clipping),
+        };
+        let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some(), settings)?;
         let quantized_kernel = a8_plan
-            .map(|plan| GatedActMul::quantized(context, data_type, plan.activation_group_size, plan.sum_group_size))
+            .map(|plan| {
+                GatedActMul::quantized(context, data_type, plan.activation_group_size, plan.sum_group_size, settings)
+            })
             .transpose()?;
         Ok(Self {
             fp_kernel,
@@ -115,5 +125,14 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         encoder.pop_debug_group();
 
         Ok(input)
+    }
+
+    fn clipping_bounds(clipping: Option<(Option<f32>, Option<f32>)>) -> Option<(f32, f32)> {
+        let (min, max) = clipping?;
+        if min.is_none() && max.is_none() {
+            return None;
+        }
+
+        Some((min.unwrap_or(f32::NEG_INFINITY), max.unwrap_or(f32::INFINITY)))
     }
 }
