@@ -19,9 +19,8 @@ use crate::{
 };
 
 struct Input<T: ArrayElement + Float> {
-    tok2row: Box<[i32]>,
     probs: Box<[T]>,
-    y_partial: Box<[T]>,
+    route_outputs: Box<[T]>,
     t: usize,
     d_model: usize,
     k: usize,
@@ -29,17 +28,15 @@ struct Input<T: ArrayElement + Float> {
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = create_context::<B>();
-    let tok2row = alloc_allocation_with_data::<B, i32>(&context, &input.tok2row);
     let probs = alloc_allocation_with_data::<B, T>(&context, &input.probs);
-    let y_partial = alloc_allocation_with_data::<B, T>(&context, &input.y_partial);
+    let route_outputs = alloc_allocation_with_data::<B, T>(&context, &input.route_outputs);
     let mut y_out = alloc_allocation::<B, T>(&context, input.t * input.d_model);
 
     let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(&context, DataType::BF16).expect("finalize kernel");
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     finalize.encode(
-        &tok2row,
         &probs,
-        &y_partial,
+        &route_outputs,
         &mut y_out,
         input.t as u32,
         input.d_model as u32,
@@ -55,38 +52,15 @@ fn test_finalize_internal(
     t: usize,
     k: usize,
     d_model: usize,
-    sum_k: usize,
 ) {
     let mut rng = StdRng::seed_from_u64(2026);
 
-    // Generate random tok2row mapping: maps (token, k_idx) → row in y_partial
-    // Some entries can be -1 (no expert selected)
-    let mut tok2row: Vec<i32> = (0..t * k)
-        .map(|_| {
-            if rng.random_bool(0.9) {
-                rng.random_range(0..sum_k as i32)
-            } else {
-                -1 // No expert selected
-            }
-        })
-        .collect();
-
-    // Ensure we use all rows in sum_k (avoid unused rows)
-    for row in 0..sum_k.min(t * k) {
-        tok2row[row] = row as i32;
-    }
-
-    // Generate random probabilities (should sum to 1 per token, but not critical for unit test)
     let probs: Vec<bf16> = (0..t * k).map(|_| bf16::from_f32(rng.random_range(0.0..1.0))).collect();
+    let route_outputs: Vec<bf16> = (0..t * k * d_model).map(|_| bf16::from_f32(rng.random_range(-2.0..2.0))).collect();
 
-    // Generate random y_partial (expert outputs)
-    let y_partial: Vec<bf16> = (0..sum_k * d_model).map(|_| bf16::from_f32(rng.random_range(-2.0..2.0))).collect();
-
-    // CPU reference
     let input = Input {
-        tok2row: tok2row.into_boxed_slice(),
         probs: probs.into_boxed_slice(),
-        y_partial: y_partial.into_boxed_slice(),
+        route_outputs: route_outputs.into_boxed_slice(),
         t,
         d_model,
         k,
@@ -101,20 +75,20 @@ fn test_finalize_internal(
 
 #[uzu_test]
 fn test_finalize_single_token() {
-    test_finalize_internal(1, 2, 64, 2)
+    test_finalize_internal(1, 2, 64)
 }
 
 #[uzu_test]
 fn test_finalize_small_batch() {
-    test_finalize_internal(4, 2, 128, 8)
+    test_finalize_internal(4, 2, 128)
 }
 
 #[uzu_test]
 fn test_finalize_medium() {
-    test_finalize_internal(8, 4, 256, 32)
+    test_finalize_internal(8, 4, 256)
 }
 
 #[uzu_test]
 fn test_finalize_large() {
-    test_finalize_internal(16, 2, 512, 32)
+    test_finalize_internal(16, 2, 512)
 }
