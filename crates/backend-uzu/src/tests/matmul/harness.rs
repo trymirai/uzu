@@ -10,7 +10,7 @@ use crate::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulRouting},
             },
         },
         cpu::Cpu,
@@ -152,6 +152,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
         ab_scale: input.case.ab_scale,
         accumulate: input.case.accumulate,
         bias: bias_allocation.as_ref(),
+        per_matrix_bias: None,
         rht_factors: rht_allocation.as_ref(),
         soft_cap: None,
     };
@@ -171,8 +172,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
             b_transpose: input.case.b_transpose,
             d: &mut d_allocation,
             d_transform,
-            gather_indices: None,
-            expert_routes: None,
+            routing: MatmulRouting::Dense,
             m,
             n,
             k,

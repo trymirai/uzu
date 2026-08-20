@@ -1,12 +1,15 @@
 use std::{mem::size_of, num::NonZeroU32};
 
+use half::bf16;
 use proc_macros::uzu_test;
 
 use crate::{
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
-            kernel::matmul::{ExpertInput, ExpertRoutes, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            kernel::matmul::{
+                ExpertInput, ExpertRoutes, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulRouting,
+            },
         },
         cpu::Cpu,
     },
@@ -55,13 +58,48 @@ fn run_with_offset<B: Backend>(
     k: usize,
     n: usize,
 ) -> Vec<f32> {
+    run_with_offset_and_output::<B>(
+        input,
+        input_byte_offset,
+        weights,
+        expert_ids,
+        expert_biases,
+        input_layout,
+        routes_per_token,
+        expert_count,
+        k,
+        n,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_with_offset_and_output<B: Backend>(
+    input: &[f32],
+    input_byte_offset: usize,
+    weights: &[f32],
+    expert_ids: &[i32],
+    expert_biases: &[f32],
+    input_layout: ExpertInput,
+    routes_per_token: u32,
+    expert_count: u32,
+    k: usize,
+    n: usize,
+    initial_output: Option<&[f32]>,
+) -> Vec<f32> {
     let routes = expert_ids.len();
     let context = B::Context::new().expect("create backend context");
     let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), input);
     let weights = alloc_allocation_with_data::<B, f32>(context.as_ref(), weights);
     let expert_ids = alloc_allocation_with_data::<B, i32>(context.as_ref(), expert_ids);
     let expert_biases = alloc_allocation_with_data::<B, f32>(context.as_ref(), expert_biases);
-    let mut output = alloc_allocation::<B, f32>(context.as_ref(), routes * n);
+    let mut output = match initial_output {
+        Some(initial_output) => {
+            assert_eq!(initial_output.len(), routes * n);
+            alloc_allocation_with_data::<B, f32>(context.as_ref(), initial_output)
+        },
+        None => alloc_allocation::<B, f32>(context.as_ref(), routes * n),
+    };
     let mut kernel =
         <B::Kernels as Kernels>::MatmulKernel::new(context.as_ref(), DataType::F32, DataType::F32, DataType::F32)
             .expect("create matmul");
@@ -80,14 +118,15 @@ fn run_with_offset<B: Backend>(
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut output,
-                d_transform: MatmulDOps::none(),
-                gather_indices: None,
-                expert_routes: Some(ExpertRoutes {
+                d_transform: MatmulDOps {
+                    per_matrix_bias: Some(&expert_biases),
+                    ..MatmulDOps::none()
+                },
+                routing: MatmulRouting::Experts(ExpertRoutes {
                     expert_ids: &expert_ids,
                     routes_per_token: NonZeroU32::new(routes_per_token).unwrap(),
                     expert_count: NonZeroU32::new(expert_count).unwrap(),
                     input: input_layout,
-                    expert_biases: Some(&expert_biases),
                 }),
                 m: routes as u32,
                 n: n as u32,
@@ -129,13 +168,11 @@ fn rejection<B: Backend>(
                 b_transpose,
                 d: &mut output,
                 d_transform: MatmulDOps::none(),
-                gather_indices: None,
-                expert_routes: Some(ExpertRoutes {
+                routing: MatmulRouting::Experts(ExpertRoutes {
                     expert_ids: &expert_ids,
                     routes_per_token: NonZeroU32::new(1).unwrap(),
                     expert_count: NonZeroU32::new(expert_count).unwrap(),
                     input: ExpertInput::Tokens,
-                    expert_biases: None,
                 }),
                 m: 1,
                 n: 2,
@@ -145,6 +182,108 @@ fn rejection<B: Backend>(
         )
         .expect_err("invalid full-precision route contract was accepted")
         .to_string()
+}
+
+fn storage_rejection<B: Backend>(
+    input_count: usize,
+    input_byte_offset: usize,
+    output_count: usize,
+) -> String {
+    let context = B::Context::new().expect("create backend context");
+    let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), &vec![1.0; input_count]);
+    let weights = alloc_allocation_with_data::<B, f32>(context.as_ref(), &[1.0; 6]);
+    let expert_ids = alloc_allocation_with_data::<B, i32>(context.as_ref(), &[0]);
+    let mut output = alloc_allocation::<B, f32>(context.as_ref(), output_count);
+    let mut kernel =
+        <B::Kernels as Kernels>::MatmulKernel::new(context.as_ref(), DataType::F32, DataType::F32, DataType::F32)
+            .unwrap();
+    let mut encoder = Encoder::<B>::new(context.as_ref()).unwrap();
+    kernel
+        .encode(
+            MatmulArguments {
+                a: MatmulA::FullPrecision {
+                    values: &input,
+                    offset: input_byte_offset,
+                },
+                b: MatmulB::FullPrecision {
+                    b: &weights,
+                },
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut output,
+                d_transform: MatmulDOps::none(),
+                routing: MatmulRouting::Experts(ExpertRoutes {
+                    expert_ids: &expert_ids,
+                    routes_per_token: NonZeroU32::new(1).unwrap(),
+                    expert_count: NonZeroU32::new(1).unwrap(),
+                    input: ExpertInput::Tokens,
+                }),
+                m: 1,
+                n: 2,
+                k: 3,
+            },
+            &mut encoder,
+        )
+        .expect_err("invalid matmul storage was accepted")
+        .to_string()
+}
+
+fn run_bf16_offset<B: Backend>() -> Vec<bf16> {
+    let context = B::Context::new().expect("create backend context");
+    let input = alloc_allocation_with_data::<B, bf16>(
+        context.as_ref(),
+        &[bf16::from_f32(99.0), bf16::from_f32(1.0), bf16::from_f32(2.0), bf16::from_f32(3.0)],
+    );
+    let weights = alloc_allocation_with_data::<B, bf16>(
+        context.as_ref(),
+        &[
+            bf16::from_f32(1.0),
+            bf16::from_f32(0.0),
+            bf16::from_f32(0.0),
+            bf16::from_f32(0.0),
+            bf16::from_f32(1.0),
+            bf16::from_f32(0.0),
+        ],
+    );
+    let biases = alloc_allocation_with_data::<B, bf16>(context.as_ref(), &[bf16::from_f32(0.1), bf16::from_f32(0.2)]);
+    let expert_ids = alloc_allocation_with_data::<B, i32>(context.as_ref(), &[0]);
+    let mut output = alloc_allocation::<B, bf16>(context.as_ref(), 2);
+    let mut kernel =
+        <B::Kernels as Kernels>::MatmulKernel::new(context.as_ref(), DataType::BF16, DataType::BF16, DataType::BF16)
+            .unwrap();
+    let mut encoder = Encoder::<B>::new(context.as_ref()).unwrap();
+    kernel
+        .encode(
+            MatmulArguments {
+                a: MatmulA::FullPrecision {
+                    values: &input,
+                    offset: size_of::<bf16>(),
+                },
+                b: MatmulB::FullPrecision {
+                    b: &weights,
+                },
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut output,
+                d_transform: MatmulDOps {
+                    per_matrix_bias: Some(&biases),
+                    ..MatmulDOps::none()
+                },
+                routing: MatmulRouting::Experts(ExpertRoutes {
+                    expert_ids: &expert_ids,
+                    routes_per_token: NonZeroU32::new(1).unwrap(),
+                    expert_count: NonZeroU32::new(1).unwrap(),
+                    input: ExpertInput::Tokens,
+                }),
+                m: 1,
+                n: 2,
+                k: 3,
+            },
+            &mut encoder,
+        )
+        .unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    allocation_to_vec::<B, bf16>(&output)
 }
 
 #[uzu_test]
@@ -160,12 +299,59 @@ fn backends_reject_invalid_full_precision_banks() {
 }
 
 #[uzu_test]
-fn backends_reject_oversized_expert_banks() {
-    let error = rejection::<Cpu>(513 * 2 * 3, 513, true, None);
-    assert!(error.contains("at most 512 experts"), "{error}");
+fn backends_reject_invalid_input_and_output_storage() {
+    for (input_count, input_byte_offset, output_count, expected) in [
+        (3, 1, 2, "byte offset is not aligned"),
+        (2, 0, 2, "input allocation does not cover"),
+        (3, 0, 1, "output allocation does not cover"),
+    ] {
+        let error = storage_rejection::<Cpu>(input_count, input_byte_offset, output_count);
+        assert!(error.contains(expected), "{error}");
+        for_each_non_cpu_backend!(|B| {
+            let error = storage_rejection::<B>(input_count, input_byte_offset, output_count);
+            assert!(error.contains(expected), "{error}");
+        });
+    }
+}
+
+#[uzu_test]
+fn direct_expert_matmul_is_not_limited_by_router_capacity() {
+    const EXPERT_COUNT: usize = 513;
+    const K: usize = 3;
+    const N: usize = 2;
+
+    let mut weights = vec![0.0; EXPERT_COUNT * N * K];
+    let last_expert = (EXPERT_COUNT - 1) * N * K;
+    weights[last_expert] = 1.0;
+    weights[last_expert + K + 1] = 1.0;
+    let biases = vec![0.0; EXPERT_COUNT * N];
+    let expected = [1.0, 2.0];
+
+    let actual = run::<Cpu>(
+        &[1.0, 2.0, 3.0],
+        &weights,
+        &[(EXPERT_COUNT - 1) as i32],
+        &biases,
+        ExpertInput::Tokens,
+        1,
+        EXPERT_COUNT as u32,
+        K,
+        N,
+    );
+    assert_eq_float(&expected, &actual, 1e-6, "CPU direct route beyond router capacity");
     for_each_non_cpu_backend!(|B| {
-        let error = rejection::<B>(513 * 2 * 3, 513, true, None);
-        assert!(error.contains("at most 512 experts"), "{error}");
+        let actual = run::<B>(
+            &[1.0, 2.0, 3.0],
+            &weights,
+            &[(EXPERT_COUNT - 1) as i32],
+            &biases,
+            ExpertInput::Tokens,
+            1,
+            EXPERT_COUNT as u32,
+            K,
+            N,
+        );
+        assert_eq_float(&expected, &actual, 1e-6, "Metal direct route beyond router capacity");
     });
 }
 
@@ -208,6 +394,124 @@ fn full_precision_input_offsets_are_bytes() {
             2,
         );
         assert_eq_float(&expected, &actual, 1e-6, "Metal byte-offset routes");
+    });
+
+    let expected = [bf16::from_f32(1.1), bf16::from_f32(2.2)];
+    let cpu = run_bf16_offset::<Cpu>();
+    assert_eq_float(&expected, &cpu, 0.01, "CPU BF16 byte-offset routes");
+    for_each_non_cpu_backend!(|B| {
+        let actual = run_bf16_offset::<B>();
+        assert_eq_float(&expected, &actual, 0.01, "Metal BF16 byte-offset routes");
+    });
+}
+
+#[uzu_test]
+fn tiny_output_rows_are_safe_for_the_final_expert() {
+    const EXPERT_COUNT: usize = 3;
+
+    for n in 1..=3 {
+        for k in [127, 128] {
+            let input: Vec<f32> = (0..3 * k).map(|index| (index % 17) as f32 * 0.01 - 0.08).collect();
+            let weights: Vec<f32> = (0..EXPERT_COUNT * n * k).map(|index| (index % 13) as f32 * 0.005 - 0.03).collect();
+            let biases: Vec<f32> = (0..EXPERT_COUNT * n).map(|index| (index % 5) as f32 * 0.02 - 0.04).collect();
+            let expert_ids = [2, 0, 1];
+            let expected = run::<Cpu>(&input, &weights, &expert_ids, &biases, ExpertInput::Tokens, 1, 3, k, n);
+
+            for_each_non_cpu_backend!(|B| {
+                let actual = run::<B>(&input, &weights, &expert_ids, &biases, ExpertInput::Tokens, 1, 3, k, n);
+                assert_eq_float(&expected, &actual, 1e-4, "tiny routed output rows");
+            });
+        }
+    }
+}
+
+#[uzu_test]
+fn invalid_routes_zero_only_their_split_k_output_tiles() {
+    const EXPERT_COUNT: usize = 3;
+    const K: usize = 512;
+    const N: usize = 65;
+
+    let input = vec![1.0; 2 * K];
+    let weights = vec![1.0; EXPERT_COUNT * N * K];
+    let biases = vec![7.0; EXPERT_COUNT * N];
+    let expert_ids = [-1, EXPERT_COUNT as i32];
+    let initial_output = vec![11.0; expert_ids.len() * N];
+    let expected = vec![0.0; expert_ids.len() * N];
+
+    let actual = run_with_offset_and_output::<Cpu>(
+        &input,
+        0,
+        &weights,
+        &expert_ids,
+        &biases,
+        ExpertInput::Tokens,
+        1,
+        EXPERT_COUNT as u32,
+        K,
+        N,
+        Some(&initial_output),
+    );
+    assert_eq_float(&expected, &actual, 0.0, "CPU invalid routed rows");
+    for_each_non_cpu_backend!(|B| {
+        let actual = run_with_offset_and_output::<B>(
+            &input,
+            0,
+            &weights,
+            &expert_ids,
+            &biases,
+            ExpertInput::Tokens,
+            1,
+            EXPERT_COUNT as u32,
+            K,
+            N,
+            Some(&initial_output),
+        );
+        assert_eq_float(&expected, &actual, 0.0, "Metal invalid routed rows");
+    });
+}
+
+#[uzu_test]
+fn maximum_expert_and_active_route_boundaries_are_safe() {
+    const EXPERT_COUNT: usize = 512;
+    const ROUTES_PER_TOKEN: usize = 128;
+    const K: usize = 3;
+    const N: usize = 2;
+
+    let mut weights = vec![0.0; EXPERT_COUNT * N * K];
+    let last_expert = (EXPERT_COUNT - 1) * N * K;
+    weights[last_expert] = 1.0;
+    weights[last_expert + K + 1] = 1.0;
+    let biases = vec![0.0; EXPERT_COUNT * N];
+    let mut expert_ids = vec![(EXPERT_COUNT - 1) as i32; ROUTES_PER_TOKEN];
+    expert_ids[ROUTES_PER_TOKEN - 1] = EXPERT_COUNT as i32;
+
+    let cpu = run::<Cpu>(
+        &[1.0, 2.0, 3.0],
+        &weights,
+        &expert_ids,
+        &biases,
+        ExpertInput::Tokens,
+        ROUTES_PER_TOKEN as u32,
+        EXPERT_COUNT as u32,
+        K,
+        N,
+    );
+    let mut expected = [1.0, 2.0].repeat(ROUTES_PER_TOKEN);
+    expected[(ROUTES_PER_TOKEN - 1) * N..].fill(0.0);
+    assert_eq_float(&expected, &cpu, 1e-6, "CPU route boundaries");
+    for_each_non_cpu_backend!(|B| {
+        let actual = run::<B>(
+            &[1.0, 2.0, 3.0],
+            &weights,
+            &expert_ids,
+            &biases,
+            ExpertInput::Tokens,
+            ROUTES_PER_TOKEN as u32,
+            EXPERT_COUNT as u32,
+            K,
+            N,
+        );
+        assert_eq_float(&expected, &actual, 1e-6, "Metal route boundaries");
     });
 }
 
