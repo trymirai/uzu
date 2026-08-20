@@ -17,6 +17,7 @@ pub const KEY_GEMINI_API_KEY: &str = "GEMINI_API_KEY";
 pub const KEY_XAI_API_KEY: &str = "XAI_API_KEY";
 pub const KEY_BASETEN_API_KEY: &str = "BASETEN_API_KEY";
 pub const KEY_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
+pub const KEY_ORCAROUTER_API_KEY: &str = "ORCAROUTER_API_KEY";
 
 #[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -33,6 +34,7 @@ pub struct EngineConfig {
     pub xai_api_key: Option<String>,
     pub baseten_api_key: Option<String>,
     pub openrouter_api_key: Option<String>,
+    pub orcarouter_api_key: Option<String>,
     pub allow_ollama_usage: bool,
     pub allow_lmstudio_usage: bool,
     #[serde(default)]
@@ -53,6 +55,7 @@ impl Default for EngineConfig {
             xai_api_key: env::var(KEY_XAI_API_KEY).ok(),
             baseten_api_key: env::var(KEY_BASETEN_API_KEY).ok(),
             openrouter_api_key: env::var(KEY_OPENROUTER_API_KEY).ok(),
+            orcarouter_api_key: env::var(KEY_ORCAROUTER_API_KEY).ok(),
             allow_ollama_usage: true,
             allow_lmstudio_usage: true,
             download_manager_type: DownloadManagerType::default(),
@@ -82,6 +85,7 @@ impl EngineConfig {
         synchronize_field!(SettingKind::Secret, xai_api_key, KEY_XAI_API_KEY.to_string());
         synchronize_field!(SettingKind::Secret, baseten_api_key, KEY_BASETEN_API_KEY.to_string());
         synchronize_field!(SettingKind::Secret, openrouter_api_key, KEY_OPENROUTER_API_KEY.to_string());
+        synchronize_field!(SettingKind::Secret, orcarouter_api_key, KEY_ORCAROUTER_API_KEY.to_string());
 
         Ok(())
     }
@@ -214,6 +218,17 @@ impl EngineConfig {
     ) -> Self {
         Self {
             openrouter_api_key: Some(openrouter_api_key),
+            ..self.clone()
+        }
+    }
+
+    #[bindings::export(Method)]
+    pub fn with_orcarouter_api_key(
+        &self,
+        orcarouter_api_key: String,
+    ) -> Self {
+        Self {
+            orcarouter_api_key: Some(orcarouter_api_key),
             ..self.clone()
         }
     }
