@@ -42,15 +42,20 @@ struct QuantChunk {
       uint extent,
       uint row
   ) {
+    static_assert(
+        metal::is_same_v<AT, bfloat> || metal::is_same_v<AT, float>,
+        "GEMV quantized input must be bfloat or float; half cannot use bfloat widening"
+    );
+    constexpr bool EXPANDS_BF16 = metal::is_same_v<AT, bfloat>;
     if constexpr (ALIGNED) {
-      load_values<false>(source, values, VALUES);
+      load_values<false, EXPANDS_BF16>(source, values, VALUES);
     } else {
       const uint valid = offset < extent ? min(extent - offset, VALUES) : 0u;
-      const bool source_aligned = sizeof(AT) != 2 || ((row * extent + offset) & 7u) == 0;
+      const bool source_aligned = !EXPANDS_BF16 || ((row * extent + offset) & 7u) == 0;
       if (valid == VALUES && source_aligned) {
-        load_values<false>(source, values, VALUES);
+        load_values<false, EXPANDS_BF16>(source, values, VALUES);
       } else {
-        load_values<true>(source, values, valid);
+        load_values<true, EXPANDS_BF16>(source, values, valid);
       }
     }
   }
@@ -84,9 +89,9 @@ private:
     }
   }
 
-  template <bool BOUNDED, typename AT>
+  template <bool BOUNDED, bool EXPANDS_BF16, typename AT>
   static METAL_FUNC void load_values(const device AT* source, thread float (&values)[VALUES], uint valid) {
-    if constexpr (!BOUNDED && sizeof(AT) == 2) {
+    if constexpr (!BOUNDED && EXPANDS_BF16) {
       constexpr uint BF16_UPPER_BITS = 0xffff0000u;
       const uint4 packed = *reinterpret_cast<const device uint4*>(source);
       METAL_PRAGMA_UNROLL

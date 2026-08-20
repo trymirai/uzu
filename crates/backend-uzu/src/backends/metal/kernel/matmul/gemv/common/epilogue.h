@@ -37,18 +37,18 @@ struct Epilogue {
     if constexpr (Tile::OUTPUT_ROWS >= METAL_SIMD_SIZE) {
       static_assert(Tile::K_SPLIT == 1, "RHT reuses shared results after Reduce");
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      constexpr uint ROW_BLOCKS = Tile::OUTPUT_ROWS / METAL_SIMD_SIZE;
-      for (uint job = tile.simd_group; job < Tile::INPUT_ROWS * ROW_BLOCKS; job += Tile::NUM_SIMDGROUPS) {
-        const uint input_index = job / ROW_BLOCKS;
-        const uint block = job % ROW_BLOCKS;
+      constexpr uint OUTPUT_BLOCKS = Tile::OUTPUT_ROWS / METAL_SIMD_SIZE;
+      for (uint job = tile.simd_group; job < Tile::INPUT_ROWS * OUTPUT_BLOCKS; job += Tile::NUM_SIMDGROUPS) {
+        const uint input_index = job / OUTPUT_BLOCKS;
+        const uint output_block = job % OUTPUT_BLOCKS;
         const uint input_row = tile.input_row + input_index;
-        const uint global_row = tile.tile_row + block * METAL_SIMD_SIZE + tile.simd_lane;
+        const uint global_row = tile.tile_row + output_block * METAL_SIMD_SIZE + tile.simd_lane;
         if ((Tile::FULL_TILE || input_row < params.batch_size) &&
             (Tile::FULL_TILE || global_row < params.out_vec_size)) {
           DT value = simdgroup_output_random_hadamard_transform(
               static_cast<ushort>(tile.simd_lane),
               static_cast<DT>(
-                  shared_results[input_index * Tile::OUTPUT_ROWS + block * METAL_SIMD_SIZE + tile.simd_lane]
+                  shared_results[input_index * Tile::OUTPUT_ROWS + output_block * METAL_SIMD_SIZE + tile.simd_lane]
               ),
               ops.hadamard_factors[global_row]
           );
