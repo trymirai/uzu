@@ -98,22 +98,22 @@ jobs:
       - name: Build crates
         run: |
           cargo +stable build \
-            ${{ matrix.target && format('--target {0}', matrix.target) }} \
-            ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) }}
+            ${{ matrix.target && format('--target {0}', matrix.target) || '' }} \
+            ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) || '' }}
 
       - name: Build benches
         if: ${{ matrix.benches }}
         run: |
           cargo +nightly bench --no-run \
-            ${{ matrix.target && format('--target {0}', matrix.target) }} \
-            ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) }}
+            ${{ matrix.target && format('--target {0}', matrix.target) || '' }} \
+            ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) || '' }}
 
       - name: Run tests
         if: ${{ matrix.tests }}
         run: |
           cargo +nightly nextest run --profile=ci \
-            ${{ matrix.target && format('--target {0}', matrix.target) }} \
-            ${{ matrix.tests == 'kernels' && '-p backend-uzu backends::common::kernel::tests --lib' }}
+            ${{ matrix.target && format('--target {0}', matrix.target) || '' }} \
+            ${{ matrix.tests == 'kernels' && '-p backend-uzu backends::common::kernel::tests --lib' || '' }}
 
   validate-bindings:
     name: validate-bindings
