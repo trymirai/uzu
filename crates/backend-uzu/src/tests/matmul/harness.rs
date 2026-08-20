@@ -155,6 +155,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
         per_matrix_bias: None,
         rht_factors: rht_allocation.as_ref(),
         soft_cap: None,
+        gate_act: None,
     };
 
     let mut encoder = Encoder::new(context).expect("encoder");

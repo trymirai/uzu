@@ -242,20 +242,12 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>() {
 
     for_each_backend!(|B| {
         let context = <B as Backend>::Context::new().expect("create context");
-        let kernel = <<B as Backend>::Kernels as Kernels>::GatedActMulKernel::new(
-            &context,
-            T::data_type(),
-            true,
-            false,
-            true,
-            true,
-            true,
-        )
-        .expect("create transformed GatedActMulKernel");
+        let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), true, false, true, true, true)
+            .expect("create transformed GatedActMul");
         let fused_up = alloc_allocation_with_data::<B, T>(&context, &fused_up);
         let mut output = alloc_allocation::<B, T>(&context, GATED_DIM as usize);
         let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
-        kernel.encode(
+        kernel.encode_fp(
             &fused_up,
             None::<&Allocation<B>>,
             &mut output,

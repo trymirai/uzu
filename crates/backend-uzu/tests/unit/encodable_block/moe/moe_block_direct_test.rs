@@ -53,11 +53,6 @@ fn config() -> MixtureOfExpertsConfig {
 }
 
 fn parameter_file(data_type: DataType) -> NamedTempFile {
-    let dtype = match data_type {
-        DataType::F16 => "F16",
-        DataType::BF16 => "BF16",
-        _ => panic!("unsupported full-precision test data type"),
-    };
     let mut header = Map::new();
     header.insert(
         "__metadata__".into(),
@@ -76,21 +71,22 @@ fn parameter_file(data_type: DataType) -> NamedTempFile {
         ("experts.up_projection.biases", vec![EXPERTS, 2 * HIDDEN_DIM]),
         ("experts.down_projection.biases", vec![EXPERTS, MODEL_DIM]),
     ];
-    let mut offset = 0usize;
+    let mut payload = Vec::new();
+    let mut seed = 0x5EEDu64;
     for (name, shape) in tensors {
-        let end = offset + size_for_shape(&shape, data_type);
-        header.insert(
-            name.into(),
-            json!({
-                "dtype": dtype,
-                "shape": shape,
-                "data_offsets": [offset, end]
-            }),
-        );
-        offset = end;
+        let element_count: usize = shape.iter().map(|dim| *dim as usize).product();
+        let values = (0..element_count).map(|_| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as f32 / u32::MAX as f32 - 0.5) * 0.5
+        });
+        let data = match data_type {
+            DataType::F16 => values.flat_map(|value| f16::from_f32(value).to_le_bytes()).collect(),
+            DataType::BF16 => values.flat_map(|value| bf16::from_f32(value).to_le_bytes()).collect(),
+            _ => unreachable!(),
+        };
+        add_tensor(&mut header, &mut payload, name, shape, data_type, data);
     }
-
-    write_parameter_file(header, &[])
+    write_parameter_file(header, &payload)
 }
 
 fn write_parameter_file(
@@ -119,6 +115,7 @@ fn add_tensor(
     payload.extend_from_slice(&data);
     let dtype = match data_type {
         DataType::BF16 => "BF16",
+        DataType::F16 => "F16",
         DataType::U8 => "U8",
         _ => panic!("unsupported test tensor data type"),
     };
@@ -356,12 +353,7 @@ fn run<B: Backend>(
     } else {
         parameter_file(DataType::BF16)
     };
-    let loader = if microfloat {
-        ParameterLoader::<B>::new(file.as_file(), context.as_ref())
-    } else {
-        ParameterLoader::<B>::new_random(file.as_file(), context.as_ref(), 41)
-    }
-    .expect("load parameters");
+    let loader = ParameterLoader::<B>::new(file.as_file(), context.as_ref()).expect("load parameters");
     let tree = loader.tree();
     let block =
         MoeBlock::<B>::new(context.as_ref(), &config(), MODEL_DIM, DataType::BF16, &tree).expect("construct MoeBlock");
@@ -382,7 +374,7 @@ fn run<B: Backend>(
 fn run_f16<B: Backend>(token_count: u32) -> Vec<f16> {
     let context = B::Context::new().expect("create context");
     let file = parameter_file(DataType::F16);
-    let loader = ParameterLoader::<B>::new_random(file.as_file(), context.as_ref(), 41).expect("load F16 parameters");
+    let loader = ParameterLoader::<B>::new(file.as_file(), context.as_ref()).expect("load F16 parameters");
     let tree = loader.tree();
     let block = MoeBlock::<B>::new(context.as_ref(), &config(), MODEL_DIM, DataType::F16, &tree)
         .expect("construct F16 MoeBlock");

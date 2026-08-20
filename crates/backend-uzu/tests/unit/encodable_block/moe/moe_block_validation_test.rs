@@ -58,8 +58,7 @@ fn constructor_error(
 ) -> MoeBlockError<Cpu> {
     let context = <Cpu as Backend>::Context::new().expect("create CPU context");
     let file = empty_parameter_file();
-    let loader =
-        ParameterLoader::<Cpu>::new_random(file.as_file(), context.as_ref(), 0).expect("load empty parameter file");
+    let loader = ParameterLoader::<Cpu>::new(file.as_file(), context.as_ref()).expect("load empty parameter file");
 
     match MoeBlock::<Cpu>::new(
         context.as_ref(),
@@ -76,8 +75,7 @@ fn constructor_error(
 fn model_dim_error(model_dim: u32) -> MoeBlockError<Cpu> {
     let context = <Cpu as Backend>::Context::new().expect("create CPU context");
     let file = empty_parameter_file();
-    let loader =
-        ParameterLoader::<Cpu>::new_random(file.as_file(), context.as_ref(), 0).expect("load empty parameter file");
+    let loader = ParameterLoader::<Cpu>::new(file.as_file(), context.as_ref()).expect("load empty parameter file");
 
     match MoeBlock::<Cpu>::new(context.as_ref(), &config(1, 1), model_dim, DataType::BF16, &loader.tree()) {
         Ok(_) => panic!("invalid model dimension was accepted"),
@@ -88,8 +86,7 @@ fn model_dim_error(model_dim: u32) -> MoeBlockError<Cpu> {
 fn hidden_dim_error(hidden_dim: u32) -> MoeBlockError<Cpu> {
     let context = <Cpu as Backend>::Context::new().expect("create CPU context");
     let file = empty_parameter_file();
-    let loader =
-        ParameterLoader::<Cpu>::new_random(file.as_file(), context.as_ref(), 0).expect("load empty parameter file");
+    let loader = ParameterLoader::<Cpu>::new(file.as_file(), context.as_ref()).expect("load empty parameter file");
     let mut config = config(1, 1);
     config.expert_hidden_dim = hidden_dim;
 
