@@ -10,6 +10,7 @@ pub enum Endpoint {
         device: Device,
         backends: Vec<Backend>,
         include_traces: bool,
+        show_all: bool,
     },
 }
 
@@ -43,12 +44,14 @@ impl EndpointTrait for Endpoint {
                 device,
                 backends,
                 include_traces,
+                show_all,
             } => Payload {
                 query: None,
                 body: Some(json!({
                     "device": device,
                     "backends": backends,
                     "include_traces": include_traces,
+                    "show_all": show_all
                 })),
             },
         }
