@@ -50,7 +50,7 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
 ) -> Vec<T> {
     let context = B::Context::new().expect("create context");
     let kernel =
-        GatedActMul::<B>::full_precision(&context, T::data_type(), true, use_hadamard).expect("create GatedActMul");
+        GatedActMul::<B>::full_precision(&context, T::data_type(), true, use_hadamard, false, false, false).expect("create GatedActMul");
 
     let fused_length = (input.batch_dim * 2 * input.gated_dim) as usize;
     let output_length = (input.batch_dim * input.gated_dim) as usize;
@@ -69,6 +69,11 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
         0,
         0,
         input.act_type,
+        None,
+        None,
+        None,
+        None,
+        None,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -161,7 +166,7 @@ fn separate_input<T: ArrayElement + Float>() -> (SeparateInput<T>, Vec<T>) {
 
 fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -> Vec<T> {
     let context = B::Context::new().expect("create context");
-    let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), false, false).expect("create GatedActMul");
+    let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), false, false, false, false, false).expect("create GatedActMul");
 
     let gate_out = alloc_allocation_with_data::<B, T>(&context, &input.gate_out);
     let per_layer_input = alloc_allocation_with_data::<B, T>(&context, &input.per_layer_input);
@@ -178,6 +183,11 @@ fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -
         input.value_offset,
         input.value_row_stride,
         input.act_type,
+        None,
+        None,
+        None,
+        None,
+        None,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -201,4 +211,85 @@ fn test_gated_act_mul_separate_f32() {
 #[uzu_test]
 fn test_gated_act_mul_separate_bf16() {
     separate_test::<bf16>();
+}
+
+fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>() {
+    const GATED_DIM: u32 = 4;
+    const ACTIVATION_ALPHA: f32 = 0.5;
+    const ACT_CLIP_MIN: f32 = -1.0;
+    const ACT_CLIP_MAX: f32 = 2.0;
+    const VALUE_CLIP_MIN: f32 = -2.0;
+    const VALUE_CLIP_MAX: f32 = 3.0;
+
+    let values = [-4.0f32, -1.0, 2.0, 5.0];
+    let acts = [-3.0f32, -0.5, 1.0, 4.0];
+    let fused_up = values.into_iter().chain(acts).map(|value| T::from(value).unwrap()).collect::<Vec<_>>();
+    let expected = values
+        .into_iter()
+        .zip(acts)
+        .map(|(value, act)| {
+            let value = value.clamp(VALUE_CLIP_MIN, VALUE_CLIP_MAX);
+            let act = act.clamp(ACT_CLIP_MIN, ACT_CLIP_MAX);
+            let activated = act / (1.0 + (-ACTIVATION_ALPHA * act).exp());
+            T::from(value * activated).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let tolerance = if T::data_type() == DataType::BF16 {
+        0.02
+    } else {
+        1e-5
+    };
+
+    for_each_backend!(|B| {
+        let context = <B as Backend>::Context::new().expect("create context");
+        let kernel = <<B as Backend>::Kernels as Kernels>::GatedActMulKernel::new(
+            &context,
+            T::data_type(),
+            true,
+            false,
+            true,
+            true,
+            true,
+        )
+        .expect("create transformed GatedActMulKernel");
+        let fused_up = alloc_allocation_with_data::<B, T>(&context, &fused_up);
+        let mut output = alloc_allocation::<B, T>(&context, GATED_DIM as usize);
+        let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
+        kernel.encode(
+            &fused_up,
+            None::<&Allocation<B>>,
+            &mut output,
+            None::<&Allocation<B>>,
+            GATED_DIM,
+            1,
+            0,
+            0,
+            ActivationType::SILU,
+            Some(ACTIVATION_ALPHA),
+            Some(ACT_CLIP_MIN),
+            Some(ACT_CLIP_MAX),
+            Some(VALUE_CLIP_MIN),
+            Some(VALUE_CLIP_MAX),
+            &mut encoder,
+        );
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+        let output = allocation_to_vec::<B, T>(&output);
+        assert_eq_float(
+            &expected,
+            &output,
+            tolerance,
+            &format!("transformed mismatch for backend {}", <B as Backend>::NAME),
+        );
+    });
+}
+
+#[uzu_test]
+fn test_gated_act_mul_transforms_f32() {
+    transformed_interleaved_test::<f32>();
+}
+
+#[uzu_test]
+fn test_gated_act_mul_transforms_bf16() {
+    transformed_interleaved_test::<bf16>();
 }

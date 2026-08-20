@@ -29,6 +29,8 @@ fn shape(
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
+        expert_routed: false,
+        expert_bias: false,
         d_transform: GemmDTransform::empty(),
     }
 }

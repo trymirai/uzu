@@ -67,6 +67,7 @@ fn bench_gemm(c: &mut Criterion) {
                                 d: &mut d,
                                 d_transform: MatmulDOps::none(),
                                 gather_indices: None,
+                                expert_routes: None,
                                 m,
                                 n,
                                 k,

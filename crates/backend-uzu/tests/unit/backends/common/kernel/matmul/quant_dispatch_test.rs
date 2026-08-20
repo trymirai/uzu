@@ -741,6 +741,7 @@ fn run_widened_f32<B: Backend>(
                 d: &mut y,
                 d_transform: MatmulDOps::none(),
                 gather_indices: None,
+                expert_routes: None,
                 m: input.m,
                 n: input.n,
                 k: input.k,

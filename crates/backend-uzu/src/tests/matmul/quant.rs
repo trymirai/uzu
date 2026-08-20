@@ -294,6 +294,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         d: y,
         d_transform: MatmulDOps::none(),
         gather_indices: None,
+        expert_routes: None,
         m: input.m,
         n: input.n,
         k: input.k,

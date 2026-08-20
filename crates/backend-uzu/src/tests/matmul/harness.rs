@@ -172,6 +172,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
             d: &mut d_allocation,
             d_transform,
             gather_indices: None,
+            expert_routes: None,
             m,
             n,
             k,
