@@ -1,4 +1,5 @@
 #include "../../common/dsl.h"
+#include "../../common/integral_constant.h"
 #include "../../generated/gemm.h"
 #include "common/arguments.h"
 #include "common/epilogue.h"
@@ -8,9 +9,9 @@
 #include "common/reduce.h"
 
 using namespace metal;
+using namespace uzu;
 using namespace uzu::gemm;
 
-// TODO: minor VARIANTS and CONSTRAINTS cleanup after tuning
 template <
     typename AT,
     typename BT,
@@ -24,9 +25,7 @@ template <
     uint OUTPUT_ROW_TILE,
     uint REDUCTION_LANES,
     uint GROUP_LANES,
-    uint NUM_SIMDGROUPS,
-    bool PREFETCHED,
-    bool FULL_TILE>
+    uint NUM_SIMDGROUPS>
 VARIANTS(AT, bfloat, float)
 VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
@@ -118,32 +117,40 @@ KERNEL(Gemv)(
     const GemmDTransform output_transform SPECIALIZE,
     const bool gathered SPECIALIZE,
     const bool signed_codes SPECIALIZE,
+    const bool full_tile SPECIALIZE,
+    const bool prefetched SPECIALIZE,
     threadgroup float shared_results[INPUT_ROW_TILE * OUTPUT_ROW_TILE * K_SPLIT],
     const uint input_tile_idx GROUPS(batch_size.div_ceil(INPUT_ROW_TILE)),
     const uint output_tile_idx GROUPS(group_count_x),
     const uint simd_lane THREADS(32),
     const uint simd_group THREADS(NUM_SIMDGROUPS)
 ) {
-  using Tile =
-      GemvTile<INPUT_ROW_TILE, OUTPUT_ROW_TILE, REDUCTION_LANES, GROUP_LANES, NUM_SIMDGROUPS, K_SPLIT, FULL_TILE>;
   using Ops = GemvOperands<AT, BT, DT>;
   const Ops ops = {b, scales, zero_points, biases, a, d, output_bias, hadamard_factors, gather_indices};
   const GemvParams params =
       {in_vec_size, out_vec_size, batch_size, ab_scale, soft_cap, output_transform, gathered, signed_codes};
+  dispatch_bool(full_tile, [&](auto full_tile_constant) {
+    constexpr bool FullTile = decltype(full_tile_constant)::value;
+    using Tile =
+        GemvTile<INPUT_ROW_TILE, OUTPUT_ROW_TILE, REDUCTION_LANES, GROUP_LANES, NUM_SIMDGROUPS, K_SPLIT, FullTile>;
   const Tile tile = Tile::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, out_vec_size);
   thread float result[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
 
   if constexpr (BITS == 0) {
     FullPrecisionBSource<Tile, AT, BT, DT, INPUT_ALIGNED>::accumulate(result, ops, params, tile);
   } else {
-    QuantBSource<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, PREFETCHED>::accumulate(
+      dispatch_bool(prefetched, [&](auto prefetched_constant) {
+        constexpr bool Prefetched = decltype(prefetched_constant)::value;
+        QuantBSource<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, Prefetched>::accumulate(
         result,
         ops,
         params,
         tile
     );
+      });
   }
 
   Reduce<Tile>::run(result, shared_results, tile);
   Epilogue<Tile, AT, BT, DT>::store(result, ops, params, tile, shared_results);
+  });
 }
