@@ -137,6 +137,7 @@ impl<B: Backend> LinearMatmul<B> {
                 d: &mut output,
                 d_transform: self.d_ops(),
                 gather_indices: None,
+                expert_routes: None,
                 m: batch_dim,
                 n: self.output_dim,
                 k: self.input_dim,

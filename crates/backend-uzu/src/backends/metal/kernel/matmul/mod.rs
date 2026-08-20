@@ -1,10 +1,14 @@
+use std::mem::size_of;
+
 pub mod gemm;
 pub mod gemv;
+mod routed;
 
 pub use self::gemm::GemmKernel;
 use self::{
     gemm::{GemmPlan, GemmProblem},
     gemv::{GemvDispatch, GemvSpecialization},
+    routed::RoutedGemm,
 };
 use crate::{
     backends::{
@@ -23,6 +27,7 @@ use crate::{
 
 pub struct MatmulMetalKernel {
     gemv: GemvDispatch,
+    routed_gemm: RoutedGemm,
     pub gemm: GemmKernel,
     weights_data_type: DataType,
     input_data_type: DataType,
@@ -42,7 +47,7 @@ impl MatmulMetalKernel {
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> bool {
-        if shape.gathered || plan.engine != gemm::GemmEngine::Mxu {
+        if shape.gathered || shape.expert_routed || plan.engine != gemm::GemmEngine::Mxu {
             return false;
         }
         match (shape.m, shape.n == shape.k, (weights_data_type, input_data_type, output_data_type)) {
@@ -119,9 +124,11 @@ impl MatmulKernel for MatmulMetalKernel {
 
         let gemm = GemmKernel::new(context, weights_data_type, input_data_type, output_data_type)?;
         let gemv = GemvDispatch::new(weights_data_type, input_data_type, output_data_type);
+        let routed_gemm = RoutedGemm::new(context, weights_data_type, input_data_type, output_data_type)?;
 
         Ok(Self {
             gemv,
+            routed_gemm,
             gemm,
             weights_data_type,
             input_data_type,
@@ -188,6 +195,41 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        if arguments.gather_indices.is_some() && arguments.expert_routes.is_some() {
+            return Err(MatmulError::UnsupportedRouting {
+                path: "MetalMatmul",
+                reason: "sparse readout and expert routing cannot be combined",
+            }
+            .into());
+        }
+        if let Some(routes) = arguments.expert_routes {
+            if routes.expert_ids.size() < arguments.m as usize * size_of::<i32>() {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "expert_ids must contain at least M entries",
+                }
+                .into());
+            }
+            if routes.input == crate::backends::common::kernel::matmul::ExpertInput::Tokens
+                && !arguments.m.is_multiple_of(routes.routes_per_token.get())
+            {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "M must be divisible by routes_per_token for token inputs",
+                }
+                .into());
+            }
+            if routes.expert_biases.is_some_and(|biases| {
+                biases.size()
+                    < routes.expert_count.get() as usize * arguments.n as usize * self.weights_data_type.size_in_bytes()
+            }) {
+                return Err(MatmulError::UnsupportedRouting {
+                    path: "MetalMatmul",
+                    reason: "expert bias bank must contain expert_count * N values",
+                }
+                .into());
+            }
+        }
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, encoder.context()) {
             MatmulDispatch::Gemv(gemv) => {
@@ -196,6 +238,9 @@ impl MatmulKernel for MatmulMetalKernel {
             MatmulDispatch::Gemm(plan) => plan,
         };
 
+        if arguments.expert_routes.is_some() {
+            return self.routed_gemm.encode(arguments, encoder).map_err(MetalError::from);
+        }
         // TODO: remove after GatherGEMM is supported
         if arguments.gather_indices.is_some() {
             return Err(MetalError::KernelDispatchFailed(

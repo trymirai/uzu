@@ -195,6 +195,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                     d: &mut intermediate,
                     d_transform: MatmulDOps::none(),
                     gather_indices: None,
+                    expert_routes: None,
                     m: batch_dim,
                     n: self.lora_rank,
                     k: self.input_dim,
@@ -233,6 +234,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                         ..MatmulDOps::none()
                     },
                     gather_indices: None,
+                    expert_routes: None,
                     m: batch_dim,
                     n: self.output_dim,
                     k: self.lora_rank,

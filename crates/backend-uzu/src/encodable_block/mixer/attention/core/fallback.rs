@@ -103,6 +103,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                         ..MatmulDOps::none()
                     },
                     gather_indices: None,
+                    expert_routes: None,
                     m: gqa_factor * suffix_length,
                     n: sequence_length,
                     k: self.head_dim,
@@ -144,6 +145,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                     d: &mut group_output,
                     d_transform: MatmulDOps::none(),
                     gather_indices: None,
+                    expert_routes: None,
                     m: gqa_factor * suffix_length,
                     n: self.head_dim,
                     k: sequence_length,

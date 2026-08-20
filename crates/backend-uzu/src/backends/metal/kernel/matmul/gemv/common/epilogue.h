@@ -12,6 +12,7 @@ struct Epilogue {
       thread U (&result)[RESULTS_PER_SIMDGROUP],
       device DT* d,
       const device BT* output_bias,
+      const device BT* expert_bias,
       const device int32_t* hadamard_factors,
       threadgroup U* shared_results,
       float ab_scale,
@@ -44,6 +45,9 @@ struct Epilogue {
         if (is_bias && !use_hadamard && global_row < out_vec_size) {
           value += static_cast<U>(output_bias[global_row]);
         }
+        if (expert_bias != nullptr && !use_hadamard && global_row < out_vec_size) {
+          value += static_cast<U>(expert_bias[global_row]);
+        }
         if (is_soft_cap) {
           value = apply_soft_cap(value, soft_cap);
         }
@@ -71,6 +75,9 @@ struct Epilogue {
           );
           if (is_bias) {
             transformed += static_cast<DT>(output_bias[global_out_idx]);
+          }
+          if (expert_bias != nullptr) {
+            transformed += static_cast<DT>(expert_bias[global_out_idx]);
           }
           d[simd_lane] = transformed;
         }

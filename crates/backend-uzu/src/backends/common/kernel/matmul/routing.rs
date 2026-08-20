@@ -1,6 +1,8 @@
+use std::num::NonZeroU32;
+
 use super::{MatmulA, MatmulArguments};
 use crate::backends::common::{
-    Backend, BufferArg,
+    Allocation, Backend, BufferArg,
     gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
 };
 
@@ -16,6 +18,38 @@ pub struct A8ActivationPlan {
     pub sum_group_size: Option<u32>,
 }
 
+/// The physical A-row layout used by direct expert routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpertInput {
+    /// A contains one row per token. Route `r` reads row `r / routes_per_token`.
+    Tokens,
+    /// A already contains one row per route. Route `r` reads row `r`.
+    Routes,
+}
+
+/// Direct route-major expert selection for a banked B operand.
+///
+/// `expert_ids` contains at least `M` native `i32` values in token-major, route-major
+/// order. Each valid ID selects one matrix from a contiguous B bank. Output row `r`
+/// always corresponds to route `r`; there are no public offsets or permutations.
+/// Invalid IDs produce an all-zero output row. Empty experts need no representation.
+pub struct ExpertRoutes<'a, B: Backend> {
+    pub expert_ids: &'a Allocation<B>,
+    pub routes_per_token: NonZeroU32,
+    pub expert_count: NonZeroU32,
+    pub input: ExpertInput,
+    /// Optional `[expert_count, N]` bias bank in the weights data type.
+    pub expert_biases: Option<&'a Allocation<B>>,
+}
+
+impl<B: Backend> Copy for ExpertRoutes<'_, B> {}
+
+impl<B: Backend> Clone for ExpertRoutes<'_, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct MatmulShape {
     pub m: u32,
@@ -29,6 +63,8 @@ pub struct MatmulShape {
     pub signed_codes: bool,
     pub a_full_precision: bool,
     pub gathered: bool,
+    pub expert_routed: bool,
+    pub expert_bias: bool,
     pub d_transform: GemmDTransform,
 }
 
@@ -48,6 +84,8 @@ impl MatmulShape {
             signed_codes: arguments.b.signed_codes(),
             a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
             gathered: arguments.gather_indices.is_some(),
+            expert_routed: arguments.expert_routes.is_some(),
+            expert_bias: arguments.expert_routes.is_some_and(|routes| routes.expert_biases.is_some()),
             d_transform: arguments.d_transform.mask(),
         }
     }

@@ -12,7 +12,7 @@ use crate::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
+            kernel::matmul::{ExpertInput, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
         },
         metal::{Metal, context::MetalContext, device_profile::DeviceProfile, kernel::GemvMetalKernel},
     },
@@ -40,6 +40,8 @@ pub(crate) struct GemvSpecialization {
     results_per_simdgroup: u32,
     num_simdgroups: u32,
     gathered: bool,
+    expert_routed: bool,
+    expert_bias: bool,
     signed_codes: bool,
 }
 
@@ -110,6 +112,8 @@ impl GemvSpecialization {
             results_per_simdgroup: tile.results_per_simdgroup,
             num_simdgroups: tile.num_simdgroups,
             gathered: shape.gathered,
+            expert_routed: shape.expert_routed,
+            expert_bias: shape.expert_bias,
             signed_codes: shape.signed_codes,
         })
     }
@@ -166,6 +170,8 @@ impl GemvDispatch {
                     specialization.num_simdgroups,
                     specialization.output_transform,
                     specialization.gathered,
+                    specialization.expert_routed,
+                    specialization.expert_bias,
                     specialization.signed_codes,
                 )
                 .map_err(MatmulError::BackendError)?;
@@ -193,6 +199,7 @@ impl GemvDispatch {
             n,
             k,
             gather_indices,
+            expert_routes,
             ..
         } = arguments;
         let MatmulA::FullPrecision {
@@ -214,6 +221,16 @@ impl GemvDispatch {
 
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;
+        let (expert_ids, expert_biases, routes_per_token, expert_count, route_inputs) = match expert_routes {
+            Some(routes) => (
+                Some(routes.expert_ids),
+                routes.expert_biases,
+                routes.routes_per_token.get(),
+                routes.expert_count.get(),
+                routes.input == ExpertInput::Routes,
+            ),
+            None => (None, None, 1, 1, false),
+        };
 
         match b {
             MatmulB::FullPrecision {
@@ -229,11 +246,16 @@ impl GemvDispatch {
                     output_bias,
                     rht_factors,
                     gather_indices,
+                    expert_ids,
+                    expert_biases,
                     k,
                     n,
                     m,
                     ab_scale,
                     group_count_x,
+                    routes_per_token,
+                    expert_count,
+                    route_inputs,
                     soft_cap,
                     encoder,
                 );
@@ -279,11 +301,16 @@ impl GemvDispatch {
                     output_bias,
                     rht_factors,
                     gather_indices,
+                    expert_ids,
+                    expert_biases,
                     k,
                     n,
                     m,
                     ab_scale,
                     group_count_x,
+                    routes_per_token,
+                    expert_count,
+                    route_inputs,
                     soft_cap,
                     encoder,
                 );

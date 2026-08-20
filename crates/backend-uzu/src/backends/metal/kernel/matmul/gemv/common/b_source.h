@@ -27,10 +27,12 @@ struct BSource {
       const device AT* a,
       const device uint* gather_indices,
       bool gathered,
+      uint matrix_idx,
       uint in_vec_size,
       uint out_vec_size,
       uint out_row,
-      uint batch_idx,
+      uint assignment_idx,
+      uint a_row,
       uint simd_lane,
       uint k_slice,
       const bool signed_codes
@@ -42,10 +44,12 @@ struct BSource {
           a,
           gather_indices,
           gathered,
+          matrix_idx,
           in_vec_size,
           out_vec_size,
           out_row,
-          batch_idx,
+          assignment_idx,
+          a_row,
           simd_lane,
           k_slice
       );
@@ -59,10 +63,12 @@ struct BSource {
           a,
           gather_indices,
           gathered,
+          matrix_idx,
           in_vec_size,
           out_vec_size,
           out_row,
-          batch_idx,
+          assignment_idx,
+          a_row,
           simd_lane,
           signed_codes
       );
