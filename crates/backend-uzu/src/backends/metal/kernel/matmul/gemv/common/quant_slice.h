@@ -35,14 +35,6 @@ public:
     uint slice;
 
     METAL_FUNC bool valid(uint groups) const thread { return group < groups; }
-
-    METAL_FUNC void advance() thread {
-      slice++;
-      if (slice == SLICES_PER_LANE) {
-        slice = 0;
-        group += Tile::GROUPS_PER_STEP;
-      }
-    }
   };
 
 private:

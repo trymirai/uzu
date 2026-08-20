@@ -16,8 +16,7 @@ template <
     uint GROUP_SIZE,
     uint BITS,
     bool INPUT_ALIGNED,
-    bool FULL_TILE,
-    bool PREFETCHED>
+    bool FULL_TILE>
 struct QuantBSource {
   using U = float;
   using Slice = QuantSlice<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FULL_TILE>;
@@ -52,40 +51,16 @@ public:
       return;
     }
 
-    if constexpr (!PREFETCHED) {
-      Slice current;
-      while (position.valid(groups)) {
-        Metadata metadata;
-        metadata.load(position.group, groups, weight_row_indices, ops);
-        for (uint slice = 0; slice < Slice::SLICES_PER_LANE; slice++) {
-          const typename Slice::Position slice_position = {position.group, slice};
-          current.load_weights(slice_position, weights, weight_row_indices, row_stride, group_offset);
-          current.accumulate(result, slice_position, ops, params, tile, group_offset, batch_remaining, metadata);
-        }
-        position.group += Tile::GROUPS_PER_STEP;
-      }
-      return;
-    }
-
     Slice current;
-    Slice next;
-    Metadata metadata;
-    metadata.load(position.group, groups, weight_row_indices, ops);
-    current.load_weights(position, weights, weight_row_indices, row_stride, group_offset);
     while (position.valid(groups)) {
-      typename Slice::Position next_position = position;
-      next_position.advance();
-      if (next_position.valid(groups)) {
-        next.load_weights(next_position, weights, weight_row_indices, row_stride, group_offset);
+      Metadata metadata;
+      metadata.load(position.group, groups, weight_row_indices, ops);
+      for (uint slice = 0; slice < Slice::SLICES_PER_LANE; slice++) {
+        const typename Slice::Position slice_position = {position.group, slice};
+        current.load_weights(slice_position, weights, weight_row_indices, row_stride, group_offset);
+        current.accumulate(result, slice_position, ops, params, tile, group_offset, batch_remaining, metadata);
       }
-      current.accumulate(result, position, ops, params, tile, group_offset, batch_remaining, metadata);
-      if (next_position.valid(groups)) {
-        current = next;
-        if (next_position.group != position.group) {
-          metadata.load(next_position.group, groups, weight_row_indices, ops);
-        }
-      }
-      position = next_position;
+      position.group += Tile::GROUPS_PER_STEP;
     }
   }
 };

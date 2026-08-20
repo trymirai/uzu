@@ -47,9 +47,6 @@ VARIANTS(OUTPUT_ROW_TILE, 1, 2, 4, 8, 16, 32, 64)
 VARIANTS(REDUCTION_LANES, 32)
 VARIANTS(GROUP_LANES, 1, 2, 4, 8, 16)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
-// TODO: Fix register spills with a function constant.
-VARIANTS(PREFETCHED, false, true)
-CONSTRAINT(!PREFETCHED)
 
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
