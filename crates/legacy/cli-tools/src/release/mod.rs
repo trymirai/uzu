@@ -1,5 +1,4 @@
 mod binaries;
-mod docs;
 mod platform;
 mod version;
 
@@ -36,7 +35,6 @@ pub fn run_release(version: &str) -> Result<()> {
     fs::create_dir_all(&release_path)?;
 
     platform::stage_platform(&paths, &platforms)?;
-    docs::stage_docs(&paths, &platforms)?;
     binaries::stage_binaries(&paths, &platforms)?;
 
     for language in platforms.languages.keys() {
