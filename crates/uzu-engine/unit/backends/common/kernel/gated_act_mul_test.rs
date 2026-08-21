@@ -102,8 +102,7 @@ fn test_gated_act_mul_interleaved_hadamard_bf16() {
     let expected = run_interleaved::<bf16, Cpu>(&input, true);
     for_each_non_cpu_backend!(|B| {
         let actual = run_interleaved::<bf16, B>(&input, true);
-        // CPU and Metal can round the bf16 product at different points before
-        // the f32 RHT, leaving valid results one bf16 ULP apart here.
+        // Cross-backend RHT results can differ by one bf16 ULP.
         assert_eq_float::<bf16>(&expected, &actual, 0.04, "Hadamard gated activation mismatch");
     });
 }
@@ -212,13 +211,21 @@ fn test_gated_act_mul_separate_bf16() {
     separate_test::<bf16>();
 }
 
-fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>() {
+fn apply_clipping(
+    value: f32,
+    clipping: (Option<f32>, Option<f32>),
+) -> f32 {
+    let (min, max) = clipping;
+    let value = min.map_or(value, |min| value.max(min));
+    max.map_or(value, |max| value.min(max))
+}
+
+fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
+    gate_clipping: (Option<f32>, Option<f32>),
+    value_clipping: (Option<f32>, Option<f32>),
+) {
     const GATED_DIM: u32 = 4;
     const ACTIVATION_ALPHA: f32 = 0.5;
-    const GATE_CLIP_MIN: f32 = -1.0;
-    const GATE_CLIP_MAX: f32 = 2.0;
-    const VALUE_CLIP_MIN: f32 = -2.0;
-    const VALUE_CLIP_MAX: f32 = 3.0;
 
     let values = [-4.0f32, -1.0, 2.0, 5.0];
     let gates = [-3.0f32, -0.5, 1.0, 4.0];
@@ -227,10 +234,10 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>() {
         .into_iter()
         .zip(gates)
         .map(|(value, gate)| {
-            let value = value.clamp(VALUE_CLIP_MIN, VALUE_CLIP_MAX);
-            let gate = gate.clamp(GATE_CLIP_MIN, GATE_CLIP_MAX);
-            let activated = gate / (1.0 + (-ACTIVATION_ALPHA * gate).exp());
-            T::from(value * activated).unwrap()
+            let value = T::from(apply_clipping(value, value_clipping)).unwrap();
+            let gate = apply_clipping(gate, gate_clipping);
+            let activated = T::from(gate / (1.0 + (-ACTIVATION_ALPHA * gate).exp())).unwrap();
+            value * activated
         })
         .collect::<Vec<_>>();
     let tolerance = if T::data_type() == DataType::BF16 {
@@ -240,8 +247,8 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>() {
     };
     let settings = GatedActMulSettings {
         activation_alpha: Some(ACTIVATION_ALPHA),
-        gate_clipping: Some((GATE_CLIP_MIN, GATE_CLIP_MAX)),
-        value_clipping: Some((VALUE_CLIP_MIN, VALUE_CLIP_MAX)),
+        gate_clipping,
+        value_clipping,
     };
 
     for_each_backend!(|B| {
@@ -277,10 +284,20 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>() {
 
 #[uzu_test]
 fn test_gated_act_mul_transforms_f32() {
-    transformed_interleaved_test::<f32>();
+    transformed_interleaved_test::<f32>((Some(-1.0), Some(2.0)), (Some(-2.0), Some(3.0)));
 }
 
 #[uzu_test]
 fn test_gated_act_mul_transforms_bf16() {
-    transformed_interleaved_test::<bf16>();
+    transformed_interleaved_test::<bf16>((Some(-1.0), Some(2.0)), (Some(-2.0), Some(3.0)));
+}
+
+#[uzu_test]
+fn test_gated_act_mul_one_sided_clipping_f32() {
+    transformed_interleaved_test::<f32>((Some(-1.0), None), (None, Some(3.0)));
+}
+
+#[uzu_test]
+fn test_gated_act_mul_one_sided_clipping_bf16() {
+    transformed_interleaved_test::<bf16>((Some(-1.0), None), (None, Some(3.0)));
 }

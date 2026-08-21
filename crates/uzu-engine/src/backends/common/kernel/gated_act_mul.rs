@@ -33,21 +33,15 @@ bitflags! {
     struct GatedActMulOptions: u8 {
         const INTERLEAVED = 1 << 0;
         const HADAMARD = 1 << 1;
-        const CUSTOM_ALPHA = 1 << 2;
-        const CLIP_GATE = 1 << 3;
-        const CLIP_VALUE = 1 << 4;
     }
 }
 
 /// Value transforms baked into a gated-activation kernel specialization.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GatedActMulSettings {
-    /// Non-default slope for SiLU's sigmoid term.
     pub activation_alpha: Option<f32>,
-    /// Bounds applied to the gate before activation.
-    pub gate_clipping: Option<(f32, f32)>,
-    /// Bounds applied to the value before multiplication.
-    pub value_clipping: Option<(f32, f32)>,
+    pub gate_clipping: (Option<f32>, Option<f32>),
+    pub value_clipping: (Option<f32>, Option<f32>),
 }
 
 pub struct GatedActMul<B: Backend> {
@@ -110,10 +104,8 @@ impl<B: Backend> GatedActMul<B> {
         sum_group_size: u32,
         settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
-        let mut options = options;
-        options.set(GatedActMulOptions::CUSTOM_ALPHA, settings.activation_alpha.is_some());
-        options.set(GatedActMulOptions::CLIP_GATE, settings.gate_clipping.is_some());
-        options.set(GatedActMulOptions::CLIP_VALUE, settings.value_clipping.is_some());
+        let (gate_clip_min, gate_clip_max) = settings.gate_clipping;
+        let (value_clip_min, value_clip_max) = settings.value_clipping;
         let kernel = <B::Kernels as Kernels>::GatedActMulKernel::new(
             context,
             data_type,
@@ -122,9 +114,11 @@ impl<B: Backend> GatedActMul<B> {
             options.contains(GatedActMulOptions::HADAMARD),
             activation_group_size,
             sum_group_size,
-            options.contains(GatedActMulOptions::CUSTOM_ALPHA),
-            options.contains(GatedActMulOptions::CLIP_GATE),
-            options.contains(GatedActMulOptions::CLIP_VALUE),
+            settings.activation_alpha.is_some(),
+            gate_clip_min.is_some(),
+            gate_clip_max.is_some(),
+            value_clip_min.is_some(),
+            value_clip_max.is_some(),
         )?;
         Ok(Self {
             kernel,
@@ -156,6 +150,8 @@ impl<B: Backend> GatedActMul<B> {
             !self.options.contains(GatedActMulOptions::HADAMARD)
                 || gated_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
         );
+        let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping;
+        let (value_clip_min, value_clip_max) = self.settings.value_clipping;
         self.kernel.encode(
             act_operand,
             value_operand,
@@ -170,10 +166,10 @@ impl<B: Backend> GatedActMul<B> {
             value_row_stride,
             act_type,
             self.settings.activation_alpha,
-            self.settings.gate_clipping.map(|(min, _)| min),
-            self.settings.gate_clipping.map(|(_, max)| max),
-            self.settings.value_clipping.map(|(min, _)| min),
-            self.settings.value_clipping.map(|(_, max)| max),
+            gate_clip_min,
+            gate_clip_max,
+            value_clip_min,
+            value_clip_max,
             encoder,
         );
     }
@@ -199,6 +195,8 @@ impl<B: Backend> GatedActMul<B> {
         if self.ops == GatedActMulOp::QuantizeWithGroupSums {
             assert!(gated_dim.is_multiple_of(self.sum_group_size));
         }
+        let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping;
+        let (value_clip_min, value_clip_max) = self.settings.value_clipping;
         self.kernel.encode(
             act_operand,
             None::<&Allocation<B>>,
@@ -213,10 +211,10 @@ impl<B: Backend> GatedActMul<B> {
             0,
             act_type,
             self.settings.activation_alpha,
-            self.settings.gate_clipping.map(|(min, _)| min),
-            self.settings.gate_clipping.map(|(_, max)| max),
-            self.settings.value_clipping.map(|(min, _)| min),
-            self.settings.value_clipping.map(|(_, max)| max),
+            gate_clip_min,
+            gate_clip_max,
+            value_clip_min,
+            value_clip_max,
             encoder,
         );
     }
