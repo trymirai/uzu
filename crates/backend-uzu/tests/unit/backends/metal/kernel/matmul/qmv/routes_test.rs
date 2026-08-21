@@ -11,7 +11,7 @@ use crate::{
             kernel::matmul::MatmulShape,
         },
         metal::{
-            device_profile::{DeviceIdentity, DeviceProfile, DeviceSize, GpuFamily},
+            device_profile::{DeviceIdentity, DeviceProfile, DeviceSize},
             kernel::matmul::{MatmulDispatch, MatmulMetalKernel, gemm::GemmProblem, gemv::GemvSpecialization},
         },
     },
@@ -148,17 +148,9 @@ fn table_is_complete_and_fingerprint_is_stable() {
 }
 
 fn device_profile(identity: DeviceIdentity) -> DeviceProfile {
-    let family = match identity {
-        DeviceIdentity::M1 => GpuFamily::Legacy,
-        DeviceIdentity::M2 | DeviceIdentity::M2Pro => GpuFamily::Apple8,
-        DeviceIdentity::M3Max | DeviceIdentity::M4 | DeviceIdentity::M4Pro => GpuFamily::Apple9,
-        DeviceIdentity::M5Max => GpuFamily::M5Plus,
-        _ => GpuFamily::Legacy,
-    };
     let large = matches!(identity, DeviceIdentity::M3Max | DeviceIdentity::M5Max);
     DeviceProfile::new(
         identity,
-        family,
         if large {
             DeviceSize::Large
         } else {
@@ -196,7 +188,7 @@ fn exact_lookup_rejects_non_matrix_inputs() {
     rht.n -= 1;
     assert!(GemvSpecialization::select_tile(&rht, DataType::BF16, DataType::BF16, DataType::BF16, tile).is_none());
 
-    let m5_without_mxu = DeviceProfile::new(DeviceIdentity::M5Max, GpuFamily::M5Plus, DeviceSize::Large, false);
+    let m5_without_mxu = DeviceProfile::new(DeviceIdentity::M5Max, DeviceSize::Large, false);
     let p = problem(7, 6144, 5120, 8, 64, GemmBPrologueKind::ScaleSymmetricDequant);
     assert!(matches!(route(device_profile(DeviceIdentity::M5Max), &p, true), Some(QmvRoute::MainGemm(_))));
     assert_eq!(route(m5_without_mxu, &p, true), None);
@@ -223,4 +215,19 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
             MatmulDispatch::Gemv(actual) if actual == specialization
         ));
     }
+}
+
+#[uzu_test]
+fn family_lookup_requires_one_unanimous_route() {
+    let m1_max = DeviceProfile::new(DeviceIdentity::M1Max, DeviceSize::Large, false);
+    let m1_route = problem(4, 8192, 5120, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
+    assert_eq!(route(m1_max, &m1_route, true), route(device_profile(DeviceIdentity::M1), &m1_route, true));
+
+    let family = DeviceProfile::new(DeviceIdentity::M2Max, DeviceSize::Small, false);
+    let unanimous = problem(6, 5120, 17408, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
+    assert_eq!(route(family, &unanimous, true), route(device_profile(DeviceIdentity::M2), &unanimous, true));
+
+    let disagreement = problem(3, 5120, 6144, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
+    assert_eq!(route(family, &disagreement, true), None);
+    assert!(route(device_profile(DeviceIdentity::M2), &disagreement, true).is_some());
 }

@@ -390,24 +390,24 @@ pub fn route(
     if mask == 0 {
         return None;
     }
-    ROWS.iter()
-        .find(|row| {
-            row.identity == device.identity()
-                && row.bits == bits
-                && row.group == group
-                && row.m == shape.m
-                && row.shapes & mask != 0
-        })
-        .map(|row| row.route)
-        .filter(|route| {
-            !matches!(
-                route,
-                QmvRoute::MainGemm(GemmPlan {
-                    engine: GemmEngine::Mxu,
-                    ..
-                })
-            ) || device.supports_mxu()
-        })
+    let matches =
+        |row: &&RouteRow| row.bits == bits && row.group == group && row.m == shape.m && row.shapes & mask != 0;
+    let route =
+        ROWS.iter().filter(matches).find(|row| row.identity == device.identity()).map(|row| row.route).or_else(|| {
+            let same_family = |row: &&RouteRow| device.gpu_family().contains(row.identity);
+            let mut routes = ROWS.iter().filter(matches).filter(same_family).map(|row| row.route);
+            let route = routes.next()?;
+            routes.all(|candidate| candidate == route).then_some(route)
+        });
+    route.filter(|route| {
+        !matches!(
+            route,
+            QmvRoute::MainGemm(GemmPlan {
+                engine: GemmEngine::Mxu,
+                ..
+            })
+        ) || device.supports_mxu()
+    })
 }
 
 #[cfg(test)]

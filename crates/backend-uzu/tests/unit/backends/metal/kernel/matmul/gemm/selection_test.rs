@@ -4,15 +4,13 @@ use super::{super::specialization::GemmSpecialization, *};
 use crate::backends::{
     common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
     metal::{
-        device_profile::{DeviceIdentity, DeviceProfile, DeviceSize, GpuFamily},
+        device_profile::{DeviceIdentity, DeviceProfile, DeviceSize},
         kernel::matmul::MatmulMetalKernel,
     },
 };
 
-const LEGACY_PROFILE: DeviceProfile =
-    DeviceProfile::new(DeviceIdentity::Other, GpuFamily::Legacy, DeviceSize::Small, false);
-const APPLE9_PROFILE: DeviceProfile =
-    DeviceProfile::new(DeviceIdentity::Other, GpuFamily::Apple9, DeviceSize::Small, false);
+const LEGACY_PROFILE: DeviceProfile = DeviceProfile::new(DeviceIdentity::M1, DeviceSize::Small, false);
+const APPLE9_PROFILE: DeviceProfile = DeviceProfile::new(DeviceIdentity::M4, DeviceSize::Small, false);
 
 fn shape(
     m: u32,
