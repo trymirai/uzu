@@ -32,18 +32,20 @@ PUBLIC KERNEL(GatedActMul) (
     const constant uint& value_row_stride,
     const constant ActivationType& act_type,
     const constant float& activation_alpha OPTIONAL(custom_activation_alpha),
-    const constant float& gate_clip_min OPTIONAL(clip_gate),
-    const constant float& gate_clip_max OPTIONAL(clip_gate),
-    const constant float& value_clip_min OPTIONAL(clip_value),
-    const constant float& value_clip_max OPTIONAL(clip_value),
+    const constant float& gate_clip_min OPTIONAL(clip_gate_min),
+    const constant float& gate_clip_max OPTIONAL(clip_gate_max),
+    const constant float& value_clip_min OPTIONAL(clip_value_min),
+    const constant float& value_clip_max OPTIONAL(clip_value_max),
     const GatedActMulOp ops SPECIALIZE,
     const bool interleaved SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
     const uint sum_group_size SPECIALIZE,
     const bool custom_activation_alpha SPECIALIZE,
-    const bool clip_gate SPECIALIZE,
-    const bool clip_value SPECIALIZE,
+    const bool clip_gate_min SPECIALIZE,
+    const bool clip_gate_max SPECIALIZE,
+    const bool clip_value_min SPECIALIZE,
+    const bool clip_value_max SPECIALIZE,
     threadgroup float partial_max OPTIONAL(QUANTIZED && activation_scale_group_size > METAL_SIMD_SIZE)[NUM_SIMDGROUPS],
     threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && sum_group_size > METAL_SIMD_SIZE)[NUM_SIMDGROUPS],
     uint activation_tile_index GROUPS(gated_dim.div_ceil(NUM_THREADS)),
@@ -68,28 +70,45 @@ PUBLIC KERNEL(GatedActMul) (
       gate = act_operand[batch_idx * gated_dim + gated_idx];
     }
   }
-  if (clip_gate) {
-    gate = static_cast<T>(clamp(float(gate), gate_clip_min, gate_clip_max));
+  if (clip_gate_min || clip_gate_max) {
+    float clipped_gate = float(gate);
+    if (clip_gate_min) {
+      clipped_gate = max(clipped_gate, gate_clip_min);
+    }
+    if (clip_gate_max) {
+      clipped_gate = min(clipped_gate, gate_clip_max);
+    }
+    gate = static_cast<T>(clipped_gate);
   }
-  if (clip_value) {
-    value = static_cast<T>(clamp(float(value), value_clip_min, value_clip_max));
+  if (clip_value_min || clip_value_max) {
+    float clipped_value = float(value);
+    if (clip_value_min) {
+      clipped_value = max(clipped_value, value_clip_min);
+    }
+    if (clip_value_max) {
+      clipped_value = min(clipped_value, value_clip_max);
+    }
+    value = static_cast<T>(clipped_value);
   }
-  const T activated = custom_activation_alpha && act_type == ActivationType::SILU
-      ? activate_silu_alpha(gate, activation_alpha)
-      : activate(gate, act_type);
-
   if (!QUANTIZED) {
     T result = static_cast<T>(0);
     if (element_in_bounds && (!use_hadamard || simdgroup_in_bounds)) {
-      float gated = static_cast<float>(value * activated);
+      float transformed;
+      if (custom_activation_alpha && act_type == ActivationType::SILU) {
+        const T activated = activate_silu_alpha(gate, activation_alpha);
+        const T gated = value * activated;
+        transformed = static_cast<float>(gated);
+      } else {
+        transformed = gated_act_mul(value, gate, act_type);
+      }
       if (use_hadamard) {
-        gated = simdgroup_input_random_hadamard_transform(
+        transformed = simdgroup_input_random_hadamard_transform(
             static_cast<ushort>(gated_idx % METAL_SIMD_SIZE),
-            gated,
+            transformed,
             hadamard_factors[gated_idx]
         );
       }
-      result = static_cast<T>(gated);
+      result = static_cast<T>(transformed);
     }
     if (element_in_bounds) {
       fp_out[batch_idx * gated_dim + gated_idx] = result;
@@ -99,7 +118,13 @@ PUBLIC KERNEL(GatedActMul) (
 
   float result = 0.0f;
   if (simdgroup_in_bounds) {
-    result = static_cast<float>(value * activated);
+    if (custom_activation_alpha && act_type == ActivationType::SILU) {
+      const T activated = activate_silu_alpha(gate, activation_alpha);
+      const T gated = value * activated;
+      result = static_cast<float>(gated);
+    } else {
+      result = gated_act_mul(value, gate, act_type);
+    }
     result = simdgroup_input_random_hadamard_transform(
         static_cast<ushort>(gated_idx % METAL_SIMD_SIZE),
         result,

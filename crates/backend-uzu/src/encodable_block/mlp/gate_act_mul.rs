@@ -38,8 +38,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         let activation_alpha = activation.alpha();
         let settings = GatedActMulSettings {
             activation_alpha: (activation_alpha != 1.0).then_some(activation_alpha),
-            gate_clipping: Self::clipping_bounds(gate_clipping),
-            value_clipping: Self::clipping_bounds(value_clipping),
+            gate_clipping: gate_clipping.unwrap_or_default(),
+            value_clipping: value_clipping.unwrap_or_default(),
         };
         let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some(), settings)?;
         let quantized_kernel = a8_plan
@@ -125,14 +125,5 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         encoder.pop_debug_group();
 
         Ok(input)
-    }
-
-    fn clipping_bounds(clipping: Option<(Option<f32>, Option<f32>)>) -> Option<(f32, f32)> {
-        let (min, max) = clipping?;
-        if min.is_none() && max.is_none() {
-            return None;
-        }
-
-        Some((min.unwrap_or(f32::NEG_INFINITY), max.unwrap_or(f32::INFINITY)))
     }
 }
