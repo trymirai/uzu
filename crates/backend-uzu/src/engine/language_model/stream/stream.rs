@@ -343,9 +343,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 output_tokens: output_tokens.unwrap(),
             })
         } else {
+            let Some(seed_token) = model_state.last_output_token.take() else {
+                return Err(LanguageModelStreamError::NoSeedToken);
+            };
             // TODO: this leaks previous LanguageModelStreamOptions
             DecodingState::Seeded {
-                seed_token: model_state.last_output_token.take().unwrap(),
+                seed_token,
             }
         };
 
