@@ -165,6 +165,11 @@ impl Session {
                 }
             }
         }
+        let cached_tokens_input = if reset {
+            0
+        } else {
+            curr_all_tokens.len()
+        };
         self.input_tokens = if reset {
             if let Err(err) = self.state_reset().await {
                 return error_stream(err);
@@ -190,6 +195,7 @@ impl Session {
             time_prefill_start: Instant::now(),
             time_first_token: None,
             total_tokens_input: self.input_tokens.len(),
+            cached_tokens_input,
             total_tokens_output: 0,
             memory_usage: None,
             metrics: None,
@@ -301,7 +307,10 @@ impl Session {
                 } => Some(ToolCallState::Finished(value.clone())),
                 ChatContentBlock::ToolCallCandidate {
                     value,
-                } => Some(ToolCallState::Candidate(value.json.clone())),
+                } => Some(ToolCallState::Candidate(
+                    // the block stores the candidate text as a JSON string document
+                    serde_json::from_str::<String>(&value.json).unwrap_or_default(),
+                )),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -345,6 +354,7 @@ struct StreamingState<'a> {
     time_prefill_start: Instant,
     time_first_token: Option<Instant>,
     total_tokens_input: usize,
+    cached_tokens_input: usize,
     total_tokens_output: usize,
     memory_usage: Option<usize>,
     metrics: Option<TokenStreamMetrics>,
@@ -411,6 +421,7 @@ impl StreamingState<'_> {
             prefill_tokens_per_second: prefill_tps,
             generate_tokens_per_second: generate_tps,
             tokens_count_input: Some(self.total_tokens_input as u32),
+            tokens_count_input_cached: Some(self.cached_tokens_input as u32),
             tokens_count_output: Some(self.total_tokens_output as u32),
             memory_used_bytes: last_stat.then(|| self.memory_usage.map(|bytes| bytes as i64)).flatten(),
             speculator_stats,

@@ -53,12 +53,25 @@ struct Usage {
     prompt_tokens: Option<u32>,
     #[serde(default)]
     completion_tokens: Option<u32>,
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u32>,
 }
 
 pub fn build(response: Response) -> Option<StreamChunk> {
     let usage = response.usage;
     let choice = response.choices.into_iter().next();
-    let tokens_input = usage.as_ref().and_then(|usage| usage.prompt_tokens);
+    let tokens_input_cached =
+        usage.as_ref().and_then(|usage| usage.prompt_tokens_details.as_ref()).and_then(|details| details.cached_tokens);
+    let tokens_input = usage
+        .as_ref()
+        .and_then(|usage| usage.prompt_tokens)
+        .map(|tokens| tokens.saturating_sub(tokens_input_cached.unwrap_or(0)));
     let tokens_output = usage.as_ref().and_then(|usage| usage.completion_tokens);
 
     let (content, tool_calls, finish_reason) = match choice {
@@ -88,6 +101,7 @@ pub fn build(response: Response) -> Option<StreamChunk> {
         && tool_calls.is_empty()
         && finish_reason.is_none()
         && tokens_input.is_none()
+        && tokens_input_cached.is_none()
         && tokens_output.is_none()
     {
         return None;
@@ -99,6 +113,7 @@ pub fn build(response: Response) -> Option<StreamChunk> {
         tool_calls,
         finish_reason,
         tokens_input,
+        tokens_input_cached,
         tokens_output,
     })
 }

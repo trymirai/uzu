@@ -18,6 +18,7 @@ pub async fn run_server(
     model: String,
     host: String,
     port: u16,
+    prefix_cache: bool,
 ) -> Result<()> {
     let engine_config = EngineConfig::default().with_application_identifier("com.trymirai.cli".to_string());
     let engine = Engine::new(engine_config).await.context("Failed to create engine")?;
@@ -45,6 +46,7 @@ pub async fn run_server(
         model_name: model_name.clone(),
         session: Arc::new(Mutex::new(session)),
         thinking_support: capabilities.thinking,
+        prefix_cache,
     };
 
     let address: IpAddr = host.parse().with_context(|| format!("Invalid host: {host}"))?;
@@ -57,6 +59,14 @@ pub async fn run_server(
 
     println!("🚀 OpenAI-compatible server for model: {model_name}");
     println!("🌐 Available at: http://{host}:{port}");
+    println!(
+        "🗄️  Prefix cache: {}",
+        if prefix_cache {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     println!("📝 Endpoints:");
     println!("   POST /v1/chat/completions (or /chat/completions)");
     println!("   GET  /v1/models           (or /models)");

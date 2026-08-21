@@ -119,6 +119,18 @@ fn reasoning_effort_prepends_system_message_for_levels_model() {
 }
 
 #[test]
+fn reasoning_effort_merges_into_leading_system_message() {
+    let messages = messages_with_support(
+        r#"{"messages":[{"role":"system","content":"be brief"},{"role":"user","content":"hi"}],"reasoning_effort":"high"}"#,
+        ThinkingSupport::Levels(ReasoningEffort::Default),
+    );
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].role, ChatRole::System {});
+    assert_eq!(messages[0].reasoning_effort(), Some(ReasoningEffort::High));
+    assert_eq!(messages[0].text().as_deref(), Some("be brief"));
+}
+
+#[test]
 fn reasoning_effort_default_emits_no_system_message() {
     for body in [
         r#"{"messages":[{"role":"user","content":"hi"}]}"#,
@@ -329,4 +341,91 @@ fn response_format_composes_with_sampling_options() {
             method: SamplingMethod::Greedy {},
         }
     );
+}
+
+#[test]
+fn message_content_accepts_string_null_and_text_parts() {
+    let messages = request(
+        r#"{"messages":[
+            {"role":"user","content":"plain"},
+            {"role":"assistant","content":null},
+            {"role":"user","content":[{"type":"text","text":"Hello"},{"type":"text","text":" world"}]}
+        ]}"#,
+    )
+    .messages;
+    assert_eq!(messages[0].content.as_deref(), Some("plain"));
+    assert_eq!(messages[1].content, None);
+    assert_eq!(messages[2].content.as_deref(), Some("Hello world"));
+
+    let missing = request(r#"{"messages":[{"role":"user"}]}"#);
+    assert_eq!(missing.messages[0].content, None);
+
+    let image = serde_json::from_str::<ChatCompletionRequest>(
+        r#"{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]}"#,
+    );
+    assert!(image.is_err());
+}
+
+#[test]
+fn assistant_reasoning_content_round_trips_in_session_block_order() {
+    let messages = messages_with_support(
+        r#"{"messages":[
+            {"role":"user","content":"hi"},
+            {"role":"assistant","reasoning_content":"thoughts","content":"answer","tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{}"}}]},
+            {"role":"assistant","reasoning_content":"","content":"no thinking"},
+            {"role":"user","content":"again"}
+        ]}"#,
+        ThinkingSupport::Levels(ReasoningEffort::Default),
+    );
+    let assistant = &messages[1];
+    let kinds = assistant
+        .content
+        .iter()
+        .map(|block| match block {
+            ChatContentBlock::Reasoning {
+                ..
+            } => "reasoning",
+            ChatContentBlock::Text {
+                ..
+            } => "text",
+            ChatContentBlock::ToolCall {
+                ..
+            } => "tool_call",
+            _ => "other",
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(kinds, ["reasoning", "text", "tool_call"]);
+    assert_eq!(assistant.reasoning().as_deref(), Some("thoughts"));
+
+    // empty reasoning_content must not create a block, matching how replies are stored
+    assert_eq!(messages[2].reasoning(), None);
+    assert_eq!(messages[2].text().as_deref(), Some("no thinking"));
+}
+
+#[test]
+fn prefix_match_ignores_tool_call_identifiers() {
+    let assistant_call = |identifier: &str| {
+        ChatMessage::assistant().with_tool_call(uzu::types::basic::ToolCall {
+            identifier: Some(identifier.to_string()),
+            name: "write".to_string(),
+            arguments: uzu::types::basic::Value {
+                json: r#"{"path":"/tmp/a"}"#.to_string(),
+            },
+        })
+    };
+
+    let current = vec![ChatMessage::user().with_text("hi".to_string()), assistant_call("nagare-uuid")];
+    let extending = vec![
+        ChatMessage::user().with_text("hi".to_string()),
+        assistant_call("server-uuid"),
+        ChatMessage::user().with_text("again".to_string()),
+    ];
+    assert!(messages_have_prefix(&extending, &current));
+
+    let mut different = assistant_call("nagare-uuid");
+    different.content.push(ChatContentBlock::Text {
+        value: "extra".to_string(),
+    });
+    let not_matching = vec![ChatMessage::user().with_text("hi".to_string()), different];
+    assert!(!messages_have_prefix(&not_matching, &current));
 }
