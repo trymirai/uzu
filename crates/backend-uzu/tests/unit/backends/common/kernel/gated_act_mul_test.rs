@@ -103,8 +103,7 @@ fn test_gated_act_mul_interleaved_hadamard_bf16() {
     let expected = run_interleaved::<bf16, Cpu>(&input, true);
     for_each_non_cpu_backend!(|B| {
         let actual = run_interleaved::<bf16, B>(&input, true);
-        // Cross-backend RHT results can differ by one bf16 ULP.
-        assert_eq_float::<bf16>(&expected, &actual, 0.04, "Hadamard gated activation mismatch");
+        assert_eq_float::<bf16>(&expected, &actual, 0.02, "Hadamard gated activation mismatch");
     });
 }
 
