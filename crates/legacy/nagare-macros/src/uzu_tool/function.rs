@@ -1,12 +1,12 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    __private::TokenStream2, Attribute, Error, FnArg, ItemFn, Pat, ReturnType, ext::IdentExt, parse_macro_input,
+    __private::TokenStream2, ext::IdentExt, parse_macro_input, Attribute, Error, FnArg, ItemFn, Pat, ReturnType,
 };
 
 use crate::uzu_tool::util::{
-    Param, arg_parsing_tokens, doc_string, is_option, is_unit, nagare_path, parameters_tokens, result_ok_type,
-    return_definition_tokens,
+    arg_parsing_tokens, doc_string, is_option, is_unit, nagare_path, parameters_tokens, result_ok_type,
+    return_definition_tokens, Param,
 };
 
 pub fn uzu_tool_function(

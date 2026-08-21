@@ -1,5 +1,5 @@
 [package]
-name = "proc-macros"
+name = "nagare-macros"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true

@@ -3765,10 +3765,10 @@ dependencies = [
  "indexmap 2.14.0",
  "inventory",
  "keisoku",
+ "nagare-macros",
  "napi",
  "napi-build",
  "napi-derive",
- "proc-macros",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",
@@ -3789,6 +3789,16 @@ dependencies = [
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "nagare-macros"
+version = "0.5.19"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -4678,16 +4688,6 @@ dependencies = [
  "syn 2.0.118",
  "version_check",
  "yansi",
-]
-
-[[package]]
-name = "proc-macros"
-version = "0.5.19"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 2.0.118",
 ]
 
 [[package]]
