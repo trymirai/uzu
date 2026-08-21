@@ -98,6 +98,7 @@ impl GpuTypes {
     pub fn scan() -> anyhow::Result<Self> {
         let src_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("Missing CARGO_MANIFEST_DIR")?)
             .join("src/backends/common/gpu_types");
+        println!("cargo::rerun-if-changed={}", src_dir.display());
 
         let mut sources: Vec<PathBuf> = WalkDir::new(&src_dir)
             .into_iter()

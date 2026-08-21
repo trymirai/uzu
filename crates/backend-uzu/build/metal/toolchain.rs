@@ -95,10 +95,11 @@ pub struct MetalToolchain {
     opt_flags: Box<[OsString]>,
     extra_options: Box<[OsString]>,
     include_dirs: Box<[PathBuf]>,
+    cache_key: [u8; blake3::OUT_LEN],
 }
 
 impl MetalToolchain {
-    pub fn from_env_with_include_dir(include_dir: Option<PathBuf>) -> anyhow::Result<Self> {
+    pub async fn from_env_with_include_dir(include_dir: Option<PathBuf>) -> anyhow::Result<Self> {
         let sdk = MetalSdk::from_env().context("cannot get sdk")?;
         let std = MetalStd::Metal4_0;
 
@@ -118,9 +119,41 @@ impl MetalToolchain {
 
         let opt_flags = [opt_level_flags, debug_flags].concat().into_boxed_slice();
 
-        let extra_options = Box::new([OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os()))]);
+        let extra_options: Box<[OsString]> =
+            Box::new([OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os()))]);
 
         let include_dirs = include_dir.into_iter().collect();
+
+        let cache_key = {
+            let mut hasher = blake3::Hasher::new();
+
+            hasher.update(sdk.to_str().as_bytes());
+            hasher.update(b"\0");
+            hasher.update(std.to_str().as_bytes());
+            hasher.update(b"\0");
+            for flag in opt_flags.iter().chain(extra_options.iter()) {
+                hasher.update(flag.as_encoded_bytes());
+                hasher.update(b"\0");
+            }
+
+            for args in [&["metal", "--version"][..], &["--show-sdk-version"][..], &["--show-sdk-build-version"][..]] {
+                let output = Command::new("xcrun")
+                    .args(["-sdk", sdk.to_str()])
+                    .args(args)
+                    .output()
+                    .await
+                    .with_context(|| format!("cannot execute xcrun {}", args.join(" ")))?;
+                if !output.status.success() {
+                    bail!("xcrun {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr));
+                }
+                hasher.update(&output.stdout);
+                hasher.update(b"\0");
+                hasher.update(&output.stderr);
+                hasher.update(b"\0");
+            }
+
+            hasher.finalize().into()
+        };
 
         Ok(Self {
             sdk,
@@ -128,6 +161,7 @@ impl MetalToolchain {
             opt_flags,
             extra_options,
             include_dirs,
+            cache_key,
         })
     }
 
@@ -135,6 +169,10 @@ impl MetalToolchain {
         let mut cmd = Command::new("xcrun");
         cmd.args(["-sdk", self.sdk.to_str()]);
         cmd
+    }
+
+    pub fn cache_key(&self) -> &[u8; blake3::OUT_LEN] {
+        &self.cache_key
     }
 
     fn add_include_dirs(
