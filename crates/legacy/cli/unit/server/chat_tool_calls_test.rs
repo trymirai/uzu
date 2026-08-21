@@ -73,7 +73,7 @@ fn invalid_tool_call_arguments_stay_serializable() {
 
     assert_eq!(call(r#"{"a":1}"#).arguments.json, r#"{"a":1}"#);
     assert_eq!(call("").arguments.json, "{}");
-    assert_eq!(call(r#"{"a":"#).arguments.json, r#""{\"a\":""#);
+    assert_eq!(call(r#"{"a":"#).arguments.json, r#"{"__uzu_unparsed_arguments":"{\"a\":"}"#);
     for arguments in ["", r#"{"a":"#] {
         serde_json::to_value(&call(arguments).arguments).expect("arguments should stay serializable");
     }
@@ -148,4 +148,143 @@ fn reply_tool_calls_serialize_in_openai_format() {
 
     let delta = serde_json::to_value(oai_tool_call(Some(0), &tool_call)).expect("serializable tool call delta");
     assert_eq!(delta["index"], 0);
+}
+
+#[test]
+fn json_candidate_announces_name_once_it_is_complete() {
+    let mut streamer = ToolCallStreamer::new();
+    assert!(streamer.update(0, r#"{"name": "wr"#).is_empty());
+    assert!(streamer.update(0, r#"{"arguments": {}}"#).is_empty());
+
+    let deltas = streamer.update(1, r#"{"name": "write", "arguments": {"path":"#);
+    assert_eq!(deltas.len(), 1);
+    assert_eq!(deltas[0].index, Some(1));
+    assert_eq!(deltas[0].function.name, "write");
+    assert_eq!(deltas[0].function.arguments, "");
+
+    // the id is assigned at announcement time and must never change mid-call
+    assert!(!deltas[0].id.is_empty());
+    let call = ToolCall {
+        identifier: Some("server-side-id-must-not-leak".to_string()),
+        name: "write".to_string(),
+        arguments: Value {
+            json: r#"{"path":"/tmp/a"}"#.to_string(),
+        },
+    };
+    assert_eq!(streamer.finish(1, &call).id, deltas[0].id);
+
+    assert!(streamer.update(1, r#"{"name": "write", "arguments": {"path": "/"#).is_empty());
+}
+
+#[test]
+fn framed_tool_call_streams_arguments_incrementally() {
+    let final_markup = "\n<function=write>\n<parameter=path>\n/tmp/a.txt\n</parameter>\n<parameter=content>\nhello world\n</parameter>\n</function>\n";
+    let final_arguments = serde_json::json!({"path": "/tmp/a.txt", "content": "hello world"});
+    let call = ToolCall {
+        identifier: Some("c1".to_string()),
+        name: "write".to_string(),
+        arguments: Value {
+            json: final_arguments.to_string(),
+        },
+    };
+
+    let mut streamer = ToolCallStreamer::new();
+    let mut fragments = String::new();
+    let mut announcements = 0;
+    let chars = final_markup.chars().collect::<Vec<_>>();
+    for i in 0..=chars.len() {
+        let partial: String = chars[..i].iter().collect();
+        for delta in streamer.update(0, &partial) {
+            if !delta.function.name.is_empty() {
+                announcements += 1;
+                assert_eq!(delta.function.name, "write");
+            }
+            fragments.push_str(&delta.function.arguments);
+        }
+    }
+    assert_eq!(announcements, 1);
+    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+
+    let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
+    assert_eq!(parsed, final_arguments);
+}
+
+#[test]
+fn framed_tool_call_withholds_typed_parameter_until_complete() {
+    let mut streamer = ToolCallStreamer::new();
+    let deltas = streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\"");
+    assert!(deltas.iter().all(|delta| delta.function.arguments.is_empty()));
+
+    let deltas = streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\": 1}\n</parameter>\n</function>\n");
+    let fragment: String = deltas.iter().map(|delta| delta.function.arguments.as_str()).collect();
+    assert_eq!(fragment, r#"{"options":{"a":1}"#);
+
+    let call = ToolCall {
+        identifier: None,
+        name: "read".to_string(),
+        arguments: Value {
+            json: r#"{"options":{"a":1}}"#.to_string(),
+        },
+    };
+    assert_eq!(streamer.finish(0, &call).function.arguments, "}");
+}
+
+#[test]
+fn framed_tool_call_streams_multibyte_content_without_panicking() {
+    let final_markup = "\n<function=write>\n<parameter=content>\nLondon — a city\n</parameter>\n</function>\n";
+    let call = ToolCall {
+        identifier: None,
+        name: "write".to_string(),
+        arguments: Value {
+            json: serde_json::json!({ "content": "London — a city" }).to_string(),
+        },
+    };
+
+    let mut streamer = ToolCallStreamer::new();
+    let mut fragments = String::new();
+    let chars = final_markup.chars().collect::<Vec<_>>();
+    for i in 0..=chars.len() {
+        let partial: String = chars[..i].iter().collect();
+        for delta in streamer.update(0, &partial) {
+            fragments.push_str(&delta.function.arguments);
+        }
+    }
+    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+    let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
+    assert_eq!(parsed, serde_json::json!({ "content": "London — a city" }));
+}
+
+#[test]
+fn framed_tool_call_with_array_parameter_assembles_exactly() {
+    // the edit-call shape: a parameter whose value is a JSON array must never be
+    // string-streamed before its type is known, and the finish must not double it
+    let final_markup = "\n<function=edit>\n<parameter=path>\nlonodn.md\n</parameter>\n<parameter=edits>\n[{\"oldText\": \"London\", \"newText\": \"Londinium\"}]\n</parameter>\n</function>\n";
+    let final_arguments = serde_json::json!({
+        "path": "lonodn.md",
+        "edits": [{"oldText": "London", "newText": "Londinium"}],
+    });
+    let call = ToolCall {
+        identifier: Some("c1".to_string()),
+        name: "edit".to_string(),
+        arguments: Value {
+            json: final_arguments.to_string(),
+        },
+    };
+
+    let mut streamer = ToolCallStreamer::new();
+    let mut fragments = String::new();
+    let mut fragment_count = 0;
+    let chars = final_markup.chars().collect::<Vec<_>>();
+    for i in 0..=chars.len() {
+        let partial: String = chars[..i].iter().collect();
+        for delta in streamer.update(0, &partial) {
+            fragment_count += 1;
+            fragments.push_str(&delta.function.arguments);
+        }
+    }
+    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+
+    assert!(fragment_count > 2, "fragments: {fragments:?}");
+    let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
+    assert_eq!(parsed, final_arguments);
 }

@@ -23,6 +23,7 @@ pub struct StreamChunk {
     pub tool_calls: Vec<ToolCallChunk>,
     pub finish_reason: Option<ChatReplyFinishReason>,
     pub tokens_input: Option<u32>,
+    pub tokens_input_cached: Option<u32>,
     pub tokens_output: Option<u32>,
 }
 
@@ -35,6 +36,7 @@ pub struct StreamState {
     start_moment: Instant,
     first_token_moment: Option<Instant>,
     tokens_input: Option<u32>,
+    tokens_input_cached: Option<u32>,
     tokens_output: Option<u32>,
 }
 
@@ -48,6 +50,7 @@ impl StreamState {
             start_moment: Instant::now(),
             first_token_moment: None,
             tokens_input: None,
+            tokens_input_cached: None,
             tokens_output: None,
         }
     }
@@ -82,6 +85,11 @@ impl StreamState {
 
         if let Some(tokens) = chunk.tokens_input {
             self.tokens_input = Some(tokens);
+            processed = true;
+        }
+
+        if let Some(tokens) = chunk.tokens_input_cached {
+            self.tokens_input_cached = Some(tokens);
             processed = true;
         }
 
@@ -141,6 +149,7 @@ impl StreamState {
             prefill_tokens_per_second,
             generate_tokens_per_second,
             tokens_count_input: self.tokens_input,
+            tokens_count_input_cached: self.tokens_input_cached,
             tokens_count_output: self.tokens_output,
             memory_used_bytes: None,
             speculator_stats: None,
