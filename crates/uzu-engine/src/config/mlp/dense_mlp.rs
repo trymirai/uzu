@@ -1,6 +1,9 @@
 use uzu_engine_macros::uzu_config;
 
-use crate::config::{activation::AnyActivation, linear::LinearConfig};
+use crate::{
+    ClippingBounds,
+    config::{activation::AnyActivation, linear::LinearConfig},
+};
 
 #[uzu_config(super::MLPConfig)]
 pub struct DenseMLPConfig {
@@ -8,8 +11,8 @@ pub struct DenseMLPConfig {
     pub activation: AnyActivation,
     pub has_up_biases: bool,
     pub has_down_biases: bool,
-    pub gate_clipping: Option<(Option<f32>, Option<f32>)>,
-    pub up_clipping: Option<(Option<f32>, Option<f32>)>,
+    pub gate_clipping: ClippingBounds,
+    pub up_clipping: ClippingBounds,
 }
 
 impl DenseMLPConfig {
@@ -25,8 +28,8 @@ impl DenseMLPConfig {
             activation,
             has_up_biases,
             has_down_biases,
-            gate_clipping: None,
-            up_clipping: None,
+            gate_clipping: ClippingBounds::default(),
+            up_clipping: ClippingBounds::default(),
         }
     }
 }
