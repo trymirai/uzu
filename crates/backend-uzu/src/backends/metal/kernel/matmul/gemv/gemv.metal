@@ -47,6 +47,8 @@ VARIANTS(OUTPUT_ROW_TILE, 1, 2, 4, 8, 16, 32, 64)
 VARIANTS(REDUCTION_LANES, 32)
 VARIANTS(GROUP_LANES, 1, 2, 4, 8, 16)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
+VARIANTS(PREFETCHED, false)
+CONSTRAINT(!PREFETCHED)
 
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
@@ -117,7 +119,6 @@ KERNEL(Gemv)(
     const bool gathered SPECIALIZE,
     const bool signed_codes SPECIALIZE,
     const bool full_tile SPECIALIZE,
-    const bool prefetched SPECIALIZE,
     threadgroup float shared_results[INPUT_ROW_TILE * OUTPUT_ROW_TILE * K_SPLIT],
     const uint input_tile_idx GROUPS(batch_size.div_ceil(INPUT_ROW_TILE)),
     const uint output_tile_idx GROUPS(group_count_x),
@@ -130,26 +131,23 @@ KERNEL(Gemv)(
       {in_vec_size, out_vec_size, batch_size, ab_scale, soft_cap, output_transform, gathered, signed_codes};
   dispatch_bool(full_tile, [&](auto full_tile_constant) {
     constexpr bool FullTile = decltype(full_tile_constant)::value;
-    using Tile =
-        GemvTile<INPUT_ROW_TILE, OUTPUT_ROW_TILE, REDUCTION_LANES, GROUP_LANES, NUM_SIMDGROUPS, K_SPLIT, FullTile>;
-  const Tile tile = Tile::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, out_vec_size);
+    using Tile = GemvTile<INPUT_ROW_TILE, OUTPUT_ROW_TILE, REDUCTION_LANES, GROUP_LANES, NUM_SIMDGROUPS, K_SPLIT>;
+    const OutputTile<Tile, FullTile> tile =
+        OutputTile<Tile, FullTile>::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, out_vec_size);
   thread float result[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
 
   if constexpr (BITS == 0) {
-    FullPrecisionBSource<Tile, AT, BT, DT, INPUT_ALIGNED>::accumulate(result, ops, params, tile);
+      FullPrecisionBSource<Tile, AT, BT, DT, INPUT_ALIGNED, FullTile>::accumulate(result, ops, params, tile);
   } else {
-      dispatch_bool(prefetched, [&](auto prefetched_constant) {
-        constexpr bool Prefetched = decltype(prefetched_constant)::value;
-        QuantBSource<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, Prefetched>::accumulate(
+      QuantBSource<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FullTile, PREFETCHED>::accumulate(
         result,
         ops,
         params,
         tile
     );
-      });
   }
 
-  Reduce<Tile>::run(result, shared_results, tile);
-  Epilogue<Tile, AT, BT, DT>::store(result, ops, params, tile, shared_results);
+    Reduce<Tile, FullTile>::run(result, shared_results, tile);
+    Epilogue<Tile, AT, BT, DT, FullTile>::store(result, ops, params, tile, shared_results);
   });
 }

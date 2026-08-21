@@ -21,21 +21,16 @@ template <
 struct QuantSlice {
   using U = float;
 
-private:
+public:
   UZU_CONST uint VALUES_PER_LANE = GROUP_SIZE / Tile::GROUP_LANES;
+
+private:
   UZU_CONST uint CHUNK_VALUES = QuantChunk<BITS>::VALUES;
   UZU_CONST uint MAX_SLICE_VALUES = 32;
   UZU_CONST uint SLICE_VALUES = VALUES_PER_LANE > MAX_SLICE_VALUES ? MAX_SLICE_VALUES : VALUES_PER_LANE;
 
 public:
   UZU_CONST uint SLICES_PER_LANE = VALUES_PER_LANE / SLICE_VALUES;
-
-  struct Position {
-    uint group;
-    uint slice;
-
-    METAL_FUNC bool valid(uint groups) const thread { return group < groups; }
-  };
 
 private:
   UZU_CONST uint SLICE_BYTES = SLICE_VALUES * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
@@ -50,8 +45,12 @@ private:
   uint4 weights[Tile::ROWS_PER_LANE][SLICE_WORDS];
 
 public:
+  static METAL_FUNC uint row_stride(const thread GemvParams& params) {
+    return params.in_vec_size * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
+  }
+
   METAL_FUNC void load_weights(
-      const thread Position& position,
+      const thread QuantPosition& position,
       const device uint8_t* weights_base,
       const thread uint (&weight_row_indices)[Tile::ROWS_PER_LANE],
       uint row_stride,
@@ -81,7 +80,7 @@ public:
 
   METAL_FUNC void accumulate(
       thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
-      const thread Position& position,
+      const thread QuantPosition& position,
       const thread GemvOperands<AT, BT, DT>& ops,
       const thread GemvParams& params,
       const thread OutputTile<Tile, FULL_TILE>& tile,
@@ -96,7 +95,7 @@ public:
       float weight_values[Tile::ROWS_PER_LANE][CHUNK_VALUES];
       Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
         constexpr uint R = decltype(output_index)::value;
-        metadata.decode(weights[R], chunk, R, params.signed_codes, weight_values[R]);
+        metadata.decode(weights[R], chunk, R, weight_values[R]);
       });
       Tile::for_each_input_row([&](auto input_index) UZU_ALWAYS_INLINE {
         constexpr uint I = decltype(input_index)::value;
@@ -122,13 +121,7 @@ public:
         });
       });
     }
-    Tile::for_each_input_row([&](auto input_index) UZU_ALWAYS_INLINE {
-      constexpr uint I = decltype(input_index)::value;
-      Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
-        constexpr uint R = decltype(output_index)::value;
-        result[I][R] = metadata.finish(result[I][R], partial[I][R], input_sum[I], R);
-      });
-    });
+    metadata.fold(result, partial, input_sum);
   }
 
 private:

@@ -8,6 +8,13 @@
 namespace uzu {
 namespace gemm {
 
+struct QuantPosition {
+  uint group;
+  uint slice;
+
+  METAL_FUNC bool valid(uint groups) const thread { return group < groups; }
+};
+
 template <
     uint INPUT_ROW_TILE_,
     uint OUTPUT_ROW_TILE_,
