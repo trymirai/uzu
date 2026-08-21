@@ -1,4 +1,5 @@
 use crate::{
+    ClippingBounds,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
@@ -28,8 +29,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         context: &B::Context,
         data_type: DataType,
         activation: AnyActivation,
-        gate_clipping: Option<(Option<f32>, Option<f32>)>,
-        value_clipping: Option<(Option<f32>, Option<f32>)>,
+        gate_clipping: ClippingBounds,
+        value_clipping: ClippingBounds,
         hidden_dim: u32,
         input_preparation: Option<LinearInputPreparation<B>>,
     ) -> Result<Self, B::Error> {
@@ -38,8 +39,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         let activation_alpha = activation.alpha();
         let settings = GatedActMulSettings {
             activation_alpha: (activation_alpha != 1.0).then_some(activation_alpha),
-            gate_clipping: gate_clipping.unwrap_or_default(),
-            value_clipping: value_clipping.unwrap_or_default(),
+            gate_clipping,
+            value_clipping,
         };
         let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some(), settings)?;
         let quantized_kernel = a8_plan

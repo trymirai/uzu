@@ -5,6 +5,7 @@ use num_traits::Float;
 use proc_macros::uzu_test;
 
 use crate::{
+    ClippingBounds,
     array::ArrayElement,
     backends::{
         common::{
@@ -211,18 +212,9 @@ fn test_gated_act_mul_separate_bf16() {
     separate_test::<bf16>();
 }
 
-fn apply_clipping(
-    value: f32,
-    clipping: (Option<f32>, Option<f32>),
-) -> f32 {
-    let (min, max) = clipping;
-    let value = min.map_or(value, |min| value.max(min));
-    max.map_or(value, |max| value.min(max))
-}
-
 fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
-    gate_clipping: (Option<f32>, Option<f32>),
-    value_clipping: (Option<f32>, Option<f32>),
+    gate_clipping: ClippingBounds,
+    value_clipping: ClippingBounds,
 ) {
     const GATED_DIM: u32 = 4;
     const ACTIVATION_ALPHA: f32 = 0.5;
@@ -234,8 +226,8 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
         .into_iter()
         .zip(gates)
         .map(|(value, gate)| {
-            let value = T::from(apply_clipping(value, value_clipping)).unwrap();
-            let gate = apply_clipping(gate, gate_clipping);
+            let value = T::from(value_clipping.apply(value)).unwrap();
+            let gate = gate_clipping.apply(gate);
             let activated = T::from(gate / (1.0 + (-ACTIVATION_ALPHA * gate).exp())).unwrap();
             value * activated
         })
@@ -284,20 +276,40 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
 
 #[uzu_test]
 fn test_gated_act_mul_transforms_f32() {
-    transformed_interleaved_test::<f32>((Some(-1.0), Some(2.0)), (Some(-2.0), Some(3.0)));
+    transformed_interleaved_test::<f32>(ClippingBounds::bounded(-1.0, 2.0), ClippingBounds::bounded(-2.0, 3.0));
 }
 
 #[uzu_test]
 fn test_gated_act_mul_transforms_bf16() {
-    transformed_interleaved_test::<bf16>((Some(-1.0), Some(2.0)), (Some(-2.0), Some(3.0)));
+    transformed_interleaved_test::<bf16>(ClippingBounds::bounded(-1.0, 2.0), ClippingBounds::bounded(-2.0, 3.0));
 }
 
 #[uzu_test]
 fn test_gated_act_mul_one_sided_clipping_f32() {
-    transformed_interleaved_test::<f32>((Some(-1.0), None), (None, Some(3.0)));
+    transformed_interleaved_test::<f32>(ClippingBounds::lower_bounded(-1.0), ClippingBounds::upper_bounded(3.0));
 }
 
 #[uzu_test]
 fn test_gated_act_mul_one_sided_clipping_bf16() {
-    transformed_interleaved_test::<bf16>((Some(-1.0), None), (None, Some(3.0)));
+    transformed_interleaved_test::<bf16>(ClippingBounds::lower_bounded(-1.0), ClippingBounds::upper_bounded(3.0));
+}
+
+#[uzu_test]
+fn test_gated_act_mul_clipping_bounds_wire_format() {
+    let cases = [
+        ("null", ClippingBounds::default()),
+        ("[-1.0,2.0]", ClippingBounds::bounded(-1.0, 2.0)),
+        ("[-1.0,null]", ClippingBounds::lower_bounded(-1.0)),
+        ("[null,3.0]", ClippingBounds::upper_bounded(3.0)),
+    ];
+
+    for (json, expected) in cases {
+        let bounds = serde_json::from_str::<ClippingBounds>(json).expect("deserialize clipping bounds");
+        assert_eq!(bounds, expected);
+        assert_eq!(serde_json::to_string(&bounds).expect("serialize clipping bounds"), json);
+    }
+
+    let empty_pair = serde_json::from_str::<ClippingBounds>("[null,null]").expect("deserialize empty bounds");
+    assert_eq!(empty_pair, ClippingBounds::default());
+    assert_eq!(serde_json::to_string(&empty_pair).expect("serialize empty bounds"), "null");
 }

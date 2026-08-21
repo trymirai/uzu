@@ -2,6 +2,7 @@
 #![cfg_attr(test, test_runner(test_runner::uzu_harness))]
 
 mod array;
+mod clipping;
 mod config;
 mod encodable_block;
 mod parameters;
@@ -15,6 +16,7 @@ pub mod data_type;
 
 pub mod engine;
 
+pub use clipping::ClippingBounds;
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 
 #[cfg(test)]
