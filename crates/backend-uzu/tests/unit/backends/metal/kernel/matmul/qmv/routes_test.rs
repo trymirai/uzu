@@ -178,7 +178,6 @@ fn exact_lookup_rejects_non_matrix_inputs() {
         |p: &mut MatmulShape| p.n = 1,
         |p: &mut MatmulShape| p.b_bits = Some(8),
         |p: &mut MatmulShape| p.gathered = true,
-        |p: &mut MatmulShape| p.d_transform = GemmDTransform::RHT,
         |p: &mut MatmulShape| p.signed_codes = true,
     ] {
         let mut rejected = p;
@@ -186,6 +185,16 @@ fn exact_lookup_rejects_non_matrix_inputs() {
         assert!(route(profile, &rejected, true).is_none());
     }
     assert!(route(profile, &p, false).is_none());
+
+    let mut rht = p;
+    rht.d_transform = GemmDTransform::RHT;
+    let selected = route(profile, &rht, true).expect("RHT must preserve the exact route");
+    let QmvRoute::Tuned(tile) = selected else {
+        panic!("test anchor must use a tuned tile");
+    };
+    assert!(GemvSpecialization::select_tile(&rht, DataType::BF16, DataType::BF16, DataType::BF16, tile).is_some());
+    rht.n -= 1;
+    assert!(GemvSpecialization::select_tile(&rht, DataType::BF16, DataType::BF16, DataType::BF16, tile).is_none());
 
     let m5_without_mxu = DeviceProfile::new(DeviceIdentity::M5Max, GpuFamily::M5Plus, DeviceSize::Large, false);
     let p = problem(7, 6144, 5120, 8, 64, GemmBPrologueKind::ScaleSymmetricDequant);

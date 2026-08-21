@@ -383,7 +383,6 @@ pub fn route(
         || !shape.b_transpose
         || shape.b_leading_dimension.is_some()
         || shape.gathered
-        || !shape.d_transform.is_empty()
     {
         return None;
     }

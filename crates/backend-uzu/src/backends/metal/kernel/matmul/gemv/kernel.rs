@@ -128,10 +128,6 @@ impl GemvSpecialization {
             256
         };
         let input_aligned = shape.k.is_multiple_of(block_size);
-        let has_rht = shape.d_transform.contains(GemmDTransform::RHT);
-        if has_rht && tile.output_row_tile() < HADAMARD_TRANSFORM_BLOCK_SIZE as u32 {
-            return None;
-        }
         // Gathered quantized rows cannot share one input tile.
         if is_quant && shape.gathered && tile.input_row_tile > 1 {
             return None;
