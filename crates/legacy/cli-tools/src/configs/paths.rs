@@ -17,6 +17,8 @@ impl Paths {
             .context(error_message)?
             .parent()
             .context(error_message)?
+            .parent()
+            .context(error_message)?
             .to_path_buf();
         Ok(Self {
             root_path,
@@ -37,7 +39,7 @@ impl Paths {
     }
 
     pub fn platforms_toml(&self) -> PathBuf {
-        self.root_path.join("platforms.toml")
+        self.root_path.join(".config").join("platforms.toml")
     }
 
     pub fn readme_template_path(&self) -> PathBuf {
@@ -71,7 +73,7 @@ impl Paths {
         &self,
         name: &str,
     ) -> PathBuf {
-        self.crates_path().join(name)
+        self.crates_path().join("legacy").join(name)
     }
 
     pub fn crate_manifest_path(

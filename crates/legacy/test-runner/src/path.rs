@@ -12,6 +12,7 @@ pub fn get_test_model_path() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
+        .join("..")
         .join("workspace")
         .join("models")
         .join(get_version())

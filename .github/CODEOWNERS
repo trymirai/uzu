@@ -1,0 +1,22 @@
+/.github @uuuvn
+/apps/playground @alexxale
+/crates/legacy/backend-remote @alexxale
+/crates/backend-uzu/build @uuuvn
+/crates/backend-uzu/src/backends/cpu @uuuvn
+/crates/backend-uzu/src/backends/metal @eugenebokhan @uuuvn @CC-Yeh
+/crates/backend-uzu/src/config @uuuvn
+/crates/backend-uzu/src/parameters @uuuvn
+/crates/backend-uzu/src/speculators @uuuvn
+/crates/legacy/bindings @alexxale
+/crates/legacy/cli @alexxale
+/crates/legacy/cli/src/storage @eugenebokhan
+/crates/legacy/download-manager @uuuvn @eugenebokhan
+/crates/legacy/hanashi @alexxale
+/crates/legacy/json-transform @alexxale
+/crates/legacy/nagare @alexxale
+/crates/legacy/shoji @alexxale
+/crates/legacy/token-stream-parser @alexxale
+/crates/legacy/uzu @alexxale
+/scripts @uuuvn
+/tools @alexxale
+/workspace @alexxale

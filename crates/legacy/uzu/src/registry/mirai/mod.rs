@@ -84,6 +84,7 @@ impl Registry {
                 device: self.config.device.clone(),
                 backends: self.config.backends.clone(),
                 include_traces: self.config.include_traces,
+                show_all: std::env::var("UZU_REGISTRY_SHOW_ALL").is_ok(),
             })
             .await?;
         response.models().ok_or_else(|| ApiError::Decode("response contained no models".to_string()))

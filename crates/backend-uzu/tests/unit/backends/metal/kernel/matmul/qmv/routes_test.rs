@@ -125,7 +125,8 @@ fn table_is_complete_and_fingerprint_is_stable() {
                         assert_eq!(specialization.tile(), tile);
                         assert!(matches!(runtime, MatmulDispatch::Gemv(actual) if actual == specialization));
                     } else if let QmvRoute::MainGemm(plan) = selected {
-                        let problem = GemmProblem::new(problem, DataType::BF16, DataType::BF16, profile.supports_mxu());
+                        let problem =
+                            GemmProblem::new(problem, DataType::BF16, DataType::BF16, profile.supports_mxu(), profile);
                         assert!(problem.plan_is_legal(plan), "stored GEMM plan must be legal");
                         assert!(matches!(runtime, MatmulDispatch::Gemm(actual) if actual == plan));
                     }

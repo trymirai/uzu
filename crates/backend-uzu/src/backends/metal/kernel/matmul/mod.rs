@@ -88,7 +88,7 @@ impl MatmulMetalKernel {
         }
         let gemv =
             GemvSpecialization::select_shape(shape, weights_data_type, input_data_type, output_data_type, profile);
-        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu);
+        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, profile);
         let plan = problem.select_plan();
         match gemv {
             None => MatmulDispatch::Gemm(plan),
