@@ -39,7 +39,7 @@ impl Paths {
     }
 
     pub fn platforms_toml(&self) -> PathBuf {
-        self.root_path.join("platforms.toml")
+        self.root_path.join(".config").join("platforms.toml")
     }
 
     pub fn readme_template_path(&self) -> PathBuf {
