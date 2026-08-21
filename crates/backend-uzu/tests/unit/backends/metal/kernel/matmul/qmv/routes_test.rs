@@ -171,14 +171,13 @@ fn device_profile(identity: DeviceIdentity) -> DeviceProfile {
 #[uzu_test]
 fn exact_lookup_rejects_non_matrix_inputs() {
     let profile = device_profile(DeviceIdentity::M1);
-    let p = problem(2, 5120, 17408, 4, 32, GemmBPrologueKind::ScaleZeroPointDequant);
+    let p = problem(2, 5120, 17408, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
     assert!(route(profile, &p, true).is_some());
     for mutate in [
         |p: &mut MatmulShape| p.m = 1,
         |p: &mut MatmulShape| p.n = 1,
         |p: &mut MatmulShape| p.b_bits = Some(8),
         |p: &mut MatmulShape| p.gathered = true,
-        |p: &mut MatmulShape| p.signed_codes = true,
     ] {
         let mut rejected = p;
         mutate(&mut rejected);
@@ -188,6 +187,7 @@ fn exact_lookup_rejects_non_matrix_inputs() {
 
     let mut rht = p;
     rht.d_transform = GemmDTransform::RHT;
+    rht.signed_codes = true;
     let selected = route(profile, &rht, true).expect("RHT must preserve the exact route");
     let QmvRoute::Tuned(tile) = selected else {
         panic!("test anchor must use a tuned tile");

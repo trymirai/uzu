@@ -378,7 +378,6 @@ pub fn route(
     if !all_bf16
         || shape.m < 2
         || shape.m > 7
-        || shape.signed_codes
         || !shape.a_full_precision
         || !shape.b_transpose
         || shape.b_leading_dimension.is_some()
