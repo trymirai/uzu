@@ -12,7 +12,10 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        gpu_types::ActivationType,
+        gpu_types::{
+            ActivationType,
+            router_topk::{ROUTER_TOPK_MAX_EXPERTS, ROUTER_TOPK_MAX_MODEL_DIM, ROUTER_TOPK_MAX_SELECTED_EXPERTS},
+        },
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
@@ -61,11 +64,11 @@ pub enum MoeBlockError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
-    #[error("MoE requires model_dim % 4 == 0")]
+    #[error("MoE model_dim must be nonzero, divisible by 4, and within the fused router capacity")]
     InvalidModelDim,
-    #[error("MoE num_routed_experts must be <= 512")]
+    #[error("MoE num_routed_experts must be nonzero and within the fused router capacity")]
     InvalidRoutedExpertCount,
-    #[error("MoE num_active_routed_experts must be > 0 and <= 128")]
+    #[error("MoE num_active_routed_experts must be nonzero, within TopK capacity, and <= num_routed_experts")]
     InvalidActiveExpertCount,
     #[error("MoE shared experts are not supported")]
     UnsupportedSharedExperts,
@@ -79,6 +82,24 @@ pub enum MoeBlockError<B: Backend> {
     UnsupportedExpertActivation(ActivationType),
 }
 
+pub(crate) fn valid_model_dim(model_dim: u32) -> bool {
+    model_dim > 0 && model_dim <= ROUTER_TOPK_MAX_MODEL_DIM && model_dim.is_multiple_of(4)
+}
+
+pub(crate) fn validate_expert_counts<B: Backend>(
+    routed_experts: u32,
+    active_experts: u32,
+) -> Result<(), MoeBlockError<B>> {
+    if !(1..=ROUTER_TOPK_MAX_EXPERTS).contains(&routed_experts) {
+        return Err(MoeBlockError::InvalidRoutedExpertCount);
+    }
+    if !(1..=ROUTER_TOPK_MAX_SELECTED_EXPERTS.min(routed_experts)).contains(&active_experts) {
+        return Err(MoeBlockError::InvalidActiveExpertCount);
+    }
+
+    Ok(())
+}
+
 impl<B: Backend> MoeBlock<B> {
     pub fn new(
         context: &B::Context,
@@ -87,15 +108,10 @@ impl<B: Backend> MoeBlock<B> {
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, MoeBlockError<B>> {
-        if !model_dim.is_multiple_of(4) {
+        if !valid_model_dim(model_dim) {
             return Err(MoeBlockError::InvalidModelDim);
         }
-        if moe_config.num_active_routed_experts == 0 || moe_config.num_active_routed_experts > 128 {
-            return Err(MoeBlockError::InvalidActiveExpertCount);
-        }
-        if moe_config.num_routed_experts > 512 {
-            return Err(MoeBlockError::InvalidRoutedExpertCount);
-        }
+        validate_expert_counts::<B>(moe_config.num_routed_experts, moe_config.num_active_routed_experts)?;
         if moe_config.num_shared_experts != 0 {
             return Err(MoeBlockError::UnsupportedSharedExperts);
         }

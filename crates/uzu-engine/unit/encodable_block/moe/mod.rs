@@ -5,6 +5,7 @@ use super::{
 };
 
 mod moe_block_e2e_test;
+mod moe_block_validation_test;
 mod moe_experts_perf_test;
 mod moe_experts_test;
 mod moe_perf_test;
