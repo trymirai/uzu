@@ -25,8 +25,7 @@ template <
     uint OUTPUT_ROW_TILE,
     uint REDUCTION_LANES,
     uint GROUP_LANES,
-    uint NUM_SIMDGROUPS,
-    bool PREFETCHED>
+    uint NUM_SIMDGROUPS>
 VARIANTS(AT, bfloat, float)
 VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
@@ -41,25 +40,75 @@ VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
-VARIANTS(INPUT_ROW_TILE, 1)
+VARIANTS(INPUT_ROW_TILE, 1, 2, 3, 4, 5, 6, 7, 8)
 VARIANTS(OUTPUT_ROW_TILE, 1, 2, 4, 8, 16, 32, 64)
-// Production uses one 32-lane reduction schedule.
-VARIANTS(REDUCTION_LANES, 32)
+VARIANTS(REDUCTION_LANES, 8, 16, 32)
 VARIANTS(GROUP_LANES, 1, 2, 4, 8, 16)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
-VARIANTS(PREFETCHED, false)
-CONSTRAINT(!PREFETCHED)
 
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(BITS == 0 || K_SPLIT == 1)
-CONSTRAINT(BITS != 0 || !PREFETCHED)
 CONSTRAINT(BITS != 0 || (INPUT_ROW_TILE == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && GROUP_LANES == 1))
+CONSTRAINT(INPUT_ROW_TILE != 1 || REDUCTION_LANES == 32)
+CONSTRAINT(INPUT_ROW_TILE == 1 || (K_SPLIT == 1 && INPUT_ALIGNED && AT == "bfloat" && DT == "bfloat" && GROUP_LANES == 1 && ((OUTPUT_ROW_TILE == 16 && ((REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 2) || (REDUCTION_LANES == 16 && NUM_SIMDGROUPS == 4))) || (OUTPUT_ROW_TILE == 8 && REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 2))))
+CONSTRAINT(
+    INPUT_ROW_TILE == 1 ||
+    (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8 &&
+     (GROUP_SIZE == 32 || GROUP_SIZE == 64)) ||
+    (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant && BITS == 4 &&
+     (GROUP_SIZE == 32 || GROUP_SIZE == 64)))
+CONSTRAINT(INPUT_ROW_TILE == 1 || B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS != 8 || GROUP_SIZE != 32 ||
+ ((INPUT_ROW_TILE == 2 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 3 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 3 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 4 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 4 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 5 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 5 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 6 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 6 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 7 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2)))
+CONSTRAINT(INPUT_ROW_TILE == 1 || B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS != 8 || GROUP_SIZE != 64 ||
+ ((INPUT_ROW_TILE == 2 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 3 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 4 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 5 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 6 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 7 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2)))
+CONSTRAINT(INPUT_ROW_TILE == 1 || B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS != 4 || GROUP_SIZE != 32 ||
+ ((INPUT_ROW_TILE == 2 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 2 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 3 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 3 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 4 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 4 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 4 && OUTPUT_ROW_TILE == 8 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 5 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 5 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 6 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 6 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 7 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 8 && OUTPUT_ROW_TILE == 8 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2)))
+CONSTRAINT(INPUT_ROW_TILE == 1 || B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS != 4 || GROUP_SIZE != 64 ||
+ ((INPUT_ROW_TILE == 2 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 2 && OUTPUT_ROW_TILE == 8 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 3 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 3 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 4 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 4 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 5 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 5 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 6 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 16 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 4) ||
+  (INPUT_ROW_TILE == 6 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2) ||
+  (INPUT_ROW_TILE == 7 && OUTPUT_ROW_TILE == 16 && REDUCTION_LANES == 8 && GROUP_LANES == 1 && NUM_SIMDGROUPS == 2)))
 // Keep only selector-reachable geometry families.
 CONSTRAINT(
     BITS == 0 ||
-    (NUM_SIMDGROUPS == 2 && (OUTPUT_ROW_TILE == 2 || OUTPUT_ROW_TILE == 4 || OUTPUT_ROW_TILE == 8)) ||
+    (NUM_SIMDGROUPS == 2 &&
+     (OUTPUT_ROW_TILE == 2 || OUTPUT_ROW_TILE == 4 || OUTPUT_ROW_TILE == 8 ||
+      (INPUT_ROW_TILE > 1 && OUTPUT_ROW_TILE == 16))) ||
     (NUM_SIMDGROUPS == 4 && (OUTPUT_ROW_TILE == 8 || OUTPUT_ROW_TILE == 16 || OUTPUT_ROW_TILE == 32)) ||
     (NUM_SIMDGROUPS == 8 &&
      (OUTPUT_ROW_TILE == 16 || OUTPUT_ROW_TILE == 32 ||
@@ -67,7 +116,7 @@ CONSTRAINT(
 CONSTRAINT(
     BITS == 0 || (AT == "bfloat" && DT == "bfloat") ||
     (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32))
-CONSTRAINT(BITS != 8 || (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32))
+CONSTRAINT(BITS != 8 || (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32) || INPUT_ROW_TILE > 1)
 CONSTRAINT(INPUT_ALIGNED || K_SPLIT == 1)
 CONSTRAINT(K_SPLIT <= NUM_SIMDGROUPS && NUM_SIMDGROUPS % K_SPLIT == 0)
 CONSTRAINT(OUTPUT_ROW_TILE % (NUM_SIMDGROUPS / K_SPLIT) == 0)
@@ -84,15 +133,12 @@ CONSTRAINT(BITS != 4 || (GROUP_SIZE / GROUP_LANES) % 16 == 0)
 CONSTRAINT(BITS != 8 || (GROUP_SIZE / GROUP_LANES) % 8 == 0)
 CONSTRAINT(BITS != 0 || REDUCTION_LANES == 32)
 CONSTRAINT(
-    BITS == 0 || (BITS == 4 &&
+    BITS == 0 || INPUT_ROW_TILE > 1 || (BITS == 4 &&
      ((GROUP_SIZE == 16 && GROUP_LANES == 1) || (GROUP_SIZE == 32 && GROUP_LANES == 2) ||
       (GROUP_SIZE == 64 && GROUP_LANES == 4) || (GROUP_SIZE == 128 && GROUP_LANES == 8))) ||
     (BITS == 8 &&
      ((GROUP_SIZE == 16 && GROUP_LANES == 2) || (GROUP_SIZE == 32 && GROUP_LANES == 4) ||
       (GROUP_SIZE == 64 && GROUP_LANES == 8) || (GROUP_SIZE == 128 && GROUP_LANES == 16))))
-// Tail-free variants require exact tile divisibility.
-CONSTRAINT(BITS != 0 || OUTPUT_ROW_TILE != 1 || FULL_TILE)
-CONSTRAINT(BITS == 0 || OUTPUT_ROW_TILE != 64 || FULL_TILE)
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales
@@ -134,18 +180,18 @@ KERNEL(Gemv)(
     using Tile = GemvTile<INPUT_ROW_TILE, OUTPUT_ROW_TILE, REDUCTION_LANES, GROUP_LANES, NUM_SIMDGROUPS, K_SPLIT>;
     const OutputTile<Tile, FullTile> tile =
         OutputTile<Tile, FullTile>::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, out_vec_size);
-  thread float result[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
+    thread float result[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
 
-  if constexpr (BITS == 0) {
+    if constexpr (BITS == 0) {
       FullPrecisionBSource<Tile, AT, BT, DT, INPUT_ALIGNED, FullTile>::accumulate(result, ops, params, tile);
-  } else {
-      QuantBSource<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FullTile, PREFETCHED>::accumulate(
-        result,
-        ops,
-        params,
-        tile
-    );
-  }
+    } else {
+      QuantBSource<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FullTile>::accumulate(
+          result,
+          ops,
+          params,
+          tile
+      );
+    }
 
     Reduce<Tile, FullTile>::run(result, shared_results, tile);
     Epilogue<Tile, AT, BT, DT, FullTile>::store(result, ops, params, tile, shared_results);

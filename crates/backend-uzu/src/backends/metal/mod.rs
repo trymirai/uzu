@@ -20,6 +20,4 @@ const _: () = {
 pub use backend::Metal;
 pub use context::MetalContext;
 #[cfg(test)]
-pub use device_profile::{DeviceGeneration, DeviceProfile, DeviceSize};
-#[cfg(test)]
 pub use kernel::matmul::gemm::GemmEngine;

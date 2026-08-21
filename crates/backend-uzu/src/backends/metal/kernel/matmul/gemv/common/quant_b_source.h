@@ -16,15 +16,12 @@ template <
     uint GROUP_SIZE,
     uint BITS,
     bool INPUT_ALIGNED,
-    bool FULL_TILE,
-    bool PREFETCHED>
+    bool FULL_TILE>
 struct QuantBSource {
   using U = float;
   using Slice = QuantSlice<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FULL_TILE>;
   using Metadata = QuantMetadata<Tile, AT, BT, DT, B_PROLOGUE, BITS>;
 
-private:
-public:
   static METAL_FUNC void accumulate(
       thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
       const thread GemvOperands<AT, BT, DT>& ops,
@@ -47,46 +44,16 @@ public:
     const uint batch_remaining = params.batch_size - tile.input_row;
     uint group = group_slot;
 
-    if constexpr (!PREFETCHED) {
-      Slice current;
-      QuantPosition position = {group, 0};
-      while (position.valid(groups)) {
-        Metadata metadata;
-        metadata.load(position.group, groups, weight_row_indices, ops, params);
-        for (position.slice = 0; position.slice < Slice::SLICES_PER_LANE; position.slice++) {
-          current.load_weights(position, weights, weight_row_indices, row_stride, group_offset);
-          current.accumulate(result, position, ops, params, tile, group_offset, batch_remaining, metadata);
-        }
-        position.group += Tile::GROUPS_PER_STEP;
-      }
-      return;
-    }
-
-    if (group >= groups) {
-      return;
-    }
-    Slice current, next;
-    Metadata metadata;
+    Slice current;
     QuantPosition position = {group, 0};
-    current.load_weights(position, weights, weight_row_indices, row_stride, group_offset);
     while (position.valid(groups)) {
-      QuantPosition ahead = {position.group, position.slice + 1};
-      if (ahead.slice == Slice::SLICES_PER_LANE) {
-        ahead.slice = 0;
-        ahead.group += Tile::GROUPS_PER_STEP;
+      Metadata metadata;
+      metadata.load(position.group, groups, weight_row_indices, ops, params);
+      for (position.slice = 0; position.slice < Slice::SLICES_PER_LANE; position.slice++) {
+        current.load_weights(position, weights, weight_row_indices, row_stride, group_offset);
+        current.accumulate(result, position, ops, params, tile, group_offset, batch_remaining, metadata);
       }
-      if (ahead.valid(groups)) {
-        next.load_weights(ahead, weights, weight_row_indices, row_stride, group_offset);
-      }
-      // One metadata load per group at slice 0; a second live set costs ~20 regs.
-      if (Slice::SLICES_PER_LANE == 1 || position.slice == 0) {
-        metadata.load(position.group, groups, weight_row_indices, ops, params);
-      }
-      current.accumulate(result, position, ops, params, tile, group_offset, batch_remaining, metadata);
-      if (ahead.valid(groups)) {
-        current = next;
-      }
-      position = ahead;
+      position.group += Tile::GROUPS_PER_STEP;
     }
   }
 };

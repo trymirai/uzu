@@ -1,10 +1,12 @@
 pub mod gemm;
 mod gemv;
+mod qmv;
 
 pub use self::gemm::GemmKernel;
 use self::{
     gemm::{GemmPlan, GemmProblem},
     gemv::{GemvKernel, GemvSpecialization},
+    qmv::QmvRoute,
 };
 use crate::{
     backends::{
@@ -64,35 +66,54 @@ impl MatmulMetalKernel {
         matches!(plan.tiling, GemmTiling::Tile16x32x256_Simdgroups1x1 | GemmTiling::Tile16x128x256_Simdgroups1x4)
     }
 
-    fn select_dispatch(
-        &self,
+    fn choose_dispatch(
         shape: &MatmulShape,
-        context: &MetalContext,
+        profile: crate::backends::metal::device_profile::DeviceProfile,
+        supports_mxu: bool,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> MatmulDispatch {
-        let gemv = GemvSpecialization::select_shape(
-            shape,
-            self.weights_data_type,
-            self.input_data_type,
-            self.output_data_type,
-            context.device_profile(),
-        );
-        let problem = GemmProblem::new(*shape, self.weights_data_type, self.output_data_type, context.supports_mxu());
+        let all_bf16 = weights_data_type == DataType::BF16
+            && input_data_type == DataType::BF16
+            && output_data_type == DataType::BF16;
+        if let Some(route) = qmv::route(profile, shape, all_bf16) {
+            return match route {
+                QmvRoute::Tuned(tile) | QmvRoute::MainGemv(tile) => MatmulDispatch::Gemv(
+                    GemvSpecialization::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile)
+                        .expect("typed QMV route must contain a legal GEMV tile"),
+                ),
+                QmvRoute::MainGemm(plan) => MatmulDispatch::Gemm(plan),
+            };
+        }
+        let gemv =
+            GemvSpecialization::select_shape(shape, weights_data_type, input_data_type, output_data_type, profile);
+        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu);
         let plan = problem.select_plan();
         match gemv {
             None => MatmulDispatch::Gemm(plan),
             Some(_)
-                if Self::prefer_gemm_over_gemv(
-                    *shape,
-                    plan,
-                    self.weights_data_type,
-                    self.input_data_type,
-                    self.output_data_type,
-                ) =>
+                if Self::prefer_gemm_over_gemv(*shape, plan, weights_data_type, input_data_type, output_data_type) =>
             {
                 MatmulDispatch::Gemm(plan)
             },
             Some(gemv) => MatmulDispatch::Gemv(gemv),
         }
+    }
+
+    fn select_dispatch(
+        &self,
+        shape: &MatmulShape,
+        context: &MetalContext,
+    ) -> MatmulDispatch {
+        Self::choose_dispatch(
+            shape,
+            context.device_profile(),
+            context.supports_mxu(),
+            self.weights_data_type,
+            self.input_data_type,
+            self.output_data_type,
+        )
     }
 }
 

@@ -50,10 +50,10 @@ pub struct MetalContext {
 
 impl MetalContext {
     pub fn supports_mxu(&self) -> bool {
-        self.device.supports_mxu()
+        self.device_profile.supports_mxu()
     }
 
-    pub fn device_profile(&self) -> DeviceProfile {
+    pub(super) fn device_profile(&self) -> DeviceProfile {
         self.device_profile
     }
 
@@ -156,6 +156,7 @@ impl Context for MetalContext {
 
         let gpu_core_count = device.gpu_core_count();
         let device_profile = classify_device(
+            &device.name(),
             gpu_core_count,
             device.supports_family(metal::MTLGPUFamily::Apple8),
             device.supports_family(metal::MTLGPUFamily::Apple9),
