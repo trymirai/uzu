@@ -1,9 +1,8 @@
 # Kernel Benchmarks
 
 Criterion-based microbenchmarks for Metal kernels. Runs on macOS (native)
-and on iPhone (via `cargo-dinghy`). Results from both are consolidated
-under a single `target/criterion/<label>/` tree so you can compare
-baselines side by side.
+and on iPhone (via `cargo-dinghy`). Results from both are consolidated under a single `target/criterion/<label>/` tree
+so you can compare baselines side by side.
 
 ## Prerequisites
 
@@ -24,9 +23,8 @@ baselines side by side.
 
 ## Available benchmark groups
 
-Benchmarks live inside the `backend-uzu` library test target (registered
-with `#[uzu_bench]` under `crates/backend-uzu/tests/unit/`), so the Cargo
-target is `--lib`.
+Benchmarks live inside the `backend-uzu` library test target (registered with `#[uzu_bench]` under
+`crates/backend-uzu/unit/`), so the Cargo target is `--lib`.
 
 | Group id                                | Filter                              |
 |-----------------------------------------|-------------------------------------|
@@ -41,20 +39,17 @@ target is `--lib`.
 | `ChatSession run`                       | `ChatSession run`                   |
 | `Forward pass`                          | `Forward pass`                      |
 
-The prefix `Metal/Kernel/Matmul` runs both `GEMM` and `GEMM_MXU` in one pass.
-The session and language-model groups require the test model path configured by
-the test helpers.
+The prefix `Metal/Kernel/Matmul` runs both `GEMM` and `GEMM_MXU` in one pass. The session and language-model groups
+require the test model path configured by the test helpers.
 
 ## Output layout
 
-Every run writes into `target/criterion/<label>/…`, where `<label>` is a
-free-form name you choose (e.g. `m2_max`, `a19`). The Criterion baseline
-you saved lives at `target/criterion/<label>/<benchmark-path>/<baseline-name>/`.
+Every run writes into `target/criterion/<label>/…`, where `<label>` is a free-form name you choose (e.g. `m2_max`,
+`a19`). The Criterion baseline you saved lives at `target/criterion/<label>/<benchmark-path>/<baseline-name>/`.
 
 ## Running on macOS
 
-From the repo root. Use an **absolute** `CRITERION_HOME` so it doesn't
-resolve relative to the package dir:
+From the repo root. Use an **absolute** `CRITERION_HOME` so it doesn't resolve relative to the package dir:
 
 ```bash
 CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
@@ -63,34 +58,29 @@ CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
   --save-baseline matmul_baseline_m2_max
 ```
 
-Set `UZU_CAPTURE_BENCH=1` to capture the first matching benchmark command
-buffer as a Metal `.gputrace`. `UZU_CAPTURE_BENCH_FILTER` is an optional
-benchmark path substring; `UZU_CAPTURE_BENCH_DIR` defaults to the current
+Set `UZU_CAPTURE_BENCH=1` to capture the first matching benchmark command buffer as a Metal `.gputrace`.
+`UZU_CAPTURE_BENCH_FILTER` is an optional benchmark path substring; `UZU_CAPTURE_BENCH_DIR` defaults to the current
 directory.
 
 ## Running on iPhone (via `cargo-dinghy`)
 
-Run one benchmark group at a time to avoid the iOS watchdog killing the
-app.
+Run one benchmark group at a time to avoid the iOS watchdog killing the app.
 
 Set `IPHONEOS_DEPLOYMENT_TARGET` (value from `.config/platforms.toml` `[envs]`)
-for all iOS builds; without it the link step fails with undefined
-symbols (e.g. `___chkstk_darwin`) because objects are built for a newer
-SDK than the default deployment target.
+for all iOS builds; without it the link step fails with undefined symbols (e.g. `___chkstk_darwin`) because objects are
+built for a newer SDK than the default deployment target.
 
 Key flags:
 
-- `-e CRITERION_HOME=criterion/a19` — on-device env var. Path is
-  relative to the app's cwd (`Documents/`), so this becomes
+- `-e CRITERION_HOME=criterion/a19` — on-device env var. Path is relative to the app's cwd (`Documents/`), so this
+  becomes
   `Documents/criterion/a19/` on device. Keep it directly under
-  `Documents/` — nested parents (e.g. `Documents/target/`) do not exist
-  on a fresh install and the pre-run sync cannot create them.
-- `--sync-dirs "$(pwd)/target/criterion=Documents/criterion"` —
-  syncs the criterion tree between host and device before and after the
-  run, so results written on device land back in the repo's
-  `target/criterion/`. `$(pwd)` is required (absolute path) because the
-  cargo runner is launched with cwd set to the package dir, not the
-  workspace root.
+  `Documents/` — nested parents (e.g. `Documents/target/`) do not exist on a fresh install and the pre-run sync cannot
+  create them.
+- `--sync-dirs "$(pwd)/target/criterion=Documents/criterion"` — syncs the criterion tree between host and device before
+  and after the run, so results written on device land back in the repo's
+  `target/criterion/`. `$(pwd)` is required (absolute path) because the cargo runner is launched with cwd set to the
+  package dir, not the workspace root.
 
 ```bash
 DEVICE=<DEVICE_ID>
@@ -125,6 +115,5 @@ open target/criterion/a19/report/index.html
 
 ## Cold GEMV
 
-GEMV-class benches cycle through enough quant-buffer copies to cover a 256 MiB
-weight working set before reusing one. This avoids ranking kernels on
-cache-warm weights; pools allocate lazily, so criterion filters skip their cost.
+GEMV-class benches cycle through enough quant-buffer copies to cover a 256 MiB weight working set before reusing one.
+This avoids ranking kernels on cache-warm weights; pools allocate lazily, so criterion filters skip their cost.

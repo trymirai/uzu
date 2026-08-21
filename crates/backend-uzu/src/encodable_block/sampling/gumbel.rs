@@ -81,5 +81,5 @@ pub fn revidx(
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/encodable_block/sampling/gumbel_test.rs"]
+#[path = "../../../unit/encodable_block/sampling/gumbel_test.rs"]
 mod tests;
