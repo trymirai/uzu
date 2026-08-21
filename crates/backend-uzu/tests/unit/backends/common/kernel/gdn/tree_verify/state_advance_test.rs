@@ -2,12 +2,12 @@
 use std::time::Duration;
 
 #[cfg(backend = "metal")]
+use backend_uzu_macros::uzu_bench;
+use backend_uzu_macros::uzu_test;
+#[cfg(backend = "metal")]
 use criterion::Criterion;
 use half::bf16;
 use num_traits::Float;
-#[cfg(backend = "metal")]
-use proc_macros::uzu_bench;
-use proc_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,

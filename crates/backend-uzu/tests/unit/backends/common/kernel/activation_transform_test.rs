@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
+use backend_uzu_macros::uzu_test;
 use half::bf16;
 use num_traits::Float;
-use proc_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,
@@ -104,7 +104,7 @@ fn input_and_output_rht_bf16() {
 }
 
 mod quantize {
-    use proc_macros::uzu_test;
+    use backend_uzu_macros::uzu_test;
     use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
     use super::BLOCK_SIZE;

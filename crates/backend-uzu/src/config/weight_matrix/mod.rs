@@ -1,4 +1,4 @@
-use proc_macros::{uzu_config, uzu_config_abstract};
+use backend_uzu_macros::{uzu_config, uzu_config_abstract};
 
 pub mod full_precision_spec;
 pub mod hybrid_spec;

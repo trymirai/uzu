@@ -1,6 +1,6 @@
+use backend_uzu_macros::kernel;
 use half::{bf16, f16};
 use num_traits::{Float, ToPrimitive};
-use proc_macros::kernel;
 
 use crate::array::ArrayElement;
 

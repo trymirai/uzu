@@ -1,6 +1,6 @@
+use backend_uzu_macros::kernel;
 use half::bf16;
 use num_traits::{Float, NumCast};
-use proc_macros::kernel;
 
 use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8};
 use crate::{

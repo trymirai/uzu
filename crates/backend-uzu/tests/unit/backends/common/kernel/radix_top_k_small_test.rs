@@ -1,7 +1,7 @@
 #[cfg(backend = "metal")]
 use std::time::Instant;
 
-use proc_macros::uzu_test;
+use backend_uzu_macros::uzu_test;
 
 #[cfg(backend = "metal")]
 use crate::backends::metal::Metal;

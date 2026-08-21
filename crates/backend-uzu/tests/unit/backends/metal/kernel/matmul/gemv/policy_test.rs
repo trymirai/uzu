@@ -1,4 +1,4 @@
-use proc_macros::uzu_test;
+use backend_uzu_macros::uzu_test;
 
 use super::*;
 use crate::backends::metal::device_profile::DeviceGeneration;

@@ -1,4 +1,4 @@
-use proc_macros::uzu_test;
+use backend_uzu_macros::uzu_test;
 
 use crate::tests::cold_pool::copy_count;
 

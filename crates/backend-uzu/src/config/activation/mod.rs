@@ -1,4 +1,4 @@
-use proc_macros::uzu_config_abstract;
+use backend_uzu_macros::uzu_config_abstract;
 
 use crate::backends::common::gpu_types::ActivationType;
 

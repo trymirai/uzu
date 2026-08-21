@@ -1,4 +1,4 @@
-use proc_macros::uzu_config;
+use backend_uzu_macros::uzu_config;
 
 use crate::config::{
     linear::LinearConfig, normalization::NormalizationConfig, token_mixer::convolutions::SeparableCausalConvConfig,

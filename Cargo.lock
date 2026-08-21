@@ -468,6 +468,7 @@ version = "0.5.19"
 dependencies = [
  "anyhow",
  "async-trait",
+ "backend-uzu-macros",
  "bindgen",
  "bitflags 2.13.0",
  "blake3",
@@ -491,7 +492,6 @@ dependencies = [
  "parking_lot",
  "prettyplease",
  "proc-macro2",
- "proc-macros",
  "proptest",
  "quote",
  "rand 0.10.2",
@@ -516,6 +516,14 @@ dependencies = [
  "xgrammar-rs",
  "xxhash-rust",
  "zstd",
+]
+
+[[package]]
+name = "backend-uzu-macros"
+version = "0.5.19"
+dependencies = [
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]

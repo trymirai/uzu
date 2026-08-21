@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/backend-uzu",
+    "crates/backend-uzu-macros",
     # --- to be rewritten
     "crates/legacy/proc-macros",
     "crates/legacy/bindings-types",
@@ -51,6 +52,7 @@ bindings-types = { path = "crates/legacy/bindings-types", default-features = fal
 bindings = { path = "crates/legacy/bindings", default-features = false }
 shoji = { path = "crates/legacy/shoji", default-features = false }
 backend-uzu = { path = "crates/backend-uzu", default-features = false }
+backend-uzu-macros = { path = "crates/backend-uzu-macros", default-features = false }
 backend-remote = { path = "crates/legacy/backend-remote", default-features = false }
 json-transform = { path = "crates/legacy/json-transform", default-features = false }
 token-stream-parser = { path = "crates/legacy/token-stream-parser", default-features = false }

@@ -1,6 +1,6 @@
+use backend_uzu_macros::uzu_test;
 use half::bf16;
 use num_traits::cast;
-use proc_macros::uzu_test;
 
 use super::*;
 use crate::{
