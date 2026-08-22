@@ -29,6 +29,8 @@ metal = [
 
 grammar = ["dep:xgrammar", "dep:schemars"]
 
+mlx-compare = ["dep:mlx-rs", "dep:mlx-sys"]
+
 [build-dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -83,6 +85,10 @@ obfstr = { workspace = true, optional = true }
 zstd = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+mlx-rs = { workspace = true, optional = true }
+mlx-sys = { workspace = true, optional = true }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 xgrammar = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
@@ -98,5 +104,6 @@ ndarray.workspace = true
 rstest.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+comfy-table = { workspace = true, features = ["tty"] }
 criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }
