@@ -348,6 +348,9 @@ fn build_hugging_face_download(
 
     for file in resolved.files {
         let relative_path = RelativeFilePath::try_from(file.relative_path.clone()).map_err(storage_error)?;
+        if !config.download_contents.includes_file(&relative_path.to_string()) {
+            continue;
+        }
         let file_check = match file.digest {
             HuggingFaceDigest::Sha256(value) => FileCheck::Sha256(value),
             HuggingFaceDigest::GitBlobSha1(value) => FileCheck::GitBlobSha1(value),

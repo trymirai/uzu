@@ -66,7 +66,7 @@ impl Startup {
             file_check: file_check.clone(),
             expected_bytes,
             destination_path: destination_path.to_path_buf(),
-            crc_path: Some(crc_path),
+            crc_path,
             resume_artifact_path: Some(resume_artifact_path),
         };
         let lock_state =

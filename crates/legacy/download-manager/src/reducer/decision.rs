@@ -94,11 +94,9 @@ fn decide_actions(
             path: observation.destination_path.clone(),
         });
 
-        if observation.crc_state == FileState::Exists
-            && let Some(path) = observation.crc_path.clone()
-        {
+        if observation.crc_state == FileState::Exists {
             actions.push(Action::DeleteCrcCache {
-                path,
+                path: observation.crc_path.clone(),
             });
         }
     }

@@ -186,6 +186,49 @@ async fn resolves_default_revision_through_model_info() {
 }
 
 #[tokio::test]
+async fn requested_paths_select_exact_files_and_whole_directories() {
+    let server = TestServer::start().await;
+    server.respond(
+        &format!("/api/models/acme/model/tree/{COMMIT}?recursive=true"),
+        TestResponse::json(format!(
+            r#"[{{"type":"file","path":"config.json","size":12,"oid":"{GIT_SHA1}"}},
+                {{"type":"file","path":"weights/model.safetensors","size":24,"oid":"{GIT_SHA1}"}},
+                {{"type":"file","path":"unwanted/notes.txt","size":36,"oid":"{GIT_SHA1}"}}]"#
+        )),
+    );
+    let resolver = resolver_for(&server, None);
+    let repository = Repository {
+        identifier: "acme/model".to_owned(),
+        commit_hash: Some(COMMIT.to_owned()),
+        paths: Some(vec!["config.json".to_owned(), "weights".to_owned()]),
+    };
+
+    let resolved = resolver.resolve_repository(&repository).await.unwrap();
+
+    let paths = resolved.files.iter().map(|file| file.relative_path.clone()).collect::<Vec<_>>();
+    assert_eq!(paths, [PathBuf::from("config.json"), PathBuf::from("weights/model.safetensors")]);
+}
+
+#[tokio::test]
+async fn requested_paths_matching_nothing_is_an_error() {
+    let server = TestServer::start().await;
+    server.respond(
+        &format!("/api/models/acme/model/tree/{COMMIT}?recursive=true"),
+        TestResponse::json(format!(r#"[{{"type":"file","path":"config.json","size":12,"oid":"{GIT_SHA1}"}}]"#)),
+    );
+    let resolver = resolver_for(&server, None);
+    let repository = Repository {
+        identifier: "acme/model".to_owned(),
+        commit_hash: Some(COMMIT.to_owned()),
+        paths: Some(vec!["absent".to_owned()]),
+    };
+
+    let error = resolver.resolve_repository(&repository).await.unwrap_err();
+
+    assert!(matches!(error, HuggingFaceResolverError::NoMatchingPaths));
+}
+
+#[tokio::test]
 async fn rejects_unsafe_tree_paths() {
     let server = TestServer::start().await;
     server.respond(

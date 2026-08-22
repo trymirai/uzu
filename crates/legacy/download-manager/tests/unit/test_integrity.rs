@@ -120,7 +120,7 @@ async fn verification_io_failure_aborts_startup_without_a_delete_plan() -> Resul
         file_check: FileCheck::Sha256(HELLO_SHA256.to_string()),
         expected_bytes: Some(HELLO.len() as u64),
         destination_path: destination_path.clone(),
-        crc_path: Some(destination_path.with_extension("crc")),
+        crc_path: destination_path.with_extension("crc"),
         resume_artifact_path: Some(DownloadConfig::resume_artifact_path_for(
             &destination_path,
             compute_download_id(&destination_path),
@@ -159,7 +159,7 @@ async fn unreadable_destination_is_an_io_failure_and_is_preserved() -> Result<()
         file_check: FileCheck::Sha256(HELLO_SHA256.to_string()),
         expected_bytes: Some(HELLO.len() as u64),
         destination_path: destination_path.clone(),
-        crc_path: Some(destination_path.with_extension("crc")),
+        crc_path: destination_path.with_extension("crc"),
         resume_artifact_path: Some(DownloadConfig::resume_artifact_path_for(
             &destination_path,
             compute_download_id(&destination_path),

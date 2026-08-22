@@ -63,9 +63,13 @@ impl HuggingFaceResolver {
     ) -> Result<ResolvedHuggingFaceRepository, HuggingFaceResolverError> {
         let repository_segments = validate_repository_id(&repository.identifier)?;
         let commit = self.resolve_commit(&repository_segments, repository.commit_hash.as_deref()).await?;
-
-        let tree = self.fetch_tree(&repository.identifier, &repository_segments, &commit).await?;
-
+        let mut tree = self.fetch_tree(&repository.identifier, &repository_segments, &commit).await?;
+        if let Some(selectors) = repository.paths.as_deref() {
+            tree.files.retain(|file| path_is_selected(&file.relative_path, selectors));
+            if tree.files.is_empty() {
+                return Err(HuggingFaceResolverError::NoMatchingPaths);
+            }
+        }
         self.materialize(tree)
     }
 
@@ -286,6 +290,8 @@ pub(crate) enum HuggingFaceResolverError {
     UnsafePath(String),
     #[error("Hugging Face returned a duplicate path: {0}")]
     DuplicatePath(String),
+    #[error("no Hugging Face repository file matched the requested paths")]
+    NoMatchingPaths,
     #[error("Hugging Face returned an invalid digest")]
     InvalidDigest,
     #[error("Hugging Face returned file metadata without a size")]
@@ -401,6 +407,20 @@ fn is_valid_repository_segment(segment: &str) -> bool {
     segment.chars().next().is_some_and(valid_edge)
         && segment.chars().next_back().is_some_and(valid_edge)
         && segment.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+}
+
+/// Whether a repository file is covered by the requested path selectors.
+///
+/// A selector matches a file exactly, or names one of its ancestor directories.
+fn path_is_selected(
+    relative_path: &str,
+    selectors: &[String],
+) -> bool {
+    selectors.iter().any(|selector| {
+        let selector = selector.trim_end_matches('/');
+        relative_path == selector
+            || (!selector.is_empty() && relative_path.strip_prefix(selector).is_some_and(|rest| rest.starts_with('/')))
+    })
 }
 
 fn validate_relative_path(path: &str) -> Result<Vec<&str>, HuggingFaceResolverError> {

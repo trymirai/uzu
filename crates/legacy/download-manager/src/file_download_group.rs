@@ -267,10 +267,7 @@ impl FileDownloadGroup {
                     )
                     .await
                     .map_err(|error| FileDownloadFailure::new(relative_path.clone(), error))?;
-                let child_task = match existing_task {
-                    Some(task) => Some(GroupChild::new(task)),
-                    None => None,
-                };
+                let child_task = existing_task.map(GroupChild::new);
                 Ok(GroupMember::new(
                     relative_path,
                     expected_bytes,

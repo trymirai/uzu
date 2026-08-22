@@ -12,6 +12,6 @@ pub struct DiskObservation {
     pub file_check: FileCheck,
     pub expected_bytes: Option<u64>,
     pub destination_path: PathBuf,
-    pub crc_path: Option<PathBuf>,
+    pub crc_path: PathBuf,
     pub resume_artifact_path: Option<PathBuf>,
 }

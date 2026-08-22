@@ -23,12 +23,9 @@ pub async fn validate(observation: &DiskObservation) -> Result<ValidationOutcome
         (FileState::Exists, file_check) => validate_integrity_with_cache(observation, file_check).await?,
     };
 
-    if checked == CheckedFileState::Missing
-        && observation.crc_state == FileState::Exists
-        && let Some(path) = observation.crc_path.clone()
-    {
+    if checked == CheckedFileState::Missing && observation.crc_state == FileState::Exists {
         actions.push(Action::DeleteCrcCache {
-            path,
+            path: observation.crc_path.clone(),
         });
     }
 
@@ -43,8 +40,7 @@ async fn validate_integrity_with_cache(
     file_check: &FileCheck,
 ) -> Result<(CheckedFileState, Vec<Action>), DownloadError> {
     if observation.crc_state == FileState::Exists
-        && let Some(receipt_path) = observation.crc_path.as_ref()
-        && integrity_cache_matches_at(&observation.destination_path, file_check, receipt_path).await
+        && integrity_cache_matches_at(&observation.destination_path, file_check, &observation.crc_path).await
     {
         return Ok((CheckedFileState::Valid, Vec::new()));
     }
@@ -54,7 +50,7 @@ async fn validate_integrity_with_cache(
             CheckedFileState::Valid,
             vec![Action::SaveIntegrityCache {
                 destination: observation.destination_path.clone(),
-                receipt_path: observation.crc_path.clone().expect("startup always supplies an integrity receipt path"),
+                receipt_path: observation.crc_path.clone(),
                 file_check: file_check.clone(),
             }],
         )),
