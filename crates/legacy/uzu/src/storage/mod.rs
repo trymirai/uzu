@@ -78,11 +78,8 @@ impl Storage {
                 },
             )?,
         );
-        let hugging_face = HuggingFaceResolver::new(
-            cache_path.join("huggingface").join("trees"),
-            config.huggingface_api_key().map(str::to_owned),
-        )
-        .map_err(storage_error)?;
+        let hugging_face =
+            HuggingFaceResolver::new(config.huggingface_api_key().map(str::to_owned)).map_err(storage_error)?;
         let (items_broadcast_sender, _) = tokio_broadcast_channel(256);
 
         Ok(Self {

@@ -1,9 +1,4 @@
-use std::{
-    collections::HashSet,
-    fmt, io,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{collections::HashSet, fmt, path::PathBuf, time::Duration};
 
 use reqwest::{
     Client, StatusCode, Url,
@@ -13,14 +8,11 @@ use serde::{Deserialize, Serialize};
 use shoji::types::basic::Repository;
 
 const DEFAULT_BASE_URL: &str = "https://huggingface.co/";
-const CACHE_SCHEMA_VERSION: u8 = 1;
-static CACHE_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Resolves a Hugging Face model reference into an immutable, commit-pinned file list.
 pub(crate) struct HuggingFaceResolver {
     client: Client,
     base_url: Url,
-    cache_root: PathBuf,
     authorization: Option<HeaderValue>,
 }
 
@@ -32,30 +24,25 @@ impl fmt::Debug for HuggingFaceResolver {
         formatter
             .debug_struct("HuggingFaceResolver")
             .field("base_url", &self.base_url)
-            .field("cache_root", &self.cache_root)
             .field("has_authorization", &self.authorization.is_some())
             .finish()
     }
 }
 
 impl HuggingFaceResolver {
-    pub(crate) fn new(
-        cache_root: PathBuf,
-        bearer_token: Option<String>,
-    ) -> Result<Self, HuggingFaceResolverError> {
+    pub(crate) fn new(bearer_token: Option<String>) -> Result<Self, HuggingFaceResolverError> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(HuggingFaceResolverError::Client)?;
         let base_url = Url::parse(DEFAULT_BASE_URL).map_err(|_| HuggingFaceResolverError::InvalidBaseUrl)?;
-        Self::with_base_url(client, base_url, cache_root, bearer_token)
+        Self::with_base_url(client, base_url, bearer_token)
     }
 
     fn with_base_url(
         client: Client,
         base_url: Url,
-        cache_root: PathBuf,
         bearer_token: Option<String>,
     ) -> Result<Self, HuggingFaceResolverError> {
         if !base_url.has_host() || !matches!(base_url.scheme(), "http" | "https") {
@@ -66,7 +53,6 @@ impl HuggingFaceResolver {
         Ok(Self {
             client,
             base_url,
-            cache_root,
             authorization,
         })
     }
@@ -78,17 +64,9 @@ impl HuggingFaceResolver {
         let repository_segments = validate_repository_id(&repository.identifier)?;
         let commit = self.resolve_commit(&repository_segments, repository.commit_hash.as_deref()).await?;
 
-        let cached_tree = match self.read_cache(&repository.identifier, &commit).await {
-            Ok(Some(tree)) => tree,
-            Ok(None) | Err(HuggingFaceResolverError::InvalidCache) => {
-                let tree = self.fetch_tree(&repository.identifier, &repository_segments, &commit).await?;
-                self.write_cache(&tree).await?;
-                tree
-            },
-            Err(error) => return Err(error),
-        };
+        let tree = self.fetch_tree(&repository.identifier, &repository_segments, &commit).await?;
 
-        self.materialize(cached_tree)
+        self.materialize(tree)
     }
 
     async fn resolve_commit(
@@ -124,7 +102,7 @@ impl HuggingFaceResolver {
         repository_id: &str,
         repository_segments: &[&str],
         commit: &str,
-    ) -> Result<CachedTree, HuggingFaceResolverError> {
+    ) -> Result<RepositoryTree, HuggingFaceResolverError> {
         let mut segments = vec!["api", "models"];
         segments.extend(repository_segments.iter().copied());
         segments.extend(["tree", commit]);
@@ -143,7 +121,7 @@ impl HuggingFaceResolver {
             for entry in entries {
                 match entry.kind.as_str() {
                     "directory" => {},
-                    "file" => files.push(CachedFile::try_from(entry)?),
+                    "file" => files.push(RepositoryFile::try_from(entry)?),
                     kind => return Err(HuggingFaceResolverError::UnsupportedTreeEntry(kind.to_owned())),
                 }
             }
@@ -165,8 +143,7 @@ impl HuggingFaceResolver {
             }
         }
 
-        Ok(CachedTree {
-            schema_version: CACHE_SCHEMA_VERSION,
+        Ok(RepositoryTree {
             repository_id: repository_id.to_owned(),
             commit: commit.to_owned(),
             files,
@@ -175,34 +152,21 @@ impl HuggingFaceResolver {
 
     fn materialize(
         &self,
-        tree: CachedTree,
+        tree: RepositoryTree,
     ) -> Result<ResolvedHuggingFaceRepository, HuggingFaceResolverError> {
-        if tree.schema_version != CACHE_SCHEMA_VERSION
-            || !is_full_commit(&tree.commit)
-            || validate_repository_id(&tree.repository_id).is_err()
-        {
-            return Err(HuggingFaceResolverError::InvalidCache);
-        }
-
         let repository_segments = validate_repository_id(&tree.repository_id)?;
         let mut files = Vec::with_capacity(tree.files.len());
-        let mut seen_paths = HashSet::with_capacity(tree.files.len());
-        for cached_file in tree.files {
-            let path_segments = validate_relative_path(&cached_file.relative_path)?;
-            if !seen_paths.insert(cached_file.relative_path.clone()) {
-                return Err(HuggingFaceResolverError::InvalidCache);
-            }
-            cached_file.digest.validate()?;
-
+        for file in tree.files {
+            let path_segments = validate_relative_path(&file.relative_path)?;
             let mut url_segments = repository_segments.clone();
             url_segments.extend(["resolve", tree.commit.as_str()]);
             url_segments.extend(path_segments);
             let source_url = self.url_with_segments(&url_segments)?.to_string();
             files.push(ResolvedHuggingFaceFile {
-                relative_path: PathBuf::from(cached_file.relative_path),
+                relative_path: PathBuf::from(file.relative_path),
                 source_url,
-                size: cached_file.size,
-                digest: cached_file.digest,
+                size: file.size,
+                digest: file.digest,
             });
         }
 
@@ -259,202 +223,6 @@ impl HuggingFaceResolver {
         path.extend(segments.iter().copied());
         drop(path);
         Ok(url)
-    }
-
-    async fn read_cache(
-        &self,
-        repository_id: &str,
-        commit: &str,
-    ) -> Result<Option<CachedTree>, HuggingFaceResolverError> {
-        let path = self.cache_path(repository_id, commit);
-        self.validate_cache_path(&path).await?;
-        let bytes = match tokio::fs::read(&path).await {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => {
-                return Err(HuggingFaceResolverError::CacheIo {
-                    path,
-                    source,
-                });
-            },
-        };
-        let tree: CachedTree = serde_json::from_slice(&bytes).map_err(|_| HuggingFaceResolverError::InvalidCache)?;
-        if tree.repository_id != repository_id || tree.commit != commit || !tree.is_valid() {
-            return Err(HuggingFaceResolverError::InvalidCache);
-        }
-        Ok(Some(tree))
-    }
-
-    async fn write_cache(
-        &self,
-        tree: &CachedTree,
-    ) -> Result<(), HuggingFaceResolverError> {
-        use tokio::io::AsyncWriteExt;
-
-        let path = self.cache_path(&tree.repository_id, &tree.commit);
-        let parent = path.parent().ok_or(HuggingFaceResolverError::InvalidCache)?.to_path_buf();
-        self.ensure_cache_directory(&parent).await?;
-        let bytes = serde_json::to_vec(tree).map_err(HuggingFaceResolverError::CacheJson)?;
-        let temporary_path = path.with_extension(format!("json.tmp-{}", uuid::Uuid::new_v4()));
-        let mut temporary_file =
-            tokio::fs::OpenOptions::new().write(true).create_new(true).open(&temporary_path).await.map_err(
-                |source| HuggingFaceResolverError::CacheIo {
-                    path: temporary_path.clone(),
-                    source,
-                },
-            )?;
-        if let Err(source) = temporary_file.write_all(&bytes).await {
-            let _ = tokio::fs::remove_file(&temporary_path).await;
-            return Err(HuggingFaceResolverError::CacheIo {
-                path: temporary_path,
-                source,
-            });
-        }
-        if let Err(source) = temporary_file.flush().await {
-            let _ = tokio::fs::remove_file(&temporary_path).await;
-            return Err(HuggingFaceResolverError::CacheIo {
-                path: temporary_path,
-                source,
-            });
-        }
-        if let Err(source) = temporary_file.sync_all().await {
-            let _ = tokio::fs::remove_file(&temporary_path).await;
-            return Err(HuggingFaceResolverError::CacheIo {
-                path: temporary_path,
-                source,
-            });
-        }
-        drop(temporary_file);
-
-        let _write_guard = CACHE_WRITE_LOCK.lock().await;
-        match self.read_cache(&tree.repository_id, &tree.commit).await {
-            Ok(Some(_)) => {
-                let _ = tokio::fs::remove_file(&temporary_path).await;
-                return Ok(());
-            },
-            Ok(None) | Err(HuggingFaceResolverError::InvalidCache) => {},
-            Err(error) => {
-                let _ = tokio::fs::remove_file(&temporary_path).await;
-                return Err(error);
-            },
-        }
-
-        self.validate_cache_path(&parent).await?;
-        match replace_cache_file(&temporary_path, &path).await {
-            Ok(()) => Ok(()),
-            Err(source) => {
-                let existing_cache = self.read_cache(&tree.repository_id, &tree.commit).await;
-                let _ = tokio::fs::remove_file(&temporary_path).await;
-                match existing_cache {
-                    Ok(Some(_)) => Ok(()),
-                    Ok(None) | Err(HuggingFaceResolverError::InvalidCache) => Err(HuggingFaceResolverError::CacheIo {
-                        path,
-                        source,
-                    }),
-                    Err(error) => Err(error),
-                }
-            },
-        }
-    }
-
-    fn cache_path(
-        &self,
-        repository_id: &str,
-        commit: &str,
-    ) -> PathBuf {
-        self.cache_root.join(encode_cache_component(repository_id)).join(format!("{commit}.json"))
-    }
-
-    async fn ensure_cache_directory(
-        &self,
-        path: &Path,
-    ) -> Result<(), HuggingFaceResolverError> {
-        self.validate_cache_path(path).await?;
-        tokio::fs::create_dir_all(path).await.map_err(|source| HuggingFaceResolverError::CacheIo {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        self.validate_cache_path(path).await
-    }
-
-    async fn validate_cache_path(
-        &self,
-        path: &Path,
-    ) -> Result<(), HuggingFaceResolverError> {
-        reject_symlink_components(path).await.map_err(|source| HuggingFaceResolverError::CacheIo {
-            path: path.to_path_buf(),
-            source,
-        })
-    }
-}
-
-#[cfg(not(windows))]
-async fn replace_cache_file(
-    source: &Path,
-    destination: &Path,
-) -> io::Result<()> {
-    tokio::fs::rename(source, destination).await
-}
-
-#[cfg(windows)]
-async fn replace_cache_file(
-    source: &Path,
-    destination: &Path,
-) -> io::Result<()> {
-    let source = source.to_path_buf();
-    let destination = destination.to_path_buf();
-    kiban::rt::run_blocking(move || replace_cache_file_sync(&source, &destination)).await
-}
-
-#[cfg(windows)]
-fn replace_cache_file_sync(
-    source: &Path,
-    destination: &Path,
-) -> io::Result<()> {
-    use std::{iter, os::windows::ffi::OsStrExt};
-
-    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW};
-
-    let source = source.as_os_str().encode_wide().chain(iter::once(0)).collect::<Vec<_>>();
-    let destination = destination.as_os_str().encode_wide().chain(iter::once(0)).collect::<Vec<_>>();
-    // SAFETY: both path buffers are null-terminated and remain alive for the duration of the call.
-    if unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) }
-        == 0
-    {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
-async fn reject_symlink_components(path: &Path) -> io::Result<()> {
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component);
-        match tokio::fs::symlink_metadata(&current).await {
-            Ok(metadata) if metadata.file_type().is_symlink() && !is_platform_path_alias(&current) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Hugging Face cache path contains a symlink: {}", current.display()),
-                ));
-            },
-            Ok(_) => {},
-            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(())
-}
-
-fn is_platform_path_alias(path: &Path) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        matches!(path.to_str(), Some("/var" | "/tmp" | "/etc"))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-        false
     }
 }
 
@@ -545,16 +313,6 @@ pub(crate) enum HuggingFaceResolverError {
         operation: &'static str,
         status: StatusCode,
     },
-    #[error("Hugging Face cache I/O failed at {path}")]
-    CacheIo {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("Hugging Face cache serialization failed")]
-    CacheJson(#[source] serde_json::Error),
-    #[error("invalid Hugging Face cache entry")]
-    InvalidCache,
 }
 
 #[derive(Deserialize)]
@@ -583,22 +341,21 @@ struct LfsMetadata {
     size: Option<u64>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct CachedTree {
-    schema_version: u8,
+#[derive(Clone, Debug)]
+struct RepositoryTree {
     repository_id: String,
     commit: String,
-    files: Vec<CachedFile>,
+    files: Vec<RepositoryFile>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct CachedFile {
+#[derive(Clone, Debug)]
+struct RepositoryFile {
     relative_path: String,
     size: u64,
     digest: HuggingFaceDigest,
 }
 
-impl TryFrom<TreeEntry> for CachedFile {
+impl TryFrom<TreeEntry> for RepositoryFile {
     type Error = HuggingFaceResolverError;
 
     fn try_from(entry: TreeEntry) -> Result<Self, Self::Error> {
@@ -621,24 +378,6 @@ impl TryFrom<TreeEntry> for CachedFile {
             relative_path: entry.path,
             size,
             digest,
-        })
-    }
-}
-
-impl CachedTree {
-    fn is_valid(&self) -> bool {
-        if self.schema_version != CACHE_SCHEMA_VERSION
-            || !is_full_commit(&self.commit)
-            || validate_repository_id(&self.repository_id).is_err()
-        {
-            return false;
-        }
-
-        let mut paths = HashSet::with_capacity(self.files.len());
-        self.files.iter().all(|file| {
-            validate_relative_path(&file.relative_path).is_ok()
-                && file.digest.validate().is_ok()
-                && paths.insert(file.relative_path.clone())
         })
     }
 }
@@ -696,19 +435,6 @@ fn is_hex(
     length: usize,
 ) -> bool {
     value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn encode_cache_component(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
-            encoded.push(char::from(byte));
-        } else {
-            use std::fmt::Write;
-            let _ = write!(encoded, "%{byte:02X}");
-        }
-    }
-    encoded
 }
 
 fn next_page_url(

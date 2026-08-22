@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    path::Path,
     sync::{Arc, Mutex},
 };
 
@@ -19,8 +18,7 @@ const LFS_SHA256: &str = "222222222222222222222222222222222222222222222222222222
 
 #[test]
 fn default_resolver_redacts_its_token() {
-    let cache = tempfile::tempdir().unwrap();
-    let resolver = HuggingFaceResolver::new(cache.path().to_path_buf(), Some("top-secret".to_owned())).unwrap();
+    let resolver = HuggingFaceResolver::new(Some("top-secret".to_owned())).unwrap();
 
     assert!(!format!("{resolver:?}").contains("top-secret"));
 }
@@ -36,86 +34,7 @@ fn repository_ids_match_the_official_one_or_two_component_shape() {
 }
 
 #[tokio::test]
-async fn cache_write_keeps_an_existing_valid_immutable_tree() {
-    let cache = tempfile::tempdir().unwrap();
-    let resolver = HuggingFaceResolver::new(cache.path().to_path_buf(), None).unwrap();
-    let first_tree = cached_tree("config.json");
-    resolver.write_cache(&first_tree).await.unwrap();
-    let path = resolver.cache_path("acme/model", COMMIT);
-    let first_bytes = tokio::fs::read(&path).await.unwrap();
-
-    resolver.write_cache(&cached_tree("replacement.json")).await.unwrap();
-
-    assert_eq!(tokio::fs::read(path).await.unwrap(), first_bytes);
-}
-
-#[tokio::test]
-async fn cache_write_replaces_an_invalid_entry_with_a_complete_tree() {
-    let cache = tempfile::tempdir().unwrap();
-    let resolver = HuggingFaceResolver::new(cache.path().to_path_buf(), None).unwrap();
-    let path = resolver.cache_path("acme/model", COMMIT);
-    tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
-    tokio::fs::write(&path, b"incomplete json").await.unwrap();
-
-    resolver.write_cache(&cached_tree("config.json")).await.unwrap();
-
-    let cached = resolver.read_cache("acme/model", COMMIT).await.unwrap().unwrap();
-    assert_eq!(cached.files[0].relative_path, "config.json");
-}
-
-#[tokio::test]
-async fn concurrent_cache_writers_publish_one_complete_tree_without_temporary_files() {
-    let cache = tempfile::tempdir().unwrap();
-    let resolver = Arc::new(HuggingFaceResolver::new(cache.path().to_path_buf(), None).unwrap());
-    let barrier = Arc::new(tokio::sync::Barrier::new(3));
-    let mut tasks = Vec::new();
-    for file_name in ["first.json", "second.json"] {
-        let resolver = Arc::clone(&resolver);
-        let barrier = Arc::clone(&barrier);
-        tasks.push(tokio::spawn(async move {
-            barrier.wait().await;
-            resolver.write_cache(&cached_tree(file_name)).await
-        }));
-    }
-
-    barrier.wait().await;
-    for task in tasks {
-        task.await.unwrap().unwrap();
-    }
-
-    let cached = resolver.read_cache("acme/model", COMMIT).await.unwrap().unwrap();
-    assert!(matches!(cached.files[0].relative_path.as_str(), "first.json" | "second.json"));
-    let cache_directory = resolver.cache_path("acme/model", COMMIT).parent().unwrap().to_path_buf();
-    let mut entries = tokio::fs::read_dir(cache_directory).await.unwrap();
-    let mut names = Vec::new();
-    while let Some(entry) = entries.next_entry().await.unwrap() {
-        names.push(entry.file_name());
-    }
-    assert_eq!(names, [std::ffi::OsString::from(format!("{COMMIT}.json"))]);
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn cache_write_rejects_a_symlinked_repository_directory() {
-    use std::os::unix::fs::symlink;
-
-    let temporary = tempfile::tempdir().unwrap();
-    let cache_root = temporary.path().join("cache");
-    let outside = temporary.path().join("outside");
-    tokio::fs::create_dir_all(&cache_root).await.unwrap();
-    tokio::fs::create_dir_all(&outside).await.unwrap();
-    let resolver = HuggingFaceResolver::new(cache_root, None).unwrap();
-    let repository_cache = resolver.cache_path("acme/model", COMMIT).parent().unwrap().to_path_buf();
-    symlink(&outside, &repository_cache).unwrap();
-
-    let error = resolver.write_cache(&cached_tree("config.json")).await.unwrap_err();
-
-    assert!(matches!(error, HuggingFaceResolverError::CacheIo { .. }));
-    assert!(std::fs::read_dir(outside).unwrap().next().is_none());
-}
-
-#[tokio::test]
-async fn resolves_revision_pagination_digests_and_cache_without_leaking_token() {
+async fn resolves_revision_pagination_and_digests_without_leaking_token() {
     let server = TestServer::start().await;
     server.respond("/api/models/acme/model/revision/main", TestResponse::json(format!(r#"{{"sha":"{COMMIT}"}}"#)));
     server.respond(
@@ -135,11 +54,9 @@ async fn resolves_revision_pagination_digests_and_cache_without_leaking_token() 
         )),
     );
 
-    let cache = tempfile::tempdir().unwrap();
     let resolver = HuggingFaceResolver::with_base_url(
         Client::new(),
         Url::parse(&server.base_url()).unwrap(),
-        cache.path().to_path_buf(),
         Some("top-secret".to_owned()),
     )
     .unwrap();
@@ -173,10 +90,6 @@ async fn resolves_revision_pagination_digests_and_cache_without_leaking_token() 
     };
     let cached = resolver.resolve_repository(&pinned).await.unwrap();
     assert_eq!(cached.files, resolved.files);
-    assert_eq!(server.requests().len(), 3, "a pinned immutable tree should come entirely from cache");
-
-    let cache_contents = tokio::fs::read_to_string(resolver.cache_path("acme/model", COMMIT)).await.unwrap();
-    assert!(!cache_contents.contains("top-secret"));
 }
 
 #[tokio::test]
@@ -195,7 +108,7 @@ async fn resolved_repository_downloads_through_the_shared_file_group() {
     server.respond(&format!("/acme/model/resolve/{COMMIT}/nested/config.json"), TestResponse::json(CONTENTS));
 
     let temporary = tempfile::tempdir().unwrap();
-    let resolver = resolver_for(&server, &temporary.path().join("trees"), None);
+    let resolver = resolver_for(&server, None);
     let repository = Repository {
         identifier: "acme/model".to_owned(),
         commit_hash: Some(COMMIT.to_owned()),
@@ -256,8 +169,7 @@ async fn resolves_default_revision_through_model_info() {
         &format!("/api/models/acme/model/tree/{COMMIT}?recursive=true"),
         TestResponse::json(format!(r#"[{{"type":"file","path":"config.json","size":12,"blobId":"{GIT_SHA1}"}}]"#)),
     );
-    let cache = tempfile::tempdir().unwrap();
-    let resolver = resolver_for(&server, cache.path(), None);
+    let resolver = resolver_for(&server, None);
     let repository = Repository {
         identifier: "acme/model".to_owned(),
         commit_hash: None,
@@ -282,8 +194,7 @@ async fn rejects_unsafe_tree_paths() {
             r#"[{{"type":"file","path":"../escape.safetensors","size":12,"oid":"{GIT_SHA1}"}}]"#
         )),
     );
-    let cache = tempfile::tempdir().unwrap();
-    let resolver = resolver_for(&server, cache.path(), None);
+    let resolver = resolver_for(&server, None);
     let repository = Repository {
         identifier: "acme/model".to_owned(),
         commit_hash: Some(COMMIT.to_owned()),
@@ -302,8 +213,7 @@ async fn rejects_file_metadata_without_a_size() {
         &format!("/api/models/acme/model/tree/{COMMIT}?recursive=true"),
         TestResponse::json(format!(r#"[{{"type":"file","path":"config.json","oid":"{GIT_SHA1}"}}]"#)),
     );
-    let cache = tempfile::tempdir().unwrap();
-    let resolver = resolver_for(&server, cache.path(), None);
+    let resolver = resolver_for(&server, None);
     let repository = Repository {
         identifier: "acme/model".to_owned(),
         commit_hash: Some(COMMIT.to_owned()),
@@ -319,8 +229,7 @@ async fn rejects_file_metadata_without_a_size() {
 async fn gated_repository_errors_are_model_specific_and_keep_the_token_redacted() {
     let server = TestServer::start().await;
     server.respond("/api/models/acme/private/revision/main", TestResponse::status(403, r#"{"error":"gated"}"#));
-    let cache = tempfile::tempdir().unwrap();
-    let resolver = resolver_for(&server, cache.path(), Some("top-secret"));
+    let resolver = resolver_for(&server, Some("top-secret"));
     let repository = Repository {
         identifier: "acme/private".to_owned(),
         commit_hash: Some("main".to_owned()),
@@ -347,8 +256,7 @@ async fn rejects_cross_origin_pagination_before_forwarding_authorization() {
         &format!("/api/models/acme/model/tree/{COMMIT}?recursive=true"),
         TestResponse::json("[]").with_header("Link", "<https://example.invalid/steal>; rel=\"next\""),
     );
-    let cache = tempfile::tempdir().unwrap();
-    let resolver = resolver_for(&server, cache.path(), Some("top-secret"));
+    let resolver = resolver_for(&server, Some("top-secret"));
     let repository = Repository {
         identifier: "acme/model".to_owned(),
         commit_hash: Some(COMMIT.to_owned()),
@@ -375,8 +283,7 @@ async fn metadata_redirect_does_not_forward_authorization_to_another_origin() {
         &format!("/api/models/acme/model/tree/{COMMIT}?recursive=true"),
         TestResponse::json(format!(r#"[{{"type":"file","path":"config.json","size":12,"oid":"{GIT_SHA1}"}}]"#)),
     );
-    let cache = tempfile::tempdir().unwrap();
-    let resolver = resolver_for(&source, cache.path(), Some("top-secret"));
+    let resolver = resolver_for(&source, Some("top-secret"));
     let repository = Repository {
         identifier: "acme/model".to_owned(),
         commit_hash: Some("main".to_owned()),
@@ -393,29 +300,10 @@ async fn metadata_redirect_does_not_forward_authorization_to_another_origin() {
 
 fn resolver_for(
     server: &TestServer,
-    cache_path: &Path,
     token: Option<&str>,
 ) -> HuggingFaceResolver {
-    HuggingFaceResolver::with_base_url(
-        Client::new(),
-        Url::parse(&server.base_url()).unwrap(),
-        cache_path.to_path_buf(),
-        token.map(str::to_owned),
-    )
-    .unwrap()
-}
-
-fn cached_tree(file_name: &str) -> CachedTree {
-    CachedTree {
-        schema_version: CACHE_SCHEMA_VERSION,
-        repository_id: "acme/model".to_owned(),
-        commit: COMMIT.to_owned(),
-        files: vec![CachedFile {
-            relative_path: file_name.to_owned(),
-            size: 12,
-            digest: HuggingFaceDigest::GitBlobSha1(GIT_SHA1.to_owned()),
-        }],
-    }
+    HuggingFaceResolver::with_base_url(Client::new(), Url::parse(&server.base_url()).unwrap(), token.map(str::to_owned))
+        .unwrap()
 }
 
 #[derive(Clone, Debug)]

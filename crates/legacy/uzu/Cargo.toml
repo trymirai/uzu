@@ -113,9 +113,6 @@ apple-native-keyring-store = { workspace = true, features = [
     "keychain",
 ] }
 
-[target.'cfg(windows)'.dependencies]
-windows-sys.workspace = true
-
 [target.'cfg(all(target_vendor = "apple", not(target_os = "macos")))'.dependencies]
 apple-native-keyring-store = { workspace = true, features = ["protected"] }
 
