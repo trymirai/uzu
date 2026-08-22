@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use crate::{FileCheck, FileDownloadGroupSpec, FileDownloadGroupSpecError, FileDownloadRequest, RelativeFilePath};
+use super::FileDownloadGroupSpecError;
+use crate::{FileCheck, FileDownloadGroupSpec, FileDownloadRequest, RelativeFilePath};
 
 fn request(path: &str) -> FileDownloadRequest {
     FileDownloadRequest::new(

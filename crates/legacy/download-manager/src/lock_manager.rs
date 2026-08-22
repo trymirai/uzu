@@ -304,19 +304,6 @@ pub(crate) async fn try_restore_quarantine(
     Ok(RestoreOutcome::Restored)
 }
 
-pub async fn try_acquire_lock(
-    lock_path: &Path,
-    manager_id: &str,
-    instance_id: Uuid,
-) -> Result<bool, std::io::Error> {
-    if check_lock_file(lock_path, manager_id, instance_id, kiban::process::id()).await.is_conflict() {
-        return Ok(false);
-    }
-
-    acquire_lock(lock_path, manager_id, instance_id).await?;
-    Ok(true)
-}
-
 async fn read_lock_file(lock_path: &Path) -> Result<LockFileInfo, Box<dyn std::error::Error>> {
     let file_content = fs::asyn::read_to_string(&lock_path).await?;
     Ok(serde_json::from_str(&file_content)?)

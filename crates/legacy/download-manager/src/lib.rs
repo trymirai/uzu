@@ -2,7 +2,6 @@ mod checked_file_state;
 mod crc_utils;
 mod download_error;
 mod download_log_event;
-mod download_state;
 mod file_check;
 mod file_download_event;
 mod file_download_group;
@@ -17,7 +16,7 @@ mod file_state;
 mod http_download_request;
 mod lock_file_info;
 mod lock_file_state;
-mod lock_manager;
+pub(crate) mod lock_manager;
 mod recovery_metadata;
 mod relative_file_path;
 
@@ -26,32 +25,31 @@ pub(crate) mod file_download_task_actor;
 pub(crate) mod reducer;
 pub(crate) mod traits;
 
-pub use checked_file_state::CheckedFileState;
 pub use crc_utils::integrity_cache_matches;
-pub use download_error::{DownloadCleanupFailure, DownloadError};
-#[allow(deprecated)]
-pub use download_state::DownloadState;
+pub use download_error::DownloadError;
 pub use file_check::FileCheck;
-pub use file_download_event::FileDownloadEvent;
 pub use file_download_group::{DownloadAttempt, FileDownloadGroup};
-pub use file_download_group_state::{
-    FileDownloadFailure, FileDownloadGroupError, FileDownloadGroupOperation, FileDownloadGroupPhase,
-    FileDownloadGroupState,
-};
-pub use file_download_manager::{
-    DownloadEvent, DownloadEventSender, FileDownloadManager, FileDownloadManagerType, SharedDownloadEventSender,
-};
-pub use file_download_phase::FileDownloadPhase;
-pub use file_download_request::{FileDownloadGroupSpec, FileDownloadGroupSpecError, FileDownloadRequest};
-pub use file_download_snapshot::FileDownloadSnapshot;
-pub use file_download_state::FileDownloadState;
+pub use file_download_group_state::{FileDownloadGroupPhase, FileDownloadGroupState};
+pub use file_download_manager::{FileDownloadManager, FileDownloadManagerType};
+pub use file_download_request::{FileDownloadGroupSpec, FileDownloadRequest};
 pub use file_download_task::FileDownloadTask;
-pub use file_state::FileState;
 pub use http_download_request::{HttpDownloadRequest, RequestHeaders};
-pub use lock_file_info::LockFileInfo;
-pub use lock_file_state::LockFileState;
-pub use lock_manager::{acquire_lock, check_lock_file, release_lock_if_owned, try_acquire_lock};
-pub use relative_file_path::{RelativeFilePath, RelativeFilePathError};
+pub use relative_file_path::RelativeFilePath;
+
+pub(crate) use checked_file_state::CheckedFileState;
+pub(crate) use download_error::DownloadCleanupFailure;
+pub(crate) use file_download_event::FileDownloadEvent;
+pub(crate) use file_download_group_state::{
+    FileDownloadFailure, FileDownloadGroupError, FileDownloadGroupOperation,
+};
+pub(crate) use file_download_manager::{DownloadEvent, DownloadEventSender, SharedDownloadEventSender};
+pub(crate) use file_download_phase::FileDownloadPhase;
+pub(crate) use file_download_snapshot::FileDownloadSnapshot;
+pub(crate) use file_download_state::FileDownloadState;
+pub(crate) use file_state::FileState;
+pub(crate) use lock_file_info::LockFileInfo;
+pub(crate) use lock_file_state::LockFileState;
+pub(crate) use lock_manager::{check_lock_file, release_lock_if_owned};
 
 pub type DownloadId = uuid::Uuid;
 

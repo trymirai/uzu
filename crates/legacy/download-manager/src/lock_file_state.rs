@@ -13,17 +13,6 @@ pub enum LockFileState {
 }
 
 impl LockFileState {
-    pub fn can_proceed(&self) -> bool {
-        matches!(
-            self,
-            Self::Missing
-                | Self::OwnedByUs(_)
-                | Self::OwnedBySameAppOldProcess(_)
-                | Self::Stale(_)
-                | Self::StaleUnparseable(_)
-        )
-    }
-
     pub fn is_conflict(&self) -> bool {
         matches!(self, Self::OwnedByOtherApp(_))
     }

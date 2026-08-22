@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use download_manager::{LockFileInfo, LockFileState, acquire_lock, release_lock_if_owned};
+use download_manager::{LockFileInfo, LockFileState, lock_manager::acquire_lock, release_lock_if_owned};
 use uuid::Uuid;
 
 use crate::lock_manager::{
