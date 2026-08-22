@@ -9,14 +9,23 @@ use crate::array::ArrayElement;
 pub fn sigmoid_gate<T: ArrayElement + Float>(
     gate: *const T,
     output: *mut T,
-    total_elements: u32,
+    gate_dim: u32,
+    batch_dim: u32,
+    gate_row_stride: u32,
 ) {
-    for idx in 0..total_elements as usize {
-        unsafe {
-            let g = (*gate.add(idx)).to_f32().unwrap();
+    assert!(gate_dim > 0, "sigmoid gate requires nonzero gate_dim");
+    assert!(gate_row_stride >= gate_dim, "sigmoid gate row stride is too small");
+    let gate_dim = gate_dim as usize;
+    let batch_dim = batch_dim as usize;
+    let gate_row_stride = gate_row_stride as usize;
+    for batch_idx in 0..batch_dim {
+        for gate_idx in 0..gate_dim {
+            let output_idx = batch_idx * gate_dim + gate_idx;
+            let gate_idx = batch_idx * gate_row_stride + gate_idx;
+            let g = unsafe { (*gate.add(gate_idx)).to_f32().unwrap() };
             let sigmoid = 1.0f32 / (1.0f32 + (-g).exp());
-            let out = (*output.add(idx)).to_f32().unwrap();
-            *output.add(idx) = T::from(out * sigmoid).unwrap();
+            let out = unsafe { (*output.add(output_idx)).to_f32().unwrap() };
+            unsafe { *output.add(output_idx) = T::from(out * sigmoid).unwrap() };
         }
     }
 }
