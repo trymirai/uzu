@@ -1,10 +1,10 @@
 use crate::{
     CheckedFileState, FileState, LockFileState,
     file_download_task_actor::{ProgressCounters, PublicProjection},
-    reducer::{Action, ActionPlan, DiskObservation, InitialLifecycleState, LockObservation, ValidationOutcome},
+    reducer::{Action, ActionPlan, DiskObservation, InitialLifecycleState, ValidationOutcome},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decision {
     pub initial_lifecycle_state: InitialLifecycleState,
     pub initial_projection: PublicProjection,
@@ -14,32 +14,30 @@ pub struct Decision {
 
 pub fn decide(
     observation: &DiskObservation,
-    lock_observation: &LockObservation,
+    lock_state: &LockFileState,
     validation: &ValidationOutcome,
 ) -> Decision {
-    let action_plan = if lock_observation.state.is_conflict() {
+    let action_plan = if lock_state.is_conflict() {
         ActionPlan::empty()
     } else {
         let decision_action_plan = decide_actions(observation, validation);
         ActionPlan::merge_in_order([validation.action_plan.clone(), decision_action_plan])
     };
 
-    let initial_lifecycle_state = match validation.checked {
-        CheckedFileState::Valid => InitialLifecycleState::Downloaded,
-        CheckedFileState::Invalid | CheckedFileState::Missing if observation.resume_state == FileState::Exists => {
-            InitialLifecycleState::Paused {
-                part_path: observation
-                    .resume_artifact_path
-                    .clone()
-                    .unwrap_or_else(|| observation.destination_path.with_extension("part")),
-            }
-        },
-        CheckedFileState::Invalid | CheckedFileState::Missing => InitialLifecycleState::NotDownloaded,
-    };
+    let initial_lifecycle_state =
+        match (&validation.checked, &observation.resume_state, observation.resume_artifact_path.as_ref()) {
+            (CheckedFileState::Valid, _, _) => InitialLifecycleState::Downloaded,
+            (CheckedFileState::Invalid | CheckedFileState::Missing, FileState::Exists, Some(part_path)) => {
+                InitialLifecycleState::Paused {
+                    part_path: part_path.clone(),
+                }
+            },
+            (CheckedFileState::Invalid | CheckedFileState::Missing, _, _) => InitialLifecycleState::NotDownloaded,
+        };
 
     // Don't surface `LockedByOther` when the file is already on disk; ownership-sensitive
-    // callers use `FileDownloadManager::destination_foreign_lock` directly.
-    let initial_projection = match (&lock_observation.state, &initial_lifecycle_state) {
+    // Lock ownership is projected through each task snapshot.
+    let initial_projection = match (lock_state, &initial_lifecycle_state) {
         (LockFileState::OwnedByOtherApp(lock_file_info), state)
             if !matches!(state, InitialLifecycleState::Downloaded) =>
         {
@@ -53,18 +51,18 @@ pub fn decide(
             ..
         } => ProgressCounters {
             downloaded_bytes: observation.resume_size.unwrap_or(0),
-            total_bytes: observation.expected_bytes.or(observation.resume_size).unwrap_or(0),
+            total_bytes: observation.expected_bytes,
         },
         InitialLifecycleState::Downloaded => {
-            let total_bytes = observation.expected_bytes.or(observation.destination_size).unwrap_or(0);
+            let total_bytes = observation.expected_bytes.or(observation.destination_size);
             ProgressCounters {
-                downloaded_bytes: total_bytes,
+                downloaded_bytes: total_bytes.unwrap_or(0),
                 total_bytes,
             }
         },
         InitialLifecycleState::NotDownloaded => ProgressCounters {
             downloaded_bytes: 0,
-            total_bytes: observation.expected_bytes.unwrap_or(0),
+            total_bytes: observation.expected_bytes,
         },
     };
 

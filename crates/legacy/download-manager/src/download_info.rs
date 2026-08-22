@@ -40,3 +40,7 @@ impl DownloadInfo {
         serde_json::from_str(json)
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/download_info_test.rs"]
+mod tests;

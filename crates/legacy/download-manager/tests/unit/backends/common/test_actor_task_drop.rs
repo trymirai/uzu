@@ -1,10 +1,13 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
-use download_manager::{DownloadError, FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use download_manager::{
+    DownloadError, FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase, compute_download_id,
+    traits::DownloadConfig,
+};
 use kiban::rt::RuntimeHandle;
 use rstest::rstest;
 
-use crate::common::{Behavior, MockRegistry, wait_for_phase};
+use crate::common::{Behavior, MockRegistry, wait_for_phase, write_recoverable_resume_artifact};
 
 #[rstest]
 #[case::universal(FileDownloadManagerType::Universal, "part")]
@@ -16,8 +19,22 @@ async fn remove_paused_task_deletes_resume_artifact(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let temporary_directory = tempfile::tempdir()?;
     let destination = temporary_directory.path().join("model.bin");
-    let resume_artifact = destination.with_extension(resume_artifact_extension);
-    tokio::fs::write(&resume_artifact, b"partial").await?;
+    let resume_artifact = DownloadConfig::resume_artifact_path_for(
+        &destination,
+        compute_download_id(&destination),
+        resume_artifact_extension,
+    );
+    write_recoverable_resume_artifact(
+        &resume_artifact,
+        &destination,
+        "http://example.invalid/model.bin",
+        FileCheck::None,
+        Some(100),
+        b"partial",
+    )
+    .await?;
+    let recovery_metadata = resume_artifact.parent().expect("resume artifact must have a parent").join("recovery.json");
+    assert!(recovery_metadata.exists());
 
     let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await?;
     let task = manager
@@ -29,6 +46,7 @@ async fn remove_paused_task_deletes_resume_artifact(
     manager.remove_file_task(task.download_id()).await?;
 
     assert!(!resume_artifact.exists());
+    assert!(!recovery_metadata.exists());
     assert!(matches!(task.download().await, Err(DownloadError::TaskStopped)));
     Ok(())
 }
@@ -45,8 +63,15 @@ async fn dropping_active_download_cancels_backend_before_releasing_lock(
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir()?;
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let lock_path = PathBuf::from(format!("{}.lock", destination.display()));
-    let resume_artifact = destination.with_extension(resume_artifact_extension);
+    let lock_path = std::env::temp_dir()
+        .join("uzu-download-manager")
+        .join("locks")
+        .join(format!("{}.lock", compute_download_id(&destination)));
+    let resume_artifact = DownloadConfig::resume_artifact_path_for(
+        &destination,
+        compute_download_id(&destination),
+        resume_artifact_extension,
+    );
     let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
     let task = manager
         .file_download_task(

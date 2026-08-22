@@ -1,8 +1,6 @@
-use serde::{Deserialize, Serialize};
-
 use crate::{DownloadId, FileDownloadEvent, file_download_task_actor::BackendEvent, traits::ActiveDownloadGeneration};
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DownloadLogEvent {
     ManagerCreated {
         manager_id: String,

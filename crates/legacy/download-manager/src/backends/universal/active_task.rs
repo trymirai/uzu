@@ -5,13 +5,13 @@ use tokio::sync::{oneshot::Receiver as TokioOneshotReceiver, watch::Sender as To
 
 use crate::{
     backends::universal::UniversalBackend,
-    traits::{ActiveTask, CancelOutcome, DownloadBackend},
+    traits::{ActiveTask, ActiveTaskPauseOutcome, DownloadBackend},
 };
 
 pub struct UniversalActiveTask {
     task_handles: Box<[Box<dyn TaskJoinHandle<()>>]>,
     pause_sender: Option<TokioWatchSender<bool>>,
-    completion_receiver: Option<TokioOneshotReceiver<()>>,
+    completion_receiver: Option<TokioOneshotReceiver<ActiveTaskPauseOutcome>>,
     resume_artifact_path: PathBuf,
 }
 
@@ -31,7 +31,7 @@ impl UniversalActiveTask {
     pub fn new(
         task_handles: Box<[Box<dyn TaskJoinHandle<()>>]>,
         pause_sender: TokioWatchSender<bool>,
-        completion_receiver: TokioOneshotReceiver<()>,
+        completion_receiver: TokioOneshotReceiver<ActiveTaskPauseOutcome>,
         resume_artifact_path: PathBuf,
     ) -> Self {
         Self {
@@ -59,33 +59,45 @@ impl ActiveTask for UniversalActiveTask {
     async fn pause(
         mut self,
         _destination: &Path,
-    ) -> Result<PathBuf, <Self::Backend as DownloadBackend>::Error> {
+    ) -> Result<ActiveTaskPauseOutcome, <Self::Backend as DownloadBackend>::Error> {
         if let Some(pause_sender) = self.pause_sender.take() {
             let _ = pause_sender.send(true);
         }
 
-        let completed = match self.completion_receiver.take() {
-            Some(completion_receiver) => completion_receiver.await.is_ok(),
-            None => false,
+        let outcome = match self.completion_receiver.take() {
+            Some(receiver) => receiver.await,
+            None => {
+                return Err(crate::backends::universal::UniversalBackendError::Io(
+                    "download worker pause outcome was already consumed".to_string(),
+                ));
+            },
         };
-
-        if completed {
-            let _ = std::mem::take(&mut self.task_handles);
-        } else {
-            for task_handle in std::mem::take(&mut self.task_handles) {
-                task_handle.abort_and_join().await;
-            }
+        match outcome {
+            Ok(ActiveTaskPauseOutcome::Paused(_)) => {
+                let _ = std::mem::take(&mut self.task_handles);
+                Ok(ActiveTaskPauseOutcome::Paused(std::mem::take(&mut self.resume_artifact_path)))
+            },
+            Ok(outcome) => {
+                let _ = std::mem::take(&mut self.task_handles);
+                Ok(outcome)
+            },
+            Err(_) => {
+                for task_handle in std::mem::take(&mut self.task_handles) {
+                    task_handle.abort_and_join().await;
+                }
+                Err(crate::backends::universal::UniversalBackendError::Io(
+                    "download worker stopped before reporting its pause outcome".to_string(),
+                ))
+            },
         }
-        Ok(std::mem::take(&mut self.resume_artifact_path))
     }
 
     async fn cancel(
         mut self,
         _destination: &Path,
-    ) -> CancelOutcome {
+    ) {
         for task_handle in std::mem::take(&mut self.task_handles) {
             task_handle.abort_and_join().await;
         }
-        CancelOutcome::BestEffort
     }
 }

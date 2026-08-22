@@ -7,23 +7,28 @@ use std::{
 use kiban::rt::RuntimeHandle;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{
-    NSBundle, NSData, NSString, NSURL, NSURLSession, NSURLSessionConfiguration, NSURLSessionDelegate,
-    NSURLSessionDownloadTask, NSURLSessionTaskState,
+    NSBundle, NSData, NSMutableURLRequest, NSString, NSURL, NSURLSession, NSURLSessionConfiguration,
+    NSURLSessionDelegate, NSURLSessionDownloadTask, NSURLSessionTaskState,
 };
 use tokio::sync::oneshot::channel as tokio_oneshot_channel;
 
+use super::active_task::write_resume_data;
 use crate::{
-    DownloadInfo, FileCheck,
-    backends::apple::{
-        AppleActiveTask, AppleBackend, AppleBackendError, AppleEventRegistry, AppleEventSink, AppleGetTasksHandler,
-        AppleSessionDelegate, task_ext::AppleDownloadTaskExt,
+    backends::{
+        apple::{
+            AppleActiveTask, AppleBackend, AppleBackendError, AppleEventRegistry, AppleEventSink, AppleGetTasksHandler,
+            AppleSessionDelegate, AppleSinkKey, DestinationInstallBarrier, task_ext::AppleDownloadTaskExt,
+        },
+        common::ensure_owned_directory,
     },
     lock_manager::DestinationLockLease,
+    recovery_metadata::{RecoveryMetadata, prepare_fresh_recovery, prepare_resume_recovery},
     traits::{ActiveDownloadGeneration, BackendContext, BackendEventSender, DownloadConfig},
 };
 
 pub struct AppleBackendContext {
     session: Retained<NSURLSession>,
+    authenticated_session: Retained<NSURLSession>,
     _delegate: Retained<AppleSessionDelegate>,
     _delegate_protocol_object: Retained<ProtocolObject<dyn NSURLSessionDelegate>>,
     event_registry: AppleEventRegistry,
@@ -51,9 +56,17 @@ impl AppleBackendContext {
                 None,
             )
         };
+        let authenticated_session = unsafe {
+            NSURLSession::sessionWithConfiguration_delegate_delegateQueue(
+                &NSURLSessionConfiguration::ephemeralSessionConfiguration(),
+                Some(&delegate_protocol_object),
+                None,
+            )
+        };
 
         Self {
             session,
+            authenticated_session,
             _delegate: delegate,
             _delegate_protocol_object: delegate_protocol_object,
             event_registry,
@@ -65,6 +78,10 @@ impl AppleBackendContext {
         &self,
         config: &DownloadConfig,
     ) -> Result<Option<Retained<NSURLSessionDownloadTask>>, AppleBackendError> {
+        if config.request.headers.has_authorization() {
+            self.cancel_legacy_background_tasks(config).await?;
+            return Ok(None);
+        }
         self.find_download_task(config).await
     }
 
@@ -72,39 +89,14 @@ impl AppleBackendContext {
         &self,
         config: &DownloadConfig,
     ) -> Result<bool, AppleBackendError> {
+        if config.request.headers.has_authorization() {
+            self.cancel_legacy_background_tasks(config).await?;
+            return Ok(false);
+        }
         let download_tasks = self.download_tasks().await?;
         Ok(download_tasks
             .iter()
             .any(|task| task.download_id() == Some(config.download_id) && is_live_task_state(task.state())))
-    }
-
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn event_sink_count_for_download(
-        &self,
-        download_id: crate::DownloadId,
-    ) -> usize {
-        self.event_registry
-            .lock()
-            .map(|registry| registry.keys().filter(|(id, _)| *id == download_id).count())
-            .unwrap_or(0)
-    }
-
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn event_sink_task_identifiers_for_download(
-        &self,
-        download_id: crate::DownloadId,
-    ) -> Vec<u64> {
-        self.event_registry
-            .lock()
-            .map(|registry| {
-                registry
-                    .keys()
-                    .filter_map(|(id, task_identifier)| (*id == download_id).then_some(*task_identifier))
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     async fn find_download_task(
@@ -147,12 +139,39 @@ impl AppleBackendContext {
         config: Arc<DownloadConfig>,
         generation: ActiveDownloadGeneration,
         backend_event_sender: BackendEventSender,
-    ) {
-        self.prepare_task(task, config, generation, backend_event_sender);
+    ) -> DestinationInstallBarrier {
+        self.prepare_task(&self.session, task, config, generation, backend_event_sender)
     }
 
     pub(crate) fn event_registry(&self) -> AppleEventRegistry {
         Arc::clone(&self.event_registry)
+    }
+
+    pub(crate) fn background_session(&self) -> Retained<NSURLSession> {
+        self.session.clone()
+    }
+
+    async fn cancel_legacy_background_tasks(
+        &self,
+        config: &DownloadConfig,
+    ) -> Result<(), AppleBackendError> {
+        for task in self.download_tasks().await? {
+            if task.download_id() == Some(config.download_id) && is_live_task_state(task.state()) {
+                task.cancel();
+            }
+        }
+        Ok(())
+    }
+
+    fn session_for_request(
+        &self,
+        config: &DownloadConfig,
+    ) -> Retained<NSURLSession> {
+        if config.request.headers.has_authorization() {
+            self.authenticated_session.clone()
+        } else {
+            self.session.clone()
+        }
     }
 }
 
@@ -169,10 +188,10 @@ fn select_matching_download_task(
         if !is_live_task_state(task_state) {
             continue;
         }
-        let info = task.download_info();
-        let source_url_matches = info.as_ref().map(|info| info.source_url == config.source_url).unwrap_or(false);
-        let crc_matches = info.as_ref().map(|info| info.crc32c == config.file_check.expected_crc()).unwrap_or(false);
-        if !(source_url_matches && crc_matches) {
+        let request_matches = task.recovery_metadata().is_some_and(|metadata| {
+            metadata.matches_request(&config.request.url, config.expected_bytes, &config.file_check)
+        });
+        if !request_matches {
             task.cancel();
             continue;
         }
@@ -215,13 +234,26 @@ impl BackendContext for AppleBackendContext {
         config: Arc<DownloadConfig>,
         generation: ActiveDownloadGeneration,
         backend_event_sender: BackendEventSender,
-        _destination_lease: &DestinationLockLease,
+        destination_lease: &DestinationLockLease,
     ) -> Result<AppleActiveTask, AppleBackendError> {
-        let ns_url = NSURL::URLWithString(&NSString::from_str(&config.source_url)).ok_or(AppleBackendError::BadUrl)?;
-        let task = self.session.downloadTaskWithURL(&ns_url);
-        self.prepare_task(&task, Arc::clone(&config), generation, backend_event_sender);
+        ensure_owned_directory(&config.artifact_root).await?;
+        let resume_artifact_path = config.resume_artifact_path("resume_data");
+        prepare_fresh_recovery(&config, &resume_artifact_path, destination_lease).await?;
+        let request = apple_request(config.as_ref())?;
+        let session = self.session_for_request(&config);
+        let task = session.downloadTaskWithRequest(&request);
+        let destination_install_barrier =
+            self.prepare_task(&session, &task, Arc::clone(&config), generation, backend_event_sender);
         task.resume();
-        Ok(AppleActiveTask::new(task, Arc::clone(&self.event_registry), config.download_id))
+        Ok(AppleActiveTask::new_for_request(
+            task,
+            session,
+            Arc::clone(&self.event_registry),
+            config.download_id,
+            resume_artifact_path,
+            &config.request.headers,
+            destination_install_barrier,
+        ))
     }
 
     async fn resume(
@@ -230,53 +262,91 @@ impl BackendContext for AppleBackendContext {
         generation: ActiveDownloadGeneration,
         resume_artifact_path: &Path,
         backend_event_sender: BackendEventSender,
-        _destination_lease: &DestinationLockLease,
+        destination_lease: &DestinationLockLease,
     ) -> Result<AppleActiveTask, AppleBackendError> {
-        let resume_data =
-            tokio::fs::read(resume_artifact_path).await.map_err(|error| AppleBackendError::Io(error.to_string()))?;
+        ensure_owned_directory(&config.artifact_root).await?;
+        let can_resume = prepare_resume_recovery(&config, resume_artifact_path, destination_lease).await?;
+        let mut resume_data = if can_resume {
+            tokio::fs::read(resume_artifact_path).await.map_err(|error| AppleBackendError::Io(error.to_string()))?
+        } else {
+            Vec::new()
+        };
+        let session = self.session_for_request(&config);
+        if config.request.headers.has_authorization() {
+            resume_data.clear();
+            write_resume_data(resume_artifact_path, &[]).await?;
+        }
         let task = if resume_data.is_empty() {
-            let ns_url =
-                NSURL::URLWithString(&NSString::from_str(&config.source_url)).ok_or(AppleBackendError::BadUrl)?;
-            self.session.downloadTaskWithURL(&ns_url)
+            let request = apple_request(config.as_ref())?;
+            session.downloadTaskWithRequest(&request)
         } else {
             let ns_data = NSData::with_bytes(&resume_data);
-            self.session.downloadTaskWithResumeData(&ns_data)
+            session.downloadTaskWithResumeData(&ns_data)
         };
-        self.prepare_task(&task, Arc::clone(&config), generation, backend_event_sender);
+        let destination_install_barrier =
+            self.prepare_task(&session, &task, Arc::clone(&config), generation, backend_event_sender);
         task.resume();
-        Ok(AppleActiveTask::new(task, Arc::clone(&self.event_registry), config.download_id))
+        Ok(AppleActiveTask::new_for_request(
+            task,
+            session,
+            Arc::clone(&self.event_registry),
+            config.download_id,
+            config.resume_artifact_path("resume_data"),
+            &config.request.headers,
+            destination_install_barrier,
+        ))
     }
 }
 
 impl AppleBackendContext {
     fn prepare_task(
         &self,
+        session: &NSURLSession,
         task: &NSURLSessionDownloadTask,
         config: Arc<DownloadConfig>,
         generation: ActiveDownloadGeneration,
         backend_event_sender: BackendEventSender,
-    ) {
-        let download_info = match &config.file_check {
-            FileCheck::CRC(crc) => DownloadInfo::with_crc(
-                config.source_url.clone(),
-                config.destination.to_string_lossy().to_string(),
-                crc.clone(),
-            ),
-            FileCheck::None => {
-                DownloadInfo::new(config.source_url.clone(), config.destination.to_string_lossy().to_string())
-            },
-        };
-        task.set_download_info(&download_info);
+    ) -> DestinationInstallBarrier {
+        let recovery_metadata = persisted_recovery_metadata(config.as_ref());
+        task.set_recovery_metadata(&recovery_metadata);
+        let destination_install_barrier = DestinationInstallBarrier::default();
         if let Ok(mut registry) = self.event_registry.lock() {
             registry.insert(
-                (config.download_id, task.task_identifier()),
+                AppleSinkKey::new(session, config.download_id, task.task_identifier()),
                 AppleEventSink {
                     generation,
                     destination: config.destination.clone(),
+                    installation_artifact: config.installation_artifact_path(),
                     backend_event_sender,
                     runtime_handle: self.runtime_handle.clone(),
+                    destination_install_barrier: destination_install_barrier.clone(),
                 },
             );
         }
+        destination_install_barrier
     }
 }
+
+fn apple_request(config: &DownloadConfig) -> Result<Retained<NSMutableURLRequest>, AppleBackendError> {
+    let url = NSURL::URLWithString(&NSString::from_str(&config.request.url)).ok_or(AppleBackendError::BadUrl)?;
+    let request = NSMutableURLRequest::requestWithURL(&url);
+    for (name, value) in config.request.headers.as_header_map() {
+        let value = value.to_str().map_err(|_| AppleBackendError::InvalidRequestHeader)?;
+        request.setValue_forHTTPHeaderField(Some(&NSString::from_str(value)), &NSString::from_str(name.as_str()));
+    }
+    Ok(request)
+}
+
+fn persisted_recovery_metadata(config: &DownloadConfig) -> RecoveryMetadata {
+    RecoveryMetadata::new(
+        config.download_id,
+        &config.request.url,
+        &config.destination,
+        config.expected_bytes,
+        config.file_check.clone(),
+    )
+}
+
+#[cfg(test)]
+#[path = "../../../tests/unit/backends/apple/context_test.rs"]
+mod tests;

@@ -3126,6 +3126,8 @@ public enum StorageError: Swift.Error, Equatable, Hashable, Codable, Foundation.
     )
     case ItemNotFound(identifier: String
     )
+    case ModelUnavailable(identifier: String, message: String
+    )
     case Registry(RegistryError
     )
     case UnsupportedItem(identifier: String
@@ -3169,7 +3171,7 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
             message: try FfiConverterString.read(from: &buf)
             )
         case 4: return .HashNotFound(
-            identifier: try FfiConverterString.read(from: &buf), 
+            identifier: try FfiConverterString.read(from: &buf),
             name: try FfiConverterString.read(from: &buf)
             )
         case 5: return .InvalidStateTransition(
@@ -3182,10 +3184,14 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
         case 7: return .ItemNotFound(
             identifier: try FfiConverterString.read(from: &buf)
             )
-        case 8: return .Registry(
+        case 8: return .ModelUnavailable(
+            identifier: try FfiConverterString.read(from: &buf),
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 9: return .Registry(
             try FfiConverterTypeRegistryError.read(from: &buf)
             )
-        case 9: return .UnsupportedItem(
+        case 10: return .UnsupportedItem(
             identifier: try FfiConverterString.read(from: &buf)
             )
 
@@ -3203,13 +3209,13 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
         case let .UnableToCreateDirectory(path):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(path, into: &buf)
-            
-        
+
+
         case let .UnableToCreateDownloadManager(message):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(message, into: &buf)
-            
-        
+
+
         case let .DownloadManager(message):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(message, into: &buf)
@@ -3237,13 +3243,19 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
             FfiConverterString.write(identifier, into: &buf)
             
         
-        case let .Registry(v1):
+        case let .ModelUnavailable(identifier,message):
             writeInt(&buf, Int32(8))
+            FfiConverterString.write(identifier, into: &buf)
+            FfiConverterString.write(message, into: &buf)
+
+
+        case let .Registry(v1):
+            writeInt(&buf, Int32(9))
             FfiConverterTypeRegistryError.write(v1, into: &buf)
             
         
         case let .UnsupportedItem(identifier):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(10))
             FfiConverterString.write(identifier, into: &buf)
             
         }

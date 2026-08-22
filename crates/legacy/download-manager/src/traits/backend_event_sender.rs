@@ -5,7 +5,7 @@ use tokio::sync::{Mutex as TokioMutex, mpsc::Sender as TokioMpscSender, watch::S
 use crate::{
     DownloadId,
     download_log_event::{DownloadLogEvent, log},
-    file_download_task_actor::{BackendEvent, BackendProgress, PendingProgressSlot},
+    file_download_task_actor::{BackendEvent, BackendProgress},
     traits::ActiveDownloadGeneration,
 };
 
@@ -20,7 +20,7 @@ impl BackendEventSender {
     pub fn new(
         download_id: DownloadId,
         terminal_event_sender: TokioMpscSender<BackendEvent>,
-        pending_progress: Arc<TokioMutex<PendingProgressSlot>>,
+        pending_progress: Arc<TokioMutex<Option<BackendProgress>>>,
         actor_waker: TokioWatchSender<()>,
     ) -> Self {
         Self {
@@ -57,7 +57,7 @@ impl BackendEventSender {
             total_bytes,
         });
         let mut pending_progress = self.progress_coalescer.pending_progress.lock().await;
-        pending_progress.progress = Some(BackendProgress {
+        *pending_progress = Some(BackendProgress {
             generation,
             downloaded_bytes,
             total_bytes,
@@ -68,6 +68,6 @@ impl BackendEventSender {
 
 #[derive(Clone, Debug)]
 struct SharedProgressCoalescer {
-    pending_progress: Arc<TokioMutex<PendingProgressSlot>>,
+    pending_progress: Arc<TokioMutex<Option<BackendProgress>>>,
     actor_waker: TokioWatchSender<()>,
 }

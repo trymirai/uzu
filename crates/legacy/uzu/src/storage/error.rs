@@ -40,4 +40,9 @@ pub enum StorageError {
     UnsupportedItem {
         identifier: String,
     },
+    #[error("Model download is unavailable for {identifier}: {message}")]
+    ModelUnavailable {
+        identifier: String,
+        message: String,
+    },
 }

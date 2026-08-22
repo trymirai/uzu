@@ -49,17 +49,33 @@ impl FileDownloadState {
     }
 
     pub fn locked_by_other(manager_id: String) -> Self {
+        Self::locked_by_other_with_progress(0, 0, manager_id)
+    }
+
+    pub fn locked_by_other_with_progress(
+        downloaded_bytes: u64,
+        total_bytes: u64,
+        manager_id: String,
+    ) -> Self {
         Self {
-            total_bytes: 0,
-            downloaded_bytes: 0,
+            total_bytes,
+            downloaded_bytes,
             phase: FileDownloadPhase::LockedByOther(manager_id),
         }
     }
 
     pub fn error(message: String) -> Self {
+        Self::error_with_progress(0, 0, message)
+    }
+
+    pub fn error_with_progress(
+        downloaded_bytes: u64,
+        total_bytes: u64,
+        message: String,
+    ) -> Self {
         Self {
-            total_bytes: 0,
-            downloaded_bytes: 0,
+            total_bytes,
+            downloaded_bytes,
             phase: FileDownloadPhase::Error(message),
         }
     }

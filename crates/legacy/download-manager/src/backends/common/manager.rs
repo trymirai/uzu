@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
-use kiban::rt::RuntimeHandle;
+use kiban::{fs, rt::RuntimeHandle};
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 use crate::{
-    DownloadError, DownloadEvent, FileCheck, FileDownloadManager, FileDownloadTask, LockFileState,
+    DownloadError, DownloadEvent, FileCheck, FileDownloadManager, FileDownloadTask, HttpDownloadRequest, LockFileState,
     backends::common::{Backend, DownloadManagerState, Startup},
-    check_lock_file, compute_download_id,
+    compute_download_id,
     download_log_event::{DownloadLogEvent, log},
-    file_download_task::CachedFileDownloadTask,
+    file_download_task::{CachedFileDownloadTask, InactiveTaskShutdown},
     file_download_task_actor::GenericFileDownloadTask,
-    lock_manager::{DestinationLockLease, lock_path_for_destination},
+    lock_manager::{DestinationLockLease, check_lock_file, lock_path_for_destination},
     reducer::InitialLifecycleState,
+    traits::DownloadConfig,
 };
 
 #[derive(Clone, Debug)]
@@ -70,20 +71,55 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
         }
     }
 
-    async fn file_download_task(
+    async fn destination_foreign_lock(
         &self,
-        source_url: &str,
+        destination_path: &std::path::Path,
+    ) -> Option<String> {
+        let lock_path = lock_path_for_destination(destination_path);
+        match check_lock_file(&lock_path, &self.state.manager_id, self.state.instance_id, kiban::process::id()).await {
+            LockFileState::OwnedByOtherApp(info) => Some(info.manager_id),
+            _ => None,
+        }
+    }
+
+    async fn http_file_download_task(
+        &self,
+        request: HttpDownloadRequest,
         destination_path: &std::path::Path,
         file_check: FileCheck,
         expected_bytes: Option<u64>,
     ) -> Result<Arc<dyn FileDownloadTask>, DownloadError> {
         let download_id = compute_download_id(destination_path);
+        let artifact_root = DownloadConfig::default_artifact_root(destination_path, download_id);
+        self.http_file_download_task_with_artifact_root(
+            request,
+            destination_path,
+            file_check,
+            expected_bytes,
+            &artifact_root,
+        )
+        .await
+    }
+
+    async fn http_file_download_task_with_artifact_root(
+        &self,
+        request: HttpDownloadRequest,
+        destination_path: &std::path::Path,
+        file_check: FileCheck,
+        expected_bytes: Option<u64>,
+        artifact_root: &std::path::Path,
+    ) -> Result<Arc<dyn FileDownloadTask>, DownloadError> {
+        request.validate()?;
+        let download_id = compute_download_id(destination_path);
         if let Some(cached_task) = self.state.get_task(download_id).await
             && !cached_task.is_stopped()
         {
             let task = cached_task.public();
-            ensure_cached_task_matches(&task, source_url, &file_check, expected_bytes)?;
-            return Ok(task);
+            if cached_task.artifact_root() == artifact_root
+                && cached_task_config_conflict(&task, &request, &file_check, expected_bytes).is_none()
+            {
+                return Ok(task);
+            }
         }
 
         let construction_lock = self.state.construction_lock(download_id).await;
@@ -92,8 +128,24 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
             let cached_task_result = match self.state.get_task(download_id).await {
                 Some(cached_task) if !cached_task.is_stopped() => {
                     let task = cached_task.public();
-                    ensure_cached_task_matches(&task, source_url, &file_check, expected_bytes)?;
-                    Some(Ok(task))
+                    let conflict = if cached_task.artifact_root() == artifact_root {
+                        cached_task_config_conflict(&task, &request, &file_check, expected_bytes)
+                    } else {
+                        Some(DownloadError::ConflictingConfig(format!(
+                            "{} already uses a different manager artifact root",
+                            task.destination().display(),
+                        )))
+                    };
+                    match conflict {
+                        None => Some(Ok(task)),
+                        Some(conflict) => match cached_task.managed().shutdown_for_replacement_if_inactive().await? {
+                            InactiveTaskShutdown::Stopped => {
+                                let _ = self.state.take_task(download_id).await;
+                                None
+                            },
+                            InactiveTaskShutdown::Active => Some(Err(conflict)),
+                        },
+                    }
                 },
                 Some(_) => {
                     let _ = self.state.take_task(download_id).await;
@@ -106,8 +158,9 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
             } else {
                 let startup = observe_startup::<B>(
                     download_id,
-                    source_url,
+                    request.clone(),
                     destination_path,
+                    artifact_root,
                     file_check.clone(),
                     expected_bytes,
                     &self.state.manager_id,
@@ -118,8 +171,9 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
                     startup,
                     self.context.as_ref(),
                     download_id,
-                    source_url,
+                    &request,
                     destination_path,
+                    artifact_root,
                     file_check,
                     expected_bytes,
                     &self.state.manager_id,
@@ -150,34 +204,152 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
                 let public_task: Arc<dyn FileDownloadTask> = task.clone();
                 let managed_task = task;
                 self.state
-                    .insert_task(download_id, CachedFileDownloadTask::new(Arc::clone(&public_task), managed_task))
+                    .insert_task(
+                        download_id,
+                        CachedFileDownloadTask::new(
+                            Arc::clone(&public_task),
+                            managed_task,
+                            artifact_root.to_path_buf(),
+                        ),
+                    )
                     .await;
                 Ok(public_task)
             }
         }
         .await;
-        if result.is_err() {
-            self.state.remove_construction_lock_if_unshared(download_id, &construction_lock).await;
-        }
+        self.state.remove_construction_lock_if_unshared(download_id, &construction_lock).await;
         result
     }
 
-    async fn destination_foreign_lock(
+    async fn open_existing_http_file_download_task_with_artifact_root(
         &self,
+        request: HttpDownloadRequest,
         destination_path: &std::path::Path,
-    ) -> Option<String> {
-        let lock_path = lock_path_for_destination(destination_path);
-        match check_lock_file(&lock_path, &self.state.manager_id, self.state.instance_id, kiban::process::id()).await {
-            LockFileState::OwnedByOtherApp(info) => Some(info.manager_id),
-            _ => None,
+        file_check: FileCheck,
+        expected_bytes: Option<u64>,
+        artifact_root: &std::path::Path,
+    ) -> Result<Option<Arc<dyn FileDownloadTask>>, DownloadError> {
+        enum OpenExistingDecision {
+            Return(Option<Arc<dyn FileDownloadTask>>),
+            Materialize,
         }
+
+        request.validate()?;
+        let download_id = compute_download_id(destination_path);
+        let construction_lock = self.state.construction_lock(download_id).await;
+        let construction_guard = construction_lock.lock().await;
+        let decision = async {
+            if let Some(cached_task) = self.state.get_task(download_id).await {
+                if cached_task.is_stopped() {
+                    let _ = self.state.take_task(download_id).await;
+                } else {
+                    let task = cached_task.public();
+                    let conflict = if cached_task.artifact_root() == artifact_root {
+                        cached_task_config_conflict(&task, &request, &file_check, expected_bytes)
+                    } else {
+                        Some(DownloadError::ConflictingConfig(format!(
+                            "{} already uses a different manager artifact root",
+                            task.destination().display(),
+                        )))
+                    };
+                    let shutdown = match conflict {
+                        None => cached_task.managed().shutdown_preserving_artifacts_if_inactive().await?,
+                        Some(conflict) => match cached_task.managed().shutdown_for_replacement_if_inactive().await? {
+                            InactiveTaskShutdown::Active => {
+                                return Err(conflict);
+                            },
+                            InactiveTaskShutdown::Stopped => InactiveTaskShutdown::Stopped,
+                        },
+                    };
+                    match shutdown {
+                        InactiveTaskShutdown::Active => return Ok(OpenExistingDecision::Return(Some(task))),
+                        InactiveTaskShutdown::Stopped => {
+                            let _ = self.state.take_task(download_id).await;
+                        },
+                    }
+                }
+            }
+
+            let config = DownloadConfig {
+                download_id,
+                request: request.clone(),
+                destination: destination_path.to_path_buf(),
+                artifact_root: artifact_root.to_path_buf(),
+                file_check: file_check.clone(),
+                expected_bytes,
+                manager_id: self.state.manager_id.clone(),
+                manager_instance_id: self.state.instance_id,
+            };
+            let has_local_state = fs::asyn::try_exists(destination_path).await?
+                || fs::asyn::try_exists(artifact_root).await?
+                || fs::asyn::try_exists(config.lock_path()).await?;
+            let has_background_task = B::SUPPORTS_INITIAL_TASK_ATTACHMENT
+                && B::has_initial_task_to_claim(self.context.as_ref(), &config).await?;
+            if has_local_state || has_background_task {
+                Ok(OpenExistingDecision::Materialize)
+            } else {
+                Ok(OpenExistingDecision::Return(None))
+            }
+        }
+        .await;
+
+        drop(construction_guard);
+        let result = match decision {
+            Ok(OpenExistingDecision::Return(task)) => Ok(task),
+            Ok(OpenExistingDecision::Materialize) => {
+                // Re-enter through the regular constructor after releasing the
+                // per-file lock. Concurrent callers still serialize on the same
+                // cached lock.
+                self.http_file_download_task_with_artifact_root(
+                    request,
+                    destination_path,
+                    file_check,
+                    expected_bytes,
+                    artifact_root,
+                )
+                .await
+                .map(Some)
+            },
+            Err(error) => Err(error),
+        };
+        self.state.remove_construction_lock_if_unshared(download_id, &construction_lock).await;
+        result
+    }
+
+    async fn release_file_task_if_inactive(
+        &self,
+        task: Arc<dyn FileDownloadTask>,
+    ) -> Result<(), DownloadError> {
+        let download_id = task.download_id();
+        let construction_lock = self.state.construction_lock(download_id).await;
+        let _construction_guard = construction_lock.lock().await;
+        let result = async {
+            let Some(cached_task) = self.state.get_task(download_id).await else {
+                return Ok(());
+            };
+            if !Arc::ptr_eq(&cached_task.public(), &task) {
+                return Ok(());
+            }
+
+            if cached_task.is_stopped()
+                || cached_task.managed().shutdown_preserving_artifacts_if_inactive().await?
+                    == InactiveTaskShutdown::Stopped
+            {
+                let _ = self.state.take_task(download_id).await;
+            }
+            Ok(())
+        }
+        .await;
+        self.state.remove_construction_lock_if_unshared(download_id, &construction_lock).await;
+        result
     }
 }
 
 pub(crate) async fn observe_startup<B: Backend>(
     download_id: crate::DownloadId,
-    source_url: &str,
+    request: HttpDownloadRequest,
     destination_path: &std::path::Path,
+    artifact_root: &std::path::Path,
     file_check: FileCheck,
     expected_bytes: Option<u64>,
     manager_id: &str,
@@ -185,8 +357,9 @@ pub(crate) async fn observe_startup<B: Backend>(
 ) -> Result<Startup, DownloadError> {
     Startup::observe::<B>(
         download_id,
-        source_url,
+        request,
         destination_path,
+        artifact_root,
         file_check,
         expected_bytes,
         manager_id,
@@ -199,8 +372,9 @@ pub(crate) async fn prepare_startup<B: Backend>(
     startup: Startup,
     context: &B::Context,
     download_id: crate::DownloadId,
-    source_url: &str,
+    request: &HttpDownloadRequest,
     destination_path: &std::path::Path,
+    artifact_root: &std::path::Path,
     file_check: FileCheck,
     expected_bytes: Option<u64>,
     manager_id: &str,
@@ -210,31 +384,33 @@ pub(crate) async fn prepare_startup<B: Backend>(
         return Ok((startup, None));
     }
 
-    let lease =
-        match DestinationLockLease::acquire_for_destination(destination_path, manager_id, manager_instance_id).await {
-            Ok(lease) => lease,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let startup = observe_startup::<B>(
-                    download_id,
-                    source_url,
-                    destination_path,
-                    file_check,
-                    expected_bytes,
-                    manager_id,
-                    manager_instance_id,
-                )
-                .await?;
-                if startup.lock_state.is_conflict() {
-                    return Ok((startup, None));
-                }
-                return Err(DownloadError::from(error));
-            },
-            Err(error) => return Err(DownloadError::from(error)),
-        };
+    let lock_path = startup.config.lock_path();
+    let lease = match DestinationLockLease::acquire(&lock_path, manager_id, manager_instance_id).await {
+        Ok(lease) => lease,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let startup = observe_startup::<B>(
+                download_id,
+                request.clone(),
+                destination_path,
+                artifact_root,
+                file_check,
+                expected_bytes,
+                manager_id,
+                manager_instance_id,
+            )
+            .await?;
+            if startup.lock_state.is_conflict() {
+                return Ok((startup, None));
+            }
+            return Err(DownloadError::from(error));
+        },
+        Err(error) => return Err(DownloadError::from(error)),
+    };
     let startup = match observe_startup::<B>(
         download_id,
-        source_url,
+        request.clone(),
         destination_path,
+        artifact_root,
         file_check,
         expected_bytes,
         manager_id,
@@ -283,33 +459,31 @@ fn startup_can_attach_initial_task<B: Backend>(startup: &Startup) -> bool {
         && !matches!(startup.initial_lifecycle_state, InitialLifecycleState::Downloaded)
 }
 
-fn ensure_cached_task_matches(
+fn cached_task_config_conflict(
     cached: &Arc<dyn FileDownloadTask>,
-    source_url: &str,
+    request: &HttpDownloadRequest,
     file_check: &FileCheck,
     expected_bytes: Option<u64>,
-) -> Result<(), DownloadError> {
-    if cached.source_url() != source_url {
-        return Err(DownloadError::ConflictingConfig(format!(
-            "{} already requested with source_url {:?}; cannot reuse for {:?}",
+) -> Option<DownloadError> {
+    if cached.http_request() != *request {
+        return Some(DownloadError::ConflictingConfig(format!(
+            "{} already requested with a different HTTP request",
             cached.destination().display(),
-            cached.source_url(),
-            source_url,
         )));
     }
     if cached.file_check() != file_check {
-        return Err(DownloadError::ConflictingConfig(format!(
+        return Some(DownloadError::ConflictingConfig(format!(
             "{} already requested with a different file_check",
             cached.destination().display(),
         )));
     }
     if cached.expected_bytes() != expected_bytes {
-        return Err(DownloadError::ConflictingConfig(format!(
+        return Some(DownloadError::ConflictingConfig(format!(
             "{} already requested with expected_bytes {:?}; got {:?}",
             cached.destination().display(),
             cached.expected_bytes(),
             expected_bytes,
         )));
     }
-    Ok(())
+    None
 }

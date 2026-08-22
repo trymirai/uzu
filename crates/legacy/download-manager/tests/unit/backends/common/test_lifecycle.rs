@@ -1,4 +1,7 @@
-use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use download_manager::{
+    FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase, compute_download_id,
+    traits::DownloadConfig,
+};
 use kiban::rt::RuntimeHandle;
 use rstest::rstest;
 
@@ -34,6 +37,8 @@ async fn test_download_fresh_completes(
     assert_eq!(state.downloaded_bytes, tokenizer.file.size as u64);
     assert_eq!(state.total_bytes, tokenizer.file.size as u64);
     assert_eq!(tokio::fs::read(&destination).await.unwrap(), tokenizer.bytes.to_vec());
-    assert!(std::path::PathBuf::from(format!("{}.crc", destination.display())).is_file());
+    let receipt_path = DownloadConfig::integrity_receipt_path_for(&destination, compute_download_id(&destination));
+    assert!(receipt_path.is_file());
+    assert!(!std::path::PathBuf::from(format!("{}.crc", destination.display())).exists());
     Ok(())
 }

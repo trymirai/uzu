@@ -1,6 +1,6 @@
 use crate::reducer::Action;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ActionPlan {
     actions: Box<[Action]>,
 }
