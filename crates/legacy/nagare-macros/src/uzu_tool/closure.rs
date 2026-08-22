@@ -2,14 +2,15 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
+    Attribute, Error, ExprClosure, Pat, ReturnType, Token,
     ext::IdentExt,
     parse::{Parse, ParseStream},
-    parse_macro_input, Attribute, Error, ExprClosure, Pat, ReturnType, Token,
+    parse_macro_input,
 };
 
 use crate::uzu_tool::util::{
-    arg_parsing_tokens, doc_string, is_option, is_unit, nagare_path, parameters_tokens, result_ok_type,
-    return_definition_tokens, Param,
+    Param, arg_parsing_tokens, doc_string, is_option, is_unit, nagare_path, parameters_tokens, result_ok_type,
+    return_definition_tokens,
 };
 
 /// Input of `uzu_tool_closure!`: optional doc comments, a tool name, a colon, and a closure.
