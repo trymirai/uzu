@@ -10,8 +10,8 @@ pub mod matmul;
 pub mod proptest;
 pub mod util;
 
-#[path = "../../unit/bench_cold_pool_test.rs"]
+#[path = "../bench_cold_pool_test.rs"]
 mod bench_cold_pool_test;
 
-#[path = "../../unit/session/model_loading_bench.rs"]
+#[path = "../session/model_loading_bench.rs"]
 mod model_loading_bench;

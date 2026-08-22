@@ -18,4 +18,5 @@ pub mod engine;
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 
 #[cfg(test)]
+#[path = "../unit/common/mod.rs"]
 pub mod tests;
