@@ -31,11 +31,12 @@ impl<B: Backend> LanguageModel<B> {
     pub fn create_empty_state(
         &self,
         max_context_length: Option<u32>,
+        sampling_seed: u64,
     ) -> Result<LanguageModelState<B>, LanguageModelCreateEmptyStateError<B>> {
         let tokens = Vec::new();
         let last_output_token = None;
 
-        let prng = PRng::new(rand::random());
+        let prng = PRng::new(sampling_seed);
 
         let transformer_state = self
             .decoder
