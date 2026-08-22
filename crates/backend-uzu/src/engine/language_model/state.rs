@@ -1,18 +1,28 @@
 use thiserror::Error;
 
+#[cfg(grammar)]
+use crate::engine::language_model::grammar::GrammarConfig;
 use crate::{
     backends::common::Backend,
     encodable_block::{dflash::DFlashState, sampling::PRng, transformer::TransformerState},
     engine::language_model::LanguageModel,
 };
 
+pub(super) struct PendingOutput {
+    pub(super) token: u64,
+    #[cfg(grammar)]
+    pub(super) grammar: Option<GrammarConfig>,
+}
+
 pub struct LanguageModelState<B: Backend> {
     pub(super) tokens: Vec<u64>,
-    pub(super) last_output_token: Option<u64>, // TODO: this leaks previous LanguageModelStreamOptions
+    pub(super) last_output: Option<PendingOutput>,
     pub(super) prng: PRng,
     pub(super) transformer_state: TransformerState<B>,
     pub(super) speculator_state: Option<DFlashState<B>>,
     pub(super) max_context_length: Option<u32>,
+    #[cfg(grammar)]
+    pub(super) grammar_start: usize,
 }
 
 impl<B: Backend> LanguageModelState<B> {
@@ -33,7 +43,7 @@ impl<B: Backend> LanguageModel<B> {
         max_context_length: Option<u32>,
     ) -> Result<LanguageModelState<B>, LanguageModelCreateEmptyStateError<B>> {
         let tokens = Vec::new();
-        let last_output_token = None;
+        let last_output = None;
 
         let prng = PRng::new(rand::random());
 
@@ -52,8 +62,10 @@ impl<B: Backend> LanguageModel<B> {
             .map_err(LanguageModelCreateEmptyStateError::Backend)?;
 
         Ok(LanguageModelState {
+            #[cfg(grammar)]
+            grammar_start: tokens.len(),
             tokens,
-            last_output_token,
+            last_output,
             prng,
             transformer_state,
             speculator_state,

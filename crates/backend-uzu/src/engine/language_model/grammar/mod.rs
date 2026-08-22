@@ -19,6 +19,7 @@ pub struct Grammar {
     vocab_size: usize,
     matcher: GrammarMatcher,
     engagement_state: GrammarEngagementState,
+    config: GrammarConfig,
 }
 
 #[derive(Debug, Error)]
@@ -85,6 +86,7 @@ impl Grammar {
             vocab_size,
             matcher,
             engagement_state,
+            config: config.clone(),
         })
     }
 }
@@ -148,6 +150,10 @@ impl Grammar {
         if num_grammar_tokens > 0 {
             self.matcher.rollback(num_grammar_tokens as i32);
         }
+    }
+
+    pub fn config(&self) -> &GrammarConfig {
+        &self.config
     }
 
     pub fn is_terminated(&self) -> bool {

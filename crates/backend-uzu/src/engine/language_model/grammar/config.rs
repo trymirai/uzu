@@ -1,6 +1,6 @@
 use schemars::JsonSchema;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GrammarConfig {
     JsonSchema {
         schema: String,

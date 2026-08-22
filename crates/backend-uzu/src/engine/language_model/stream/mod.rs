@@ -35,6 +35,8 @@ pub enum LanguageModelStreamError<B: Backend> {
     Speculator(#[from] DFlashTreeError<B>),
     #[error("No seed token (both state and input are empty)")]
     NoSeedToken,
+    #[error("Incompatible pending output (sampled under a different grammar)")]
+    IncompatiblePendingOutput,
     #[error("Context overflow")]
     ContextOverflow,
 }

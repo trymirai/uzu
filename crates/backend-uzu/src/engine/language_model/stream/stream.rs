@@ -20,7 +20,7 @@ use crate::{
         capture::CaptureSpan,
         language_model::{
             LanguageModel,
-            state::LanguageModelState,
+            state::{LanguageModelState, PendingOutput},
             stream::{LanguageModelStreamError, LanguageModelStreamOptions},
         },
     },
@@ -188,7 +188,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let mut metrics = TokenStreamMetrics::default();
 
         let decoding_state = if !input.is_empty() {
-            model_state.last_output_token.take();
+            model_state.last_output.take();
+            #[cfg(grammar)]
+            {
+                model_state.grammar_start = model_state.tokens.len() + input.len();
+            }
 
             // NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
             let max_batch_size = 1024;
@@ -343,9 +347,20 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 output_tokens: output_tokens.unwrap(),
             })
         } else {
-            // TODO: this leaks previous LanguageModelStreamOptions
+            let pending = model_state.last_output.take().unwrap();
+            #[cfg(grammar)]
+            match (&pending.grammar, options.grammar.as_ref().map(Grammar::config)) {
+                (old, Some(new)) if old.as_ref() == Some(new) => {
+                    let grammar = options.grammar.as_mut().unwrap();
+                    for &token in &model_state.tokens[model_state.grammar_start..] {
+                        grammar.accept_token(token)?;
+                    }
+                },
+                (_, Some(_)) => return Err(LanguageModelStreamError::IncompatiblePendingOutput),
+                (_, None) => {},
+            }
             DecodingState::Seeded {
-                seed_token: model_state.last_output_token.take().unwrap(),
+                seed_token: pending.token,
             }
         };
 
@@ -796,7 +811,7 @@ impl<'a, B: Backend> Iterator for LanguageModelStream<'a, B> {
 
 impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
     fn drop(&mut self) {
-        let last_output_token = match replace(&mut self.decoding_state, DecodingState::Invalid) {
+        let last_output = match replace(&mut self.decoding_state, DecodingState::Invalid) {
             DecodingState::Seeded {
                 seed_token,
             } => Some(seed_token),
@@ -868,6 +883,10 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
             DecodingState::Invalid => None, // TODO: proper error handling
         };
 
-        self.model_state.last_output_token = last_output_token;
+        self.model_state.last_output = last_output.map(|token| PendingOutput {
+            token,
+            #[cfg(grammar)]
+            grammar: self.options.grammar.as_ref().map(|grammar| grammar.config().clone()),
+        });
     }
 }
