@@ -85,13 +85,13 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         Box::pin(async move {
             let max_context_length = get_max_context_length(&self.model, self.config.context_length.clone());
             let sampling_seed = match &self.config.sampling_seed {
-                SamplingSeed::Default {} => None,
+                SamplingSeed::Default {} => rand::random(),
                 SamplingSeed::Custom {
                     seed,
-                } => Some(*seed as u64),
+                } => *seed as u64,
             };
             self.model
-                .create_empty_state_with_seed(max_context_length, sampling_seed)
+                .create_empty_state(max_context_length, sampling_seed)
                 .map_err(|err| BackendError::from(err.to_string()))
                 .map(|state| Box::new(UzuChatTokenBackendInstanceState::new(state)) as Box<dyn State>)
         })
