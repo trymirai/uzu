@@ -1,7 +1,6 @@
 mod checked_file_state;
 mod crc_utils;
 mod download_error;
-mod download_info;
 mod download_log_event;
 mod download_state;
 mod file_check;
@@ -30,7 +29,6 @@ pub(crate) mod traits;
 pub use checked_file_state::CheckedFileState;
 pub use crc_utils::integrity_cache_matches;
 pub use download_error::{DownloadCleanupFailure, DownloadError};
-pub use download_info::DownloadInfo;
 #[allow(deprecated)]
 pub use download_state::DownloadState;
 pub use file_check::FileCheck;

@@ -1,7 +1,7 @@
 use base64::Engine;
 
 use crate::{
-    DownloadError, DownloadInfo, FileCheck, FileState, compute_download_id,
+    DownloadError, FileCheck, FileState, compute_download_id,
     crc_utils::{
         VerificationError, VerificationStatus, crc_path_for_file, integrity_cache_matches, save_integrity_cache_at,
         verify_file_integrity,
@@ -19,25 +19,6 @@ async fn save_integrity_cache(
     file_check: &FileCheck,
 ) -> Result<(), std::io::Error> {
     save_integrity_cache_at(file_path, file_check, &crc_path_for_file(file_path)).await
-}
-
-#[test]
-fn apple_download_info_preserves_legacy_crc_and_new_digest_checks() -> Result<(), Box<dyn std::error::Error>> {
-    let legacy_json =
-        r#"{"source_url":"https://example.test/file","destination_path":"/tmp/file","crc32c":"AAAAAA=="}"#;
-    let legacy = DownloadInfo::from_json(legacy_json)?;
-    assert_eq!(legacy.resolved_file_check(), FileCheck::CRC("AAAAAA==".to_string()));
-
-    let sha = DownloadInfo::with_file_check(
-        "https://example.test/file",
-        "/tmp/file",
-        FileCheck::Sha256(HELLO_SHA256.to_string()),
-    );
-    assert_eq!(
-        DownloadInfo::from_json(&sha.to_json()?)?.resolved_file_check(),
-        FileCheck::Sha256(HELLO_SHA256.to_string())
-    );
-    Ok(())
 }
 
 #[tokio::test]

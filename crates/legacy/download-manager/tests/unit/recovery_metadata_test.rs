@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
-use super::{observe_resume_recovery, write_recovery_metadata};
+use super::{RecoveryMetadata, observe_resume_recovery, write_recovery_metadata};
 use crate::{FileCheck, FileState, HttpDownloadRequest, RequestHeaders, compute_download_id, traits::DownloadConfig};
 
 #[tokio::test]
@@ -106,6 +106,27 @@ async fn metadata_write_rejects_a_late_symlinked_artifact_root() {
     assert!(write_recovery_metadata(&config).await.is_err());
     assert!(!outside.join("recovery.json").exists());
     assert!(!outside.join("recovery.tmp").exists());
+}
+
+#[test]
+fn schema_zero_metadata_reads_as_a_crc_check_and_schema_one_round_trips() {
+    let legacy_json =
+        r#"{"source_url":"https://example.test/file","destination_path":"/tmp/file","crc32c":"AAAAAA=="}"#;
+    let legacy = RecoveryMetadata::from_json(legacy_json).unwrap();
+    assert_eq!(legacy.resolved_file_check(), FileCheck::CRC("AAAAAA==".to_string()));
+    assert_eq!(legacy.download_id(), Some(compute_download_id(Path::new("/tmp/file"))));
+
+    let digest = FileCheck::Sha256("a".repeat(64));
+    let current = RecoveryMetadata::new(
+        compute_download_id(Path::new("/tmp/file")),
+        "https://example.test/file",
+        Path::new("/tmp/file"),
+        Some(42),
+        digest.clone(),
+    );
+    let restored = RecoveryMetadata::from_json(&current.to_json().unwrap()).unwrap();
+    assert_eq!(restored.resolved_file_check(), digest);
+    assert!(restored.matches_request("https://example.test/file", Some(42), &digest));
 }
 
 fn test_config(
