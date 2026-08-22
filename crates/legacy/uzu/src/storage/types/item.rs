@@ -96,50 +96,6 @@ impl Item {
     ) -> bool {
         self.group.spec() == other
     }
-
-    #[deprecated(note = "state() already returns the reduced group state")]
-    pub async fn reduce_state(&self) -> DownloadState {
-        self.state().await
-    }
-
-    #[deprecated(note = "group state is canonical and cannot be replaced externally")]
-    pub async fn update_state_and_broadcast(
-        &self,
-        _new_state: DownloadState,
-    ) {
-    }
-
-    #[deprecated(note = "per-file tasks are private implementation details of FileDownloadGroup")]
-    #[allow(deprecated)]
-    pub async fn file_task_by_download_id(
-        &self,
-        download_id: uuid::Uuid,
-    ) -> Option<Arc<dyn download_manager::FileDownloadTask>> {
-        self.group.legacy_file_task_by_download_id(download_id)
-    }
-
-    #[deprecated(note = "FileDownloadGroup::open reconciles state during construction")]
-    pub async fn reconcile(&self) -> Result<(), StorageError> {
-        let _ = self.state().await;
-        Ok(())
-    }
-
-    #[deprecated(note = "pause() quiesces transfers while preserving resumable data")]
-    pub async fn detach_active_downloads(&self) -> Result<(), StorageError> {
-        if matches!(self.group.state().phase, FileDownloadGroupPhase::Downloading) {
-            self.pause().await?;
-        }
-        Ok(())
-    }
-
-    #[deprecated(note = "Storage owns one merged group-state watcher")]
-    pub async fn handle_file_task_update(&self) {}
-
-    #[deprecated(note = "Storage owns one merged group-state watcher")]
-    pub async fn start_listening(&self) {}
-
-    #[deprecated(note = "Storage owns one merged group-state watcher")]
-    pub async fn stop_listening(&self) {}
 }
 
 fn storage_error(error: impl std::fmt::Display) -> StorageError {

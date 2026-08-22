@@ -364,21 +364,6 @@ impl FileDownloadGroup {
         self.inner.state_receiver.borrow().clone()
     }
 
-    #[doc(hidden)]
-    #[deprecated(note = "per-file tasks are private implementation details of FileDownloadGroup")]
-    pub fn legacy_file_task_by_download_id(
-        &self,
-        download_id: crate::DownloadId,
-    ) -> Option<Arc<dyn FileDownloadTask>> {
-        self.inner
-            .owner
-            .members
-            .iter()
-            .filter_map(GroupMember::child)
-            .find(|child| child.task.download_id() == download_id)
-            .map(|child| child.task)
-    }
-
     /// Returns a stream that immediately yields the current state and then its replacements.
     pub fn subscribe(&self) -> WatchStream<FileDownloadGroupState> {
         WatchStream::new(self.inner.state_receiver.clone())
