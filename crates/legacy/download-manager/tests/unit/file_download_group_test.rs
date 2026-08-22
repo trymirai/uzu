@@ -19,8 +19,7 @@ use crate::{
     FileDownloadRequest, FileDownloadSnapshot, FileDownloadState, FileDownloadTask, HttpDownloadRequest,
     RelativeFilePath,
     file_download_group::{
-        GROUP_ROOTS, GroupChild, GroupMember, destination_root_is_mount_point, group_artifact_root_for_location,
-        reduce_group_state, root_registry_key,
+        GROUP_ROOTS, GroupChild, GroupMember, group_artifact_root, reduce_group_state, root_registry_key,
     },
 };
 
@@ -862,7 +861,7 @@ async fn open_rejects_symlinked_group_artifact_root() {
     let outside = tempfile::tempdir().unwrap();
     let destination_root = tokio::fs::canonicalize(root.path()).await.unwrap();
     let spec = FileDownloadGroupSpec::new(&destination_root, [request_for_path("model.bin")]).unwrap();
-    let artifact_root = group_artifact_root_for_location(&destination_root, spec.files(), false);
+    let artifact_root = group_artifact_root(&spec);
     tokio::fs::create_dir_all(artifact_root.parent().unwrap()).await.unwrap();
     symlink(outside.path(), &artifact_root).unwrap();
     tokio::fs::write(outside.path().join("download.part"), b"keep part").await.unwrap();
@@ -1288,47 +1287,16 @@ async fn active_dropped_group_keeps_overlapping_roots_reserved_until_settled() {
 }
 
 #[test]
-fn artifact_state_is_a_sibling_of_a_regular_destination_root() {
+fn artifact_state_is_a_sibling_of_the_destination_root() {
     let destination_root = Path::new("/cache/models/model");
+    let spec = FileDownloadGroupSpec::new(destination_root, [request_for_path("model.bin")]).unwrap();
 
     assert_eq!(
-        group_artifact_root_for_location(destination_root, &[], false),
+        group_artifact_root(&spec),
         Path::new("/cache/models")
             .join(".uzu-download-manager")
             .join(crate::compute_download_id(destination_root).to_string())
     );
-}
-
-#[test]
-fn artifact_state_moves_inside_a_mount_point_root() {
-    let destination_root = Path::new("/volumes/models");
-
-    assert_eq!(
-        group_artifact_root_for_location(destination_root, &[], true),
-        destination_root.join(format!(".uzu-download-manager-{}", crate::compute_download_id(destination_root)))
-    );
-}
-
-#[test]
-fn mount_point_artifact_state_does_not_overlap_declared_files() {
-    let destination_root = Path::new("/volumes/models");
-    let root_id = crate::compute_download_id(destination_root);
-    let colliding_path = format!(".UZU-DOWNLOAD-MANAGER-{root_id}/metadata.json");
-    let files = [request_for_path(&colliding_path)];
-
-    assert_eq!(
-        group_artifact_root_for_location(destination_root, &files, true),
-        destination_root.join(format!(".uzu-download-manager-{root_id}-1"))
-    );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn detects_filesystem_root_but_not_regular_directory_as_mount_point() {
-    let regular_directory = tempfile::tempdir().unwrap();
-
-    assert!(destination_root_is_mount_point(Path::new("/")).await);
-    assert!(!destination_root_is_mount_point(regular_directory.path()).await);
 }
 
 #[tokio::test]
@@ -1389,8 +1357,7 @@ async fn open_materializes_member_with_existing_manager_artifacts() {
     let destination_root = tokio::fs::canonicalize(root.path()).await.unwrap();
     let spec = FileDownloadGroupSpec::new(&destination_root, [request_for_path("model.bin")]).unwrap();
     let destination = destination_root.join("model.bin");
-    let artifact_root = group_artifact_root_for_location(&destination_root, spec.files(), false)
-        .join(crate::compute_download_id(&destination).to_string());
+    let artifact_root = group_artifact_root(&spec).join(crate::compute_download_id(&destination).to_string());
     tokio::fs::create_dir_all(&artifact_root).await.unwrap();
     let manager: Arc<dyn FileDownloadManager> = Arc::from(
         <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, kiban::rt::RuntimeHandle::current())
@@ -1411,8 +1378,7 @@ async fn open_reconciles_cached_task_when_valid_destination_appears() {
     let spec = FileDownloadGroupSpec::new(&destination_root, [sized_request_for_path("model.bin", 5)]).unwrap();
     let request = spec.files()[0].clone();
     let destination = destination_root.join("model.bin");
-    let artifact_root = group_artifact_root_for_location(&destination_root, spec.files(), false)
-        .join(crate::compute_download_id(&destination).to_string());
+    let artifact_root = group_artifact_root(&spec).join(crate::compute_download_id(&destination).to_string());
     let manager: Arc<dyn FileDownloadManager> = Arc::from(
         <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, kiban::rt::RuntimeHandle::current())
             .await
@@ -1445,8 +1411,7 @@ async fn open_reconciles_cached_downloaded_task_after_destination_is_removed() {
     let spec = FileDownloadGroupSpec::new(&destination_root, [sized_request_for_path("model.bin", 5)]).unwrap();
     let request = spec.files()[0].clone();
     let destination = destination_root.join("model.bin");
-    let artifact_root = group_artifact_root_for_location(&destination_root, spec.files(), false)
-        .join(crate::compute_download_id(&destination).to_string());
+    let artifact_root = group_artifact_root(&spec).join(crate::compute_download_id(&destination).to_string());
     let manager: Arc<dyn FileDownloadManager> = Arc::from(
         <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, kiban::rt::RuntimeHandle::current())
             .await
@@ -1480,8 +1445,7 @@ async fn open_reconciles_cached_downloaded_task_after_destination_is_truncated()
     let spec = FileDownloadGroupSpec::new(&destination_root, [sized_request_for_path("model.bin", 5)]).unwrap();
     let request = spec.files()[0].clone();
     let destination = destination_root.join("model.bin");
-    let artifact_root = group_artifact_root_for_location(&destination_root, spec.files(), false)
-        .join(crate::compute_download_id(&destination).to_string());
+    let artifact_root = group_artifact_root(&spec).join(crate::compute_download_id(&destination).to_string());
     let manager: Arc<dyn FileDownloadManager> = Arc::from(
         <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, kiban::rt::RuntimeHandle::current())
             .await

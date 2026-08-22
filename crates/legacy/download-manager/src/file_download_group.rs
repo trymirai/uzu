@@ -20,8 +20,8 @@ use tokio_stream::wrappers::WatchStream;
 
 use crate::{
     DownloadError, FileDownloadFailure, FileDownloadGroupError, FileDownloadGroupOperation, FileDownloadGroupPhase,
-    FileDownloadGroupSpec, FileDownloadGroupState, FileDownloadManager, FileDownloadPhase, FileDownloadRequest,
-    FileDownloadSnapshot, FileDownloadState, FileDownloadTask, RelativeFilePath, compute_download_id,
+    FileDownloadGroupSpec, FileDownloadGroupState, FileDownloadManager, FileDownloadPhase, FileDownloadSnapshot,
+    FileDownloadState, FileDownloadTask, RelativeFilePath, compute_download_id, traits::DownloadConfig,
 };
 
 #[derive(Clone)]
@@ -245,7 +245,7 @@ impl FileDownloadGroup {
                 GroupRootClaim::Wait(wait) => wait.wait().await,
             }
         };
-        let artifact_root = group_artifact_root(&spec).await;
+        let artifact_root = group_artifact_root(&spec);
         validate_artifact_roots(&spec, &artifact_root).await?;
 
         let task_results = join_all(spec.files().iter().map(|file| {
@@ -602,84 +602,13 @@ async fn wait_for_group_owner_idle(owner: &FileDownloadGroupOwner) -> bool {
     }
 }
 
-async fn group_artifact_root(spec: &FileDownloadGroupSpec) -> PathBuf {
-    group_artifact_root_for_location(
-        spec.destination_root(),
-        spec.files(),
-        destination_root_is_mount_point(spec.destination_root()).await,
-    )
-}
-
-fn group_artifact_root_for_location(
-    destination_root: &Path,
-    files: &[FileDownloadRequest],
-    root_is_mount_point: bool,
-) -> PathBuf {
-    let root_id = compute_download_id(destination_root);
-    if !root_is_mount_point {
-        return destination_root
-            .parent()
-            .unwrap_or(destination_root)
-            .join(".uzu-download-manager")
-            .join(root_id.to_string());
-    }
-
-    for suffix in 0..=files.len() {
-        let directory_name = match suffix {
-            0 => format!(".uzu-download-manager-{root_id}"),
-            suffix => format!(".uzu-download-manager-{root_id}-{suffix}"),
-        };
-        if files.iter().all(|file| !uses_top_level_directory(file, &directory_name)) {
-            return destination_root.join(directory_name);
-        }
-    }
-
-    unreachable!("there are more artifact directory candidates than declared file paths")
-}
-
-fn uses_top_level_directory(
-    file: &FileDownloadRequest,
-    directory_name: &str,
-) -> bool {
-    let Some(Component::Normal(name)) = file.relative_path.as_path().components().next() else {
-        return false;
-    };
-    name.to_str().is_some_and(|name| name.eq_ignore_ascii_case(directory_name))
-}
-
-#[cfg(unix)]
-async fn destination_root_is_mount_point(destination_root: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
-    let Some(parent) = destination_root.parent() else {
-        return true;
-    };
-    let Ok(root_metadata) = tokio::fs::metadata(destination_root).await else {
-        return false;
-    };
-    match tokio::fs::metadata(parent).await {
-        Ok(parent_metadata) => root_metadata.dev() != parent_metadata.dev(),
-        Err(_) => true,
-    }
-}
-
-#[cfg(windows)]
-async fn destination_root_is_mount_point(destination_root: &Path) -> bool {
-    let Some(parent) = destination_root.parent() else {
-        return true;
-    };
-    let Ok(canonical_root) = tokio::fs::canonicalize(destination_root).await else {
-        return false;
-    };
-    match tokio::fs::canonicalize(parent).await {
-        Ok(canonical_parent) => !root_registry_key(&canonical_root).starts_with(root_registry_key(&canonical_parent)),
-        Err(_) => true,
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-async fn destination_root_is_mount_point(destination_root: &Path) -> bool {
-    destination_root.parent().is_none()
+/// The group's artifact directory, a sibling of the destination root.
+///
+/// The destination root is always a directory inside the application cache, so
+/// this reuses the per-file layout instead of probing for mount points.
+fn group_artifact_root(spec: &FileDownloadGroupSpec) -> PathBuf {
+    let destination_root = spec.destination_root();
+    DownloadConfig::default_artifact_root(destination_root, compute_download_id(destination_root))
 }
 
 fn roots_overlap(
