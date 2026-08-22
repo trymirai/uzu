@@ -1,4 +1,4 @@
-use proc_macros::kernel;
+use backend_uzu_macros::kernel;
 
 use crate::backends::common::gpu_types::trie::TrieNode;
 

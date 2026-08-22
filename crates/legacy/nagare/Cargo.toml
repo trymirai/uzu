@@ -53,7 +53,7 @@ bindings-wasm = [
 [dependencies]
 bindings-types.workspace = true
 bindings.workspace = true
-proc-macros.workspace = true
+nagare-macros.workspace = true
 shoji.workspace = true
 hanashi.workspace = true
 serde.workspace = true

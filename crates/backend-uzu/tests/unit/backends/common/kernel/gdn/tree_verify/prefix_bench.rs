@@ -2,8 +2,8 @@
 
 use std::mem::size_of;
 
+use backend_uzu_macros::uzu_bench;
 use criterion::{BenchmarkId, Criterion, Throughput};
-use proc_macros::uzu_bench;
 
 use crate::{
     backends::{

@@ -1,4 +1,4 @@
-use proc_macros::uzu_config_abstract;
+use backend_uzu_macros::uzu_config_abstract;
 
 pub mod dense_mlp;
 pub mod mixture_of_experts;

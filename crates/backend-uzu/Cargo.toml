@@ -54,7 +54,7 @@ serde_json = { workspace = true, features = ["unbounded_depth"], optional = true
 zstd = { workspace = true, optional = true }
 
 [dependencies]
-proc-macros.workspace = true
+backend-uzu-macros.workspace = true
 bitflags.workspace = true
 derive_more.workspace = true
 shoji.workspace = true
