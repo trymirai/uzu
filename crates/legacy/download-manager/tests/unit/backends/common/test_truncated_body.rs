@@ -21,7 +21,7 @@ async fn truncated_body_without_crc_fails_length_check(
         .file_download_task(&served_file.file.url, &destination, FileCheck::None, Some(served_file.file.size as u64))
         .await
         .unwrap();
-    let mut progress = task.progress().await.unwrap();
+    let mut progress = task.snapshot_receiver();
 
     task.download().await.unwrap();
     let state = wait_for_phase(&task, &mut progress, |phase| {

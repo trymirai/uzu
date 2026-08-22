@@ -82,7 +82,7 @@ async fn dropping_active_download_cancels_backend_before_releasing_lock(
         )
         .await
         .unwrap();
-    let mut progress = task.progress().await.unwrap();
+    let mut progress = task.snapshot_receiver();
     task.download().await.unwrap();
     wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Downloading)).await;
     assert!(lock_path.exists());

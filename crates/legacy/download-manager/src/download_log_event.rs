@@ -1,4 +1,4 @@
-use crate::{DownloadId, FileDownloadEvent, file_download_task_actor::BackendEvent, traits::ActiveDownloadGeneration};
+use crate::{DownloadId, file_download_task_actor::BackendEvent, traits::ActiveDownloadGeneration};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DownloadLogEvent {
@@ -27,10 +27,6 @@ pub(crate) enum DownloadLogEvent {
     BackendTerminal {
         download_id: DownloadId,
         event: BackendEvent,
-    },
-    PublicEventEmitted {
-        download_id: DownloadId,
-        event: FileDownloadEvent,
     },
 }
 

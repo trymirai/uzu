@@ -29,7 +29,7 @@ async fn test_download_fresh_completes(
         )
         .await
         .unwrap();
-    let mut progress = task.progress().await.unwrap();
+    let mut progress = task.snapshot_receiver();
 
     task.download().await.unwrap();
     let state = wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Downloaded)).await;

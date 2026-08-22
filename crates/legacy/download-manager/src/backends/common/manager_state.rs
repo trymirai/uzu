@@ -1,13 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use tokio::sync::{Mutex as TokioMutex, broadcast::channel as tokio_broadcast_channel};
-use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
+use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
-use crate::{
-    DownloadError, DownloadEvent, DownloadId, FileDownloadTask, SharedDownloadEventSender,
-    file_download_task::CachedFileDownloadTask,
-};
+use crate::{DownloadError, DownloadId, FileDownloadTask, file_download_task::CachedFileDownloadTask};
 
 type TaskCache = Arc<TokioMutex<HashMap<DownloadId, CachedFileDownloadTask>>>;
 type ConstructionLocks = Arc<TokioMutex<HashMap<DownloadId, Arc<TokioMutex<()>>>>>;
@@ -16,7 +12,6 @@ type ConstructionLocks = Arc<TokioMutex<HashMap<DownloadId, Arc<TokioMutex<()>>>
 pub struct DownloadManagerState {
     pub manager_id: String,
     pub instance_id: Uuid,
-    pub global_broadcast_sender: SharedDownloadEventSender,
     task_cache: TaskCache,
     construction_locks: ConstructionLocks,
 }
@@ -36,22 +31,12 @@ impl std::fmt::Debug for DownloadManagerState {
 
 impl DownloadManagerState {
     pub fn new(suffix: &str) -> Self {
-        let (global_broadcast_sender, _) = tokio_broadcast_channel::<DownloadEvent>(256);
         Self {
             manager_id: generate_manager_id(suffix),
             instance_id: Uuid::new_v4(),
-            global_broadcast_sender: Arc::new(global_broadcast_sender),
             task_cache: Arc::new(TokioMutex::new(HashMap::new())),
             construction_locks: Arc::new(TokioMutex::new(HashMap::new())),
         }
-    }
-
-    pub fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<DownloadEvent> {
-        TokioBroadcastStream::new(self.global_broadcast_sender.subscribe())
-    }
-
-    pub fn global_broadcast_sender(&self) -> SharedDownloadEventSender {
-        Arc::clone(&self.global_broadcast_sender)
     }
 
     pub async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTask>>, DownloadError> {

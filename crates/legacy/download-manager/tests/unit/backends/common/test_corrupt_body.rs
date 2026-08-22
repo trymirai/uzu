@@ -25,7 +25,7 @@ async fn test_corrupt_body_fails_crc(
         )
         .await
         .unwrap();
-    let mut progress = task.progress().await.unwrap();
+    let mut progress = task.snapshot_receiver();
 
     task.download().await.unwrap();
     let state = wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Error(_))).await;
@@ -54,7 +54,7 @@ async fn test_corrupt_body_cancel_resets_error_state(
             Some(tokenizer.file.size as u64),
         )
         .await?;
-    let mut progress = task.progress().await?;
+    let mut progress = task.snapshot_receiver();
 
     task.download().await?;
     wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Error(_))).await;

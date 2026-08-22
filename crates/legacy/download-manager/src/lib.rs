@@ -3,7 +3,6 @@ mod crc_utils;
 mod download_error;
 mod download_log_event;
 mod file_check;
-mod file_download_event;
 mod file_download_group;
 mod file_download_group_state;
 mod file_download_manager;
@@ -30,11 +29,9 @@ pub use crc_utils::integrity_cache_matches;
 pub(crate) use download_error::DownloadCleanupFailure;
 pub use download_error::DownloadError;
 pub use file_check::FileCheck;
-pub(crate) use file_download_event::FileDownloadEvent;
 pub use file_download_group::{DownloadAttempt, FileDownloadGroup};
 pub(crate) use file_download_group_state::{FileDownloadFailure, FileDownloadGroupError, FileDownloadGroupOperation};
 pub use file_download_group_state::{FileDownloadGroupPhase, FileDownloadGroupState};
-pub(crate) use file_download_manager::{DownloadEvent, DownloadEventSender, SharedDownloadEventSender};
 pub use file_download_manager::{FileDownloadManager, FileDownloadManagerType};
 pub(crate) use file_download_phase::FileDownloadPhase;
 pub use file_download_request::{FileDownloadGroupSpec, FileDownloadRequest};
@@ -137,6 +134,5 @@ extern crate self as download_manager;
 #[path = "../tests/unit/common/mod.rs"]
 mod common;
 #[cfg(test)]
-#[expect(deprecated, reason = "compatibility tests exercise the deprecated task API")]
 #[path = "../tests/unit/mod.rs"]
 mod unit_tests;

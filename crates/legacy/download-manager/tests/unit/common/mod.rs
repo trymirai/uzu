@@ -3,16 +3,33 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use download_manager::{
-    FileCheck, FileDownloadPhase, FileDownloadState, FileDownloadTask, HttpDownloadRequest, compute_download_id,
-    recovery_metadata::write_recovery_metadata, traits::DownloadConfig,
+    FileCheck, FileDownloadPhase, FileDownloadSnapshot, FileDownloadState, FileDownloadTask, HttpDownloadRequest,
+    compute_download_id, recovery_metadata::write_recovery_metadata, traits::DownloadConfig,
 };
 pub use mock_registry::{Behavior, MockRegistry};
-use tokio::time::timeout;
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use tokio::{sync::watch::Receiver as TokioWatchReceiver, time::timeout};
+
+/// Resolves once the task reaches a terminal snapshot (downloaded, errored, or locked).
+pub async fn wait_for_terminal(task: &Arc<dyn FileDownloadTask>) {
+    let mut snapshots = task.snapshot_receiver();
+    loop {
+        let is_terminal = {
+            let snapshot = snapshots.borrow_and_update();
+            snapshot.failure.is_some()
+                || matches!(
+                    snapshot.state.phase,
+                    FileDownloadPhase::Downloaded | FileDownloadPhase::Error(_) | FileDownloadPhase::LockedByOther(_)
+                )
+        };
+        if is_terminal || snapshots.changed().await.is_err() {
+            return;
+        }
+    }
+}
 
 pub async fn wait_for_phase(
     task: &Arc<dyn FileDownloadTask>,
-    progress_stream: &mut BroadcastStream<FileDownloadState>,
+    snapshots: &mut TokioWatchReceiver<FileDownloadSnapshot>,
     mut is_expected_phase: impl FnMut(&FileDownloadPhase) -> bool,
 ) -> FileDownloadState {
     timeout(Duration::from_secs(15), async {
@@ -21,14 +38,14 @@ pub async fn wait_for_phase(
             return state;
         }
 
-        while let Some(result) = progress_stream.next().await {
-            let state = result.expect("download progress stream must not lag");
+        while snapshots.changed().await.is_ok() {
+            let state = snapshots.borrow_and_update().state.clone();
             if is_expected_phase(&state.phase) {
                 return state;
             }
         }
 
-        panic!("download progress stream ended before expected phase");
+        panic!("download snapshot watch closed before expected phase");
     })
     .await
     .expect("timed out waiting for file download phase")

@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
 use kiban::{fs, rt::RuntimeHandle};
-use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 use crate::{
-    DownloadError, DownloadEvent, FileCheck, FileDownloadManager, FileDownloadTask, HttpDownloadRequest, LockFileState,
+    DownloadError, FileCheck, FileDownloadManager, FileDownloadTask, HttpDownloadRequest,
     backends::common::{Backend, DownloadManagerState, Startup},
     compute_download_id,
     download_log_event::{DownloadLogEvent, log},
     file_download_task::{CachedFileDownloadTask, InactiveTaskShutdown},
     file_download_task_actor::GenericFileDownloadTask,
-    lock_manager::{DestinationLockLease, check_lock_file, lock_path_for_destination},
+    lock_manager::DestinationLockLease,
     reducer::InitialLifecycleState,
     traits::DownloadConfig,
 };
@@ -42,14 +41,6 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
         &self.state.manager_id
     }
 
-    fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<DownloadEvent> {
-        self.state.subscribe_to_all_downloads()
-    }
-
-    fn global_broadcast_sender(&self) -> crate::SharedDownloadEventSender {
-        self.state.global_broadcast_sender()
-    }
-
     async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTask>>, DownloadError> {
         self.state.get_all_file_tasks().await
     }
@@ -68,17 +59,6 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
         match shutdown_result {
             Ok(()) | Err(DownloadError::TaskStopped | DownloadError::ChannelClosed) => Ok(()),
             Err(error) => Err(error),
-        }
-    }
-
-    async fn destination_foreign_lock(
-        &self,
-        destination_path: &std::path::Path,
-    ) -> Option<String> {
-        let lock_path = lock_path_for_destination(destination_path);
-        match check_lock_file(&lock_path, &self.state.manager_id, self.state.instance_id, kiban::process::id()).await {
-            LockFileState::OwnedByOtherApp(info) => Some(info.manager_id),
-            _ => None,
         }
     }
 

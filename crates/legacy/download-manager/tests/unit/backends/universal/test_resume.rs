@@ -43,7 +43,7 @@ async fn test_universal_resume_restarts_when_server_ignores_range() -> Result<()
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::Paused);
     task.download().await?;
-    timeout(Duration::from_secs(10), task.wait()).await?;
+    timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&task)).await?;
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
     assert_eq!(tokio::fs::read(&destination).await?, bytes);
@@ -84,7 +84,7 @@ async fn restart_discards_a_partial_file_when_the_source_changes() -> Result<(),
     assert!(!metadata_path.exists(), "startup must discard metadata owned by the old source");
 
     task.download().await?;
-    timeout(Duration::from_secs(10), task.wait()).await?;
+    timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&task)).await?;
     assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
     assert_eq!(tokio::fs::read(&destination).await?, bytes);
     let requests = server.received_requests().await.expect("request recording is enabled");

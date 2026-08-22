@@ -8,25 +8,18 @@ use std::{
     },
 };
 
-use kiban::{rt, rt::TaskJoinHandle};
+use kiban::rt;
 use tokio::sync::{
     Mutex as TokioMutex,
-    broadcast::Sender as TokioBroadcastSender,
     mpsc::{Sender as TokioMpscSender, channel as tokio_mpsc_channel},
     oneshot::channel as tokio_oneshot_channel,
     watch::{Receiver as TokioWatchReceiver, channel as tokio_watch_channel},
 };
-use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 use crate::{
-    DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadEvent, FileDownloadPhase,
-    FileDownloadSnapshot, FileDownloadState, HttpDownloadRequest,
+    DownloadError, DownloadId, FileCheck, FileDownloadSnapshot, FileDownloadState, HttpDownloadRequest,
     backends::common::{Backend, InitialTaskAttachment},
-    download_log_event::{DownloadLogEvent, log},
-    file_download_task::{
-        InactiveTaskShutdown, ManagedFileDownloadTask, legacy_broadcast_sender, legacy_state_receiver,
-        wait_for_legacy_terminal,
-    },
+    file_download_task::{InactiveTaskShutdown, ManagedFileDownloadTask},
     file_download_task_actor::{
         DownloadActorState, DownloadTaskActor, ProgressCounters, PublicProjection, TaskCommand,
         project_runtime_public_state,
@@ -40,7 +33,6 @@ pub struct GenericFileDownloadTask<B: DownloadBackend> {
     config: Arc<DownloadConfig>,
     command_sender: TokioMpscSender<TaskCommand>,
     snapshot_receiver: TokioWatchReceiver<FileDownloadSnapshot>,
-    listener_task: Arc<TokioMutex<Option<Box<dyn TaskJoinHandle<()>>>>>,
     is_stopped: AtomicBool,
     backend: PhantomData<B>,
 }
@@ -159,7 +151,6 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
             config,
             command_sender,
             snapshot_receiver,
-            listener_task: Arc::new(TokioMutex::new(None)),
             is_stopped: AtomicBool::new(false),
             backend: PhantomData,
         })
@@ -182,12 +173,6 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
         snapshots.borrow_and_update();
         while snapshots.changed().await.is_ok() {
             snapshots.borrow_and_update();
-        }
-    }
-
-    async fn stop_legacy_listener(&self) {
-        if let Some(listener_task) = self.listener_task.lock().await.take() {
-            listener_task.abort_and_join().await;
         }
     }
 }
@@ -268,105 +253,6 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
     fn snapshot_receiver(&self) -> TokioWatchReceiver<FileDownloadSnapshot> {
         self.snapshot_receiver.clone()
     }
-
-    fn has_atomic_snapshot_watch(&self) -> bool {
-        true
-    }
-
-    #[allow(deprecated)]
-    fn state_receiver(&self) -> TokioWatchReceiver<FileDownloadState> {
-        legacy_state_receiver(self.snapshot_receiver.clone())
-    }
-
-    fn failure(&self) -> Option<DownloadError> {
-        self.snapshot_receiver.borrow().failure.clone()
-    }
-
-    #[allow(deprecated)]
-    async fn progress(&self) -> Result<TokioBroadcastStream<FileDownloadState>, DownloadError> {
-        let sender = legacy_broadcast_sender(self.snapshot_receiver.clone());
-        Ok(TokioBroadcastStream::new(sender.subscribe()))
-    }
-
-    #[allow(deprecated)]
-    async fn start_listening(
-        &self,
-        global_broadcast: DownloadEventSender,
-    ) {
-        let mut listener_task = self.listener_task.lock().await;
-        if listener_task.is_some() {
-            return;
-        }
-
-        let download_id = self.config.download_id;
-        let destination = self.config.destination.clone();
-        let mut snapshots = self.snapshot_receiver.clone();
-        snapshots.borrow_and_update();
-        *listener_task = Some(rt::spawn(async move {
-            let mut last_downloaded_bytes = 0u64;
-
-            while snapshots.changed().await.is_ok() {
-                let state = snapshots.borrow_and_update().state.clone();
-
-                match state.phase {
-                    FileDownloadPhase::Downloading => {
-                        let bytes_written = state.downloaded_bytes.saturating_sub(last_downloaded_bytes);
-                        last_downloaded_bytes = state.downloaded_bytes;
-                        let event = FileDownloadEvent::ProgressUpdate {
-                            bytes_written,
-                            total_bytes_written: state.downloaded_bytes,
-                            total_bytes_expected: state.total_bytes,
-                        };
-                        log(DownloadLogEvent::PublicEventEmitted {
-                            download_id,
-                            event: event.clone(),
-                        });
-                        let _ = global_broadcast.send((download_id, event));
-                    },
-                    FileDownloadPhase::Downloaded => {
-                        let event = FileDownloadEvent::DownloadCompleted {
-                            tmp_path: destination.clone(),
-                            final_destination: destination.clone(),
-                        };
-                        log(DownloadLogEvent::PublicEventEmitted {
-                            download_id,
-                            event: event.clone(),
-                        });
-                        let _ = global_broadcast.send((download_id, event));
-                        break;
-                    },
-                    FileDownloadPhase::Error(message) => {
-                        let event = FileDownloadEvent::Error {
-                            message,
-                        };
-                        log(DownloadLogEvent::PublicEventEmitted {
-                            download_id,
-                            event: event.clone(),
-                        });
-                        let _ = global_broadcast.send((download_id, event));
-                        break;
-                    },
-                    FileDownloadPhase::NotDownloaded
-                    | FileDownloadPhase::Paused
-                    | FileDownloadPhase::LockedByOther(_) => {},
-                }
-            }
-        }));
-    }
-
-    #[allow(deprecated)]
-    async fn stop_listening(&self) {
-        self.stop_legacy_listener().await;
-    }
-
-    async fn wait(&self) {
-        wait_for_legacy_terminal(self.snapshot_receiver.clone()).await;
-    }
-
-    #[allow(deprecated)]
-    fn broadcast_sender(&self) -> TokioBroadcastSender<FileDownloadState> {
-        legacy_broadcast_sender(self.snapshot_receiver.clone())
-    }
 }
 
 #[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
@@ -375,7 +261,6 @@ impl<B: DownloadBackend> ManagedFileDownloadTask for GenericFileDownloadTask<B> 
     async fn shutdown_for_removal(&self) -> Result<(), DownloadError> {
         if self.is_stopped.swap(true, Ordering::SeqCst) {
             self.wait_for_actor_stopped().await;
-            self.stop_legacy_listener().await;
             return Ok(());
         }
 
@@ -389,20 +274,17 @@ impl<B: DownloadBackend> ManagedFileDownloadTask for GenericFileDownloadTask<B> 
             .is_err()
         {
             self.wait_for_actor_stopped().await;
-            self.stop_legacy_listener().await;
             return Ok(());
         }
 
         let result = reply_receiver.await.unwrap_or(Err(DownloadError::TaskStopped));
         self.wait_for_actor_stopped().await;
-        self.stop_legacy_listener().await;
         result
     }
 
     async fn shutdown_for_replacement_if_inactive(&self) -> Result<InactiveTaskShutdown, DownloadError> {
         if self.is_stopped.load(Ordering::SeqCst) {
             self.wait_for_actor_stopped().await;
-            self.stop_legacy_listener().await;
             return Ok(InactiveTaskShutdown::Stopped);
         }
 
@@ -418,7 +300,6 @@ impl<B: DownloadBackend> ManagedFileDownloadTask for GenericFileDownloadTask<B> 
         if result == InactiveTaskShutdown::Stopped {
             self.is_stopped.store(true, Ordering::SeqCst);
             self.wait_for_actor_stopped().await;
-            self.stop_legacy_listener().await;
         }
         Ok(result)
     }
@@ -426,7 +307,6 @@ impl<B: DownloadBackend> ManagedFileDownloadTask for GenericFileDownloadTask<B> 
     async fn shutdown_preserving_artifacts_if_inactive(&self) -> Result<InactiveTaskShutdown, DownloadError> {
         if self.is_stopped.load(Ordering::SeqCst) {
             self.wait_for_actor_stopped().await;
-            self.stop_legacy_listener().await;
             return Ok(InactiveTaskShutdown::Stopped);
         }
 
@@ -440,7 +320,6 @@ impl<B: DownloadBackend> ManagedFileDownloadTask for GenericFileDownloadTask<B> 
             .is_err()
         {
             self.wait_for_actor_stopped().await;
-            self.stop_legacy_listener().await;
             return Ok(InactiveTaskShutdown::Stopped);
         }
 
@@ -448,7 +327,6 @@ impl<B: DownloadBackend> ManagedFileDownloadTask for GenericFileDownloadTask<B> 
         if result == InactiveTaskShutdown::Stopped {
             self.is_stopped.store(true, Ordering::SeqCst);
             self.wait_for_actor_stopped().await;
-            self.stop_legacy_listener().await;
         }
         Ok(result)
     }

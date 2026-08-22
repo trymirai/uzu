@@ -1,19 +1,13 @@
 use std::{path::Path, sync::Arc};
 
 use kiban::rt::RuntimeHandle;
-use tokio::sync::broadcast::Sender as TokioBroadcastSender;
-use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 #[cfg(target_vendor = "apple")]
 use crate::backends::apple::AppleDownloadManager;
 use crate::{
-    DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadTask, HttpDownloadRequest,
+    DownloadError, DownloadId, FileCheck, FileDownloadTask, HttpDownloadRequest,
     backends::universal::UniversalDownloadManager,
 };
-
-pub type DownloadEvent = (DownloadId, FileDownloadEvent);
-pub type DownloadEventSender = TokioBroadcastSender<DownloadEvent>;
-pub type SharedDownloadEventSender = Arc<DownloadEventSender>;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -36,30 +30,13 @@ impl Default for FileDownloadManagerType {
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 pub trait FileDownloadManager: Send + Sync + 'static {
     fn manager_id(&self) -> &str;
-    #[deprecated(note = "subscribe to FileDownloadGroup::subscribe() instead")]
-    fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<DownloadEvent>;
-    #[deprecated(note = "use FileDownloadGroup state instead of forwarding per-file events")]
-    fn global_broadcast_sender(&self) -> SharedDownloadEventSender;
-
-    #[deprecated(note = "open a FileDownloadGroup instead of inspecting the manager task cache")]
     async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTask>>, DownloadError>;
 
-    #[deprecated(note = "use FileDownloadGroup::cancel() for owned destructive cleanup")]
     async fn remove_file_task(
         &self,
         download_id: DownloadId,
     ) -> Result<(), DownloadError>;
 
-    #[deprecated(note = "observe locking through FileDownloadGroup state")]
-    async fn destination_foreign_lock(
-        &self,
-        _destination_path: &Path,
-    ) -> Option<String> {
-        None
-    }
-
-    #[deprecated(note = "create a FileDownloadGroup instead")]
-    #[allow(deprecated)]
     async fn file_download_task(
         &self,
         source_url: &str,
@@ -71,7 +48,6 @@ pub trait FileDownloadManager: Send + Sync + 'static {
             .await
     }
 
-    #[deprecated(note = "create a FileDownloadGroup instead")]
     async fn http_file_download_task(
         &self,
         _request: HttpDownloadRequest,
@@ -83,7 +59,6 @@ pub trait FileDownloadManager: Send + Sync + 'static {
     }
 
     #[doc(hidden)]
-    #[allow(deprecated)]
     async fn http_file_download_task_with_artifact_root(
         &self,
         request: HttpDownloadRequest,

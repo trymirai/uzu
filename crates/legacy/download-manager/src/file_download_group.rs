@@ -22,7 +22,6 @@ use crate::{
     DownloadError, FileDownloadFailure, FileDownloadGroupError, FileDownloadGroupOperation, FileDownloadGroupPhase,
     FileDownloadGroupSpec, FileDownloadGroupState, FileDownloadManager, FileDownloadPhase, FileDownloadRequest,
     FileDownloadSnapshot, FileDownloadState, FileDownloadTask, RelativeFilePath, compute_download_id,
-    file_download_task::seeded_compatibility_snapshot_receiver,
 };
 
 #[derive(Clone)]
@@ -212,18 +211,7 @@ impl GroupMember {
 }
 
 impl GroupChild {
-    async fn new(task: Arc<dyn FileDownloadTask>) -> Self {
-        if task.has_atomic_snapshot_watch() {
-            return Self::from_atomic_watch(task);
-        }
-        let snapshot_receiver = seeded_compatibility_snapshot_receiver(Arc::clone(&task)).await;
-        Self {
-            task,
-            snapshot_receiver,
-        }
-    }
-
-    fn from_atomic_watch(task: Arc<dyn FileDownloadTask>) -> Self {
+    fn new(task: Arc<dyn FileDownloadTask>) -> Self {
         let snapshot_receiver = task.snapshot_receiver();
         Self {
             task,
@@ -280,7 +268,7 @@ impl FileDownloadGroup {
                     .await
                     .map_err(|error| FileDownloadFailure::new(relative_path.clone(), error))?;
                 let child_task = match existing_task {
-                    Some(task) => Some(GroupChild::new(task).await),
+                    Some(task) => Some(GroupChild::new(task)),
                     None => None,
                 };
                 Ok(GroupMember::new(
@@ -1037,7 +1025,7 @@ async fn materialize_member(
             &member.artifact_root,
         )
         .await?;
-    Ok(member.set_child_if_missing(GroupChild::new(task).await))
+    Ok(member.set_child_if_missing(GroupChild::new(task)))
 }
 
 fn current_member_snapshots(members: &[GroupMember]) -> Vec<FileDownloadSnapshot> {

@@ -412,7 +412,7 @@ async fn apple_sends_auth_header_and_does_not_install_http_errors() -> Result<()
     let authorized_task =
         manager.http_file_download_task(authorized_request, &authorized_destination, FileCheck::None, Some(2)).await?;
     authorized_task.download().await?;
-    tokio::time::timeout(Duration::from_secs(10), authorized_task.wait()).await?;
+    tokio::time::timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&authorized_task)).await?;
     assert_eq!(authorized_task.state().await.phase, FileDownloadPhase::Downloaded);
     assert_eq!(tokio::fs::read(authorized_destination).await?, b"ok");
 
@@ -421,7 +421,7 @@ async fn apple_sends_auth_header_and_does_not_install_http_errors() -> Result<()
         .file_download_task(&format!("{}/missing", server.uri()), &missing_destination, FileCheck::None, None)
         .await?;
     missing_task.download().await?;
-    tokio::time::timeout(Duration::from_secs(10), missing_task.wait()).await?;
+    tokio::time::timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&missing_task)).await?;
     assert!(matches!(missing_task.state().await.phase, FileDownloadPhase::Error(_)));
     assert!(!missing_destination.exists(), "HTTP error body must not be installed as the destination");
     Ok(())
@@ -454,7 +454,7 @@ async fn apple_retries_a_transient_http_error() -> Result<(), Box<dyn std::error
         .await?;
 
     task.download().await?;
-    tokio::time::timeout(Duration::from_secs(10), task.wait()).await?;
+    tokio::time::timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&task)).await?;
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
@@ -493,7 +493,7 @@ async fn apple_does_not_forward_authorization_to_redirected_origin() -> Result<(
     let task = manager.http_file_download_task(request, &destination, FileCheck::None, Some(5)).await?;
 
     task.download().await?;
-    tokio::time::timeout(Duration::from_secs(10), task.wait()).await?;
+    tokio::time::timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&task)).await?;
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
     assert_eq!(tokio::fs::read(destination).await?, b"model");

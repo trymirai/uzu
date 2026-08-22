@@ -1,5 +1,3 @@
-#![allow(deprecated)]
-
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -16,10 +14,10 @@ use tokio::sync::{
 };
 
 use crate::{
-    DownloadError, DownloadEvent, DownloadEventSender, DownloadId, FileCheck, FileDownloadFailure, FileDownloadGroup,
-    FileDownloadGroupError, FileDownloadGroupPhase, FileDownloadGroupSpec, FileDownloadManager,
-    FileDownloadManagerType, FileDownloadPhase, FileDownloadRequest, FileDownloadSnapshot, FileDownloadState,
-    FileDownloadTask, HttpDownloadRequest, RelativeFilePath, SharedDownloadEventSender,
+    DownloadError, DownloadId, FileCheck, FileDownloadFailure, FileDownloadGroup, FileDownloadGroupError,
+    FileDownloadGroupPhase, FileDownloadGroupSpec, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase,
+    FileDownloadRequest, FileDownloadSnapshot, FileDownloadState, FileDownloadTask, HttpDownloadRequest,
+    RelativeFilePath,
     file_download_group::{
         GROUP_ROOTS, GroupChild, GroupMember, destination_root_is_mount_point, group_artifact_root_for_location,
         reduce_group_state, root_registry_key,
@@ -267,40 +265,13 @@ impl FileDownloadTask for MockTask {
         self.state_sender.borrow().clone()
     }
 
-    fn state_receiver(&self) -> TokioWatchReceiver<FileDownloadState> {
-        self.state_sender.subscribe()
-    }
-
     fn snapshot_receiver(&self) -> TokioWatchReceiver<FileDownloadSnapshot> {
         self.snapshot_sender.subscribe()
-    }
-
-    fn has_atomic_snapshot_watch(&self) -> bool {
-        true
-    }
-
-    async fn progress(&self) -> Result<tokio_stream::wrappers::BroadcastStream<FileDownloadState>, DownloadError> {
-        Ok(tokio_stream::wrappers::BroadcastStream::new(self.progress_sender.subscribe()))
-    }
-
-    async fn start_listening(
-        &self,
-        _: DownloadEventSender,
-    ) {
-    }
-
-    async fn stop_listening(&self) {}
-
-    async fn wait(&self) {}
-
-    fn broadcast_sender(&self) -> TokioBroadcastSender<FileDownloadState> {
-        self.progress_sender.clone()
     }
 }
 
 struct MockManager {
     task: Arc<MockTask>,
-    global_sender: SharedDownloadEventSender,
     task_requests: Arc<AtomicUsize>,
     drop_count: Arc<AtomicUsize>,
     open_existing: bool,
@@ -324,14 +295,6 @@ impl Drop for MockManager {
 impl FileDownloadManager for MockManager {
     fn manager_id(&self) -> &str {
         "group-lifecycle-test"
-    }
-
-    fn subscribe_to_all_downloads(&self) -> tokio_stream::wrappers::BroadcastStream<DownloadEvent> {
-        tokio_stream::wrappers::BroadcastStream::new(self.global_sender.subscribe())
-    }
-
-    fn global_broadcast_sender(&self) -> SharedDownloadEventSender {
-        Arc::clone(&self.global_sender)
     }
 
     async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTask>>, DownloadError> {
@@ -397,10 +360,8 @@ fn mock_manager_with_existing(
     drop_count: Arc<AtomicUsize>,
     open_existing: bool,
 ) -> Arc<dyn FileDownloadManager> {
-    let (global_sender, _) = tokio_broadcast_channel(16);
     Arc::new(MockManager {
         task,
-        global_sender: Arc::new(global_sender),
         task_requests,
         drop_count,
         open_existing,
@@ -414,10 +375,8 @@ fn blocking_mock_manager(
     drop_count: Arc<AtomicUsize>,
     gate: MaterializationGate,
 ) -> Arc<dyn FileDownloadManager> {
-    let (global_sender, _) = tokio_broadcast_channel(16);
     Arc::new(MockManager {
         task,
-        global_sender: Arc::new(global_sender),
         task_requests,
         drop_count,
         open_existing: false,
@@ -431,10 +390,8 @@ fn blocking_existing_mock_manager(
     drop_count: Arc<AtomicUsize>,
     gate: MaterializationGate,
 ) -> Arc<dyn FileDownloadManager> {
-    let (global_sender, _) = tokio_broadcast_channel(16);
     Arc::new(MockManager {
         task,
-        global_sender: Arc::new(global_sender),
         task_requests,
         drop_count,
         open_existing: true,
@@ -454,7 +411,7 @@ fn test_members<const N: usize>(files: [(&str, Option<u64>); N]) -> Vec<GroupMem
                 task.destination().to_path_buf(),
                 task.file_check().clone(),
                 PathBuf::from("/mock-artifacts").join(path),
-                Some(GroupChild::from_atomic_watch(task)),
+                Some(GroupChild::new(task)),
             )
         })
         .collect()
@@ -481,7 +438,7 @@ async fn mock_group(tasks: &[Arc<MockTask>]) -> FileDownloadGroup {
                 task.destination.clone(),
                 task.file_check.clone(),
                 PathBuf::from("/mock-artifacts").join(task.download_id.to_string()),
-                Some(GroupChild::from_atomic_watch(task.clone())),
+                Some(GroupChild::new(task.clone())),
             )
         })
         .collect::<Vec<_>>()

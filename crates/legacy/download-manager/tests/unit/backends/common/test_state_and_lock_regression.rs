@@ -314,7 +314,7 @@ async fn active_task_with_different_config_is_not_replaced(
             Some(tokenizer.file.size as u64),
         )
         .await?;
-    let mut progress = task.progress().await?;
+    let mut progress = task.snapshot_receiver();
     task.download().await?;
     wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Downloading)).await;
 
@@ -359,7 +359,7 @@ async fn replacing_paused_task_removes_only_its_resume_artifact(
             Some(tokenizer.file.size as u64),
         )
         .await?;
-    let mut progress = task.progress().await?;
+    let mut progress = task.snapshot_receiver();
     task.download().await?;
     wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Downloading)).await;
     if resume_artifact_extension == "part" {
@@ -410,7 +410,7 @@ async fn replacing_downloaded_task_preserves_destination(
         )
         .await?;
     task.download().await?;
-    task.wait().await;
+    crate::common::wait_for_terminal(&task).await;
     assert!(matches!(task.state().await.phase, FileDownloadPhase::Downloaded));
     let contents_before_replacement = tokio::fs::read(&destination).await?;
 
@@ -500,7 +500,7 @@ async fn separate_managers_in_same_process_cannot_share_destination_lock(
         )
         .await
         .unwrap();
-    let mut progress_a = task_a.progress().await.unwrap();
+    let mut progress_a = task_a.snapshot_receiver();
     task_a.download().await.unwrap();
     wait_for_phase(&task_a, &mut progress_a, |phase| matches!(phase, FileDownloadPhase::Downloading)).await;
 

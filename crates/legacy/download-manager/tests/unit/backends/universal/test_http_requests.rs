@@ -62,7 +62,7 @@ async fn sends_auth_header_without_exposing_its_value() -> Result<(), Box<dyn st
     assert!(!conflict_message.contains(token));
     assert!(!conflict_message.contains("different_secret_token"));
 
-    timeout(Duration::from_secs(10), task.wait()).await?;
+    timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&task)).await?;
     assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
     assert_eq!(tokio::fs::read(destination).await?, bytes);
     Ok(())
@@ -104,7 +104,7 @@ async fn strips_authorization_on_cross_origin_redirects() -> Result<(), Box<dyn 
         universal_manager().await?.http_file_download_task(request, &destination, FileCheck::None, Some(4)).await?;
 
     task.download().await?;
-    timeout(Duration::from_secs(10), task.wait()).await?;
+    timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&task)).await?;
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
     assert!(!target_saw_authorization.load(Ordering::SeqCst));
@@ -137,7 +137,7 @@ async fn sends_auth_header_and_managed_range_when_resuming() -> Result<(), Box<d
         universal_manager().await?.http_file_download_task(request, &destination, FileCheck::None, Some(6)).await?;
 
     task.download().await?;
-    timeout(Duration::from_secs(10), task.wait()).await?;
+    timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&task)).await?;
     assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
     assert_eq!(tokio::fs::read(destination).await?, b"abcdef");
     Ok(())
@@ -174,7 +174,7 @@ async fn retries_server_errors_but_not_auth_errors() -> Result<(), Box<dyn std::
         )
         .await?;
     transient_task.download().await?;
-    timeout(Duration::from_secs(10), transient_task.wait()).await?;
+    timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&transient_task)).await?;
     assert_eq!(transient_task.state().await.phase, FileDownloadPhase::Downloaded);
     assert_eq!(transient_attempts.load(Ordering::SeqCst), 2);
 
@@ -192,12 +192,11 @@ async fn retries_server_errors_but_not_auth_errors() -> Result<(), Box<dyn std::
         .await?;
     let auth_snapshots = auth_task.snapshot_receiver();
     auth_task.download().await?;
-    timeout(Duration::from_secs(10), auth_task.wait()).await?;
+    timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&auth_task)).await?;
     let snapshot = auth_snapshots.borrow().clone();
     assert!(matches!(snapshot.state.phase, FileDownloadPhase::Error(_)));
     assert_eq!(snapshot.failure, Some(DownloadError::AuthenticationRequired));
     assert_eq!(auth_task.state().await, snapshot.state);
-    assert_eq!(auth_task.failure(), snapshot.failure);
     assert!(!auth_destination.exists());
     Ok(())
 }
@@ -250,7 +249,7 @@ async fn does_not_install_unfollowed_redirect_bodies() -> Result<(), Box<dyn std
         .await?;
 
     task.download().await?;
-    timeout(Duration::from_secs(10), task.wait()).await?;
+    timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&task)).await?;
 
     assert!(matches!(task.state().await.phase, FileDownloadPhase::Error(_)));
     assert!(!destination.exists());

@@ -50,7 +50,7 @@ async fn resume_rejects_206_when_content_range_offset_mismatches_request() -> Re
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::Paused);
     task.download().await?;
-    timeout(Duration::from_secs(10), task.wait()).await?;
+    timeout(Duration::from_secs(10), crate::common::wait_for_terminal(&task)).await?;
 
     let final_phase = task.state().await.phase;
     match &final_phase {
