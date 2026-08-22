@@ -1,7 +1,6 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use download_manager::{DownloadAttempt, FileDownloadGroup, FileDownloadGroupPhase, FileDownloadGroupState};
-use shoji::types::basic::File;
 use tokio::sync::broadcast::channel as tokio_broadcast_channel;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 
@@ -14,7 +13,6 @@ use crate::storage::{
 #[derive(Clone)]
 pub struct Item {
     pub identifier: String,
-    pub files: Arc<Vec<File>>,
     pub cache_path: PathBuf,
 
     group: FileDownloadGroup,
@@ -37,13 +35,11 @@ impl std::fmt::Debug for Item {
 impl Item {
     pub fn new(
         identifier: String,
-        files: Arc<Vec<File>>,
         cache_path: PathBuf,
         group: FileDownloadGroup,
     ) -> Self {
         Self {
             identifier,
-            files,
             cache_path,
             group,
         }

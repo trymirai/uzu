@@ -5,8 +5,8 @@ mod hugging_face;
 pub mod types;
 
 use std::{
-    collections::{HashMap, HashSet},
-    fs::{File as FsFile, create_dir_all},
+    collections::HashMap,
+    fs::create_dir_all,
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -47,7 +47,6 @@ pub struct Storage {
 }
 
 struct ResolvedModelDownload {
-    files: Arc<Vec<File>>,
     cache_path: PathBuf,
     group_spec: FileDownloadGroupSpec,
 }
@@ -139,7 +138,7 @@ impl Storage {
                 },
             };
 
-            let item = Item::new(identifier.clone(), resolved.files, resolved.cache_path, group);
+            let item = Item::new(identifier.clone(), resolved.cache_path, group);
             next_items.insert(identifier, item);
         }
 
@@ -286,7 +285,7 @@ impl Storage {
             ModelReference::Mirai {
                 files,
                 ..
-            } => self.resolve_mirai_download(model, files).await,
+            } => build_mirai_download(&self.config, model, files),
             ModelReference::HuggingFace {
                 repository,
             } => {
@@ -300,71 +299,6 @@ impl Storage {
             }),
         }
     }
-
-    async fn resolve_mirai_download(
-        &self,
-        model: &Model,
-        all_files: &[File],
-    ) -> Result<ResolvedModelDownload, StorageError> {
-        let ResolvedModelDownload {
-            files,
-            cache_path,
-            group_spec,
-        } = build_mirai_download(&self.config, model, all_files)?;
-        let cache_path = self.migrate_legacy_cache(model, cache_path, &files).await?;
-        Ok(ResolvedModelDownload {
-            files,
-            cache_path,
-            group_spec,
-        })
-    }
-
-    async fn migrate_legacy_cache(
-        &self,
-        model: &Model,
-        safe_path: PathBuf,
-        files: &[File],
-    ) -> Result<PathBuf, StorageError> {
-        if std::fs::symlink_metadata(&safe_path).is_ok() {
-            return Ok(safe_path);
-        }
-        let Some(legacy_path) = self.config.legacy_cache_model_path(model) else {
-            return Ok(safe_path);
-        };
-        if std::fs::symlink_metadata(&legacy_path).is_err() {
-            return Ok(safe_path);
-        }
-
-        let models_root = self.config.cache_models_path();
-        reject_symlink_ancestors(&models_root).map_err(storage_error)?;
-        create_dir_all(&models_root).map_err(storage_error)?;
-        reject_symlink_ancestors(&models_root).map_err(storage_error)?;
-        let Ok(relative_legacy) = legacy_path.strip_prefix(&models_root) else {
-            return Ok(safe_path);
-        };
-        if !path_is_symlink_free(&models_root, relative_legacy) {
-            return Ok(safe_path);
-        }
-        let Ok(canonical_root) = std::fs::canonicalize(&models_root) else {
-            return Ok(safe_path);
-        };
-        let Ok(canonical_legacy) = std::fs::canonicalize(&legacy_path) else {
-            return Ok(safe_path);
-        };
-        if !canonical_legacy.starts_with(&canonical_root) {
-            return Ok(safe_path);
-        }
-        if !legacy_tree_is_safe(&canonical_legacy) {
-            return Ok(safe_path);
-        }
-        let Some(verified_files) = verified_legacy_files(&canonical_legacy, files).await else {
-            return Ok(safe_path);
-        };
-        if let Err(error) = install_verified_legacy_files(&canonical_legacy, &safe_path, &verified_files) {
-            tracing::warn!(legacy_path = %canonical_legacy.display(), %error, "legacy model cache migration was skipped");
-        }
-        Ok(safe_path)
-    }
 }
 
 fn build_mirai_download(
@@ -372,10 +306,9 @@ fn build_mirai_download(
     model: &Model,
     all_files: &[File],
 ) -> Result<ResolvedModelDownload, StorageError> {
-    let files =
-        all_files.iter().filter(|file| config.download_contents.includes_file(&file.name)).cloned().collect::<Vec<_>>();
-    let mut requests = Vec::with_capacity(files.len());
-    for file in &files {
+    let files = all_files.iter().filter(|file| config.download_contents.includes_file(&file.name));
+    let mut requests = Vec::with_capacity(all_files.len());
+    for file in files {
         let expected_bytes = u64::try_from(file.size).map_err(|_| StorageError::DownloadManager {
             message: format!("negative file size for {}", file.name),
         })?;
@@ -391,19 +324,15 @@ fn build_mirai_download(
         ));
     }
 
-    let source_identity = canonical_source_identity(&requests)?;
     let revision = model.checkpoint_version().ok_or_else(|| StorageError::UnsupportedItem {
         identifier: model.identifier.clone(),
     })?;
-    let cache_path = config.cache_model_path_for_source(model, &revision, &source_identity).ok_or_else(|| {
-        StorageError::UnsupportedItem {
-            identifier: model.identifier.clone(),
-        }
+    let cache_path = config.cache_model_path(model, &revision).ok_or_else(|| StorageError::UnsupportedItem {
+        identifier: model.identifier.clone(),
     })?;
     let group_spec = FileDownloadGroupSpec::new(cache_path.clone(), requests).map_err(storage_error)?;
     ensure_binding_total_fits(&group_spec)?;
     Ok(ResolvedModelDownload {
-        files: Arc::new(files),
         cache_path,
         group_spec,
     })
@@ -414,7 +343,6 @@ fn build_hugging_face_download(
     model: &Model,
     resolved: ResolvedHuggingFaceRepository,
 ) -> Result<ResolvedModelDownload, StorageError> {
-    let mut files = Vec::with_capacity(resolved.files.len());
     let mut requests = Vec::with_capacity(resolved.files.len());
     let headers = resolved.authorization.map(RequestHeaders::authorization).unwrap_or_default();
 
@@ -424,15 +352,6 @@ fn build_hugging_face_download(
             HuggingFaceDigest::Sha256(value) => FileCheck::Sha256(value),
             HuggingFaceDigest::GitBlobSha1(value) => FileCheck::GitBlobSha1(value),
         };
-        let size = i64::try_from(file.size).map_err(|_| StorageError::DownloadManager {
-            message: format!("file size exceeds i64 for {relative_path}"),
-        })?;
-        files.push(File {
-            url: file.source_url.clone(),
-            name: relative_path.to_string(),
-            size,
-            hashes: Vec::new(),
-        });
         requests.push(FileDownloadRequest::new(
             HttpDownloadRequest::with_headers(file.source_url, headers.clone()),
             relative_path,
@@ -441,212 +360,27 @@ fn build_hugging_face_download(
         ));
     }
 
-    let source_identity = canonical_source_identity(&requests)?;
-    let cache_path =
-        config.cache_model_path_for_source(model, &resolved.commit, &source_identity).ok_or_else(|| {
-            StorageError::UnsupportedItem {
-                identifier: model.identifier.clone(),
-            }
-        })?;
+    let cache_path = config.cache_model_path(model, &resolved.commit).ok_or_else(|| StorageError::UnsupportedItem {
+        identifier: model.identifier.clone(),
+    })?;
     let group_spec = FileDownloadGroupSpec::new(cache_path.clone(), requests).map_err(storage_error)?;
     ensure_binding_total_fits(&group_spec)?;
     Ok(ResolvedModelDownload {
-        files: Arc::new(files),
         cache_path,
         group_spec,
     })
 }
 
-async fn verified_legacy_files(
-    root: &Path,
-    files: &[File],
-) -> Option<Vec<RelativeFilePath>> {
-    if files.is_empty() {
-        return None;
-    }
-    let root = std::fs::canonicalize(root).ok()?;
-    let mut verified_files = Vec::with_capacity(files.len());
-    let mut destinations = HashSet::with_capacity(files.len());
-    for file in files {
-        let relative_path = RelativeFilePath::try_from(file.name.as_str()).ok()?;
-        if !destinations.insert(relative_path.as_path().to_path_buf()) {
-            return None;
-        };
-        if !path_is_symlink_free(&root, relative_path.as_path()) {
-            return None;
-        }
-        let destination = root.join(relative_path.as_path());
-        let Ok(canonical_destination) = std::fs::canonicalize(&destination) else {
-            return None;
-        };
-        if !canonical_destination.starts_with(&root) {
-            return None;
-        }
-        let Ok(expected_bytes) = u64::try_from(file.size) else {
-            return None;
-        };
-        let Ok(metadata) = tokio::fs::symlink_metadata(&canonical_destination).await else {
-            return None;
-        };
-        if !metadata.is_file() || metadata.len() != expected_bytes {
-            return None;
-        }
-        let crc = file.crc32c()?;
-        if !download_manager::integrity_cache_matches(&canonical_destination, &FileCheck::CRC(crc)).await {
-            return None;
-        }
-        verified_files.push(relative_path);
-    }
-    verified_files.sort_by(|left, right| left.as_path().cmp(right.as_path()));
-    Some(verified_files)
-}
-
-fn path_is_symlink_free(
-    root: &Path,
-    relative_path: &Path,
-) -> bool {
-    let mut current = root.to_path_buf();
-    let Ok(root_metadata) = std::fs::symlink_metadata(&current) else {
-        return false;
-    };
-    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-        return false;
-    }
-    for component in relative_path.components() {
-        current.push(component);
-        match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => return false,
-            Ok(_) => {},
-            Err(_) => return false,
-        }
-    }
-    true
-}
-
-fn legacy_tree_is_safe(root: &Path) -> bool {
-    let Ok(root_metadata) = std::fs::symlink_metadata(root) else {
-        return false;
-    };
-    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-        return false;
-    }
-    let Ok(canonical_root) = std::fs::canonicalize(root) else {
-        return false;
-    };
-
-    let mut pending = vec![canonical_root.clone()];
-    let mut visited = HashSet::from([canonical_root.clone()]);
-    while let Some(directory) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&directory) else {
-            return false;
-        };
-        for entry in entries {
-            let Ok(entry) = entry else {
-                return false;
-            };
-            let path = entry.path();
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                return false;
-            };
-            if is_live_download_artifact(name) {
-                return false;
-            }
-
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                return false;
-            };
-            if metadata.file_type().is_symlink() {
-                return false;
-            }
-            if metadata.is_file() {
-                if FsFile::open(&path).is_err() {
-                    return false;
-                }
-                continue;
-            }
-            if !metadata.is_dir() {
-                return false;
-            }
-
-            let Ok(canonical_directory) = std::fs::canonicalize(&path) else {
-                return false;
-            };
-            if !canonical_directory.starts_with(&canonical_root) || !visited.insert(canonical_directory.clone()) {
-                return false;
-            }
-            pending.push(canonical_directory);
-        }
-    }
-    true
-}
-
-fn is_live_download_artifact(name: &str) -> bool {
-    name.ends_with(".part")
-        || name.ends_with(".resume_data")
-        || name.ends_with(".lock")
-        || name == "installing"
-        || name.ends_with(".installing")
-        || name.starts_with(".uzu-download-manager")
-}
-
-fn install_verified_legacy_files(
-    legacy_root: &Path,
-    safe_path: &Path,
-    files: &[RelativeFilePath],
-) -> io::Result<()> {
-    let legacy_root = std::fs::canonicalize(legacy_root)?;
-    let parent = safe_path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "safe cache path has no parent"))?;
-    reject_symlink_ancestors(parent)?;
-    create_dir_all(parent)?;
-    reject_symlink_ancestors(parent)?;
-    let safe_name = safe_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "safe cache path has no file name"))?;
-    let staging_path = parent.join(format!(".{safe_name}.migrate-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&staging_path)?;
-    reject_symlink_ancestors(&staging_path)?;
-
-    let install_result = (|| {
-        for relative_path in files {
-            let source = legacy_root.join(relative_path.as_path());
-            if !path_is_symlink_free(&legacy_root, relative_path.as_path()) {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "legacy file path changed during migration"));
-            }
-            let canonical_source = std::fs::canonicalize(&source)?;
-            if !canonical_source.starts_with(&legacy_root) {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "legacy file escaped its cache root"));
-            }
-
-            let destination = staging_path.join(relative_path.as_path());
-            if let Some(parent) = destination.parent() {
-                reject_symlink_ancestors(parent)?;
-                create_dir_all(parent)?;
-                reject_symlink_ancestors(parent)?;
-            }
-            std::fs::copy(canonical_source, destination)?;
-        }
-
-        reject_symlink_ancestors(parent)?;
-        reject_symlink_ancestors(&staging_path)?;
-        match std::fs::rename(&staging_path, safe_path) {
-            Ok(()) => Ok(()),
-            Err(_)
-                if std::fs::symlink_metadata(safe_path).is_ok_and(|metadata| metadata.is_dir())
-                    && reject_symlink_ancestors(safe_path).is_ok() =>
-            {
-                Ok(())
+fn ensure_binding_total_fits(spec: &FileDownloadGroupSpec) -> Result<(), StorageError> {
+    let total =
+        spec.files().iter().filter_map(|file| file.expected_bytes).try_fold(0_u64, u64::checked_add).ok_or_else(
+            || StorageError::DownloadManager {
+                message: "model byte total overflow".to_string(),
             },
-            Err(error) => Err(error),
-        }
-    })();
-
-    if staging_path.exists() {
-        let _ = std::fs::remove_dir_all(&staging_path);
-    }
-    install_result
+        )?;
+    i64::try_from(total).map(|_| ()).map_err(|_| StorageError::DownloadManager {
+        message: "model byte total exceeds the binding range".to_string(),
+    })
 }
 
 fn reject_symlink_ancestors(path: &Path) -> io::Result<()> {
@@ -678,40 +412,6 @@ fn is_platform_path_alias(path: &Path) -> bool {
         let _ = path;
         false
     }
-}
-
-fn ensure_binding_total_fits(spec: &FileDownloadGroupSpec) -> Result<(), StorageError> {
-    let total =
-        spec.files().iter().filter_map(|file| file.expected_bytes).try_fold(0_u64, u64::checked_add).ok_or_else(
-            || StorageError::DownloadManager {
-                message: "model byte total overflow".to_string(),
-            },
-        )?;
-    i64::try_from(total).map(|_| ()).map_err(|_| StorageError::DownloadManager {
-        message: "model byte total exceeds the binding range".to_string(),
-    })
-}
-
-#[derive(serde::Serialize)]
-struct CanonicalDownloadMember<'a> {
-    relative_path: String,
-    source_url: &'a str,
-    expected_bytes: Option<u64>,
-    check: &'a FileCheck,
-}
-
-fn canonical_source_identity(requests: &[FileDownloadRequest]) -> Result<Vec<u8>, StorageError> {
-    let mut members = requests
-        .iter()
-        .map(|request| CanonicalDownloadMember {
-            relative_path: request.relative_path.to_string(),
-            source_url: &request.source.url,
-            expected_bytes: request.expected_bytes,
-            check: &request.check,
-        })
-        .collect::<Vec<_>>();
-    members.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-    serde_json::to_vec(&members).map_err(storage_error)
 }
 
 fn storage_error(error: impl std::fmt::Display) -> StorageError {

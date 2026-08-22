@@ -62,50 +62,21 @@ impl Config {
         self.cache_path().join("models")
     }
 
-    pub fn cache_model_path(
-        &self,
-        model: &Model,
-    ) -> Option<PathBuf> {
-        self.cache_model_path_at_revision(model, &model.checkpoint_version()?)
-    }
-
-    pub(crate) fn cache_model_path_at_revision(
+    /// The on-disk root for one revision of a model.
+    ///
+    /// `revision` is the Mirai checkpoint version or the Hugging Face commit;
+    /// both are safe single path components.
+    pub(crate) fn cache_model_path(
         &self,
         model: &Model,
         revision: &str,
-    ) -> Option<PathBuf> {
-        self.cache_model_path_for_source(model, revision, &[])
-    }
-
-    pub(crate) fn cache_model_path_for_source(
-        &self,
-        model: &Model,
-        revision: &str,
-        canonical_source_identity: &[u8],
-    ) -> Option<PathBuf> {
-        let reference_name = model.reference_name()?;
-        let repositories = model.repo_ids().join("\n");
-        let model_identity = format!("{reference_name}\n{}\n{repositories}", model.identifier);
-        let model_key = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, model_identity.as_bytes());
-        let mut source_identity = Vec::with_capacity(revision.len() + canonical_source_identity.len() + 1);
-        source_identity.extend_from_slice(revision.as_bytes());
-        source_identity.push(0);
-        source_identity.extend_from_slice(canonical_source_identity);
-        let revision_key = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, &source_identity);
-        Some(self.cache_models_path().join(reference_name).join(model_key.to_string()).join(revision_key.to_string()))
-    }
-
-    pub(crate) fn legacy_cache_model_path(
-        &self,
-        model: &Model,
     ) -> Option<PathBuf> {
         let reference_name = model.reference_name()?;
         let model_identifier = model.cache_identifier();
-        let checkpoint_version = model.checkpoint_version()?;
-        if !is_safe_component(&model_identifier) || !is_safe_component(&checkpoint_version) {
+        if !is_safe_component(&model_identifier) || !is_safe_component(revision) {
             return None;
         }
-        Some(self.cache_models_path().join(reference_name).join(model_identifier).join(checkpoint_version))
+        Some(self.cache_models_path().join(reference_name).join(model_identifier).join(revision))
     }
 
     pub fn log_name(&self) -> String {
