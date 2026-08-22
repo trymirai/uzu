@@ -123,33 +123,12 @@ pub(crate) async fn ensure_owned_directory(path: &Path) -> Result<(), DownloadEr
 }
 
 pub(crate) async fn reject_symlink_components(path: &Path) -> Result<(), DownloadError> {
-    let mut current = std::path::PathBuf::new();
-    for component in path.components() {
-        current.push(component);
-        match tokio::fs::symlink_metadata(&current).await {
-            Ok(metadata) if metadata.file_type().is_symlink() && !is_platform_path_alias(&current) => {
-                return Err(DownloadError::Io(format!(
-                    "download state path contains a symlink: {}",
-                    current.display()
-                )));
-            },
-            Ok(_) => {},
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-            Err(error) => return Err(DownloadError::from(error)),
-        }
-    }
-    Ok(())
-}
-
-fn is_platform_path_alias(path: &Path) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        matches!(path.to_str(), Some("/var" | "/tmp" | "/etc"))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-        false
+    match crate::path_safety::first_symlink_ancestor(path).await {
+        Ok(None) => Ok(()),
+        Ok(Some(symlink)) => {
+            Err(DownloadError::Io(format!("download state path contains a symlink: {}", symlink.display())))
+        },
+        Err(error) => Err(DownloadError::from(error)),
     }
 }
 

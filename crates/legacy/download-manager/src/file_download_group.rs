@@ -1139,7 +1139,9 @@ async fn first_invalid_owned_directory(path: &Path) -> Result<Option<(PathBuf, &
     for component in path.components() {
         current.push(component);
         match tokio::fs::symlink_metadata(&current).await {
-            Ok(metadata) if metadata.file_type().is_symlink() && !is_platform_path_alias(&current) => {
+            Ok(metadata)
+                if metadata.file_type().is_symlink() && !crate::path_safety::is_platform_path_alias(&current) =>
+            {
                 return Ok(Some((current, "contains a symlink")));
             },
             Ok(metadata) if !metadata.is_dir() => return Ok(Some((current, "contains a non-directory ancestor"))),
@@ -1167,7 +1169,7 @@ async fn validate_existing_symlinks(spec: &FileDownloadGroupSpec) -> Result<Path
             )
         })?;
         let mut failures = Vec::new();
-        match first_disallowed_symlink_ancestor(&normalized_root).await {
+        match crate::path_safety::first_symlink_ancestor(&normalized_root).await {
             Ok(Some(symlink)) => failures.push(FileDownloadFailure::new(
                 spec.files()[0].relative_path.clone(),
                 DownloadError::Io(format!("destination root has a symlinked ancestor: {}", symlink.display())),
@@ -1256,34 +1258,6 @@ async fn validate_existing_symlinks(spec: &FileDownloadGroupSpec) -> Result<Path
             sort_failures(&mut failures);
             Err(FileDownloadGroupError::file_failures(FileDownloadGroupOperation::Create, failures))
         }
-    }
-}
-
-async fn first_disallowed_symlink_ancestor(path: &Path) -> Result<Option<PathBuf>, std::io::Error> {
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component);
-        match tokio::fs::symlink_metadata(&current).await {
-            Ok(metadata) if metadata.file_type().is_symlink() && !is_platform_path_alias(&current) => {
-                return Ok(Some(current));
-            },
-            Ok(_) => {},
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(None)
-}
-
-fn is_platform_path_alias(path: &Path) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        matches!(path.to_str(), Some("/var" | "/tmp" | "/etc"))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-        false
     }
 }
 

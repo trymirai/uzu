@@ -21,6 +21,7 @@ mod relative_file_path;
 
 pub(crate) mod backends;
 pub(crate) mod file_download_task_actor;
+pub(crate) mod path_safety;
 pub(crate) mod reducer;
 pub(crate) mod traits;
 

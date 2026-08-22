@@ -298,26 +298,13 @@ fn install_downloaded_file(
 }
 
 fn reject_symlink_components(path: &Path) -> Result<(), std::io::Error> {
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component);
-        match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() && !is_platform_path_alias(&current) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    format!("download installation path contains a symlink: {}", current.display()),
-                ));
-            },
-            Ok(_) => {},
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-            Err(error) => return Err(error),
-        }
+    match crate::path_safety::first_symlink_ancestor_blocking(path)? {
+        None => Ok(()),
+        Some(symlink) => Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("download installation path contains a symlink: {}", symlink.display()),
+        )),
     }
-    Ok(())
-}
-
-fn is_platform_path_alias(path: &Path) -> bool {
-    matches!(path.to_str(), Some("/var" | "/tmp" | "/etc"))
 }
 
 fn is_success_http_status(status: isize) -> bool {
