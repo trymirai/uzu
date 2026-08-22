@@ -1,56 +1,97 @@
-use std::{
-    collections::{HashMap, hash_map::Entry},
-    sync::OnceLock,
-};
-
 use super::policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK};
 use crate::{
     backends::{
         common::{
-            Allocation, BufferArg, Encoder,
             gpu_types::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
+            kernel::matmul::MatmulShape,
         },
-        metal::{Metal, context::MetalContext, device_profile::DeviceProfile, kernel::GemvMetalKernel},
+        metal::{context::MetalContext, device_profile::DeviceProfile, error::MetalError, kernel::GemvMetalKernel},
     },
     data_type::DataType,
 };
 
-const DEFAULT_GEMV_MAX_BATCH: u32 = 8;
-static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
-
-fn max_gemv_batch_threshold() -> u32 {
-    *GEMV_MAX_BATCH.get_or_init(|| {
-        // TODO: remove magic env var
-        std::env::var("UZU_GEMV_MAX_BATCH").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_GEMV_MAX_BATCH)
-    })
-}
+const GEMV_MAX_BATCH: u32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct GemvSpecialization {
+pub struct GemvSpecialization {
     b_prologue: GemmBPrologueKind,
     group_size: u32,
     bits: u32,
     output_transform: GemmDTransform,
     input_aligned: bool,
     k_split: u32,
-    results_per_simdgroup: u32,
+    output_row_tile: u32,
     num_simdgroups: u32,
+    input_row_tile: u32,
+    reduction_lanes: u32,
+    group_lanes: u32,
     gathered: bool,
     signed_codes: bool,
+    full_tile: bool,
 }
 
 impl GemvSpecialization {
-    pub(crate) fn select_shape(
+    #[cfg(test)]
+    pub fn tile(self) -> policy::GemvTile {
+        policy::GemvTile {
+            num_simdgroups: self.num_simdgroups,
+            k_split: self.k_split,
+            results_per_simdgroup: self.output_row_tile / (self.num_simdgroups / self.k_split),
+            input_row_tile: self.input_row_tile,
+            reduction_lanes: self.reduction_lanes,
+            group_lanes: self.group_lanes,
+        }
+    }
+
+    pub fn select_shape(
         shape: &MatmulShape,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         device_profile: DeviceProfile,
-    ) -> Option<GemvSpecialization> {
+    ) -> Option<Self> {
+        let is_quant = shape.is_quant();
+        let bits = shape.b_bits.unwrap_or(0);
+        let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
+        let tile = if is_quant && shape.gathered {
+            policy::gathered_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
+        } else if is_quant {
+            policy::quantized_tile(
+                device_profile,
+                bits,
+                shape.b_group_size.unwrap_or(0),
+                shape.m,
+                shape.n,
+                shape.k,
+                shape.d_transform,
+                bf16_io,
+            )
+        } else {
+            let mixed_precision = weights_data_type == DataType::F32
+                && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
+            if mixed_precision || shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > GEMV_MAX_BATCH {
+                return None;
+            }
+            let input_aligned = shape.k.is_multiple_of(FP_K_BLOCK);
+            if shape.d_transform.contains(GemmDTransform::RHT) {
+                Some(policy::DEFAULT_TILE)
+            } else {
+                Some(policy::fp_tile(shape.m, shape.n, shape.k, input_aligned, device_profile))
+            }
+        };
+        Self::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile?)
+    }
+
+    pub fn select_tile(
+        shape: &MatmulShape,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        tile: policy::GemvTile,
+    ) -> Option<Self> {
         if !shape.b_transpose || !shape.a_full_precision {
             return None;
         }
@@ -63,24 +104,20 @@ impl GemvSpecialization {
         if bad_leading_dimension {
             return None;
         }
-        if shape.d_transform.contains(GemmDTransform::ACCUMULATE) && !shape.n.is_multiple_of(32) {
-            return None;
-        }
         if shape.d_transform.contains(GemmDTransform::RHT) && !shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) {
             return None;
         }
-        if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > max_gemv_batch_threshold() {
+        if shape.d_transform.contains(GemmDTransform::ACCUMULATE) && !shape.n.is_multiple_of(32) {
             return None;
         }
+        let bits = shape.b_bits.unwrap_or(0);
         if !is_quant {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
-            if mixed_precision {
+            if mixed_precision || shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > GEMV_MAX_BATCH {
                 return None;
             }
         }
-
-        let bits = shape.b_bits.unwrap_or(0);
         let block_size = if !is_quant {
             FP_K_BLOCK
         } else if bits == 4 {
@@ -89,49 +126,90 @@ impl GemvSpecialization {
             256
         };
         let input_aligned = shape.k.is_multiple_of(block_size);
-        let has_rht = shape.d_transform.contains(GemmDTransform::RHT);
-        let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
-        let tile = if is_quant && bf16_io {
-            policy::quant_tile(shape.m, shape.n, shape.k, bits, has_rht, device_profile)
-        } else if is_quant || has_rht {
-            // Non-bf16 quant IO and fp+RHT keep the default tile (the only
-            // one instantiated for those modes).
-            policy::DEFAULT_TILE
-        } else {
-            policy::fp_tile(shape.m, shape.n, shape.k, input_aligned, device_profile)
-        };
-        Some(Self {
+        // Gathered quantized rows cannot share one input tile.
+        if is_quant && shape.gathered && tile.input_row_tile > 1 {
+            return None;
+        }
+        let specialization = Self {
             b_prologue: shape.b_prologue,
             group_size: shape.b_group_size.unwrap_or(0),
             bits,
             output_transform: shape.d_transform,
             input_aligned,
             k_split: tile.k_split,
-            results_per_simdgroup: tile.results_per_simdgroup,
+            output_row_tile: tile.output_row_tile(),
             num_simdgroups: tile.num_simdgroups,
+            input_row_tile: tile.input_row_tile,
+            reduction_lanes: tile.reduction_lanes,
+            group_lanes: tile.group_lanes,
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
-        })
+            full_tile: full_tile(shape, tile),
+        };
+        Some(specialization)
+    }
+
+    pub fn output_row_tile(&self) -> u32 {
+        self.output_row_tile
+    }
+
+    fn create_pipeline(
+        &self,
+        context: &MetalContext,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+    ) -> Result<GemvMetalKernel, MetalError> {
+        GemvMetalKernel::new(
+            context,
+            input_data_type,
+            weights_data_type,
+            output_data_type,
+            self.b_prologue,
+            self.group_size,
+            self.bits,
+            self.k_split,
+            self.input_aligned,
+            self.input_row_tile,
+            self.output_row_tile(),
+            self.reduction_lanes,
+            self.group_lanes,
+            self.num_simdgroups,
+            self.output_transform,
+            self.gathered,
+            self.signed_codes,
+            self.full_tile,
+        )
     }
 }
 
-fn rows_per_threadgroup(
-    k_split: u32,
-    results_per_simdgroup: u32,
-    num_simdgroups: u32,
-) -> u32 {
-    (num_simdgroups / k_split) * results_per_simdgroup
+fn full_tile(
+    shape: &MatmulShape,
+    tile: policy::GemvTile,
+) -> bool {
+    shape.m.is_multiple_of(tile.input_row_tile) && shape.n.is_multiple_of(tile.output_row_tile())
 }
 
-pub(crate) struct GemvDispatch {
+use std::collections::{HashMap, hash_map::Entry};
+
+use crate::backends::{
+    common::{
+        BufferArg, Encoder,
+        kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
+    },
+    metal::Metal,
+};
+
+/// GEMV pipelines compiled on first use.
+pub struct GemvKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
     pipelines: HashMap<GemvSpecialization, GemvMetalKernel>,
 }
 
-impl GemvDispatch {
-    pub(crate) fn new(
+impl GemvKernel {
+    pub fn new(
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
@@ -152,29 +230,15 @@ impl GemvDispatch {
         match self.pipelines.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let kernel = GemvMetalKernel::new(
-                    context,
-                    self.input_data_type,
-                    self.weights_data_type,
-                    self.output_data_type,
-                    specialization.b_prologue,
-                    specialization.group_size,
-                    specialization.bits,
-                    specialization.k_split,
-                    specialization.input_aligned,
-                    specialization.results_per_simdgroup,
-                    specialization.num_simdgroups,
-                    specialization.output_transform,
-                    specialization.gathered,
-                    specialization.signed_codes,
-                )
-                .map_err(MatmulError::BackendError)?;
+                let kernel = specialization
+                    .create_pipeline(context, self.weights_data_type, self.input_data_type, self.output_data_type)
+                    .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
             },
         }
     }
 
-    pub(crate) fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+    pub fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         specialization: GemvSpecialization,
@@ -206,88 +270,80 @@ impl GemvDispatch {
             });
         };
 
-        let group_count_x = n.div_ceil(rows_per_threadgroup(
-            specialization.k_split,
-            specialization.results_per_simdgroup,
-            specialization.num_simdgroups,
-        ));
+        // Preserve each weight buffer's residency range.
+        let (scales, zero_points, biases) = match &b {
+            MatmulB::FullPrecision {
+                ..
+            } => (None, None, None),
+            MatmulB::ScaleBiasDequant {
+                scales,
+                biases,
+                ..
+            } => (Some(*scales), None, Some(*biases)),
+            MatmulB::ScaleZeroPointDequant {
+                scales,
+                zero_points,
+                ..
+            } => (Some(*scales), Some(*zero_points), None),
+            MatmulB::ScaleSymmetricDequant {
+                scales,
+                ..
+            } => (Some(*scales), None, None),
+        };
 
+        let output_group_count = n.div_ceil(specialization.output_row_tile());
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;
-
         match b {
             MatmulB::FullPrecision {
                 b: weights,
-            } => {
-                pipeline.encode(
-                    weights,
-                    None::<&Allocation<Metal>>,
-                    None::<&Allocation<Metal>>,
-                    None::<&Allocation<Metal>>,
-                    (a, a_offset),
-                    &mut *d,
-                    output_bias,
-                    rht_factors,
-                    gather_indices,
-                    k,
-                    n,
-                    m,
-                    ab_scale,
-                    group_count_x,
-                    soft_cap,
-                    encoder,
-                );
-            },
-            quant_b @ (MatmulB::ScaleBiasDequant {
+            } => pipeline.encode(
+                weights,
+                scales,
+                zero_points,
+                biases,
+                (a, a_offset),
+                &mut *d,
+                output_bias,
+                rht_factors,
+                gather_indices,
+                k,
+                n,
+                m,
+                ab_scale,
+                output_group_count,
+                soft_cap,
+                encoder,
+            ),
+            MatmulB::ScaleBiasDequant {
+                b: weights,
                 ..
             }
             | MatmulB::ScaleZeroPointDequant {
+                b: weights,
                 ..
             }
             | MatmulB::ScaleSymmetricDequant {
+                b: weights,
                 ..
-            }) => {
-                let (weights, scales, zero_points, biases) = match quant_b {
-                    MatmulB::ScaleBiasDequant {
-                        b: w,
-                        scales,
-                        biases,
-                        ..
-                    } => (w, scales, None, Some(biases)),
-                    MatmulB::ScaleZeroPointDequant {
-                        b: w,
-                        scales,
-                        zero_points,
-                        ..
-                    } => (w, scales, Some(zero_points), None),
-                    MatmulB::ScaleSymmetricDequant {
-                        b: w,
-                        scales,
-                        ..
-                    } => (w, scales, None, None),
-                    MatmulB::FullPrecision {
-                        ..
-                    } => unreachable!(),
-                };
-                pipeline.encode(
-                    weights,
-                    Some(scales),
-                    zero_points,
-                    biases,
-                    (a, a_offset),
-                    &mut *d,
-                    output_bias,
-                    rht_factors,
-                    gather_indices,
-                    k,
-                    n,
-                    m,
-                    ab_scale,
-                    group_count_x,
-                    soft_cap,
-                    encoder,
-                );
-            },
+            } => pipeline.encode(
+                weights,
+                scales,
+                zero_points,
+                biases,
+                (a, a_offset),
+                &mut *d,
+                output_bias,
+                rht_factors,
+                gather_indices,
+                k,
+                n,
+                m,
+                ab_scale,
+                output_group_count,
+                soft_cap,
+                encoder,
+            ),
         }
 
         Ok(())

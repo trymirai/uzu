@@ -61,14 +61,19 @@ METAL_FUNC constexpr Int zero_point_row_stride(Int groups_per_row) {
 }
 
 template <ushort BITS>
-METAL_FUNC uint decode_zero_point(const device uint8_t* zero_points_row, uint group_index) {
+METAL_FUNC uint decode_zero_point(uint8_t packed, uint group_index) {
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 zero points supported");
   if constexpr (BITS == 4) {
-    const uint packed = uint(zero_points_row[group_index >> 1]);
-    return (packed >> ((group_index & 1u) * 4u)) & 0x0Fu;
+    return (uint(packed) >> ((group_index & 1u) * 4u)) & 0x0Fu;
   } else {
-    return uint(zero_points_row[group_index]);
+    return uint(packed);
   }
+}
+
+template <ushort BITS>
+METAL_FUNC uint decode_zero_point(const device uint8_t* zero_points_row, uint group_index) {
+  const uint byte_index = BITS == 4 ? group_index >> 1 : group_index;
+  return decode_zero_point<BITS>(zero_points_row[byte_index], group_index);
 }
 
 METAL_FUNC char4 unpack_signed_nibbles_to_int8(uint packed) {

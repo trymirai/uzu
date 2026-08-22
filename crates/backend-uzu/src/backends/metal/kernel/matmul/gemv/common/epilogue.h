@@ -2,89 +2,122 @@
 
 #include "../../../common/soft_cap.h"
 #include "../../../hadamard_transform/hadamard_transform.h"
+#include "arguments.h"
+#include "tile.h"
 
 namespace uzu {
 namespace gemm {
 
-template <typename BT, typename DT, typename U, uint RESULTS_PER_SIMDGROUP>
+template <typename Tile, typename AT, typename BT, typename DT, bool FULL_TILE>
 struct Epilogue {
+  using U = float;
+
   static METAL_FUNC void store(
-      thread U (&result)[RESULTS_PER_SIMDGROUP],
-      device DT* d,
-      const device BT* output_bias,
-      const device int32_t* hadamard_factors,
-      threadgroup U* shared_results,
-      float ab_scale,
-      float soft_cap,
-      GemmDTransform output_transform,
-      uint out_row,
-      uint out_vec_size,
-      uint out_block_idx,
-      uint simd_group,
-      uint simd_lane,
-      bool writer
+      thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
+      const thread GemvOperands<AT, BT, DT>& ops,
+      const thread GemvParams& params,
+      const thread OutputTile<Tile, FULL_TILE>& tile,
+      threadgroup U* shared_results
   ) {
-    const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
-    const bool is_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
-    const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
-    const bool is_soft_cap = output_transform.contains(GemmDTransform::SOFT_CAP);
-    const bool use_hadamard = output_transform.contains(GemmDTransform::RHT);
-
-    if (writer && simd_lane == 0) {
-      METAL_PRAGMA_UNROLL
-      for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-        U value = result[row];
-        if (is_scale) {
-          value = static_cast<U>(ab_scale) * value;
-        }
-        const uint global_row = out_row + row;
-        if (is_accumulate && global_row < out_vec_size) {
-          value += static_cast<U>(d[row]);
-        }
-        if (is_bias && !use_hadamard && global_row < out_vec_size) {
-          value += static_cast<U>(output_bias[global_row]);
-        }
-        if (is_soft_cap) {
-          value = apply_soft_cap(value, soft_cap);
-        }
-        result[row] = value;
-      }
+    const bool use_hadamard =
+        Tile::OUTPUT_ROWS >= METAL_SIMD_SIZE && params.output_transform.contains(GemmDTransform::RHT);
+    const bool output_writer = tile.writer && tile.reduction_lane == 0;
+    if (!use_hadamard && !output_writer) {
+      return;
     }
 
-    if (use_hadamard) {
-      if (simd_lane == 0) {
-        METAL_PRAGMA_UNROLL
-        for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-          shared_results[simd_group * RESULTS_PER_SIMDGROUP + row] = result[row];
-        }
-      }
+    if (!use_hadamard) {
+      write_results<false>(result, ops, params, tile, shared_results);
+      return;
+    }
+    if (output_writer) {
+      write_results<true>(result, ops, params, tile, shared_results);
+    }
 
+    if constexpr (Tile::OUTPUT_ROWS >= METAL_SIMD_SIZE) {
+      static_assert(Tile::K_SPLIT == 1, "RHT reuses shared results after Reduce");
       threadgroup_barrier(mem_flags::mem_threadgroup);
-
-      if (simd_group == 0) {
-        uint global_out_idx = out_block_idx * 32 + simd_lane;
-        if (global_out_idx < out_vec_size) {
-          DT transformed = simdgroup_output_random_hadamard_transform(
-              static_cast<ushort>(simd_lane),
-              static_cast<DT>(shared_results[simd_lane]),
-              hadamard_factors[global_out_idx]
+      constexpr uint OUTPUT_BLOCKS = Tile::OUTPUT_ROWS / METAL_SIMD_SIZE;
+      for (uint job = tile.simd_group; job < Tile::INPUT_ROWS * OUTPUT_BLOCKS; job += Tile::NUM_SIMDGROUPS) {
+        const uint input_index = job / OUTPUT_BLOCKS;
+        const uint output_block = job % OUTPUT_BLOCKS;
+        const uint input_row = tile.input_row + input_index;
+        const uint global_row = tile.tile_row + output_block * METAL_SIMD_SIZE + tile.simd_lane;
+        if ((FULL_TILE || input_row < params.batch_size) && (FULL_TILE || global_row < params.out_vec_size)) {
+          DT value = simdgroup_output_random_hadamard_transform(
+              static_cast<ushort>(tile.simd_lane),
+              static_cast<DT>(
+                  shared_results[input_index * Tile::OUTPUT_ROWS + output_block * METAL_SIMD_SIZE + tile.simd_lane]
+              ),
+              ops.hadamard_factors[global_row]
           );
-          if (is_bias) {
-            transformed += static_cast<DT>(output_bias[global_out_idx]);
+          if (params.output_transform.contains(GemmDTransform::BIAS)) {
+            value += static_cast<DT>(ops.output_bias[global_row]);
           }
-          d[simd_lane] = transformed;
-        }
-      }
-    } else {
-      if (writer && simd_lane == 0) {
-        METAL_PRAGMA_UNROLL
-        for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-          if (out_row + row < out_vec_size) {
-            d[row] = static_cast<DT>(result[row]);
-          }
+          ops.d[input_row * params.out_vec_size + global_row] = value;
         }
       }
     }
+  }
+
+private:
+  template <bool STAGE_HADAMARD>
+  static METAL_FUNC void write_results(
+      thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
+      const thread GemvOperands<AT, BT, DT>& ops,
+      const thread GemvParams& params,
+      const thread OutputTile<Tile, FULL_TILE>& tile,
+      threadgroup U* shared_results
+  ) {
+    Tile::for_each_input_row([&](auto input_index) UZU_ALWAYS_INLINE {
+      constexpr uint I = decltype(input_index)::value;
+      const uint input_row = tile.input_row + I;
+      if (!(FULL_TILE || input_row < params.batch_size)) {
+        return;
+      }
+      device DT* output = ops.d + input_row * params.out_vec_size + tile.row0;
+      Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
+        constexpr uint R = decltype(output_index)::value;
+        const uint global_row = tile.row0 + R;
+        if (!OutputTile<Tile, FULL_TILE>::row_in_range(global_row, params.out_vec_size)) {
+          return;
+        }
+        if (tile.clamped && params.output_transform.contains(GemmDTransform::ACCUMULATE)) {
+          return;
+        }
+        if constexpr (STAGE_HADAMARD) {
+          shared_results[I * Tile::OUTPUT_ROWS + tile.local_row + R] =
+              transform<false>(result[I][R], output + R, global_row, ops, params);
+        } else {
+          output[R] = static_cast<DT>(transform<true>(result[I][R], output + R, global_row, ops, params));
+        }
+      });
+    });
+  }
+
+  template <bool APPLY_BIAS>
+  static METAL_FUNC U transform(
+      U value,
+      const device DT* output,
+      uint global_row,
+      const thread GemvOperands<AT, BT, DT>& ops,
+      const thread GemvParams& params
+  ) {
+    if (params.output_transform.contains(GemmDTransform::SCALE)) {
+      value *= params.ab_scale;
+    }
+    if (params.output_transform.contains(GemmDTransform::ACCUMULATE)) {
+      value += static_cast<U>(*output);
+    }
+    if constexpr (APPLY_BIAS) {
+      if (params.output_transform.contains(GemmDTransform::BIAS)) {
+        value += static_cast<U>(ops.output_bias[global_row]);
+      }
+    }
+    if (params.output_transform.contains(GemmDTransform::SOFT_CAP)) {
+      value = apply_soft_cap(value, params.soft_cap);
+    }
+    return value;
   }
 };
 

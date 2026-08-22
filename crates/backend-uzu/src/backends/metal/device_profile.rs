@@ -1,76 +1,141 @@
-//TODO: remove after retune with gpu core counts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceSize {
-    /// Below Max/Ultra class: base and Pro dies, plus Max parts binned under
-    /// the core-count cutoff (a 24-core M1 Max lands here, a 32-core one does not).
+pub(super) enum DeviceIdentity {
+    M1,
+    M1Pro,
+    M1Max,
+    M1Ultra,
+    M2,
+    M2Pro,
+    M2Max,
+    M2Ultra,
+    M3,
+    M3Pro,
+    M3Max,
+    M4,
+    M4Pro,
+    M4Max,
+    M5,
+    M5Pro,
+    M5Max,
+}
+
+impl DeviceIdentity {
+    fn from_name(device_name: &str) -> Self {
+        let Some(chip) = device_name.strip_prefix("Apple M") else {
+            panic!("unsupported Metal device {device_name:?}; add its DeviceIdentity mapping");
+        };
+        match chip {
+            "1" => Self::M1,
+            "1 Pro" => Self::M1Pro,
+            "1 Max" => Self::M1Max,
+            "1 Ultra" => Self::M1Ultra,
+            "2" => Self::M2,
+            "2 Pro" => Self::M2Pro,
+            "2 Max" => Self::M2Max,
+            "2 Ultra" => Self::M2Ultra,
+            "3" => Self::M3,
+            "3 Pro" => Self::M3Pro,
+            "3 Max" => Self::M3Max,
+            "4" => Self::M4,
+            "4 Pro" => Self::M4Pro,
+            "4 Max" => Self::M4Max,
+            "5" => Self::M5,
+            "5 Pro" => Self::M5Pro,
+            "5 Max" => Self::M5Max,
+            _ => panic!("unsupported Metal device {device_name:?}; add its DeviceIdentity mapping"),
+        }
+    }
+
+    const fn gpu_family(self) -> GpuFamily {
+        match self {
+            Self::M1 | Self::M1Pro | Self::M1Max | Self::M1Ultra => GpuFamily::Legacy,
+            Self::M2 | Self::M2Pro | Self::M2Max | Self::M2Ultra => GpuFamily::Apple8,
+            Self::M3 | Self::M3Pro | Self::M3Max | Self::M4 | Self::M4Pro | Self::M4Max => GpuFamily::Apple9,
+            Self::M5 | Self::M5Pro | Self::M5Max => GpuFamily::M5Plus,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GpuFamily {
+    Legacy,
+    Apple8,
+    Apple9,
+    M5Plus,
+}
+
+impl GpuFamily {
+    pub(super) fn contains(
+        self,
+        identity: DeviceIdentity,
+    ) -> bool {
+        identity.gpu_family() == self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DeviceSize {
     Small,
-    /// Max/Ultra-class GPUs, currently classified by >= 30 GPU cores.
     Large,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceGeneration {
-    Legacy, // M1 (G13) and A14 or older
-    Apple8, // M2, A15/16
-    Apple9, // M3/4, A17 Pro, A18
-    M5Plus, // M5 (Apple9 + MXU support)
+impl DeviceSize {
+    fn from_gpu_core_count(gpu_core_count: u32) -> Self {
+        if gpu_core_count >= 30 {
+            Self::Large
+        } else {
+            Self::Small
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeviceProfile {
-    gpu_core_count: u32,
-    generation: DeviceGeneration,
+pub(super) struct DeviceProfile {
+    identity: DeviceIdentity,
+    size: DeviceSize,
+    supports_mxu: bool,
 }
-
-const LARGE_MIN_GPU_CORES: u32 = 30;
 
 impl DeviceProfile {
-    pub const fn new(
-        gpu_core_count: u32,
-        generation: DeviceGeneration,
+    pub(super) const fn new(
+        identity: DeviceIdentity,
+        size: DeviceSize,
+        supports_mxu: bool,
     ) -> Self {
         Self {
-            gpu_core_count,
-            generation,
+            identity,
+            size,
+            supports_mxu,
         }
     }
 
-    pub const fn size(self) -> DeviceSize {
-        if self.gpu_core_count >= LARGE_MIN_GPU_CORES {
-            DeviceSize::Large
-        } else {
-            DeviceSize::Small
-        }
+    pub(super) const fn identity(self) -> DeviceIdentity {
+        self.identity
     }
 
-    // TODO: retune based on gpu core counts
-    pub const fn gpu_core_count(self) -> u32 {
-        self.gpu_core_count
+    pub(super) const fn gpu_family(self) -> GpuFamily {
+        self.identity.gpu_family()
     }
 
-    pub const fn generation(self) -> DeviceGeneration {
-        self.generation
+    pub(super) const fn size(self) -> DeviceSize {
+        self.size
+    }
+
+    pub(super) const fn supports_mxu(self) -> bool {
+        self.supports_mxu
     }
 }
 
 pub(super) fn classify_device(
+    device_name: &str,
     gpu_core_count: u32,
-    supports_apple8_family: bool,
-    supports_apple9_family: bool,
     supports_mxu: bool,
 ) -> DeviceProfile {
-    // MXU is probed first: M5 also reports Apple9, so a family check alone
-    // cannot separate the two generations.
-    let generation = if supports_mxu {
-        DeviceGeneration::M5Plus
-    } else if supports_apple9_family {
-        DeviceGeneration::Apple9
-    } else if supports_apple8_family {
-        DeviceGeneration::Apple8
-    } else {
-        DeviceGeneration::Legacy
-    };
-    DeviceProfile::new(gpu_core_count, generation)
+    DeviceProfile::new(
+        DeviceIdentity::from_name(device_name),
+        DeviceSize::from_gpu_core_count(gpu_core_count),
+        supports_mxu,
+    )
 }
 
 #[cfg(test)]

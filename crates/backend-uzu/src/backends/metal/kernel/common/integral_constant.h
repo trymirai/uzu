@@ -6,6 +6,8 @@
 
 namespace uzu {
 
+#define UZU_ALWAYS_INLINE __attribute__((always_inline))
+
 template <typename T, T v>
 struct integral_constant {
   static constexpr constant T value = v;
