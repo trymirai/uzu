@@ -53,7 +53,7 @@ use crate::{
 pub struct Engine {
     settings: SharedAccess<Option<Settings>>,
     registry: SharedAccess<MergedRegistry>,
-    storage: SharedAccess<Storage>,
+    storage: Arc<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
     callback: SharedAccess<Option<Arc<EngineCallback>>>,
     telemetry: SharedAccess<Telemetry>,
@@ -98,11 +98,12 @@ impl Engine {
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
         let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
-            .with_download_manager_type(config.download_manager_type.into());
+            .with_download_manager_type(config.download_manager_type.into())
+            .with_huggingface_api_key(config.huggingface_api_key.clone());
         let storage_cache_path = storage_config.cache_path();
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
-        let storage = SharedAccess::new(Storage::new(runtime_handle, storage_config).await?);
+        let storage = Arc::new(Storage::new(runtime_handle, storage_config).await?);
 
         let engine = Self {
             settings: SharedAccess::new(settings),
@@ -428,12 +429,10 @@ impl Engine {
         if let Some(local_external_path) = model.local_external_path() {
             return Some(local_external_path);
         }
-        let storage = self.storage.lock().await;
-        let state = storage.state(&model.identifier).await?;
+        let item = self.storage.get(&model.identifier).await?;
+        let state = item.state().await;
         match state.phase {
-            DownloadPhase::Downloaded {} => {
-                storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
-            },
+            DownloadPhase::Downloaded {} => Some(item.cache_path.to_string_lossy().to_string()),
             DownloadPhase::NotDownloaded {}
             | DownloadPhase::Downloading {}
             | DownloadPhase::Paused {}
@@ -458,7 +457,7 @@ impl Engine {
         model: &Model,
     ) -> Result<DownloaderStream, EngineError> {
         if !model.is_downloadable() {
-            return Ok(DownloaderStream::empty(model.identifier.clone()));
+            return Ok(DownloaderStream::empty());
         }
 
         let downloader = self.downloader(model);
@@ -466,7 +465,7 @@ impl Engine {
             return Err(EngineError::UnableToGetDownloaderProgressStream {});
         };
         if matches!(state.phase, DownloadPhase::Downloaded {}) {
-            return Ok(DownloaderStream::empty(model.identifier.clone()));
+            return Ok(DownloaderStream::empty());
         }
         downloader.resume().await?;
         downloader.progress().await
@@ -482,7 +481,7 @@ impl Engine {
 
     #[bindings::export(Method(Getter))]
     pub async fn download_states(&self) -> HashMap<String, DownloadState> {
-        self.storage.lock().await.states().await
+        self.storage.states().await
     }
 }
 
@@ -567,12 +566,12 @@ impl Engine {
 
 impl Engine {
     pub async fn storage_subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
-        self.storage.lock().await.subscribe()
+        self.storage.subscribe()
     }
 
     async fn handle_registry_refresh(&self) -> Result<(), EngineError> {
         let models = self.registry.lock().await.models().await?;
-        self.storage.lock().await.refresh(models).await?;
+        self.storage.refresh(models).await?;
         if let Some(callback) = self.callback.lock().await.as_ref().cloned() {
             callback.on_event();
         };

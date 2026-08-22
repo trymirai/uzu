@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InitialLifecycleState {
     NotDownloaded,
     Paused {

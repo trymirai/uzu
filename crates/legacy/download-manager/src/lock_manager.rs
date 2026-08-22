@@ -10,7 +10,7 @@ use kiban::{
 };
 use uuid::Uuid;
 
-use crate::{LockFileInfo, LockFileState};
+use crate::{LockFileInfo, LockFileState, compute_download_id};
 
 const LOCK_TIMEOUT_MINUTES: i64 = 30;
 
@@ -22,14 +22,6 @@ pub(crate) struct DestinationLockLease {
 }
 
 impl DestinationLockLease {
-    pub(crate) async fn acquire_for_destination(
-        destination_path: &Path,
-        manager_id: &str,
-        instance_id: Uuid,
-    ) -> Result<Self, std::io::Error> {
-        Self::acquire(&lock_path_for_destination(destination_path), manager_id, instance_id).await
-    }
-
     pub(crate) async fn acquire(
         lock_path: &Path,
         manager_id: &str,
@@ -49,7 +41,10 @@ impl DestinationLockLease {
 }
 
 pub(crate) fn lock_path_for_destination(destination: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.lock", destination.display()))
+    std::env::temp_dir()
+        .join("uzu-download-manager")
+        .join("locks")
+        .join(format!("{}.lock", compute_download_id(destination)))
 }
 
 pub async fn check_lock_file(
@@ -375,3 +370,7 @@ async fn classify_unparseable_lock(
 fn is_lock_stale(lock_info: &LockFileInfo) -> bool {
     chrono::Utc::now() - lock_info.acquired_at > chrono::Duration::minutes(LOCK_TIMEOUT_MINUTES)
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/lock_manager_test_support.rs"]
+mod test_support;

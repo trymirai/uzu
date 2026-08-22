@@ -1,9 +1,18 @@
-use serde::{Deserialize, Serialize};
+use crate::DownloadError;
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum PublicProjection {
     #[default]
     None,
     LockedByOther(String),
-    StickyError(String),
+    StickyError(DownloadError),
+}
+
+impl PublicProjection {
+    pub(crate) fn failure(&self) -> Option<DownloadError> {
+        match self {
+            Self::StickyError(error) => Some(error.clone()),
+            Self::None | Self::LockedByOther(_) => None,
+        }
+    }
 }

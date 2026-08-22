@@ -1,19 +1,31 @@
-use std::{error::Error, path::PathBuf};
+use std::{
+    collections::HashMap,
+    error::Error,
+    path::{Path, PathBuf},
+    sync::{Arc, LazyLock},
+};
 
-use download_manager::{DownloadError, FileCheck, FileDownloadManager, FileDownloadPhase, compute_download_id};
+use download_manager::{
+    DownloadError, FileCheck, FileDownloadGroup, FileDownloadGroupPhase, FileDownloadGroupSpec, FileDownloadManager,
+    FileDownloadRequest, RelativeFilePath, compute_download_id,
+};
 use kiban::{eprintf, fs, printf, rt::RuntimeHandle};
-use tokio::sync::OnceCell;
+use tokio::sync::{Mutex, OnceCell};
 use tokio_stream::StreamExt;
 use wasm_bindgen::{JsError, JsValue, prelude::wasm_bindgen};
 
-static MANAGER: OnceCell<Box<dyn FileDownloadManager>> = OnceCell::const_new();
+static MANAGER: OnceCell<Arc<dyn FileDownloadManager>> = OnceCell::const_new();
+static GROUPS: LazyLock<Mutex<HashMap<String, FileDownloadGroup>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[wasm_bindgen(getter_with_clone)]
+#[wasm_bindgen]
 pub struct JsFileDownloadState {
+    #[wasm_bindgen(getter_with_clone)]
     pub task_id: String,
+    #[wasm_bindgen(getter_with_clone)]
     pub phase: String,
     pub downloaded_bytes: f64,
     pub total_bytes: f64,
+    #[wasm_bindgen(getter_with_clone)]
     pub message: Option<String>,
 }
 
@@ -37,12 +49,9 @@ pub async fn download(
 
 #[wasm_bindgen]
 pub async fn pause(task_id: String) -> Result<(), JsError> {
-    let manager = get_manager().await?;
-    let all_tasks = manager.get_all_file_tasks().await?;
-    for task in all_tasks {
-        if task.download_id().to_string() == task_id {
-            task.pause().await?;
-        }
+    let group = GROUPS.lock().await.get(&task_id).cloned();
+    if let Some(group) = group {
+        group.pause().await?;
     }
 
     Ok(())
@@ -50,12 +59,9 @@ pub async fn pause(task_id: String) -> Result<(), JsError> {
 
 #[wasm_bindgen]
 pub async fn resume(task_id: String) -> Result<(), JsError> {
-    let manager = get_manager().await?;
-    let all_tasks = manager.get_all_file_tasks().await?;
-    for task in all_tasks {
-        if task.download_id().to_string() == task_id {
-            task.download().await?;
-        }
+    let group = GROUPS.lock().await.get(&task_id).cloned();
+    if let Some(group) = group {
+        group.download().await?;
     }
 
     Ok(())
@@ -68,67 +74,96 @@ async fn download_internal(
 ) -> Result<(), Box<dyn Error>> {
     let file_path = PathBuf::from(file_path_str);
     let manager = get_manager().await?;
-    manager.remove_file_task(compute_download_id(&file_path)).await?;
+    let task_id = compute_download_id(&file_path).to_string();
 
-    if fs::asyn::try_exists(&file_path).await? {
+    if let Some(previous_group) = GROUPS.lock().await.remove(&task_id) {
+        previous_group.cancel().await?;
+    } else if fs::asyn::try_exists(&file_path).await? {
         fs::asyn::remove_file(&file_path).await?;
     }
 
-    let task = manager.file_download_task(&url, &file_path, FileCheck::None, None).await?;
-    let mut progress_stream = task.progress().await?;
-    task.download().await?;
+    let destination_root = file_path.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let relative_path = RelativeFilePath::try_from(
+        file_path.file_name().ok_or("download path must name a file")?.to_string_lossy().as_ref(),
+    )?;
+    let spec = FileDownloadGroupSpec::new(
+        destination_root,
+        [FileDownloadRequest::new(url, relative_path, FileCheck::None, None)],
+    )?;
+    let group = FileDownloadGroup::open(manager, spec).await?;
+    GROUPS.lock().await.insert(task_id.clone(), group.clone());
+    let mut progress_stream = group.subscribe();
+    let attempt = group.download().await?;
 
     let mut download_error = None;
-    while let Some(Ok(state)) = progress_stream.next().await {
-        let (phase, message) = match &state.phase {
-            FileDownloadPhase::NotDownloaded => ("not_downloaded", None),
-            FileDownloadPhase::Downloading => ("downloading", None),
-            FileDownloadPhase::Paused => ("paused", None),
-            FileDownloadPhase::Downloaded => ("downloaded", None),
-            FileDownloadPhase::LockedByOther(id) => ("locked", Some(id.clone())),
-            FileDownloadPhase::Error(err) => ("error", Some(err.clone())),
+    while let Some(state) = progress_stream.next().await {
+        let failure_message = || {
+            state
+                .failures
+                .iter()
+                .map(|failure| format!("{}: {}", failure.relative_path, failure.error))
+                .collect::<Vec<_>>()
+                .join("; ")
+        };
+        let (phase, message) = match state.phase {
+            FileDownloadGroupPhase::NotDownloaded => ("not_downloaded", None),
+            FileDownloadGroupPhase::Downloading => ("downloading", None),
+            FileDownloadGroupPhase::Paused => ("paused", None),
+            FileDownloadGroupPhase::Downloaded => ("downloaded", None),
+            FileDownloadGroupPhase::Locked => ("locked", Some(failure_message())),
+            FileDownloadGroupPhase::Error => ("error", Some(failure_message())),
         };
         let js_state = JsFileDownloadState {
-            task_id: task.download_id().to_string(),
+            task_id: task_id.clone(),
             phase: phase.to_owned(),
             downloaded_bytes: state.downloaded_bytes as f64,
-            total_bytes: state.total_bytes as f64,
-            message,
+            total_bytes: state.total_bytes.unwrap_or(0) as f64,
+            message: message.clone(),
         };
         callback(js_state);
 
         match state.phase {
-            FileDownloadPhase::Downloading => {
-                printf!("Progress: {} / {} bytes ({:?})", state.downloaded_bytes, state.total_bytes, state.phase);
+            FileDownloadGroupPhase::Downloading => {
+                printf!("Progress: {} / {:?} bytes ({:?})", state.downloaded_bytes, state.total_bytes, state.phase);
             },
-            FileDownloadPhase::Downloaded => {
+            FileDownloadGroupPhase::Downloaded => {
                 printf!("Downloaded state");
                 break;
             },
-            FileDownloadPhase::Error(err) => {
-                eprintf!("Error: {err}");
-                download_error = Some(err);
+            FileDownloadGroupPhase::Error => {
+                let error = message.unwrap_or_else(|| "download failed".to_owned());
+                eprintf!("Error: {error}");
+                download_error = Some(error);
                 break;
             },
             _ => (),
         }
     }
-    task.wait().await;
+    attempt.wait().await?;
 
     if let Some(err) = download_error {
         return Err(DownloadError::Backend(err).into());
     }
 
-    if let FileDownloadPhase::Error(err) = task.state().await.phase {
-        return Err(DownloadError::Backend(err).into());
+    let final_state = group.state();
+    if matches!(final_state.phase, FileDownloadGroupPhase::Error | FileDownloadGroupPhase::Locked) {
+        let message = final_state
+            .failures
+            .iter()
+            .map(|failure| format!("{}: {}", failure.relative_path, failure.error))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(DownloadError::Backend(message).into());
     }
 
     Ok(())
 }
 
-async fn get_manager() -> Result<&'static dyn FileDownloadManager, DownloadError> {
+async fn get_manager() -> Result<Arc<dyn FileDownloadManager>, DownloadError> {
     MANAGER
-        .get_or_try_init(|| <dyn FileDownloadManager>::system_default(RuntimeHandle::current()))
+        .get_or_try_init(|| async {
+            <dyn FileDownloadManager>::system_default(RuntimeHandle::current()).await.map(Arc::from)
+        })
         .await
-        .map(Box::as_ref)
+        .map(Arc::clone)
 }

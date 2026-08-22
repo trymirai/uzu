@@ -19,13 +19,14 @@ pub const KEY_BASETEN_API_KEY: &str = "BASETEN_API_KEY";
 pub const KEY_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
 
 #[bindings::export(Structure(Class))]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct EngineConfig {
     pub application_identifier: Option<String>,
     pub mirai_api_key: Option<String>,
     pub lalamo_path: Option<String>,
     pub local_path: Option<String>,
+    #[serde(skip_serializing)]
     pub huggingface_api_key: Option<String>,
     pub openai_api_key: Option<String>,
     pub anthropic_api_key: Option<String>,
@@ -37,6 +38,35 @@ pub struct EngineConfig {
     pub allow_lmstudio_usage: bool,
     #[serde(default)]
     pub download_manager_type: DownloadManagerType,
+}
+
+impl std::fmt::Debug for EngineConfig {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        fn secret(value: &Option<String>) -> Option<&'static str> {
+            value.as_ref().map(|_| "[REDACTED]")
+        }
+
+        formatter
+            .debug_struct("EngineConfig")
+            .field("application_identifier", &self.application_identifier)
+            .field("mirai_api_key", &secret(&self.mirai_api_key))
+            .field("lalamo_path", &self.lalamo_path)
+            .field("local_path", &self.local_path)
+            .field("huggingface_api_key", &secret(&self.huggingface_api_key))
+            .field("openai_api_key", &secret(&self.openai_api_key))
+            .field("anthropic_api_key", &secret(&self.anthropic_api_key))
+            .field("gemini_api_key", &secret(&self.gemini_api_key))
+            .field("xai_api_key", &secret(&self.xai_api_key))
+            .field("baseten_api_key", &secret(&self.baseten_api_key))
+            .field("openrouter_api_key", &secret(&self.openrouter_api_key))
+            .field("allow_ollama_usage", &self.allow_ollama_usage)
+            .field("allow_lmstudio_usage", &self.allow_lmstudio_usage)
+            .field("download_manager_type", &self.download_manager_type)
+            .finish()
+    }
 }
 
 impl Default for EngineConfig {
@@ -86,6 +116,10 @@ impl EngineConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/engine/config_test.rs"]
+mod tests;
 
 #[bindings::export(Implementation)]
 impl EngineConfig {

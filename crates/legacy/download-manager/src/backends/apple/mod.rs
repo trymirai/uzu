@@ -12,7 +12,9 @@ mod task_ext;
 pub use active_task::AppleActiveTask;
 pub use backend::AppleBackend;
 pub use context::AppleBackendContext;
-pub(crate) use delegate::{AppleEventRegistry, AppleEventSink, AppleSessionDelegate, AppleSinkKey};
+pub(crate) use delegate::{
+    AppleEventRegistry, AppleEventSink, AppleSessionDelegate, AppleSinkKey, DestinationInstallBarrier,
+};
 pub use error::AppleBackendError;
 pub(crate) use get_tasks_handler::AppleGetTasksHandler;
 pub use manager::AppleDownloadManager;

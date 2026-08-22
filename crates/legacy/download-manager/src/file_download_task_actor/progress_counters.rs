@@ -1,7 +1,5 @@
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ProgressCounters {
     pub downloaded_bytes: u64,
-    pub total_bytes: u64,
+    pub total_bytes: Option<u64>,
 }

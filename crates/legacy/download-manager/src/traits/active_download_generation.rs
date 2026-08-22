@@ -1,6 +1,4 @@
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ActiveDownloadGeneration(u64);
 
 impl ActiveDownloadGeneration {

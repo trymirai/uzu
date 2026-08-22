@@ -1,13 +1,13 @@
-use crate::traits::ActiveDownloadGeneration;
+use crate::{DownloadError, traits::ActiveDownloadGeneration};
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BackendEvent {
     Completed {
         generation: ActiveDownloadGeneration,
     },
     Error {
         generation: ActiveDownloadGeneration,
-        message: String,
+        error: DownloadError,
     },
 }
 
@@ -20,11 +20,11 @@ impl BackendEvent {
 
     pub fn error(
         generation: ActiveDownloadGeneration,
-        message: String,
+        error: DownloadError,
     ) -> Self {
         Self::Error {
             generation,
-            message,
+            error,
         }
     }
 }

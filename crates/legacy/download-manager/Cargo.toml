@@ -11,11 +11,15 @@ license.workspace = true
 [dependencies]
 kiban.workspace = true
 futures-util.workspace = true
+http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 crc32c.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+unicode-normalization.workspace = true
 base64.workspace = true
 tracing.workspace = true
 chrono.workspace = true
@@ -50,7 +54,3 @@ chrono.workspace = true
 
 [lints]
 workspace = true
-
-[[test]]
-name = "unit"
-path = "tests/unit/test_entry.rs"

@@ -3,13 +3,13 @@ use std::{path::Path, sync::Arc};
 use kiban::fs;
 
 use crate::{
-    DownloadError, DownloadId, FileCheck, FileState, LockFileState,
+    CheckedFileState, DownloadError, DownloadId, FileCheck, FileState, HttpDownloadRequest, LockFileState,
     backends::common::{Backend, action_executor::apply_actions},
     check_lock_file,
-    crc_utils::crc_path_for_file,
     file_download_task_actor::{ProgressCounters, PublicProjection},
-    lock_manager::{DestinationLockLease, lock_path_for_destination},
-    reducer::{ActionPlan, DiskObservation, InitialLifecycleState, LockObservation, decide, validate},
+    lock_manager::DestinationLockLease,
+    recovery_metadata::observe_resume_recovery,
+    reducer::{Action, ActionPlan, DiskObservation, InitialLifecycleState, decide, validate},
     traits::DownloadConfig,
 };
 
@@ -26,20 +26,33 @@ pub struct Startup {
 impl Startup {
     pub async fn observe<B: Backend>(
         download_id: DownloadId,
-        source_url: &str,
+        request: HttpDownloadRequest,
         destination_path: &Path,
+        artifact_root: &Path,
         file_check: FileCheck,
         expected_bytes: Option<u64>,
         manager_id: &str,
         manager_instance_id: uuid::Uuid,
     ) -> Result<Self, DownloadError> {
-        let resume_artifact_path = destination_path.with_extension(B::RESUME_ARTIFACT_EXTENSION);
-        let expected_crc = match &file_check {
-            FileCheck::CRC(crc) => Some(crc.clone()),
-            FileCheck::None => None,
-        };
-        let crc_path = crc_path_for_file(destination_path);
-        let resume_state = file_state(&resume_artifact_path).await;
+        let config = Arc::new(DownloadConfig {
+            download_id,
+            request,
+            destination: destination_path.to_path_buf(),
+            artifact_root: artifact_root.to_path_buf(),
+            file_check: file_check.clone(),
+            expected_bytes,
+            manager_id: manager_id.to_string(),
+            manager_instance_id,
+        });
+        reject_symlink_components(destination_path).await?;
+        ensure_owned_directory(artifact_root).await?;
+        if let Some(lock_directory) = config.lock_path().parent() {
+            ensure_owned_directory(lock_directory).await?;
+        }
+        let resume_artifact_path = config.resume_artifact_path(B::RESUME_ARTIFACT_EXTENSION);
+        let crc_path = config.integrity_receipt_path();
+        let recovery_observation = observe_resume_recovery(&config, &resume_artifact_path).await?;
+        let resume_state = recovery_observation.resume_state;
         let resume_size = match resume_state {
             FileState::Exists => B::read_resume_progress(&resume_artifact_path).await,
             FileState::Missing => None,
@@ -50,34 +63,41 @@ impl Startup {
             resume_state,
             destination_size: fs::asyn::file_length(destination_path).await.ok(),
             resume_size,
-            expected_crc,
+            file_check: file_check.clone(),
             expected_bytes,
             destination_path: destination_path.to_path_buf(),
             crc_path: Some(crc_path),
             resume_artifact_path: Some(resume_artifact_path),
         };
-        let lock_state = check_lock_file(
-            &lock_path_for_destination(destination_path),
-            manager_id,
-            manager_instance_id,
-            kiban::process::id(),
-        )
-        .await;
-        let lock_observation = LockObservation {
-            state: lock_state.clone(),
-        };
-        let validation = validate(&observation).await;
-        let decision = decide(&observation, &lock_observation, &validation);
-        let config = Arc::new(DownloadConfig {
-            download_id,
-            source_url: source_url.to_string(),
-            destination: destination_path.to_path_buf(),
-            file_check,
-            expected_bytes,
-            manager_id: manager_id.to_string(),
-            manager_instance_id,
-        });
-
+        let lock_state =
+            check_lock_file(&config.lock_path(), manager_id, manager_instance_id, kiban::process::id()).await;
+        let validation = validate(&observation).await?;
+        // Validation reads the destination and its receipt. Check both owned
+        // paths again so a late ancestor swap cannot turn the resulting action
+        // plan into an operation outside the downloader's roots.
+        reject_symlink_components(destination_path).await?;
+        reject_symlink_components(artifact_root).await?;
+        let mut decision = decide(&observation, &lock_state, &validation);
+        if !lock_state.is_conflict() {
+            let mut recovery_actions = recovery_observation
+                .cleanup_paths
+                .iter()
+                .cloned()
+                .map(|path| Action::DeleteResumeArtifact {
+                    path,
+                })
+                .collect::<Vec<_>>();
+            if validation.checked == CheckedFileState::Valid && resume_state == FileState::Exists {
+                recovery_actions.push(Action::DeleteResumeArtifact {
+                    path: config.recovery_metadata_path(),
+                });
+                recovery_actions.push(Action::DeleteResumeArtifact {
+                    path: config.recovery_metadata_staging_path(),
+                });
+            }
+            decision.action_plan =
+                ActionPlan::merge_in_order([decision.action_plan, ActionPlan::from_ordered_actions(recovery_actions)]);
+        }
         Ok(Self {
             config,
             initial_lifecycle_state: decision.initial_lifecycle_state,
@@ -93,6 +113,43 @@ impl Startup {
         destination_lease: &DestinationLockLease,
     ) -> Result<(), DownloadError> {
         apply_actions(&self.action_plan, destination_lease).await
+    }
+}
+
+pub(crate) async fn ensure_owned_directory(path: &Path) -> Result<(), DownloadError> {
+    reject_symlink_components(path).await?;
+    fs::asyn::create_dir_all(path).await?;
+    reject_symlink_components(path).await
+}
+
+pub(crate) async fn reject_symlink_components(path: &Path) -> Result<(), DownloadError> {
+    let mut current = std::path::PathBuf::new();
+    for component in path.components() {
+        current.push(component);
+        match tokio::fs::symlink_metadata(&current).await {
+            Ok(metadata) if metadata.file_type().is_symlink() && !is_platform_path_alias(&current) => {
+                return Err(DownloadError::Io(format!(
+                    "download state path contains a symlink: {}",
+                    current.display()
+                )));
+            },
+            Ok(_) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(DownloadError::from(error)),
+        }
+    }
+    Ok(())
+}
+
+fn is_platform_path_alias(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        matches!(path.to_str(), Some("/var" | "/tmp" | "/etc"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        false
     }
 }
 

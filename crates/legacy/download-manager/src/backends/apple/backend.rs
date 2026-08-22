@@ -23,6 +23,8 @@ impl DownloadBackend for AppleBackend {
     type ActiveTask = AppleActiveTask;
     type Error = AppleBackendError;
 
+    const TERMINAL_RETRY_COUNT: u16 = 3;
+
     async fn read_resume_progress(part_path: &Path) -> Option<u64> {
         resume_data_parser::read_resume_progress(part_path)
     }
@@ -46,7 +48,7 @@ impl common::Backend for AppleBackend {
         config: Arc<DownloadConfig>,
         generation: ActiveDownloadGeneration,
         backend_event_sender: BackendEventSender,
-        _destination_lease: &DestinationLockLease,
+        destination_lease: &DestinationLockLease,
     ) -> Result<InitialTaskAttachment<Self>, DownloadError> {
         let Some(task) = context
             .claim_matching_download_task(&config)
@@ -58,17 +60,33 @@ impl common::Backend for AppleBackend {
 
         match task.state() {
             NSURLSessionTaskState::Running | NSURLSessionTaskState::Suspended => {
+                common::ensure_owned_directory(&config.artifact_root).await?;
+                crate::recovery_metadata::prepare_fresh_recovery(
+                    &config,
+                    &config.resume_artifact_path("resume_data"),
+                    destination_lease,
+                )
+                .await?;
                 let initial_downloaded_bytes = task.count_of_bytes_received();
                 let total_bytes = match task.count_of_bytes_expected_to_receive() {
                     0 => config.expected_bytes,
                     total_bytes => Some(total_bytes),
                 };
-                context.attach_existing_task(&task, Arc::clone(&config), generation, backend_event_sender);
+                let destination_install_barrier =
+                    context.attach_existing_task(&task, Arc::clone(&config), generation, backend_event_sender);
                 if matches!(task.state(), NSURLSessionTaskState::Suspended) {
                     task.resume();
                 }
                 Ok(InitialTaskAttachment::Downloading {
-                    active_task: AppleActiveTask::new(task, context.event_registry(), config.download_id),
+                    active_task: AppleActiveTask::new_for_request(
+                        task,
+                        context.background_session(),
+                        context.event_registry(),
+                        config.download_id,
+                        config.resume_artifact_path("resume_data"),
+                        &config.request.headers,
+                        destination_install_barrier,
+                    ),
                     initial_downloaded_bytes,
                     total_bytes,
                 })

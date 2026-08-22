@@ -1033,5 +1033,6 @@ export type StorageError =
   | { type: 'InvalidStateTransition', from: DownloadPhase, to: DownloadPhase }
   | { type: 'IO', message: string }
   | { type: 'ItemNotFound', identifier: string }
+  | { type: 'ModelUnavailable', identifier: string, message: string }
   | { type: 'Registry', field0: RegistryError }
   | { type: 'UnsupportedItem', identifier: string }

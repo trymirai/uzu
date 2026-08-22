@@ -1,16 +1,14 @@
-use std::path::PathBuf;
-
 use objc2::msg_send;
 use objc2_foundation::{NSString, NSURLSessionDownloadTask, NSURLSessionTaskState};
 
-use crate::{DownloadId, DownloadInfo, compute_download_id};
+use crate::{DownloadId, recovery_metadata::RecoveryMetadata};
 
-pub trait AppleDownloadTaskExt {
-    fn set_download_info(
+pub(crate) trait AppleDownloadTaskExt {
+    fn set_recovery_metadata(
         &self,
-        info: &DownloadInfo,
+        metadata: &RecoveryMetadata,
     );
-    fn download_info(&self) -> Option<DownloadInfo>;
+    fn recovery_metadata(&self) -> Option<RecoveryMetadata>;
     fn download_id(&self) -> Option<DownloadId>;
     fn state(&self) -> NSURLSessionTaskState;
     fn count_of_bytes_expected_to_receive(&self) -> u64;
@@ -19,24 +17,24 @@ pub trait AppleDownloadTaskExt {
 }
 
 impl AppleDownloadTaskExt for NSURLSessionDownloadTask {
-    fn set_download_info(
+    fn set_recovery_metadata(
         &self,
-        info: &DownloadInfo,
+        metadata: &RecoveryMetadata,
     ) {
-        if let Ok(json) = info.to_json() {
+        if let Ok(json) = metadata.to_json() {
             let ns_string = NSString::from_str(&json);
             self.setTaskDescription(Some(&ns_string));
         }
     }
 
-    fn download_info(&self) -> Option<DownloadInfo> {
+    fn recovery_metadata(&self) -> Option<RecoveryMetadata> {
         self.taskDescription()
             .map(|description| description.to_string())
-            .and_then(|description| DownloadInfo::from_json(&description).ok())
+            .and_then(|description| RecoveryMetadata::from_json(&description).ok())
     }
 
     fn download_id(&self) -> Option<DownloadId> {
-        self.download_info().map(|info| compute_download_id(PathBuf::from(info.destination_path).as_path()))
+        self.recovery_metadata().and_then(|metadata| metadata.download_id())
     }
 
     fn state(&self) -> NSURLSessionTaskState {

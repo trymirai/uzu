@@ -1,4 +1,3 @@
-use download_manager::{FileDownloadPhase, FileDownloadState};
 use serde::{Deserialize, Serialize};
 
 use crate::storage::types::DownloadPhase;
@@ -111,49 +110,4 @@ impl DownloadState {
             } => "Error".to_string(),
         }
     }
-}
-
-pub fn reduce_file_download_states(file_states: &[FileDownloadState]) -> DownloadState {
-    if file_states.is_empty() {
-        return DownloadState::not_downloaded(0);
-    }
-
-    let total_bytes: u64 = file_states.iter().map(|f| f.total_bytes).sum();
-    let downloaded_bytes: u64 = file_states.iter().map(|f| f.downloaded_bytes).sum();
-
-    let all_downloaded = file_states.iter().all(|f| matches!(f.phase, FileDownloadPhase::Downloaded));
-    let any_downloaded = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Downloaded));
-    let any_downloading = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Downloading));
-    let any_paused = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Paused));
-    let any_locked = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::LockedByOther(_)));
-
-    if all_downloaded {
-        return DownloadState::downloaded(total_bytes as i64);
-    }
-
-    if let Some(error_state) = file_states.iter().find(|f| matches!(f.phase, FileDownloadPhase::Error(_)))
-        && let FileDownloadPhase::Error(err) = &error_state.phase
-    {
-        return DownloadState::error(err.clone());
-    }
-
-    if any_locked {
-        return DownloadState::locked(downloaded_bytes as i64, total_bytes as i64);
-    }
-
-    if any_downloading {
-        return DownloadState::downloading(downloaded_bytes as i64, total_bytes as i64);
-    }
-
-    if any_paused {
-        return DownloadState::paused(downloaded_bytes as i64, total_bytes as i64);
-    }
-
-    // If some files are downloaded but not all, and nothing is actively
-    // downloading, treat as paused (partial progress, can resume)
-    if any_downloaded && downloaded_bytes > 0 {
-        return DownloadState::paused(downloaded_bytes as i64, total_bytes as i64);
-    }
-
-    DownloadState::not_downloaded(total_bytes as i64)
 }

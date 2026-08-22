@@ -11,10 +11,20 @@ pub fn project_runtime_public_state<B: DownloadBackend>(
     config: &DownloadConfig,
 ) -> FileDownloadState {
     match projection {
-        PublicProjection::StickyError(message) => FileDownloadState::error(message.clone()),
-        PublicProjection::LockedByOther(manager_id) => FileDownloadState::locked_by_other(manager_id.clone()),
+        PublicProjection::StickyError(error) => FileDownloadState::error_with_progress(
+            progress_counters.downloaded_bytes,
+            fallback_total_bytes(progress_counters, config.expected_bytes),
+            error.to_string(),
+        ),
+        PublicProjection::LockedByOther(manager_id) => FileDownloadState::locked_by_other_with_progress(
+            progress_counters.downloaded_bytes,
+            fallback_total_bytes(progress_counters, config.expected_bytes),
+            manager_id.clone(),
+        ),
         PublicProjection::None => match lifecycle_state {
-            DownloadActorState::NotDownloaded => FileDownloadState::not_downloaded(config.expected_bytes.unwrap_or(0)),
+            DownloadActorState::NotDownloaded => {
+                FileDownloadState::not_downloaded(fallback_total_bytes(progress_counters, config.expected_bytes))
+            },
             DownloadActorState::Paused {
                 ..
             } => FileDownloadState::paused(
@@ -22,7 +32,10 @@ pub fn project_runtime_public_state<B: DownloadBackend>(
                 fallback_total_bytes(progress_counters, config.expected_bytes),
             ),
             DownloadActorState::Downloaded => {
-                let total_bytes = config.expected_bytes.unwrap_or(progress_counters.total_bytes);
+                let total_bytes = config
+                    .expected_bytes
+                    .or(progress_counters.total_bytes)
+                    .unwrap_or(progress_counters.downloaded_bytes);
                 FileDownloadState::downloaded(total_bytes)
             },
             DownloadActorState::Downloading {
@@ -39,9 +52,5 @@ fn fallback_total_bytes(
     progress_counters: ProgressCounters,
     expected_bytes: Option<u64>,
 ) -> u64 {
-    if progress_counters.total_bytes == 0 {
-        expected_bytes.unwrap_or(0)
-    } else {
-        progress_counters.total_bytes
-    }
+    progress_counters.total_bytes.or(expected_bytes).unwrap_or(0)
 }

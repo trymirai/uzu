@@ -113,6 +113,9 @@ apple-native-keyring-store = { workspace = true, features = [
     "keychain",
 ] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 [target.'cfg(all(target_vendor = "apple", not(target_os = "macos")))'.dependencies]
 apple-native-keyring-store = { workspace = true, features = ["protected"] }
 
@@ -129,7 +132,11 @@ rstest.workspace = true
 
 [[test]]
 name = "tool"
-path = "tests/tool/mod.rs"
+path = "tests/integration/tool/mod.rs"
+
+[[test]]
+name = "test_engine"
+path = "tests/integration/test_engine.rs"
 
 [[test]]
 name = "unit"
