@@ -74,5 +74,5 @@ pub(super) fn classify_device(
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/backends/metal/device_profile_test.rs"]
+#[path = "../../../unit/backends/metal/device_profile_test.rs"]
 mod tests;
