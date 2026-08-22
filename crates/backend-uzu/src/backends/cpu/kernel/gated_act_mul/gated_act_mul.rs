@@ -5,7 +5,7 @@ use proc_macros::kernel;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+        common::gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE, activation_silu_alpha},
         cpu::kernel::activation_transform::{hadamard_transform, quantize_transformed_row},
     },
 };
@@ -27,11 +27,21 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
     value_offset: u32,
     value_row_stride: u32,
     act_type: ActivationType,
+    #[optional(custom_activation_alpha)] activation_alpha: Option<f32>,
+    #[optional(clip_gate_min)] gate_clip_min: Option<f32>,
+    #[optional(clip_gate_max)] gate_clip_max: Option<f32>,
+    #[optional(clip_value_min)] value_clip_min: Option<f32>,
+    #[optional(clip_value_max)] value_clip_max: Option<f32>,
     #[specialize] ops: GatedActMulOp,
     #[specialize] interleaved: bool,
     #[specialize] use_hadamard: bool,
     #[specialize] activation_scale_group_size: u32,
     #[specialize] sum_group_size: u32,
+    #[specialize] custom_activation_alpha: bool,
+    #[specialize] clip_gate_min: bool,
+    #[specialize] clip_gate_max: bool,
+    #[specialize] clip_value_min: bool,
+    #[specialize] clip_value_max: bool,
 ) {
     assert_eq!(hadamard_factors.is_some(), use_hadamard);
     let quantize = matches!(ops, GatedActMulOp::Quantize | GatedActMulOp::QuantizeWithGroupSums);
@@ -57,7 +67,36 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
                 (batch * gated_dim + gated, unsafe { *value_operand.unwrap().add(value_index) })
             };
             let gate = unsafe { *act_operand.add(act_index) };
-            let result = super::gated_act_mul(value, gate, act_type);
+            let gate = if clip_gate_min || clip_gate_max {
+                let mut gate = gate.to_f32().unwrap();
+                if clip_gate_min {
+                    gate = gate.max(gate_clip_min.unwrap());
+                }
+                if clip_gate_max {
+                    gate = gate.min(gate_clip_max.unwrap());
+                }
+                T::from(gate).unwrap()
+            } else {
+                gate
+            };
+            let activated: T = if custom_activation_alpha && act_type == ActivationType::SILU {
+                activation_silu_alpha(gate, activation_alpha.unwrap())
+            } else {
+                act_type.activate(gate)
+            };
+            let value = if clip_value_min || clip_value_max {
+                let mut value = value.to_f32().unwrap();
+                if clip_value_min {
+                    value = value.max(value_clip_min.unwrap());
+                }
+                if clip_value_max {
+                    value = value.min(value_clip_max.unwrap());
+                }
+                T::from(value).unwrap()
+            } else {
+                value
+            };
+            let result = (value * activated).to_f32().unwrap();
             if let Some(transformed) = transformed.as_mut() {
                 transformed[gated] = result;
             } else {

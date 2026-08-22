@@ -175,8 +175,8 @@ impl<B: Backend> MoeBlock<B> {
         let finalize_kernel =
             <B::Kernels as Kernels>::MoeFinalizeKernel::new(context, data_type).map_err(MoeBlockError::BackendError)?;
 
-        let (gate_lo, gate_hi) = moe_config.expert_config.gate_clipping.unwrap_or_default();
-        let (up_lo, up_hi) = moe_config.expert_config.up_clipping.unwrap_or_default();
+        let gate_clipping = moe_config.expert_config.gate_clipping;
+        let up_clipping = moe_config.expert_config.up_clipping;
 
         Ok(Self {
             router_topk_kernel,
@@ -198,10 +198,10 @@ impl<B: Backend> MoeBlock<B> {
             hidden_dim: moe_config.expert_hidden_dim,
             num_routed_experts: moe_config.num_routed_experts,
             num_active_experts: moe_config.num_active_routed_experts,
-            gate_clip_min: gate_lo.unwrap_or(f32::NEG_INFINITY),
-            gate_clip_max: gate_hi.unwrap_or(f32::INFINITY),
-            up_clip_min: up_lo.unwrap_or(f32::NEG_INFINITY),
-            up_clip_max: up_hi.unwrap_or(f32::INFINITY),
+            gate_clip_min: gate_clipping.min.unwrap_or(f32::NEG_INFINITY),
+            gate_clip_max: gate_clipping.max.unwrap_or(f32::INFINITY),
+            up_clip_min: up_clipping.min.unwrap_or(f32::NEG_INFINITY),
+            up_clip_max: up_clipping.max.unwrap_or(f32::INFINITY),
             silu_alpha: moe_config.expert_config.activation.alpha(),
             data_type,
         })
