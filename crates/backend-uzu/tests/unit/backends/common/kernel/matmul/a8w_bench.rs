@@ -100,9 +100,9 @@ impl BenchmarkData {
             a_working: alloc_allocation::<Metal, bf16>(context, (m * k) as usize),
             a_int8: alloc_allocation::<Metal, i8>(context, (m * k) as usize),
             a_scales: alloc_allocation::<Metal, f32>(context, (m * groups) as usize),
-            m: m as u32,
-            k: k as u32,
-            n: n as u32,
+            m,
+            k,
+            n,
             group_size,
             mode: if bits == 4 {
                 QuantizationMode::U4
@@ -224,7 +224,7 @@ fn bench_bits(
             k,
             n,
             bits,
-            HADAMARD_TRANSFORM_BLOCK_SIZE as u32,
+            HADAMARD_TRANSFORM_BLOCK_SIZE,
             0xA8_00 ^ u64::from(bits) ^ k as u64 ^ n as u64,
         );
         let mut output = alloc_allocation::<Metal, bf16>(context, (m * n) as usize);

@@ -104,9 +104,7 @@ impl GemvSpecialization {
         if bad_leading_dimension {
             return None;
         }
-        if shape.d_transform.contains(GemmDTransform::RHT)
-            && !shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE as u32)
-        {
+        if shape.d_transform.contains(GemmDTransform::RHT) && !shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) {
             return None;
         }
         if shape.d_transform.contains(GemmDTransform::ACCUMULATE) && !shape.n.is_multiple_of(32) {
