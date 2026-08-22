@@ -1,4 +1,7 @@
-use std::{fmt, path::{Path, PathBuf}};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use kiban::fs;
 use serde::{Deserialize, Serialize};

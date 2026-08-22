@@ -69,10 +69,3 @@ fn rejects_windows_device_names_with_extensions() {
         assert!(RelativeFilePath::try_from(path).is_ok());
     }
 }
-
-#[test]
-fn deserialize_revalidates_path() {
-    let error = serde_json::from_str::<RelativeFilePath>(r#""../model.bin""#).unwrap_err();
-
-    assert!(error.to_string().contains("portable safe relative path"));
-}

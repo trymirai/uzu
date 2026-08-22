@@ -3,8 +3,6 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
-
 /// A non-empty, portable relative file path that cannot escape its destination root.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RelativeFilePath(PathBuf);
@@ -98,12 +96,6 @@ fn is_windows_device_name(component: &str) -> bool {
     )
 }
 
-impl AsRef<Path> for RelativeFilePath {
-    fn as_ref(&self) -> &Path {
-        self.as_path()
-    }
-}
-
 impl fmt::Display for RelativeFilePath {
     fn fmt(
         &self,
@@ -121,35 +113,11 @@ impl TryFrom<PathBuf> for RelativeFilePath {
     }
 }
 
-impl TryFrom<&Path> for RelativeFilePath {
-    type Error = RelativeFilePathError;
-
-    fn try_from(path: &Path) -> Result<Self, Self::Error> {
-        Self::new(path)
-    }
-}
-
 impl TryFrom<&str> for RelativeFilePath {
     type Error = RelativeFilePathError;
 
     fn try_from(path: &str) -> Result<Self, Self::Error> {
         Self::new(path)
-    }
-}
-
-impl Serialize for RelativeFilePath {
-    fn serialize<S: Serializer>(
-        &self,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for RelativeFilePath {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let path = PathBuf::deserialize(deserializer)?;
-        Self::new(path).map_err(D::Error::custom)
     }
 }
 

@@ -40,8 +40,6 @@ pub enum DownloadError {
     Protocol(String),
     #[error("canceled")]
     Canceled,
-    #[error("resume unsupported")]
-    ResumeUnsupported,
     #[error("bad url")]
     BadUrl,
     #[error("invalid request header")]

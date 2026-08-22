@@ -25,31 +25,28 @@ pub(crate) mod file_download_task_actor;
 pub(crate) mod reducer;
 pub(crate) mod traits;
 
+pub(crate) use checked_file_state::CheckedFileState;
 pub use crc_utils::integrity_cache_matches;
+pub(crate) use download_error::DownloadCleanupFailure;
 pub use download_error::DownloadError;
 pub use file_check::FileCheck;
-pub use file_download_group::{DownloadAttempt, FileDownloadGroup};
-pub use file_download_group_state::{FileDownloadGroupPhase, FileDownloadGroupState};
-pub use file_download_manager::{FileDownloadManager, FileDownloadManagerType};
-pub use file_download_request::{FileDownloadGroupSpec, FileDownloadRequest};
-pub use file_download_task::FileDownloadTask;
-pub use http_download_request::{HttpDownloadRequest, RequestHeaders};
-pub use relative_file_path::RelativeFilePath;
-
-pub(crate) use checked_file_state::CheckedFileState;
-pub(crate) use download_error::DownloadCleanupFailure;
 pub(crate) use file_download_event::FileDownloadEvent;
-pub(crate) use file_download_group_state::{
-    FileDownloadFailure, FileDownloadGroupError, FileDownloadGroupOperation,
-};
+pub use file_download_group::{DownloadAttempt, FileDownloadGroup};
+pub(crate) use file_download_group_state::{FileDownloadFailure, FileDownloadGroupError, FileDownloadGroupOperation};
+pub use file_download_group_state::{FileDownloadGroupPhase, FileDownloadGroupState};
 pub(crate) use file_download_manager::{DownloadEvent, DownloadEventSender, SharedDownloadEventSender};
+pub use file_download_manager::{FileDownloadManager, FileDownloadManagerType};
 pub(crate) use file_download_phase::FileDownloadPhase;
+pub use file_download_request::{FileDownloadGroupSpec, FileDownloadRequest};
 pub(crate) use file_download_snapshot::FileDownloadSnapshot;
 pub(crate) use file_download_state::FileDownloadState;
+pub use file_download_task::FileDownloadTask;
 pub(crate) use file_state::FileState;
+pub use http_download_request::{HttpDownloadRequest, RequestHeaders};
 pub(crate) use lock_file_info::LockFileInfo;
 pub(crate) use lock_file_state::LockFileState;
 pub(crate) use lock_manager::{check_lock_file, release_lock_if_owned};
+pub use relative_file_path::RelativeFilePath;
 
 pub type DownloadId = uuid::Uuid;
 

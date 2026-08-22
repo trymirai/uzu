@@ -465,7 +465,7 @@ async fn mock_group(tasks: &[Arc<MockTask>]) -> FileDownloadGroup {
         let relative_path = task.destination.strip_prefix("/mock").unwrap();
         FileDownloadRequest::new(
             task.source_url.clone(),
-            RelativeFilePath::try_from(relative_path).unwrap(),
+            RelativeFilePath::try_from(relative_path.to_path_buf()).unwrap(),
             FileCheck::None,
             task.expected_bytes,
         )
@@ -475,7 +475,7 @@ async fn mock_group(tasks: &[Arc<MockTask>]) -> FileDownloadGroup {
         .iter()
         .map(|task| {
             GroupMember::new(
-                RelativeFilePath::try_from(task.destination.strip_prefix("/mock").unwrap()).unwrap(),
+                RelativeFilePath::try_from(task.destination.strip_prefix("/mock").unwrap().to_path_buf()).unwrap(),
                 task.expected_bytes,
                 task.http_request(),
                 task.destination.clone(),
