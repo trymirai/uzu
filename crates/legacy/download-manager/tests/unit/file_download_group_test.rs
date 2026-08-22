@@ -2,7 +2,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -18,9 +18,7 @@ use crate::{
     FileDownloadGroupPhase, FileDownloadGroupSpec, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase,
     FileDownloadRequest, FileDownloadSnapshot, FileDownloadState, FileDownloadTask, HttpDownloadRequest,
     RelativeFilePath,
-    file_download_group::{
-        GROUP_ROOTS, GroupChild, GroupMember, group_artifact_root, reduce_group_state, root_registry_key,
-    },
+    file_download_group::{GroupChild, GroupMember, group_artifact_root, reduce_group_state},
 };
 
 fn failure(
@@ -368,21 +366,6 @@ fn mock_manager_with_existing(
     })
 }
 
-fn blocking_mock_manager(
-    task: Arc<MockTask>,
-    task_requests: Arc<AtomicUsize>,
-    drop_count: Arc<AtomicUsize>,
-    gate: MaterializationGate,
-) -> Arc<dyn FileDownloadManager> {
-    Arc::new(MockManager {
-        task,
-        task_requests,
-        drop_count,
-        open_existing: false,
-        materialization_gate: Some(gate),
-    })
-}
-
 fn blocking_existing_mock_manager(
     task: Arc<MockTask>,
     task_requests: Arc<AtomicUsize>,
@@ -447,15 +430,19 @@ async fn mock_group(tasks: &[Arc<MockTask>]) -> FileDownloadGroup {
         Arc::new(AtomicUsize::new(0)),
         Arc::new(AtomicUsize::new(0)),
     );
-    let (actor_count, _) = tokio_watch_channel(0);
+    static MOCK_ROOT_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+    let mock_root = PathBuf::from(format!("/mock-group-{}", MOCK_ROOT_SEQUENCE.fetch_add(1, Ordering::SeqCst)));
+    let root_claim = match super::GroupRootClaim::acquire(&mock_root, &spec).unwrap() {
+        super::GroupRootOutcome::Claimed(claim) => claim,
+        super::GroupRootOutcome::AlreadyOpen(_) => unreachable!("each mock group uses a fresh root"),
+    };
     FileDownloadGroup::spawn(Arc::new(super::FileDownloadGroupOwner {
         runtime_handle: kiban::rt::RuntimeHandle::current(),
         manager,
         spec,
         artifact_root: PathBuf::from("/mock-artifacts"),
         members,
-        actor_count,
-        release_watcher_running: AtomicBool::new(false),
+        _root_claim: root_claim,
     }))
 }
 
@@ -916,7 +903,7 @@ async fn download_and_cancel_reject_artifact_symlink_inserted_after_open() {
 }
 
 #[tokio::test]
-async fn open_reuses_matching_live_group_and_rejects_conflicting_spec() {
+async fn a_live_group_owns_its_root_until_dropped() {
     let root = tempfile::tempdir().unwrap();
     let manager: Arc<dyn FileDownloadManager> = Arc::from(
         <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, kiban::rt::RuntimeHandle::current())
@@ -927,45 +914,30 @@ async fn open_reuses_matching_live_group_and_rejects_conflicting_spec() {
         FileDownloadRequest::new(url, RelativeFilePath::try_from("model.bin").unwrap(), FileCheck::None, None)
     };
     let spec = FileDownloadGroupSpec::new(root.path(), [request("https://example.com/first")]).unwrap();
-
     let first = FileDownloadGroup::open(Arc::clone(&manager), spec.clone()).await.unwrap();
-    let reused = FileDownloadGroup::open(Arc::clone(&manager), spec).await.unwrap();
-    assert!(Arc::ptr_eq(&first.inner, &reused.inner));
 
-    let conflict_spec = FileDownloadGroupSpec::new(root.path(), [request("https://example.com/second")]).unwrap();
-    let conflict = FileDownloadGroup::open(manager, conflict_spec).await.unwrap_err();
+    let reopened = FileDownloadGroup::open(Arc::clone(&manager), spec.clone()).await.unwrap();
+    assert!(Arc::ptr_eq(&first.inner, &reopened.inner), "an identical spec must reuse the live group");
+
+    let other_spec = FileDownloadGroupSpec::new(root.path(), [request("https://example.com/second")]).unwrap();
+    let conflict = FileDownloadGroup::open(Arc::clone(&manager), other_spec).await.unwrap_err();
     assert!(matches!(conflict, FileDownloadGroupError::RootConflict { .. }));
+
+    drop(reopened);
+    drop(first);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let replacement_spec =
+                FileDownloadGroupSpec::new(root.path(), [request("https://example.com/second")]).unwrap();
+            if FileDownloadGroup::open(Arc::clone(&manager), replacement_spec).await.is_ok() {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the root must become claimable once the group is dropped");
 }
-
-#[tokio::test]
-async fn open_reuses_matching_group_across_manager_instances() {
-    let root = tempfile::tempdir().unwrap();
-    let spec = FileDownloadGroupSpec::new(
-        root.path(),
-        [FileDownloadRequest::new(
-            "https://example.com/model.bin",
-            RelativeFilePath::try_from("model.bin").unwrap(),
-            FileCheck::None,
-            None,
-        )],
-    )
-    .unwrap();
-    let manager = || async {
-        let manager: Arc<dyn FileDownloadManager> = Arc::from(
-            <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, kiban::rt::RuntimeHandle::current())
-                .await
-                .unwrap(),
-        );
-        manager
-    };
-
-    let first = FileDownloadGroup::open(manager().await, spec.clone()).await.unwrap();
-    let second = FileDownloadGroup::open(manager().await, spec).await.unwrap();
-
-    assert!(Arc::ptr_eq(&first.inner, &second.inner));
-}
-
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[tokio::test]
 async fn roots_that_only_differ_by_case_share_one_ownership_key() {
     let parent = tempfile::tempdir().unwrap();
@@ -1012,58 +984,6 @@ async fn roots_that_only_differ_by_case_share_one_ownership_key() {
 }
 
 #[tokio::test]
-async fn dropping_and_reopening_an_active_group_reuses_its_live_children() {
-    let root = tempfile::tempdir().unwrap();
-    let spec = FileDownloadGroupSpec::new(root.path(), [request_for_path("model.bin")]).unwrap();
-    let task = Arc::new(MockTask::new("model.bin", FileDownloadState::not_downloaded(10)));
-    let first_task_requests = Arc::new(AtomicUsize::new(0));
-    let first_manager_drops = Arc::new(AtomicUsize::new(0));
-    let group = FileDownloadGroup::open(
-        mock_manager(Arc::clone(&task), Arc::clone(&first_task_requests), Arc::clone(&first_manager_drops)),
-        spec.clone(),
-    )
-    .await
-    .unwrap();
-    let _abandoned_attempt = group.download().await.unwrap();
-
-    drop(group);
-    tokio::task::yield_now().await;
-
-    assert_eq!(task.pause_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(first_manager_drops.load(Ordering::SeqCst), 0);
-
-    let replacement_task = Arc::new(MockTask::new("replacement.bin", FileDownloadState::not_downloaded(10)));
-    let replacement_task_requests = Arc::new(AtomicUsize::new(0));
-    let replacement_manager_drops = Arc::new(AtomicUsize::new(0));
-    let reopened = FileDownloadGroup::open(
-        mock_manager(replacement_task, Arc::clone(&replacement_task_requests), Arc::clone(&replacement_manager_drops)),
-        spec,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(reopened.state().phase, FileDownloadGroupPhase::Downloading);
-    assert_eq!(replacement_task_requests.load(Ordering::SeqCst), 0);
-    assert_eq!(replacement_manager_drops.load(Ordering::SeqCst), 1);
-    let resumed_attempt = reopened.download().await.unwrap();
-    assert_eq!(task.download_calls.load(Ordering::SeqCst), 1);
-
-    task.complete();
-    assert_eq!(resumed_attempt.wait().await.unwrap().phase, FileDownloadGroupPhase::Downloaded);
-    drop(reopened);
-
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while first_manager_drops.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(first_manager_drops.load(Ordering::SeqCst), 1);
-    assert_eq!(first_task_requests.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
 async fn blocked_root_reconciliation_does_not_block_an_unrelated_root() {
     let parent = tempfile::tempdir().unwrap();
     let blocked_root = parent.path().join("blocked");
@@ -1104,186 +1024,6 @@ async fn blocked_root_reconciliation_does_not_block_an_unrelated_root() {
     let unrelated_group = unrelated_open.expect("an unrelated root must not wait for blocked reconciliation").unwrap();
     drop(blocked_group);
     drop(unrelated_group);
-}
-
-#[tokio::test]
-async fn dropping_group_while_download_command_materializes_keeps_owner_until_transfer_settles() {
-    let root = tempfile::tempdir().unwrap();
-    let spec = FileDownloadGroupSpec::new(root.path(), [request_for_path("model.bin")]).unwrap();
-    let task = Arc::new(MockTask::new("model.bin", FileDownloadState::not_downloaded(10)));
-    let task_requests = Arc::new(AtomicUsize::new(0));
-    let manager_drops = Arc::new(AtomicUsize::new(0));
-    let gate = MaterializationGate {
-        started: Arc::new(Notify::new()),
-        continue_download: Arc::new(Notify::new()),
-    };
-    let group = FileDownloadGroup::open(
-        blocking_mock_manager(Arc::clone(&task), Arc::clone(&task_requests), Arc::clone(&manager_drops), gate.clone()),
-        spec.clone(),
-    )
-    .await
-    .unwrap();
-    let downloading_group = group.clone();
-    let download_call = tokio::spawn(async move { downloading_group.download().await });
-    gate.started.notified().await;
-
-    download_call.abort();
-    let _ = download_call.await;
-    drop(group);
-    assert_eq!(manager_drops.load(Ordering::SeqCst), 0);
-
-    let replacement_task = Arc::new(MockTask::new("replacement.bin", FileDownloadState::not_downloaded(10)));
-    let replacement_task_requests = Arc::new(AtomicUsize::new(0));
-    let replacement_manager_drops = Arc::new(AtomicUsize::new(0));
-    let reopening = tokio::spawn(FileDownloadGroup::open(
-        mock_manager(replacement_task, Arc::clone(&replacement_task_requests), Arc::clone(&replacement_manager_drops)),
-        spec,
-    ));
-    tokio::task::yield_now().await;
-    assert!(!reopening.is_finished(), "reopen must wait for the in-flight group actor");
-
-    gate.continue_download.notify_one();
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while !matches!(task.state_sender.borrow().phase, FileDownloadPhase::Downloading) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    let reopened = tokio::time::timeout(Duration::from_secs(1), reopening).await.unwrap().unwrap().unwrap();
-    assert_eq!(*reopened.inner.owner.actor_count.borrow(), 1);
-    assert_eq!(manager_drops.load(Ordering::SeqCst), 0);
-    assert_eq!(task_requests.load(Ordering::SeqCst), 1);
-    assert_eq!(replacement_task_requests.load(Ordering::SeqCst), 0);
-    assert_eq!(replacement_manager_drops.load(Ordering::SeqCst), 1);
-
-    task.complete();
-    drop(reopened);
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while manager_drops.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(manager_drops.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-async fn repeated_reopen_and_drop_uses_one_release_watcher() {
-    let root = tempfile::tempdir().unwrap();
-    let spec = FileDownloadGroupSpec::new(root.path(), [request_for_path("model.bin")]).unwrap();
-    let task = Arc::new(MockTask::new("model.bin", FileDownloadState::not_downloaded(10)));
-    let manager_drops = Arc::new(AtomicUsize::new(0));
-    let group = FileDownloadGroup::open(
-        mock_manager(Arc::clone(&task), Arc::new(AtomicUsize::new(0)), Arc::clone(&manager_drops)),
-        spec.clone(),
-    )
-    .await
-    .unwrap();
-    let _abandoned_attempt = group.download().await.unwrap();
-    let owner = Arc::clone(&group.inner.owner);
-    drop(group);
-
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while *owner.actor_count.borrow() > 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    assert!(owner.release_watcher_running.load(Ordering::Acquire));
-    let retained_owner_count = Arc::strong_count(&owner);
-
-    for _ in 0..3 {
-        let reopened = FileDownloadGroup::open(
-            mock_manager(
-                Arc::new(MockTask::new("replacement.bin", FileDownloadState::not_downloaded(10))),
-                Arc::new(AtomicUsize::new(0)),
-                Arc::new(AtomicUsize::new(0)),
-            ),
-            spec.clone(),
-        )
-        .await
-        .unwrap();
-        assert!(Arc::ptr_eq(&reopened.inner.owner, &owner));
-        drop(reopened);
-
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while *owner.actor_count.borrow() > 0 || Arc::strong_count(&owner) > retained_owner_count {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("reopening must not retain another release watcher");
-        assert_eq!(Arc::strong_count(&owner), retained_owner_count);
-    }
-
-    task.complete();
-    let registry_key = root_registry_key(owner.spec.destination_root());
-    tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            let root_is_owned =
-                GROUP_ROOTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(&registry_key);
-            if !root_is_owned {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    drop(owner);
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while manager_drops.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-}
-
-#[tokio::test]
-async fn active_dropped_group_keeps_overlapping_roots_reserved_until_settled() {
-    let parent = tempfile::tempdir().unwrap();
-    let destination_root = parent.path().join("model");
-    tokio::fs::create_dir(&destination_root).await.unwrap();
-    let spec = FileDownloadGroupSpec::new(&destination_root, [request_for_path("model.bin")]).unwrap();
-    let task = Arc::new(MockTask::new("model.bin", FileDownloadState::not_downloaded(10)));
-    let manager_drops = Arc::new(AtomicUsize::new(0));
-    let group = FileDownloadGroup::open(
-        mock_manager(Arc::clone(&task), Arc::new(AtomicUsize::new(0)), Arc::clone(&manager_drops)),
-        spec,
-    )
-    .await
-    .unwrap();
-    let _abandoned_attempt = group.download().await.unwrap();
-    drop(group);
-
-    let conflicting_spec =
-        FileDownloadGroupSpec::new(destination_root.join("nested"), [request_for_path("other.bin")]).unwrap();
-    let conflicting_task = Arc::new(MockTask::new("other.bin", FileDownloadState::not_downloaded(10)));
-    let conflicting_task_requests = Arc::new(AtomicUsize::new(0));
-    let conflict = FileDownloadGroup::open(
-        mock_manager(conflicting_task, Arc::clone(&conflicting_task_requests), Arc::new(AtomicUsize::new(0))),
-        conflicting_spec,
-    )
-    .await
-    .unwrap_err();
-
-    assert!(matches!(conflict, FileDownloadGroupError::RootConflict { .. }));
-    assert_eq!(conflicting_task_requests.load(Ordering::SeqCst), 0);
-    assert_eq!(manager_drops.load(Ordering::SeqCst), 0);
-
-    task.complete();
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while manager_drops.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(manager_drops.load(Ordering::SeqCst), 1);
 }
 
 #[test]

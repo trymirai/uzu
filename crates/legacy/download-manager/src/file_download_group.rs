@@ -3,10 +3,7 @@ use std::{
     fmt,
     path::{Component, Path, PathBuf},
     pin::Pin,
-    sync::{
-        Arc, LazyLock, Mutex, OnceLock, Weak,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, LazyLock, Mutex, OnceLock, Weak},
 };
 
 use futures_util::{Stream, StreamExt, future::join_all, stream::SelectAll};
@@ -41,42 +38,71 @@ struct FileDownloadGroupOwner {
     spec: Arc<FileDownloadGroupSpec>,
     artifact_root: PathBuf,
     members: Arc<[GroupMember]>,
-    actor_count: TokioWatchSender<usize>,
-    release_watcher_running: AtomicBool,
+    _root_claim: GroupRootClaim,
 }
 
-enum GroupRootEntry {
-    Reserved(Arc<GroupRootReservationState>),
-    Live(GroupRootOwner),
-}
+/// The live group owning each destination root.
+///
+/// Two groups must never manage one root: they would race over the same files
+/// and destination locks. Reopening with an identical spec is idempotent and
+/// hands back the group that is already there.
+static GROUP_ROOTS: LazyLock<Mutex<HashMap<PathBuf, GroupRootEntry>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-struct GroupRootOwner {
-    owner: Arc<FileDownloadGroupOwner>,
+struct GroupRootEntry {
+    spec: Arc<FileDownloadGroupSpec>,
     handle: Weak<FileDownloadGroupHandle>,
 }
 
-struct GroupRootReservationState {
-    completed: TokioWatchSender<bool>,
+/// Holds a destination root for one group and frees it when the group dies.
+struct GroupRootClaim(PathBuf);
+
+enum GroupRootOutcome {
+    Claimed(GroupRootClaim),
+    AlreadyOpen(Arc<FileDownloadGroupHandle>),
 }
 
-struct GroupRootReservation {
-    registry_key: PathBuf,
-    state: Arc<GroupRootReservationState>,
-    active: bool,
+impl GroupRootClaim {
+    fn acquire(
+        destination_root: &Path,
+        spec: &Arc<FileDownloadGroupSpec>,
+    ) -> Result<GroupRootOutcome, FileDownloadGroupError> {
+        let key = root_registry_key(destination_root);
+        let mut roots = GROUP_ROOTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(entry) = roots.get(&key) {
+            let Some(handle) = entry.handle.upgrade() else {
+                return Err(root_conflict(destination_root));
+            };
+            if entry.spec != *spec {
+                return Err(root_conflict(destination_root));
+            }
+            return Ok(GroupRootOutcome::AlreadyOpen(handle));
+        }
+        roots.insert(
+            key.clone(),
+            GroupRootEntry {
+                spec: Arc::clone(spec),
+                handle: Weak::new(),
+            },
+        );
+        Ok(GroupRootOutcome::Claimed(Self(key)))
+    }
+
+    fn publish(
+        &self,
+        handle: &Arc<FileDownloadGroupHandle>,
+    ) {
+        let mut roots = GROUP_ROOTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(entry) = roots.get_mut(&self.0) {
+            entry.handle = Arc::downgrade(handle);
+        }
+    }
 }
 
-enum GroupRootClaim {
-    Existing(Arc<FileDownloadGroupHandle>),
-    Reserved(GroupRootReservation),
-    Wait(GroupRootWait),
+impl Drop for GroupRootClaim {
+    fn drop(&mut self) {
+        GROUP_ROOTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&self.0);
+    }
 }
-
-enum GroupRootWait {
-    Construction(Arc<GroupRootReservationState>),
-    Actor(Arc<FileDownloadGroupOwner>),
-}
-
-static GROUP_ROOTS: LazyLock<Mutex<HashMap<PathBuf, GroupRootEntry>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub struct DownloadAttempt {
     completion_receiver: TokioOneshotReceiver<FileDownloadGroupState>,
@@ -116,7 +142,6 @@ enum GroupCommand {
 
 struct FileDownloadGroupActor {
     owner: Arc<FileDownloadGroupOwner>,
-    _lease: GroupActorLease,
     members: Arc<[GroupMember]>,
     member_snapshots: Vec<FileDownloadSnapshot>,
     watched_members: Vec<bool>,
@@ -124,34 +149,6 @@ struct FileDownloadGroupActor {
     command_receiver: TokioMpscReceiver<GroupCommand>,
     state_sender: TokioWatchSender<FileDownloadGroupState>,
     attempt_waiters: Vec<TokioOneshotSender<FileDownloadGroupState>>,
-}
-
-struct GroupActorLease(Arc<FileDownloadGroupOwner>);
-
-impl FileDownloadGroupOwner {
-    fn has_downloading_member(&self) -> bool {
-        self.members
-            .iter()
-            .filter_map(GroupMember::child)
-            .any(|child| matches!(child.snapshot_receiver.borrow().state.phase, FileDownloadPhase::Downloading))
-    }
-
-    fn is_live(&self) -> bool {
-        *self.actor_count.borrow() > 0 || self.has_downloading_member()
-    }
-}
-
-impl GroupActorLease {
-    fn new(owner: Arc<FileDownloadGroupOwner>) -> Self {
-        owner.actor_count.send_modify(|count| *count += 1);
-        Self(owner)
-    }
-}
-
-impl Drop for GroupActorLease {
-    fn drop(&mut self) {
-        self.0.actor_count.send_modify(|count| *count = count.saturating_sub(1));
-    }
 }
 
 impl GroupMember {
@@ -220,12 +217,6 @@ impl GroupChild {
     }
 }
 
-impl Drop for FileDownloadGroupHandle {
-    fn drop(&mut self) {
-        schedule_group_root_release(Arc::clone(&self.owner));
-    }
-}
-
 impl FileDownloadGroup {
     pub async fn open(
         manager: Arc<dyn FileDownloadManager>,
@@ -233,17 +224,13 @@ impl FileDownloadGroup {
     ) -> Result<Self, FileDownloadGroupError> {
         let normalized_root = validate_existing_symlinks(&spec).await?;
         let spec = Arc::new(spec.with_destination_root(normalized_root.clone()));
-        let registry_key = root_registry_key(&normalized_root);
-        let reservation = loop {
-            match claim_group_root(&registry_key, &normalized_root, &spec)? {
-                GroupRootClaim::Existing(inner) => {
-                    return Ok(Self {
-                        inner,
-                    });
-                },
-                GroupRootClaim::Reserved(reservation) => break reservation,
-                GroupRootClaim::Wait(wait) => wait.wait().await,
-            }
+        let root_claim = match GroupRootClaim::acquire(&normalized_root, &spec)? {
+            GroupRootOutcome::AlreadyOpen(inner) => {
+                return Ok(Self {
+                    inner,
+                });
+            },
+            GroupRootOutcome::Claimed(claim) => claim,
         };
         let artifact_root = group_artifact_root(&spec);
         validate_artifact_roots(&spec, &artifact_root).await?;
@@ -294,18 +281,16 @@ impl FileDownloadGroup {
             return Err(FileDownloadGroupError::file_failures(FileDownloadGroupOperation::Create, failures));
         }
 
-        let (actor_count, _) = tokio_watch_channel(0);
         let owner = Arc::new(FileDownloadGroupOwner {
             runtime_handle: rt::RuntimeHandle::current(),
             manager,
             spec,
             artifact_root,
             members: members.into(),
-            actor_count,
-            release_watcher_running: AtomicBool::new(false),
+            _root_claim: root_claim,
         });
         let group = Self::spawn(owner);
-        reservation.publish(&group.inner);
+        group.inner.owner._root_claim.publish(&group.inner);
         Ok(group)
     }
 
@@ -316,11 +301,9 @@ impl FileDownloadGroup {
         let initial_state = reduce_group_state(&members, &member_snapshots, &retained_member_failures(&members));
         let (state_sender, state_receiver) = tokio_watch_channel(initial_state);
         let (command_sender, command_receiver) = tokio_mpsc_channel(32);
-        let lease = GroupActorLease::new(Arc::clone(&owner));
         owner.runtime_handle.spawn(
             FileDownloadGroupActor {
                 owner: Arc::clone(&owner),
-                _lease: lease,
                 members: Arc::clone(&members),
                 member_snapshots,
                 watched_members,
@@ -397,205 +380,20 @@ fn root_conflict(destination_root: &Path) -> FileDownloadGroupError {
     }
 }
 
-fn claim_group_root(
-    registry_key: &Path,
-    destination_root: &Path,
-    spec: &FileDownloadGroupSpec,
-) -> Result<GroupRootClaim, FileDownloadGroupError> {
-    let mut roots = GROUP_ROOTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let overlapping_key = roots.keys().find(|root| roots_overlap(root, registry_key)).cloned();
-    let Some(overlapping_key) = overlapping_key else {
-        let state = Arc::new(GroupRootReservationState::new());
-        roots.insert(registry_key.to_path_buf(), GroupRootEntry::Reserved(Arc::clone(&state)));
-        return Ok(GroupRootClaim::Reserved(GroupRootReservation {
-            registry_key: registry_key.to_path_buf(),
-            state,
-            active: true,
-        }));
-    };
-
-    if overlapping_key != registry_key {
-        return Err(root_conflict(destination_root));
-    }
-
-    match roots.get_mut(&overlapping_key).expect("the overlapping root came from this registry") {
-        GroupRootEntry::Reserved(state) => Ok(GroupRootClaim::Wait(GroupRootWait::Construction(Arc::clone(state)))),
-        GroupRootEntry::Live(group) => {
-            if group.owner.spec.as_ref() != spec {
-                return Err(root_conflict(destination_root));
-            }
-            if let Some(handle) = group.handle.upgrade() {
-                return Ok(GroupRootClaim::Existing(handle));
-            }
-            if *group.owner.actor_count.borrow() > 0 {
-                return Ok(GroupRootClaim::Wait(GroupRootWait::Actor(Arc::clone(&group.owner))));
-            }
-
-            let reopened = FileDownloadGroup::spawn(Arc::clone(&group.owner));
-            group.handle = Arc::downgrade(&reopened.inner);
-            Ok(GroupRootClaim::Existing(reopened.inner))
-        },
-    }
-}
-
-impl GroupRootReservationState {
-    fn new() -> Self {
-        let (completed, _) = tokio_watch_channel(false);
-        Self {
-            completed,
-        }
-    }
-
-    async fn wait(&self) {
-        let mut completed = self.completed.subscribe();
-        if !*completed.borrow() {
-            let _ = completed.changed().await;
-        }
-    }
-
-    fn complete(&self) {
-        self.completed.send_replace(true);
-    }
-}
-
-impl GroupRootWait {
-    async fn wait(self) {
-        match self {
-            Self::Construction(state) => state.wait().await,
-            Self::Actor(owner) => {
-                let mut actor_count = owner.actor_count.subscribe();
-                while *actor_count.borrow() > 0 {
-                    if actor_count.changed().await.is_err() {
-                        break;
-                    }
-                }
-            },
-        }
-    }
-}
-
-impl GroupRootReservation {
-    fn publish(
-        mut self,
-        group: &Arc<FileDownloadGroupHandle>,
-    ) {
-        let mut roots = GROUP_ROOTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let owns_reservation = matches!(
-            roots.get(&self.registry_key),
-            Some(GroupRootEntry::Reserved(state)) if Arc::ptr_eq(state, &self.state)
-        );
-        debug_assert!(owns_reservation, "group root reservation disappeared before publication");
-        if owns_reservation {
-            roots.insert(
-                self.registry_key.clone(),
-                GroupRootEntry::Live(GroupRootOwner {
-                    owner: Arc::clone(&group.owner),
-                    handle: Arc::downgrade(group),
-                }),
-            );
-        }
-        self.active = false;
-        drop(roots);
-        self.state.complete();
-    }
-}
-
-impl Drop for GroupRootReservation {
+impl Drop for FileDownloadGroupOwner {
     fn drop(&mut self) {
-        if !self.active {
+        let retired = self.members.iter().filter_map(GroupMember::child).map(|child| child.task).collect::<Vec<_>>();
+        if retired.is_empty() {
             return;
         }
-
-        let mut roots = GROUP_ROOTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let owns_reservation = matches!(
-            roots.get(&self.registry_key),
-            Some(GroupRootEntry::Reserved(state)) if Arc::ptr_eq(state, &self.state)
-        );
-        if owns_reservation {
-            roots.remove(&self.registry_key);
-        }
-        drop(roots);
-        self.state.complete();
-    }
-}
-
-fn schedule_group_root_release(owner: Arc<FileDownloadGroupOwner>) {
-    if owner.release_watcher_running.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok() {
-        owner.runtime_handle.clone().spawn(release_group_root_when_idle(owner));
-    }
-}
-
-async fn release_group_root_when_idle(owner: Arc<FileDownloadGroupOwner>) {
-    loop {
-        if !wait_for_group_owner_idle(&owner).await {
-            owner.release_watcher_running.store(false, Ordering::Release);
-            return;
-        }
-
-        let key = root_registry_key(owner.spec.destination_root());
-        let removed = {
-            let mut roots = GROUP_ROOTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let owns_root = matches!(
-                roots.get(&key),
-                Some(GroupRootEntry::Live(group))
-                    if Arc::ptr_eq(&group.owner, &owner)
-                        && group.handle.strong_count() == 0
-                        && !owner.is_live()
-            );
-            owns_root.then(|| roots.remove(&key)).flatten().is_some()
-        };
-        if removed {
-            for child in owner.members.iter().filter_map(GroupMember::child) {
-                if let Err(error) = owner.manager.release_file_task_if_inactive(child.task).await {
+        let manager = Arc::clone(&self.manager);
+        self.runtime_handle.clone().spawn(async move {
+            for task in retired {
+                if let Err(error) = manager.release_file_task_if_inactive(task).await {
                     tracing::debug!("failed to release retired file task: {error}");
                 }
             }
-            owner.release_watcher_running.store(false, Ordering::Release);
-            return;
-        }
-
-        owner.release_watcher_running.store(false, Ordering::Release);
-        let handle_is_gone = {
-            let roots = GROUP_ROOTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            matches!(
-                roots.get(&key),
-                Some(GroupRootEntry::Live(group))
-                    if Arc::ptr_eq(&group.owner, &owner) && group.handle.strong_count() == 0
-            )
-        };
-        if !handle_is_gone
-            || owner.release_watcher_running.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err()
-        {
-            return;
-        }
-    }
-}
-
-async fn wait_for_group_owner_idle(owner: &FileDownloadGroupOwner) -> bool {
-    let mut actor_count = owner.actor_count.subscribe();
-    loop {
-        while *actor_count.borrow() > 0 {
-            if actor_count.changed().await.is_err() {
-                return false;
-            }
-        }
-
-        let mut updates = SelectAll::new();
-        for child in owner.members.iter().filter_map(GroupMember::child) {
-            updates.push(WatchStream::from_changes(child.snapshot_receiver));
-        }
-        if !owner.has_downloading_member() {
-            return true;
-        }
-
-        tokio::select! {
-            changed = actor_count.changed() => {
-                if changed.is_err() {
-                    return false;
-                }
-            }
-            _ = updates.next() => {}
-        }
+        });
     }
 }
 
@@ -606,13 +404,6 @@ async fn wait_for_group_owner_idle(owner: &FileDownloadGroupOwner) -> bool {
 fn group_artifact_root(spec: &FileDownloadGroupSpec) -> PathBuf {
     let destination_root = spec.destination_root();
     DownloadConfig::default_artifact_root(destination_root, compute_download_id(destination_root))
-}
-
-fn roots_overlap(
-    left: &Path,
-    right: &Path,
-) -> bool {
-    left.starts_with(right) || right.starts_with(left)
 }
 
 fn root_registry_key(path: &Path) -> PathBuf {
