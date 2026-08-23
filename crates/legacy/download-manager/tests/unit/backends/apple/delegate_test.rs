@@ -8,8 +8,7 @@ use std::{
 };
 
 use super::{
-    AppleSinkKey, DestinationInstallBarrier, download_location_path, install_downloaded_file, is_https_to_http,
-    is_success_http_status,
+    AppleSinkKey, DestinationInstallBarrier, download_location_path, install_downloaded_file, is_success_http_status,
 };
 
 impl AppleSinkKey {
@@ -47,15 +46,6 @@ fn only_success_statuses_may_be_installed() {
     for status in [199, 300, 401, 403, 404, 410, 429, 500] {
         assert!(!is_success_http_status(status));
     }
-}
-
-#[test]
-fn rejects_only_https_to_http_redirects() {
-    assert!(is_https_to_http(Some("https"), Some("http")));
-    assert!(!is_https_to_http(Some("https"), Some("https")));
-    assert!(!is_https_to_http(Some("http"), Some("http")));
-    assert!(!is_https_to_http(Some("http"), Some("https")));
-    assert!(!is_https_to_http(None, Some("http")));
 }
 
 #[test]

@@ -394,9 +394,9 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                     validate_destructive_cleanup_paths(&self.config)
                         .await
                         .map_err(|failure| DownloadError::cleanup_failures(vec![failure]))?;
-                    remove_file_if_exists(&part_path).await?;
-                    remove_file_if_exists(&self.config.recovery_metadata_path()).await?;
-                    remove_file_if_exists(&self.config.recovery_metadata_staging_path()).await?;
+                    crate::remove_file_if_present(&part_path).await?;
+                    crate::remove_file_if_present(&self.config.recovery_metadata_path()).await?;
+                    crate::remove_file_if_present(&self.config.recovery_metadata_staging_path()).await?;
                     Ok::<(), DownloadError>(())
                 }
                 .await;
@@ -888,7 +888,7 @@ async fn remove_download_files(config: &DownloadConfig) -> Vec<DownloadCleanupFa
     ];
     let mut failures = Vec::new();
     for path in paths {
-        if let Err(error) = remove_file_if_exists(&path).await {
+        if let Err(error) = crate::remove_file_if_present(&path).await {
             failures.push(DownloadCleanupFailure::new(&path, &error));
         }
     }
@@ -910,14 +910,6 @@ async fn remove_directory_if_empty(path: &Path) -> Result<(), std::io::Error> {
     match tokio::fs::remove_dir(path).await {
         Ok(()) => Ok(()),
         Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::DirectoryNotEmpty) => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-async fn remove_file_if_exists(path: &Path) -> Result<(), std::io::Error> {
-    match fs::asyn::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     }
 }

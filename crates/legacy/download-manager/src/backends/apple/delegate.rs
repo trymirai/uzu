@@ -317,14 +317,7 @@ fn is_https_to_http_redirect(
 ) -> bool {
     let previous_scheme = response.URL().and_then(|url| url.scheme()).map(|scheme| scheme.to_string());
     let next_scheme = request.URL().and_then(|url| url.scheme()).map(|scheme| scheme.to_string());
-    is_https_to_http(previous_scheme.as_deref(), next_scheme.as_deref())
-}
-
-fn is_https_to_http(
-    previous_scheme: Option<&str>,
-    next_scheme: Option<&str>,
-) -> bool {
-    matches!((previous_scheme, next_scheme), (Some("https"), Some("http")))
+    crate::http_download_request::is_transport_downgrade(previous_scheme.as_deref(), next_scheme.as_deref())
 }
 
 #[cfg(test)]

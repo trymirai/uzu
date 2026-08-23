@@ -79,6 +79,16 @@ impl HttpDownloadRequest {
     }
 }
 
+/// Whether a redirect weakens transport security.
+///
+/// Anything leaving `https` counts, not just `https` to `http`.
+pub(crate) fn is_transport_downgrade(
+    previous_scheme: Option<&str>,
+    next_scheme: Option<&str>,
+) -> bool {
+    previous_scheme.is_some_and(|previous| previous == "https" && next_scheme != Some("https"))
+}
+
 fn is_loopback(url: &reqwest::Url) -> bool {
     let Some(host) = url.host_str() else {
         return false;

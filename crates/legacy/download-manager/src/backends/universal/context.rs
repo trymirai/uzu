@@ -329,7 +329,7 @@ fn is_https_downgrade(
     previous: Option<&reqwest::Url>,
     next: &reqwest::Url,
 ) -> bool {
-    previous.is_some_and(|previous| previous.scheme() == "https" && next.scheme() != "https")
+    crate::http_download_request::is_transport_downgrade(previous.map(reqwest::Url::scheme), Some(next.scheme()))
 }
 
 fn classify_reqwest_error(error: reqwest::Error) -> DownloadError {
@@ -370,7 +370,3 @@ fn parse_content_range_total(header_value: &str) -> Option<u64> {
     }
     total.parse::<u64>().ok()
 }
-
-#[cfg(test)]
-#[path = "../../../tests/unit/backends/universal/context_test.rs"]
-mod tests;

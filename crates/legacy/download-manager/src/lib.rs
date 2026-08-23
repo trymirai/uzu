@@ -46,6 +46,15 @@ pub(crate) use lock_file_state::LockFileState;
 pub(crate) use lock_manager::{check_lock_file, release_lock_if_owned};
 pub use relative_file_path::RelativeFilePath;
 
+/// Removes `path`, treating an already-absent file as success.
+pub(crate) async fn remove_file_if_present(path: &std::path::Path) -> Result<(), std::io::Error> {
+    match kiban::fs::asyn::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 pub type DownloadId = uuid::Uuid;
 
 pub fn compute_download_id(destination_path: &std::path::Path) -> DownloadId {

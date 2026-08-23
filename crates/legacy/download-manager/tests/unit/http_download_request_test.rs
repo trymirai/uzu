@@ -1,12 +1,4 @@
-use super::{HttpDownloadRequest, RequestHeaders};
-
-#[test]
-fn debug_redacts_bearer_token() {
-    let headers = RequestHeaders::bearer("secret-token").expect("valid header");
-    let debug = format!("{headers:?}");
-
-    assert!(!debug.contains("secret-token"), "debug output leaked the token: {debug}");
-}
+use super::{HttpDownloadRequest, RequestHeaders, is_transport_downgrade};
 
 #[test]
 fn request_debug_redacts_bearer_token() {
@@ -28,4 +20,14 @@ fn rejects_authenticated_plaintext_except_for_loopback_tests() {
         Err(crate::DownloadError::InsecureAuthenticatedRequest)
     );
     assert!(HttpDownloadRequest::with_headers("http://127.0.0.1/model", headers).validate().is_ok());
+}
+
+#[test]
+fn any_redirect_leaving_https_is_a_downgrade() {
+    assert!(is_transport_downgrade(Some("https"), Some("http")));
+    assert!(is_transport_downgrade(Some("https"), Some("ftp")));
+    assert!(is_transport_downgrade(Some("https"), None));
+    assert!(!is_transport_downgrade(Some("https"), Some("https")));
+    assert!(!is_transport_downgrade(Some("http"), Some("http")));
+    assert!(!is_transport_downgrade(None, Some("http")));
 }

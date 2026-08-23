@@ -302,11 +302,7 @@ async fn remove_owned_file_if_present(
     path: &Path,
 ) -> Result<(), DownloadError> {
     validate_recovery_root(config).await?;
-    match fs::asyn::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(DownloadError::from(error)),
-    }
+    crate::remove_file_if_present(path).await.map_err(DownloadError::from)
 }
 
 async fn validate_recovery_root(config: &DownloadConfig) -> Result<(), DownloadError> {

@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use kiban::fs;
 
 use crate::{
     DownloadError,
@@ -26,7 +25,7 @@ pub async fn apply_actions(
                 path,
             } => {
                 reject_parent_symlinks(path).await?;
-                remove_file_if_present(path).await?;
+                crate::remove_file_if_present(path).await.map_err(DownloadError::from)?;
             },
             Action::SaveIntegrityCache {
                 destination,
@@ -47,14 +46,6 @@ async fn reject_parent_symlinks(path: &Path) -> Result<(), DownloadError> {
         reject_symlink_components(parent).await?;
     }
     Ok(())
-}
-
-async fn remove_file_if_present(path: &Path) -> Result<(), DownloadError> {
-    match fs::asyn::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(DownloadError::from(error)),
-    }
 }
 
 #[cfg(all(test, unix))]
