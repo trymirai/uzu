@@ -13,7 +13,8 @@ mod metal;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<ExitCode> {
-    println!("cargo::rerun-if-changed=.");
+    println!("cargo::rerun-if-changed=build");
+
     if envs::build_always() {
         println!("cargo::rerun-if-changed=/var/empty/hack_nonexistent_file_to_always_rerun");
     }
@@ -63,7 +64,7 @@ async fn main() -> anyhow::Result<ExitCode> {
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
     if backend_metal {
-        compilers.push(Box::new(metal::MetalCompiler::new()?));
+        compilers.push(Box::new(metal::MetalCompiler::new().await?));
     }
 
     if compilers.is_empty() {

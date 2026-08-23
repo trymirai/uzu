@@ -127,6 +127,7 @@ impl CpuCompiler {
     pub fn new() -> anyhow::Result<Self> {
         let src_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("missing CARGO_MANIFEST_DIR")?)
             .join("src/backends/cpu/kernel");
+        println!("cargo::rerun-if-changed={}", src_dir.display());
 
         let build_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?).join("cpu");
         fs::create_dir_all(&build_dir).with_context(|| format!("cannot create {}", build_dir.display()))?;

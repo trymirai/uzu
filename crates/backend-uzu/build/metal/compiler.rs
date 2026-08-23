@@ -1,4 +1,8 @@
-use std::{collections::HashMap, env, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -19,7 +23,7 @@ use crate::{
 
 #[derive(Serialize, Deserialize)]
 struct Cached {
-    buildsystem_hash: [u8; blake3::OUT_LEN],
+    cache_key: [u8; blake3::OUT_LEN],
     dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
     public_kernels: Box<[Kernel]>,
     has_kernels: bool,
@@ -32,12 +36,14 @@ pub struct MetalCompiler {
     output_directory: PathBuf,
     metallib_compressed: bool,
     toolchain: MetalToolchain,
+    cache_key: [u8; blake3::OUT_LEN],
 }
 
 impl MetalCompiler {
-    pub fn new() -> anyhow::Result<Self> {
+    pub async fn new() -> anyhow::Result<Self> {
         let source_directory = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("missing CARGO_MANIFEST_DIR")?)
             .join("src/backends/metal/kernel");
+        println!("cargo::rerun-if-changed={}", source_directory.display());
 
         let gpu_types_directory = source_directory.join("generated");
 
@@ -51,7 +57,19 @@ impl MetalCompiler {
         };
 
         let toolchain = MetalToolchain::from_env_with_include_dir(Some(gpu_types_directory.clone()))
+            .await
             .context("cannot create toolchain")?;
+
+        let cache_key = {
+            let build_system_hash = caching::build_system_hash().context("cannot get build system hash")?;
+
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(build_system_hash.as_bytes());
+            hasher.update(toolchain.cache_key());
+            hasher.update(&[u8::from(metallib_compressed)]);
+
+            hasher.finalize().into()
+        };
 
         Ok(Self {
             source_directory,
@@ -59,7 +77,17 @@ impl MetalCompiler {
             output_directory,
             metallib_compressed,
             toolchain,
+            cache_key,
         })
+    }
+
+    fn emit_rerun_if_changed_for_dependency(
+        &self,
+        path: &str,
+    ) {
+        if !Path::new(path).starts_with(&self.source_directory) {
+            println!("cargo::rerun-if-changed={path}");
+        }
     }
 
     async fn compile(
@@ -92,15 +120,16 @@ impl MetalCompiler {
         let bindgen_file = output_base_path.with_extension("rs");
         let cached_file = output_base_path.with_extension("cached");
 
-        let buildsystem_hash = caching::build_system_hash().context("cannot get build system hash")?.as_bytes();
-
         if let Ok(cached_contents) = fs::read(&cached_file)
             && let Ok(cached) = serde_json::from_slice::<Cached>(&cached_contents)
-            && &cached.buildsystem_hash == buildsystem_hash
+            && cached.cache_key == self.cache_key
             && cached.dependency_hashes.iter().all(|(path, hash)| {
                 fs::read(path.as_ref()).map(|contents| blake3::hash(&contents).as_bytes() == hash).unwrap_or(false)
             })
         {
+            for path in cached.dependency_hashes.keys() {
+                self.emit_rerun_if_changed_for_dependency(path);
+            }
             debug_log!("compile cached: {source_path_relative_str}");
             return Ok((kernel_path, cached.public_kernels, cached.has_kernels));
         }
@@ -115,6 +144,7 @@ impl MetalCompiler {
 
         let dependency_hashes = dependencies
             .map(|path| {
+                self.emit_rerun_if_changed_for_dependency(&path);
                 Ok((
                     path.clone(),
                     blake3::hash(&fs::read(path.as_ref()).with_context(|| format!("cannot read {path}"))?).into(),
@@ -202,7 +232,7 @@ impl MetalCompiler {
         let has_kernels = !kernel_infos.is_empty();
 
         let cached = Cached {
-            buildsystem_hash: *buildsystem_hash,
+            cache_key: self.cache_key,
             dependency_hashes,
             public_kernels: public_kernels.clone(),
             has_kernels,
