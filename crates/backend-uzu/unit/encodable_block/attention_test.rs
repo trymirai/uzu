@@ -1,7 +1,7 @@
 #![cfg(backend = "metal")]
 
+use backend_uzu_macros::uzu_test;
 use ndarray::{Array4, s};
-use proc_macros::uzu_test;
 use test_tag::tag;
 
 use crate::{

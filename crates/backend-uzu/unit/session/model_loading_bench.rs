@@ -1,7 +1,7 @@
 use std::time::Duration;
 
+use backend_uzu_macros::uzu_bench;
 use criterion::{BenchmarkId, Criterion};
-use proc_macros::uzu_bench;
 use test_runner::path::get_test_model_path;
 
 use crate::{engine::Engine, tests::helpers::for_each_non_cpu_backend};

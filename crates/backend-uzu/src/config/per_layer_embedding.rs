@@ -1,4 +1,4 @@
-use proc_macros::uzu_config;
+use backend_uzu_macros::uzu_config;
 
 use super::{activation::AnyActivation, linear::LinearConfig, normalization::NormalizationConfig};
 

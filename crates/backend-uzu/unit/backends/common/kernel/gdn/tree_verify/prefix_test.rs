@@ -1,6 +1,6 @@
 #![cfg(backend = "metal")]
 
-use proc_macros::uzu_test;
+use backend_uzu_macros::uzu_test;
 
 use crate::{
     backends::{

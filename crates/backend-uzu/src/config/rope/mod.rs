@@ -1,4 +1,4 @@
-use proc_macros::uzu_config_abstract;
+use backend_uzu_macros::uzu_config_abstract;
 
 pub mod linear_scaling_rope;
 pub mod llama_rope;

@@ -1,4 +1,4 @@
-use proc_macros::kernel;
+use backend_uzu_macros::kernel;
 
 #[kernel(MoeTileCounts)]
 pub fn moe_tile_counts(

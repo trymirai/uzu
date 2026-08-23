@@ -1,5 +1,5 @@
+use backend_uzu_macros::uzu_config;
 use derive_more::Display;
-use proc_macros::uzu_config;
 
 use crate::data_type::DataType;
 

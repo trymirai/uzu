@@ -1,5 +1,5 @@
+use backend_uzu_macros::uzu_test;
 use half::bf16;
-use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use test_runner::perf::run_perf_with_warmup;
 

@@ -2,9 +2,9 @@
 
 use std::fmt::{Debug, Display};
 
+use backend_uzu_macros::uzu_test;
 use half::bf16;
 use num_traits::Float;
-use proc_macros::uzu_test;
 use rstest::rstest;
 
 use crate::{

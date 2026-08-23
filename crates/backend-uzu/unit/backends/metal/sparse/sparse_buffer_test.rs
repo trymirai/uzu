@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use proc_macros::uzu_test;
+use backend_uzu_macros::uzu_test;
 
 use crate::{
     backends::{

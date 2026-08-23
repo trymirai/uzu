@@ -1,4 +1,4 @@
-use proc_macros::uzu_config;
+use backend_uzu_macros::uzu_config;
 
 #[uzu_config]
 #[serde(rename_all = "snake_case")]

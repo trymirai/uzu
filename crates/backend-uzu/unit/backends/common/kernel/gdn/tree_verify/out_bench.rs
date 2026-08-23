@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
+use backend_uzu_macros::uzu_bench;
 use criterion::{BenchmarkId, Criterion};
 use half::bf16;
 use num_traits::Float;
-use proc_macros::uzu_bench;
 
 use crate::{
     array::ArrayElement,

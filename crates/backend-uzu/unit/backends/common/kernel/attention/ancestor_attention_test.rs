@@ -2,8 +2,8 @@
 
 use std::{sync::Arc, time::Duration};
 
+use backend_uzu_macros::uzu_test;
 use half::bf16;
-use proc_macros::uzu_test;
 
 use crate::{
     backends::{
