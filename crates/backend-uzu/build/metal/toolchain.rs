@@ -215,28 +215,28 @@ impl MetalToolchain {
             bail!("metal analyzer failed: {}", String::from_utf8_lossy(&analyze_output.stderr));
         }
 
-        let ast_root = {
-            let mut deserializer = serde_json::Deserializer::from_slice(&analyze_output.stdout);
-            deserializer.disable_recursion_limit();
-            MetalAstNode::deserialize(&mut deserializer).context("cannot deserialize ast dump")?
-        };
-
-        if !matches!(&ast_root.kind, MetalAstKind::TranslationUnitDecl) {
-            bail!(
-                "unexpected kind of ast root: MetalAstKind::TranslationUnitDecl expected, but {:?} found",
-                ast_root.kind
-            );
-        }
-
         let source_contents = fs::read_to_string(path).context("cannot read source file")?;
 
-        let kernel_infos = ast_root
-            .inner
-            .into_iter()
-            .filter_map(|node| MetalKernelInfo::from_ast_node_and_source(node, &source_contents).transpose())
-            .collect::<anyhow::Result<Vec<_>>>()
-            .context("cannot parse kernel infos from AST")?
-            .into_iter();
+        let kernel_infos = tokio::task::spawn_blocking(move || {
+            let mut deserializer = serde_json::Deserializer::from_slice(&analyze_output.stdout);
+            deserializer.disable_recursion_limit();
+            let ast_root = MetalAstNode::deserialize(&mut deserializer).context("cannot deserialize ast dump")?;
+
+            if !matches!(&ast_root.kind, MetalAstKind::TranslationUnitDecl) {
+                bail!(
+                    "unexpected kind of ast root: MetalAstKind::TranslationUnitDecl expected, but {:?} found",
+                    ast_root.kind
+                );
+            }
+
+            ast_root
+                .inner
+                .into_iter()
+                .filter_map(|node| MetalKernelInfo::from_ast_node_and_source(node, &source_contents).transpose())
+                .collect::<anyhow::Result<Vec<_>>>()
+                .context("cannot parse kernel infos from AST")
+        })
+        .await??;
 
         let depfile_contents = fs::read_to_string(depfile_path.path()).context("cannot read depfile")?;
 
@@ -248,7 +248,7 @@ impl MetalToolchain {
             .collect::<Vec<_>>()
             .into_iter();
 
-        Ok((kernel_infos, dependencies))
+        Ok((kernel_infos.into_iter(), dependencies))
     }
 
     pub async fn compile(
@@ -259,7 +259,6 @@ impl MetalToolchain {
     ) -> anyhow::Result<Option<Box<str>>> {
         let mut cmd = self.xcrun();
         cmd.arg("metal")
-            .arg("-c")
             .args(["-x", "metal"])
             .arg(format!("-std={}", self.std.to_str()))
             .args(self.extra_options.as_ref())
@@ -291,36 +290,6 @@ impl MetalToolchain {
 
         if !compile_output.status.success() {
             bail!("metal compiler failed: {stderr}");
-        }
-
-        let warnings = if !stderr.is_empty() {
-            Some(stderr)
-        } else {
-            None
-        };
-
-        Ok(warnings)
-    }
-
-    pub async fn link(
-        &self,
-        object: impl AsRef<Path>,
-        output: impl AsRef<Path>,
-    ) -> anyhow::Result<Option<Box<str>>> {
-        let link_output = self
-            .xcrun()
-            .arg("metallib")
-            .arg(object.as_ref())
-            .arg("-o")
-            .arg(output.as_ref())
-            .output()
-            .await
-            .context("cannot execute metal linker")?;
-
-        let stderr = String::from_utf8_lossy(&link_output.stderr).into_owned().into_boxed_str();
-
-        if !link_output.status.success() {
-            bail!("metal linker failed: {stderr}");
         }
 
         let warnings = if !stderr.is_empty() {
