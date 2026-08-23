@@ -225,5 +225,5 @@ pub(crate) fn quant_tile(
 }
 
 #[cfg(test)]
-#[path = "../../../../../../tests/unit/backends/metal/kernel/matmul/gemv/policy_test.rs"]
+#[path = "../../../../../../unit/backends/metal/kernel/matmul/gemv/policy_test.rs"]
 mod tests;

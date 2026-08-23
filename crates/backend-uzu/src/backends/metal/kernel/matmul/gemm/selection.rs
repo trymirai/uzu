@@ -188,5 +188,5 @@ fn select_mxu_quant_tiling(shape: MatmulShape) -> GemmTiling {
     }
 }
 #[cfg(test)]
-#[path = "../../../../../../tests/unit/backends/metal/kernel/matmul/gemm/selection_test.rs"]
+#[path = "../../../../../../unit/backends/metal/kernel/matmul/gemm/selection_test.rs"]
 mod tests;
