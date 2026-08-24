@@ -33,6 +33,7 @@ use crate::backends::{
 
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
+    device_name: String,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pub command_queue4: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     timeline_event: Retained<ProtocolObject<dyn MTLEvent>>,
@@ -148,6 +149,7 @@ impl Context for MetalContext {
     fn new() -> Result<Arc<Self>, MetalError> {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
             <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
+        let device_name = device.name();
 
         let command_queue =
             device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
@@ -170,6 +172,7 @@ impl Context for MetalContext {
 
         Ok(Arc::new_cyclic(|weak_self| Self {
             device,
+            device_name,
             command_queue,
             command_queue4,
             timeline_event,
@@ -184,6 +187,10 @@ impl Context for MetalContext {
             #[cfg(test)]
             timeline_shared_event,
         }))
+    }
+
+    fn device_name(&self) -> Option<&str> {
+        Some(&self.device_name)
     }
 
     fn create_buffer(

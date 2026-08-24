@@ -32,6 +32,10 @@ impl Context for CpuContext {
         }))
     }
 
+    fn device_name(&self) -> Option<&str> {
+        None
+    }
+
     fn create_buffer(
         &self,
         size: usize,

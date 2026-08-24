@@ -88,7 +88,8 @@ impl<B: Backend> Engine<B> {
         let speculator = speculator_path
             .as_deref()
             .map(|speculator_path| DFlashTfmSpeculator::new(speculator_path, self.context.clone()))
-            .transpose()?;
+            .transpose()?
+            .flatten();
 
         let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
 
