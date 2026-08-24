@@ -26,23 +26,19 @@ use shoji::{
 };
 use tokenizers::Tokenizer;
 use tokio_util::sync::CancellationToken;
-
-#[cfg(grammar)]
-use crate::bridge::helpers::get_grammar;
-use crate::{
+use uzu_engine::{
     backends::common::Backend,
-    bridge::{
-        chat_token_state::UzuChatTokenBackendInstanceState,
-        helpers::{error_stream, get_max_context_length, get_sampling_method},
-    },
     engine::{
         Engine,
-        language_model::{
-            LanguageModel,
-            state::LanguageModelState,
-            stream::{LanguageModelStream, LanguageModelStreamOptions},
-        },
+        language_model::{LanguageModel, state::LanguageModelState, stream::LanguageModelStream},
     },
+};
+
+#[cfg(feature = "capability-grammar")]
+use crate::engine::bridge::helpers::get_grammar;
+use crate::engine::bridge::{
+    chat_token_state::UzuChatTokenBackendInstanceState,
+    helpers::{error_stream, get_max_context_length, get_sampling_method},
 };
 
 pub struct UzuChatTokenBackendInstance<B: Backend> {
@@ -118,7 +114,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         let token_limit = config.token_limit.map(|count| count as usize);
 
-        #[cfg(grammar)]
+        #[cfg(feature = "capability-grammar")]
         let grammar = if let Some(grammar_config) = config.grammar {
             match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids) {
                 Ok(grammar) => Some(grammar),
@@ -129,16 +125,17 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         } else {
             None
         };
-        #[cfg(not(grammar))]
+        #[cfg(not(feature = "capability-grammar"))]
         if config.grammar.is_some() {
             return Box::pin(NoMetricsStream::new(error_stream("Grammar is not supported by this build".to_string())));
         }
 
-        let options = LanguageModelStreamOptions {
-            sampling_method: get_sampling_method::<B>(&self.model, &config.sampling_policy),
-            #[cfg(grammar)]
-            grammar,
-        };
+        let mut options = self.model.default_stream_options();
+        options.sampling_method = get_sampling_method::<B>(&self.model, &config.sampling_policy);
+        #[cfg(feature = "capability-grammar")]
+        {
+            options.grammar = grammar;
+        }
 
         let stream = match self.model.stream(input, &mut state_guard, options) {
             Ok(iter) => iter,

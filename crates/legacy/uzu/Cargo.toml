@@ -87,6 +87,10 @@ thiserror.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true, features = ["full"] }
+tokio-util.workspace = true
+parking_lot = { workspace = true, features = ["send_guard"] }
+tokenizers.workspace = true
+rand.workspace = true
 dirs.workspace = true
 sysinfo.workspace = true
 reqwest.workspace = true

@@ -14,14 +14,12 @@ use shoji::{
             },
         },
     },
-    types::session::classification::{ChatTokenCodecConfig, TokenCodecConfig},
+    types::session::classification::TokenCodecConfig,
 };
 use tokenizers::Tokenizer;
 use tokio_util::sync::CancellationToken;
-
-use crate::{
+use uzu_engine::{
     backends::common::Backend,
-    config::token_codec::AnyTokenCodecConfig,
     engine::{Engine, classifier_model::ClassifierModel},
 };
 
@@ -83,20 +81,7 @@ impl<B: Backend> ClassificationInstance for UzuClassificationBackendInstance<B> 
     }
 
     fn token_codec_config(&self) -> TokenCodecConfig {
-        match self.model.lock().token_codec_config() {
-            AnyTokenCodecConfig::ChatCodecConfig(config) => TokenCodecConfig::Chat(ChatTokenCodecConfig {
-                prompt_template: config.prompt_template.clone(),
-                output_parser_regex: config.output_parser_regex.clone(),
-                system_role_name: config.system_role_name.clone(),
-                user_role_name: config.user_role_name.clone(),
-                assistant_role_name: config.assistant_role_name.clone(),
-                eos_token: config.eos_token.clone(),
-                bos_token: config.bos_token.clone(),
-                end_of_thinking_tag: config.end_of_thinking_tag.clone(),
-                default_system_prompt: config.default_system_prompt.clone(),
-            }),
-            AnyTokenCodecConfig::RawTextCodecConfig(_) => TokenCodecConfig::RawText,
-        }
+        self.model.lock().token_codec_config()
     }
 }
 

@@ -76,6 +76,7 @@ jobs:
             crates: ['cli']
           - host: 'linux'
             target: 'wasm32-wasip1-threads'
+            nightly: true
             crates: ['uzu']
             tests: 'kernels'
           - host: 'linux'
@@ -97,7 +98,7 @@ jobs:
 
       - name: Build crates
         run: |
-          cargo +stable build \
+          cargo +${{ matrix.nightly && 'nightly' || 'stable' }} build \
             ${{ matrix.target && format('--target {0}', matrix.target) || '' }} \
             ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) || '' }}
 

@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use shoji::traits::State as LlmInstanceState;
-
-use crate::{backends::common::Backend, engine::language_model::state::LanguageModelState};
+use uzu_engine::{backends::common::Backend, engine::language_model::state::LanguageModelState};
 
 pub struct UzuChatTokenBackendInstanceState<B: Backend> {
     pub value: Arc<Mutex<LanguageModelState<B>>>,

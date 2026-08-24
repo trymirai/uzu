@@ -1,7 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use shoji::types::model::Model;
-use uzu_engine::bridge::resolve_model_specialization;
+use shoji::types::model::{Model, ModelSpecialization};
+use uzu_engine::engine::{ModelType, resolve_model_type};
 
 use crate::registry::RegistryError;
 
@@ -62,15 +65,23 @@ impl Config {
         Self::new("local".to_string(), backend_identifier, backend_version, "Local".to_string(), path, Some(resolver))
     }
 
+    fn resolve_model_specialization(model_path: &Path) -> Result<ModelSpecialization, RegistryError> {
+        resolve_model_type(model_path)
+            .map(|model_type| match model_type {
+                ModelType::LanguageModel => ModelSpecialization::Chat {},
+                ModelType::Classifier => ModelSpecialization::Classification {},
+            })
+            .map_err(|error| RegistryError::UnableToGetModels {
+                message: format!("Unable to resolve specialization for {}: {error}", model_path.display()),
+            })
+    }
+
     fn resolve_model(mut model: Model) -> Result<Model, RegistryError> {
         let model_path = model.local_external_path().ok_or_else(|| RegistryError::UnableToGetModels {
             message: format!("Local model {} has no local path", model.identifier),
         })?;
         let model_path = PathBuf::from(model_path);
-        let specialization =
-            resolve_model_specialization(&model_path).map_err(|error| RegistryError::UnableToGetModels {
-                message: format!("Unable to resolve specialization for {}: {error}", model_path.display()),
-            })?;
+        let specialization = Self::resolve_model_specialization(&model_path)?;
         model.specializations = vec![specialization];
         Ok(model)
     }

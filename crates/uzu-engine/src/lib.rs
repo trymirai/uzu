@@ -1,5 +1,6 @@
 #![cfg_attr(test, feature(custom_test_frameworks, test))]
 #![cfg_attr(test, test_runner(test_runner::uzu_harness))]
+#![cfg_attr(target_family = "wasm", feature(wasi_ext))]
 
 mod array;
 mod config;
@@ -10,7 +11,6 @@ mod trie;
 mod utils;
 
 pub mod backends;
-pub mod bridge;
 pub mod data_type;
 
 pub mod engine;

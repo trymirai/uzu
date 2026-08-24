@@ -1,20 +1,19 @@
 use std::pin::Pin;
 
 use futures::{Stream, stream};
-#[cfg(grammar)]
+#[cfg(feature = "capability-grammar")]
 use shoji::types::basic::Grammar as ShojiGrammar;
 use shoji::{
     traits::backend::{Error as BackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
     types::basic::{ContextLength, SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy},
 };
-#[cfg(grammar)]
+#[cfg(feature = "capability-grammar")]
 use tokenizers::Tokenizer;
-
-#[cfg(grammar)]
-use crate::engine::language_model::grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError};
-use crate::{
-    backends::common::Backend, encodable_block::sampling::SamplingMethod as UzuSamplingMethod,
-    engine::language_model::LanguageModel,
+#[cfg(feature = "capability-grammar")]
+use uzu_engine::engine::language_model::grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError};
+use uzu_engine::{
+    backends::common::Backend,
+    engine::language_model::{LanguageModel, stream::SamplingMethod as UzuSamplingMethod},
 };
 
 pub fn error_stream<'a>(
@@ -25,7 +24,7 @@ pub fn error_stream<'a>(
     }))
 }
 
-#[cfg(grammar)]
+#[cfg(feature = "capability-grammar")]
 pub fn get_grammar(
     grammar: ShojiGrammar,
     tokenizer: &Tokenizer,

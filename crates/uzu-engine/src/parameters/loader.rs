@@ -1,3 +1,7 @@
+#[cfg(unix)]
+use std::os::unix::fs::FileExt;
+#[cfg(target_family = "wasm")]
+use std::os::wasi::fs::FileExt;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -11,7 +15,7 @@ use crate::{
     array::{ArrayElement, size_for_shape},
     backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
     data_type::DataType,
-    utils::{fs::file_read_exact_at, strict_serde::DeserializeStrictOwned},
+    utils::strict_serde::DeserializeStrictOwned,
 };
 
 pub struct ParameterMetadata {
@@ -155,7 +159,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
         let element_count = self.metadata.size / std::mem::size_of::<T>();
         let mut data = vec![T::zeroed(); element_count];
         let destination = bytemuck::cast_slice_mut(&mut data);
-        file_read_exact_at(self.loader.file, destination, self.metadata.offset as u64)?;
+        self.loader.file.read_exact_at(destination, self.metadata.offset as u64)?;
         Ok(data.into_boxed_slice())
     }
 
@@ -173,7 +177,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
                 range.len(),
             )
         };
-        file_read_exact_at(self.loader.file, destination, self.metadata.offset as u64)?;
+        self.loader.file.read_exact_at(destination, self.metadata.offset as u64)?;
         Ok(allocation)
     }
 }

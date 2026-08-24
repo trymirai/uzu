@@ -3502,15 +3502,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "memmap2"
-version = "0.9.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "memmem"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7569,10 +7560,12 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-security",
+ "parking_lot",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",
  "pyo3-stub-gen",
+ "rand 0.10.2",
  "reqwest 0.13.4",
  "rodio",
  "rstest",
@@ -7584,8 +7577,10 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -7616,7 +7611,6 @@ dependencies = [
  "is_close",
  "itertools 0.14.0",
  "libm",
- "memmap2",
  "monostate",
  "mtl-rs",
  "ndarray",
@@ -7633,7 +7627,6 @@ dependencies = [
  "rangemap",
  "rhai",
  "rstest",
- "rustix",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -7645,7 +7638,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokenizers",
  "tokio",
- "tokio-util",
  "uzu-engine-macros",
  "walkdir",
  "xgrammar-rs",

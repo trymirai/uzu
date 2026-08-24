@@ -1,3 +1,4 @@
+pub mod bridge;
 mod callback;
 pub mod config;
 mod download_manager;
@@ -29,10 +30,10 @@ use shoji::{
     },
 };
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
-use uzu_engine::bridge::UzuLlmBackend;
 
 use crate::{
     device::Device,
+    engine::bridge::UzuLlmBackend,
     helpers::{SharedAccess, is_endpoint_reachable},
     logs,
     registry::{

@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::{fs::File, io::BufReader, path::Path, sync::Arc};
 
 use thiserror::Error;
 
 use crate::{
     backends::common::{Backend, Context},
+    config::model::AnyModelConfig,
     engine::capture::CaptureManager,
 };
 
@@ -40,4 +41,28 @@ impl<B: Backend> Engine<B> {
     pub fn peak_memory_usage(&self) -> Option<usize> {
         self.context.peak_memory_usage()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelType {
+    LanguageModel,
+    Classifier,
+}
+
+#[derive(Debug, Error)]
+pub enum ResolveModelTypeError {
+    #[error("Unable to open model configuration: {0}")]
+    UnableToOpenConfig(#[from] std::io::Error),
+    #[error("Unable to deserialize model configuration: {0}")]
+    UnableToDeserializeConfig(#[from] serde_json::Error),
+}
+
+pub fn resolve_model_type(model_path: &Path) -> Result<ModelType, ResolveModelTypeError> {
+    let config_path = model_path.join("config.json");
+    let file = File::open(&config_path)?;
+    let config: AnyModelConfig = serde_json::from_reader(BufReader::new(file))?;
+    Ok(match config {
+        AnyModelConfig::LanguageModelConfig(_) => ModelType::LanguageModel,
+        AnyModelConfig::ClassifierModelConfig(_) => ModelType::Classifier,
+    })
 }
