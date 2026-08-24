@@ -1,4 +1,4 @@
-use backend_uzu_macros::kernel;
+use uzu_engine_macros::kernel;
 
 use crate::backends::common::gpu_types::weaver::{
     FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FRONTIER_NO_WINNER, FrontierIdx, MetadataIdx, PADDING_DEPTH, TreeIdx,

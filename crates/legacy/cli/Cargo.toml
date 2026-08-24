@@ -20,7 +20,7 @@ capability-grammar = ["uzu/capability-grammar"]
 
 [dependencies]
 anyhow.workspace = true
-backend-uzu.workspace = true
+uzu-engine.workspace = true
 chrono.workspace = true
 clap.workspace = true
 comfy-table.workspace = true

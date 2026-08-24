@@ -6,9 +6,9 @@
 //! - Intermediate buffer correctness (row maps, tiles, dispatch args)
 //! - Numerical correctness against CPU reference
 
-use backend_uzu_macros::uzu_test;
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use uzu_engine_macros::uzu_test;
 
 use super::{
     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock, cpu_tile_counts,

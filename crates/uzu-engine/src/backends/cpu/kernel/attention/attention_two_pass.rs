@@ -1,6 +1,6 @@
-use backend_uzu_macros::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use uzu_engine_macros::kernel;
 
 use crate::{
     array::ArrayElement,

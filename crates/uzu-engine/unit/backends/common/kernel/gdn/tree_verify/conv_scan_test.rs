@@ -2,12 +2,12 @@
 use std::{mem::size_of, time::Duration};
 
 #[cfg(backend = "metal")]
-use backend_uzu_macros::uzu_bench;
-use backend_uzu_macros::uzu_test;
-#[cfg(backend = "metal")]
 use criterion::Criterion;
 #[cfg(backend = "metal")]
 use half::bf16;
+#[cfg(backend = "metal")]
+use uzu_engine_macros::uzu_bench;
+use uzu_engine_macros::uzu_test;
 
 #[cfg(backend = "metal")]
 use crate::{

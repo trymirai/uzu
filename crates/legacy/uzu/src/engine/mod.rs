@@ -7,7 +7,6 @@ mod error;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use backend_remote::openai::Backend as OpenAIBackend;
-use backend_uzu::bridge::UzuLlmBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
 pub use download_manager::DownloadManagerType;
@@ -30,6 +29,7 @@ use shoji::{
     },
 };
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use uzu_engine::bridge::UzuLlmBackend;
 
 use crate::{
     device::Device,
@@ -85,7 +85,7 @@ impl Engine {
             );
             let context = TelemetryContext::new(
                 env!("CARGO_PKG_VERSION").to_string(),
-                backend_uzu::TOOLCHAIN_VERSION.to_string(),
+                uzu_engine::TOOLCHAIN_VERSION.to_string(),
                 TelemetryDevice {
                     os_name: device.os_name.clone(),
                     cpu_name: device.cpu_name.clone(),

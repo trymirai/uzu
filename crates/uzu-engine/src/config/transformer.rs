@@ -1,4 +1,4 @@
-use backend_uzu_macros::uzu_config;
+use uzu_engine_macros::uzu_config;
 
 use crate::config::{normalization::NormalizationConfig, transformer_layer::TransformerLayerConfig};
 

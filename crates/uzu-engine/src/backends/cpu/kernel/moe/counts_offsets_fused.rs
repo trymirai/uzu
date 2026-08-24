@@ -1,4 +1,4 @@
-use backend_uzu_macros::kernel;
+use uzu_engine_macros::kernel;
 
 #[kernel(MoeCountsOffsetsFused)]
 pub fn moe_counts_offsets_fused(

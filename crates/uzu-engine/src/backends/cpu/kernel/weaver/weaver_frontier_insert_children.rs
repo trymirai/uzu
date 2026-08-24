@@ -1,4 +1,4 @@
-use backend_uzu_macros::kernel;
+use uzu_engine_macros::kernel;
 
 use crate::backends::common::gpu_types::weaver::{FrontierIdx, MetadataIdx, TreeIdx};
 

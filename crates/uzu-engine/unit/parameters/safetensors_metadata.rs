@@ -1,7 +1,7 @@
 use std::fs::File;
 
-use backend_uzu_macros::uzu_test;
 use test_runner::path::get_test_weights_path;
+use uzu_engine_macros::uzu_test;
 
 use crate::parameters::safetensors_metadata::read_metadata;
 

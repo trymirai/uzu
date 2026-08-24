@@ -1,4 +1,4 @@
-use backend_uzu_macros::uzu_config_abstract;
+use uzu_engine_macros::uzu_config_abstract;
 
 pub mod tied_embedding;
 pub mod untied_embedding;

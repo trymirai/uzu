@@ -6,8 +6,8 @@ Local reference on M5 Max, `Hg=16 HV=48 K=128`, BF16 inputs, Criterion
 Run through the existing `uzu_bench` lib harness:
 
 ```bash
-cargo bench -p backend-uzu --lib -- "BuildTreeGram/.*/B1_T64"
-cargo bench -p backend-uzu --lib -- "BuildTreeGram"
+cargo bench -p uzu-engine --lib -- "BuildTreeGram/.*/B1_T64"
+cargo bench -p uzu-engine --lib -- "BuildTreeGram"
 ```
 
 The current bench uses the repo-standard `iter_encode_loop_named` GPU-time

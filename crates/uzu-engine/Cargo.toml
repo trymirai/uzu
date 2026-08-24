@@ -1,5 +1,5 @@
 [package]
-name = "backend-uzu"
+name = "uzu-engine"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -56,7 +56,7 @@ xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 zstd = { workspace = true, optional = true }
 
 [dependencies]
-backend-uzu-macros.workspace = true
+uzu-engine-macros.workspace = true
 bitflags.workspace = true
 derive_more.workspace = true
 shoji.workspace = true

@@ -1,8 +1,8 @@
 #![cfg(backend = "metal")]
 
-use backend_uzu_macros::uzu_bench;
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;
+use uzu_engine_macros::uzu_bench;
 
 use crate::{
     array::ArrayElement,

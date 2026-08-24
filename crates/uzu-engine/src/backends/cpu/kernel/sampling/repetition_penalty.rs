@@ -1,6 +1,6 @@
-use backend_uzu_macros::kernel;
 use half::bf16;
 use num_traits::{Float, NumCast};
+use uzu_engine_macros::kernel;
 
 use crate::{array::ArrayElement, backends::common::gpu_types::ring::RingParams};
 

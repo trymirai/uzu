@@ -6,8 +6,8 @@ use std::{
     time::Instant,
 };
 
-use backend_uzu_macros::uzu_test;
 use serde::{Deserialize, Serialize};
+use uzu_engine_macros::uzu_test;
 
 use crate::backends::{
     common::{

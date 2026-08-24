@@ -2,9 +2,9 @@
 
 use std::{mem::size_of, time::Duration};
 
-use backend_uzu_macros::uzu_bench;
 use criterion::{BenchmarkId, Criterion};
 use half::bf16;
+use uzu_engine_macros::uzu_bench;
 
 use crate::{
     backends::{

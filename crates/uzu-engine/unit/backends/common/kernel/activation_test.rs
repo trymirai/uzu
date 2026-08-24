@@ -1,8 +1,8 @@
 use std::fmt::{Debug, Display};
 
-use backend_uzu_macros::uzu_test;
 use half::{bf16, f16};
 use num_traits::Float;
+use uzu_engine_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,

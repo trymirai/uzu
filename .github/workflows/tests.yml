@@ -32,7 +32,7 @@ jobs:
           linters: true
           metal: true
 
-      - name: Check backend-uzu rustfmt discovery
+      - name: Check uzu-engine rustfmt discovery
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: RUSTUP_TOOLCHAIN=nightly ./scripts/check-rustfmt-discovery.sh
 
@@ -113,7 +113,7 @@ jobs:
         run: |
           cargo +nightly nextest run --profile=ci \
             ${{ matrix.target && format('--target {0}', matrix.target) || '' }} \
-            ${{ matrix.tests == 'kernels' && '-p backend-uzu backends::common::kernel::tests --lib' || '' }}
+            ${{ matrix.tests == 'kernels' && '-p uzu-engine backends::common::kernel::tests --lib' || '' }}
 
   validate-bindings:
     name: validate-bindings

@@ -1,4 +1,4 @@
-use backend_uzu_macros::uzu_config;
+use uzu_engine_macros::uzu_config;
 
 use crate::config::{
     embedding::AnyEmbeddingConfig, normalization::NormalizationConfig, per_layer_embedding::PLEModelConfig,

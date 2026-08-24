@@ -1,5 +1,5 @@
-use backend_uzu_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{

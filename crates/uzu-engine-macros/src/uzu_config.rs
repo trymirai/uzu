@@ -79,7 +79,7 @@ pub fn uzu_config_abstract(
 
         use #struct_ident;
 
-        #[backend_uzu_macros::uzu_config]
+        #[uzu_engine_macros::uzu_config]
         #[serde(untagged)]
         #input_vis enum #enum_ident {
             #(#enum_variants,)*
@@ -146,7 +146,7 @@ pub fn uzu_config(
         return quote! {
             macro_rules! #callback_ident {
                 ($($super_fields:tt)*) => {
-                    #[backend_uzu_macros::uzu_config]
+                    #[uzu_engine_macros::uzu_config]
                     #(#input_attrs)*
                     #input_vis struct #input_ident #input_generics {
                         #[serde(rename = "type")]

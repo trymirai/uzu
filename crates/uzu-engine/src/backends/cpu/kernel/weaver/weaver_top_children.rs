@@ -1,5 +1,5 @@
-use backend_uzu_macros::kernel;
 use half::bf16;
+use uzu_engine_macros::kernel;
 
 use crate::{
     backends::common::gpu_types::weaver::{CANDIDATES_MAX, MetadataIdx},

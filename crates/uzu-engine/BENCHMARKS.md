@@ -23,8 +23,8 @@ so you can compare baselines side by side.
 
 ## Available benchmark groups
 
-Benchmarks live inside the `backend-uzu` library test target (registered with `#[uzu_bench]` under
-`crates/backend-uzu/unit/`), so the Cargo target is `--lib`.
+Benchmarks live inside the `uzu-engine` library test target (registered with `#[uzu_bench]` under
+`crates/uzu-engine/unit/`), so the Cargo target is `--lib`.
 
 | Group id                                | Filter                              |
 |-----------------------------------------|-------------------------------------|
@@ -53,7 +53,7 @@ From the repo root. Use an **absolute** `CRITERION_HOME` so it doesn't resolve r
 
 ```bash
 CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
-  -p backend-uzu \
+  -p uzu-engine \
   --lib -- "Metal/Kernel/Matmul" \
   --save-baseline matmul_baseline_m2_max
 ```
@@ -89,7 +89,7 @@ IPHONEOS_DEPLOYMENT_TARGET=26.4 cargo dinghy \
   -d "$DEVICE" \
   -e CRITERION_HOME=criterion/a19 \
   --sync-dirs "$(pwd)/target/criterion=Documents/criterion" \
-  bench -p backend-uzu --lib -- \
+  bench -p uzu-engine --lib -- \
     "Metal/Kernel/Matmul" \
     --save-baseline matmul_baseline_a19
 ```

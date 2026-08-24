@@ -1,5 +1,5 @@
-use backend_uzu_macros::kernel;
 use half::bf16;
+use uzu_engine_macros::kernel;
 
 use super::attention_single_pass::attention_single_pass;
 use crate::backends::common::gpu_types::weaver::MetadataIdx;

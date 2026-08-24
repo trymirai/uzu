@@ -1,4 +1,4 @@
-use backend_uzu_macros::kernel;
+use uzu_engine_macros::kernel;
 
 #[kernel(MoePassATileCounts)]
 pub fn moe_pass_a_tile_counts(

@@ -1,4 +1,4 @@
-use backend_uzu_macros::uzu_test;
+use uzu_engine_macros::uzu_test;
 
 use super::{super::specialization::GemmSpecialization, *};
 use crate::backends::{

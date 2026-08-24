@@ -1,7 +1,7 @@
 #![cfg(backend = "metal")]
 
-use backend_uzu_macros::uzu_test;
 use half::bf16;
+use uzu_engine_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,

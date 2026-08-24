@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
-use backend_uzu::bridge::resolve_model_specialization;
 use shoji::types::model::Model;
+use uzu_engine::bridge::resolve_model_specialization;
 
 use crate::registry::RegistryError;
 
