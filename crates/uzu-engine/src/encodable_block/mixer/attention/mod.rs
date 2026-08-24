@@ -24,12 +24,12 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-pub(crate) mod core;
+pub mod core;
 mod mode;
 mod qkv_norm;
 mod state;
 
-pub(crate) use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, AttentionStateType};
+pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCacheView};
 
 pub mod rope;
 
@@ -37,8 +37,7 @@ pub struct Attention<B: Backend> {
     head_dim: u32,
     num_q_heads: u32,
     num_kv_heads: Option<u32>,
-    is_causal: bool,
-    sliding_window_size: Option<u32>,
+    ring_capacity: Option<u32>,
     max_rope_length: Option<u32>,
     data_type: DataType,
     qkv: LinearProjection<B>,
@@ -164,7 +163,8 @@ impl<B: Backend> Attention<B> {
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
 
-        let is_kv_cache_ring = is_causal && sliding_window_size.is_some();
+        let ring_capacity = sliding_window_size.filter(|capacity| *capacity > 0);
+        let is_kv_cache_ring = ring_capacity.is_some();
 
         let flat_core = AttentionCores::new(
             AttentionCoreNewArguments {
@@ -219,8 +219,7 @@ impl<B: Backend> Attention<B> {
                 head_dim,
                 num_q_heads,
                 num_kv_heads,
-                is_causal,
-                sliding_window_size,
+                ring_capacity,
                 max_rope_length,
                 data_type,
                 qkv: LinearProjection {
