@@ -107,10 +107,6 @@ impl Paths {
         self.release_workspace_path().join("platform")
     }
 
-    pub fn release_docs_path(&self) -> PathBuf {
-        self.release_workspace_path().join("docs")
-    }
-
     pub fn release_binaries_path(&self) -> PathBuf {
         self.release_workspace_path().join("binaries")
     }
