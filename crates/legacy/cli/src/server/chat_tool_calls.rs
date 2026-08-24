@@ -15,16 +15,17 @@ pub struct OaiToolCall {
     // Present only in streaming deltas, per the OpenAI wire format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
-    // Empty in fragments: only the announcement and the final delta carry the id.
+    // Empty after announcement; finish carries metadata only if no announcement occurred.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
-    #[serde(rename = "type", default)]
+    #[serde(rename = "type", default, skip_serializing_if = "String::is_empty")]
     pub kind: String,
     pub function: OaiFunctionCall,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OaiFunctionCall {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     pub arguments: String,
 }
@@ -381,7 +382,7 @@ impl ToolCallStreamer {
                 deltas.push(OaiToolCall {
                     index: Some(index),
                     id: String::new(),
-                    kind: "function".to_string(),
+                    kind: String::new(),
                     function: OaiFunctionCall {
                         name: String::new(),
                         arguments: open_text[self.open_text.len()..].to_string(),
@@ -423,12 +424,17 @@ impl ToolCallStreamer {
         } else {
             self.closing_fragment(call)
         };
+        let (id, kind, name) = if self.name_announced {
+            (String::new(), String::new(), String::new())
+        } else {
+            (self.id.clone(), "function".to_string(), call.name.clone())
+        };
         OaiToolCall {
             index: Some(index),
-            id: self.id.clone(),
-            kind: "function".to_string(),
+            id,
+            kind,
             function: OaiFunctionCall {
-                name: call.name.clone(),
+                name,
                 arguments,
             },
         }

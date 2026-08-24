@@ -162,7 +162,7 @@ fn json_candidate_announces_name_once_it_is_complete() {
     assert_eq!(deltas[0].function.name, "write");
     assert_eq!(deltas[0].function.arguments, "");
 
-    // the id is assigned at announcement time and must never change mid-call
+    // Metadata is emitted exactly once, in the announcement delta.
     assert!(!deltas[0].id.is_empty());
     let call = ToolCall {
         identifier: Some("server-side-id-must-not-leak".to_string()),
@@ -171,9 +171,53 @@ fn json_candidate_announces_name_once_it_is_complete() {
             json: r#"{"path":"/tmp/a"}"#.to_string(),
         },
     };
-    assert_eq!(streamer.finish(1, &call).id, deltas[0].id);
+    let finish = serde_json::to_value(streamer.finish(1, &call)).expect("serializable final delta");
+    assert_eq!(
+        finish,
+        serde_json::json!({
+            "index": 1,
+            "function": {"arguments": r#"{"path":"/tmp/a"}"#}
+        })
+    );
 
     assert!(streamer.update(1, r#"{"name": "write", "arguments": {"path": "/"#).is_empty());
+}
+
+#[test]
+fn framed_argument_deltas_do_not_repeat_announced_metadata() {
+    let mut streamer = ToolCallStreamer::new();
+    let deltas = streamer.update(0, "<function=write>\n<parameter=path>\n/tmp/a");
+    assert_eq!(deltas.len(), 2);
+
+    let announcement = serde_json::to_value(&deltas[0]).expect("serializable announcement");
+    assert_eq!(announcement["type"], "function");
+    assert_eq!(announcement["function"]["name"], "write");
+
+    let arguments = serde_json::to_value(&deltas[1]).expect("serializable argument delta");
+    assert_eq!(
+        arguments,
+        serde_json::json!({
+            "index": 0,
+            "function": {"arguments": r#"{"path":"/tmp/a"#}
+        })
+    );
+}
+
+#[test]
+fn finish_emits_metadata_when_no_announcement_was_possible() {
+    let mut streamer = ToolCallStreamer::new();
+    let call = ToolCall {
+        identifier: None,
+        name: "write".to_string(),
+        arguments: Value {
+            json: r#"{"path":"/tmp/a"}"#.to_string(),
+        },
+    };
+
+    let finish = serde_json::to_value(streamer.finish(0, &call)).expect("serializable final delta");
+    assert_eq!(finish["type"], "function");
+    assert_eq!(finish["function"]["name"], "write");
+    assert!(!finish["id"].as_str().expect("string id").is_empty());
 }
 
 #[test]
