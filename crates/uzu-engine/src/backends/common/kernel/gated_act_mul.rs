@@ -1,12 +1,12 @@
 use bitflags::bitflags;
 
 use crate::{
-    ClippingBounds,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::GatedActMulKernel,
     },
+    config::clipping::ClippingBounds,
     data_type::DataType,
 };
 
@@ -114,10 +114,8 @@ impl<B: Backend> GatedActMul<B> {
             activation_group_size,
             sum_group_size,
             settings.activation_alpha.is_some(),
-            settings.gate_clipping.min.is_some(),
-            settings.gate_clipping.max.is_some(),
-            settings.value_clipping.min.is_some(),
-            settings.value_clipping.max.is_some(),
+            settings.gate_clipping.into_pair().is_some(),
+            settings.value_clipping.into_pair().is_some(),
         )?;
         Ok(Self {
             kernel,
@@ -149,6 +147,8 @@ impl<B: Backend> GatedActMul<B> {
             !self.options.contains(GatedActMulOptions::HADAMARD)
                 || gated_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
         );
+        let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping.into_pair().unzip();
+        let (value_clip_min, value_clip_max) = self.settings.value_clipping.into_pair().unzip();
         self.kernel.encode(
             act_operand,
             value_operand,
@@ -163,10 +163,10 @@ impl<B: Backend> GatedActMul<B> {
             value_row_stride,
             act_type,
             self.settings.activation_alpha,
-            self.settings.gate_clipping.min,
-            self.settings.gate_clipping.max,
-            self.settings.value_clipping.min,
-            self.settings.value_clipping.max,
+            gate_clip_min,
+            gate_clip_max,
+            value_clip_min,
+            value_clip_max,
             encoder,
         );
     }
@@ -192,6 +192,8 @@ impl<B: Backend> GatedActMul<B> {
         if self.ops == GatedActMulOp::QuantizeWithGroupSums {
             assert!(gated_dim.is_multiple_of(self.sum_group_size));
         }
+        let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping.into_pair().unzip();
+        let (value_clip_min, value_clip_max) = self.settings.value_clipping.into_pair().unzip();
         self.kernel.encode(
             act_operand,
             None::<&Allocation<B>>,
@@ -206,10 +208,10 @@ impl<B: Backend> GatedActMul<B> {
             0,
             act_type,
             self.settings.activation_alpha,
-            self.settings.gate_clipping.min,
-            self.settings.gate_clipping.max,
-            self.settings.value_clipping.min,
-            self.settings.value_clipping.max,
+            gate_clip_min,
+            gate_clip_max,
+            value_clip_min,
+            value_clip_max,
             encoder,
         );
     }

@@ -31,4 +31,12 @@ impl AnyActivation {
             AnyActivation::GELU(_) | AnyActivation::Identity(_) => 1.0,
         }
     }
+
+    /// Non-default activation slope encoded by kernels that specialize it.
+    pub fn custom_alpha(&self) -> Option<f32> {
+        match self {
+            AnyActivation::SiLU(config) if config.alpha != 1.0 => Some(config.alpha),
+            _ => None,
+        }
+    }
 }

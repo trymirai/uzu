@@ -176,7 +176,9 @@ impl<B: Backend> MoeBlock<B> {
             <B::Kernels as Kernels>::MoeFinalizeKernel::new(context, data_type).map_err(MoeBlockError::BackendError)?;
 
         let gate_clipping = moe_config.expert_config.gate_clipping;
+        let gate_clipping = gate_clipping.into_pair().unwrap_or((f32::MIN, f32::MAX));
         let up_clipping = moe_config.expert_config.up_clipping;
+        let up_clipping = up_clipping.into_pair().unwrap_or((f32::MIN, f32::MAX));
 
         Ok(Self {
             router_topk_kernel,
@@ -198,10 +200,10 @@ impl<B: Backend> MoeBlock<B> {
             hidden_dim: moe_config.expert_hidden_dim,
             num_routed_experts: moe_config.num_routed_experts,
             num_active_experts: moe_config.num_active_routed_experts,
-            gate_clip_min: gate_clipping.min.unwrap_or(f32::NEG_INFINITY),
-            gate_clip_max: gate_clipping.max.unwrap_or(f32::INFINITY),
-            up_clip_min: up_clipping.min.unwrap_or(f32::NEG_INFINITY),
-            up_clip_max: up_clipping.max.unwrap_or(f32::INFINITY),
+            gate_clip_min: gate_clipping.0,
+            gate_clip_max: gate_clipping.1,
+            up_clip_min: up_clipping.0,
+            up_clip_max: up_clipping.1,
             silu_alpha: moe_config.expert_config.activation.alpha(),
             data_type,
         })

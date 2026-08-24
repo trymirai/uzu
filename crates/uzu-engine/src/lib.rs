@@ -3,7 +3,6 @@
 #![cfg_attr(target_family = "wasm", feature(wasi_ext))]
 
 mod array;
-mod clipping;
 mod config;
 mod encodable_block;
 mod parameters;
@@ -16,7 +15,6 @@ pub mod data_type;
 
 pub mod engine;
 
-pub use clipping::ClippingBounds;
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 
 #[cfg(test)]

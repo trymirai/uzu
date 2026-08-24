@@ -1,5 +1,4 @@
 use crate::{
-    ClippingBounds,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
@@ -9,7 +8,7 @@ use crate::{
             matmul::{A8ActivationPlan, ActivationFormat},
         },
     },
-    config::activation::AnyActivation,
+    config::{activation::AnyActivation, clipping::ClippingBounds},
     data_type::DataType,
     encodable_block::linear::{LinearInput, LinearInputPreparation},
 };
@@ -36,9 +35,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
     ) -> Result<Self, B::Error> {
         let (hadamard_factors, a8_plan) = input_preparation
             .map_or((None, None), |preparation| (Some(preparation.input_factors), preparation.a8_plan));
-        let activation_alpha = activation.alpha();
         let settings = GatedActMulSettings {
-            activation_alpha: (activation_alpha != 1.0).then_some(activation_alpha),
+            activation_alpha: activation.custom_alpha(),
             gate_clipping,
             value_clipping,
         };

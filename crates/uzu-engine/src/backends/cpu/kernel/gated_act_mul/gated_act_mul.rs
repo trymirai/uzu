@@ -28,20 +28,18 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
     value_row_stride: u32,
     act_type: ActivationType,
     #[optional(custom_activation_alpha)] activation_alpha: Option<f32>,
-    #[optional(clip_gate_min)] gate_clip_min: Option<f32>,
-    #[optional(clip_gate_max)] gate_clip_max: Option<f32>,
-    #[optional(clip_value_min)] value_clip_min: Option<f32>,
-    #[optional(clip_value_max)] value_clip_max: Option<f32>,
+    #[optional(clip_gate)] gate_clip_min: Option<f32>,
+    #[optional(clip_gate)] gate_clip_max: Option<f32>,
+    #[optional(clip_value)] value_clip_min: Option<f32>,
+    #[optional(clip_value)] value_clip_max: Option<f32>,
     #[specialize] ops: GatedActMulOp,
     #[specialize] interleaved: bool,
     #[specialize] use_hadamard: bool,
     #[specialize] activation_scale_group_size: u32,
     #[specialize] sum_group_size: u32,
     #[specialize] custom_activation_alpha: bool,
-    #[specialize] clip_gate_min: bool,
-    #[specialize] clip_gate_max: bool,
-    #[specialize] clip_value_min: bool,
-    #[specialize] clip_value_max: bool,
+    #[specialize] clip_gate: bool,
+    #[specialize] clip_value: bool,
 ) {
     assert_eq!(hadamard_factors.is_some(), use_hadamard);
     let quantize = matches!(ops, GatedActMulOp::Quantize | GatedActMulOp::QuantizeWithGroupSums);
@@ -67,14 +65,8 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
                 (batch * gated_dim + gated, unsafe { *value_operand.unwrap().add(value_index) })
             };
             let gate = unsafe { *act_operand.add(act_index) };
-            let gate = if clip_gate_min || clip_gate_max {
-                let mut gate = gate.to_f32().unwrap();
-                if clip_gate_min {
-                    gate = gate.max(gate_clip_min.unwrap());
-                }
-                if clip_gate_max {
-                    gate = gate.min(gate_clip_max.unwrap());
-                }
+            let gate = if clip_gate {
+                let gate = gate.to_f32().unwrap().clamp(gate_clip_min.unwrap(), gate_clip_max.unwrap());
                 T::from(gate).unwrap()
             } else {
                 gate
@@ -84,14 +76,8 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
             } else {
                 act_type.activate(gate)
             };
-            let value = if clip_value_min || clip_value_max {
-                let mut value = value.to_f32().unwrap();
-                if clip_value_min {
-                    value = value.max(value_clip_min.unwrap());
-                }
-                if clip_value_max {
-                    value = value.min(value_clip_max.unwrap());
-                }
+            let value = if clip_value {
+                let value = value.to_f32().unwrap().clamp(value_clip_min.unwrap(), value_clip_max.unwrap());
                 T::from(value).unwrap()
             } else {
                 value

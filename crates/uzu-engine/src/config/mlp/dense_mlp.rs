@@ -1,9 +1,6 @@
 use uzu_engine_macros::uzu_config;
 
-use crate::{
-    ClippingBounds,
-    config::{activation::AnyActivation, linear::LinearConfig},
-};
+use crate::config::{activation::AnyActivation, clipping::ClippingBounds, linear::LinearConfig};
 
 #[uzu_config(super::MLPConfig)]
 pub struct DenseMLPConfig {
