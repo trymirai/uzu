@@ -11,6 +11,9 @@ use crate::{
     encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };
 
+mod gemm_grouped;
+pub use gemm_grouped::AttentionGemmGrouped;
+
 pub struct AttentionGemmMetalCore {
     kernels: Mutex<HashMap<AttentionGemmKey, AttentionGemmMetalKernel>>,
     head_dim: u32,

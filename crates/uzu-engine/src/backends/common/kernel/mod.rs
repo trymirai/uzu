@@ -2,6 +2,7 @@ use crate::backends::common::Backend;
 
 pub mod activation_transform;
 pub mod attention_gemm;
+pub mod attention_gemm_grouped;
 pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod gated_act_mul;
@@ -17,6 +18,7 @@ pub trait Kernels: Sized {
     type Backend: Backend<Kernels = Self>;
 
     autogen_kernels!();
+    type AttentionGemmGroupedCore: attention_gemm_grouped::AttentionGemmGroupedCore<Self::Backend>;
     type AttentionGemmCore: attention_gemm::AttentionGemmCore<Self::Backend>;
     type DeltaNetChunkedPrefill: delta_net_chunked_prefill::DeltaNetChunkedPrefill<Self::Backend>;
     type DeltaNetTreeVerify: delta_net_tree_verify::DeltaNetTreeVerify<Self::Backend>;

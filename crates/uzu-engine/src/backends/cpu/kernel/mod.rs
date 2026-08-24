@@ -32,6 +32,7 @@ impl Kernels for CpuKernels {
     type Backend = Cpu;
 
     autogen_kernels!();
+    type AttentionGemmGroupedCore = Infallible;
     type AttentionGemmCore = Infallible;
     type DeltaNetChunkedPrefill = Infallible;
     type DeltaNetTreeVerify = Infallible;

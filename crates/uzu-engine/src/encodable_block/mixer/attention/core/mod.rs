@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{
         Allocation, Backend, BufferArg, Encoder, Kernels,
-        kernel::attention_gemm::AttentionGemmCore as AttentionGemmCoreTrait,
+        kernel::{attention_gemm::AttentionGemmCore, attention_gemm_grouped::AttentionGemmGroupedCore},
     },
     data_type::DataType,
     encodable_block::mixer::attention::{
@@ -13,6 +13,10 @@ use crate::{
 mod fallback;
 mod single_pass;
 mod two_pass;
+
+const SINGLE_PASS_KV_THRESHOLD: u32 = 1024;
+const D256_SINGLE_PASS_KV_THRESHOLD: u32 = 150_000;
+const D128_SHORT_KV_GEMM_THRESHOLD: u32 = 2_048;
 
 pub struct AttentionCoreNewArguments {
     pub head_dim: u32,
@@ -38,6 +42,8 @@ pub struct AttentionCoreEncodeArguments<'a, B: Backend, KT: BufferArg<'a, B>, VT
 }
 
 pub struct AttentionCores<B: Backend> {
+    head_dim: u32,
+    grouped: Option<<B::Kernels as Kernels>::AttentionGemmGroupedCore>,
     gemm: Option<<B::Kernels as Kernels>::AttentionGemmCore>,
     fallback: Option<AttentionFallbackCore<B>>,
     two_pass: AttentionTwoPassCore<B>,
@@ -49,14 +55,24 @@ impl<B: Backend> AttentionCores<B> {
         arguments: AttentionCoreNewArguments,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
-        let gemm = if <<B::Kernels as Kernels>::AttentionGemmCore as AttentionGemmCoreTrait<B>>::is_supported(
-            &arguments, context,
-        )? {
-            Some(<<B::Kernels as Kernels>::AttentionGemmCore as AttentionGemmCoreTrait<B>>::new(context, &arguments)?)
-        } else {
-            None
-        };
-        let fallback = if arguments.head_dim == 512 && !arguments.is_trie {
+        let grouped =
+            if <<B::Kernels as Kernels>::AttentionGemmGroupedCore as AttentionGemmGroupedCore<B>>::is_supported(
+                &arguments, context,
+            )? {
+                Some(<<B::Kernels as Kernels>::AttentionGemmGroupedCore as AttentionGemmGroupedCore<B>>::new(
+                    context, &arguments,
+                )?)
+            } else {
+                None
+            };
+        let gemm =
+            if <<B::Kernels as Kernels>::AttentionGemmCore as AttentionGemmCore<B>>::is_supported(&arguments, context)?
+            {
+                Some(<<B::Kernels as Kernels>::AttentionGemmCore as AttentionGemmCore<B>>::new(context, &arguments)?)
+            } else {
+                None
+            };
+        let fallback = if AttentionFallbackCore::<B>::is_supported(&arguments) {
             Some(AttentionFallbackCore::new(&arguments, context)?)
         } else {
             None
@@ -65,12 +81,15 @@ impl<B: Backend> AttentionCores<B> {
         let single_pass = AttentionSinglePassCore::new(&arguments, context)?;
 
         Ok(Self {
+            head_dim: arguments.head_dim,
+            grouped,
             gemm,
             fallback,
             two_pass,
             single_pass,
         })
     }
+
     pub fn encode<'a, KT: BufferArg<'a, B>, VT: BufferArg<'a, B>>(
         &self,
         arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
@@ -78,23 +97,60 @@ impl<B: Backend> AttentionCores<B> {
     ) -> Result<Allocation<B>, <B as Backend>::Error> {
         encoder.push_debug_group("attention core");
 
-        let output = if arguments.suffix_length > 8
-            && let Some(gemm) = &self.gemm
-        {
-            gemm.encode(arguments, encoder)
-        } else if arguments.suffix_length > 8
-            && let Some(fallback) = &self.fallback
-        {
-            fallback.encode(arguments, encoder)
-        } else if arguments.state_type.physical_prefix_length() + arguments.suffix_length > 1024 {
-            self.two_pass.encode(arguments, encoder)
-        } else {
-            self.single_pass.encode(arguments, encoder)
-        }?;
+        let output = self.select_and_encode(arguments, encoder);
 
         encoder.pop_debug_group();
 
-        Ok(output)
+        output
+    }
+
+    fn select_and_encode<'a, KT: BufferArg<'a, B>, VT: BufferArg<'a, B>>(
+        &self,
+        arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, <B as Backend>::Error> {
+        let suffix_length = arguments.suffix_length;
+        let kv_length = arguments.state_type.physical_prefix_length() + suffix_length;
+        let is_kv_cache_ring = arguments.state_type.ring_params().is_some();
+
+        if !is_kv_cache_ring {
+            if let Some(grouped) = &self.grouped {
+                if grouped.should_encode(suffix_length, kv_length) {
+                    return grouped.encode(arguments, encoder);
+                }
+
+                // These measured sibling exceptions apply only when the
+                // grouped core was built for this layer.
+                if self.head_dim == 256
+                    && (1..=16).contains(&suffix_length)
+                    && kv_length > D256_SINGLE_PASS_KV_THRESHOLD
+                {
+                    return self.single_pass.encode(arguments, encoder);
+                }
+                if (self.head_dim == 256 && (9..=16).contains(&suffix_length))
+                    || (self.head_dim == 128
+                        && (9..=16).contains(&suffix_length)
+                        && kv_length > D128_SHORT_KV_GEMM_THRESHOLD)
+                {
+                    return self.two_pass.encode(arguments, encoder);
+                }
+            }
+        }
+
+        if suffix_length > 8 {
+            if let Some(gemm) = &self.gemm {
+                return gemm.encode(arguments, encoder);
+            }
+            if let Some(fallback) = &self.fallback {
+                return fallback.encode(arguments, encoder);
+            }
+        }
+
+        if kv_length > SINGLE_PASS_KV_THRESHOLD {
+            self.two_pass.encode(arguments, encoder)
+        } else {
+            self.single_pass.encode(arguments, encoder)
+        }
     }
 }
 

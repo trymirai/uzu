@@ -26,6 +26,10 @@ pub struct AttentionFallbackCore<B: Backend> {
 }
 
 impl<B: Backend> AttentionFallbackCore<B> {
+    pub fn is_supported(arguments: &AttentionCoreNewArguments) -> bool {
+        arguments.head_dim == 512 && !arguments.is_trie
+    }
+
     pub fn new(
         arguments: &AttentionCoreNewArguments,
         context: &B::Context,

@@ -1,26 +1,37 @@
 #![cfg(backend = "metal")]
 
+use half::bf16;
 use ndarray::{Array4, s};
 use test_tag::tag;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
+    array::ArrayElement,
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels,
+            gpu_types::trie::TrieNode as GpuTrieNode,
             kernel::{
                 AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
                 attention_gemm::AttentionGemmCore,
             },
         },
+        cpu::Cpu,
         metal::Metal,
     },
     data_type::DataType,
-    encodable_block::mixer::attention::{
-        core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
-        state::AttentionStateType,
+    encodable_block::{
+        mixer::attention::{
+            core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments, AttentionCores},
+            state::AttentionStateType,
+        },
+        sampling::PRng,
     },
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
+    },
+    trie::TrieNode,
 };
 
 fn reference_attention(
@@ -665,6 +676,79 @@ fn test_two_pass_attention_gqa() {
             .expect("two-pass attention GQA");
 
     compare_results(&kernel_output, &reference_output, 1e-2, "Two-pass attention GQA").unwrap();
+}
+
+type GroupedShape = (usize, usize, usize, usize, usize, bool);
+
+fn run_grouped_core<B: Backend>(
+    context: &B::Context,
+    shape: GroupedShape,
+    trie_nodes: Option<&[GpuTrieNode]>,
+) -> Vec<bf16> {
+    let (head_dim, num_q_heads, num_groups, suffix_length, prefix_length, is_causal) = shape;
+    let kv_length = prefix_length + suffix_length;
+    let row = num_groups * head_dim;
+    let fill = |count: usize, phase: f32| {
+        (0..count).map(|i| bf16::from_f32(((i as f32) * 0.017 + phase).sin() * 0.5)).collect::<Vec<_>>()
+    };
+    let queries = alloc_allocation_with_data::<B, bf16>(context, &fill(num_q_heads * suffix_length * head_dim, 0.5));
+    let keys = alloc_allocation_with_data::<B, bf16>(context, &fill(kv_length * row, 1.0));
+    let values = alloc_allocation_with_data::<B, bf16>(context, &fill(kv_length * row, 2.0));
+    let trie = trie_nodes.map(|nodes| {
+        let words: Vec<u32> = nodes.iter().flat_map(|node| [node.trie_start, node.trie_end, node.height]).collect();
+        alloc_allocation_with_data::<B, u32>(context, &words)
+    });
+    let cores = AttentionCores::<B>::new(
+        AttentionCoreNewArguments {
+            head_dim: head_dim as u32,
+            num_groups: num_groups as u32,
+            num_q_heads: num_q_heads as u32,
+            has_sinks: false,
+            is_kv_cache_ring: false,
+            is_causal,
+            is_trie: trie_nodes.is_some(),
+            sliding_window_size: None,
+            scale: Some(1.0 / (head_dim as f32).sqrt()),
+            data_type: bf16::data_type(),
+        },
+        context,
+    )
+    .expect("AttentionCores");
+    let arguments = AttentionCoreEncodeArguments {
+        queries: &queries,
+        keys: &keys,
+        values: &values,
+        suffix_length: suffix_length as u32,
+        trie: trie.as_ref(),
+        sinks: None,
+        state_type: &AttentionStateType::Full {
+            length: prefix_length as u32,
+        },
+    };
+    let mut encoder = Encoder::<B>::new(context).expect("encoder");
+    let pooled = cores.encode(arguments, &mut encoder).expect("encode");
+    let mut output = alloc_allocation::<B, bf16>(context, suffix_length * num_q_heads * head_dim);
+    encoder.encode_copy(&pooled, .., &mut output, ..);
+    let completed = encoder.end_encoding().submit().wait_until_completed().expect("submit");
+    drop((pooled, completed));
+    allocation_to_vec::<B, bf16>(&output)
+}
+
+#[uzu_test]
+fn test_grouped_attention_through_public_core() {
+    let trie: Vec<GpuTrieNode> =
+        TrieNode::flat(0, &[0, 1, 2, 3, 4], &PRng::new(0)).linearize().token_subtrie_ranges().collect();
+    let cpu_context = <Cpu as Backend>::Context::new().expect("CPU attention context");
+    let metal_context = <Metal as Backend>::Context::new().expect("Metal attention context");
+    for &(head_dim, num_q_heads, num_groups, suffix_length, prefix_length, causal, use_trie) in
+        &[(128, 8, 2, 16, 1024, false, false), (256, 6, 1, 32, 1024, true, false), (256, 6, 1, 31, 1024, true, true)]
+    {
+        let nodes = use_trie.then_some(trie.as_slice());
+        let shape = (head_dim, num_q_heads, num_groups, suffix_length, prefix_length, causal);
+        let expected = run_grouped_core::<Cpu>(cpu_context.as_ref(), shape, nodes);
+        let actual = run_grouped_core::<Metal>(metal_context.as_ref(), shape, nodes);
+        assert_eq_float::<bf16>(&expected, &actual, 1e-2, "public grouped attention");
+    }
 }
 
 #[tag(heavy)]

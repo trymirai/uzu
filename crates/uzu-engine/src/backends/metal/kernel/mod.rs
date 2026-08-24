@@ -22,6 +22,7 @@ impl Kernels for MetalKernels {
     type Backend = Metal;
 
     autogen_kernels!();
+    type AttentionGemmGroupedCore = attention::AttentionGemmGrouped;
     type AttentionGemmCore = attention::AttentionGemmMetalCore;
     type DeltaNetChunkedPrefill = gdn::chunked::MetalDeltaNetChunkedPrefill;
     type DeltaNetTreeVerify = gdn::tree_verify::MetalDeltaNetTreeVerify;
