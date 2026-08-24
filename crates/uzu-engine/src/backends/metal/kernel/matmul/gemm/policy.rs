@@ -29,6 +29,7 @@ const SIMDGROUP_QUANT_WIDE_N_MIN: u32 = 6144;
 
 const SPLIT_K_TARGET_TILES_FP: u32 = 512;
 const SPLIT_K_TARGET_TILES_A8: u32 = 256;
+const SPLIT_K_TARGET_TILES_A8_TILE16X32: u32 = 4 * SPLIT_K_TARGET_TILES_A8;
 const SPLIT_K_TARGET_TILES_A8_TILE32_W4: u32 = 512;
 const SPLIT_K_TARGET_TILES_A8_TILE32_W8: u32 = 1024;
 
@@ -48,7 +49,7 @@ pub(super) fn mxu_mn_tile(
         (_, _, 0) => GemmTiling::Tile64x32x256_Simdgroups4x1,
         (false, 0..=1, _) => GemmTiling::Tile32x64x256_Simdgroups2x2,
         (false, 3..=4, 2) => GemmTiling::Tile128x128x256_Simdgroups4x4,
-        (true, 0, _) => GemmTiling::Tile16x128x256_Simdgroups1x4,
+        (true, 0, _) => GemmTiling::Tile16x32x256_Simdgroups1x1,
         (true, 1, _) => GemmTiling::Tile32x64x256_Simdgroups2x2,
         (true, 4, _) => GemmTiling::Tile128x128x256_Simdgroups4x4,
         _ => MXU_DEFAULT_TILE,
@@ -137,6 +138,7 @@ pub(super) fn split_k_target_tiles(
     match (is_a_int8, tiling, b_bits) {
         (true, GemmTiling::Tile32x64x256_Simdgroups2x2, Some(4)) => SPLIT_K_TARGET_TILES_A8_TILE32_W4,
         (true, GemmTiling::Tile32x64x256_Simdgroups2x2, _) => SPLIT_K_TARGET_TILES_A8_TILE32_W8,
+        (true, GemmTiling::Tile16x32x256_Simdgroups1x1, _) => SPLIT_K_TARGET_TILES_A8_TILE16X32,
         (true, _, _) => SPLIT_K_TARGET_TILES_A8,
         (false, _, _) => SPLIT_K_TARGET_TILES_FP,
     }
