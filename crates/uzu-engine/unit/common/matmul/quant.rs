@@ -67,7 +67,8 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let num_groups_k = k.div_ceil(group_size);
         let mut rng = SmallRng::seed_from_u64(seed);
 
-        let w_packed: Vec<u32> = (0..(n * k * bits / 32) as usize).map(|_| rng.random_range(0..u32::MAX)).collect();
+        let w_packed: Vec<u32> =
+            (0..(n as usize * k as usize * bits as usize / 32)).map(|_| rng.random_range(0..u32::MAX)).collect();
         let scales: Vec<T> =
             (0..(n * num_groups_k) as usize).map(|_| T::from(rng.random_range(0.01f32..0.3f32)).unwrap()).collect();
         let x: Vec<T> = (0..(m * k) as usize).map(|_| T::from(rng.random_range(-0.3f32..0.3f32)).unwrap()).collect();
