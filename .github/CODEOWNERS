@@ -1,12 +1,12 @@
 /.github @uuuvn
 /apps/playground @alexxale
 /crates/legacy/backend-remote @alexxale
-/crates/backend-uzu/build @uuuvn
-/crates/backend-uzu/src/backends/cpu @uuuvn
-/crates/backend-uzu/src/backends/metal @eugenebokhan @uuuvn @CC-Yeh
-/crates/backend-uzu/src/config @uuuvn
-/crates/backend-uzu/src/parameters @uuuvn
-/crates/backend-uzu/src/speculators @uuuvn
+/crates/uzu-engine/build @uuuvn
+/crates/uzu-engine/src/backends/cpu @uuuvn
+/crates/uzu-engine/src/backends/metal @eugenebokhan @uuuvn @CC-Yeh
+/crates/uzu-engine/src/config @uuuvn
+/crates/uzu-engine/src/parameters @uuuvn
+/crates/uzu-engine/src/speculators @uuuvn
 /crates/legacy/bindings @alexxale
 /crates/legacy/cli @alexxale
 /crates/legacy/cli/src/storage @eugenebokhan

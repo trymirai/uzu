@@ -1,6 +1,6 @@
-use backend_uzu::VERSION;
 use indoc::indoc;
 use iocraft::prelude::*;
+use uzu_engine::VERSION;
 
 use crate::interactive::components::ApplicationState;
 
