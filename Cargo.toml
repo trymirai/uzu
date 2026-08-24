@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "crates/backend-uzu",
-    "crates/backend-uzu-macros",
+    "crates/uzu-engine",
+    "crates/uzu-engine-macros",
     # --- to be rewritten
     "crates/legacy/bindings-types",
     "crates/legacy/bindings",
@@ -50,8 +50,8 @@ test-runner = { path = "crates/legacy/test-runner" }
 bindings-types = { path = "crates/legacy/bindings-types", default-features = false }
 bindings = { path = "crates/legacy/bindings", default-features = false }
 shoji = { path = "crates/legacy/shoji", default-features = false }
-backend-uzu = { path = "crates/backend-uzu", default-features = false }
-backend-uzu-macros = { path = "crates/backend-uzu-macros" }
+uzu-engine = { path = "crates/uzu-engine", default-features = false }
+uzu-engine-macros = { path = "crates/uzu-engine-macros" }
 backend-remote = { path = "crates/legacy/backend-remote", default-features = false }
 json-transform = { path = "crates/legacy/json-transform", default-features = false }
 token-stream-parser = { path = "crates/legacy/token-stream-parser", default-features = false }

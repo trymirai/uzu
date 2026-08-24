@@ -463,70 +463,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "backend-uzu"
-version = "0.5.19"
-dependencies = [
- "anyhow",
- "async-trait",
- "backend-uzu-macros",
- "bindgen",
- "bitflags 2.13.0",
- "blake3",
- "bytemuck",
- "clang-ast",
- "criterion",
- "depfile",
- "derive_more",
- "futures",
- "half",
- "is_close",
- "itertools 0.14.0",
- "libm",
- "memmap2",
- "monostate",
- "mtl-rs",
- "ndarray",
- "num-traits",
- "obfstr",
- "objc2",
- "parking_lot",
- "prettyplease",
- "proc-macro2",
- "proptest",
- "quote",
- "rand 0.10.2",
- "rand_distr",
- "rangemap",
- "rhai",
- "rstest",
- "rustix",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "shoji",
- "syn 2.0.118",
- "tempfile",
- "test-runner",
- "test-tag",
- "thiserror 2.0.18",
- "tokenizers",
- "tokio",
- "tokio-util",
- "walkdir",
- "xgrammar-rs",
- "xxhash-rust",
- "zstd",
-]
-
-[[package]]
-name = "backend-uzu-macros"
-version = "0.5.19"
-dependencies = [
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
 name = "backoff"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1003,7 +939,6 @@ name = "cli"
 version = "0.5.19"
 dependencies = [
  "anyhow",
- "backend-uzu",
  "chrono",
  "clap",
  "comfy-table",
@@ -1033,6 +968,7 @@ dependencies = [
  "unicode-width 0.2.2",
  "uuid",
  "uzu",
+ "uzu-engine",
 ]
 
 [[package]]
@@ -1045,6 +981,7 @@ dependencies = [
  "heck",
  "ignore",
  "indexmap 2.14.0",
+ "itertools 0.14.0",
  "minijinja",
  "regex",
  "serde",
@@ -1052,6 +989,7 @@ dependencies = [
  "syn 2.0.118",
  "toml 1.1.2+spec-1.1.0",
  "toml_edit 0.25.12+spec-1.1.0",
+ "walkdir",
 ]
 
 [[package]]
@@ -3564,15 +3502,6 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
-
-[[package]]
-name = "memmap2"
-version = "0.9.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "memmem"
@@ -7609,7 +7538,6 @@ dependencies = [
  "apple-native-keyring-store",
  "async-openai",
  "backend-remote",
- "backend-uzu",
  "bindings",
  "bindings-types",
  "bitflags 2.13.0",
@@ -7634,10 +7562,12 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-security",
+ "parking_lot",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",
  "pyo3-stub-gen",
+ "rand 0.10.2",
  "reqwest 0.13.4",
  "rodio",
  "rstest",
@@ -7649,16 +7579,80 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
  "tsify",
  "uniffi",
  "uuid",
+ "uzu-engine",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "uzu-engine"
+version = "0.5.19"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bindgen",
+ "bitflags 2.13.0",
+ "blake3",
+ "bytemuck",
+ "clang-ast",
+ "criterion",
+ "depfile",
+ "derive_more",
+ "futures",
+ "half",
+ "is_close",
+ "itertools 0.14.0",
+ "libm",
+ "monostate",
+ "mtl-rs",
+ "ndarray",
+ "num-traits",
+ "obfstr",
+ "objc2",
+ "parking_lot",
+ "prettyplease",
+ "proc-macro2",
+ "proptest",
+ "quote",
+ "rand 0.10.2",
+ "rand_distr",
+ "rangemap",
+ "rhai",
+ "rstest",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "shoji",
+ "syn 2.0.118",
+ "tempfile",
+ "test-runner",
+ "test-tag",
+ "thiserror 2.0.18",
+ "tokenizers",
+ "tokio",
+ "uzu-engine-macros",
+ "walkdir",
+ "xgrammar-rs",
+ "xxhash-rust",
+ "zstd",
+]
+
+[[package]]
+name = "uzu-engine-macros"
+version = "0.5.19"
+dependencies = [
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
