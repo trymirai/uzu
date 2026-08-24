@@ -7,6 +7,8 @@ pub trait Context: Sized + Send + Sync {
 
     fn new() -> Result<Arc<Self>, <Self::Backend as Backend>::Error>;
 
+    fn device_name(&self) -> Option<&str>;
+
     fn create_command_buffer(
         &self,
         name: Option<&str>,
