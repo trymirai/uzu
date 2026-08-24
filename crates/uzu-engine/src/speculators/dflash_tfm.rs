@@ -1,17 +1,21 @@
 use std::{
+    collections::HashMap,
     fs::File,
     io::{self, BufReader},
     path::Path,
     sync::Arc,
 };
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use crate::encodable_block::dflash::DFlashState;
 #[cfg(grammar)]
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
-    backends::common::{Allocation, AllocationPool, Backend, Encoder, gpu_types::trie::TrieNode as GpuTrieNode},
+    backends::common::{
+        Allocation, AllocationPool, Backend, Context, Encoder, gpu_types::trie::TrieNode as GpuTrieNode,
+    },
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
     encodable_block::{
@@ -53,6 +57,8 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
     Weaver(#[from] WeaverNewError<B>),
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[serde(tag = "type")]
 pub enum DFlashTfmTreeConstructionMethod {
     Argmax,
     Weaver {
@@ -62,6 +68,7 @@ pub enum DFlashTfmTreeConstructionMethod {
     },
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct DFlashTfmTreeShape {
     pub tree_budget: u32,
     pub max_tree_depth: u32,
@@ -75,13 +82,26 @@ pub struct DFlashTfmSpeculator<B: Backend> {
     weaver: Option<Weaver<B>>,
     sampling: Sampling<B>,
     config: DFlashSpeculatorConfig,
+    shape: DFlashTfmTreeShape,
 }
 
 impl<B: Backend> DFlashTfmSpeculator<B> {
     pub fn new(
         model_path: &Path,
         context: Arc<B::Context>,
-    ) -> Result<Self, DFlashSpeculatorLoadError<B>> {
+    ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
+        let mut shapes = serde_json::from_reader::<_, HashMap<String, DFlashTfmTreeShape>>(BufReader::new(
+            File::open(model_path.join("shapes.json"))?,
+        ))?;
+
+        let Some(shape) = context
+            .device_name()
+            .and_then(|device_name| shapes.remove(device_name))
+            .or_else(|| shapes.remove("default"))
+        else {
+            return Ok(None);
+        };
+
         let data_type = DataType::BF16;
 
         let config: SpeculatorModelConfig =
@@ -110,17 +130,14 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let sampling = Sampling::new(DataType::F32, config.draft_config.vocab_size);
 
-        Ok(Self {
+        Ok(Some(Self {
             context,
             dflash,
             weaver,
             sampling,
             config,
-        })
-    }
-
-    pub fn has_weaver(&self) -> bool {
-        self.weaver.is_some()
+            shape,
+        }))
     }
 
     pub fn hidden_feature_layer_indices(&self) -> &[u32] {
@@ -142,6 +159,31 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         self.dflash.encode_accept(state, target_features, accepted_indices, encoder)
+    }
+
+    pub fn make_shape(
+        &self,
+        max_depth: Option<u32>,
+    ) -> Option<DFlashTfmTreeShape> {
+        if max_depth.is_some_and(|max_depth| max_depth < 2) {
+            return None;
+        }
+
+        let mut shape = self.shape.clone();
+
+        if let Some(max_depth) = max_depth {
+            shape.max_tree_depth = u32::min(shape.max_tree_depth, max_depth);
+
+            if let DFlashTfmTreeConstructionMethod::Weaver {
+                rounds,
+                ..
+            } = &mut shape.construction_method
+            {
+                *rounds = u32::min(*rounds, max_depth);
+            }
+        }
+
+        Some(shape)
     }
 
     pub fn propose_tree(
