@@ -86,7 +86,6 @@ schemars = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-tag.workspace = true
-test-runner = { workspace = true, features = ["nightly-harness"] }
 proptest.workspace = true
 criterion.workspace = true
 rand.workspace = true
@@ -95,6 +94,10 @@ is_close.workspace = true
 ndarray.workspace = true
 rstest.workspace = true
 keisoku.workspace = true
+
+[target.'cfg(target_os = "ios")'.dev-dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, default-features = true }

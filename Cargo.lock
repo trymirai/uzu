@@ -6604,16 +6604,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-runner"
-version = "0.5.19"
-dependencies = [
- "criterion",
- "keisoku",
- "objc2",
- "objc2-foundation",
-]
-
-[[package]]
 name = "test-tag"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7620,6 +7610,7 @@ dependencies = [
  "num-traits",
  "obfstr",
  "objc2",
+ "objc2-foundation",
  "parking_lot",
  "prettyplease",
  "proc-macro2",
@@ -7636,7 +7627,6 @@ dependencies = [
  "shoji",
  "syn 2.0.118",
  "tempfile",
- "test-runner",
  "test-tag",
  "thiserror 2.0.18",
  "tokenizers",

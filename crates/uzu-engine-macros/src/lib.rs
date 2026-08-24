@@ -1,8 +1,14 @@
 mod dsl;
+mod harness;
 mod uzu_config;
 mod uzu_test;
 
 use proc_macro::TokenStream;
+
+#[proc_macro]
+pub fn define_test_harness(input: TokenStream) -> TokenStream {
+    harness::define_test_harness(input)
+}
 
 // CPU kernel DSL
 #[proc_macro_attribute]

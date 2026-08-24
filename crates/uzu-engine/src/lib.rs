@@ -1,6 +1,9 @@
 #![cfg_attr(test, feature(custom_test_frameworks, test))]
-#![cfg_attr(test, test_runner(test_runner::uzu_harness))]
+#![cfg_attr(test, test_runner(crate::__uzu_test_harness::uzu_harness))]
 #![cfg_attr(target_family = "wasm", feature(wasi_ext))]
+
+#[cfg(test)]
+uzu_engine_macros::define_test_harness!();
 
 mod array;
 mod config;

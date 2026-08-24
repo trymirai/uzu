@@ -30,10 +30,10 @@ pub fn uzu_test(
 
         #[test_case]
         #[allow(non_upper_case_globals)]
-        const #const_name: test_runner::UzuTest =
-            test_runner::UzuTest::Test(&test_runner::test::TestDescAndFn {
-                desc: test_runner::test::TestDesc {
-                    name: test_runner::test::StaticTestName(concat!(
+        const #const_name: crate::__uzu_test_harness::UzuTest =
+            crate::__uzu_test_harness::UzuTest::Test(&crate::__uzu_test_harness::test::TestDescAndFn {
+                desc: crate::__uzu_test_harness::test::TestDesc {
+                    name: crate::__uzu_test_harness::test::StaticTestName(concat!(
                         module_path!(),
                         "::",
                         stringify!(#name),
@@ -45,13 +45,13 @@ pub fn uzu_test(
                     start_col: column!() as usize,
                     end_line: line!() as usize,
                     end_col: column!() as usize,
-                    should_panic: test_runner::test::ShouldPanic::No,
+                    should_panic: crate::__uzu_test_harness::test::ShouldPanic::No,
                     compile_fail: false,
                     no_run: false,
-                    test_type: test_runner::test::TestType::Unknown,
+                    test_type: crate::__uzu_test_harness::test::TestType::Unknown,
                 },
-                testfn: test_runner::test::StaticTestFn(|| {
-                    test_runner::test::assert_test_result(#name())
+                testfn: crate::__uzu_test_harness::test::StaticTestFn(|| {
+                    crate::__uzu_test_harness::test::assert_test_result(#name())
                 }),
             });
     }
@@ -72,7 +72,7 @@ pub fn uzu_bench(
 
         #[test_case]
         #[allow(non_upper_case_globals)]
-        const #const_name: test_runner::UzuTest = test_runner::UzuTest::Bench(&|| {
+        const #const_name: crate::__uzu_test_harness::UzuTest = crate::__uzu_test_harness::UzuTest::Bench(&|| {
             let mut criterion = ::criterion::Criterion::default().configure_from_args();
             #name(&mut criterion);
         });
