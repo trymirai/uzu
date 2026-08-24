@@ -5,12 +5,25 @@ pub enum UzuTest {
     Test(&'static test::TestDescAndFn),
 }
 
+#[cfg(target_os = "ios")]
+pub fn ios_set_current_dir() {
+    use objc2_foundation::{NSSearchPathDirectory, NSSearchPathDomainMask, NSSearchPathForDirectoriesInDomains};
+    let paths = NSSearchPathForDirectoriesInDomains(
+        NSSearchPathDirectory(9),  // NSDocumentDirectory
+        NSSearchPathDomainMask(1), // NSUserDomainMask
+        true,
+    );
+    if let Some(docs) = paths.firstObject() {
+        let _ = std::env::set_current_dir(docs.to_string());
+    }
+}
+
 pub fn uzu_harness(tests: &[&UzuTest]) {
     let args = std::env::args().collect::<Vec<String>>();
     let benchmarks = args.contains(&"--bench".to_string());
     if benchmarks {
         #[cfg(target_os = "ios")]
-        crate::path::ios_set_current_dir();
+        uzu_engine::tests::path::ios_set_current_dir();
         enable_benchmark_gpu_capture_if_requested();
         let bench_tests: Vec<&dyn Fn()> = tests
             .iter()

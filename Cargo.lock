@@ -7612,6 +7612,7 @@ dependencies = [
  "half",
  "is_close",
  "itertools 0.14.0",
+ "keisoku",
  "libm",
  "monostate",
  "mtl-rs",

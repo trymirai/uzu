@@ -1,9 +1,8 @@
 use std::fs::File;
 
-use test_runner::path::get_test_weights_path;
 use uzu_engine_macros::uzu_test;
 
-use crate::parameters::safetensors_metadata::read_metadata;
+use crate::{parameters::safetensors_metadata::read_metadata, tests::path::get_test_weights_path};
 
 #[uzu_test]
 #[ignore] // TODO: test data downloading

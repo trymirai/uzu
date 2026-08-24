@@ -13,5 +13,8 @@ pub mod util;
 #[path = "../bench_cold_pool_test.rs"]
 mod bench_cold_pool_test;
 
+pub mod metrics;
 #[path = "../session/model_loading_bench.rs"]
 mod model_loading_bench;
+pub mod path;
+pub mod perf;
