@@ -11,10 +11,21 @@ use crate::common::{enum_paths::EnumPaths, identifiers::KernelName, mangling::st
 
 pub type SpecializeBaseIndices = HashMap<KernelName, usize>;
 
+pub struct VariantWrapper {
+    pub name: Box<str>,
+    pub source: Box<str>,
+}
+
+pub struct KernelWrappers {
+    pub header: Option<Box<str>>,
+    pub variants: Box<[VariantWrapper]>,
+    pub footer: Option<Box<str>>,
+}
+
 pub fn wrappers(
     kernels: &[MetalKernelInfo],
     enum_paths: &EnumPaths,
-) -> anyhow::Result<(Box<[Box<str>]>, SpecializeBaseIndices)> {
+) -> anyhow::Result<(Box<[KernelWrappers]>, SpecializeBaseIndices)> {
     let mut all_wrappers = Vec::new();
     let mut base_indices = SpecializeBaseIndices::new();
     let mut next_index = 0usize;
@@ -28,8 +39,7 @@ pub fn wrappers(
             next_index += specialize_count;
         }
 
-        let kernel_wrappers = kernel_wrappers(kernel, base_indices.get(&kernel.name), enum_paths)?;
-        all_wrappers.extend(kernel_wrappers.into_vec());
+        all_wrappers.push(kernel_wrappers(kernel, base_indices.get(&kernel.name), enum_paths)?);
     }
 
     Ok((all_wrappers.into_boxed_slice(), base_indices))
@@ -129,13 +139,11 @@ fn kernel_wrappers(
     kernel: &MetalKernelInfo,
     base_index: Option<&usize>,
     enum_paths: &EnumPaths,
-) -> anyhow::Result<Box<[Box<str>]>> {
-    let mut kernel_wrappers = Vec::new();
+) -> anyhow::Result<KernelWrappers> {
+    let mut variants = Vec::new();
     let bindings = specialize_bindings(kernel, enum_paths);
 
-    if let Some(&base) = base_index {
-        kernel_wrappers.push(kernel_header(&bindings, base).into_boxed_str());
-    }
+    let header = base_index.map(|&base| kernel_header(&bindings, base).into_boxed_str());
 
     let evaluator = crate::common::constraints::Evaluator::new(
         kernel.variants.as_deref().into_iter().flatten().flat_map(|tp| tp.variants.iter().map(|v| v.as_ref())),
@@ -289,19 +297,22 @@ fn kernel_wrappers(
         let condition_definitions = condition_definitions.into_iter().flatten().join("\n");
         let undefs = undefs.join("");
 
-        kernel_wrappers.push(
-            format!(
+        variants.push(VariantWrapper {
+            source: format!(
                 "{defs}\n{condition_definitions}\n[[kernel, max_total_threads_per_threadgroup({max_total_threads_per_threadgroup})]] void {wrapper_name}({wrapper_arguments}) {{\n{wrapper_body}}}\n{undefs}"
             )
             .into(),
-        );
+            name: wrapper_name.into_boxed_str(),
+        });
     }
 
-    if base_index.is_some() {
-        kernel_wrappers.push(kernel_footer(&bindings).into_boxed_str());
-    }
+    let footer = base_index.map(|_| kernel_footer(&bindings).into_boxed_str());
 
-    Ok(kernel_wrappers.into())
+    Ok(KernelWrappers {
+        header,
+        variants: variants.into(),
+        footer,
+    })
 }
 
 fn optional_shared_arguments(kernel: &MetalKernelInfo) -> impl Iterator<Item = &MetalArgument> {

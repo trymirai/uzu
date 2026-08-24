@@ -18,6 +18,7 @@ pub fn bindgen(
     specialize_indices: &SpecializeBaseIndices,
     enum_paths: &EnumPaths,
     library_const: &proc_macro2::Ident,
+    num_shards: usize,
     library_compressed: bool,
 ) -> Result<(TokenStream, Option<TokenStream>)> {
     let kernel_name = kernel.name.as_ref();
@@ -69,6 +70,13 @@ pub fn bindgen(
     let dispatch_code = &dispatch_emission.dispatch_code;
     let empty_dispatch_guards = &dispatch_emission.empty_dispatch_guards;
 
+    let library_data = if num_shards == 1 {
+        quote! { #library_const[0] }
+    } else {
+        let num_shards = num_shards as u64;
+        quote! { #library_const[(xxhash_rust::xxh3::xxh3_64(entry_name.as_bytes()) % #num_shards) as usize] }
+    };
+
     let trait_implementation_for = &trait_wiring.trait_implementation_for;
     let associate_backend = &trait_wiring.associate_backend;
     let method_visibility = &trait_wiring.method_visibility;
@@ -97,7 +105,7 @@ pub fn bindgen(
             ) -> Result<Self, MetalError> {
                 let entry_name = #entry_name;
                 #function_constants_initialization
-                let pipeline = context.compute_pipeline_state(#library_const, #library_compressed, #cache_key, &entry_name, #function_constants_argument)?;
+                let pipeline = context.compute_pipeline_state(#library_data, #library_compressed, #cache_key, &entry_name, #function_constants_argument)?;
                 Ok(Self {
                     pipeline
                     #(, #conditional_buffer_initializers)*

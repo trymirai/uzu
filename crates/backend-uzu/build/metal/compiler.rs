@@ -6,12 +6,19 @@ use std::{
 
 use anyhow::Context;
 use async_trait::async_trait;
-use futures::{StreamExt, TryStreamExt, stream};
+use futures::{StreamExt, TryStreamExt, future::try_join_all, stream};
+use itertools::{Itertools, izip};
 use quote::{format_ident, quote};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
+use xxhash_rust::xxh3::xxh3_64;
 
-use super::{ast::MetalKernelInfo, bindgen::bindgen_global, toolchain::MetalToolchain, wrapper::wrappers};
+use super::{
+    ast::MetalKernelInfo,
+    bindgen::bindgen_global,
+    toolchain::MetalToolchain,
+    wrapper::{KernelWrappers, VariantWrapper, wrappers},
+};
 use crate::{
     common::{
         caching, codegen::write_tokens, compiler::Compiler, enum_paths::EnumPaths, gpu_types::GpuTypes,
@@ -21,12 +28,54 @@ use crate::{
     metal::gpu_types::gpu_type_gen,
 };
 
+const MIN_VARIANTS_PER_SHARD: usize = 8;
+const MAX_VARIANTS_PER_SHARD: usize = 64;
+
+fn shard_footers(kernel_wrappers: &[KernelWrappers]) -> Vec<String> {
+    let total_variants: usize = kernel_wrappers.iter().map(|kernel| kernel.variants.len()).sum();
+    let min_shards = total_variants.div_ceil(MAX_VARIANTS_PER_SHARD);
+    let ncpu = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(1);
+    let num_shards = total_variants.div_ceil(MIN_VARIANTS_PER_SHARD).clamp(min_shards, min_shards.max(ncpu));
+    let num_shards = if num_shards >= ncpu {
+        num_shards.div_ceil(ncpu) * ncpu
+    } else {
+        num_shards
+    };
+
+    let mut footers = vec![String::new(); num_shards];
+    for kernel in kernel_wrappers {
+        let mut emit = |index: usize, variants: Vec<&VariantWrapper>| {
+            let footer = &mut footers[index];
+            footer.push_str(kernel.header.as_deref().unwrap_or(""));
+            footer.push_str(&variants.iter().map(|variant| variant.source.as_ref()).join(""));
+            footer.push_str(kernel.footer.as_deref().unwrap_or(""));
+        };
+
+        if num_shards == 1 {
+            emit(0, kernel.variants.iter().collect());
+        } else {
+            for (index, variants) in kernel
+                .variants
+                .iter()
+                .into_group_map_by(|variant| (xxh3_64(variant.name.as_bytes()) % num_shards as u64) as usize)
+                .into_iter()
+                .sorted_unstable_by_key(|(index, _)| *index)
+            {
+                emit(index, variants);
+            }
+        }
+    }
+    footers
+}
+
 #[derive(Serialize, Deserialize)]
 struct Cached {
     cache_key: [u8; blake3::OUT_LEN],
     dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
     public_kernels: Box<[Kernel]>,
     has_kernels: bool,
+    num_variants: usize,
+    num_shards: usize,
 }
 
 #[derive(Debug)]
@@ -110,13 +159,6 @@ impl MetalCompiler {
         fs::create_dir_all(output_base_path.parent().context("cannot get output directory")?)
             .context("cannot create output directory")?;
 
-        let object_file = output_base_path.with_extension("air");
-        let metallib_file = output_base_path.with_extension("metallib");
-        let metallib_maybe_compressed_file = if self.metallib_compressed {
-            metallib_file.with_added_extension("zst")
-        } else {
-            metallib_file.clone()
-        };
         let bindgen_file = output_base_path.with_extension("rs");
         let cached_file = output_base_path.with_extension("cached");
 
@@ -130,7 +172,12 @@ impl MetalCompiler {
             for path in cached.dependency_hashes.keys() {
                 self.emit_rerun_if_changed_for_dependency(path);
             }
-            debug_log!("compile cached: {source_path_relative_str}");
+            let sharding = if cached.has_kernels {
+                format!(" ({} variants / {} shards)", cached.num_variants, cached.num_shards)
+            } else {
+                Default::default()
+            };
+            debug_log!("compile cached: {source_path_relative_str}{sharding}");
             return Ok((kernel_path, cached.public_kernels, cached.has_kernels));
         }
 
@@ -153,56 +200,70 @@ impl MetalCompiler {
             .collect::<anyhow::Result<HashMap<Box<str>, [u8; blake3::OUT_LEN]>>>()
             .context("cannot hash dependencies")?;
 
+        let mut num_variants = 0;
+        let mut num_shards = 0;
         if !kernel_infos.is_empty() {
-            let (wrapper_strs, specialize_indices) =
+            let (kernel_wrappers, specialize_indices) =
                 wrappers(&kernel_infos, enum_paths).context("cannot generate kernel wrappers")?;
 
-            let mut footer = String::new();
-            for wrapper in wrapper_strs.iter() {
-                footer.push_str(wrapper);
-            }
+            num_variants = kernel_wrappers.iter().map(|kernel| kernel.variants.len()).sum();
+            let footers = shard_footers(&kernel_wrappers);
+            num_shards = footers.len();
 
-            let compile_output = self
-                .toolchain
-                .compile(&source_path, &footer, &object_file)
-                .await
-                .with_context(|| format!("cannot compile {source_path_relative_str}"))?;
-
-            if let Some(warnings) = &compile_output {
-                for line in warnings.lines() {
-                    println!("cargo::warning={line}");
-                }
-            }
-
-            let link_output = self
-                .toolchain
-                .link(&object_file, &metallib_file)
-                .await
-                .with_context(|| format!("cannot link {source_path_relative_str}"))?;
-
-            if let Some(warnings) = &link_output {
-                for line in warnings.lines() {
-                    println!("cargo::warning={line}");
-                }
-            }
-
-            if self.metallib_compressed {
-                let metallib_file = metallib_file.clone();
-                let metallib_compressed_file = metallib_maybe_compressed_file.clone();
-
-                tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                    let metallib_source = fs::read(&metallib_file)?;
-                    let metallib_compressed = zstd::encode_all(metallib_source.as_slice(), 22)?;
-                    fs::write(&metallib_compressed_file, &metallib_compressed)?;
-                    Ok(())
-                })
-                .await??;
+            let metallib_files: Vec<PathBuf> = match num_shards {
+                1 => vec![output_base_path.with_extension("metallib")],
+                num_shards => {
+                    (0..num_shards).map(|i| output_base_path.with_extension(format!("shard{i}.metallib"))).collect()
+                },
             };
+
+            let metallib_maybe_compressed_files: Vec<PathBuf> = metallib_files
+                .iter()
+                .map(|file| {
+                    if self.metallib_compressed {
+                        file.with_added_extension("zst")
+                    } else {
+                        file.clone()
+                    }
+                })
+                .collect();
+
+            let compile_outputs = try_join_all(izip!(&footers, &metallib_files, &metallib_maybe_compressed_files).map(
+                |(footer, metallib_file, compressed_file)| {
+                    let source_path = &source_path;
+                    async move {
+                        let warnings = self.toolchain.compile(source_path, footer, metallib_file).await?;
+
+                        if self.metallib_compressed {
+                            let metallib_file = metallib_file.clone();
+                            let compressed_file = compressed_file.clone();
+                            tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                                let metallib_source = fs::read(metallib_file)?;
+                                fs::write(compressed_file, zstd::encode_all(metallib_source.as_slice(), 22)?)?;
+                                Ok(())
+                            })
+                            .await??;
+                        }
+
+                        anyhow::Ok(warnings)
+                    }
+                },
+            ))
+            .await
+            .with_context(|| format!("cannot compile {source_path_relative_str}"))?;
+
+            for warnings in compile_outputs.into_iter().flatten() {
+                for line in warnings.lines() {
+                    println!("cargo::warning={line}");
+                }
+            }
 
             let library_const =
                 format_ident!("MTLB_{}", blake3::hash(source_path_relative_str.as_bytes()).to_hex().to_uppercase());
-            let metallib_maybe_compressed_file_str =
-                metallib_maybe_compressed_file.to_str().context("metallib path is not utf-8")?;
+            let metallib_file_strs = metallib_maybe_compressed_files
+                .iter()
+                .map(|file| file.to_str().context("metallib path is not utf-8"))
+                .collect::<anyhow::Result<Vec<_>>>()?;
 
             let bindings = kernel_infos
                 .iter()
@@ -212,6 +273,7 @@ impl MetalCompiler {
                         &specialize_indices,
                         enum_paths,
                         &library_const,
+                        num_shards,
                         self.metallib_compressed,
                     )
                     .with_context(|| format!("cannot generate bindings for {}", kernel.name))
@@ -220,7 +282,7 @@ impl MetalCompiler {
                 .collect::<anyhow::Result<Vec<_>>>()?;
 
             let tokens = quote! {
-                const #library_const: &[u8] = include_bytes!(#metallib_maybe_compressed_file_str);
+                const #library_const: [&[u8]; #num_shards] = [#(include_bytes!(#metallib_file_strs)),*];
 
                 #(#bindings)*
             };
@@ -236,11 +298,18 @@ impl MetalCompiler {
             dependency_hashes,
             public_kernels: public_kernels.clone(),
             has_kernels,
+            num_variants,
+            num_shards,
         };
         fs::write(&cached_file, serde_json::to_vec_pretty(&cached).context("cannot serialize cache")?)
             .context("cannot write cache file")?;
 
-        debug_log!("compile end: {source_path_relative_str}");
+        let sharding = if has_kernels {
+            format!(" ({num_variants} variants / {num_shards} shards)")
+        } else {
+            Default::default()
+        };
+        debug_log!("compile end: {source_path_relative_str}{sharding}");
 
         Ok((kernel_path, public_kernels, has_kernels))
     }
