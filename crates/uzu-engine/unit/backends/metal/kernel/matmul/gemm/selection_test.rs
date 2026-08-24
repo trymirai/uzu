@@ -61,7 +61,7 @@ fn policy_boundaries_are_preserved() {
     use GemmTiling::*;
 
     for (is_a_int8, m, n, expected) in [
-        (true, 16, 4096, Tile16x128x256_Simdgroups1x4),
+        (true, 16, 4096, Tile16x32x256_Simdgroups1x1),
         (true, 17, 4096, Tile32x64x256_Simdgroups2x2),
         (true, 64, 63, Tile64x32x256_Simdgroups4x1),
         (true, 512, 4096, Tile128x128x256_Simdgroups4x4),
@@ -122,9 +122,17 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     large_group.b_group_size = Some(128);
     assert_eq!(problem(large_group, DataType::BF16).select_plan().tiling, Tile64x64x256_Simdgroups2x2);
 
-    let mut a8 = quant(shape(16, 4096, 4096));
-    a8.a_full_precision = false;
-    assert_eq!(problem(a8, DataType::BF16).select_plan().split_k, 8);
+    for (m, n, k, expected_tiling, expected_split_k) in [
+        (16, 4096, 4096, Tile16x32x256_Simdgroups1x1, 8),
+        (16, 1024, 4096, Tile16x32x256_Simdgroups1x1, 16),
+        (16, 34816, 4096, Tile16x32x256_Simdgroups1x1, 1),
+    ] {
+        let mut a8 = quant(shape(m, n, k));
+        a8.a_full_precision = false;
+        let plan = problem(a8, DataType::BF16).select_plan();
+        assert_eq!(plan.tiling, expected_tiling);
+        assert_eq!(plan.split_k, expected_split_k);
+    }
 
     let mut biased = quant(shape(16, 4096, 4096));
     biased.a_full_precision = false;
