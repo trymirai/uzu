@@ -1,4 +1,5 @@
-use crate::util::enable_benchmark_gpu_capture_if_requested;
+pub const METAL_CAPTURE_ENABLED: &str = "METAL_CAPTURE_ENABLED";
+pub const UZU_CAPTURE_BENCH: &str = "UZU_CAPTURE_BENCH";
 
 pub enum UzuTest {
     Bench(&'static dyn Fn()),
@@ -43,4 +44,16 @@ pub fn uzu_harness(tests: &[&UzuTest]) {
             .collect::<Vec<_>>();
         test::test_main_static(&default_tests)
     }
+}
+
+fn enable_benchmark_gpu_capture_if_requested() {
+    if enabled(UZU_CAPTURE_BENCH) {
+        unsafe {
+            std::env::set_var(METAL_CAPTURE_ENABLED, "1");
+        }
+    }
+}
+
+fn enabled(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("yes") || v.eq_ignore_ascii_case("true"))
 }

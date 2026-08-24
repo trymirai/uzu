@@ -1,8 +1,5 @@
 #![cfg_attr(feature = "nightly-harness", feature(test))]
 
-pub mod env_vars;
-pub mod util;
-
 #[cfg(feature = "nightly-harness")]
 pub extern crate test;
 
