@@ -1,5 +1,6 @@
 use std::path::Path;
 
+mod docs;
 mod jsr;
 mod license;
 mod package_json;
@@ -95,6 +96,8 @@ pub fn run_sync(check: bool) -> Result<()> {
     )?;
 
     PlaygroundSyncTask.run(&platforms, &workspace, &root_path.join("apps/playground/Project.swift"), check)?;
+
+    docs::sync_docs(&platforms, root_path, check)?;
 
     Ok(())
 }

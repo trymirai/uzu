@@ -981,6 +981,7 @@ dependencies = [
  "heck",
  "ignore",
  "indexmap 2.14.0",
+ "itertools 0.14.0",
  "minijinja",
  "regex",
  "serde",
@@ -988,6 +989,7 @@ dependencies = [
  "syn 2.0.118",
  "toml 1.1.2+spec-1.1.0",
  "toml_edit 0.25.12+spec-1.1.0",
+ "walkdir",
 ]
 
 [[package]]
