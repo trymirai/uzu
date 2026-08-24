@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use uzu::types::{
-    basic::{ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value},
-    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
+use uuid::Uuid;
+use uzu::{
+    session::chat::normalize_tool_call_arguments,
+    types::{
+        basic::{ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value, parse_lenient_json},
+        session::chat::{ChatContentBlock, ChatMessage, ChatRole},
+    },
 };
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -11,6 +15,8 @@ pub struct OaiToolCall {
     // Present only in streaming deltas, per the OpenAI wire format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
+    // Empty in fragments: only the announcement and the final delta carry the id.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
     #[serde(rename = "type", default)]
     pub kind: String,
@@ -86,13 +92,16 @@ pub fn choose_tools<'t>(
 }
 
 pub fn to_tool_call(tool_call: &OaiToolCall) -> ToolCall {
-    // An invalid Value fails serialization inside template rendering and errors the whole request,
-    // so arguments that are not valid JSON are re-wrapped instead of passed through.
+    // Templates render arguments as key/value pairs; normalization guarantees
+    // an object no matter what the client echoes back.
     let arguments = &tool_call.function.arguments;
-    let json = match serde_json::from_str::<serde_json::Value>(arguments) {
-        Ok(_) => arguments.clone(),
-        Err(_) if arguments.trim().is_empty() => "{}".to_string(),
-        Err(_) => serde_json::Value::String(arguments.clone()).to_string(),
+    let json = if arguments.trim().is_empty() {
+        "{}".to_string()
+    } else {
+        normalize_tool_call_arguments(Value {
+            json: arguments.clone(),
+        })
+        .json
     };
     ToolCall {
         identifier: Some(tool_call.id.clone()),
@@ -199,16 +208,265 @@ pub fn withhold_stream_text(
     has_tools && (trimmed.is_empty() || trimmed.starts_with('{'))
 }
 
-pub fn tool_call_deltas(
-    tool_calls: &[ToolCall],
-    emitted: usize,
-) -> Vec<OaiToolCall> {
-    tool_calls
-        .iter()
-        .enumerate()
-        .skip(emitted)
-        .map(|(index, tool_call)| oai_tool_call(Some(index), tool_call))
-        .collect()
+// Streaming state for one in-progress tool call.
+//
+// OpenAI clients assemble `function.arguments` by concatenating delta fragments and parsing the
+// result when the call ends, so every fragment must extend one string. Candidate content comes in
+// two shapes:
+// - framed (qwen3.5-style): the candidate value is the model's raw `<function=name>` /
+//   `<parameter=key>` markup, growing token by token. Arguments are synthesized into compact JSON;
+//   the currently open parameter's value streams as escaped string content.
+// - bare JSON (llama-3-style): the candidate value is partial JSON text; only the name is
+//   announced, since the raw text is not a prefix of the canonical arguments string.
+pub struct ToolCallStreamer {
+    id: String,
+    name_announced: bool,
+    key_order: Vec<String>,
+    open_text: String,
+}
+
+enum FramedParam {
+    Complete(String),
+    Open(String),
+}
+
+struct FramedCall {
+    name: Option<String>,
+    params: Vec<(String, FramedParam)>,
+}
+
+fn parse_framed_call(raw: &str) -> FramedCall {
+    let name = raw.find("<function=").and_then(|start| {
+        let rest = &raw[start + "<function=".len()..];
+        rest.find('>').map(|end| rest[..end].to_string())
+    });
+    let mut params = Vec::new();
+    let mut rest = raw;
+    while let Some(start) = rest.find("<parameter=") {
+        rest = &rest[start + "<parameter=".len()..];
+        let Some(tag_end) = rest.find('>') else {
+            break;
+        };
+        let key = rest[..tag_end].to_string();
+        let value_part = &rest[tag_end + 1..];
+        let value_part = value_part.strip_prefix('\n').unwrap_or(value_part);
+        match value_part.find("\n</parameter>") {
+            Some(end) => {
+                params.push((key, FramedParam::Complete(value_part[..end].to_string())));
+                rest = &value_part[end + "\n</parameter>".len()..];
+            },
+            None => {
+                params.push((key, FramedParam::Open(value_part.to_string())));
+                break;
+            },
+        }
+    }
+    FramedCall {
+        name,
+        params,
+    }
+}
+
+// Mirrors the parser's synthesis rule: values starting with `{` or `[` are typed JSON,
+// everything else is a string.
+fn serialize_param_value(value: &str) -> String {
+    let trimmed = value.trim_start();
+    if (trimmed.starts_with('{') || trimmed.starts_with('['))
+        && let Some(parsed) = parse_lenient_json(value)
+    {
+        return parsed.to_string();
+    }
+    serde_json::Value::String(value.to_string()).to_string()
+}
+
+// The longest suffix of `content` that could be the start of the parameter close tag is
+// ambiguous until more tokens arrive, so it is withheld from streaming.
+const PARAMETER_CLOSE_SEQUENCE: &str = "\n</parameter>";
+
+fn withhold_ambiguous_tail(content: &str) -> &str {
+    // the leftmost char boundary whose suffix is a prefix of the close sequence
+    // gives the longest ambiguous tail
+    for (index, _) in content.char_indices() {
+        let suffix = &content[index..];
+        if suffix.len() <= PARAMETER_CLOSE_SEQUENCE.len() && PARAMETER_CLOSE_SEQUENCE.starts_with(suffix) {
+            return &content[..index];
+        }
+    }
+    content
+}
+
+// The arguments text with no closing brace: completed parameters are frozen, the open
+// parameter's value streams as it grows.
+fn open_arguments_text(params: &[(String, FramedParam)]) -> Option<String> {
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for (key, param) in params {
+        let serialized = match param {
+            FramedParam::Complete(value) => serialize_param_value(value),
+            FramedParam::Open(content) => {
+                // an empty value has no known type yet, and typed values (JSON starting
+                // with `{`/`[`, matching the parser's synthesis rule) can only be serialized
+                // once complete: either way nothing about the parameter may be emitted
+                let streamable = withhold_ambiguous_tail(content);
+                if streamable.is_empty() || streamable.starts_with('{') || streamable.starts_with('[') {
+                    break;
+                }
+                let quoted = serde_json::Value::String(streamable.to_string()).to_string();
+                quoted[..quoted.len() - 1].to_string()
+            },
+        };
+        entries.push((key.clone(), serialized));
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    let mut out = String::from("{");
+    for (index, (key, serialized)) in entries.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(&serde_json::to_string(key).expect("key serializes"));
+        out.push(':');
+        out.push_str(serialized);
+    }
+    Some(out)
+}
+
+fn json_candidate_name(raw: &str) -> Option<String> {
+    let rest = &raw[raw.find("\"name\"")? + 6..];
+    let rest = rest[rest.find(':')? + 1..].trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let mut name = String::new();
+    let mut chars = rest.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(name),
+            '\\' => match chars.next() {
+                Some('n') => name.push('\n'),
+                Some(other) => name.push(other),
+                None => return None,
+            },
+            c => name.push(c),
+        }
+    }
+    None
+}
+
+impl ToolCallStreamer {
+    pub fn new() -> Self {
+        Self {
+            // The id is assigned by the server at announcement time: clients key
+            // in-progress tool call UI by id, so it must never change mid-call.
+            id: Uuid::new_v4().to_string(),
+            name_announced: false,
+            key_order: Vec::new(),
+            open_text: String::new(),
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        index: usize,
+        raw: &str,
+    ) -> Vec<OaiToolCall> {
+        let mut deltas = Vec::new();
+        let name;
+        if raw.trim_start().starts_with('<') {
+            let call = parse_framed_call(raw);
+            name = call.name.filter(|name| !name.is_empty());
+            self.key_order = call.params.iter().map(|(key, _)| key.clone()).collect();
+            if let Some(open_text) = open_arguments_text(&call.params)
+                && open_text.len() > self.open_text.len()
+                && open_text.starts_with(&self.open_text)
+            {
+                deltas.push(OaiToolCall {
+                    index: Some(index),
+                    id: String::new(),
+                    kind: "function".to_string(),
+                    function: OaiFunctionCall {
+                        name: String::new(),
+                        arguments: open_text[self.open_text.len()..].to_string(),
+                    },
+                });
+                self.open_text = open_text;
+            }
+        } else {
+            name = json_candidate_name(raw);
+        }
+        if let Some(name) = name
+            && !name.is_empty()
+            && !self.name_announced
+        {
+            self.name_announced = true;
+            deltas.insert(
+                0,
+                OaiToolCall {
+                    index: Some(index),
+                    id: self.id.clone(),
+                    kind: "function".to_string(),
+                    function: OaiFunctionCall {
+                        name,
+                        arguments: String::new(),
+                    },
+                },
+            );
+        }
+        deltas
+    }
+
+    pub fn finish(
+        &mut self,
+        index: usize,
+        call: &ToolCall,
+    ) -> OaiToolCall {
+        let arguments = if self.open_text.is_empty() {
+            call.arguments.json.clone()
+        } else {
+            self.closing_fragment(call)
+        };
+        OaiToolCall {
+            index: Some(index),
+            id: self.id.clone(),
+            kind: "function".to_string(),
+            function: OaiFunctionCall {
+                name: call.name.clone(),
+                arguments,
+            },
+        }
+    }
+
+    fn closing_fragment(
+        &self,
+        call: &ToolCall,
+    ) -> String {
+        // Rebuild the final arguments with keys in streamed order so the closing fragment
+        // completes the exact string the earlier fragments started.
+        let final_text = match serde_json::from_str::<serde_json::Value>(&call.arguments.json) {
+            Ok(serde_json::Value::Object(map)) => {
+                let mut keys: Vec<&str> =
+                    self.key_order.iter().map(String::as_str).filter(|key| map.contains_key(*key)).collect();
+                for key in map.keys() {
+                    if !keys.contains(&key.as_str()) {
+                        keys.push(key);
+                    }
+                }
+                let entries = keys
+                    .iter()
+                    .map(|key| format!("{}:{}", serde_json::to_string(key).expect("key serializes"), map[*key]))
+                    .collect::<Vec<_>>();
+                format!("{{{}}}", entries.join(","))
+            },
+            _ => call.arguments.json.clone(),
+        };
+        match final_text.strip_prefix(&self.open_text) {
+            Some(suffix) => suffix.to_string(),
+            None => {
+                eprintln!(
+                    "[server] tool call stream diverged from the final call; the client may reject the assembled arguments"
+                );
+                final_text
+            },
+        }
+    }
 }
 
 #[cfg(test)]

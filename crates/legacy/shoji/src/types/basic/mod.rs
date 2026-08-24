@@ -40,4 +40,4 @@ pub use tool_description::ToolDescription;
 pub use tool_function::ToolFunction;
 pub use tool_namespace::ToolNamespace;
 pub use translation_payload::TranslationPayload;
-pub use value::Value;
+pub use value::{Value, parse_lenient_json};

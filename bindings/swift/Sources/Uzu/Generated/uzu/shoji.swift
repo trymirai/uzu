@@ -1311,6 +1311,7 @@ public struct ChatReplyStats: Equatable, Hashable, Codable {
     public var prefillTokensPerSecond: Double?
     public var generateTokensPerSecond: Double?
     public var tokensCountInput: UInt32?
+    public var tokensCountInputCached: UInt32?
     public var tokensCountOutput: UInt32?
     public var memoryUsedBytes: Int64?
     public var speculatorStats: ChatReplySpeculatorStats?
@@ -1318,12 +1319,13 @@ public struct ChatReplyStats: Equatable, Hashable, Codable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(duration: Double, timeToFirstToken: Double?, prefillTokensPerSecond: Double?, generateTokensPerSecond: Double?, tokensCountInput: UInt32?, tokensCountOutput: UInt32?, memoryUsedBytes: Int64?, speculatorStats: ChatReplySpeculatorStats?, powerStats: ChatReplyPowerStats?) {
+    public init(duration: Double, timeToFirstToken: Double?, prefillTokensPerSecond: Double?, generateTokensPerSecond: Double?, tokensCountInput: UInt32?, tokensCountInputCached: UInt32?, tokensCountOutput: UInt32?, memoryUsedBytes: Int64?, speculatorStats: ChatReplySpeculatorStats?, powerStats: ChatReplyPowerStats?) {
         self.duration = duration
         self.timeToFirstToken = timeToFirstToken
         self.prefillTokensPerSecond = prefillTokensPerSecond
         self.generateTokensPerSecond = generateTokensPerSecond
         self.tokensCountInput = tokensCountInput
+        self.tokensCountInputCached = tokensCountInputCached
         self.tokensCountOutput = tokensCountOutput
         self.memoryUsedBytes = memoryUsedBytes
         self.speculatorStats = speculatorStats
@@ -1370,6 +1372,7 @@ public struct FfiConverterTypeChatReplyStats: FfiConverterRustBuffer {
                 prefillTokensPerSecond: FfiConverterOptionDouble.read(from: &buf), 
                 generateTokensPerSecond: FfiConverterOptionDouble.read(from: &buf), 
                 tokensCountInput: FfiConverterOptionUInt32.read(from: &buf), 
+                tokensCountInputCached: FfiConverterOptionUInt32.read(from: &buf), 
                 tokensCountOutput: FfiConverterOptionUInt32.read(from: &buf), 
                 memoryUsedBytes: FfiConverterOptionInt64.read(from: &buf), 
                 speculatorStats: FfiConverterOptionTypeChatReplySpeculatorStats.read(from: &buf), 
@@ -1383,6 +1386,7 @@ public struct FfiConverterTypeChatReplyStats: FfiConverterRustBuffer {
         FfiConverterOptionDouble.write(value.prefillTokensPerSecond, into: &buf)
         FfiConverterOptionDouble.write(value.generateTokensPerSecond, into: &buf)
         FfiConverterOptionUInt32.write(value.tokensCountInput, into: &buf)
+        FfiConverterOptionUInt32.write(value.tokensCountInputCached, into: &buf)
         FfiConverterOptionUInt32.write(value.tokensCountOutput, into: &buf)
         FfiConverterOptionInt64.write(value.memoryUsedBytes, into: &buf)
         FfiConverterOptionTypeChatReplySpeculatorStats.write(value.speculatorStats, into: &buf)
