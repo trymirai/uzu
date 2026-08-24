@@ -808,7 +808,6 @@ async fn run_stream(
             chunk = stream.next() => chunk,
             () = sender.closed() => {
                 cancel_token.cancel();
-                cancel_token.cancel();
                 log.fail("client disconnected");
                 return;
             },
