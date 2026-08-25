@@ -2,7 +2,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, AsBufferRangeMut, Backend, Encoder, Kernels,
-        kernel::{AncestorAttentionKernel, AttentionPrepareKernel},
+        kernel::{AncestorAttentionKernel, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
     },
     config::{
         activation::{AnyActivation, silu::SiLU},
@@ -11,10 +11,7 @@ use crate::{
     },
     encodable_block::{
         linear::Linear,
-        mixer::attention::{
-            core::{AttentionCoreNewArguments, AttentionCores},
-            rope::PrecalculatedRoPE,
-        },
+        mixer::attention::rope::PrecalculatedRoPE,
         mlp::Mlp,
         normalization::{Normalization, PostLayerScalar, ShortcutMode},
         weaver::{DATA_TYPE, ROPE_DATA_TYPE, WeaverNewError},
@@ -31,7 +28,7 @@ pub struct WeaverLayer<B: Backend> {
     pub pre_attention_norm: Normalization<B>,
     pub qkv_projection: Box<dyn Linear<B>>,
     attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
-    pub prefix_attention: AttentionCores<B>,
+    pub prefix_attention: <B::Kernels as Kernels>::AttentionKernel,
     pub ancestor_attention: <B::Kernels as Kernels>::AncestorAttentionKernel,
     out_projection: Box<dyn Linear<B>>,
     pre_mlp_norm: Normalization<B>,
@@ -77,20 +74,19 @@ impl<B: Backend> WeaverLayer<B> {
             DATA_TYPE,
             &parameter_tree.subtree("out_projection"),
         )?;
-        let prefix_attention = AttentionCores::new(
-            AttentionCoreNewArguments {
+        let prefix_attention = <B::Kernels as Kernels>::AttentionKernel::new(
+            context,
+            AttentionKernelConfig {
                 head_dim,
                 num_groups: num_heads,
                 num_q_heads: num_heads,
                 has_sinks: false,
                 is_kv_cache_ring: false,
                 is_causal: true,
-                is_trie: false,
                 sliding_window_size: None,
                 scale: Some(attention_scale),
                 data_type: DATA_TYPE,
             },
-            context,
         )
         .map_err(WeaverNewError::Backend)?;
         let attention_prepare =

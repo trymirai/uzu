@@ -11,7 +11,7 @@ use crate::{
     encodable_block::mixer::{MixerState, attention::Attention},
 };
 
-pub(crate) const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
+pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
 
 pub enum AttentionStateType {
     Full {

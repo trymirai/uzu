@@ -2,7 +2,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, BufferArgMut, Encoder,
         gpu_types::trie::TrieNode,
-        kernel::{AttentionPrepareKernel, SigmoidGateKernel},
+        kernel::{AttentionArguments, AttentionKernel, AttentionPrepareKernel, SigmoidGateKernel},
     },
     encodable_block::{
         batch_topology::BatchTopology,
@@ -11,7 +11,6 @@ use crate::{
             MixerState,
             attention::{
                 Attention,
-                core::AttentionCoreEncodeArguments,
                 qkv_norm::QKVNorm,
                 rope::PrecalculatedRoPE,
                 state::{AttentionState, AttentionStateType},
@@ -21,9 +20,9 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-pub(super) struct LinearProjection<B: Backend> {
-    pub(super) lin: Box<dyn Linear<B>>,
-    pub(super) norm: Option<QKVNorm<B>>,
+pub struct LinearProjection<B: Backend> {
+    pub lin: Box<dyn Linear<B>>,
+    pub norm: Option<QKVNorm<B>>,
 }
 
 impl<B: Backend> LinearProjection<B> {
@@ -42,7 +41,7 @@ impl<B: Backend> LinearProjection<B> {
 }
 
 impl<B: Backend> Attention<B> {
-    pub(super) fn attend(
+    pub fn attend(
         &self,
         hidden: Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
@@ -117,8 +116,8 @@ impl<B: Backend> Attention<B> {
                     }
                 };
 
-                self.flat_core.encode(
-                    AttentionCoreEncodeArguments {
+                self.kernel.encode(
+                    AttentionArguments {
                         queries: &queries,
                         keys: &keys,
                         values: &values,
@@ -175,16 +174,16 @@ impl<B: Backend> Attention<B> {
         state: &AttentionState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let (core, trie) = if batch_dim.is_flat() {
-            (&self.flat_core, None)
+        let trie = if batch_dim.is_flat() {
+            None
         } else {
             let mut trie = encoder.allocate_constant(batch_dim.size() as usize * size_of::<TrieNode>())?;
             trie.copyin(batch_dim.nodes());
-            (&self.trie_core, Some(trie))
+            Some(trie)
         };
 
-        core.encode(
-            AttentionCoreEncodeArguments {
+        self.kernel.encode(
+            AttentionArguments {
                 queries,
                 keys: state.keys.as_ref(),
                 values: state.values.as_ref(),

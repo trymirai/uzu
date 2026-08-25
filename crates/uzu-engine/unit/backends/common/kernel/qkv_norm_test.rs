@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -163,10 +163,9 @@ fn test_internal<
     input: &Input<InputT, ScaleT, OutputT>,
     expected: &[OutputT],
 ) {
-    let eps = if matches!(InputT::data_type(), DataType::F16 | DataType::BF16)
-        || matches!(ScaleT::data_type(), DataType::F16 | DataType::BF16)
-        || matches!(OutputT::data_type(), DataType::F16 | DataType::BF16)
-        || matches!(AccumT::data_type(), DataType::F16 | DataType::BF16)
+    let eps = if [InputT::data_type(), ScaleT::data_type(), OutputT::data_type(), AccumT::data_type()]
+        .into_iter()
+        .any(|data_type| data_type == DataType::BF16)
     {
         1e-2
     } else {
@@ -319,44 +318,14 @@ fn test_q_norm_f32_f32_f32_f32() {
 }
 
 #[uzu_test]
-fn test_q_norm_f16_f16_f16_f32() {
-    test_q_norm::<f16, f16, f16, f32>();
-}
-
-#[uzu_test]
-fn test_q_norm_f16_f16_f16_f16() {
-    test_q_norm::<f16, f16, f16, f16>();
-}
-
-#[uzu_test]
 fn test_q_norm_bf16_bf16_bf16_f32() {
     test_q_norm::<bf16, bf16, bf16, f32>();
-}
-
-#[uzu_test]
-fn test_q_norm_f32_f16_f32_f32() {
-    test_q_norm::<f32, f16, f32, f32>();
-}
-
-#[uzu_test]
-fn test_q_norm_f16_f32_f16_f32() {
-    test_q_norm::<f16, f32, f16, f32>();
 }
 
 // K norm tests
 #[uzu_test]
 fn test_k_norm_f32_f32_f32_f32() {
     test_k_norm::<f32, f32, f32, f32>();
-}
-
-#[uzu_test]
-fn test_k_norm_f16_f16_f16_f32() {
-    test_k_norm::<f16, f16, f16, f32>();
-}
-
-#[uzu_test]
-fn test_k_norm_f16_f16_f16_f16() {
-    test_k_norm::<f16, f16, f16, f16>();
 }
 
 #[uzu_test]
@@ -370,11 +339,6 @@ fn test_v_norm_no_scales_f32_f32_f32_f32() {
 }
 
 #[uzu_test]
-fn test_v_norm_no_scales_f16_f16_f16_f32() {
-    test_v_norm_no_scales::<f16, f16, f16, f32>();
-}
-
-#[uzu_test]
 fn test_v_norm_no_scales_bf16_bf16_bf16_f32() {
     test_v_norm_no_scales::<bf16, bf16, bf16, f32>();
 }
@@ -383,11 +347,6 @@ fn test_v_norm_no_scales_bf16_bf16_bf16_f32() {
 #[uzu_test]
 fn test_addressing_f32_f32_f32_f32() {
     test_addressing::<f32, f32, f32, f32>();
-}
-
-#[uzu_test]
-fn test_addressing_f16_f16_f16_f32() {
-    test_addressing::<f16, f16, f16, f32>();
 }
 
 #[uzu_test]

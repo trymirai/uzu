@@ -2,7 +2,7 @@
 #include "../common/dsl.h"
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(SigmoidGate)(
     const device T* gate,
     device T* output,

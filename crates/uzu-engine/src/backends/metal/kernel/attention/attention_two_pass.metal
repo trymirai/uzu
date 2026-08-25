@@ -18,9 +18,9 @@ using namespace uzu::trie;
 // Each simdgroup independently handles one query head and derives its KV head
 // via integer division. Simdgroups sharing a KV head benefit from L1 cache.
 template <typename T, uint HEAD_DIM>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_DIM, 64, 128, 256, 512)
-PUBLIC KERNEL(AttentionTwoPass1)(
+KERNEL(AttentionTwoPass1)(
     const device T* queries,
     const device T* keys,
     const device T* values,
@@ -139,9 +139,9 @@ PUBLIC KERNEL(AttentionTwoPass1)(
 }
 
 template <typename T, uint HEAD_DIM>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_DIM, 64, 128, 256, 512)
-PUBLIC KERNEL(AttentionTwoPass2)(
+KERNEL(AttentionTwoPass2)(
     const device float* partials,
     const device float* sums,
     const device float* maxs,

@@ -3,8 +3,9 @@ use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use crate::{
     backends::{
         common::{
-            Allocation, BufferArg, BufferArgMut, Encoder, gpu_types::AttnParams,
-            kernel::attention_gemm_grouped::AttentionGemmGroupedCore,
+            Allocation, BufferArg, BufferArgMut, Encoder,
+            gpu_types::AttnParams,
+            kernel::{AttentionArguments, AttentionKernelConfig},
         },
         metal::{
             Metal,
@@ -14,11 +15,12 @@ use crate::{
         },
     },
     data_type::DataType,
-    encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };
 
 mod policy;
-use policy::{MAX_TRIE_SUFFIX, MaskKind, choose_splits};
+use policy::{MAX_TRIE_SUFFIX, choose_splits};
+
+use super::MaskKind;
 
 const SIMDGROUPS_PER_THREADGROUP: u32 = 8;
 const SLICE_COLS: u32 = 64;
@@ -188,69 +190,70 @@ impl AttentionGemmGroupedMetal {
 }
 
 pub struct AttentionGemmGrouped {
-    core: Mutex<Option<AttentionGemmGroupedMetal>>,
+    non_trie: Mutex<Option<AttentionGemmGroupedMetal>>,
+    trie: Mutex<Option<AttentionGemmGroupedMetal>>,
     head_dim: u32,
     num_groups: u32,
     num_q_heads: u32,
     scale: Option<f32>,
-    mask: MaskKind,
 }
 
 impl AttentionGemmGrouped {
     fn get_or_create(
         &self,
         context: &MetalContext,
+        mask: MaskKind,
     ) -> Result<MappedMutexGuard<'_, AttentionGemmGroupedMetal>, MetalError> {
-        let mut core = self.core.lock();
-        if core.is_none() {
-            *core = Some(AttentionGemmGroupedMetal::new_fixed(
+        let cache = if mask.is_trie() {
+            &self.trie
+        } else {
+            &self.non_trie
+        };
+        let mut cache = cache.lock();
+        if cache.is_none() {
+            *cache = Some(AttentionGemmGroupedMetal::new_fixed(
                 context,
                 self.head_dim,
                 self.num_groups,
                 self.num_q_heads,
                 self.scale,
-                self.mask,
+                mask,
             )?);
         }
-        Ok(MutexGuard::map(core, |core| core.as_mut().expect("pipeline was just initialized")))
+        Ok(MutexGuard::map(cache, |cache| cache.as_mut().expect("attention pipeline was just initialized")))
     }
-}
 
-impl AttentionGemmGroupedCore<Metal> for AttentionGemmGrouped {
-    fn is_supported(
-        arguments: &AttentionCoreNewArguments,
+    pub fn is_supported(
+        config: &AttentionKernelConfig,
         context: &MetalContext,
-    ) -> Result<bool, MetalError> {
-        Ok(policy::is_supported(arguments, context))
+    ) -> bool {
+        policy::is_supported(config, context)
     }
 
-    fn new(
-        _context: &MetalContext,
-        arguments: &AttentionCoreNewArguments,
-    ) -> Result<Self, MetalError> {
-        let mask = MaskKind::for_attention(arguments.is_causal, arguments.is_trie)
-            .expect("AttentionGemmGrouped::new on an unsupported mask");
-        Ok(Self {
-            core: Mutex::new(None),
-            head_dim: arguments.head_dim,
-            num_groups: arguments.num_groups,
-            num_q_heads: arguments.num_q_heads,
-            scale: arguments.scale,
-            mask,
-        })
+    pub fn new(config: &AttentionKernelConfig) -> Self {
+        Self {
+            non_trie: Mutex::new(None),
+            trie: Mutex::new(None),
+            head_dim: config.head_dim,
+            num_groups: config.num_groups,
+            num_q_heads: config.num_q_heads,
+            scale: config.scale,
+        }
     }
 
-    fn should_encode(
+    pub fn should_encode(
         &self,
+        mask: MaskKind,
         suffix_length: u32,
         kv_length: u32,
     ) -> bool {
-        policy::should_encode(self.head_dim, self.mask, suffix_length, kv_length)
+        policy::should_encode(self.head_dim, mask, suffix_length, kv_length)
     }
 
-    fn encode<'a, KT: BufferArg<'a, Metal>, VT: BufferArg<'a, Metal>>(
+    pub fn encode<'a, KT: BufferArg<'a, Metal>, VT: BufferArg<'a, Metal>>(
         &self,
-        arguments: AttentionCoreEncodeArguments<'a, Metal, KT, VT>,
+        mask: MaskKind,
+        arguments: AttentionArguments<'a, Metal, KT, VT>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<Allocation<Metal>, MetalError> {
         let suffix_length = arguments.suffix_length;
@@ -260,7 +263,7 @@ impl AttentionGemmGroupedCore<Metal> for AttentionGemmGrouped {
         let kv_length = arguments.state_type.physical_prefix_length() + suffix_length;
         let mut output =
             encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], DataType::BF16)?;
-        let core = self.get_or_create(encoder.context())?;
+        let core = self.get_or_create(encoder.context(), mask)?;
         let num_splits = choose_splits(
             core.head_dim,
             suffix_length,

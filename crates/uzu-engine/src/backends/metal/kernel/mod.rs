@@ -9,7 +9,7 @@ use crate::backends::{
     metal::Metal,
 };
 
-pub mod attention;
+mod attention;
 pub mod gdn;
 pub mod matmul;
 mod radix_top_k_small;
@@ -22,8 +22,7 @@ impl Kernels for MetalKernels {
     type Backend = Metal;
 
     autogen_kernels!();
-    type AttentionGemmGroupedCore = attention::AttentionGemmGrouped;
-    type AttentionGemmCore = attention::AttentionGemmMetalCore;
+    type AttentionKernel = attention::AttentionMetalKernel;
     type DeltaNetChunkedPrefill = gdn::chunked::MetalDeltaNetChunkedPrefill;
     type DeltaNetTreeVerify = gdn::tree_verify::MetalDeltaNetTreeVerify;
     type MatmulKernel = matmul::MatmulMetalKernel;

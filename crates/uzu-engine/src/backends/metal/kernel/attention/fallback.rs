@@ -1,66 +1,77 @@
 use parking_lot::Mutex;
 
 use crate::{
-    backends::common::{
-        Allocation, Backend, BufferArg, Encoder, Kernels,
-        kernel::{
-            AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, SoftmaxKernel,
-            matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+    backends::{
+        common::{
+            Allocation, BufferArg, Encoder, Kernels,
+            kernel::{
+                AttentionArguments, AttentionKernelConfig, SoftmaxKernel,
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            },
+        },
+        metal::{
+            Metal,
+            context::MetalContext,
+            error::MetalError,
+            kernel::{
+                AttentionFallbackScatterScoresMetalKernel, AttentionFallbackScatterValuesMetalKernel, MetalKernels,
+            },
         },
     },
     data_type::DataType,
-    encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };
 
-pub struct AttentionFallbackCore<B: Backend> {
+const HEAD_DIM: u32 = 512;
+
+pub struct AttentionFallback {
     head_dim: u32,
     num_groups: u32,
     num_q_heads: u32,
     sliding_window_size: Option<u32>,
     scale: Option<f32>,
     data_type: DataType,
-    scatter_scores: <B::Kernels as Kernels>::AttentionFallbackScatterScoresKernel,
-    scatter_values: <B::Kernels as Kernels>::AttentionFallbackScatterValuesKernel,
-    softmax: <B::Kernels as Kernels>::SoftmaxKernel,
-    matmul: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
+    scatter_scores: AttentionFallbackScatterScoresMetalKernel,
+    scatter_values: AttentionFallbackScatterValuesMetalKernel,
+    softmax: <MetalKernels as Kernels>::SoftmaxKernel,
+    matmul: Mutex<<MetalKernels as Kernels>::MatmulKernel>,
 }
 
-impl<B: Backend> AttentionFallbackCore<B> {
-    pub fn is_supported(arguments: &AttentionCoreNewArguments) -> bool {
-        arguments.head_dim == 512 && !arguments.is_trie
+impl AttentionFallback {
+    pub fn is_supported(config: &AttentionKernelConfig) -> bool {
+        config.head_dim == HEAD_DIM && matches!(config.data_type, DataType::BF16 | DataType::F32)
     }
 
     pub fn new(
-        arguments: &AttentionCoreNewArguments,
-        context: &B::Context,
-    ) -> Result<Self, B::Error> {
-        assert!(!arguments.is_trie, "trie not supported by attention fallback"); // Is it?
-
-        let scatter_scores = <B::Kernels as Kernels>::AttentionFallbackScatterScoresKernel::new(
+        config: &AttentionKernelConfig,
+        context: &MetalContext,
+    ) -> Result<Self, MetalError> {
+        let scatter_scores = AttentionFallbackScatterScoresMetalKernel::new(
             context,
-            arguments.data_type,
-            arguments.is_kv_cache_ring,
-            arguments.is_causal,
-            arguments.is_trie,
-            arguments.sliding_window_size.is_some(),
+            config.data_type,
+            config.is_kv_cache_ring,
+            config.is_causal,
+            false,
+            config.sliding_window_size.is_some(),
         )?;
-        let scatter_values =
-            <B::Kernels as Kernels>::AttentionFallbackScatterValuesKernel::new(context, arguments.data_type)?;
-        let softmax = <B::Kernels as Kernels>::SoftmaxKernel::new(context, arguments.data_type, arguments.has_sinks)?;
-        let matmul = Mutex::new(<B::Kernels as Kernels>::MatmulKernel::new(
+        let scatter_values = AttentionFallbackScatterValuesMetalKernel::new(context, config.data_type)?;
+        let softmax = <<MetalKernels as Kernels>::SoftmaxKernel as SoftmaxKernel>::new(
             context,
-            arguments.data_type,
-            arguments.data_type,
-            arguments.data_type,
+            config.data_type,
+            config.has_sinks,
+        )?;
+        let matmul = Mutex::new(<<MetalKernels as Kernels>::MatmulKernel as MatmulKernel>::new(
+            context,
+            config.data_type,
+            config.data_type,
+            config.data_type,
         )?);
-
         Ok(Self {
-            head_dim: arguments.head_dim,
-            num_groups: arguments.num_groups,
-            num_q_heads: arguments.num_q_heads,
-            sliding_window_size: arguments.sliding_window_size,
-            scale: arguments.scale,
-            data_type: arguments.data_type,
+            head_dim: config.head_dim,
+            num_groups: config.num_groups,
+            num_q_heads: config.num_q_heads,
+            sliding_window_size: config.sliding_window_size,
+            scale: config.scale,
+            data_type: config.data_type,
             scatter_scores,
             scatter_values,
             softmax,
@@ -68,20 +79,19 @@ impl<B: Backend> AttentionFallbackCore<B> {
         })
     }
 
-    pub fn encode<'a, KT: BufferArg<'a, B>, VT: BufferArg<'a, B>>(
+    pub fn encode<'a, KT: BufferArg<'a, Metal>, VT: BufferArg<'a, Metal>>(
         &self,
-        arguments: AttentionCoreEncodeArguments<'a, B, KT, VT>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
+        arguments: AttentionArguments<'a, Metal, KT, VT>,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<Allocation<Metal>, MetalError> {
+        assert!(arguments.trie.is_none(), "fallback does not support trie");
         let suffix_length = arguments.suffix_length;
         let sequence_length = arguments.state_type.physical_prefix_length() + suffix_length;
         let gqa_factor = self.num_q_heads / self.num_groups;
-        let scale = self.scale.unwrap_or(1.0f32 / (self.head_dim as f32).sqrt());
-
+        let scale = self.scale.unwrap_or(1.0 / (self.head_dim as f32).sqrt());
         let dt_bytes = self.data_type.size_in_bytes();
         let head_dim_bytes = self.head_dim as usize * dt_bytes;
         let group_rows = (gqa_factor * suffix_length) as usize;
-
         let mut output =
             encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
         let mut scores =
@@ -117,7 +127,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
                 &group_scores,
                 &mut scores,
                 arguments.state_type.ring_params(),
-                None::<&Allocation<B>>,
+                None::<&Allocation<Metal>>,
                 self.sliding_window_size,
                 group_index,
                 gqa_factor,
@@ -129,10 +139,8 @@ impl<B: Backend> AttentionFallbackCore<B> {
         }
 
         self.softmax.encode(&mut scores, arguments.sinks, sequence_length, self.num_q_heads, suffix_length, encoder);
-
         let mut group_output =
             encoder.allocate_scratch_for_shape(&[gqa_factor * suffix_length, self.head_dim], self.data_type)?;
-
         for group_index in 0..self.num_groups {
             self.matmul.lock().encode(
                 MatmulArguments {
@@ -166,7 +174,6 @@ impl<B: Backend> AttentionFallbackCore<B> {
                 encoder,
             );
         }
-
         Ok(output)
     }
 }

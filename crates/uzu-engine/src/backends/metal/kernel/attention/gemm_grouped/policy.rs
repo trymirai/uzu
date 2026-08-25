@@ -1,37 +1,8 @@
+use super::MaskKind;
 use crate::{
-    backends::metal::context::MetalContext, data_type::DataType,
-    encodable_block::mixer::attention::core::AttentionCoreNewArguments,
+    backends::{common::kernel::AttentionKernelConfig, metal::context::MetalContext},
+    data_type::DataType,
 };
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum MaskKind {
-    #[default]
-    None,
-    Causal,
-    Trie,
-}
-
-impl MaskKind {
-    pub fn for_attention(
-        is_causal: bool,
-        is_trie: bool,
-    ) -> Option<Self> {
-        match (is_causal, is_trie) {
-            (true, true) => Some(Self::Trie),
-            (true, false) => Some(Self::Causal),
-            (false, false) => Some(Self::None),
-            (false, true) => None,
-        }
-    }
-
-    pub fn is_causal(self) -> bool {
-        !matches!(self, Self::None)
-    }
-
-    pub fn is_trie(self) -> bool {
-        matches!(self, Self::Trie)
-    }
-}
 
 const GEMM_GROUPED_HEAD_DIMS: [u32; 2] = [128, 256];
 const GEMM_GROUPED_DECODE_SUFFIX_MIN: u32 = 16;
@@ -41,7 +12,7 @@ const GEMM_GROUPED_MIN_KV_LENGTH: u32 = 1024;
 pub const MAX_TRIE_SUFFIX: u32 = 64;
 
 pub fn is_supported(
-    arguments: &AttentionCoreNewArguments,
+    arguments: &AttentionKernelConfig,
     context: &MetalContext,
 ) -> bool {
     GEMM_GROUPED_HEAD_DIMS.contains(&arguments.head_dim)
@@ -53,7 +24,6 @@ pub fn is_supported(
         && arguments.scale.is_none_or(|scale| scale > 0.0)
         && arguments.num_groups > 0
         && arguments.num_q_heads.is_multiple_of(arguments.num_groups)
-        && MaskKind::for_attention(arguments.is_causal, arguments.is_trie).is_some()
 }
 
 pub fn should_encode(
@@ -62,15 +32,11 @@ pub fn should_encode(
     suffix_length: u32,
     kv_length: u32,
 ) -> bool {
-    if kv_length >= GEMM_GROUPED_MIN_KV_LENGTH
+    kv_length >= GEMM_GROUPED_MIN_KV_LENGTH
         && ((GEMM_GROUPED_DECODE_SUFFIX_MIN..=GEMM_GROUPED_DECODE_SUFFIX_MAX).contains(&suffix_length)
             || (head_dim == 256
                 && mask == MaskKind::Causal
                 && (GEMM_GROUPED_DECODE_SUFFIX_MAX + 1..=GEMM_GROUPED_PREFILL_SUFFIX_MAX).contains(&suffix_length)))
-    {
-        return true;
-    }
-    false
 }
 
 type MeasuredSplits = (u32, u32, &'static [(u32, u32)]);
@@ -80,6 +46,7 @@ const MEASURED_SUFFIX_MAX: u32 = 64;
 
 // TODO: validate this table per chip (M1-M5) before changing the policy.
 // TODO: add a simdgroup/non-MXU implementation before widening availability.
+// TODO: measure the D128/D256 crossover before widening suffix ranges.
 const MEASURED_TG_PER_CORE_TENTHS: &[MeasuredSplits] = &[
     (256, 16, &[(0, 24), (5120, 18), (131072, 39)]),
     (256, 32, &[(0, 24), (5120, 18), (32768, 60)]),
