@@ -37,8 +37,9 @@ use crate::{
     server::{
         ServerState,
         chat_tool_calls::{
-            OaiTool, OaiToolCall, ToolCallStreamer, backfill_tool_result_names, choose_tools, insert_tools_message,
-            oai_tool_call, reply_tool_calls, to_tool_call, tool_call_result_block, withhold_stream_text,
+            OaiTool, OaiToolCall, ToolCallStreamer, ToolParameterTypes, backfill_tool_result_names, choose_tools,
+            coerce_tool_call, insert_tools_message, oai_tool_call, reply_tool_calls, to_tool_call,
+            tool_call_result_block, withhold_stream_text,
         },
         request_log::RequestLog,
     },
@@ -609,6 +610,41 @@ fn chunk_json(
     serde_json::to_string(&chunk).unwrap_or_default()
 }
 
+/// Schema coercion retypes scalar arguments on the wire, so a client may echo
+/// `5` where the session stored `"5"` (or a JSON string where the session
+/// stored the value it spells); such pairs must still count as the same prefix.
+fn tool_call_arguments_equivalent(
+    stored: &str,
+    echoed: &str,
+) -> bool {
+    if stored == echoed {
+        return true;
+    }
+    match (serde_json::from_str::<serde_json::Value>(stored), serde_json::from_str::<serde_json::Value>(echoed)) {
+        (Ok(stored), Ok(echoed)) => json_values_equivalent(&stored, &echoed),
+        _ => false,
+    }
+}
+
+fn json_values_equivalent(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+) -> bool {
+    use serde_json::Value;
+    match (left, right) {
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .all(|(key, value)| right.get(key).is_some_and(|other| json_values_equivalent(value, other)))
+        },
+        (Value::String(text), other) | (other, Value::String(text)) if !other.is_string() => {
+            serde_json::from_str::<Value>(text).is_ok_and(|parsed| parsed == *other)
+        },
+        (left, right) => left == right,
+    }
+}
+
 /// Tool call identifiers are assigned per turn and never rendered into tokens, so they are
 /// excluded from the comparison; everything else about the messages must match.
 fn messages_have_prefix(
@@ -630,10 +666,8 @@ fn messages_have_prefix(
                                 value: call,
                             },
                         ) => {
-                            let (mut prefix_call, mut call) = (prefix_call.clone(), call.clone());
-                            prefix_call.identifier = None;
-                            call.identifier = None;
-                            prefix_call == call
+                            prefix_call.name == call.name
+                                && tool_call_arguments_equivalent(&prefix_call.arguments.json, &call.arguments.json)
                         },
                         _ => prefix_block == block,
                     }
@@ -683,6 +717,7 @@ async fn run_blocking(
     model: String,
     created: i64,
     prefix_cache: bool,
+    parameter_types: ToolParameterTypes,
     sender: mpsc::UnboundedSender<Vec<u8>>,
     log: RequestLog,
 ) {
@@ -755,7 +790,7 @@ async fn run_blocking(
 
     let response = match final_replies.last() {
         Some(reply) => {
-            let tool_calls = reply_tool_calls(&reply.message);
+            let tool_calls = reply_tool_calls(&reply.message, &parameter_types);
             // OpenAI sets content to null (not "") on tool call replies.
             let content = reply.message.text().or_else(|| tool_calls.is_none().then(String::new));
             let mut finish_reason =
@@ -818,6 +853,7 @@ async fn run_stream(
     model: String,
     created: i64,
     prefix_cache: bool,
+    parameter_types: ToolParameterTypes,
     sender: mpsc::UnboundedSender<Event>,
     log: RequestLog,
 ) {
@@ -957,8 +993,11 @@ async fn run_stream(
                     // candidates carry their partial text as a JSON string document, except
                     // object-valued ones (e.g. muse-glimmer's name-only progress objects)
                     let raw = serde_json::from_str::<String>(&value.json).unwrap_or_else(|_| value.json.clone());
-                    let deltas =
-                        tool_call_streamers.entry(index).or_insert_with(ToolCallStreamer::new).update(index, &raw);
+                    let deltas = tool_call_streamers.entry(index).or_insert_with(ToolCallStreamer::new).update(
+                        index,
+                        &raw,
+                        &parameter_types,
+                    );
                     for delta in deltas {
                         let sent = sender.send(Event::data(chunk_json(
                             &id,
@@ -983,13 +1022,13 @@ async fn run_stream(
                 while emitted_tool_calls < tool_calls.len() {
                     let index = emitted_tool_calls;
                     emitted_tool_calls += 1;
-                    let call = &tool_calls[index];
-                    if call.arguments.json.contains(UNPARSED_ARGUMENTS_KEY) {
+                    if tool_calls[index].arguments.json.contains(UNPARSED_ARGUMENTS_KEY) {
                         wrapped_arguments += 1;
                     }
+                    let call = coerce_tool_call(&tool_calls[index], &parameter_types);
                     let delta = match tool_call_streamers.remove(&index) {
-                        Some(mut streamer) => streamer.finish(index, call),
-                        None => oai_tool_call(Some(index), call),
+                        Some(mut streamer) => streamer.finish(index, &call),
+                        None => oai_tool_call(Some(index), &call),
                     };
                     let sent = sender.send(Event::data(chunk_json(
                         &id,
@@ -1149,6 +1188,10 @@ pub async fn handle_chat_completions(
         },
     };
 
+    // The parser cannot type scalar arguments; the declared schemas restore
+    // the types when replies cross back into the OpenAI wire format.
+    let parameter_types = ToolParameterTypes::from_tools(request.tools.as_deref());
+
     if is_stream {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Event>();
@@ -1160,6 +1203,7 @@ pub async fn handle_chat_completions(
             model,
             created,
             state.prefix_cache,
+            parameter_types,
             sender,
             log,
         ));
@@ -1176,6 +1220,7 @@ pub async fn handle_chat_completions(
             model,
             created,
             state.prefix_cache,
+            parameter_types,
             sender,
             log,
         ));

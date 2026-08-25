@@ -92,6 +92,120 @@ pub fn choose_tools<'t>(
     }
 }
 
+/// Declared JSON-Schema types of each tool parameter, keyed by function name.
+/// Tool-call markup cannot carry scalar types — the parser keeps every scalar
+/// parameter a string and types JSON-shaped values by their braces — so the
+/// declared schema is what restores the wire types clients validate against.
+#[derive(Clone, Default)]
+pub struct ToolParameterTypes(HashMap<String, HashMap<String, Vec<String>>>);
+
+impl ToolParameterTypes {
+    pub fn from_tools(tools: Option<&[OaiTool]>) -> Self {
+        let mut functions = HashMap::new();
+        for tool in tools.unwrap_or_default() {
+            let Some(parameters) = &tool.function.parameters else {
+                continue;
+            };
+            let Ok(schema) = serde_json::from_str::<serde_json::Value>(&parameters.json) else {
+                continue;
+            };
+            let Some(properties) = schema.get("properties").and_then(serde_json::Value::as_object) else {
+                continue;
+            };
+            let parameters = properties
+                .iter()
+                .filter_map(|(name, property)| {
+                    let types = match property.get("type")? {
+                        serde_json::Value::String(kind) => vec![kind.clone()],
+                        serde_json::Value::Array(kinds) => {
+                            kinds.iter().filter_map(|kind| kind.as_str().map(str::to_string)).collect()
+                        },
+                        _ => return None,
+                    };
+                    (!types.is_empty()).then(|| (name.clone(), types))
+                })
+                .collect();
+            functions.insert(tool.function.name.clone(), parameters);
+        }
+        Self(functions)
+    }
+
+    fn declared(
+        &self,
+        function: &str,
+        parameter: &str,
+    ) -> Option<&[String]> {
+        Some(self.0.get(function)?.get(parameter)?.as_slice())
+    }
+}
+
+fn matches_declared_type(
+    value: &serde_json::Value,
+    declared: &[String],
+) -> bool {
+    declared.iter().any(|kind| match kind.as_str() {
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "number" => value.is_number(),
+        "boolean" => value.is_boolean(),
+        "null" => value.is_null(),
+        "object" => value.is_object(),
+        "array" => value.is_array(),
+        "string" => value.is_string(),
+        _ => false,
+    })
+}
+
+fn coerce_parameter_value(
+    value: &serde_json::Value,
+    declared: &[String],
+) -> Option<serde_json::Value> {
+    let declares_string = declared.iter().any(|kind| kind == "string");
+    match value {
+        // The parser kept the bare markup text as a string; restore the
+        // declared type when the text reads as it. A union that includes
+        // "string" stays a string: the text is already schema-valid and the
+        // intended type is unknowable.
+        serde_json::Value::String(text) if !declares_string => {
+            let parsed = serde_json::from_str::<serde_json::Value>(text).ok()?;
+            matches_declared_type(&parsed, declared).then_some(parsed)
+        },
+        // JSON-shaped markup text was typed by its braces although the
+        // parameter is a plain string.
+        value if declared == ["string"] && !value.is_string() => Some(serde_json::Value::String(value.to_string())),
+        _ => None,
+    }
+}
+
+/// Restores the declared scalar types the markup could not carry. Applied only
+/// at the OpenAI boundary: the session keeps the parser's values so its stored
+/// history stays consistent with what the template renders.
+pub fn coerce_tool_call(
+    tool_call: &ToolCall,
+    types: &ToolParameterTypes,
+) -> ToolCall {
+    let Ok(serde_json::Value::Object(mut object)) = serde_json::from_str(&tool_call.arguments.json) else {
+        return tool_call.clone();
+    };
+    let mut changed = false;
+    for (parameter, value) in object.iter_mut() {
+        if let Some(declared) = types.declared(&tool_call.name, parameter)
+            && let Some(coerced) = coerce_parameter_value(value, declared)
+        {
+            *value = coerced;
+            changed = true;
+        }
+    }
+    if !changed {
+        return tool_call.clone();
+    }
+    ToolCall {
+        arguments: Value {
+            json: serde_json::Value::Object(object).to_string(),
+        },
+        ..tool_call.clone()
+    }
+}
+
 pub fn to_tool_call(tool_call: &OaiToolCall) -> ToolCall {
     // Templates render arguments as key/value pairs; normalization guarantees
     // an object no matter what the client echoes back.
@@ -193,9 +307,13 @@ pub fn oai_tool_call(
     }
 }
 
-pub fn reply_tool_calls(message: &ChatMessage) -> Option<Vec<OaiToolCall>> {
+pub fn reply_tool_calls(
+    message: &ChatMessage,
+    types: &ToolParameterTypes,
+) -> Option<Vec<OaiToolCall>> {
     let tool_calls = message.tool_calls();
-    (!tool_calls.is_empty()).then(|| tool_calls.iter().map(|tool_call| oai_tool_call(None, tool_call)).collect())
+    (!tool_calls.is_empty())
+        .then(|| tool_calls.iter().map(|tool_call| oai_tool_call(None, &coerce_tool_call(tool_call, types))).collect())
 }
 
 // Bare-JSON formats (e.g. llama-3) stream a tool call as ordinary text and only rewrite
@@ -268,12 +386,27 @@ fn parse_framed_call(raw: &str) -> FramedCall {
     }
 }
 
-// Mirrors the parser's synthesis rule: values starting with `{` or `[` are typed JSON,
-// everything else is a string.
-fn serialize_param_value(value: &str) -> String {
+// Mirrors the parser's synthesis rule composed with the schema coercion the
+// final call goes through: values starting with `{` or `[` are typed JSON
+// unless the parameter is declared a plain string, bare scalars take a
+// declared non-string type when they parse as it, everything else is a string.
+fn serialize_param_value(
+    value: &str,
+    declared: Option<&[String]>,
+) -> String {
     let trimmed = value.trim_start();
-    if (trimmed.starts_with('{') || trimmed.starts_with('['))
-        && let Some(parsed) = parse_lenient_json(value)
+    let json_shaped = trimmed.starts_with('{') || trimmed.starts_with('[');
+    if json_shaped && let Some(parsed) = parse_lenient_json(value) {
+        if declared.is_some_and(|declared| declared == ["string"]) {
+            return serde_json::Value::String(parsed.to_string()).to_string();
+        }
+        return parsed.to_string();
+    }
+    if !json_shaped
+        && let Some(declared) = declared
+        && !declared.iter().any(|kind| kind == "string")
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value)
+        && matches_declared_type(&parsed, declared)
     {
         return parsed.to_string();
     }
@@ -298,17 +431,29 @@ fn withhold_ambiguous_tail(content: &str) -> &str {
 
 // The arguments text with no closing brace: completed parameters are frozen, the open
 // parameter's value streams as it grows.
-fn open_arguments_text(params: &[(String, FramedParam)]) -> Option<String> {
+fn open_arguments_text(
+    params: &[(String, FramedParam)],
+    function: Option<&str>,
+    types: &ToolParameterTypes,
+) -> Option<String> {
     let mut entries: Vec<(String, String)> = Vec::new();
     for (key, param) in params {
+        let declared = function.and_then(|function| types.declared(function, key));
         let serialized = match param {
-            FramedParam::Complete(value) => serialize_param_value(value),
+            FramedParam::Complete(value) => serialize_param_value(value, declared),
             FramedParam::Open(content) => {
-                // an empty value has no known type yet, and typed values (JSON starting
-                // with `{`/`[`, matching the parser's synthesis rule) can only be serialized
-                // once complete: either way nothing about the parameter may be emitted
+                // an empty value has no known type yet, and typed values (JSON
+                // starting with `{`/`[`, or declared non-string so the final
+                // form is a bare literal) can only be serialized once
+                // complete: either way nothing about the parameter may be emitted
                 let streamable = withhold_ambiguous_tail(content);
-                if streamable.is_empty() || streamable.starts_with('{') || streamable.starts_with('[') {
+                let declared_non_string =
+                    declared.is_some_and(|declared| !declared.iter().any(|kind| kind == "string"));
+                if streamable.is_empty()
+                    || streamable.starts_with('{')
+                    || streamable.starts_with('[')
+                    || declared_non_string
+                {
                     break;
                 }
                 let quoted = serde_json::Value::String(streamable.to_string()).to_string();
@@ -368,6 +513,7 @@ impl ToolCallStreamer {
         &mut self,
         index: usize,
         raw: &str,
+        types: &ToolParameterTypes,
     ) -> Vec<OaiToolCall> {
         let mut deltas = Vec::new();
         let name;
@@ -375,7 +521,7 @@ impl ToolCallStreamer {
             let call = parse_framed_call(raw);
             name = call.name.filter(|name| !name.is_empty());
             self.key_order = call.params.iter().map(|(key, _)| key.clone()).collect();
-            if let Some(open_text) = open_arguments_text(&call.params)
+            if let Some(open_text) = open_arguments_text(&call.params, name.as_deref(), types)
                 && open_text.len() > self.open_text.len()
                 && open_text.starts_with(&self.open_text)
             {

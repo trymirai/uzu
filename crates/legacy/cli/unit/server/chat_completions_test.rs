@@ -429,3 +429,34 @@ fn prefix_match_ignores_tool_call_identifiers() {
     let not_matching = vec![ChatMessage::user().with_text("hi".to_string()), different];
     assert!(!messages_have_prefix(&not_matching, &current));
 }
+
+#[test]
+fn prefix_match_treats_coerced_arguments_as_equal() {
+    let assistant_call = |arguments: &str| {
+        ChatMessage::assistant().with_tool_call(uzu::types::basic::ToolCall {
+            identifier: Some("id".to_string()),
+            name: "search".to_string(),
+            arguments: uzu::types::basic::Value {
+                json: arguments.to_string(),
+            },
+        })
+    };
+
+    // the session stores the parser's stringified scalar; the client echoes the
+    // coerced typed value it received
+    let current = vec![assistant_call(r#"{"query":"cats","limit":"5"}"#)];
+    let extending =
+        vec![assistant_call(r#"{"query":"cats","limit":5}"#), ChatMessage::user().with_text("more".to_string())];
+    assert!(messages_have_prefix(&extending, &current));
+
+    // a genuinely different value is still a mismatch
+    let different =
+        vec![assistant_call(r#"{"query":"cats","limit":6}"#), ChatMessage::user().with_text("more".to_string())];
+    assert!(!messages_have_prefix(&different, &current));
+
+    // string-declared values that the parser typed by their braces also match their echo
+    let stored_object = vec![assistant_call(r#"{"content":{"a":1}}"#)];
+    let echoed_string =
+        vec![assistant_call(r#"{"content":"{\"a\":1}"}"#), ChatMessage::user().with_text("more".to_string())];
+    assert!(messages_have_prefix(&echoed_string, &stored_object));
+}
