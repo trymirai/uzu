@@ -20,9 +20,9 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-pub struct LinearProjection<B: Backend> {
-    pub lin: Box<dyn Linear<B>>,
-    pub norm: Option<QKVNorm<B>>,
+pub(super) struct LinearProjection<B: Backend> {
+    pub(super) lin: Box<dyn Linear<B>>,
+    pub(super) norm: Option<QKVNorm<B>>,
 }
 
 impl<B: Backend> LinearProjection<B> {
@@ -41,7 +41,7 @@ impl<B: Backend> LinearProjection<B> {
 }
 
 impl<B: Backend> Attention<B> {
-    pub fn attend(
+    pub(super) fn attend(
         &self,
         hidden: Allocation<B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,

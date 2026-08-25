@@ -1,12 +1,12 @@
 #include <metal_stdlib>
-#include "../common/dsl.h"
-#include "../common/integral_constant.h"
-#include "../common/thread_context.h"
-#include "../matmul/common/fragment.h"
-#include "../matmul/common/loader.h"
-#include "../matmul/common/mxu_fragment/ops.h"
-#include "../generated/attention.h"
-#include "../generated/trie.h"
+#include "../../common/dsl.h"
+#include "../../common/integral_constant.h"
+#include "../../common/thread_context.h"
+#include "../../matmul/common/fragment.h"
+#include "../../matmul/common/loader.h"
+#include "../../matmul/common/mxu_fragment/ops.h"
+#include "../../generated/attention.h"
+#include "../../generated/trie.h"
 
 using namespace metal;
 using namespace uzu::matmul;

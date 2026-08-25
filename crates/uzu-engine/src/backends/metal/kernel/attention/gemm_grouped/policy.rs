@@ -108,5 +108,5 @@ pub fn choose_splits(
 }
 
 #[cfg(test)]
-#[path = "../../../../../../unit/backends/metal/kernel/attention_gemm_grouped_policy_test.rs"]
+#[path = "../../../../../../unit/backends/metal/kernel/attention/gemm_grouped_policy_test.rs"]
 mod tests;
