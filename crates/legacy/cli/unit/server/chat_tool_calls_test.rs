@@ -386,6 +386,61 @@ fn declared_types_restore_scalar_arguments() {
 }
 
 #[test]
+fn python_style_booleans_coerce_to_declared_boolean() {
+    let types = parameter_types(SEARCH_TOOL);
+    // qwen3.5 writes Python-style booleans into its tool markup
+    let call = ToolCall {
+        identifier: None,
+        name: "search".to_string(),
+        arguments: Value {
+            json: r#"{"metric":"True","query":"False","limit":"True"}"#.to_string(),
+        },
+    };
+
+    let coerced: serde_json::Value =
+        serde_json::from_str(&coerce_tool_call(&call, &types).arguments.json).expect("coerced arguments parse");
+    assert_eq!(
+        coerced,
+        serde_json::json!({
+            "metric": true,
+            // declared strings are never retyped
+            "query": "False",
+            // a boolean does not read as the declared integer
+            "limit": "True"
+        })
+    );
+}
+
+#[test]
+fn framed_streamer_agrees_with_coerced_boolean_finish() {
+    let types = parameter_types(SEARCH_TOOL);
+    let final_markup =
+        "<function=search>\n<parameter=query>\ncats\n</parameter>\n<parameter=metric>\nTrue\n</parameter>\n</function>";
+    // what coerce_tool_call produces from the parser's Python-style boolean
+    let call = ToolCall {
+        identifier: Some("c1".to_string()),
+        name: "search".to_string(),
+        arguments: Value {
+            json: r#"{"query":"cats","metric":true}"#.to_string(),
+        },
+    };
+
+    let mut streamer = ToolCallStreamer::new();
+    let mut fragments = String::new();
+    let chars = final_markup.chars().collect::<Vec<_>>();
+    for i in 0..=chars.len() {
+        let partial: String = chars[..i].iter().collect();
+        for delta in streamer.update(0, &partial, &types) {
+            fragments.push_str(&delta.function.arguments);
+        }
+    }
+    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+
+    let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
+    assert_eq!(parsed, serde_json::json!({"query": "cats", "metric": true}));
+}
+
+#[test]
 fn declared_string_keeps_json_shaped_text() {
     let types = parameter_types(
         r#"[{"type":"function","function":{"name":"write_file","description":"Write",

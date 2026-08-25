@@ -155,6 +155,19 @@ fn matches_declared_type(
     })
 }
 
+/// Bare scalar text is strict JSON, plus the Python-style booleans some models
+/// emit in tool markup (qwen3.5 writes `True`/`False`).
+pub fn parse_scalar_text(text: &str) -> Option<serde_json::Value> {
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(text) {
+        return Some(parsed);
+    }
+    match text.trim() {
+        text if text.eq_ignore_ascii_case("true") => Some(serde_json::Value::Bool(true)),
+        text if text.eq_ignore_ascii_case("false") => Some(serde_json::Value::Bool(false)),
+        _ => None,
+    }
+}
+
 fn coerce_parameter_value(
     value: &serde_json::Value,
     declared: &[String],
@@ -166,7 +179,7 @@ fn coerce_parameter_value(
         // "string" stays a string: the text is already schema-valid and the
         // intended type is unknowable.
         serde_json::Value::String(text) if !declares_string => {
-            let parsed = serde_json::from_str::<serde_json::Value>(text).ok()?;
+            let parsed = parse_scalar_text(text)?;
             matches_declared_type(&parsed, declared).then_some(parsed)
         },
         // JSON-shaped markup text was typed by its braces although the
@@ -405,7 +418,7 @@ fn serialize_param_value(
     if !json_shaped
         && let Some(declared) = declared
         && !declared.iter().any(|kind| kind == "string")
-        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value)
+        && let Some(parsed) = parse_scalar_text(value)
         && matches_declared_type(&parsed, declared)
     {
         return parsed.to_string();

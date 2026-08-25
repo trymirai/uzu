@@ -38,7 +38,7 @@ use crate::{
         ServerState,
         chat_tool_calls::{
             OaiTool, OaiToolCall, ToolCallStreamer, ToolParameterTypes, backfill_tool_result_names, choose_tools,
-            coerce_tool_call, insert_tools_message, oai_tool_call, reply_tool_calls, to_tool_call,
+            coerce_tool_call, insert_tools_message, oai_tool_call, parse_scalar_text, reply_tool_calls, to_tool_call,
             tool_call_result_block, withhold_stream_text,
         },
         request_log::RequestLog,
@@ -497,6 +497,28 @@ fn json_schema_grammar(json_schema: &JsonSchemaFormat) -> Result<Grammar, Respon
     })
 }
 
+/// Wrong-typed values already fail JSON extraction; out-of-range numbers would
+/// otherwise reach the sampler unchecked (a huge temperature generates garbage
+/// with HTTP 200).
+fn validate_sampling(request: &ChatCompletionRequest) -> Result<(), (&'static str, String)> {
+    if let Some(temperature) = request.temperature
+        && !(0.0..=2.0).contains(&temperature)
+    {
+        return Err(("temperature", format!("temperature must be between 0 and 2, got {temperature}")));
+    }
+    if let Some(top_p) = request.top_p
+        && !(top_p > 0.0 && top_p <= 1.0)
+    {
+        return Err(("top_p", format!("top_p must be greater than 0 and at most 1, got {top_p}")));
+    }
+    if let Some(top_k) = request.top_k
+        && top_k < 1
+    {
+        return Err(("top_k", format!("top_k must be at least 1, got {top_k}")));
+    }
+    Ok(())
+}
+
 fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig, ResponseFormatError> {
     let token_limit = request.max_completion_tokens.or(request.max_tokens);
     let mut config = ChatReplyConfig::default().with_token_limit(token_limit);
@@ -565,30 +587,41 @@ fn usage_from_stats(
     }
 }
 
-fn error_response(
-    id: String,
-    model: String,
-    created: i64,
-    message: &str,
-) -> ChatCompletionResponse {
-    ChatCompletionResponse {
-        id,
-        object: "chat.completion".to_string(),
-        created,
-        model,
-        choices: vec![ChatCompletionChoice {
-            index: 0,
-            message: OaiMessage {
-                role: "assistant".to_string(),
-                content: Some(format!("Error: {message}")),
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: None,
-            },
-            finish_reason: "stop".to_string(),
-        }],
-        usage: ChatCompletionUsage::default(),
+/// nagare re-wraps backend errors at each layer, so a message can arrive as
+/// "Backend error: Backend error: ..."; the wire message keeps only the inner text.
+fn strip_backend_prefixes(message: &str) -> &str {
+    let mut message = message;
+    while let Some(inner) = message.strip_prefix("Backend error: ") {
+        message = inner;
     }
+    message
+}
+
+fn oai_error_body(
+    status: Status,
+    code: &str,
+    message: &str,
+) -> OaiErrorResponse {
+    let kind = if status.code < 500 {
+        "invalid_request_error"
+    } else {
+        "server_error"
+    };
+    OaiErrorResponse {
+        error: OaiError {
+            message: strip_backend_prefixes(message).to_string(),
+            kind: kind.to_string(),
+            param: None,
+            code: Some(code.to_string()),
+        },
+    }
+}
+
+fn send_error_body(
+    sender: &mpsc::UnboundedSender<Vec<u8>>,
+    body: &OaiErrorResponse,
+) {
+    let _ = sender.send(serde_json::to_vec(body).unwrap_or_default());
 }
 
 fn chunk_json(
@@ -643,7 +676,7 @@ fn json_values_equivalent(
                     .all(|(key, value)| right.get(key).is_some_and(|other| json_values_equivalent(value, other)))
         },
         (Value::String(text), other) | (other, Value::String(text)) if !other.is_string() => {
-            serde_json::from_str::<Value>(text).is_ok_and(|parsed| parsed == *other)
+            parse_scalar_text(text).is_some_and(|parsed| parsed == *other)
         },
         (left, right) => left == right,
     }
@@ -753,7 +786,7 @@ async fn run_blocking(
         Err(error) => {
             log.fail(&error.to_string());
             let _ = status_sender.send(Status::InternalServerError);
-            send_response(&sender, &error_response(id, model, created, &error.to_string()));
+            send_error_body(&sender, &oai_error_body(Status::InternalServerError, "backend_error", &error.to_string()));
             return;
         },
     };
@@ -797,7 +830,7 @@ async fn run_blocking(
                 if let Some(status_sender) = status_sender.take() {
                     let _ = status_sender.send(Status::BadRequest);
                 }
-                send_response(&sender, &error_response(id, model, created, &error.to_string()));
+                send_error_body(&sender, &oai_error_body(Status::BadRequest, "backend_error", &error.to_string()));
                 return;
             },
         }
@@ -807,59 +840,51 @@ async fn run_blocking(
         let _ = status_sender.send(Status::InternalServerError);
     }
 
-    let response = match final_replies.last() {
-        Some(reply) => {
-            let tool_calls = reply_tool_calls(&reply.message, &parameter_types);
-            // OpenAI sets content to null (not "") on tool call replies.
-            let content = reply.message.text().or_else(|| tool_calls.is_none().then(String::new));
-            let mut finish_reason =
-                reply.finish_reason.as_ref().map(map_finish_reason).unwrap_or_else(|| "stop".to_string());
-            // Calls the parser could not finalize must not execute as a partial batch.
-            // OpenAI has no finish reason for this; providers signal terminal errors with
-            // unrecognized reasons (pi maps them to a thrown provider error), so the turn
-            // fails loudly instead of stalling on an absent or incomplete tool_calls array.
-            let has_unfinished_candidates =
-                reply.message.content.iter().any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
-            if finish_reason == "tool_calls" && (tool_calls.is_none() || has_unfinished_candidates) {
-                finish_reason = "malformed_tool_call".to_string();
-            }
-            let wrapped_arguments = reply
-                .message
-                .tool_calls()
-                .iter()
-                .filter(|call| call.arguments.json.contains(UNPARSED_ARGUMENTS_KEY))
-                .count();
-            let mut notes = Vec::new();
-            if has_unfinished_candidates {
-                notes.push("model generated unfinished tool call(s)".to_string());
-            }
-            if wrapped_arguments > 0 {
-                notes.push(format!("{wrapped_arguments} tool call(s) with unparseable arguments"));
-            }
-            log.finish(&finish_reason, Some(&reply.stats), notes);
-            ChatCompletionResponse {
-                id,
-                object: "chat.completion".to_string(),
-                created,
-                model,
-                choices: vec![ChatCompletionChoice {
-                    index: 0,
-                    message: OaiMessage {
-                        role: "assistant".to_string(),
-                        content,
-                        reasoning_content: reply.message.reasoning().filter(|reasoning| !reasoning.is_empty()),
-                        tool_calls,
-                        tool_call_id: None,
-                    },
-                    finish_reason,
-                }],
-                usage: usage_from_stats(&reply.stats, prefix_cache),
-            }
-        },
-        None => {
-            log.fail("no response generated");
-            error_response(id, model, created, "No response generated")
-        },
+    let Some(reply) = final_replies.last() else {
+        log.fail("no response generated");
+        send_error_body(&sender, &oai_error_body(Status::InternalServerError, "no_response", "No response generated"));
+        return;
+    };
+    let tool_calls = reply_tool_calls(&reply.message, &parameter_types);
+    // OpenAI sets content to null (not "") on tool call replies.
+    let content = reply.message.text().or_else(|| tool_calls.is_none().then(String::new));
+    let mut finish_reason = reply.finish_reason.as_ref().map(map_finish_reason).unwrap_or_else(|| "stop".to_string());
+    // Calls the parser could not finalize must not execute as a partial batch.
+    // OpenAI has no finish reason for this; providers signal terminal errors with
+    // unrecognized reasons (pi maps them to a thrown provider error), so the turn
+    // fails loudly instead of stalling on an absent or incomplete tool_calls array.
+    let has_unfinished_candidates =
+        reply.message.content.iter().any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
+    if finish_reason == "tool_calls" && (tool_calls.is_none() || has_unfinished_candidates) {
+        finish_reason = "malformed_tool_call".to_string();
+    }
+    let wrapped_arguments =
+        reply.message.tool_calls().iter().filter(|call| call.arguments.json.contains(UNPARSED_ARGUMENTS_KEY)).count();
+    let mut notes = Vec::new();
+    if has_unfinished_candidates {
+        notes.push("model generated unfinished tool call(s)".to_string());
+    }
+    if wrapped_arguments > 0 {
+        notes.push(format!("{wrapped_arguments} tool call(s) with unparseable arguments"));
+    }
+    log.finish(&finish_reason, Some(&reply.stats), notes);
+    let response = ChatCompletionResponse {
+        id,
+        object: "chat.completion".to_string(),
+        created,
+        model,
+        choices: vec![ChatCompletionChoice {
+            index: 0,
+            message: OaiMessage {
+                role: "assistant".to_string(),
+                content,
+                reasoning_content: reply.message.reasoning().filter(|reasoning| !reasoning.is_empty()),
+                tool_calls,
+                tool_call_id: None,
+            },
+            finish_reason,
+        }],
+        usage: usage_from_stats(&reply.stats, prefix_cache),
     };
     send_response(&sender, &response);
 }
@@ -890,17 +915,10 @@ async fn run_stream(
         Ok(input) => input,
         Err(error) => {
             log.fail(&error.to_string());
-            let _ = sender.send(Event::data(chunk_json(
-                &id,
-                &model,
-                created,
-                StreamDelta {
-                    content: Some(format!("Error: {error}")),
-                    ..StreamDelta::default()
-                },
-                Some("stop".to_string()),
-                None,
-            )));
+            // The SSE response is already committed as 200, so the error travels
+            // as an OpenAI-style error event, the way OpenAI reports mid-stream.
+            let body = oai_error_body(Status::InternalServerError, "backend_error", &error.to_string());
+            let _ = sender.send(Event::data(serde_json::to_string(&body).unwrap_or_default()));
             let _ = sender.send(Event::data("[DONE]"));
             return;
         },
@@ -1083,17 +1101,9 @@ async fn run_stream(
             } => {
                 errored = true;
                 log.fail(&error.to_string());
-                let _ = sender.send(Event::data(chunk_json(
-                    &id,
-                    &model,
-                    created,
-                    StreamDelta {
-                        content: Some(format!("Error: {error}")),
-                        ..StreamDelta::default()
-                    },
-                    Some("stop".to_string()),
-                    None,
-                )));
+                // Committed 200 stream: report as an OpenAI-style error event.
+                let body = oai_error_body(Status::BadRequest, "backend_error", &error.to_string());
+                let _ = sender.send(Event::data(serde_json::to_string(&body).unwrap_or_default()));
                 break;
             },
         }
@@ -1189,6 +1199,10 @@ pub async fn handle_chat_completions(
         request.reasoning_effort.as_ref().and_then(serde_json::Value::as_str).or(Some("unspecified")),
     );
 
+    if let Err((param, message)) = validate_sampling(&request) {
+        log.fail(&message);
+        return invalid_request_response(param, "out_of_range", message);
+    }
     let config = match build_reply_config(&request) {
         Ok(config) => config,
         Err(error) => {
