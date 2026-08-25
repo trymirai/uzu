@@ -51,7 +51,7 @@ pub fn is_supported(
         && !arguments.is_kv_cache_ring
         && arguments.sliding_window_size.is_none()
         && arguments.num_groups > 0
-        && arguments.num_q_heads % arguments.num_groups == 0
+        && arguments.num_q_heads.is_multiple_of(arguments.num_groups)
         && MaskKind::for_attention(arguments.is_causal, arguments.is_trie).is_some()
 }
 

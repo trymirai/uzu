@@ -113,27 +113,22 @@ impl<B: Backend> AttentionCores<B> {
         let kv_length = arguments.state_type.physical_prefix_length() + suffix_length;
         let is_kv_cache_ring = arguments.state_type.ring_params().is_some();
 
-        if !is_kv_cache_ring {
-            if let Some(grouped) = &self.grouped {
-                if grouped.should_encode(suffix_length, kv_length) {
-                    return grouped.encode(arguments, encoder);
-                }
+        if !is_kv_cache_ring && let Some(grouped) = &self.grouped {
+            if grouped.should_encode(suffix_length, kv_length) {
+                return grouped.encode(arguments, encoder);
+            }
 
-                // These measured sibling exceptions apply only when the
-                // grouped core was built for this layer.
-                if self.head_dim == 256
-                    && (1..=16).contains(&suffix_length)
-                    && kv_length > D256_SINGLE_PASS_KV_THRESHOLD
-                {
-                    return self.single_pass.encode(arguments, encoder);
-                }
-                if (self.head_dim == 256 && (9..=16).contains(&suffix_length))
-                    || (self.head_dim == 128
-                        && (9..=16).contains(&suffix_length)
-                        && kv_length > D128_SHORT_KV_GEMM_THRESHOLD)
-                {
-                    return self.two_pass.encode(arguments, encoder);
-                }
+            // These measured sibling exceptions apply only when the
+            // grouped core was built for this layer.
+            if self.head_dim == 256 && (1..=16).contains(&suffix_length) && kv_length > D256_SINGLE_PASS_KV_THRESHOLD {
+                return self.single_pass.encode(arguments, encoder);
+            }
+            if (self.head_dim == 256 && (9..=16).contains(&suffix_length))
+                || (self.head_dim == 128
+                    && (9..=16).contains(&suffix_length)
+                    && kv_length > D128_SHORT_KV_GEMM_THRESHOLD)
+            {
+                return self.two_pass.encode(arguments, encoder);
             }
         }
 
