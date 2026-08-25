@@ -35,7 +35,9 @@ use uzu_engine::{
 };
 
 #[cfg(feature = "capability-grammar")]
-use crate::engine::bridge::helpers::{get_grammar, grammar_trigger_token_sequence};
+use crate::engine::bridge::helpers::{
+    get_grammar, grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt,
+};
 use crate::engine::bridge::{
     chat_token_state::UzuChatTokenBackendInstanceState,
     helpers::{error_stream, get_max_context_length, get_sampling_method},
@@ -122,12 +124,12 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         #[cfg(feature = "capability-grammar")]
         let grammar = if let Some(grammar_config) = config.grammar {
-            match get_grammar(
-                grammar_config,
+            let trigger_token_sequence = grammar_trigger_token_sequence_for_prompt(
+                self.grammar_trigger_token_sequence.as_deref(),
+                input,
                 self.model.tokenizer(),
-                &self.stop_token_ids,
-                self.grammar_trigger_token_sequence.clone(),
-            ) {
+            );
+            match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids, trigger_token_sequence) {
                 Ok(grammar) => Some(grammar),
                 Err(err) => {
                     return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));

@@ -56,6 +56,32 @@ pub fn grammar_trigger_token_sequence<B: Backend>(model: &LanguageModel<B>) -> O
     (!token_ids.is_empty()).then_some(token_ids)
 }
 
+/// Returns the end-of-thinking trigger only when it still has to be generated.
+/// Toggle-capable models render the trigger into the generation prompt when
+/// reasoning is disabled, in which case the grammar must engage immediately.
+#[cfg(feature = "capability-grammar")]
+pub fn grammar_trigger_token_sequence_for_prompt(
+    trigger_token_sequence: Option<&[u64]>,
+    prompt: &[u64],
+    tokenizer: &Tokenizer,
+) -> Option<Vec<u64>> {
+    let trigger_token_sequence = trigger_token_sequence.filter(|sequence| !sequence.is_empty())?;
+    let trailing_tokens = prompt
+        .windows(trigger_token_sequence.len())
+        .rposition(|window| window == trigger_token_sequence)
+        .map(|start| &prompt[start + trigger_token_sequence.len()..]);
+
+    let trigger_is_in_generation_prompt = trailing_tokens.is_some_and(|trailing_tokens| {
+        let Ok(trailing_tokens) = trailing_tokens.iter().copied().map(u32::try_from).collect::<Result<Vec<_>, _>>()
+        else {
+            return false;
+        };
+        tokenizer.decode(&trailing_tokens, false).is_ok_and(|suffix| suffix.trim().is_empty())
+    });
+
+    (!trigger_is_in_generation_prompt).then(|| trigger_token_sequence.to_vec())
+}
+
 pub fn get_max_context_length<B: Backend>(
     model: &LanguageModel<B>,
     context_length: ContextLength,
@@ -103,5 +129,45 @@ pub fn get_sampling_method<B: Backend>(
                 suffix_repetition_length: suffix_repetition_length.map(|value| value as u32),
             },
         },
+    }
+}
+
+#[cfg(all(test, feature = "capability-grammar"))]
+mod tests {
+    use tokenizers::{Tokenizer, decoders::fuse::Fuse, models::wordlevel::WordLevel};
+
+    use super::grammar_trigger_token_sequence_for_prompt;
+
+    fn tokenizer() -> Tokenizer {
+        let model = WordLevel::builder()
+            .vocab(
+                [
+                    ("<unk>".to_string(), 0),
+                    ("</think>".to_string(), 1),
+                    ("\n\n".to_string(), 2),
+                    ("next".to_string(), 3),
+                ]
+                .into_iter()
+                .collect(),
+            )
+            .build()
+            .unwrap();
+        let mut tokenizer = Tokenizer::new(model);
+        tokenizer.with_decoder(Some(Fuse::new()));
+        tokenizer
+    }
+
+    #[test]
+    fn grammar_engages_immediately_when_prompt_closes_reasoning() {
+        let tokenizer = tokenizer();
+
+        assert_eq!(grammar_trigger_token_sequence_for_prompt(Some(&[1]), &[1, 2], &tokenizer), None);
+    }
+
+    #[test]
+    fn grammar_waits_for_trigger_when_only_history_contains_it() {
+        let tokenizer = tokenizer();
+
+        assert_eq!(grammar_trigger_token_sequence_for_prompt(Some(&[1]), &[1, 2, 3], &tokenizer), Some(vec![1]));
     }
 }
