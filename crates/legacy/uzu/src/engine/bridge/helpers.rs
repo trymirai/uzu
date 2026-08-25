@@ -29,6 +29,7 @@ pub fn get_grammar(
     grammar: ShojiGrammar,
     tokenizer: &Tokenizer,
     stop_token_ids: &[i32],
+    trigger_token_sequence: Option<Vec<u64>>,
 ) -> Result<UzuGrammar, GrammarError> {
     let config = match grammar {
         ShojiGrammar::JsonAny {
@@ -41,7 +42,18 @@ pub fn get_grammar(
             pattern,
         } => GrammarConfig::regex(pattern, false),
     };
-    UzuGrammar::new(&config, tokenizer, None, Some(stop_token_ids))
+    UzuGrammar::new(&config, tokenizer, trigger_token_sequence, Some(stop_token_ids))
+}
+
+/// The token sequence of the model's end-of-thinking tag. A reasoning model
+/// opens every reply with reasoning tokens that no grammar can accept, so the
+/// grammar must stay disengaged until this sequence has been generated.
+#[cfg(feature = "capability-grammar")]
+pub fn grammar_trigger_token_sequence<B: Backend>(model: &LanguageModel<B>) -> Option<Vec<u64>> {
+    let tag = model.end_of_thinking_tag()?;
+    let token_ids: Vec<u64> =
+        model.tokenizer().encode(tag, false).ok()?.get_ids().iter().map(|token_id| u64::from(*token_id)).collect();
+    (!token_ids.is_empty()).then_some(token_ids)
 }
 
 pub fn get_max_context_length<B: Backend>(
