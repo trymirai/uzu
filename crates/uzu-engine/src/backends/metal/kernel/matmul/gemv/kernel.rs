@@ -266,6 +266,9 @@ impl GemvKernel {
         let (scales, zero_points, biases) = match &b {
             MatmulB::FullPrecision {
                 ..
+            }
+            | MatmulB::Microfloat {
+                ..
             } => (None, None, None),
             MatmulB::ScaleBiasDequant {
                 scales,
@@ -287,6 +290,12 @@ impl GemvKernel {
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;
         match b {
+            MatmulB::Microfloat {
+                metadata,
+                ..
+            } => {
+                return Err(MatmulError::UnsupportedMicrofloat(metadata.format()));
+            },
             MatmulB::FullPrecision {
                 b: weights,
             } => pipeline.encode(
