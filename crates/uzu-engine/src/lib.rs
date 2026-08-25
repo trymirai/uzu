@@ -3,7 +3,8 @@
 #![cfg_attr(target_family = "wasm", feature(wasi_ext))]
 
 #[cfg(test)]
-uzu_engine_macros::define_test_harness!();
+#[path = "../unit/harness.rs"]
+mod __uzu_test_harness;
 
 mod array;
 mod config;
