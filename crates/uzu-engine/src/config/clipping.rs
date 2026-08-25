@@ -30,9 +30,7 @@ impl From<WireClippingBounds> for ClippingBounds {
 
 impl From<ClippingBounds> for WireClippingBounds {
     fn from(bounds: ClippingBounds) -> Self {
-        let Some((min, max)) = bounds.0 else {
-            return None;
-        };
+        let (min, max) = bounds.0?;
         let min = (min != f32::MIN).then_some(min);
         let max = (max != f32::MAX).then_some(max);
         if min.is_none() && max.is_none() {
