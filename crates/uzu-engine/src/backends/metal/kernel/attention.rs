@@ -80,7 +80,9 @@ impl AttentionGemmMetalCore {
     }
 }
 
-impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
+impl AttentionGemmCore for AttentionGemmMetalCore {
+    type Backend = Metal;
+
     fn is_supported(
         arguments: &AttentionCoreNewArguments,
         _context: &MetalContext,

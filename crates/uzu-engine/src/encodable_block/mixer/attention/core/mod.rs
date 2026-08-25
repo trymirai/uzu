@@ -49,10 +49,10 @@ impl<B: Backend> AttentionCores<B> {
         arguments: AttentionCoreNewArguments,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
-        let gemm = if <<B::Kernels as Kernels>::AttentionGemmCore as AttentionGemmCoreTrait<B>>::is_supported(
+        let gemm = if <<B::Kernels as Kernels>::AttentionGemmCore as AttentionGemmCoreTrait>::is_supported(
             &arguments, context,
         )? {
-            Some(<<B::Kernels as Kernels>::AttentionGemmCore as AttentionGemmCoreTrait<B>>::new(context, &arguments)?)
+            Some(<<B::Kernels as Kernels>::AttentionGemmCore as AttentionGemmCoreTrait>::new(context, &arguments)?)
         } else {
             None
         };
