@@ -13,7 +13,8 @@
             "user"
         ],
         "user": [
-            "assistant"
+            "assistant",
+            "user"
         ],
         "assistant": [
             "tool",
@@ -21,7 +22,8 @@
         ],
         "tool": [
             "tool",
-            "assistant"
+            "assistant",
+            "user"
         ]
     }
 }

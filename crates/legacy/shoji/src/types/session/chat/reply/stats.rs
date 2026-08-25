@@ -27,6 +27,7 @@ pub struct ChatReplyStats {
     pub prefill_tokens_per_second: Option<f64>,
     pub generate_tokens_per_second: Option<f64>,
     pub tokens_count_input: Option<u32>,
+    pub tokens_count_input_cached: Option<u32>,
     pub tokens_count_output: Option<u32>,
     pub memory_used_bytes: Option<i64>,
     pub speculator_stats: Option<ChatReplySpeculatorStats>,

@@ -456,15 +456,6 @@
                                             {
                                                 "type": "first"
                                             }
-                                        ],
-                                        "arguments": [
-                                            {
-                                                "type": "get",
-                                                "path": [
-                                                    "$value",
-                                                    "content"
-                                                ]
-                                            }
                                         ]
                                     }
                                 }
