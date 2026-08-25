@@ -6,6 +6,7 @@ use crate::{
         gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::GatedActMulKernel,
     },
+    config::clipping::ClippingBounds,
     data_type::DataType,
 };
 
@@ -36,10 +37,19 @@ bitflags! {
     }
 }
 
+/// Value transforms baked into a gated-activation kernel specialization.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GatedActMulSettings {
+    pub activation_alpha: Option<f32>,
+    pub gate_clipping: ClippingBounds,
+    pub value_clipping: ClippingBounds,
+}
+
 pub struct GatedActMul<B: Backend> {
     kernel: <B::Kernels as Kernels>::GatedActMulKernel,
     ops: GatedActMulOp,
     options: GatedActMulOptions,
+    settings: GatedActMulSettings,
     activation_group_size: u32,
     sum_group_size: u32,
 }
@@ -50,6 +60,7 @@ impl<B: Backend> GatedActMul<B> {
         data_type: DataType,
         interleaved: bool,
         use_hadamard: bool,
+        settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
         let mut options = GatedActMulOptions::empty();
         options.set(GatedActMulOptions::INTERLEAVED, interleaved);
@@ -61,6 +72,7 @@ impl<B: Backend> GatedActMul<B> {
             options,
             HADAMARD_TRANSFORM_BLOCK_SIZE,
             HADAMARD_TRANSFORM_BLOCK_SIZE,
+            settings,
         )
     }
 
@@ -69,6 +81,7 @@ impl<B: Backend> GatedActMul<B> {
         data_type: DataType,
         activation_group_size: u32,
         sum_group_size: Option<u32>,
+        settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
         let activation_group_size = GatedActMulGroupSize::from_u32(activation_group_size);
         let sum_group_size = sum_group_size.map(GatedActMulGroupSize::from_u32);
@@ -79,6 +92,7 @@ impl<B: Backend> GatedActMul<B> {
             GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD,
             activation_group_size as u32,
             sum_group_size.unwrap_or(activation_group_size) as u32,
+            settings,
         )
     }
 
@@ -89,6 +103,7 @@ impl<B: Backend> GatedActMul<B> {
         options: GatedActMulOptions,
         activation_group_size: u32,
         sum_group_size: u32,
+        settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
         let kernel = <B::Kernels as Kernels>::GatedActMulKernel::new(
             context,
@@ -98,11 +113,15 @@ impl<B: Backend> GatedActMul<B> {
             options.contains(GatedActMulOptions::HADAMARD),
             activation_group_size,
             sum_group_size,
+            settings.activation_alpha.is_some(),
+            settings.gate_clipping.into_pair().is_some(),
+            settings.value_clipping.into_pair().is_some(),
         )?;
         Ok(Self {
             kernel,
             ops,
             options,
+            settings,
             activation_group_size,
             sum_group_size,
         })
@@ -128,6 +147,8 @@ impl<B: Backend> GatedActMul<B> {
             !self.options.contains(GatedActMulOptions::HADAMARD)
                 || gated_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)
         );
+        let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping.into_pair().unzip();
+        let (value_clip_min, value_clip_max) = self.settings.value_clipping.into_pair().unzip();
         self.kernel.encode(
             act_operand,
             value_operand,
@@ -141,6 +162,11 @@ impl<B: Backend> GatedActMul<B> {
             value_offset,
             value_row_stride,
             act_type,
+            self.settings.activation_alpha,
+            gate_clip_min,
+            gate_clip_max,
+            value_clip_min,
+            value_clip_max,
             encoder,
         );
     }
@@ -166,6 +192,8 @@ impl<B: Backend> GatedActMul<B> {
         if self.ops == GatedActMulOp::QuantizeWithGroupSums {
             assert!(gated_dim.is_multiple_of(self.sum_group_size));
         }
+        let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping.into_pair().unzip();
+        let (value_clip_min, value_clip_max) = self.settings.value_clipping.into_pair().unzip();
         self.kernel.encode(
             act_operand,
             None::<&Allocation<B>>,
@@ -179,6 +207,11 @@ impl<B: Backend> GatedActMul<B> {
             0,
             0,
             act_type,
+            self.settings.activation_alpha,
+            gate_clip_min,
+            gate_clip_max,
+            value_clip_min,
+            value_clip_max,
             encoder,
         );
     }
