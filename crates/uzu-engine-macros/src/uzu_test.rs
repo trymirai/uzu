@@ -30,10 +30,10 @@ pub fn uzu_test(
 
         #[test_case]
         #[allow(non_upper_case_globals)]
-        const #const_name: crate::__uzu_test_harness::UzuTest =
-            crate::__uzu_test_harness::UzuTest::Test(&crate::__uzu_test_harness::test::TestDescAndFn {
-                desc: crate::__uzu_test_harness::test::TestDesc {
-                    name: crate::__uzu_test_harness::test::StaticTestName(concat!(
+        const #const_name: crate::tests::harness::UzuTest =
+            crate::tests::harness::UzuTest::Test(&crate::tests::harness::test::TestDescAndFn {
+                desc: crate::tests::harness::test::TestDesc {
+                    name: crate::tests::harness::test::StaticTestName(concat!(
                         module_path!(),
                         "::",
                         stringify!(#name),
@@ -45,13 +45,13 @@ pub fn uzu_test(
                     start_col: column!() as usize,
                     end_line: line!() as usize,
                     end_col: column!() as usize,
-                    should_panic: crate::__uzu_test_harness::test::ShouldPanic::No,
+                    should_panic: crate::tests::harness::test::ShouldPanic::No,
                     compile_fail: false,
                     no_run: false,
-                    test_type: crate::__uzu_test_harness::test::TestType::Unknown,
+                    test_type: crate::tests::harness::test::TestType::Unknown,
                 },
-                testfn: crate::__uzu_test_harness::test::StaticTestFn(|| {
-                    crate::__uzu_test_harness::test::assert_test_result(#name())
+                testfn: crate::tests::harness::test::StaticTestFn(|| {
+                    crate::tests::harness::test::assert_test_result(#name())
                 }),
             });
     }
@@ -72,7 +72,7 @@ pub fn uzu_bench(
 
         #[test_case]
         #[allow(non_upper_case_globals)]
-        const #const_name: crate::__uzu_test_harness::UzuTest = crate::__uzu_test_harness::UzuTest::Bench(&|| {
+        const #const_name: crate::tests::harness::UzuTest = crate::tests::harness::UzuTest::Bench(&|| {
             let mut criterion = ::criterion::Criterion::default().configure_from_args();
             #name(&mut criterion);
         });

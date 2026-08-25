@@ -1,10 +1,6 @@
 #![cfg_attr(test, feature(custom_test_frameworks, test))]
-#![cfg_attr(test, test_runner(crate::__uzu_test_harness::uzu_harness))]
+#![cfg_attr(test, test_runner(crate::tests::harness::uzu_harness))]
 #![cfg_attr(target_family = "wasm", feature(wasi_ext))]
-
-#[cfg(test)]
-#[path = "../unit/harness.rs"]
-mod __uzu_test_harness;
 
 mod array;
 mod config;
