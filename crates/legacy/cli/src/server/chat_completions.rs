@@ -19,7 +19,7 @@ use rocket::{
     serde::json::Json,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 use uzu::{
@@ -220,7 +220,7 @@ pub enum ChatCompletionResult {
     // The single JSON body arrives as a stream: Rocket only surfaces a client
     // disconnect by dropping the body stream, which is the blocking path's one
     // signal to cancel a generation nobody is waiting for.
-    Json(ByteStream<Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>>),
+    Json(Status, ByteStream<Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>>),
     Stream(EventStream<Pin<Box<dyn Stream<Item = Event> + Send>>>),
     Error(status::Custom<Json<OaiErrorResponse>>),
 }
@@ -231,7 +231,11 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
         request: &'r Request<'_>,
     ) -> rocket::response::Result<'r> {
         match self {
-            ChatCompletionResult::Json(body) => (ContentType::JSON, body).respond_to(request),
+            ChatCompletionResult::Json(status, body) => {
+                let mut response = (ContentType::JSON, body).respond_to(request)?;
+                response.set_status(status);
+                Ok(response)
+            },
             ChatCompletionResult::Stream(stream) => stream.respond_to(request),
             ChatCompletionResult::Error(error) => error.respond_to(request),
         }
@@ -719,6 +723,7 @@ async fn run_blocking(
     prefix_cache: bool,
     parameter_types: ToolParameterTypes,
     sender: mpsc::UnboundedSender<Vec<u8>>,
+    status_sender: oneshot::Sender<Status>,
     log: RequestLog,
 ) {
     // A blocking response writes nothing until generation finishes, and Rocket
@@ -747,6 +752,7 @@ async fn run_blocking(
         Ok(input) => input,
         Err(error) => {
             log.fail(&error.to_string());
+            let _ = status_sender.send(Status::InternalServerError);
             send_response(&sender, &error_response(id, model, created, &error.to_string()));
             return;
         },
@@ -757,6 +763,7 @@ async fn run_blocking(
     // notices a disconnect mid-generation. Cancelling stops the backend at the
     // next token boundary and lets the session run its cancelled-turn cleanup.
     let stream = session.reply_with_stream(input, config).await;
+    let mut status_sender = Some(status_sender);
     let mut final_replies = Vec::new();
     loop {
         let chunk = tokio::select! {
@@ -777,15 +784,27 @@ async fn run_blocking(
         match chunk {
             ChatSessionStreamChunk::Replies {
                 replies,
-            } => final_replies = replies,
+            } => {
+                if let Some(status_sender) = status_sender.take() {
+                    let _ = status_sender.send(Status::Ok);
+                }
+                final_replies = replies;
+            },
             ChatSessionStreamChunk::Error {
                 error,
             } => {
                 log.fail(&error.to_string());
+                if let Some(status_sender) = status_sender.take() {
+                    let _ = status_sender.send(Status::BadRequest);
+                }
                 send_response(&sender, &error_response(id, model, created, &error.to_string()));
                 return;
             },
         }
+    }
+
+    if let Some(status_sender) = status_sender.take() {
+        let _ = status_sender.send(Status::InternalServerError);
     }
 
     let response = match final_replies.last() {
@@ -1212,6 +1231,7 @@ pub async fn handle_chat_completions(
     } else {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (status_sender, status_receiver) = oneshot::channel();
         rocket::tokio::spawn(run_blocking(
             session,
             messages,
@@ -1222,10 +1242,12 @@ pub async fn handle_chat_completions(
             state.prefix_cache,
             parameter_types,
             sender,
+            status_sender,
             log,
         ));
+        let status = status_receiver.await.unwrap_or(Status::InternalServerError);
         let body: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
-        ChatCompletionResult::Json(ByteStream::from(body))
+        ChatCompletionResult::Json(status, ByteStream::from(body))
     }
 }
 

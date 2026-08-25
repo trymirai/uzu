@@ -81,7 +81,7 @@ fn response_format_validation_errors_are_request_errors() {
     let error = ResponseFormatError::GrammarUnsupported;
     match invalid_request_response("response_format", error.code(), error.message()) {
         ChatCompletionResult::Error(_) => {},
-        ChatCompletionResult::Json(_) | ChatCompletionResult::Stream(_) => {
+        ChatCompletionResult::Json(_, _) | ChatCompletionResult::Stream(_) => {
             panic!("response_format validation errors should be request errors")
         },
     }
