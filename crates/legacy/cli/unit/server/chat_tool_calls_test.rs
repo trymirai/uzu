@@ -171,6 +171,7 @@ fn json_candidate_announces_name_once_it_is_complete() {
             json: r#"{"path":"/tmp/a"}"#.to_string(),
         },
     };
+
     let finish = serde_json::to_value(streamer.finish(1, &call)).expect("serializable final delta");
     assert_eq!(
         finish,
