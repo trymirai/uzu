@@ -347,9 +347,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 node.logprob,
             );
             for &child_index in &node.child_indices {
+                // Grammar-illegal proposals are dropped; nothing may be proposed
+                // past termination either, since only stop tokens can follow.
                 #[cfg(grammar)]
                 if let Some(grammar) = grammar.as_mut()
-                    && grammar.accept_token(nodes[child_index].token_id as u64).is_err()
+                    && (grammar.is_terminated() || grammar.accept_token(nodes[child_index].token_id as u64).is_err())
                 {
                     continue;
                 }
