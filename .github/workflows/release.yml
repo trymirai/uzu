@@ -251,10 +251,10 @@ jobs:
 
       # ---------------------------------------------------------------
       # Commit + tag locally now, while the workspace only contains
-      # sync/build output. Publishes below write credential files and
-      # clone other repos into the workspace, which would otherwise be
-      # swept into `git add -A`. The push happens at the very end,
-      # after every publish step has succeeded.
+      # sync/build output. Publishes below write credential files into
+      # the workspace, which would otherwise be swept into `git add -A`.
+      # The push happens at the very end, after every publish step has
+      # succeeded.
       # ---------------------------------------------------------------
       - name: "Release: Commit and tag"
         run: |
@@ -322,51 +322,6 @@ jobs:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
           uv publish workspace/release/python-pypi/*.whl
-
-      # ---------------------------------------------------------------
-      # Publish Docs
-      # ---------------------------------------------------------------
-      - name: "Publish Docs: Generate GitHub App token"
-        id: docs-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: trymirai
-          repositories: docs
-
-      - name: "Publish Docs: Checkout repo"
-        uses: actions/checkout@v6
-        with:
-          repository: trymirai/docs
-          ref: main
-          token: ${{ steps.docs-token.outputs.token }}
-          path: docs-repo
-          persist-credentials: false
-
-      - name: "Publish Docs: Sync"
-        run: |
-          set -euo pipefail
-          rsync -a --delete \
-            --exclude '.git' --exclude '.git/*' \
-            workspace/release/docs/ docs-repo/snippets/generated/
-
-      - name: "Publish Docs: Commit and push changes"
-        env:
-          GH_TOKEN: ${{ steps.docs-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          cd docs-repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --staged --quiet; then
-            echo "No docs changes to commit"
-          else
-            git commit -m "Release ${VERSION}"
-            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/trymirai/docs.git"
-            git push origin HEAD:main
-          fi
 
       # ---------------------------------------------------------------
       # Push the release commit and tag now that every publish has

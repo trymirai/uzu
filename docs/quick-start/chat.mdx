@@ -1,0 +1,43 @@
+---
+title: "Chat"
+---
+
+import StepsPython from '/snippets/quick-start/python-steps.mdx';
+import StepsSwift from '/snippets/quick-start/swift-steps.mdx';
+import StepsTypeScript from '/snippets/quick-start/typescript-steps.mdx';
+import StepsRust from '/snippets/quick-start/rust-steps.mdx';
+import CodePython from '/snippets/generated/examples/python/chat.mdx';
+import CodeSwift from '/snippets/generated/examples/swift/chat.mdx';
+import CodeTypeScript from '/snippets/generated/examples/typescript/chat.mdx';
+import CodeRust from '/snippets/generated/examples/rust/chat.mdx';
+
+<Tip>
+  In this example, we will download a model and get a reply to a specific list of messages.
+</Tip>
+
+<Tabs>
+  <Tab title="Python">
+    <Steps>
+        <StepsPython/>
+    </Steps>
+  </Tab>
+  <Tab title="Swift">
+    <Steps>
+        <StepsSwift/>
+    </Steps>
+  </Tab>
+  <Tab title="TypeScript">
+    <Steps>
+        <StepsTypeScript/>
+    </Steps>
+  </Tab>
+  <Tab title="Rust">
+    <Steps>
+        <StepsRust/>
+    </Steps>
+  </Tab>
+</Tabs>
+
+<Info>
+  Once loaded, the same `ChatSession` can be reused for multiple requests until you drop it. Each model may consume a significant amount of RAM, so it's important to keep only one session loaded at a time. For iOS apps, we recommend adding the [Increased Memory Capability](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.kernel.increased-memory-limit) entitlement to ensure your app can allocate the required memory.
+</Info>

@@ -24,7 +24,6 @@ use crate::{
             stream::{LanguageModelStreamError, LanguageModelStreamOptions},
         },
     },
-    speculators::dflash_tfm::{DFlashTfmTreeConstructionMethod, DFlashTfmTreeShape},
     trie::TrieNode,
 };
 
@@ -547,15 +546,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             None
         };
 
-        let full_batch_size = 16;
-        let speculation_batch = self
-            .model_state
-            .max_context_length
-            .map_or(full_batch_size, |max_context_length| full_batch_size.min(max_context_length - context_length));
-
         let mut pending = Vec::new();
-        let (input_trie, chain_copy, full_accept) = if speculation_batch > 1
-            && let Some(speculator) = &self.model.speculator
+        let (input_trie, chain_copy, full_accept) = if let Some(speculator) = &self.model.speculator
+            && let Some(shape) = speculator.make_shape(
+                self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
+            )
             && let (root_token, Some(output_norm)) = prev_output.resolve(
                 &mut self.model_state.tokens,
                 #[cfg(grammar)]
@@ -569,20 +564,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 output_norm,
                 root_token as u32,
                 self.model.decoder.embedding(),
-                DFlashTfmTreeShape {
-                    tree_budget: speculation_batch,
-                    max_tree_depth: 16,
-                    dflash_depth_override: None,
-                    construction_method: if speculator.has_weaver() {
-                        DFlashTfmTreeConstructionMethod::Weaver {
-                            rounds: 16,
-                            expand_per_round: 4,
-                            expand_width: 4,
-                        }
-                    } else {
-                        DFlashTfmTreeConstructionMethod::Argmax
-                    },
-                },
+                shape,
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),
                 &self.model_state.prng,

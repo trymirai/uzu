@@ -42,6 +42,12 @@ enum Commands {
         port: u16,
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
+        /// Reuse the previous request's state when the new prompt extends it (enabled by default).
+        #[arg(long = "prefix-cache", action = clap::ArgAction::SetTrue, conflicts_with = "no_prefix_cache")]
+        prefix_cache: bool,
+        /// Reset the session on every request, disabling prefix cache reuse.
+        #[arg(long = "no-prefix-cache", action = clap::ArgAction::SetTrue)]
+        no_prefix_cache: bool,
     },
     Storage {
         #[arg(long, value_enum, default_value_t = storage::DownloadManagerCliType::default())]
@@ -67,7 +73,9 @@ async fn main() -> Result<()> {
             model,
             port,
             host,
-        }) => server::run_server(model, host, port).await?,
+            prefix_cache,
+            no_prefix_cache,
+        }) => server::run_server(model, host, port, prefix_cache || !no_prefix_cache).await?,
         Some(Commands::Storage {
             download_manager,
         }) => storage::run(download_manager).await?,
