@@ -19,7 +19,7 @@ use rocket::{
     serde::json::Json,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 use uzu::{
@@ -756,7 +756,6 @@ async fn run_blocking(
     prefix_cache: bool,
     parameter_types: ToolParameterTypes,
     sender: mpsc::UnboundedSender<Vec<u8>>,
-    status_sender: oneshot::Sender<Status>,
     log: RequestLog,
 ) {
     // A blocking response writes nothing until generation finishes, and Rocket
@@ -785,7 +784,6 @@ async fn run_blocking(
         Ok(input) => input,
         Err(error) => {
             log.fail(&error.to_string());
-            let _ = status_sender.send(Status::InternalServerError);
             send_error_body(&sender, &oai_error_body(Status::InternalServerError, "backend_error", &error.to_string()));
             return;
         },
@@ -796,7 +794,6 @@ async fn run_blocking(
     // notices a disconnect mid-generation. Cancelling stops the backend at the
     // next token boundary and lets the session run its cancelled-turn cleanup.
     let stream = session.reply_with_stream(input, config).await;
-    let mut status_sender = Some(status_sender);
     let mut final_replies = Vec::new();
     loop {
         let chunk = tokio::select! {
@@ -818,26 +815,16 @@ async fn run_blocking(
             ChatSessionStreamChunk::Replies {
                 replies,
             } => {
-                if let Some(status_sender) = status_sender.take() {
-                    let _ = status_sender.send(Status::Ok);
-                }
                 final_replies = replies;
             },
             ChatSessionStreamChunk::Error {
                 error,
             } => {
                 log.fail(&error.to_string());
-                if let Some(status_sender) = status_sender.take() {
-                    let _ = status_sender.send(Status::BadRequest);
-                }
                 send_error_body(&sender, &oai_error_body(Status::BadRequest, "backend_error", &error.to_string()));
                 return;
             },
         }
-    }
-
-    if let Some(status_sender) = status_sender.take() {
-        let _ = status_sender.send(Status::InternalServerError);
     }
 
     let Some(reply) = final_replies.last() else {
@@ -1245,7 +1232,6 @@ pub async fn handle_chat_completions(
     } else {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Vec<u8>>();
-        let (status_sender, status_receiver) = oneshot::channel();
         rocket::tokio::spawn(run_blocking(
             session,
             messages,
@@ -1256,12 +1242,13 @@ pub async fn handle_chat_completions(
             state.prefix_cache,
             parameter_types,
             sender,
-            status_sender,
             log,
         ));
-        let status = status_receiver.await.unwrap_or(Status::InternalServerError);
         let body: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
-        ChatCompletionResult::Json(status, ByteStream::from(body))
+        // Hand the body to Rocket immediately so it can write keepalives and
+        // drop the receiver when the client disconnects. Any backend error
+        // occurs after the 200 response is committed and is sent in the body.
+        ChatCompletionResult::Json(Status::Ok, ByteStream::from(body))
     }
 }
 
