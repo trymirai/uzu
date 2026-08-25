@@ -67,6 +67,8 @@ impl<B: Backend> dyn Mlp<B> {
                     context,
                     data_type,
                     dense_config.activation.clone(),
+                    dense_config.gate_clipping,
+                    dense_config.up_clipping,
                     hidden_dimension,
                     down_input_preparation,
                 )

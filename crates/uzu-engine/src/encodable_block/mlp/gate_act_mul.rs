@@ -4,11 +4,11 @@ use crate::{
         Allocation, Backend, Encoder,
         gpu_types::ActivationType,
         kernel::{
-            GatedActMul,
+            GatedActMul, GatedActMulSettings,
             matmul::{A8ActivationPlan, ActivationFormat},
         },
     },
-    config::activation::AnyActivation,
+    config::{activation::AnyActivation, clipping::ClippingBounds},
     data_type::DataType,
     encodable_block::linear::{LinearInput, LinearInputPreparation},
 };
@@ -28,14 +28,23 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         context: &B::Context,
         data_type: DataType,
         activation: AnyActivation,
+        gate_clipping: ClippingBounds,
+        value_clipping: ClippingBounds,
         hidden_dim: u32,
         input_preparation: Option<LinearInputPreparation<B>>,
     ) -> Result<Self, B::Error> {
         let (hadamard_factors, a8_plan) = input_preparation
             .map_or((None, None), |preparation| (Some(preparation.input_factors), preparation.a8_plan));
-        let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some())?;
+        let settings = GatedActMulSettings {
+            activation_alpha: activation.custom_alpha(),
+            gate_clipping,
+            value_clipping,
+        };
+        let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some(), settings)?;
         let quantized_kernel = a8_plan
-            .map(|plan| GatedActMul::quantized(context, data_type, plan.activation_group_size, plan.sum_group_size))
+            .map(|plan| {
+                GatedActMul::quantized(context, data_type, plan.activation_group_size, plan.sum_group_size, settings)
+            })
             .transpose()?;
         Ok(Self {
             fp_kernel,

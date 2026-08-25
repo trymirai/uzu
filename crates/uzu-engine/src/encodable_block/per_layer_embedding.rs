@@ -4,7 +4,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        kernel::{GatedActMul, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
+        kernel::{GatedActMul, GatedActMulSettings, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
     },
     config::{
         activation::AnyActivation,
@@ -196,7 +196,12 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             context,
         )?;
 
-        let gate_act_mul = GatedActMul::full_precision(context, data_type, false, false)
+        let activation_alpha = config.activation.alpha();
+        let settings = GatedActMulSettings {
+            activation_alpha: (activation_alpha != 1.0).then_some(activation_alpha),
+            ..Default::default()
+        };
+        let gate_act_mul = GatedActMul::full_precision(context, data_type, false, false, settings)
             .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_finalize = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true)
             .map_err(PerLayerEmbeddingError::BackendError)?;
