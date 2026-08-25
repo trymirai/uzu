@@ -9,7 +9,7 @@ pub mod matmul;
 pub mod radix_top_k_small;
 
 pub use activation_transform::ActivationTransform;
-pub use gated_act_mul::GatedActMul;
+pub use gated_act_mul::{GatedActMul, GatedActMulSettings};
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 

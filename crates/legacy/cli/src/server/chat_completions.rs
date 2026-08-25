@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     pin::Pin,
     str::FromStr,
     sync::Arc,
@@ -7,6 +8,7 @@ use std::{
 
 use rocket::{
     Request, State,
+    data::{ByteUnit, Data},
     futures::Stream,
     http::Status,
     post,
@@ -21,10 +23,12 @@ use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 use uzu::{
-    session::chat::{ChatSession, ChatSessionStreamChunk},
+    session::chat::{ChatSession, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
     types::{
         basic::{Grammar, ReasoningEffort, SamplingMethod},
-        session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
+        session::chat::{
+            ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole,
+        },
     },
 };
 
@@ -33,16 +37,45 @@ use crate::{
     server::{
         ServerState,
         chat_tool_calls::{
-            OaiTool, OaiToolCall, backfill_tool_result_names, choose_tools, insert_tools_message, reply_tool_calls,
-            to_tool_call, tool_call_deltas, tool_call_result_block, withhold_stream_text,
+            OaiTool, OaiToolCall, ToolCallStreamer, backfill_tool_result_names, choose_tools, insert_tools_message,
+            oai_tool_call, reply_tool_calls, to_tool_call, tool_call_result_block, withhold_stream_text,
         },
+        request_log::RequestLog,
     },
 };
+
+fn deserialize_message_content<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<serde_json::Value>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(serde_json::Value::String(text)) => Ok(Some(text)),
+        Some(serde_json::Value::Array(parts)) => {
+            let mut text = String::new();
+            for part in &parts {
+                match part.get("type").and_then(serde_json::Value::as_str) {
+                    Some("text") => {
+                        text.push_str(part.get("text").and_then(serde_json::Value::as_str).unwrap_or_default());
+                    },
+                    Some(other) => {
+                        return Err(serde::de::Error::custom(format!(
+                            "unsupported message content part type: {other}"
+                        )));
+                    },
+                    None => return Err(serde::de::Error::custom("message content part is missing a type")),
+                }
+            }
+            Ok(Some(text))
+        },
+        Some(_) => Err(serde::de::Error::custom("message content must be a string or an array of content parts")),
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OaiMessage {
     pub role: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_message_content")]
     pub content: Option<String>,
     // vLLM-style reasoning channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -112,11 +145,18 @@ pub struct ChatCompletionChoice {
     pub finish_reason: String,
 }
 
+#[derive(Serialize, Clone)]
+pub struct ChatCompletionPromptTokensDetails {
+    pub cached_tokens: u32,
+}
+
 #[derive(Serialize, Clone, Default)]
 pub struct ChatCompletionUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<ChatCompletionPromptTokensDetails>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spec_verify_ct: Option<u32>,
 }
@@ -137,6 +177,8 @@ struct StreamDelta {
     role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OaiToolCall>>,
 }
@@ -202,6 +244,12 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
         .map(|message| {
             let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
             let mut chat_message = ChatMessage::for_role(role);
+            // Block order matches how the session stores generated replies
+            // (reasoning, then text, then tool calls) so a client that echoes
+            // reasoning back keeps the message prefix intact.
+            if let Some(reasoning) = message.reasoning_content.as_ref().filter(|reasoning| !reasoning.is_empty()) {
+                chat_message = chat_message.with_reasoning(reasoning.clone());
+            }
             if let Some(identifier) = &message.tool_call_id {
                 let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
                 chat_message = chat_message.with_block(result);
@@ -354,8 +402,15 @@ pub(crate) fn build_messages(
     if let Some((effort, source)) = requested_reasoning_effort(request)? {
         let fulfilled = thinking_support.fulfill_requested_effort(effort).map_err(|detail| source.error(detail))?;
         if let Some(effort) = fulfilled {
-            // The engine reads the effort from a reasoning_effort block carried on a system message.
-            messages.insert(0, ChatMessage::system().with_reasoning_effort(effort));
+            // The engine reads the effort from a reasoning_effort block carried on a system
+            // message. Merge into a leading system message when the client sent one:
+            // templates reject two system messages in a row.
+            match messages.first_mut() {
+                Some(first) if first.role == (ChatRole::System {}) => {
+                    *first = first.clone().with_reasoning_effort(effort);
+                },
+                _ => messages.insert(0, ChatMessage::system().with_reasoning_effort(effort)),
+            }
         }
     }
     backfill_tool_result_names(&mut messages);
@@ -480,13 +535,21 @@ fn map_finish_reason(finish_reason: &ChatReplyFinishReason) -> String {
     .to_string()
 }
 
-fn usage_from_stats(stats: &ChatReplyStats) -> ChatCompletionUsage {
-    let prompt_tokens = stats.tokens_count_input.unwrap_or(0);
+fn usage_from_stats(
+    stats: &ChatReplyStats,
+    prefix_cache: bool,
+) -> ChatCompletionUsage {
+    let cached_tokens = stats.tokens_count_input_cached.unwrap_or(0);
+    let prefilled_tokens = stats.tokens_count_input.unwrap_or(0);
+    let prompt_tokens = prefilled_tokens + cached_tokens;
     let completion_tokens = stats.tokens_count_output.unwrap_or(0);
     ChatCompletionUsage {
         prompt_tokens,
         completion_tokens,
         total_tokens: prompt_tokens + completion_tokens,
+        prompt_tokens_details: prefix_cache.then_some(ChatCompletionPromptTokensDetails {
+            cached_tokens,
+        }),
         spec_verify_ct: stats
             .speculator_stats
             .as_ref()
@@ -543,6 +606,57 @@ fn chunk_json(
     serde_json::to_string(&chunk).unwrap_or_default()
 }
 
+/// Tool call identifiers are assigned per turn and never rendered into tokens, so they are
+/// excluded from the comparison; everything else about the messages must match.
+fn messages_have_prefix(
+    messages: &[ChatMessage],
+    prefix: &[ChatMessage],
+) -> bool {
+    prefix.len() <= messages.len()
+        && prefix.iter().zip(messages).all(|(prefix_message, message)| {
+            prefix_message.role == message.role
+                && prefix_message.metadata == message.metadata
+                && prefix_message.content.len() == message.content.len()
+                && prefix_message.content.iter().zip(&message.content).all(|(prefix_block, block)| {
+                    match (prefix_block, block) {
+                        (
+                            ChatContentBlock::ToolCall {
+                                value: prefix_call,
+                            },
+                            ChatContentBlock::ToolCall {
+                                value: call,
+                            },
+                        ) => {
+                            let (mut prefix_call, mut call) = (prefix_call.clone(), call.clone());
+                            prefix_call.identifier = None;
+                            call.identifier = None;
+                            prefix_call == call
+                        },
+                        _ => prefix_block == block,
+                    }
+                })
+        })
+}
+
+/// Returns only the messages the session has not seen yet when the request
+/// extends the session's current history; otherwise resets the session and
+/// returns the full list. Token-level reuse itself is decided inside the
+/// session, which falls back to a full prefill if the rendered tokens diverge.
+async fn prepare_input(
+    session: &ChatSession,
+    mut messages: Vec<ChatMessage>,
+    prefix_cache: bool,
+) -> Result<Vec<ChatMessage>, uzu::session::chat::ChatSessionError> {
+    if prefix_cache {
+        let current = session.messages().await;
+        if !current.is_empty() && messages.len() > current.len() && messages_have_prefix(&messages, &current) {
+            return Ok(messages.split_off(current.len()));
+        }
+    }
+    session.reset().await?;
+    Ok(messages)
+}
+
 async fn run_blocking(
     session: Arc<Mutex<ChatSession>>,
     messages: Vec<ChatMessage>,
@@ -550,13 +664,19 @@ async fn run_blocking(
     id: String,
     model: String,
     created: i64,
+    prefix_cache: bool,
+    log: RequestLog,
 ) -> ChatCompletionResponse {
     let session = session.lock().await;
-    if let Err(error) = session.reset().await {
-        return error_response(id, model, created, &error.to_string());
-    }
+    let input = match prepare_input(&session, messages, prefix_cache).await {
+        Ok(input) => input,
+        Err(error) => {
+            log.fail(&error.to_string());
+            return error_response(id, model, created, &error.to_string());
+        },
+    };
 
-    match session.reply(messages, config).await {
+    match session.reply(input, config).await {
         Ok(replies) => match replies.last() {
             Some(reply) => {
                 let tool_calls = reply_tool_calls(&reply.message);
@@ -564,11 +684,32 @@ async fn run_blocking(
                 let content = reply.message.text().or_else(|| tool_calls.is_none().then(String::new));
                 let mut finish_reason =
                     reply.finish_reason.as_ref().map(map_finish_reason).unwrap_or_else(|| "stop".to_string());
-                // A call the parser could not finalize yields ToolCalls with nothing to execute.
-                // Clients would stall on an absent tool_calls array, so report stop.
-                if tool_calls.is_none() && finish_reason == "tool_calls" {
-                    finish_reason = "stop".to_string();
+                // Calls the parser could not finalize must not execute as a partial batch.
+                // OpenAI has no finish reason for this; providers signal terminal errors with
+                // unrecognized reasons (pi maps them to a thrown provider error), so the turn
+                // fails loudly instead of stalling on an absent or incomplete tool_calls array.
+                let has_unfinished_candidates = reply
+                    .message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
+                if finish_reason == "tool_calls" && (tool_calls.is_none() || has_unfinished_candidates) {
+                    finish_reason = "malformed_tool_call".to_string();
                 }
+                let wrapped_arguments = reply
+                    .message
+                    .tool_calls()
+                    .iter()
+                    .filter(|call| call.arguments.json.contains(UNPARSED_ARGUMENTS_KEY))
+                    .count();
+                let mut notes = Vec::new();
+                if has_unfinished_candidates {
+                    notes.push("model generated unfinished tool call(s)".to_string());
+                }
+                if wrapped_arguments > 0 {
+                    notes.push(format!("{wrapped_arguments} tool call(s) with unparseable arguments"));
+                }
+                log.finish(&finish_reason, Some(&reply.stats), notes);
                 ChatCompletionResponse {
                     id,
                     object: "chat.completion".to_string(),
@@ -585,12 +726,18 @@ async fn run_blocking(
                         },
                         finish_reason,
                     }],
-                    usage: usage_from_stats(&reply.stats),
+                    usage: usage_from_stats(&reply.stats, prefix_cache),
                 }
             },
-            None => error_response(id, model, created, "No response generated"),
+            None => {
+                log.fail("no response generated");
+                error_response(id, model, created, "No response generated")
+            },
         },
-        Err(error) => error_response(id, model, created, &error.to_string()),
+        Err(error) => {
+            log.fail(&error.to_string());
+            error_response(id, model, created, &error.to_string())
+        },
     }
 }
 
@@ -601,24 +748,31 @@ async fn run_stream(
     id: String,
     model: String,
     created: i64,
+    prefix_cache: bool,
     sender: mpsc::UnboundedSender<Event>,
+    log: RequestLog,
 ) {
     let session = session.lock().await;
-    if let Err(error) = session.reset().await {
-        let _ = sender.send(Event::data(chunk_json(
-            &id,
-            &model,
-            created,
-            StreamDelta {
-                content: Some(format!("Error: {error}")),
-                ..StreamDelta::default()
-            },
-            Some("stop".to_string()),
-            None,
-        )));
-        let _ = sender.send(Event::data("[DONE]"));
-        return;
-    }
+    let has_tools = messages.iter().any(|message| !message.tool_namespaces().is_empty());
+    let input = match prepare_input(&session, messages, prefix_cache).await {
+        Ok(input) => input,
+        Err(error) => {
+            log.fail(&error.to_string());
+            let _ = sender.send(Event::data(chunk_json(
+                &id,
+                &model,
+                created,
+                StreamDelta {
+                    content: Some(format!("Error: {error}")),
+                    ..StreamDelta::default()
+                },
+                Some("stop".to_string()),
+                None,
+            )));
+            let _ = sender.send(Event::data("[DONE]"));
+            return;
+        },
+    };
 
     let _ = sender.send(Event::data(chunk_json(
         &id,
@@ -632,16 +786,36 @@ async fn run_stream(
         None,
     )));
 
-    let has_tools = messages.iter().any(|message| !message.tool_namespaces().is_empty());
-    let stream = session.reply_with_stream(messages, config).await;
+    let stream = session.reply_with_stream(input, config).await;
+    let cancel_token = stream.cancel_token();
     let mut emitted = 0usize;
+    let mut emitted_reasoning = 0usize;
     let mut emitted_tool_calls = 0usize;
+    let mut tool_call_streamers: HashMap<usize, ToolCallStreamer> = HashMap::new();
     let mut final_text = String::new();
     let mut finish_reason = "stop".to_string();
-    let mut usage = ChatCompletionUsage::default();
+    let mut final_stats: Option<ChatReplyStats> = None;
+    let mut final_had_candidates = false;
+    let mut wrapped_arguments = 0usize;
     let mut errored = false;
 
-    while let Some(chunk) = stream.next().await {
+    loop {
+        // Rocket drops the SSE receiver as soon as the connection dies, so racing each chunk
+        // against the channel closing notices a disconnect even while generation is still in
+        // prefill and no chunk is on its way. Cancelling stops the backend at the next token
+        // boundary and lets the session run its cancelled-turn history cleanup.
+        let chunk = tokio::select! {
+            chunk = stream.next() => chunk,
+            () = sender.closed() => {
+                cancel_token.cancel();
+                cancel_token.cancel();
+                log.fail("client disconnected");
+                return;
+            },
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
         match chunk {
             ChatSessionStreamChunk::Replies {
                 replies,
@@ -649,6 +823,30 @@ async fn run_stream(
                 let Some(reply) = replies.last() else {
                     continue;
                 };
+                let reasoning = reply.message.reasoning().unwrap_or_default();
+                let reasoning_start = (emitted_reasoning..=reasoning.len())
+                    .find(|&index| reasoning.is_char_boundary(index))
+                    .unwrap_or(reasoning.len());
+                if reasoning.len() > reasoning_start {
+                    let delta = reasoning[reasoning_start..].to_string();
+                    emitted_reasoning = reasoning.len();
+                    let sent = sender.send(Event::data(chunk_json(
+                        &id,
+                        &model,
+                        created,
+                        StreamDelta {
+                            reasoning_content: Some(delta),
+                            ..StreamDelta::default()
+                        },
+                        None,
+                        None,
+                    )));
+                    if sent.is_err() {
+                        cancel_token.cancel();
+                        log.fail("client disconnected");
+                        return;
+                    }
+                }
                 let text = reply.message.text().unwrap_or_default();
                 let start = (emitted..=text.len()).find(|&index| text.is_char_boundary(index)).unwrap_or(text.len());
                 if !withhold_stream_text(has_tools, &text) && text.len() > start {
@@ -666,26 +864,72 @@ async fn run_stream(
                         None,
                     )));
                     if sent.is_err() {
+                        cancel_token.cancel();
+                        log.fail("client disconnected");
                         return;
                     }
                 }
 
+                let finished_count = reply.message.tool_calls().len();
+                let candidates = reply.message.content.iter().filter_map(|block| match block {
+                    ChatContentBlock::ToolCallCandidate {
+                        value,
+                    } => Some(value),
+                    _ => None,
+                });
+                for (offset, value) in candidates.enumerate() {
+                    let index = finished_count + offset;
+                    // candidates carry their partial text as a JSON string document, except
+                    // object-valued ones (e.g. muse-glimmer's name-only progress objects)
+                    let raw = serde_json::from_str::<String>(&value.json).unwrap_or_else(|_| value.json.clone());
+                    let deltas =
+                        tool_call_streamers.entry(index).or_insert_with(ToolCallStreamer::new).update(index, &raw);
+                    for delta in deltas {
+                        let sent = sender.send(Event::data(chunk_json(
+                            &id,
+                            &model,
+                            created,
+                            StreamDelta {
+                                tool_calls: Some(vec![delta]),
+                                ..StreamDelta::default()
+                            },
+                            None,
+                            None,
+                        )));
+                        if sent.is_err() {
+                            cancel_token.cancel();
+                            log.fail("client disconnected");
+                            return;
+                        }
+                    }
+                }
+
                 let tool_calls = reply.message.tool_calls();
-                if tool_calls.len() > emitted_tool_calls {
-                    let delta = tool_call_deltas(&tool_calls, emitted_tool_calls);
-                    emitted_tool_calls = tool_calls.len();
+                while emitted_tool_calls < tool_calls.len() {
+                    let index = emitted_tool_calls;
+                    emitted_tool_calls += 1;
+                    let call = &tool_calls[index];
+                    if call.arguments.json.contains(UNPARSED_ARGUMENTS_KEY) {
+                        wrapped_arguments += 1;
+                    }
+                    let delta = match tool_call_streamers.remove(&index) {
+                        Some(mut streamer) => streamer.finish(index, call),
+                        None => oai_tool_call(Some(index), call),
+                    };
                     let sent = sender.send(Event::data(chunk_json(
                         &id,
                         &model,
                         created,
                         StreamDelta {
-                            tool_calls: Some(delta),
+                            tool_calls: Some(vec![delta]),
                             ..StreamDelta::default()
                         },
                         None,
                         None,
                     )));
                     if sent.is_err() {
+                        cancel_token.cancel();
+                        log.fail("client disconnected");
                         return;
                     }
                 }
@@ -693,13 +937,19 @@ async fn run_stream(
                 if let Some(reason) = &reply.finish_reason {
                     finish_reason = map_finish_reason(reason);
                 }
-                usage = usage_from_stats(&reply.stats);
+                final_stats = Some(reply.stats.clone());
                 final_text = text;
+                final_had_candidates = reply
+                    .message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
             },
             ChatSessionStreamChunk::Error {
                 error,
             } => {
                 errored = true;
+                log.fail(&error.to_string());
                 let _ = sender.send(Event::data(chunk_json(
                     &id,
                     &model,
@@ -734,14 +984,28 @@ async fn run_stream(
                 None,
             )));
             if sent.is_err() {
+                cancel_token.cancel();
+                log.fail("client disconnected");
                 return;
             }
         }
-        // Same guard as the blocking path: candidates that never finalized produce a ToolCalls finish with
-        // no emitted tool call deltas, which reads as stop.
-        if emitted_tool_calls == 0 && finish_reason == "tool_calls" {
-            finish_reason = "stop".to_string();
+        // Same guard as the blocking path: calls the parser could not finalize must not
+        // execute as a partial batch, so the turn reports a malformed tool call instead of
+        // stalling on an absent or incomplete tool_calls array.
+        if finish_reason == "tool_calls" && (emitted_tool_calls == 0 || final_had_candidates) {
+            finish_reason = "malformed_tool_call".to_string();
         }
+        let mut notes = Vec::new();
+        if final_had_candidates {
+            notes.push("model generated unfinished tool call(s)".to_string());
+        }
+        if wrapped_arguments > 0 {
+            notes.push(format!("{wrapped_arguments} tool call(s) with unparseable arguments"));
+        }
+        log.finish(&finish_reason, final_stats.as_ref(), notes);
+        let usage = final_stats
+            .as_ref()
+            .map_or_else(ChatCompletionUsage::default, |stats| usage_from_stats(stats, prefix_cache));
         let _ = sender.send(Event::data(chunk_json(
             &id,
             &model,
@@ -755,35 +1019,80 @@ async fn run_stream(
 }
 
 #[allow(private_interfaces)]
-#[post("/chat/completions", format = "json", data = "<request>")]
+#[post("/chat/completions", format = "json", data = "<body>")]
 pub async fn handle_chat_completions(
-    request: Json<ChatCompletionRequest>,
+    body: Data<'_>,
     state: &State<ServerState>,
 ) -> ChatCompletionResult {
-    let request = request.into_inner();
+    let body = match body.open(ByteUnit::Mebibyte(64)).into_string().await {
+        Ok(body) if body.is_complete() => body.into_inner(),
+        Ok(_) => {
+            return invalid_request_response("body", "request_too_large", "request body exceeds 64 MiB".to_string());
+        },
+        Err(error) => {
+            return invalid_request_response("body", "invalid_body", format!("failed to read request body: {error}"));
+        },
+    };
+    let request = match serde_json::from_str::<ChatCompletionRequest>(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            RequestLog::rejected(&format!("failed to parse chat completion request: {error}"));
+            return invalid_request_response(
+                "body",
+                "invalid_request",
+                format!("failed to parse chat completion request: {error}"),
+            );
+        },
+    };
     let id = format!("chatcmpl-{}", Uuid::new_v4().simple());
     let created = now_unix();
     let model = state.model_name.clone();
     let is_stream = request.stream.unwrap_or(false);
+    let log = RequestLog::start(
+        &id,
+        is_stream,
+        request.messages.len(),
+        request.tools.as_ref().map_or(0, Vec::len),
+        request.reasoning_effort.as_ref().and_then(serde_json::Value::as_str).or(Some("unspecified")),
+    );
 
     let config = match build_reply_config(&request) {
         Ok(config) => config,
-        Err(error) => return invalid_request_response("response_format", error.code(), error.message()),
+        Err(error) => {
+            log.fail(&error.message());
+            return invalid_request_response("response_format", error.code(), error.message());
+        },
     };
     let messages = match build_messages(&request, state.thinking_support) {
         Ok(messages) => messages,
-        Err(error) => return invalid_request_response(error.param(), error.code(), error.into_detail()),
+        Err(error) => {
+            let param = error.param();
+            let code = error.code();
+            let detail = error.into_detail();
+            log.fail(&detail);
+            return invalid_request_response(param, code, detail);
+        },
     };
 
     if is_stream {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Event>();
-        rocket::tokio::spawn(run_stream(session, messages, config, id, model, created, sender));
+        rocket::tokio::spawn(run_stream(
+            session,
+            messages,
+            config,
+            id,
+            model,
+            created,
+            state.prefix_cache,
+            sender,
+            log,
+        ));
         let body: Pin<Box<dyn Stream<Item = Event> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
         ChatCompletionResult::Stream(EventStream::from(body))
     } else {
         let session = Arc::clone(&state.session);
-        let response = run_blocking(session, messages, config, id, model, created).await;
+        let response = run_blocking(session, messages, config, id, model, created, state.prefix_cache, log).await;
         ChatCompletionResult::Json(Json(response))
     }
 }
