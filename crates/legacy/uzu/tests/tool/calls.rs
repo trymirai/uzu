@@ -129,6 +129,8 @@ async fn run_tool_calls_test(
         // the models occasionally skip a tool call, hallucinate that part of the answer, or
         // finish without any text in the final reply.
         let reply_config = ChatReplyConfig {
+            // Bound malformed generations so a missing stop token fails instead of running to the context limit.
+            token_limit: Some(256),
             sampling_policy: SamplingPolicy::Custom {
                 method: SamplingMethod::Greedy {},
             },
