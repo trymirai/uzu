@@ -157,3 +157,114 @@ fn test_token_stream_parser_muse_glimmer_tool_output_and_reply() {
         },
     );
 }
+
+mod hermetic {
+    use std::path::PathBuf;
+
+    use token_stream_parser::{
+        Parser,
+        token_stream::{TokenStreamParser, TokenStreamParserConfig},
+        types::Token,
+    };
+
+    // Fabricated tokens: the parser matches framing tokens by value, so no tokenizer is needed.
+    fn feed(
+        parser: &mut TokenStreamParser,
+        text: &str,
+        next_id: &mut u32,
+    ) {
+        const SPECIALS: [&str; 6] =
+            ["<|begin_of_text|>", "<|start|>", "<|message|>", "<|eom|>", "<|eot|>", "<|end_of_text|>"];
+        let mut rest = text;
+        while !rest.is_empty() {
+            let next = SPECIALS.iter().filter_map(|special| rest.find(special).map(|i| (i, special))).min();
+            match next {
+                Some((0, special)) => {
+                    parser
+                        .push(&Token {
+                            id: *next_id,
+                            value: special.to_string(),
+                            is_special: true,
+                        })
+                        .unwrap();
+                    *next_id += 1;
+                    rest = &rest[special.len()..];
+                },
+                Some((index, _)) => {
+                    push_text(parser, &rest[..index], next_id);
+                    rest = &rest[index..];
+                },
+                None => {
+                    push_text(parser, rest, next_id);
+                    rest = "";
+                },
+            }
+        }
+    }
+
+    fn push_text(
+        parser: &mut TokenStreamParser,
+        text: &str,
+        next_id: &mut u32,
+    ) {
+        if text.is_empty() {
+            return;
+        }
+        parser
+            .push(&Token {
+                id: *next_id,
+                value: text.to_string(),
+                is_special: false,
+            })
+            .unwrap();
+        *next_id += 1;
+    }
+
+    fn parser() -> TokenStreamParser {
+        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("hanashi")
+            .join("configs")
+            .join("parsing")
+            .join("muse-glimmer.json");
+        let config: TokenStreamParserConfig =
+            serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+        TokenStreamParser::new(config).unwrap()
+    }
+
+    #[test]
+    fn unfinished_tool_call_does_not_parse_as_finished() {
+        let mut parser = parser();
+        let mut next_id = 0;
+        feed(&mut parser, "<|start|>user<|message|>hi<|eot|><|start|>assistant", &mut next_id);
+        // stream stops mid-call, right after the markup's first char
+        feed(&mut parser, " to=bash<|message|><", &mut next_id);
+
+        let assistant = &parser.state().value[1];
+        let section = &assistant["content"][0];
+        assert_eq!(section["type"], "tool_call");
+        assert!(section["value"].get("arguments").is_none(), "an unfinished call must not expose arguments: {section}");
+    }
+
+    #[test]
+    fn closed_tool_call_parses_arguments() {
+        let mut parser = parser();
+        let mut next_id = 0;
+        feed(&mut parser, "<|start|>user<|message|>hi<|eot|><|start|>assistant", &mut next_id);
+        feed(
+            &mut parser,
+            concat!(
+                " to=bash<|message|>",
+                "<atem:function_calls>\n<atem:invoke name=\"bash\">\n",
+                "<atem:parameter name=\"command\">printenv</atem:parameter>\n",
+                "</atem:invoke>\n</atem:function_calls><|eot|>"
+            ),
+            &mut next_id,
+        );
+
+        let assistant = &parser.state().value[1];
+        let section = &assistant["content"][0];
+        assert_eq!(section["value"]["name"], "bash");
+        assert_eq!(section["value"]["arguments"]["command"], "printenv");
+    }
+}

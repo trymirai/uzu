@@ -20,7 +20,7 @@ use shoji::{
         backend::chat_message::{Output as BackendOutput, ToolCallState},
     },
     types::{
-        basic::{CancelToken, ToolCall, ToolDescription, ToolNamespace, Value},
+        basic::{CancelToken, ToolCall, ToolDescription, ToolNamespace, Value, parse_lenient_json},
         model::Model,
         session::chat::{
             ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyFinishReason,
@@ -316,6 +316,9 @@ impl ChatSession {
                         interrupted = true;
                         break;
                     }
+                    // Token backends produce output from a blocking poll, so this loop never
+                    // pends between tokens and consumers would only see one batch at the end.
+                    tokio::task::yield_now().await;
                     if finish_reason.is_some() {
                         break;
                     }
@@ -665,12 +668,38 @@ fn build_message(
                 message.with_tool_call(ToolCall {
                     identifier,
                     name: tool_call.name.clone(),
-                    arguments: tool_call.arguments.clone(),
+                    arguments: normalize_tool_call_arguments(tool_call.arguments.clone()),
                 })
             },
         };
     }
     message
+}
+
+/// Key wrapping tool call arguments that survived no parsing attempt, so
+/// templates always see an object and clients can recognize the failure.
+pub const UNPARSED_ARGUMENTS_KEY: &str = "__uzu_unparsed_arguments";
+
+/// Canonicalizes tool call arguments to a compact JSON object. Models sometimes
+/// emit arguments as a string containing the object (with unescaped control
+/// characters or quotes inside), which clients reject and templates cannot
+/// iterate; unparseable remnants are wrapped so templates always see an object.
+pub fn normalize_tool_call_arguments(arguments: Value) -> Value {
+    let mut parsed = match parse_lenient_json(&arguments.json) {
+        Some(parsed) => parsed,
+        None => serde_json::Value::String(arguments.json.clone()),
+    };
+    if let serde_json::Value::String(inner) = &parsed
+        && let Some(unwrapped) = parse_lenient_json(inner)
+    {
+        parsed = unwrapped;
+    }
+    if !parsed.is_object() {
+        parsed = serde_json::json!({ UNPARSED_ARGUMENTS_KEY: parsed });
+    }
+    Value {
+        json: parsed.to_string(),
+    }
 }
 
 fn aggregate_stats(
@@ -686,6 +715,7 @@ fn aggregate_stats(
         prefill_tokens_per_second: stats.iter().find_map(|stats| stats.prefill_tokens_per_second),
         generate_tokens_per_second: aggregate_generate_rate(&stats),
         tokens_count_input: sum_optional_u32(&stats, |stats| stats.tokens_count_input),
+        tokens_count_input_cached: sum_optional_u32(&stats, |stats| stats.tokens_count_input_cached),
         tokens_count_output: sum_optional_u32(&stats, |stats| stats.tokens_count_output),
         memory_used_bytes: stats.iter().filter_map(|stats| stats.memory_used_bytes).max(),
         speculator_stats,
@@ -868,5 +898,63 @@ fn merge_tool_namespaces(
                 target.tools.push(tool);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_tool_call_arguments_canonicalizes_and_unwraps_string_encoding() {
+        let object = normalize_tool_call_arguments(Value {
+            json: "{ \"path\": \"/tmp/a\" }".to_string(),
+        });
+        assert_eq!(object.json, r#"{"path":"/tmp/a"}"#);
+
+        let double_encoded = normalize_tool_call_arguments(Value {
+            json: serde_json::Value::String("{ \"path\": \"/tmp/a\" }".to_string()).to_string(),
+        });
+        assert_eq!(double_encoded.json, r#"{"path":"/tmp/a"}"#);
+
+        let plain_string = normalize_tool_call_arguments(Value {
+            json: serde_json::Value::String("not json at all".to_string()).to_string(),
+        });
+        assert_eq!(plain_string.json, r#"{"__uzu_unparsed_arguments":"not json at all"}"#);
+
+        let invalid = normalize_tool_call_arguments(Value {
+            json: "{oops".to_string(),
+        });
+        assert_eq!(invalid.json, r#"{"__uzu_unparsed_arguments":"{oops"}"#);
+
+        // string-encoded object with bare quotes inside its string values
+        let bare_quotes = normalize_tool_call_arguments(Value {
+            json: concat!("\"{ \\\"content\\\": \\\"called ", "\"The Square Mile\" home\n", "\\\" }\"").to_string(),
+        });
+        assert_eq!(bare_quotes.json, r#"{"content":"called \"The Square Mile\" home\n"}"#);
+
+        // string-encoded object with an invalid JSON escape (the model meant a literal backslash)
+        let invalid_escape = normalize_tool_call_arguments(Value {
+            json: r#""{ \"command\": \"grep -c 'a\|b'\" }""#.to_string(),
+        });
+        assert_eq!(invalid_escape.json, r#"{"command":"grep -c 'a\\|b'"}"#);
+
+        // string-encoded object with raw newlines inside its string values
+        let with_newlines = normalize_tool_call_arguments(Value {
+            json: serde_json::Value::String("{ \"content\": \"line one\nline two\" }".to_string()).to_string(),
+        });
+        assert_eq!(with_newlines.json, r#"{"content":"line one\nline two"}"#);
+
+        // the outer document itself may carry raw control characters inside the string literal
+        let raw_outer = normalize_tool_call_arguments(Value {
+            json: "{ \"content\": \"line one\nline two\" }".to_string(),
+        });
+        assert_eq!(raw_outer.json, r#"{"content":"line one\nline two"}"#);
+
+        // ... including when string-encoded on top of that
+        let raw_outer_string_encoded = normalize_tool_call_arguments(Value {
+            json: "\"{ \\\"content\\\": \\\"a\nb\\\" }\"".to_string(),
+        });
+        assert_eq!(raw_outer_string_encoded.json, r#"{"content":"a\nb"}"#);
     }
 }
