@@ -4,7 +4,6 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use backend_uzu::{VERSION, data_type::DataType};
 use shoji::types::model::{ModelFamily, ModelReference};
 use sysinfo::System;
 use uzu::{
@@ -15,6 +14,7 @@ use uzu::{
         session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyPowerStats},
     },
 };
+use uzu_engine::{VERSION, data_type::DataType};
 
 use crate::bench::{
     model::{BenchDevice, BenchResult, BenchTask},

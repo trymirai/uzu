@@ -13,9 +13,9 @@ crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
 default = ["backend-cpu", "backend-metal", "capability-grammar"]
-backend-cpu = ["backend-uzu/cpu"]
-backend-metal = ["backend-uzu/metal"]
-capability-grammar = ["backend-uzu/grammar"]
+backend-cpu = ["uzu-engine/cpu"]
+backend-metal = ["uzu-engine/metal"]
+capability-grammar = ["uzu-engine/grammar"]
 bindings = [
     "bindings-uniffi",
     "bindings-napi",
@@ -59,7 +59,7 @@ bindings-wasm = [
 [dependencies]
 bindings-types.workspace = true
 bindings.workspace = true
-backend-uzu.workspace = true
+uzu-engine.workspace = true
 kiban.workspace = true
 shoji.workspace = true
 anyhow.workspace = true
@@ -87,6 +87,10 @@ thiserror.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true, features = ["full"] }
+tokio-util.workspace = true
+parking_lot = { workspace = true, features = ["send_guard"] }
+tokenizers.workspace = true
+rand.workspace = true
 dirs.workspace = true
 sysinfo.workspace = true
 reqwest.workspace = true

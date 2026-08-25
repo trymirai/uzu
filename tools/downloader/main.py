@@ -38,7 +38,7 @@ from .utils import download_file_with_resume
 
 ROOT_PATH = Path(__file__).parent.parent.parent
 CARGO_TOML_PATH = ROOT_PATH / "Cargo.toml"
-TOOLCHAIN_VERSION_PATH = ROOT_PATH / "crates" / "backend-uzu" / "src" / "utils" / "version.rs"
+TOOLCHAIN_VERSION_PATH = ROOT_PATH / "crates" / "uzu-engine" / "src" / "utils" / "version.rs"
 WORKSPACE_PATH = ROOT_PATH / "workspace"
 MODELS_PATH = WORKSPACE_PATH / "models"
 MIRAI_API_URL = "https://sdk.trymirai.com/api/v1/fetch/models"

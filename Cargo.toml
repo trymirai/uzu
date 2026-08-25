@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "crates/backend-uzu",
+    "crates/uzu-engine",
+    "crates/uzu-engine-macros",
     # --- to be rewritten
-    "crates/legacy/proc-macros",
     "crates/legacy/bindings-types",
     "crates/legacy/bindings",
     "crates/legacy/shoji",
@@ -11,6 +11,7 @@ members = [
     "crates/legacy/token-stream-parser",
     "crates/legacy/hanashi",
     "crates/legacy/nagare",
+    "crates/legacy/nagare-macros",
     "crates/legacy/download-manager",
     "crates/legacy/mock-registry",
     "crates/legacy/uzu",
@@ -26,7 +27,7 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.94"
-version = "0.5.19"
+version = "0.5.20"
 authors = ["Mirai Tech Inc. <contact@getmirai.co>"]
 description = "A high-performance inference engine for AI models"
 readme = "README.md"
@@ -45,17 +46,18 @@ keywords = [
 ]
 
 [workspace.dependencies]
-proc-macros = { path = "crates/legacy/proc-macros" }
 test-runner = { path = "crates/legacy/test-runner" }
 bindings-types = { path = "crates/legacy/bindings-types", default-features = false }
 bindings = { path = "crates/legacy/bindings", default-features = false }
 shoji = { path = "crates/legacy/shoji", default-features = false }
-backend-uzu = { path = "crates/backend-uzu", default-features = false }
+uzu-engine = { path = "crates/uzu-engine", default-features = false }
+uzu-engine-macros = { path = "crates/uzu-engine-macros" }
 backend-remote = { path = "crates/legacy/backend-remote", default-features = false }
 json-transform = { path = "crates/legacy/json-transform", default-features = false }
 token-stream-parser = { path = "crates/legacy/token-stream-parser", default-features = false }
 hanashi = { path = "crates/legacy/hanashi", default-features = false }
 nagare = { path = "crates/legacy/nagare", default-features = false }
+nagare-macros = { path = "crates/legacy/nagare-macros" }
 download-manager = { path = "crates/legacy/download-manager", default-features = false }
 mock-registry = { path = "crates/legacy/mock-registry", default-features = false }
 keisoku = { path = "crates/legacy/keisoku", default-features = false }

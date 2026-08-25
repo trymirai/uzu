@@ -1,3 +1,4 @@
+pub mod bridge;
 mod callback;
 pub mod config;
 mod download_manager;
@@ -7,7 +8,6 @@ mod error;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use backend_remote::openai::Backend as OpenAIBackend;
-use backend_uzu::bridge::UzuLlmBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
 pub use download_manager::DownloadManagerType;
@@ -33,6 +33,7 @@ use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
     device::Device,
+    engine::bridge::UzuLlmBackend,
     helpers::{SharedAccess, is_endpoint_reachable},
     logs,
     registry::{
@@ -85,7 +86,7 @@ impl Engine {
             );
             let context = TelemetryContext::new(
                 env!("CARGO_PKG_VERSION").to_string(),
-                backend_uzu::TOOLCHAIN_VERSION.to_string(),
+                uzu_engine::TOOLCHAIN_VERSION.to_string(),
                 TelemetryDevice {
                     os_name: device.os_name.clone(),
                     cpu_name: device.cpu_name.clone(),

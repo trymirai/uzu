@@ -1,0 +1,44 @@
+<Step title="Make a new project folder">
+```sh
+mkdir demo && cd demo
+```
+</Step>
+<Step title="Initialize with pnpm">
+```sh
+pnpm init
+```
+</Step>
+<Step title="Install dependencies">
+```sh
+pnpm add typescript ts-node @types/node -D
+pnpm add @trymirai/uzu
+```
+</Step>
+<Step title="Initialize a tsconfig.json">
+```json
+{
+    "compilerOptions": {
+        "target": "es2020",
+        "module": "commonjs",
+        "moduleResolution": "node",
+        "strict": true,
+        "esModuleInterop": true,
+        "outDir": "dist",
+        "types": [
+            "node"
+        ]
+    },
+    "include": [
+        "*.ts"
+    ]
+}
+```
+</Step>
+<Step title="Create main.ts">
+<CodeTypeScript />
+</Step>
+<Step title="Run the snippet">
+```sh
+pnpm ts-node main.ts
+```
+</Step>

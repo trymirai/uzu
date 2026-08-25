@@ -1,6 +1,6 @@
-use backend_uzu::data_type::DataType;
 use rocket::serde::{Deserialize, Serialize};
 use uzu::types::session::chat::{ChatMessage, ChatReplyPowerStats, ChatRole};
+use uzu_engine::data_type::DataType;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchTask {

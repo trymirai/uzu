@@ -1,9 +1,14 @@
-use async_openai::types::responses::{OutputItem, ResponseStreamEvent};
+use async_openai::types::responses::{OutputItem, ResponseStreamEvent, ResponseUsage};
 
 use crate::openai::{
     bridging::responses::finish_reason,
     stream_state::{StreamChunk, ToolCallChunk},
 };
+
+fn usage_parts(usage: &ResponseUsage) -> (Option<u32>, Option<u32>, Option<u32>) {
+    let cached = usage.input_tokens_details.cached_tokens;
+    (Some(usage.input_tokens.saturating_sub(cached)), Some(cached), Some(usage.output_tokens))
+}
 
 pub fn build(event: ResponseStreamEvent) -> Option<StreamChunk> {
     match event {
@@ -40,24 +45,39 @@ pub fn build(event: ResponseStreamEvent) -> Option<StreamChunk> {
             }],
             ..StreamChunk::default()
         }),
-        ResponseStreamEvent::ResponseCompleted(event) => Some(StreamChunk {
-            finish_reason: finish_reason::build(&event.response.status),
-            tokens_input: event.response.usage.as_ref().map(|usage| usage.input_tokens),
-            tokens_output: event.response.usage.as_ref().map(|usage| usage.output_tokens),
-            ..StreamChunk::default()
-        }),
-        ResponseStreamEvent::ResponseFailed(event) => Some(StreamChunk {
-            finish_reason: finish_reason::build(&event.response.status),
-            tokens_input: event.response.usage.as_ref().map(|usage| usage.input_tokens),
-            tokens_output: event.response.usage.as_ref().map(|usage| usage.output_tokens),
-            ..StreamChunk::default()
-        }),
-        ResponseStreamEvent::ResponseIncomplete(event) => Some(StreamChunk {
-            finish_reason: finish_reason::build(&event.response.status),
-            tokens_input: event.response.usage.as_ref().map(|usage| usage.input_tokens),
-            tokens_output: event.response.usage.as_ref().map(|usage| usage.output_tokens),
-            ..StreamChunk::default()
-        }),
+        ResponseStreamEvent::ResponseCompleted(event) => {
+            let (tokens_input, tokens_input_cached, tokens_output) =
+                event.response.usage.as_ref().map(usage_parts).unwrap_or_default();
+            Some(StreamChunk {
+                finish_reason: finish_reason::build(&event.response.status),
+                tokens_input,
+                tokens_input_cached,
+                tokens_output,
+                ..StreamChunk::default()
+            })
+        },
+        ResponseStreamEvent::ResponseFailed(event) => {
+            let (tokens_input, tokens_input_cached, tokens_output) =
+                event.response.usage.as_ref().map(usage_parts).unwrap_or_default();
+            Some(StreamChunk {
+                finish_reason: finish_reason::build(&event.response.status),
+                tokens_input,
+                tokens_input_cached,
+                tokens_output,
+                ..StreamChunk::default()
+            })
+        },
+        ResponseStreamEvent::ResponseIncomplete(event) => {
+            let (tokens_input, tokens_input_cached, tokens_output) =
+                event.response.usage.as_ref().map(usage_parts).unwrap_or_default();
+            Some(StreamChunk {
+                finish_reason: finish_reason::build(&event.response.status),
+                tokens_input,
+                tokens_input_cached,
+                tokens_output,
+                ..StreamChunk::default()
+            })
+        },
         _ => None,
     }
 }

@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "backend-remote"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "async-openai",
  "futures",
@@ -460,62 +460,6 @@ dependencies = [
  "shoji",
  "thiserror 2.0.18",
  "tokio-util",
-]
-
-[[package]]
-name = "backend-uzu"
-version = "0.5.19"
-dependencies = [
- "anyhow",
- "async-trait",
- "bindgen",
- "bitflags 2.13.0",
- "blake3",
- "bytemuck",
- "clang-ast",
- "criterion",
- "depfile",
- "derive_more",
- "futures",
- "half",
- "is_close",
- "itertools 0.14.0",
- "libm",
- "memmap2",
- "monostate",
- "mtl-rs",
- "ndarray",
- "num-traits",
- "obfstr",
- "objc2",
- "parking_lot",
- "prettyplease",
- "proc-macro2",
- "proc-macros",
- "proptest",
- "quote",
- "rand 0.10.2",
- "rand_distr",
- "rangemap",
- "rhai",
- "rstest",
- "rustix",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "shoji",
- "syn 2.0.118",
- "tempfile",
- "test-runner",
- "test-tag",
- "thiserror 2.0.18",
- "tokenizers",
- "tokio",
- "tokio-util",
- "walkdir",
- "xgrammar-rs",
- "xxhash-rust",
- "zstd",
 ]
 
 [[package]]
@@ -587,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "bindings"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -597,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "bindings-types"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "inventory",
  "napi",
@@ -992,10 +936,9 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "anyhow",
- "backend-uzu",
  "chrono",
  "clap",
  "comfy-table",
@@ -1025,11 +968,12 @@ dependencies = [
  "unicode-width 0.2.2",
  "uuid",
  "uzu",
+ "uzu-engine",
 ]
 
 [[package]]
 name = "cli-tools"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "anyhow",
  "clap",
@@ -1037,6 +981,7 @@ dependencies = [
  "heck",
  "ignore",
  "indexmap 2.14.0",
+ "itertools 0.14.0",
  "minijinja",
  "regex",
  "serde",
@@ -1044,6 +989,7 @@ dependencies = [
  "syn 2.0.118",
  "toml 1.1.2+spec-1.1.0",
  "toml_edit 0.25.12+spec-1.1.0",
+ "walkdir",
 ]
 
 [[package]]
@@ -1799,7 +1745,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download-manager"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2444,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "hanashi"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3161,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "json-transform"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3215,7 +3161,7 @@ dependencies = [
 
 [[package]]
 name = "kanka"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "libc",
  "obfstr",
@@ -3235,7 +3181,7 @@ dependencies = [
 
 [[package]]
 name = "keisoku"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "bitflags 2.13.0",
  "kanka",
@@ -3259,7 +3205,7 @@ dependencies = [
 
 [[package]]
 name = "kiban"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3558,15 +3504,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "memmap2"
-version = "0.9.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "memmem"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3661,7 +3598,7 @@ dependencies = [
 
 [[package]]
 name = "mock-registry"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.0",
@@ -3746,7 +3683,7 @@ dependencies = [
 
 [[package]]
 name = "nagare"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "async-trait",
  "bindings",
@@ -3757,10 +3694,10 @@ dependencies = [
  "indexmap 2.14.0",
  "inventory",
  "keisoku",
+ "nagare-macros",
  "napi",
  "napi-build",
  "napi-derive",
- "proc-macros",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",
@@ -3781,6 +3718,16 @@ dependencies = [
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "nagare-macros"
+version = "0.5.20"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -4670,16 +4617,6 @@ dependencies = [
  "syn 2.0.118",
  "version_check",
  "yansi",
-]
-
-[[package]]
-name = "proc-macros"
-version = "0.5.19"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 2.0.118",
 ]
 
 [[package]]
@@ -6149,7 +6086,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shoji"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "bindings",
  "bindings-types",
@@ -6668,7 +6605,7 @@ dependencies = [
 
 [[package]]
 name = "test-runner"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "criterion",
  "keisoku",
@@ -6843,7 +6780,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "token-stream-parser"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "indexmap 2.14.0",
  "json-transform",
@@ -7595,13 +7532,12 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
  "async-openai",
  "backend-remote",
- "backend-uzu",
  "bindings",
  "bindings-types",
  "bitflags 2.13.0",
@@ -7626,10 +7562,12 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-security",
+ "parking_lot",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",
  "pyo3-stub-gen",
+ "rand 0.10.2",
  "reqwest 0.13.4",
  "rodio",
  "rstest",
@@ -7641,16 +7579,80 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
  "tsify",
  "uniffi",
  "uuid",
+ "uzu-engine",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "uzu-engine"
+version = "0.5.20"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bindgen",
+ "bitflags 2.13.0",
+ "blake3",
+ "bytemuck",
+ "clang-ast",
+ "criterion",
+ "depfile",
+ "derive_more",
+ "futures",
+ "half",
+ "is_close",
+ "itertools 0.14.0",
+ "libm",
+ "monostate",
+ "mtl-rs",
+ "ndarray",
+ "num-traits",
+ "obfstr",
+ "objc2",
+ "parking_lot",
+ "prettyplease",
+ "proc-macro2",
+ "proptest",
+ "quote",
+ "rand 0.10.2",
+ "rand_distr",
+ "rangemap",
+ "rhai",
+ "rstest",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "shoji",
+ "syn 2.0.118",
+ "tempfile",
+ "test-runner",
+ "test-tag",
+ "thiserror 2.0.18",
+ "tokenizers",
+ "tokio",
+ "uzu-engine-macros",
+ "walkdir",
+ "xgrammar-rs",
+ "xxhash-rust",
+ "zstd",
+]
+
+[[package]]
+name = "uzu-engine-macros"
+version = "0.5.20"
+dependencies = [
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
