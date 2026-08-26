@@ -2,17 +2,14 @@ use crate::{
     backends::common::{
         Allocation, Backend, BufferArgMut, Encoder,
         gpu_types::trie::TrieNode,
-        kernel::{AttentionPrepareKernel, SigmoidGateKernel},
+        kernel::{AttentionArguments, AttentionKernel, AttentionPrepareKernel, SigmoidGateKernel},
     },
     encodable_block::{
         batch_topology::BatchTopology,
         linear::Linear,
         mixer::{
             MixerState,
-            attention::{
-                Attention, KVCacheView, core::AttentionCoreEncodeArguments, qkv_norm::QKVNorm, rope::PrecalculatedRoPE,
-                state::AttentionState,
-            },
+            attention::{Attention, KVCacheView, qkv_norm::QKVNorm, rope::PrecalculatedRoPE, state::AttentionState},
         },
     },
     utils::maybe_mut::MaybeMut,
@@ -104,8 +101,8 @@ impl<B: Backend> Attention<B> {
 
                 let cache = self.ring_capacity.map_or_else(|| KVCacheView::full(0), |_| KVCacheView::ring(0, 0));
 
-                self.flat_core.encode(
-                    AttentionCoreEncodeArguments {
+                self.kernel.encode(
+                    AttentionArguments {
                         queries: &queries,
                         keys: &keys,
                         values: &values,
@@ -163,16 +160,16 @@ impl<B: Backend> Attention<B> {
         state: &AttentionState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let (core, trie) = if batch_dim.is_flat() {
-            (&self.flat_core, None)
+        let trie = if batch_dim.is_flat() {
+            None
         } else {
             let mut trie = encoder.allocate_constant(batch_dim.size() as usize * size_of::<TrieNode>())?;
             trie.copyin(batch_dim.nodes());
-            (&self.trie_core, Some(trie))
+            Some(trie)
         };
 
-        core.encode(
-            AttentionCoreEncodeArguments {
+        self.kernel.encode(
+            AttentionArguments {
                 queries,
                 keys: state.keys.as_ref(),
                 values: state.values.as_ref(),

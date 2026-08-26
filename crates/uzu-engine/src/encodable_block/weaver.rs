@@ -9,8 +9,8 @@ use crate::{
             TreeIdx,
         },
         kernel::{
-            AncestorAttentionKernel, WeaverFrontierInsertChildrenKernel, WeaverFrontierSelectKernel,
-            WeaverTopChildrenKernel, radix_top_k_small::RadixTopKSmall,
+            AncestorAttentionKernel, AttentionArguments, AttentionKernel, WeaverFrontierInsertChildrenKernel,
+            WeaverFrontierSelectKernel, WeaverTopChildrenKernel, radix_top_k_small::RadixTopKSmall,
         },
     },
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
@@ -18,7 +18,7 @@ use crate::{
     encodable_block::{
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError},
-        mixer::attention::{KVCacheView, core::AttentionCoreEncodeArguments, rope::PrecalculatedRoPE},
+        mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
         mlp::MlpBlockError,
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
@@ -330,7 +330,7 @@ impl<B: Backend> Weaver<B> {
             let attention_output = layer
                 .prefix_attention
                 .encode(
-                    AttentionCoreEncodeArguments {
+                    AttentionArguments {
                         queries: &queries,
                         keys: &kv_cache,
                         values: (&kv_cache, kv_plane_bytes),

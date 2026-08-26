@@ -4,14 +4,17 @@ use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
 use crate::{
     backends::{
-        common::{Allocation, BufferArg, Encoder, gpu_types::AttnParams, kernel::attention_gemm::AttentionGemmCore},
+        common::{
+            Allocation, BufferArg, Encoder,
+            gpu_types::AttnParams,
+            kernel::{AttentionArguments, AttentionKernelConfig},
+        },
         metal::{Metal, context::MetalContext, error::MetalError, kernel::AttentionGemmMetalKernel},
     },
     data_type::DataType,
-    encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };
 
-pub struct AttentionGemmMetalCore {
+pub struct AttentionGemm {
     kernels: Mutex<HashMap<AttentionGemmKey, AttentionGemmMetalKernel>>,
     head_dim: u32,
     num_groups: u32,
@@ -22,7 +25,6 @@ pub struct AttentionGemmMetalCore {
     simd_bk: u32,
     is_kv_cache_ring: bool,
     is_causal: bool,
-    is_trie: bool,
     is_sliding_window: bool,
     has_sinks: bool,
 }
@@ -32,6 +34,7 @@ struct AttentionGemmKey {
     use_mxu: bool,
     align_q: bool,
     align_k: bool,
+    is_trie: bool,
 }
 
 fn retile_params(
@@ -47,7 +50,33 @@ fn retile_params(
     params
 }
 
-impl AttentionGemmMetalCore {
+impl AttentionGemm {
+    pub fn is_supported(config: &AttentionKernelConfig) -> bool {
+        matches!(config.head_dim, 64 | 128 | 256) && matches!(config.data_type, DataType::BF16 | DataType::F32)
+    }
+
+    pub fn new(config: &AttentionKernelConfig) -> Self {
+        let simd_bk = if config.head_dim < 128 {
+            32
+        } else {
+            16
+        };
+        Self {
+            kernels: Mutex::new(HashMap::new()),
+            head_dim: config.head_dim,
+            num_groups: config.num_groups,
+            num_q_heads: config.num_q_heads,
+            sliding_window_size: config.sliding_window_size,
+            scale: config.scale,
+            data_type: config.data_type,
+            simd_bk,
+            is_kv_cache_ring: config.is_kv_cache_ring,
+            is_causal: config.is_causal,
+            is_sliding_window: config.sliding_window_size.is_some(),
+            has_sinks: config.has_sinks,
+        }
+    }
+
     fn get_or_create(
         &self,
         context: &MetalContext,
@@ -70,7 +99,7 @@ impl AttentionGemmMetalCore {
                 key.align_k,
                 self.is_kv_cache_ring,
                 self.is_causal,
-                self.is_trie,
+                key.is_trie,
                 self.is_sliding_window,
                 self.has_sinks,
             )?;
@@ -78,48 +107,10 @@ impl AttentionGemmMetalCore {
         }
         Ok(MutexGuard::map(kernels, |kernels| kernels.get_mut(&key).expect("kernel was just initialized")))
     }
-}
 
-impl AttentionGemmCore for AttentionGemmMetalCore {
-    type Backend = Metal;
-
-    fn is_supported(
-        arguments: &AttentionCoreNewArguments,
-        _context: &MetalContext,
-    ) -> Result<bool, MetalError> {
-        Ok(matches!(arguments.head_dim, 64 | 128 | 256))
-    }
-
-    fn new(
-        _context: &MetalContext,
-        arguments: &AttentionCoreNewArguments,
-    ) -> Result<Self, MetalError> {
-        let simd_bk = if arguments.head_dim < 128 {
-            32
-        } else {
-            16
-        };
-
-        Ok(Self {
-            kernels: Mutex::new(HashMap::new()),
-            head_dim: arguments.head_dim,
-            num_groups: arguments.num_groups,
-            num_q_heads: arguments.num_q_heads,
-            sliding_window_size: arguments.sliding_window_size,
-            scale: arguments.scale,
-            data_type: arguments.data_type,
-            simd_bk,
-            is_kv_cache_ring: arguments.is_kv_cache_ring,
-            is_causal: arguments.is_causal,
-            is_trie: arguments.is_trie,
-            is_sliding_window: arguments.sliding_window_size.is_some(),
-            has_sinks: arguments.has_sinks,
-        })
-    }
-
-    fn encode<'a, KT: BufferArg<'a, Metal>, VT: BufferArg<'a, Metal>>(
+    pub fn encode<'a, KT: BufferArg<'a, Metal>, VT: BufferArg<'a, Metal>>(
         &self,
-        arguments: AttentionCoreEncodeArguments<'a, Metal, KT, VT>,
+        arguments: AttentionArguments<'a, Metal, KT, VT>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<Allocation<Metal>, MetalError> {
         let mut output = encoder
@@ -127,7 +118,7 @@ impl AttentionGemmCore for AttentionGemmMetalCore {
 
         let use_mxu = arguments.suffix_length >= 64
             && encoder.context().supports_mxu()
-            && matches!(self.data_type, DataType::BF16 | DataType::F16)
+            && matches!(self.data_type, DataType::BF16)
             && matches!(self.head_dim, 64 | 128);
         let (bq, bk) = if use_mxu {
             (64, 32)
@@ -141,7 +132,7 @@ impl AttentionGemmCore for AttentionGemmMetalCore {
                 v_strides: [0, self.head_dim, self.num_groups * self.head_dim],
                 o_strides: [0, self.head_dim, self.num_q_heads * self.head_dim],
                 gqa_factor: self.num_q_heads / self.num_groups,
-                scale: self.scale.unwrap_or(1.0f32 / (self.head_dim as f32).sqrt()),
+                scale: self.scale.unwrap_or(1.0 / (self.head_dim as f32).sqrt()),
                 q_len: arguments.suffix_length,
                 k_len: arguments.cache.prefix_len() + arguments.suffix_length,
                 q_off: arguments.cache.prefix_len(),
@@ -158,9 +149,9 @@ impl AttentionGemmCore for AttentionGemmMetalCore {
             use_mxu,
             align_q: params.q_rem == 0,
             align_k: params.k_rem == 0,
+            is_trie: arguments.trie.is_some(),
         };
         let kernel = self.get_or_create(encoder.context(), key)?;
-
         kernel.encode(
             arguments.queries,
             arguments.keys,
