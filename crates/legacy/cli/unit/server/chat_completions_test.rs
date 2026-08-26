@@ -1,4 +1,5 @@
 use super::*;
+use crate::common::thinking::ReasoningEffortSet;
 
 fn request(json: &str) -> ChatCompletionRequest {
     serde_json::from_str(json).expect("valid request json")
@@ -98,6 +99,13 @@ fn malformed_response_format_passes_json_extraction() {
     }
 }
 
+fn any_levels() -> ThinkingSupport {
+    ThinkingSupport::Levels {
+        effort: ReasoningEffort::Default,
+        supported: ReasoningEffortSet::ALL,
+    }
+}
+
 fn messages_with_support(
     json: &str,
     thinking_support: ThinkingSupport,
@@ -111,7 +119,7 @@ fn reasoning_effort_prepends_system_message_for_levels_model() {
 
     let messages = messages_with_support(
         r#"{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}"#,
-        ThinkingSupport::Levels(ReasoningEffort::Default),
+        any_levels(),
     );
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].reasoning_effort(), Some(ReasoningEffort::High));
@@ -122,7 +130,7 @@ fn reasoning_effort_prepends_system_message_for_levels_model() {
 fn reasoning_effort_merges_into_leading_system_message() {
     let messages = messages_with_support(
         r#"{"messages":[{"role":"system","content":"be brief"},{"role":"user","content":"hi"}],"reasoning_effort":"high"}"#,
-        ThinkingSupport::Levels(ReasoningEffort::Default),
+        any_levels(),
     );
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].role, ChatRole::System {});
@@ -136,7 +144,7 @@ fn reasoning_effort_default_emits_no_system_message() {
         r#"{"messages":[{"role":"user","content":"hi"}]}"#,
         r#"{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"default"}"#,
     ] {
-        let messages = messages_with_support(body, ThinkingSupport::Levels(ReasoningEffort::Default));
+        let messages = messages_with_support(body, any_levels());
         assert_eq!(messages.len(), 1);
         assert!(messages.iter().all(|message| message.reasoning_effort().is_none()));
     }
@@ -196,10 +204,7 @@ fn enable_thinking_honored_for_toggle_model() {
 
 #[test]
 fn enable_thinking_honored_for_levels_model() {
-    let disabled = messages_with_support(
-        r#"{"messages":[],"enable_thinking":false}"#,
-        ThinkingSupport::Levels(ReasoningEffort::Default),
-    );
+    let disabled = messages_with_support(r#"{"messages":[],"enable_thinking":false}"#, any_levels());
     assert_eq!(disabled[0].reasoning_effort(), Some(ReasoningEffort::Disabled));
 }
 
@@ -221,17 +226,14 @@ fn enable_thinking_rejects_contradictions() {
         r#"{"messages":[],"enable_thinking":false,"reasoning_effort":"high"}"#,
         r#"{"messages":[],"enable_thinking":true,"reasoning_effort":"disabled"}"#,
     ] {
-        build_messages(&request(body), ThinkingSupport::Levels(ReasoningEffort::Default))
-            .expect_err("contradictory thinking requests should be rejected");
+        build_messages(&request(body), any_levels()).expect_err("contradictory thinking requests should be rejected");
     }
 }
 
 #[test]
 fn enable_thinking_agrees_with_compatible_reasoning_effort() {
-    let messages = messages_with_support(
-        r#"{"messages":[],"enable_thinking":true,"reasoning_effort":"low"}"#,
-        ThinkingSupport::Levels(ReasoningEffort::Default),
-    );
+    let messages =
+        messages_with_support(r#"{"messages":[],"enable_thinking":true,"reasoning_effort":"low"}"#, any_levels());
     assert_eq!(messages[0].reasoning_effort(), Some(ReasoningEffort::Low));
 }
 
@@ -375,7 +377,7 @@ fn assistant_reasoning_content_round_trips_in_session_block_order() {
             {"role":"assistant","reasoning_content":"","content":"no thinking"},
             {"role":"user","content":"again"}
         ]}"#,
-        ThinkingSupport::Levels(ReasoningEffort::Default),
+        any_levels(),
     );
     let assistant = &messages[1];
     let kinds = assistant

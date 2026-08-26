@@ -137,7 +137,7 @@ fn checkpoint(
                 }],
             },
         },
-        encodings: vec![],
+        encoding: None,
     }
 }
 

@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use hanashi::chat::EncodingConfig;
+use serde::{Deserialize, Deserializer, Serialize};
 use shoji::types::{
     basic::{Metadata, Value},
     model::{
@@ -160,7 +161,13 @@ pub struct ResponseModel {
     pub quantization: Option<Quantization>,
     pub specializations: Vec<ModelSpecialization>,
     pub accessibility: ModelAccessibility,
-    pub encodings: Vec<Value>,
+    #[serde(rename = "encodings", default, deserialize_with = "deserialize_encoding")]
+    pub encoding: Option<Value>,
+}
+
+fn deserialize_encoding<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
+    let encodings = Vec::<Value>::deserialize(deserializer)?;
+    Ok(EncodingConfig::select(&encodings))
 }
 
 impl ResponseModel {
@@ -194,7 +201,7 @@ impl ResponseModel {
             quantization,
             specializations: self.specializations.clone(),
             accessibility: self.accessibility.clone(),
-            encodings: self.encodings.clone(),
+            encoding: self.encoding.clone(),
         })
     }
 }

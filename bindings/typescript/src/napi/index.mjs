@@ -87,6 +87,7 @@ export const PcmBatch = cjs.PcmBatch;
 export const Repository = cjs.Repository;
 export const SamplingMethodGreedy = cjs.SamplingMethodGreedy;
 export const SamplingMethodStochastic = cjs.SamplingMethodStochastic;
+export const SamplingParameters = cjs.SamplingParameters;
 export const SamplingPolicyCustom = cjs.SamplingPolicyCustom;
 export const SamplingPolicyDefault = cjs.SamplingPolicyDefault;
 export const SamplingSeedCustom = cjs.SamplingSeedCustom;

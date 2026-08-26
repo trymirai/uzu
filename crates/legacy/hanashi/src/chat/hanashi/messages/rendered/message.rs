@@ -28,32 +28,6 @@ impl Message {
             role: role.clone(),
         })?;
 
-        // Validate no duplicate block types across fields
-        let mut seen_block_types: IndexMap<ChatContentBlockType, String> = IndexMap::new();
-        for (field_name, field) in config.message.iter().chain(config.context.iter()) {
-            let block_types = match &field.config {
-                FieldConfig::Unique {
-                    block,
-                    ..
-                } => vec![block.clone()],
-                FieldConfig::Collected {
-                    blocks,
-                    ..
-                } => blocks.clone(),
-            };
-            for block_type in block_types {
-                if let Some(existing_field) = seen_block_types.get(&block_type)
-                    && existing_field != field_name
-                {
-                    return Err(Error::DuplicateBlock {
-                        role: role.clone(),
-                        block_type,
-                    });
-                }
-                seen_block_types.insert(block_type, field_name.clone());
-            }
-        }
-
         // Determine which block types should get raw canonical serialization
         let mut raw_types: Vec<ChatContentBlockType> = Vec::new();
         for (_, field) in config.message.iter().chain(config.context.iter()) {
@@ -100,12 +74,14 @@ impl Message {
 
             let mut matched = false;
             for (fields, destination) in destinations.iter_mut() {
-                if let Some((field_name, field)) = find_field_for_block(fields, block_type) {
+                for (field_name, field) in fields.iter() {
+                    if !field_matches_block(&field.config, block_type) {
+                        continue;
+                    }
                     *seen_fields.entry(field_name.clone()).or_insert(0) += 1;
                     let raw = raw_types.contains(block_type);
-                    apply_field_value(destination, &field_name, &field.config, value, raw, role, block_type)?;
+                    apply_field_value(destination, field_name, &field.config, value, raw, role, block_type)?;
                     matched = true;
-                    break;
                 }
             }
 
@@ -140,27 +116,20 @@ impl Message {
     }
 }
 
-fn find_field_for_block<'a>(
-    fields: &'a IndexMap<String, Field>,
+fn field_matches_block(
+    config: &FieldConfig,
     block_type: &ChatContentBlockType,
-) -> Option<(String, &'a Field)> {
-    fields.iter().find_map(|(name, field)| {
-        let matches = match &field.config {
-            FieldConfig::Unique {
-                block,
-                ..
-            } => block == block_type,
-            FieldConfig::Collected {
-                blocks,
-                ..
-            } => blocks.contains(block_type),
-        };
-        if matches {
-            Some((name.clone(), field))
-        } else {
-            None
-        }
-    })
+) -> bool {
+    match config {
+        FieldConfig::Unique {
+            block,
+            ..
+        } => block == block_type,
+        FieldConfig::Collected {
+            blocks,
+            ..
+        } => blocks.contains(block_type),
+    }
 }
 
 fn apply_field_value(

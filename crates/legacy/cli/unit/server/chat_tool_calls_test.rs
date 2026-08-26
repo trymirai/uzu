@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    common::model_capabilities::ThinkingSupport,
+    common::thinking::ThinkingSupport,
     server::chat_completions::{ChatCompletionRequest, build_messages},
 };
 

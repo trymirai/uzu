@@ -1,17 +1,6 @@
 use shoji::types::basic::ReasoningEffort;
 
-use crate::{
-    common::model_capabilities::{ThinkingPreference, ThinkingSupport},
-    interactive::util::cycle,
-};
-
-const LEVELS: [ReasoningEffort; 5] = [
-    ReasoningEffort::Default,
-    ReasoningEffort::Low,
-    ReasoningEffort::Medium,
-    ReasoningEffort::High,
-    ReasoningEffort::Disabled,
-];
+use crate::common::thinking::{ThinkingPreference, ThinkingSupport};
 
 fn level_label(effort: ReasoningEffort) -> &'static str {
     match effort {
@@ -19,6 +8,7 @@ fn level_label(effort: ReasoningEffort) -> &'static str {
         ReasoningEffort::Low => "low",
         ReasoningEffort::Medium => "medium",
         ReasoningEffort::High => "high",
+        ReasoningEffort::XHigh => "xhigh",
         ReasoningEffort::Disabled => "off",
     }
 }
@@ -43,7 +33,17 @@ impl ThinkingSupportExt for ThinkingSupport {
         delta: i64,
     ) -> ThinkingSupport {
         match self {
-            ThinkingSupport::Levels(effort) => ThinkingSupport::Levels(cycle(&LEVELS, effort, delta as isize)),
+            ThinkingSupport::Levels {
+                effort,
+                supported,
+            } => {
+                let levels = supported.iter().collect::<Vec<_>>();
+                let effort = crate::interactive::util::cycle(&levels, effort, delta as isize);
+                ThinkingSupport::Levels {
+                    effort,
+                    supported,
+                }
+            },
             ThinkingSupport::Toggle(value) => ThinkingSupport::Toggle(!value),
             other => other,
         }
@@ -54,7 +54,10 @@ impl ThinkingSupportExt for ThinkingSupport {
         preference: &mut ThinkingPreference,
     ) {
         match self {
-            ThinkingSupport::Levels(effort) => preference.level = effort,
+            ThinkingSupport::Levels {
+                effort,
+                ..
+            } => preference.level = effort,
             ThinkingSupport::Toggle(value) => preference.enabled = value,
             ThinkingSupport::AlwaysOn | ThinkingSupport::Unsupported => {},
         }
@@ -62,7 +65,10 @@ impl ThinkingSupportExt for ThinkingSupport {
 
     fn value_label(self) -> &'static str {
         match self {
-            ThinkingSupport::Levels(effort) => level_label(effort),
+            ThinkingSupport::Levels {
+                effort,
+                ..
+            } => level_label(effort),
             ThinkingSupport::Toggle(true) => "on",
             ThinkingSupport::Toggle(false) => "off",
             ThinkingSupport::AlwaysOn => "always on",

@@ -1,5 +1,4 @@
 use std::{
-    io,
     pin::Pin,
     sync::Arc,
     time::{Duration, Instant},
@@ -22,7 +21,7 @@ use shoji::{
         },
     },
     types::{
-        basic::TokenId,
+        basic::{SamplingParameters, TokenId},
         model::Model,
         session::chat::{
             ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason,
@@ -63,28 +62,14 @@ impl Session {
         reference: String,
         model: &Model,
     ) -> Result<Self, ChatSessionError> {
-        let encoding_configs = model
-            .encodings
-            .iter()
-            .map(|value| serde_json::from_str::<EncodingConfig>(value.json.as_str()).map_err(io::Error::other))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|err| ChatSessionError::Loading {
-                message: format!("Failed to parse encoding config: {err}"),
+        let encoding_config: Option<EncodingConfig> = model
+            .encoding
+            .as_ref()
+            .map(|value| serde_json::from_str::<EncodingConfig>(value.json.as_str()))
+            .transpose()
+            .map_err(|error| ChatSessionError::Loading {
+                message: format!("Failed to parse encoding config: {error}"),
             })?;
-
-        let encoding_config: Option<EncodingConfig> = if encoding_configs.is_empty() {
-            None
-        } else if encoding_configs.len() == 1 {
-            encoding_configs.first().cloned()
-        } else {
-            let harmony_config =
-                encoding_configs.iter().find(|config| matches!(config, EncodingConfig::Harmony { .. }));
-            if harmony_config.is_some() {
-                harmony_config.cloned()
-            } else {
-                encoding_configs.first().cloned()
-            }
-        };
 
         let tokenizer_location = TokenizerLocation::Directory {
             path: reference,
@@ -338,6 +323,10 @@ impl Session {
 
     pub fn supports_multiple_tool_calls(&self) -> bool {
         self.encoding.supports_multiple_tool_calls()
+    }
+
+    pub fn sampling_defaults(&self) -> SamplingParameters {
+        self.instance.sampling_defaults()
     }
 }
 

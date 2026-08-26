@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::session::chat::ChatModelCapabilities;
+use shoji::types::{basic::Value, session::chat::ChatModelCapabilities};
 
 use crate::chat::{Error, hanashi::config::HanashiConfig, harmony::HarmonyConfig};
 
@@ -17,8 +17,16 @@ pub enum EncodingConfig {
 }
 
 impl EncodingConfig {
-    #[allow(dead_code)]
-    fn capabilities(&self) -> Result<ChatModelCapabilities, Error> {
+    pub fn select(encodings: &[Value]) -> Option<Value> {
+        let parse = |value: &Value| serde_json::from_str::<EncodingConfig>(&value.json).ok();
+        encodings
+            .iter()
+            .find(|value| matches!(parse(value), Some(EncodingConfig::Harmony { .. })))
+            .or_else(|| encodings.iter().find(|value| parse(value).is_some()))
+            .cloned()
+    }
+
+    pub fn capabilities(&self) -> Result<ChatModelCapabilities, Error> {
         match self {
             EncodingConfig::Hanashi {
                 config,

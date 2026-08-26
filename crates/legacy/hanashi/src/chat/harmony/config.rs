@@ -14,6 +14,7 @@ impl HarmonyConfig {
             HarmonyConfig::GptOss => ChatModelCapabilities {
                 supports_reasoning: true,
                 supports_disable_reasoning: false,
+                reasoning_efforts: vec![],
                 supports_tools: true,
                 supports_multiple_tool_calls: false,
                 requires_tools: false,

@@ -646,6 +646,8 @@ public protocol ChatSessionProtocol: AnyObject, Sendable {
     
     func reset() async throws 
     
+    func samplingDefaults() async  -> SamplingParameters?
+    
     func state() async  -> ChatSessionState
     
     func supportsToolCalls() async  -> Bool
@@ -805,6 +807,24 @@ open func reset()async throws   {
             freeFunc: ffi_nagare_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeChatSessionError_lift
+        )
+}
+    
+open func samplingDefaults()async  -> SamplingParameters?  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nagare_fn_method_chatsession_sampling_defaults(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nagare_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nagare_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nagare_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeSamplingParameters.lift,
+            errorHandler: nil
+            
         )
 }
     
@@ -2465,6 +2485,30 @@ public func FfiConverterCallbackInterfaceForeignToolHandler_lower(_ v: ForeignTo
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeSamplingParameters: FfiConverterRustBuffer {
+    typealias SwiftType = SamplingParameters?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSamplingParameters.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSamplingParameters.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeChatSessionStreamChunk: FfiConverterRustBuffer {
     typealias SwiftType = ChatSessionStreamChunk?
 
@@ -2779,6 +2823,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_chatsession_reset() != 1317) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_chatsession_sampling_defaults() != 47931) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_chatsession_state() != 61854) {

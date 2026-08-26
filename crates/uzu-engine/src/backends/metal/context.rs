@@ -51,10 +51,10 @@ pub struct MetalContext {
 
 impl MetalContext {
     pub fn supports_mxu(&self) -> bool {
-        self.device.supports_mxu()
+        self.device_profile.supports_mxu()
     }
 
-    pub fn device_profile(&self) -> DeviceProfile {
+    pub(super) fn device_profile(&self) -> DeviceProfile {
         self.device_profile
     }
 
@@ -157,12 +157,7 @@ impl Context for MetalContext {
         let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
 
         let gpu_core_count = device.gpu_core_count();
-        let device_profile = classify_device(
-            gpu_core_count,
-            device.supports_family(metal::MTLGPUFamily::Apple8),
-            device.supports_family(metal::MTLGPUFamily::Apple9),
-            device.supports_mxu(),
-        );
+        let device_profile = classify_device(&device.name(), gpu_core_count, device.supports_mxu());
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = Metal::ALLOCATION_GRANULARITY;
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);

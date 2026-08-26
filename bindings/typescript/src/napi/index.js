@@ -590,6 +590,7 @@ module.exports.PcmBatch = nativeBinding.PcmBatch
 module.exports.Repository = nativeBinding.Repository
 module.exports.SamplingMethodGreedy = nativeBinding.SamplingMethodGreedy
 module.exports.SamplingMethodStochastic = nativeBinding.SamplingMethodStochastic
+module.exports.SamplingParameters = nativeBinding.SamplingParameters
 module.exports.SamplingPolicyCustom = nativeBinding.SamplingPolicyCustom
 module.exports.SamplingPolicyDefault = nativeBinding.SamplingPolicyDefault
 module.exports.SamplingSeedCustom = nativeBinding.SamplingSeedCustom
