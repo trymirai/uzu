@@ -163,7 +163,8 @@ impl<B: Backend> Attention<B> {
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
 
-        let ring_capacity = sliding_window_size.filter(|capacity| *capacity > 0);
+        assert!(sliding_window_size.is_none_or(|size| size > 0), "zero sliding window size");
+        let ring_capacity = sliding_window_size;
         let is_kv_cache_ring = ring_capacity.is_some();
 
         let flat_core = AttentionCores::new(
