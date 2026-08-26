@@ -139,17 +139,18 @@ impl Session {
             },
         };
 
-        // if new_all_tokens = curr_all_tokens + suffix, then just encode suffix,
-        // else reset state and encode all tokens
-        let mut reset = new_all_tokens.len() <= curr_all_tokens.len();
-        if !reset {
-            for i in 0..curr_all_tokens.len() {
-                if new_all_tokens[i] != curr_all_tokens[i].id as u64 {
-                    reset = true;
-                    break;
-                }
-            }
-        }
+        // The engine state can only be kept whole or reset, so reuse it whenever the session's
+        // text is a prefix of the newly rendered text — even if tokenizations differ, as sampled
+        // replies are not canonically tokenized — and prefill only the raw-tokenized text suffix.
+        let curr_text = curr_all_tokens.iter().fold(String::new(), |mut text, token| {
+            text.push_str(&token.value);
+            text
+        });
+        let new_text = self.encoding.state().tokens.iter().fold(String::new(), |mut text, token| {
+            text.push_str(&token.value);
+            text
+        });
+        let reset = !new_text.starts_with(&curr_text);
         let cached_tokens_input = if reset {
             0
         } else {
@@ -161,7 +162,14 @@ impl Session {
             }
             new_all_tokens
         } else {
-            new_all_tokens[curr_all_tokens.len()..].to_vec()
+            match self.encoding.tokenize(&new_text[curr_text.len()..]) {
+                Ok(suffix_tokens) => suffix_tokens.into_iter().map(u64::from).collect(),
+                Err(err) => {
+                    return error_stream(ChatSessionError::Backend {
+                        message: err.to_string(),
+                    });
+                },
+            }
         };
 
         let instance = self.instance.as_ref();
@@ -376,12 +384,11 @@ impl StreamingState<'_> {
         &self,
         last_stat: bool,
     ) -> ChatReplyStats {
-        let speculator_stats = if let Some(metrics) = self.metrics.as_ref()
-            && metrics.num_decode_forward_passes > 0
-        {
-            Some(ChatReplySpeculatorStats {
-                tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / metrics.num_decode_forward_passes as f64,
-                num_decode_forward_passes: metrics.num_decode_forward_passes as u32,
+        let speculator_stats = if let Some(metrics) = self.metrics.as_ref() {
+            let num_forward_passes = metrics.num_prefill_forward_passes + metrics.num_decode_forward_passes;
+            (num_forward_passes > 0).then(|| ChatReplySpeculatorStats {
+                tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / num_forward_passes as f64,
+                num_decode_forward_passes: num_forward_passes as u32,
             })
         } else {
             None
