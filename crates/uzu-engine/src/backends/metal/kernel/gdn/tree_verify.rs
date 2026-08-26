@@ -62,7 +62,9 @@ pub struct MetalDeltaNetTreeVerify {
     out: <MetalKernels as Kernels>::BuildTreeOutKernel,
 }
 
-impl DeltaNetTreeVerify<Metal> for MetalDeltaNetTreeVerify {
+impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
+    type Backend = Metal;
+
     fn is_supported(_context: &MetalContext) -> bool {
         true
     }

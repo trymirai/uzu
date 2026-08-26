@@ -80,7 +80,9 @@ impl AttentionGemmMetalCore {
     }
 }
 
-impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
+impl AttentionGemmCore for AttentionGemmMetalCore {
+    type Backend = Metal;
+
     fn is_supported(
         arguments: &AttentionCoreNewArguments,
         _context: &MetalContext,
@@ -141,8 +143,8 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
                 gqa_factor: self.num_q_heads / self.num_groups,
                 scale: self.scale.unwrap_or(1.0f32 / (self.head_dim as f32).sqrt()),
                 q_len: arguments.suffix_length,
-                k_len: arguments.state_type.physical_prefix_length() + arguments.suffix_length,
-                q_off: arguments.state_type.physical_prefix_length(),
+                k_len: arguments.cache.prefix_len() + arguments.suffix_length,
+                q_off: arguments.cache.prefix_len(),
                 nq_aligned: 0,
                 q_rem: 0,
                 nk: 0,
@@ -165,7 +167,7 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
             arguments.values,
             &mut output,
             params,
-            arguments.state_type.ring_params(),
+            arguments.cache.ring_params(),
             arguments.trie,
             self.sliding_window_size,
             arguments.sinks,

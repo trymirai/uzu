@@ -12,8 +12,8 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::mixer::attention::{
+        KVCacheView,
         core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments, AttentionCores},
-        state::AttentionStateType,
     },
     tests::{
         assert::assert_eq_float,
@@ -100,10 +100,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let values_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.values);
 
     let segment_prefix_length = input.sequence_length - input.suffix_length;
-    let state_type = AttentionStateType::Full {
-        length: segment_prefix_length as u32,
-    };
-
     let args = AttentionCoreEncodeArguments {
         queries: &queries_allocation,
         keys: &keys_allocation,
@@ -111,7 +107,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         suffix_length: input.suffix_length as u32,
         trie: None,
         sinks: None,
-        state_type: &state_type,
+        cache: KVCacheView::full(segment_prefix_length as u32),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

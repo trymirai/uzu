@@ -13,7 +13,9 @@ pub struct CpuRadixTopKSmall {
     columns: usize,
 }
 
-impl RadixTopKSmall<Cpu> for CpuRadixTopKSmall {
+impl RadixTopKSmall for CpuRadixTopKSmall {
+    type Backend = Cpu;
+
     fn new(
         _context: &CpuContext,
         columns: u32,
