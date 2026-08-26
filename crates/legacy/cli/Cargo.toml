@@ -29,6 +29,7 @@ crossterm.workspace = true
 dirs.workspace = true
 dotenvy.workspace = true
 futures-util.workspace = true
+hanashi.workspace = true
 indexmap.workspace = true
 indicatif.workspace = true
 indoc.workspace = true

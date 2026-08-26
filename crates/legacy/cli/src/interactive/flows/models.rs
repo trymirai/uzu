@@ -1,11 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
 use iocraft::prelude::*;
-use shoji::types::model::Model;
+use shoji::types::{basic::SamplingParameters, model::Model};
 use uzu::storage::types::DownloadState;
 
 use crate::{
-    common::model_capabilities::ModelCapabilities,
+    common::thinking::ThinkingSupport,
     interactive::{
         components::{ApplicationState, Loading, ModelState, Selector, SelectorItem, SelectorStyle},
         flows::{Flow, FlowEvent},
@@ -111,7 +111,9 @@ fn Models(
                         model: model.clone(),
                         download_state,
                         session_state: None,
-                        capabilities: ModelCapabilities::default(),
+                        thinking: ThinkingSupport::default(),
+                        sampling_defaults: SamplingParameters::default(),
+                        thinking_locked: false,
                     });
                     let mut preferences = app_state.preferences().clone();
                     preferences.selected_model_id = Some(model.identifier.clone());

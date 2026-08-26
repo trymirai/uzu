@@ -1,11 +1,12 @@
 use iocraft::prelude::*;
+use shoji::types::basic::SamplingParameters;
 
 use crate::{
-    common::model_capabilities::{ModelSamplingDefaults, ThinkingSupport},
+    common::thinking::ThinkingSupport,
     interactive::{
         components::{ApplicationState, Preferences, Theme, ThinkingSupportExt},
         flows::{Flow, FlowEvent},
-        sampling::SamplingMode,
+        sampling::{SamplingMode, SamplingParametersExt},
     },
 };
 
@@ -49,9 +50,10 @@ enum Field {
 fn visible_fields(
     preferences: &Preferences,
     support: ThinkingSupport,
+    thinking_locked: bool,
 ) -> Vec<Field> {
     let mut fields = Vec::new();
-    if support.is_adjustable() {
+    if support.is_adjustable() && !thinking_locked {
         fields.push(Field::Thinking);
     }
     fields.push(Field::SamplingMode);
@@ -117,7 +119,7 @@ fn toggle(
     preferences: &mut Preferences,
     field: Field,
     support: ThinkingSupport,
-    defaults: ModelSamplingDefaults,
+    defaults: SamplingParameters,
 ) {
     let sampling = &mut preferences.sampling;
     match field {
@@ -207,16 +209,17 @@ fn SettingsFlowView(
     let on_event = std::mem::take(&mut props.on_event);
     let state = *hooks.use_context::<State<ApplicationState>>();
 
-    let capabilities =
-        state.read().model_state.as_ref().map(|model_state| model_state.capabilities).unwrap_or_default();
-    let support = capabilities.thinking;
-    let defaults = capabilities.sampling_defaults;
+    let support = state.read().model_state.as_ref().map(|model_state| model_state.thinking).unwrap_or_default();
+    let defaults =
+        state.read().model_state.as_ref().map(|model_state| model_state.sampling_defaults).unwrap_or_default();
+    let thinking_locked =
+        state.read().model_state.as_ref().map(|model_state| model_state.thinking_locked).unwrap_or(false);
 
     let mut draft = hooks.use_state(|| state.read().preferences().clone());
     let mut selected_index = hooks.use_state(|| 0usize);
 
     let preferences = draft.read().clone();
-    let fields = visible_fields(&preferences, support);
+    let fields = visible_fields(&preferences, support, thinking_locked);
     if selected_index.get() >= fields.len() {
         selected_index.set(fields.len().saturating_sub(1));
     }
@@ -235,7 +238,7 @@ fn SettingsFlowView(
         }
 
         let preferences = draft.read().clone();
-        let fields = visible_fields(&preferences, support);
+        let fields = visible_fields(&preferences, support, thinking_locked);
         if fields.is_empty() {
             return;
         }
@@ -297,7 +300,9 @@ fn SettingsFlowView(
     let padding = theme.padding();
 
     let mut rows: Vec<AnyElement<'static>> = vec![section_header("Thinking", &theme)];
-    if support.is_adjustable() {
+    if thinking_locked && support.is_adjustable() {
+        rows.push(info_row("Thinking", thinking_summary(support, &preferences), &theme));
+    } else if support.is_adjustable() {
         rows.push(field_row(Field::Thinking, &preferences, selected, &theme, support, defaults));
     } else {
         rows.push(info_row("Thinking", support.value_label(), &theme));
@@ -374,7 +379,7 @@ fn field_row(
     selected: Option<Field>,
     theme: &Theme,
     support: ThinkingSupport,
-    defaults: ModelSamplingDefaults,
+    defaults: SamplingParameters,
 ) -> AnyElement<'static> {
     let is_selected = selected == Some(field);
     let marker = if is_selected {

@@ -33,7 +33,7 @@ use uzu::{
 };
 
 use crate::{
-    common::model_capabilities::ThinkingSupport,
+    common::thinking::ThinkingSupport,
     server::{
         ServerState,
         chat_tool_calls::{

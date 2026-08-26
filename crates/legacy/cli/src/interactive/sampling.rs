@@ -1,5 +1,5 @@
 use rocket::serde::{Deserialize, Serialize};
-use shoji::types::basic::{SamplingMethod, SamplingPolicy};
+use shoji::types::basic::{SamplingMethod, SamplingParameters, SamplingPolicy};
 
 use crate::interactive::util::cycle;
 
@@ -109,6 +109,39 @@ impl SamplingPreferences {
                     parts.join(", ")
                 }
             },
+        }
+    }
+}
+
+pub trait SamplingParametersExt {
+    fn summary(&self) -> String;
+}
+
+impl SamplingParametersExt for SamplingParameters {
+    fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(value) = self.temperature {
+            parts.push(format!("temp {value:.2}"));
+        }
+        if let Some(value) = self.top_k {
+            parts.push(format!("top-k {value}"));
+        }
+        if let Some(value) = self.top_p {
+            parts.push(format!("top-p {value:.2}"));
+        }
+        if let Some(value) = self.min_p {
+            parts.push(format!("min-p {value:.2}"));
+        }
+        if let Some(value) = self.repetition_penalty {
+            parts.push(format!("repetition penalty {:.2}", value));
+        }
+        if let Some(value) = self.suffix_repetition_length {
+            parts.push(format!("suffix repetition length {:.2}", value));
+        }
+        if parts.is_empty() {
+            "model defaults".to_string()
+        } else {
+            parts.join(", ")
         }
     }
 }
