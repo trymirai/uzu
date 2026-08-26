@@ -1,15 +1,11 @@
 use thiserror::Error;
+use uzu_engine_macros::uzu_config;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Copy, Eq)]
+#[uzu_config]
+#[serde(rename_all = "snake_case")]
 pub enum MicrofloatFormat {
     Mxfp4,
-}
-
-/// Order of the logical matrix axes in packed code and scale storage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MicrofloatAxisOrder {
-    OutputInput,
-    InputOutput,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -24,8 +20,6 @@ pub enum MicrofloatError {
         format: MicrofloatFormat,
         group_size: u32,
     },
-    #[error("unsupported microfloat axis order: {0:?}")]
-    UnsupportedAxisOrder(MicrofloatAxisOrder),
     #[error("microfloat rows and columns must be nonzero")]
     EmptyShape,
     #[error("microfloat columns {columns} are not divisible by group size {group_size}")]
@@ -45,7 +39,6 @@ pub enum MicrofloatError {
 pub struct MicrofloatEncoding {
     format: MicrofloatFormat,
     group_size: u32,
-    axis_order: MicrofloatAxisOrder,
 }
 
 impl MicrofloatEncoding {
@@ -53,7 +46,6 @@ impl MicrofloatEncoding {
         format: MicrofloatFormat,
         bits: u32,
         group_size: u32,
-        axis_order: MicrofloatAxisOrder,
     ) -> Result<Self, MicrofloatError> {
         if bits != 4 {
             return Err(MicrofloatError::UnsupportedBits {
@@ -67,13 +59,9 @@ impl MicrofloatEncoding {
                 group_size,
             });
         }
-        if axis_order != MicrofloatAxisOrder::OutputInput {
-            return Err(MicrofloatError::UnsupportedAxisOrder(axis_order));
-        }
         Ok(Self {
             format,
             group_size,
-            axis_order,
         })
     }
 
@@ -87,10 +75,6 @@ impl MicrofloatEncoding {
 
     pub fn group_size(self) -> u32 {
         self.group_size
-    }
-
-    pub fn axis_order(self) -> MicrofloatAxisOrder {
-        self.axis_order
     }
 }
 
@@ -138,10 +122,6 @@ impl MicrofloatMetadata {
 
     pub fn group_size(self) -> u32 {
         self.encoding.group_size()
-    }
-
-    pub fn axis_order(self) -> MicrofloatAxisOrder {
-        self.encoding.axis_order()
     }
 
     pub fn rows(self) -> u32 {
@@ -231,14 +211,13 @@ mod tests {
     fn validates_supported_mxfp4_encodings() {
         for group_size in [16, 32] {
             let encoding =
-                MicrofloatEncoding::new(MicrofloatFormat::Mxfp4, 4, group_size, MicrofloatAxisOrder::OutputInput)
-                    .expect("supported MXFP4 encoding");
+                MicrofloatEncoding::new(MicrofloatFormat::Mxfp4, 4, group_size).expect("supported MXFP4 encoding");
             let metadata = MicrofloatMetadata::new(encoding, 3, 32).expect("supported MXFP4 metadata");
             assert_eq!(metadata.required_code_bytes(), 48);
             assert_eq!(metadata.required_scale_bytes(), 3 * 32 / group_size as usize);
         }
         assert!(matches!(
-            MicrofloatEncoding::new(MicrofloatFormat::Mxfp4, 8, 16, MicrofloatAxisOrder::OutputInput),
+            MicrofloatEncoding::new(MicrofloatFormat::Mxfp4, 8, 16),
             Err(MicrofloatError::UnsupportedBits {
                 bits: 8,
                 ..

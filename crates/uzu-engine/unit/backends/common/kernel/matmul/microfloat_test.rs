@@ -5,7 +5,7 @@ use crate::{
         common::{
             Backend, Context, Encoder, Kernels,
             kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
-            microfloat::{MicrofloatAxisOrder, MicrofloatEncoding, MicrofloatFormat, MicrofloatMetadata, decode_mxfp4},
+            microfloat::{MicrofloatEncoding, MicrofloatFormat, MicrofloatMetadata, decode_mxfp4},
         },
         cpu::Cpu,
     },
@@ -37,13 +37,8 @@ fn cpu_executes_dense_mxfp4_matmul() {
             let codes = packed_codes();
             let scales: Vec<u8> = (0..N * K / group_size).map(|index| 126 + (index % 3) as u8).collect();
             let outer_scales = [1.25f32];
-            let encoding = MicrofloatEncoding::new(
-                MicrofloatFormat::Mxfp4,
-                4,
-                group_size as u32,
-                MicrofloatAxisOrder::OutputInput,
-            )
-            .expect("valid MXFP4 encoding");
+            let encoding =
+                MicrofloatEncoding::new(MicrofloatFormat::Mxfp4, 4, group_size as u32).expect("valid MXFP4 encoding");
             let metadata = MicrofloatMetadata::new(encoding, N as u32, K as u32).expect("valid dense MXFP4 metadata");
 
             let context = <Cpu as Backend>::Context::new().expect("create CPU context");

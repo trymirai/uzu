@@ -133,14 +133,4 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
             } => *signed_codes,
         }
     }
-
-    pub fn microfloat_metadata(&self) -> Option<MicrofloatMetadata> {
-        match self {
-            Self::Microfloat {
-                metadata,
-                ..
-            } => Some(*metadata),
-            _ => None,
-        }
-    }
 }

@@ -1,18 +1,12 @@
 use uzu_engine_macros::uzu_config;
 
-use crate::config::weight_matrix::Layout;
-
-#[uzu_config]
-#[serde(rename_all = "snake_case")]
-pub enum MicrofloatScaleMode {
-    Mxfp4,
-}
+use crate::{backends::common::microfloat::MicrofloatFormat, config::weight_matrix::Layout};
 
 #[uzu_config(super::WeightMatrixSpec)]
 pub struct MicrofloatSpec {
     pub bits: u32,
     pub group_size: usize,
-    pub scale_mode: MicrofloatScaleMode,
+    pub scale_mode: MicrofloatFormat,
     pub layout: Layout,
 }
 
@@ -37,6 +31,6 @@ mod tests {
         let AnyWeightMatrixSpec::MicrofloatSpec(spec) = spec else {
             panic!("expected MicrofloatSpec");
         };
-        assert_eq!(spec.scale_mode, MicrofloatScaleMode::Mxfp4);
+        assert_eq!(spec.scale_mode, MicrofloatFormat::Mxfp4);
     }
 }

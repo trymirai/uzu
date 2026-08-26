@@ -5,12 +5,9 @@ use crate::{
         Allocation, Backend,
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::matmul::MatmulB,
-        microfloat::{MicrofloatAxisOrder, MicrofloatEncoding, MicrofloatFormat, MicrofloatMetadata},
+        microfloat::{MicrofloatEncoding, MicrofloatMetadata},
     },
-    config::weight_matrix::{
-        AnyWeightMatrixSpec, Layout,
-        microfloat_spec::{MicrofloatScaleMode, MicrofloatSpec},
-    },
+    config::weight_matrix::{AnyWeightMatrixSpec, Layout, microfloat_spec::MicrofloatSpec},
     data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -62,17 +59,15 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
             layout,
             ..
         }) => {
-            let format = match scale_mode {
-                MicrofloatScaleMode::Mxfp4 => MicrofloatFormat::Mxfp4,
-            };
+            if layout != &Layout::OutputInput {
+                return Err(WeightMatrixError::UnsupportedConfiguration(format!(
+                    "microfloat matrices require output-input layout, got {layout:?}"
+                )));
+            }
             let group_size = u32::try_from(*group_size).map_err(|_| {
                 WeightMatrixError::UnsupportedConfiguration(format!("microfloat group size {group_size} exceeds u32"))
             })?;
-            let axis_order = match layout {
-                Layout::OutputInput => MicrofloatAxisOrder::OutputInput,
-                Layout::InputOutput => MicrofloatAxisOrder::InputOutput,
-            };
-            let encoding = MicrofloatEncoding::new(format, *bits, group_size, axis_order)
+            let encoding = MicrofloatEncoding::new(*scale_mode, *bits, group_size)
                 .map_err(|error| WeightMatrixError::UnsupportedConfiguration(error.to_string()))?;
             (layout.clone(), None, Some(encoding))
         },
@@ -446,7 +441,6 @@ mod tests {
         );
     }
 
-    /// Pristine dense MXFP4 artifact at the `WeightMatrix` loading boundary.
     fn dense_microfloat_parameter_file() -> NamedTempFile {
         const ROWS: u32 = 2;
         const COLUMNS: u32 = 32;
