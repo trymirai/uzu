@@ -19,7 +19,9 @@ pub struct AttentionCpuKernel {
     config: AttentionKernelConfig,
 }
 
-impl AttentionKernel<Cpu> for AttentionCpuKernel {
+impl AttentionKernel for AttentionCpuKernel {
+    type Backend = Cpu;
+
     fn new(
         _context: &CpuContext,
         config: AttentionKernelConfig,

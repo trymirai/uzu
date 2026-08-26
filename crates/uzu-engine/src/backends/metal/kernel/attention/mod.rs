@@ -55,7 +55,9 @@ pub struct AttentionMetalKernel {
     single_pass: single_pass::AttentionSinglePass,
 }
 
-impl AttentionKernel<Metal> for AttentionMetalKernel {
+impl AttentionKernel for AttentionMetalKernel {
+    type Backend = Metal;
+
     fn new(
         context: &MetalContext,
         config: AttentionKernelConfig,

@@ -20,7 +20,7 @@ pub trait Kernels: Sized {
     type Backend: Backend<Kernels = Self>;
 
     autogen_kernels!();
-    type AttentionKernel: attention::AttentionKernel<Self::Backend>;
+    type AttentionKernel: attention::AttentionKernel<Backend = Self::Backend>;
     type DeltaNetChunkedPrefill: delta_net_chunked_prefill::DeltaNetChunkedPrefill<Backend = Self::Backend>;
     type DeltaNetTreeVerify: delta_net_tree_verify::DeltaNetTreeVerify<Backend = Self::Backend>;
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;

@@ -1,23 +1,25 @@
 use crate::{
-    backends::common::{Allocation, Backend, BufferArg, Encoder},
+    backends::common::{Allocation, Backend, BufferArg, Encoder, Kernels},
     data_type::DataType,
     encodable_block::mixer::attention::AttentionStateType,
 };
 
-pub trait AttentionKernel<B: Backend>: Sized + Send + Sync {
+pub trait AttentionKernel: Sized + Send + Sync {
+    type Backend: Backend<Kernels: Kernels<AttentionKernel = Self>>;
+
     fn new(
-        context: &B::Context,
+        context: &<Self::Backend as Backend>::Context,
         config: AttentionKernelConfig,
-    ) -> Result<Self, B::Error>;
+    ) -> Result<Self, <Self::Backend as Backend>::Error>;
 
     fn encode<'a, KT, VT>(
         &self,
-        arguments: AttentionArguments<'a, B, KT, VT>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error>
+        arguments: AttentionArguments<'a, Self::Backend, KT, VT>,
+        encoder: &mut Encoder<Self::Backend>,
+    ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error>
     where
-        KT: BufferArg<'a, B>,
-        VT: BufferArg<'a, B>;
+        KT: BufferArg<'a, Self::Backend>,
+        VT: BufferArg<'a, Self::Backend>;
 }
 
 #[derive(Clone, Copy)]
