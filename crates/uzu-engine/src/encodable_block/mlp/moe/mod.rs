@@ -82,24 +82,6 @@ pub enum MoeBlockError<B: Backend> {
     UnsupportedExpertActivation(ActivationType),
 }
 
-pub(crate) fn valid_model_dim(model_dim: u32) -> bool {
-    model_dim > 0 && model_dim <= ROUTER_TOPK_MAX_MODEL_DIM && model_dim.is_multiple_of(4)
-}
-
-pub(crate) fn validate_expert_counts<B: Backend>(
-    routed_experts: u32,
-    active_experts: u32,
-) -> Result<(), MoeBlockError<B>> {
-    if !(1..=ROUTER_TOPK_MAX_EXPERTS).contains(&routed_experts) {
-        return Err(MoeBlockError::InvalidRoutedExpertCount);
-    }
-    if !(1..=ROUTER_TOPK_MAX_SELECTED_EXPERTS.min(routed_experts)).contains(&active_experts) {
-        return Err(MoeBlockError::InvalidActiveExpertCount);
-    }
-
-    Ok(())
-}
-
 impl<B: Backend> MoeBlock<B> {
     pub fn new(
         context: &B::Context,
@@ -108,10 +90,17 @@ impl<B: Backend> MoeBlock<B> {
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, MoeBlockError<B>> {
-        if !valid_model_dim(model_dim) {
+        if model_dim == 0 || model_dim > ROUTER_TOPK_MAX_MODEL_DIM || !model_dim.is_multiple_of(4) {
             return Err(MoeBlockError::InvalidModelDim);
         }
-        validate_expert_counts::<B>(moe_config.num_routed_experts, moe_config.num_active_routed_experts)?;
+        if !(1..=ROUTER_TOPK_MAX_EXPERTS).contains(&moe_config.num_routed_experts) {
+            return Err(MoeBlockError::InvalidRoutedExpertCount);
+        }
+        if !(1..=ROUTER_TOPK_MAX_SELECTED_EXPERTS.min(moe_config.num_routed_experts))
+            .contains(&moe_config.num_active_routed_experts)
+        {
+            return Err(MoeBlockError::InvalidActiveExpertCount);
+        }
         if moe_config.num_shared_experts != 0 {
             return Err(MoeBlockError::UnsupportedSharedExperts);
         }
