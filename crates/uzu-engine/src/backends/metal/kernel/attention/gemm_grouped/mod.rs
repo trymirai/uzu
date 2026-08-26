@@ -12,6 +12,7 @@ use crate::{
             context::MetalContext,
             error::MetalError,
             kernel::{AttentionGemmGroupedCombineMetalKernel, AttentionGemmGroupedMetalKernel},
+            metal_extensions::DeviceExt,
         },
     },
     data_type::DataType,
@@ -76,7 +77,7 @@ impl AttentionGemmGroupedMetal {
             scale,
             block_rows,
             mask,
-            gpu_core_count: context.device_profile().gpu_core_count(),
+            gpu_core_count: context.device.gpu_core_count(),
         })
     }
 
