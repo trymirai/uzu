@@ -13,6 +13,7 @@ pub enum ReasoningEffort {
     Low,
     Medium,
     High,
+    XHigh,
 }
 
 impl FromStr for ReasoningEffort {
@@ -25,6 +26,7 @@ impl FromStr for ReasoningEffort {
             "low" => Ok(ReasoningEffort::Low),
             "medium" => Ok(ReasoningEffort::Medium),
             "high" => Ok(ReasoningEffort::High),
+            "xhigh" => Ok(ReasoningEffort::XHigh),
             other => Err(format!("Unknown reasoning effort: {other}")),
         }
     }
@@ -41,6 +43,7 @@ impl Display for ReasoningEffort {
             ReasoningEffort::Low => "low",
             ReasoningEffort::Medium => "medium",
             ReasoningEffort::High => "high",
+            ReasoningEffort::XHigh => "xhigh",
         };
         write!(formatter, "{name}")
     }

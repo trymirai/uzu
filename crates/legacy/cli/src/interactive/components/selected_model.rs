@@ -5,7 +5,7 @@ use tokio_stream::StreamExt;
 use uzu::storage::types::DownloadPhase;
 
 use crate::{
-    common::model_capabilities::{ModelCapabilities, ThinkingSupport},
+    common::thinking::ThinkingSupport,
     interactive::components::{ApplicationState, ProgressBar, ThinkingSupportExt},
 };
 
@@ -35,9 +35,9 @@ pub fn SelectedModel(
             let Some(model) = model else {
                 return;
             };
-            let capabilities = ModelCapabilities::load(&engine, &model).await;
+            let thinking = ThinkingSupport::for_model(&model);
             if let Some(model_state) = state.write().model_state.as_mut() {
-                model_state.capabilities = capabilities;
+                model_state.thinking = thinking;
             }
             if !model.is_downloadable() {
                 return;
@@ -82,9 +82,9 @@ pub fn SelectedModel(
                     model_state.download_state = event_state;
                 }
                 if became_downloaded {
-                    let capabilities = ModelCapabilities::load(&engine, &model).await;
+                    let thinking = ThinkingSupport::for_model(&model);
                     if let Some(model_state) = state.write().model_state.as_mut() {
-                        model_state.capabilities = capabilities;
+                        model_state.thinking = thinking;
                     }
                 }
             }
@@ -172,12 +172,12 @@ pub fn SelectedModel(
     let thinking = state.read().thinking();
     let model_data = state.read().model_state.as_ref().map(|model_state| {
         let session_status = model_state.session_state.as_deref().and_then(|session_state| session_state.status_text());
-        (model_state.model.clone(), model_state.download_state.clone(), session_status, model_state.capabilities)
+        (model_state.model.clone(), model_state.download_state.clone(), session_status, model_state.thinking)
     });
 
     let view: AnyElement<'static> = match model_data {
         None => element! { View }.into(),
-        Some((model, download_state, session_status, capabilities)) => {
+        Some((model, download_state, session_status, thinking_support)) => {
             let is_downloaded = matches!(download_state.phase, DownloadPhase::Downloaded {});
             let is_downloading = matches!(download_state.phase, DownloadPhase::Downloading {});
             let status = if is_downloading {
@@ -202,7 +202,7 @@ pub fn SelectedModel(
             let padding = theme.padding();
             let padding_wide = theme.padding_wide();
             let chat_indicator = (model.is_chat_capable() && (is_downloaded || !model.is_downloadable())).then(|| {
-                let thinking = match capabilities.thinking.with_preference(&thinking) {
+                let thinking = match thinking_support.with_preference(&thinking) {
                     ThinkingSupport::Unsupported => None,
                     support => Some(support.value_label()),
                 };

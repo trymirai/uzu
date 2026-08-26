@@ -10,7 +10,7 @@ use uzu::{
 };
 
 use crate::{
-    common::model_capabilities::ModelCapabilities,
+    common::thinking::ThinkingSupport,
     server::{ServerState, handle_chat_completions, handle_models},
 };
 
@@ -38,14 +38,14 @@ pub async fn run_server(
     }
     spinner.finish_with_message(format!("Loaded: {}", resolved.identifier));
 
-    let capabilities = ModelCapabilities::load(&engine, &resolved).await;
+    let thinking_support = ThinkingSupport::for_model(&resolved);
     let session =
         engine.chat(resolved.clone(), ChatConfig::default()).await.context("Failed to create chat session")?;
     let model_name = resolved.identifier.clone();
     let state = ServerState {
         model_name: model_name.clone(),
         session: Arc::new(Mutex::new(session)),
-        thinking_support: capabilities.thinking,
+        thinking_support,
         prefix_cache,
     };
 

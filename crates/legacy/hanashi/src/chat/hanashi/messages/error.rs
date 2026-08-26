@@ -38,11 +38,6 @@ pub enum Error {
         role: ChatRole,
         field: String,
     },
-    #[error("Block type '{block_type}' is assigned to multiple fields for role '{role}'")]
-    DuplicateBlock {
-        role: ChatRole,
-        block_type: ChatContentBlockType,
-    },
     #[error("Limit of {limit} exceeded for '{block_type}' on role '{role}'")]
     LimitExceeded {
         role: ChatRole,

@@ -4,7 +4,10 @@ use tokenizers::Tokenizer;
 
 use crate::{
     traits::backend::{Error, Instance as InstanceTrait},
-    types::session::chat::{ChatConfig, ChatReplyConfig},
+    types::{
+        basic::SamplingParameters,
+        session::chat::{ChatConfig, ChatReplyConfig},
+    },
 };
 
 pub enum TokenStreamOutput {
@@ -47,4 +50,6 @@ pub trait Instance:
     fn max_context_length(&self) -> Option<usize>;
 
     fn stop_token_ids(&self) -> Option<Box<[u64]>>;
+
+    fn sampling_defaults(&self) -> SamplingParameters;
 }
