@@ -5,8 +5,8 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::mixer::attention::{
+        KVCacheView,
         core::{fallback::AttentionFallbackCore, single_pass::AttentionSinglePassCore, two_pass::AttentionTwoPassCore},
-        state::AttentionStateType,
     },
 };
 
@@ -34,7 +34,7 @@ pub struct AttentionCoreEncodeArguments<'a, B: Backend, KT: BufferArg<'a, B>, VT
     pub suffix_length: u32,
     pub trie: Option<&'a Allocation<B>>,
     pub sinks: Option<&'a Allocation<B>>,
-    pub state_type: &'a AttentionStateType,
+    pub cache: KVCacheView,
 }
 
 pub struct AttentionCores<B: Backend> {
@@ -86,7 +86,7 @@ impl<B: Backend> AttentionCores<B> {
             && let Some(fallback) = &self.fallback
         {
             fallback.encode(arguments, encoder)
-        } else if arguments.state_type.physical_prefix_length() + arguments.suffix_length > 1024 {
+        } else if arguments.cache.prefix_len() + arguments.suffix_length > 1024 {
             self.two_pass.encode(arguments, encoder)
         } else {
             self.single_pass.encode(arguments, encoder)

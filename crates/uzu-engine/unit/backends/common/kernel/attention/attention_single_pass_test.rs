@@ -7,7 +7,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::AttentionSinglePassKernel},
+        common::{
+            Allocation, Backend, Context, Encoder, Kernels, gpu_types::ring::RingParams,
+            kernel::AttentionSinglePassKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -28,6 +31,8 @@ struct Input<T: ArrayElement + Float> {
     head_dim: u32,
     scale: f32,
     do_causal: bool,
+    ring_params: Option<RingParams>,
+    sliding_window_size: Option<u32>,
 }
 
 fn get_input<T: ArrayElement + Float>(
@@ -74,6 +79,8 @@ fn get_input<T: ArrayElement + Float>(
         head_dim,
         scale,
         do_causal,
+        ring_params: None,
+        sliding_window_size: None,
     }
 }
 
@@ -85,10 +92,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         T::data_type(),
         input.head_dim,
         false,
-        false,
+        input.ring_params.is_some(),
         input.do_causal,
         false,
-        false,
+        input.sliding_window_size.is_some(),
     )
     .expect("Failed to create AttentionSinglePassKernel");
 
@@ -111,10 +118,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         input.head_dim,
         input.sequence_length * input.head_dim,
         input.head_dim,
-        None,
+        input.ring_params,
         input.scale,
         None::<&Allocation<B>>,
-        None,
+        input.sliding_window_size,
         None::<&Allocation<B>>,
         input.num_heads,
         input.suffix_length,
@@ -186,6 +193,17 @@ fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input, &expected);
 }
 
+fn test_noncausal_ring<T: ArrayElement + Float + Debug + Display>() {
+    let mut input = get_input::<T>(8, 2, 8, 4, 64, false);
+    input.ring_params = Some(RingParams {
+        ring_offset: 2,
+        ring_length: 4,
+    });
+    input.sliding_window_size = Some(4);
+    let expected = get_output::<T, Cpu>(&input);
+    test_internal(&input, &expected);
+}
+
 fn test_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: u32) {
     let input = get_input::<T>(4, 4, 8, 2, head_dim, true);
     let expected = get_output::<T, Cpu>(&input);
@@ -238,6 +256,11 @@ fn test_gqa_f16() {
 #[uzu_test]
 fn test_gqa_bf16() {
     test_gqa::<bf16>();
+}
+
+#[uzu_test]
+fn test_noncausal_ring_bf16() {
+    test_noncausal_ring::<bf16>();
 }
 
 // Head dim 128

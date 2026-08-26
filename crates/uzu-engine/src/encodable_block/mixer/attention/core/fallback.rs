@@ -70,7 +70,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let suffix_length = arguments.suffix_length;
-        let sequence_length = arguments.state_type.physical_prefix_length() + suffix_length;
+        let sequence_length = arguments.cache.prefix_len() + suffix_length;
         let gqa_factor = self.num_q_heads / self.num_groups;
         let scale = self.scale.unwrap_or(1.0f32 / (self.head_dim as f32).sqrt());
 
@@ -112,7 +112,7 @@ impl<B: Backend> AttentionFallbackCore<B> {
             self.scatter_scores.encode(
                 &group_scores,
                 &mut scores,
-                arguments.state_type.ring_params(),
+                arguments.cache.ring_params(),
                 None::<&Allocation<B>>,
                 self.sliding_window_size,
                 group_index,

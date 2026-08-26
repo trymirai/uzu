@@ -17,8 +17,8 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::mixer::attention::{
+        KVCacheView,
         core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
-        state::AttentionStateType,
     },
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
 };
@@ -339,10 +339,6 @@ fn run_gemm_attention(
     let value_allocation = create_attention_cache_allocation(values, seq_len, context);
 
     let sinks_allocation = sinks.map(|sinks| create_sinks_allocation(sinks, context));
-    let state_type = AttentionStateType::Full {
-        length: 0,
-    };
-
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     let args = AttentionCoreEncodeArguments {
@@ -352,7 +348,7 @@ fn run_gemm_attention(
         suffix_length: seq_len as u32,
         trie: None,
         sinks: sinks_allocation.as_ref(),
-        state_type: &state_type,
+        cache: KVCacheView::full(0),
     };
 
     let pooled_output = core.encode(args, &mut encoder)?;
