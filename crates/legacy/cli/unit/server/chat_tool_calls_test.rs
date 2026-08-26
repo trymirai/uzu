@@ -153,16 +153,16 @@ fn reply_tool_calls_serialize_in_openai_format() {
 #[test]
 fn json_candidate_announces_name_once_it_is_complete() {
     let mut streamer = ToolCallStreamer::new();
-    assert!(streamer.update(0, r#"{"name": "wr"#).is_empty());
-    assert!(streamer.update(0, r#"{"arguments": {}}"#).is_empty());
+    assert!(streamer.update(0, r#"{"name": "wr"#, &ToolParameterTypes::default()).is_empty());
+    assert!(streamer.update(0, r#"{"arguments": {}}"#, &ToolParameterTypes::default()).is_empty());
 
-    let deltas = streamer.update(1, r#"{"name": "write", "arguments": {"path":"#);
+    let deltas = streamer.update(1, r#"{"name": "write", "arguments": {"path":"#, &ToolParameterTypes::default());
     assert_eq!(deltas.len(), 1);
     assert_eq!(deltas[0].index, Some(1));
     assert_eq!(deltas[0].function.name, "write");
     assert_eq!(deltas[0].function.arguments, "");
 
-    // the id is assigned at announcement time and must never change mid-call
+    // Metadata is emitted exactly once, in the announcement delta.
     assert!(!deltas[0].id.is_empty());
     let call = ToolCall {
         identifier: Some("server-side-id-must-not-leak".to_string()),
@@ -171,9 +171,56 @@ fn json_candidate_announces_name_once_it_is_complete() {
             json: r#"{"path":"/tmp/a"}"#.to_string(),
         },
     };
-    assert_eq!(streamer.finish(1, &call).id, deltas[0].id);
 
-    assert!(streamer.update(1, r#"{"name": "write", "arguments": {"path": "/"#).is_empty());
+    let finish = serde_json::to_value(streamer.finish(1, &call)).expect("serializable final delta");
+    assert_eq!(
+        finish,
+        serde_json::json!({
+            "index": 1,
+            "function": {"arguments": r#"{"path":"/tmp/a"}"#}
+        })
+    );
+
+    assert!(
+        streamer.update(1, r#"{"name": "write", "arguments": {"path": "/"#, &ToolParameterTypes::default()).is_empty()
+    );
+}
+
+#[test]
+fn framed_argument_deltas_do_not_repeat_announced_metadata() {
+    let mut streamer = ToolCallStreamer::new();
+    let deltas = streamer.update(0, "<function=write>\n<parameter=path>\n/tmp/a", &ToolParameterTypes::default());
+    assert_eq!(deltas.len(), 2);
+
+    let announcement = serde_json::to_value(&deltas[0]).expect("serializable announcement");
+    assert_eq!(announcement["type"], "function");
+    assert_eq!(announcement["function"]["name"], "write");
+
+    let arguments = serde_json::to_value(&deltas[1]).expect("serializable argument delta");
+    assert_eq!(
+        arguments,
+        serde_json::json!({
+            "index": 0,
+            "function": {"arguments": r#"{"path":"/tmp/a"#}
+        })
+    );
+}
+
+#[test]
+fn finish_emits_metadata_when_no_announcement_was_possible() {
+    let mut streamer = ToolCallStreamer::new();
+    let call = ToolCall {
+        identifier: None,
+        name: "write".to_string(),
+        arguments: Value {
+            json: r#"{"path":"/tmp/a"}"#.to_string(),
+        },
+    };
+
+    let finish = serde_json::to_value(streamer.finish(0, &call)).expect("serializable final delta");
+    assert_eq!(finish["type"], "function");
+    assert_eq!(finish["function"]["name"], "write");
+    assert!(!finish["id"].as_str().expect("string id").is_empty());
 }
 
 #[test]
@@ -194,7 +241,7 @@ fn framed_tool_call_streams_arguments_incrementally() {
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
-        for delta in streamer.update(0, &partial) {
+        for delta in streamer.update(0, &partial, &ToolParameterTypes::default()) {
             if !delta.function.name.is_empty() {
                 announcements += 1;
                 assert_eq!(delta.function.name, "write");
@@ -212,10 +259,14 @@ fn framed_tool_call_streams_arguments_incrementally() {
 #[test]
 fn framed_tool_call_withholds_typed_parameter_until_complete() {
     let mut streamer = ToolCallStreamer::new();
-    let deltas = streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\"");
+    let deltas = streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\"", &ToolParameterTypes::default());
     assert!(deltas.iter().all(|delta| delta.function.arguments.is_empty()));
 
-    let deltas = streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\": 1}\n</parameter>\n</function>\n");
+    let deltas = streamer.update(
+        0,
+        "\n<function=read>\n<parameter=options>\n{\"a\": 1}\n</parameter>\n</function>\n",
+        &ToolParameterTypes::default(),
+    );
     let fragment: String = deltas.iter().map(|delta| delta.function.arguments.as_str()).collect();
     assert_eq!(fragment, r#"{"options":{"a":1}"#);
 
@@ -245,7 +296,7 @@ fn framed_tool_call_streams_multibyte_content_without_panicking() {
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
-        for delta in streamer.update(0, &partial) {
+        for delta in streamer.update(0, &partial, &ToolParameterTypes::default()) {
             fragments.push_str(&delta.function.arguments);
         }
     }
@@ -277,7 +328,7 @@ fn framed_tool_call_with_array_parameter_assembles_exactly() {
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
-        for delta in streamer.update(0, &partial) {
+        for delta in streamer.update(0, &partial, &ToolParameterTypes::default()) {
             fragment_count += 1;
             fragments.push_str(&delta.function.arguments);
         }
@@ -287,4 +338,174 @@ fn framed_tool_call_with_array_parameter_assembles_exactly() {
     assert!(fragment_count > 2, "fragments: {fragments:?}");
     let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
     assert_eq!(parsed, final_arguments);
+}
+
+fn parameter_types(tools_json: &str) -> ToolParameterTypes {
+    let tools: Vec<OaiTool> = serde_json::from_str(tools_json).expect("valid tools json");
+    ToolParameterTypes::from_tools(Some(&tools))
+}
+
+const SEARCH_TOOL: &str = r#"[{"type":"function","function":{"name":"search","description":"Search",
+    "parameters":{"type":"object","properties":{
+        "query":{"type":"string"},
+        "limit":{"type":"integer"},
+        "ratio":{"type":"number"},
+        "metric":{"type":"boolean"},
+        "note":{"type":["string","null"]},
+        "padded_id":{"type":"string"}
+    },"required":["query"]}}}]"#;
+
+#[test]
+fn declared_types_restore_scalar_arguments() {
+    let types = parameter_types(SEARCH_TOOL);
+    let call = ToolCall {
+        identifier: None,
+        name: "search".to_string(),
+        arguments: Value {
+            json: r#"{"query":"cats","limit":"5","ratio":"-0.75","metric":"true","note":"null","padded_id":"00123","unknown":"7"}"#.to_string(),
+        },
+    };
+
+    let coerced: serde_json::Value =
+        serde_json::from_str(&coerce_tool_call(&call, &types).arguments.json).expect("coerced arguments parse");
+    assert_eq!(
+        coerced,
+        serde_json::json!({
+            "query": "cats",
+            "limit": 5,
+            "ratio": -0.75,
+            "metric": true,
+            // a union that includes "string" keeps the string: it is already schema-valid
+            "note": "null",
+            // declared strings are never retyped, so padded ids survive
+            "padded_id": "00123",
+            // undeclared parameters are left alone
+            "unknown": "7"
+        })
+    );
+}
+
+#[test]
+fn python_style_booleans_coerce_to_declared_boolean() {
+    let types = parameter_types(SEARCH_TOOL);
+    // qwen3.5 writes Python-style booleans into its tool markup
+    let call = ToolCall {
+        identifier: None,
+        name: "search".to_string(),
+        arguments: Value {
+            json: r#"{"metric":"True","query":"False","limit":"True"}"#.to_string(),
+        },
+    };
+
+    let coerced: serde_json::Value =
+        serde_json::from_str(&coerce_tool_call(&call, &types).arguments.json).expect("coerced arguments parse");
+    assert_eq!(
+        coerced,
+        serde_json::json!({
+            "metric": true,
+            // declared strings are never retyped
+            "query": "False",
+            // a boolean does not read as the declared integer
+            "limit": "True"
+        })
+    );
+}
+
+#[test]
+fn framed_streamer_agrees_with_coerced_boolean_finish() {
+    let types = parameter_types(SEARCH_TOOL);
+    let final_markup =
+        "<function=search>\n<parameter=query>\ncats\n</parameter>\n<parameter=metric>\nTrue\n</parameter>\n</function>";
+    // what coerce_tool_call produces from the parser's Python-style boolean
+    let call = ToolCall {
+        identifier: Some("c1".to_string()),
+        name: "search".to_string(),
+        arguments: Value {
+            json: r#"{"query":"cats","metric":true}"#.to_string(),
+        },
+    };
+
+    let mut streamer = ToolCallStreamer::new();
+    let mut fragments = String::new();
+    let chars = final_markup.chars().collect::<Vec<_>>();
+    for i in 0..=chars.len() {
+        let partial: String = chars[..i].iter().collect();
+        for delta in streamer.update(0, &partial, &types) {
+            fragments.push_str(&delta.function.arguments);
+        }
+    }
+    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+
+    let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
+    assert_eq!(parsed, serde_json::json!({"query": "cats", "metric": true}));
+}
+
+#[test]
+fn declared_string_keeps_json_shaped_text() {
+    let types = parameter_types(
+        r#"[{"type":"function","function":{"name":"write_file","description":"Write",
+            "parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},
+            "required":["path","content"]}}}]"#,
+    );
+    // the parser typed the JSON-shaped content by its braces
+    let call = ToolCall {
+        identifier: None,
+        name: "write_file".to_string(),
+        arguments: Value {
+            json: r#"{"path":"data.json","content":{"a":1}}"#.to_string(),
+        },
+    };
+
+    let coerced: serde_json::Value =
+        serde_json::from_str(&coerce_tool_call(&call, &types).arguments.json).expect("coerced arguments parse");
+    assert_eq!(coerced["content"], serde_json::json!(r#"{"a":1}"#));
+}
+
+#[test]
+fn coercion_leaves_unparseable_scalars_and_wrapped_arguments_alone() {
+    let types = parameter_types(SEARCH_TOOL);
+    let call = |json: &str| ToolCall {
+        identifier: None,
+        name: "search".to_string(),
+        arguments: Value {
+            json: json.to_string(),
+        },
+    };
+
+    // text that does not read as the declared type stays a string
+    assert_eq!(coerce_tool_call(&call(r#"{"limit":"lots"}"#), &types).arguments.json, r#"{"limit":"lots"}"#);
+    // a declared integer that reads as a float stays a string
+    assert_eq!(coerce_tool_call(&call(r#"{"limit":"5.5"}"#), &types).arguments.json, r#"{"limit":"5.5"}"#);
+    // wrapped unparseable arguments are not an object of parameters
+    let wrapped = r#"{"__uzu_unparsed_arguments":"{\"a\":"}"#;
+    assert_eq!(coerce_tool_call(&call(wrapped), &types).arguments.json, wrapped);
+}
+
+#[test]
+fn framed_streamer_agrees_with_coerced_finish() {
+    let types = parameter_types(SEARCH_TOOL);
+    let final_markup =
+        "<function=search>\n<parameter=query>\ncats\n</parameter>\n<parameter=limit>\n5\n</parameter>\n</function>";
+    // what coerce_tool_call produces from the parser's stringified scalars
+    let call = ToolCall {
+        identifier: Some("c1".to_string()),
+        name: "search".to_string(),
+        arguments: Value {
+            json: r#"{"query":"cats","limit":5}"#.to_string(),
+        },
+    };
+
+    let mut streamer = ToolCallStreamer::new();
+    let mut fragments = String::new();
+    let chars = final_markup.chars().collect::<Vec<_>>();
+    for i in 0..=chars.len() {
+        let partial: String = chars[..i].iter().collect();
+        for delta in streamer.update(0, &partial, &types) {
+            fragments.push_str(&delta.function.arguments);
+        }
+    }
+    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+
+    let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
+    assert_eq!(parsed, serde_json::json!({"query": "cats", "limit": 5}));
 }
