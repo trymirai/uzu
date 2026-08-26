@@ -7,7 +7,6 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, kernel::GroupedConvolutionKernel},
         cpu::Cpu,
     },
-    encodable_block::dflash::ConvolutionStage,
     tests::{
         assert::assert_eq_float,
         helpers::{
@@ -20,7 +19,7 @@ fn run<B: Backend>(
     input: &[bf16],
     coefficients: &[bf16],
     base_kernel: &[bf16],
-    stage: ConvolutionStage,
+    stage: u32,
 ) -> Vec<f32> {
     let context = B::Context::new().unwrap();
     let kernel = <B::Kernels as Kernels>::GroupedConvolutionKernel::new(&context, bf16::data_type()).unwrap();
@@ -29,7 +28,7 @@ fn run<B: Backend>(
     let base_kernel = alloc_allocation_with_data::<B, bf16>(&context, base_kernel);
     let mut output = alloc_allocation::<B, bf16>(&context, 4 * 4);
     let mut encoder = Encoder::new(context.as_ref()).unwrap();
-    kernel.encode(&input, &coefficients, &base_kernel, &mut output, 4, 4, 2, 2, 2, stage.index(), &mut encoder);
+    kernel.encode(&input, &coefficients, &base_kernel, &mut output, 4, 4, 2, 2, 2, stage, &mut encoder);
     submit_encoder(encoder);
     allocation_to_vec::<B, bf16>(&output).into_iter().map(|value| value.to_f32()).collect()
 }
@@ -42,7 +41,7 @@ fn test() {
     let input = (0..16).map(|index| bf16::from_f32(index as f32 * 0.25 - 1.0)).collect::<Vec<_>>();
     let coefficients = (0..32).map(|index| bf16::from_f32(index as f32 * 0.05 - 0.4)).collect::<Vec<_>>();
     let base_kernel = (0..16).map(|index| bf16::from_f32(index as f32 * 0.1 - 0.7)).collect::<Vec<_>>();
-    for stage in [ConvolutionStage::Input, ConvolutionStage::Output] {
+    for stage in [0u32, 1] {
         let expected = run::<Cpu>(&input, &coefficients, &base_kernel, stage);
         assert_eq_float(&EXPECTED[stage as usize], &expected, 0.05, "grouped convolution CPU reference");
         for_each_non_cpu_backend!(|B| {

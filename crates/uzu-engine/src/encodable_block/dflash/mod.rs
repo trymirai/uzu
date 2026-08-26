@@ -1,5 +1,6 @@
 use std::any::Any;
 
+pub use convolution::ConvolutionNewError;
 use thiserror::Error;
 
 use crate::{
@@ -13,9 +14,7 @@ use crate::{
         linear::{Linear, LinearBlockError},
         mixer::{
             MixerState,
-            attention::{
-                ATTENTION_SUFFIX_CAPACITY, Attention, AttentionNewError, AttentionState, rope::PrecalculatedRoPE,
-            },
+            attention::{ATTENTION_SUFFIX_CAPACITY, AttentionNewError, AttentionState, rope::PrecalculatedRoPE},
         },
         mlp::MlpBlockError,
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
@@ -24,6 +23,8 @@ use crate::{
     parameters::ParameterTree,
     utils::maybe_mut::MaybeMut,
 };
+
+mod convolution;
 
 pub struct DFlashState<B: Backend> {
     layer_states: Box<[Box<dyn MixerState<B>>]>,
@@ -68,6 +69,8 @@ pub enum DFlashNewError<B: Backend> {
     Mlp(#[from] MlpBlockError<B>),
     #[error("Attention error: {0}")]
     Attention(#[from] AttentionNewError<B>),
+    #[error("Convolution error: {0}")]
+    Convolution(#[from] ConvolutionNewError<B>),
     #[error("Transformer layer error: {0}")]
     TransformerLayer(#[from] TransformerLayerError<B>),
     #[error("Backend error: {0}")]
@@ -131,7 +134,7 @@ impl<B: Backend> DFlash<B> {
             .iter()
             .zip(0u32..)
             .map(|(layer_config, index)| {
-                TransformerLayer::new(
+                let layer = TransformerLayer::new(
                     context,
                     config.model_dim,
                     config.hidden_dim,
@@ -140,9 +143,23 @@ impl<B: Backend> DFlash<B> {
                     index,
                     &layers_tree.subtree(&index.to_string()),
                     data_type,
-                )
+                )?;
+
+                if let Some(convolution_config) = &config.grouped_convolution_config {
+                    Ok(convolution::wrap(
+                        layer,
+                        context,
+                        convolution_config,
+                        config.model_dim,
+                        config.block_size,
+                        &parameter_tree.subtree("layer_grouped_convolutions").subtree(&index.to_string()),
+                        data_type,
+                    )?)
+                } else {
+                    Ok(layer)
+                }
             })
-            .collect::<Result<Box<[_]>, TransformerLayerError<B>>>()?;
+            .collect::<Result<Box<[_]>, DFlashNewError<B>>>()?;
         let output_norm = Normalization::new(
             config.model_dim,
             None,
@@ -256,9 +273,8 @@ impl<B: Backend> DFlash<B> {
             self.layers.iter().zip(state.layer_states.iter_mut()).zip(layer_key_values)
         {
             mixer_state.prepare(state.context_length, num_tokens, encoder.context())?;
-            let attention = (layer.mixer.as_ref() as &dyn Any)
-                .downcast_ref::<Attention<B>>()
-                .expect("DFlash draft layers must use attention mixers");
+            let attention =
+                convolution::attention_of(layer.mixer.as_ref()).expect("DFlash draft layers must use attention mixers");
             let attention_state = (mixer_state.as_mut() as &mut dyn Any)
                 .downcast_mut::<AttentionState<B>>()
                 .expect("DFlash draft layer states must be attention states");
