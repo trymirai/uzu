@@ -20,7 +20,7 @@ use shoji::{
         backend::chat_message::{Output as BackendOutput, ToolCallState},
     },
     types::{
-        basic::{CancelToken, ToolCall, ToolDescription, ToolNamespace, Value, parse_lenient_json},
+        basic::{CancelToken, SamplingParameters, ToolCall, ToolDescription, ToolNamespace, Value, parse_lenient_json},
         model::Model,
         session::chat::{
             ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyFinishReason,
@@ -113,6 +113,13 @@ impl Instance {
         match self {
             Instance::Token(session) => session.supports_multiple_tool_calls(),
             Instance::Message(session) => session.supports_multiple_tool_calls(),
+        }
+    }
+
+    pub fn sampling_defaults(&self) -> Option<SamplingParameters> {
+        match self {
+            Instance::Token(session) => Some(session.sampling_defaults()),
+            Instance::Message(_) => None,
         }
     }
 }
@@ -565,6 +572,11 @@ impl ChatSession {
     #[bindings::export(Method(Getter))]
     pub async fn supports_tool_calls(&self) -> bool {
         self.tool_registry.is_some()
+    }
+
+    #[bindings::export(Method(Getter))]
+    pub async fn sampling_defaults(&self) -> Option<SamplingParameters> {
+        self.instance.lock().await.sampling_defaults()
     }
 
     #[bindings::export(Method)]

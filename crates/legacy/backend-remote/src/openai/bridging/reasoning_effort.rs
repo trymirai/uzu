@@ -8,5 +8,6 @@ pub fn build(effort: ReasoningEffort) -> OpenAIReasoningEffort {
         ReasoningEffort::Low => OpenAIReasoningEffort::Low,
         ReasoningEffort::Medium => OpenAIReasoningEffort::Medium,
         ReasoningEffort::High => OpenAIReasoningEffort::High,
+        ReasoningEffort::XHigh => OpenAIReasoningEffort::Xhigh,
     }
 }

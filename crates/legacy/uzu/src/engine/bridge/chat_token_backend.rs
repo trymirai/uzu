@@ -20,7 +20,7 @@ use shoji::{
         },
     },
     types::{
-        basic::SamplingSeed,
+        basic::{SamplingParameters, SamplingSeed},
         session::chat::{ChatConfig, ChatReplyConfig},
     },
 };
@@ -35,7 +35,9 @@ use uzu_engine::{
 };
 
 #[cfg(feature = "capability-grammar")]
-use crate::engine::bridge::helpers::get_grammar;
+use crate::engine::bridge::helpers::{
+    get_grammar, grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt,
+};
 use crate::engine::bridge::{
     chat_token_state::UzuChatTokenBackendInstanceState,
     helpers::{error_stream, get_max_context_length, get_sampling_method},
@@ -47,6 +49,9 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     config: ChatConfig,
     stop_token_ids: Vec<i32>,
     max_context_length: Option<u32>,
+    sampling_defaults: SamplingParameters,
+    #[cfg(feature = "capability-grammar")]
+    grammar_trigger_token_sequence: Option<Vec<u64>>,
 }
 
 impl<B: Backend> UzuChatTokenBackendInstance<B> {
@@ -58,8 +63,19 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
 
-        let stop_token_ids = model.generation_config().stop_token_ids.iter().map(|id| *id as i32).collect();
+        let generation_config = model.generation_config();
+        let stop_token_ids = generation_config.stop_token_ids.iter().map(|id| *id as i32).collect();
+        let sampling_defaults = SamplingParameters {
+            temperature: generation_config.temperature.map(|value| value as f64),
+            top_k: generation_config.top_k.map(|value| value as i64),
+            top_p: generation_config.top_p.map(|value| value as f64),
+            min_p: generation_config.min_p.map(|value| value as f64),
+            repetition_penalty: generation_config.repetition_penalty.map(|value| value as f64),
+            suffix_repetition_length: generation_config.suffix_repetition_length.map(|value| value as i64),
+        };
         let max_context_length = get_max_context_length(&model, config.context_length.clone());
+        #[cfg(feature = "capability-grammar")]
+        let grammar_trigger_token_sequence = grammar_trigger_token_sequence(&model);
 
         Ok(Self {
             engine,
@@ -67,6 +83,9 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             config,
             stop_token_ids,
             max_context_length,
+            sampling_defaults,
+            #[cfg(feature = "capability-grammar")]
+            grammar_trigger_token_sequence,
         })
     }
 }
@@ -116,7 +135,12 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         #[cfg(feature = "capability-grammar")]
         let grammar = if let Some(grammar_config) = config.grammar {
-            match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids) {
+            let trigger_token_sequence = grammar_trigger_token_sequence_for_prompt(
+                self.grammar_trigger_token_sequence.as_deref(),
+                input,
+                self.model.tokenizer(),
+            );
+            match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids, trigger_token_sequence) {
                 Ok(grammar) => Some(grammar),
                 Err(err) => {
                     return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
@@ -176,6 +200,10 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
 
     fn stop_token_ids(&self) -> Option<Box<[u64]>> {
         Some(self.stop_token_ids.iter().map(|id| *id as u64).collect())
+    }
+
+    fn sampling_defaults(&self) -> SamplingParameters {
+        self.sampling_defaults
     }
 }
 

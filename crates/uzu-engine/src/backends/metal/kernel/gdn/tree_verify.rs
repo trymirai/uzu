@@ -9,7 +9,7 @@ use crate::{
         },
         metal::{
             Metal, MetalContext,
-            device_profile::{DeviceGeneration, DeviceSize},
+            device_profile::{DeviceSize, GpuFamily},
             error::MetalError,
             kernel::MetalKernels,
         },
@@ -62,7 +62,9 @@ pub struct MetalDeltaNetTreeVerify {
     out: <MetalKernels as Kernels>::BuildTreeOutKernel,
 }
 
-impl DeltaNetTreeVerify<Metal> for MetalDeltaNetTreeVerify {
+impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
+    type Backend = Metal;
+
     fn is_supported(_context: &MetalContext) -> bool {
         true
     }
@@ -74,7 +76,7 @@ impl DeltaNetTreeVerify<Metal> for MetalDeltaNetTreeVerify {
         let use_mxu = arguments.data_type == DataType::BF16 && context.supports_mxu();
         let transposed_h0 = !use_mxu
             && context.device_profile().size() == DeviceSize::Small
-            && matches!(context.device_profile().generation(), DeviceGeneration::Legacy | DeviceGeneration::Apple8);
+            && matches!(context.device_profile().gpu_family(), GpuFamily::Legacy | GpuFamily::Apple8);
         Ok(Self {
             arguments: *arguments,
             prefix: <MetalKernels as Kernels>::BuildTreePrefixKernel::new(context)?,

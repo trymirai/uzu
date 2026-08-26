@@ -1,6 +1,7 @@
-use std::convert::Infallible;
-
-use crate::backends::{common::Kernels, cpu::Cpu};
+use crate::backends::{
+    common::{Kernels, kernel::Unsupported},
+    cpu::Cpu,
+};
 
 mod activation;
 pub(crate) mod activation_transform;
@@ -32,9 +33,9 @@ impl Kernels for CpuKernels {
     type Backend = Cpu;
 
     autogen_kernels!();
-    type AttentionGemmCore = Infallible;
-    type DeltaNetChunkedPrefill = Infallible;
-    type DeltaNetTreeVerify = Infallible;
+    type AttentionKernel = attention::AttentionCpuKernel;
+    type DeltaNetChunkedPrefill = Unsupported<Cpu>;
+    type DeltaNetTreeVerify = Unsupported<Cpu>;
     type MatmulKernel = matmul::MatmulCpuKernel;
     type RadixTopKSmall = radix_top_k_small::CpuRadixTopKSmall;
 }

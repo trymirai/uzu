@@ -211,4 +211,78 @@ mod tests {
 
         assert_eq!(without_block, with_default_block);
     }
+
+    #[test]
+    fn qwen38_preserves_historical_thinking_by_default() {
+        let renderer = renderer(HanashiConfig::Qwen38);
+
+        let history = vec![
+            user_message(),
+            ChatMessage::assistant().with_reasoning("deep thought".to_string()).with_text("the answer".to_string()),
+            user_message(),
+        ];
+        let prompt = render(&renderer, history);
+
+        assert!(prompt.contains("<think>\ndeep thought\n</think>"), "historical thinking dropped: {prompt:?}");
+    }
+
+    #[test]
+    fn qwen38_every_supported_effort_renders() {
+        let renderer = renderer(HanashiConfig::Qwen38);
+
+        for effort in [
+            ReasoningEffort::Disabled,
+            ReasoningEffort::Default,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::XHigh,
+        ] {
+            render(&renderer, vec![system_message_with_effort(effort), user_message()]);
+        }
+    }
+
+    #[test]
+    fn qwen38_reasoning_effort_injects_instructions() {
+        let renderer = renderer(HanashiConfig::Qwen38);
+
+        let low = render(&renderer, vec![system_message_with_effort(ReasoningEffort::Low), user_message()]);
+        let medium = render(&renderer, vec![system_message_with_effort(ReasoningEffort::Medium), user_message()]);
+        let xhigh = render(&renderer, vec![system_message_with_effort(ReasoningEffort::XHigh), user_message()]);
+        let default = render(&renderer, vec![system_message_with_effort(ReasoningEffort::Default), user_message()]);
+
+        assert!(low.contains("Reasoning effort is set to low."), "got: {low:?}");
+        assert!(!medium.contains("Reasoning effort is set to"), "got: {medium:?}");
+        assert!(xhigh.contains("Reasoning effort is set to xhigh."), "got: {xhigh:?}");
+        assert_eq!(default, xhigh);
+    }
+
+    #[test]
+    fn qwen38_disabled_still_disables_thinking() {
+        let renderer = renderer(HanashiConfig::Qwen38);
+
+        let prompt = render(&renderer, vec![system_message_with_effort(ReasoningEffort::Disabled), user_message()]);
+
+        assert!(
+            prompt.ends_with("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            "expected a thinking-disabled generation prompt, got: {prompt:?}"
+        );
+    }
+
+    #[test]
+    fn qwen38_capabilities_report_levels() {
+        let capabilities = HanashiConfig::Qwen38.capabilities().unwrap();
+
+        assert!(capabilities.supports_reasoning);
+        assert!(capabilities.supports_disable_reasoning);
+        for effort in [
+            ReasoningEffort::Disabled,
+            ReasoningEffort::Default,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::XHigh,
+        ] {
+            assert!(capabilities.reasoning_efforts.contains(&effort), "missing {effort}");
+        }
+        assert!(!capabilities.reasoning_efforts.contains(&ReasoningEffort::High));
+    }
 }

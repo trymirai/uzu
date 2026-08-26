@@ -22,7 +22,7 @@ pub struct Model {
     pub specializations: Vec<ModelSpecialization>,
     pub accessibility: ModelAccessibility,
     #[serde(default)]
-    pub encodings: Vec<Value>,
+    pub encoding: Option<Value>,
 }
 
 #[bindings::export(Implementation)]
@@ -186,7 +186,7 @@ impl Model {
         backend_version: String,
         specializations: Vec<ModelSpecialization>,
         accessibility: ModelAccessibility,
-        encodings: Vec<Value>,
+        encoding: Option<Value>,
     ) -> Self {
         let registry = ModelRegistry {
             identifier: registry_identifier,
@@ -206,7 +206,7 @@ impl Model {
             quantization: None,
             specializations,
             accessibility,
-            encodings,
+            encoding,
         }
     }
 }

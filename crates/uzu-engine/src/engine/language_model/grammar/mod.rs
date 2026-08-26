@@ -33,7 +33,7 @@ impl Grammar {
     pub fn new(
         config: &GrammarConfig,
         tokenizer: &Tokenizer,
-        trigger_token_id: Option<u64>,
+        trigger_token_sequence: Option<Vec<u64>>,
         stop_token_ids: Option<&[i32]>,
     ) -> Result<Self, GrammarError> {
         let tokenizer_info =
@@ -72,13 +72,12 @@ impl Grammar {
         let compiled = compiler.compile_grammar(&grammar).map_err(GrammarError::XGrammar)?;
         let matcher = GrammarMatcher::new(&compiled, None, true, -1).map_err(GrammarError::XGrammar)?;
 
-        let engagement_state = if let Some(trigger_token_id) = trigger_token_id {
-            GrammarEngagementState::Triggered {
-                trigger_token_id,
-                trigger_distance: None,
-            }
-        } else {
-            GrammarEngagementState::Always
+        let engagement_state = match trigger_token_sequence.filter(|sequence| !sequence.is_empty()) {
+            Some(trigger_sequence) => GrammarEngagementState::Triggered {
+                trigger_sequence,
+                match_history: Vec::new(),
+            },
+            None => GrammarEngagementState::Always,
         };
 
         Ok(Self {
@@ -131,7 +130,13 @@ impl Grammar {
         &mut self,
         token_id: u64,
     ) -> Result<(), GrammarError> {
-        if self.engagement_state.is_engaged() && !self.matcher.accept_token(token_id as i32) {
+        // A terminated matcher cannot advance and its bitmask only allows stop
+        // tokens, which close generation without being part of the grammar, so
+        // tokens sampled after termination must not be rejected.
+        if self.engagement_state.is_engaged()
+            && !self.matcher.is_terminated()
+            && !self.matcher.accept_token(token_id as i32)
+        {
             return Err(GrammarError::GrammarReject);
         }
 

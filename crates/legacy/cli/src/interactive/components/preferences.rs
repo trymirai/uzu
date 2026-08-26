@@ -3,7 +3,7 @@ use std::{fs, io, path::Path};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    common::model_capabilities::ThinkingPreference,
+    common::thinking::ThinkingPreference,
     interactive::{components::Theme, sampling::SamplingPreferences},
 };
 

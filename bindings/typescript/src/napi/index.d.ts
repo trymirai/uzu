@@ -15,6 +15,7 @@ export declare class ChatSession {
   get state(): Promise<ChatSessionState>
   get messages(): Promise<Array<ChatMessage>>
   get supportsToolCalls(): Promise<boolean>
+  get samplingDefaults(): Promise<SamplingParameters | null>
   reset(): Promise<void>
   reply(input: Array<ChatMessage>, config: ChatReplyConfig): Promise<Array<ChatReply>>
   replyWithStream(input: Array<ChatMessage>, config: ChatReplyConfig): Promise<ChatSessionStream>
@@ -255,10 +256,11 @@ export declare class ChatMessage {
 export declare class ChatModelCapabilities {
   supportsReasoning: boolean
   supportsDisableReasoning: boolean
+  reasoningEfforts: Array<ReasoningEffort>
   supportsTools: boolean
   supportsMultipleToolCalls: boolean
   requiresTools: boolean
-  constructor(supportsReasoning: boolean, supportsDisableReasoning: boolean, supportsTools: boolean, supportsMultipleToolCalls: boolean, requiresTools: boolean)
+  constructor(supportsReasoning: boolean, supportsDisableReasoning: boolean, reasoningEfforts: Array<ReasoningEffort>, supportsTools: boolean, supportsMultipleToolCalls: boolean, requiresTools: boolean)
 }
 
 export declare class ChatReply {
@@ -470,8 +472,8 @@ export declare class Model {
   quantization?: ModelQuantization
   specializations: Array<ModelSpecialization>
   accessibility: ModelAccessibility
-  encodings: Array<any>
-  constructor(identifier: string, registry: ModelRegistry, backends: Array<ModelBackend>, family?: ModelFamily, properties?: ModelProperties, quantization?: ModelQuantization, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encodings: Array<any>)
+  encoding?: any
+  constructor(identifier: string, registry: ModelRegistry, backends: Array<ModelBackend>, family?: ModelFamily, properties?: ModelProperties, quantization?: ModelQuantization, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encoding?: any)
   get name(): string
   get isLocal(): boolean
   get isRemote(): boolean
@@ -483,7 +485,7 @@ export declare class Model {
   get referenceName(): string | null
   get checkpointVersion(): string | null
 
-  static external(identifier: string, registryIdentifier: string, registryName: string, backendIdentifier: string, backendName: string, backendVersion: string, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encodings: Array<any>): Model
+  static external(identifier: string, registryIdentifier: string, registryName: string, backendIdentifier: string, backendName: string, backendVersion: string, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encoding?: any | undefined | null): Model
   get isChatCapable(): boolean
   get isClassificationCapable(): boolean
   get isTextToSpeechCapable(): boolean
@@ -618,6 +620,16 @@ export declare class SamplingMethodGreedy {
 }
 
 export declare class SamplingMethodStochastic {
+  temperature?: number
+  topK?: number
+  topP?: number
+  minP?: number
+  repetitionPenalty?: number
+  suffixRepetitionLength?: number
+  constructor(temperature?: number, topK?: number, topP?: number, minP?: number, repetitionPenalty?: number, suffixRepetitionLength?: number)
+}
+
+export declare class SamplingParameters {
   temperature?: number
   topK?: number
   topP?: number
@@ -797,7 +809,8 @@ export declare const enum ReasoningEffort {
   Default = 'Default',
   Low = 'Low',
   Medium = 'Medium',
-  High = 'High'
+  High = 'High',
+  XHigh = 'XHigh'
 }
 
 export type SamplingMethod =

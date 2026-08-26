@@ -253,6 +253,13 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
 #[case::gs64_4bit(1, 96, 64, 64, 4, QuantizationMethod::ScaleBias)]
 #[case::gs64_4bit_zp(2, 96, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs128_8bit(1, 192, 64, 128, 8, QuantizationMethod::ScaleBias)]
+// Whole quantization groups with an unaligned K block.
+#[case::gs64_4bit_k1152_zp(1, 1152, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs64_8bit_k1152_zp(1, 1152, 64, 64, 8, QuantizationMethod::ScaleZeroPoint)]
+// Same, plus a final partial quantization group (1056 = 16 * 64 + 32).
+#[case::gs64_4bit_k1056_partial_group(1, 1056, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs64_4bit_k514_unaligned_rows(2, 514, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs64_8bit_k257_unaligned_rows(2, 257, 64, 64, 8, QuantizationMethod::ScaleZeroPoint)]
 fn parity_gemv_partial_group_bf16(
     #[case] m: u32,
     #[case] k: u32,

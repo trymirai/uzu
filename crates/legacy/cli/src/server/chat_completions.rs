@@ -10,11 +10,11 @@ use rocket::{
     Request, State,
     data::{ByteUnit, Data},
     futures::Stream,
-    http::Status,
+    http::{ContentType, Status},
     post,
     response::{
         Responder, status,
-        stream::{Event, EventStream},
+        stream::{ByteStream, Event, EventStream},
     },
     serde::json::Json,
 };
@@ -23,7 +23,7 @@ use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 use uzu::{
-    session::chat::{ChatSession, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
+    session::chat::{ChatSession, ChatSessionStream, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
     types::{
         basic::{Grammar, ReasoningEffort, SamplingMethod},
         session::chat::{
@@ -33,12 +33,13 @@ use uzu::{
 };
 
 use crate::{
-    common::model_capabilities::ThinkingSupport,
+    common::thinking::ThinkingSupport,
     server::{
         ServerState,
         chat_tool_calls::{
-            OaiTool, OaiToolCall, ToolCallStreamer, backfill_tool_result_names, choose_tools, insert_tools_message,
-            oai_tool_call, reply_tool_calls, to_tool_call, tool_call_result_block, withhold_stream_text,
+            OaiTool, OaiToolCall, ToolCallStreamer, ToolParameterTypes, backfill_tool_result_names, choose_tools,
+            coerce_tool_call, insert_tools_message, oai_tool_call, parse_scalar_text, reply_tool_calls, to_tool_call,
+            tool_call_result_block, withhold_stream_text,
         },
         request_log::RequestLog,
     },
@@ -216,7 +217,10 @@ struct OaiError {
 }
 
 pub enum ChatCompletionResult {
-    Json(Json<ChatCompletionResponse>),
+    // The single JSON body arrives as a stream: Rocket only surfaces a client
+    // disconnect by dropping the body stream, which is the blocking path's one
+    // signal to cancel a generation nobody is waiting for.
+    Json(Status, ByteStream<Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>>),
     Stream(EventStream<Pin<Box<dyn Stream<Item = Event> + Send>>>),
     Error(status::Custom<Json<OaiErrorResponse>>),
 }
@@ -227,7 +231,11 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
         request: &'r Request<'_>,
     ) -> rocket::response::Result<'r> {
         match self {
-            ChatCompletionResult::Json(json) => json.respond_to(request),
+            ChatCompletionResult::Json(status, body) => {
+                let mut response = (ContentType::JSON, body).respond_to(request)?;
+                response.set_status(status);
+                Ok(response)
+            },
             ChatCompletionResult::Stream(stream) => stream.respond_to(request),
             ChatCompletionResult::Error(error) => error.respond_to(request),
         }
@@ -489,6 +497,28 @@ fn json_schema_grammar(json_schema: &JsonSchemaFormat) -> Result<Grammar, Respon
     })
 }
 
+/// Wrong-typed values already fail JSON extraction; out-of-range numbers would
+/// otherwise reach the sampler unchecked (a huge temperature generates garbage
+/// with HTTP 200).
+fn validate_sampling(request: &ChatCompletionRequest) -> Result<(), (&'static str, String)> {
+    if let Some(temperature) = request.temperature
+        && !(0.0..=2.0).contains(&temperature)
+    {
+        return Err(("temperature", format!("temperature must be between 0 and 2, got {temperature}")));
+    }
+    if let Some(top_p) = request.top_p
+        && !(top_p > 0.0 && top_p <= 1.0)
+    {
+        return Err(("top_p", format!("top_p must be greater than 0 and at most 1, got {top_p}")));
+    }
+    if let Some(top_k) = request.top_k
+        && top_k < 1
+    {
+        return Err(("top_k", format!("top_k must be at least 1, got {top_k}")));
+    }
+    Ok(())
+}
+
 fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig, ResponseFormatError> {
     let token_limit = request.max_completion_tokens.or(request.max_tokens);
     let mut config = ChatReplyConfig::default().with_token_limit(token_limit);
@@ -557,30 +587,41 @@ fn usage_from_stats(
     }
 }
 
-fn error_response(
-    id: String,
-    model: String,
-    created: i64,
-    message: &str,
-) -> ChatCompletionResponse {
-    ChatCompletionResponse {
-        id,
-        object: "chat.completion".to_string(),
-        created,
-        model,
-        choices: vec![ChatCompletionChoice {
-            index: 0,
-            message: OaiMessage {
-                role: "assistant".to_string(),
-                content: Some(format!("Error: {message}")),
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: None,
-            },
-            finish_reason: "stop".to_string(),
-        }],
-        usage: ChatCompletionUsage::default(),
+/// nagare re-wraps backend errors at each layer, so a message can arrive as
+/// "Backend error: Backend error: ..."; the wire message keeps only the inner text.
+fn strip_backend_prefixes(message: &str) -> &str {
+    let mut message = message;
+    while let Some(inner) = message.strip_prefix("Backend error: ") {
+        message = inner;
     }
+    message
+}
+
+fn oai_error_body(
+    status: Status,
+    code: &str,
+    message: &str,
+) -> OaiErrorResponse {
+    let kind = if status.code < 500 {
+        "invalid_request_error"
+    } else {
+        "server_error"
+    };
+    OaiErrorResponse {
+        error: OaiError {
+            message: strip_backend_prefixes(message).to_string(),
+            kind: kind.to_string(),
+            param: None,
+            code: Some(code.to_string()),
+        },
+    }
+}
+
+fn send_error_body(
+    sender: &mpsc::UnboundedSender<Vec<u8>>,
+    body: &OaiErrorResponse,
+) {
+    let _ = sender.send(serde_json::to_vec(body).unwrap_or_default());
 }
 
 fn chunk_json(
@@ -606,6 +647,41 @@ fn chunk_json(
     serde_json::to_string(&chunk).unwrap_or_default()
 }
 
+/// Schema coercion retypes scalar arguments on the wire, so a client may echo
+/// `5` where the session stored `"5"` (or a JSON string where the session
+/// stored the value it spells); such pairs must still count as the same prefix.
+fn tool_call_arguments_equivalent(
+    stored: &str,
+    echoed: &str,
+) -> bool {
+    if stored == echoed {
+        return true;
+    }
+    match (serde_json::from_str::<serde_json::Value>(stored), serde_json::from_str::<serde_json::Value>(echoed)) {
+        (Ok(stored), Ok(echoed)) => json_values_equivalent(&stored, &echoed),
+        _ => false,
+    }
+}
+
+fn json_values_equivalent(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+) -> bool {
+    use serde_json::Value;
+    match (left, right) {
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .all(|(key, value)| right.get(key).is_some_and(|other| json_values_equivalent(value, other)))
+        },
+        (Value::String(text), other) | (other, Value::String(text)) if !other.is_string() => {
+            parse_scalar_text(text).is_some_and(|parsed| parsed == *other)
+        },
+        (left, right) => left == right,
+    }
+}
+
 /// Tool call identifiers are assigned per turn and never rendered into tokens, so they are
 /// excluded from the comparison; everything else about the messages must match.
 fn messages_have_prefix(
@@ -627,10 +703,8 @@ fn messages_have_prefix(
                                 value: call,
                             },
                         ) => {
-                            let (mut prefix_call, mut call) = (prefix_call.clone(), call.clone());
-                            prefix_call.identifier = None;
-                            call.identifier = None;
-                            prefix_call == call
+                            prefix_call.name == call.name
+                                && tool_call_arguments_equivalent(&prefix_call.arguments.json, &call.arguments.json)
                         },
                         _ => prefix_block == block,
                     }
@@ -657,6 +731,21 @@ async fn prepare_input(
     Ok(messages)
 }
 
+fn send_response(
+    sender: &mpsc::UnboundedSender<Vec<u8>>,
+    response: &ChatCompletionResponse,
+) {
+    let _ = sender.send(serde_json::to_vec(response).unwrap_or_default());
+}
+
+/// Cancels the turn and waits for it to wind down before the caller releases
+/// the session lock: a request arriving right after a cancellation must not
+/// catch the session mid-cleanup, where it rejects operations.
+async fn cancel_and_drain(stream: &ChatSessionStream) {
+    stream.cancel_token().cancel();
+    while stream.next().await.is_some() {}
+}
+
 async fn run_blocking(
     session: Arc<Mutex<ChatSession>>,
     messages: Vec<ChatMessage>,
@@ -665,80 +754,126 @@ async fn run_blocking(
     model: String,
     created: i64,
     prefix_cache: bool,
+    parameter_types: ToolParameterTypes,
+    sender: mpsc::UnboundedSender<Vec<u8>>,
     log: RequestLog,
-) -> ChatCompletionResponse {
-    let session = session.lock().await;
+) {
+    // A blocking response writes nothing until generation finishes, and Rocket
+    // only discovers a vanished client through a failed socket write, which is
+    // what makes it drop the body receiver that `sender.closed()` observes. A
+    // periodic newline — insignificant leading whitespace for the JSON body —
+    // keeps forcing that write while the request queues and generates.
+    let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(3));
+
+    // Requests serialize on the single session, so a client can disconnect
+    // while still queued; generating for it would block everyone behind it.
+    let mut lock = std::pin::pin!(session.lock());
+    let session = loop {
+        tokio::select! {
+            session = &mut lock => break session,
+            () = sender.closed() => {
+                log.fail("client disconnected");
+                return;
+            },
+            _ = keepalive.tick() => {
+                let _ = sender.send(b"\n".to_vec());
+            },
+        }
+    };
     let input = match prepare_input(&session, messages, prefix_cache).await {
         Ok(input) => input,
         Err(error) => {
             log.fail(&error.to_string());
-            return error_response(id, model, created, &error.to_string());
+            send_error_body(&sender, &oai_error_body(Status::InternalServerError, "backend_error", &error.to_string()));
+            return;
         },
     };
 
-    match session.reply(input, config).await {
-        Ok(replies) => match replies.last() {
-            Some(reply) => {
-                let tool_calls = reply_tool_calls(&reply.message);
-                // OpenAI sets content to null (not "") on tool call replies.
-                let content = reply.message.text().or_else(|| tool_calls.is_none().then(String::new));
-                let mut finish_reason =
-                    reply.finish_reason.as_ref().map(map_finish_reason).unwrap_or_else(|| "stop".to_string());
-                // Calls the parser could not finalize must not execute as a partial batch.
-                // OpenAI has no finish reason for this; providers signal terminal errors with
-                // unrecognized reasons (pi maps them to a thrown provider error), so the turn
-                // fails loudly instead of stalling on an absent or incomplete tool_calls array.
-                let has_unfinished_candidates = reply
-                    .message
-                    .content
-                    .iter()
-                    .any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
-                if finish_reason == "tool_calls" && (tool_calls.is_none() || has_unfinished_candidates) {
-                    finish_reason = "malformed_tool_call".to_string();
-                }
-                let wrapped_arguments = reply
-                    .message
-                    .tool_calls()
-                    .iter()
-                    .filter(|call| call.arguments.json.contains(UNPARSED_ARGUMENTS_KEY))
-                    .count();
-                let mut notes = Vec::new();
-                if has_unfinished_candidates {
-                    notes.push("model generated unfinished tool call(s)".to_string());
-                }
-                if wrapped_arguments > 0 {
-                    notes.push(format!("{wrapped_arguments} tool call(s) with unparseable arguments"));
-                }
-                log.finish(&finish_reason, Some(&reply.stats), notes);
-                ChatCompletionResponse {
-                    id,
-                    object: "chat.completion".to_string(),
-                    created,
-                    model,
-                    choices: vec![ChatCompletionChoice {
-                        index: 0,
-                        message: OaiMessage {
-                            role: "assistant".to_string(),
-                            content,
-                            reasoning_content: reply.message.reasoning().filter(|reasoning| !reasoning.is_empty()),
-                            tool_calls,
-                            tool_call_id: None,
-                        },
-                        finish_reason,
-                    }],
-                    usage: usage_from_stats(&reply.stats, prefix_cache),
-                }
+    // Drive the reply through its stream instead of ChatSession::reply, which
+    // cannot be cancelled: racing each chunk against the channel closing
+    // notices a disconnect mid-generation. Cancelling stops the backend at the
+    // next token boundary and lets the session run its cancelled-turn cleanup.
+    let stream = session.reply_with_stream(input, config).await;
+    let mut final_replies = Vec::new();
+    loop {
+        let chunk = tokio::select! {
+            chunk = stream.next() => chunk,
+            () = sender.closed() => {
+                cancel_and_drain(&stream).await;
+                log.fail("client disconnected");
+                return;
             },
-            None => {
-                log.fail("no response generated");
-                error_response(id, model, created, "No response generated")
+            _ = keepalive.tick() => {
+                let _ = sender.send(b"\n".to_vec());
+                continue;
             },
-        },
-        Err(error) => {
-            log.fail(&error.to_string());
-            error_response(id, model, created, &error.to_string())
-        },
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        match chunk {
+            ChatSessionStreamChunk::Replies {
+                replies,
+            } => {
+                final_replies = replies;
+            },
+            ChatSessionStreamChunk::Error {
+                error,
+            } => {
+                log.fail(&error.to_string());
+                send_error_body(&sender, &oai_error_body(Status::BadRequest, "backend_error", &error.to_string()));
+                return;
+            },
+        }
     }
+
+    let Some(reply) = final_replies.last() else {
+        log.fail("no response generated");
+        send_error_body(&sender, &oai_error_body(Status::InternalServerError, "no_response", "No response generated"));
+        return;
+    };
+    let tool_calls = reply_tool_calls(&reply.message, &parameter_types);
+    // OpenAI sets content to null (not "") on tool call replies.
+    let content = reply.message.text().or_else(|| tool_calls.is_none().then(String::new));
+    let mut finish_reason = reply.finish_reason.as_ref().map(map_finish_reason).unwrap_or_else(|| "stop".to_string());
+    // Calls the parser could not finalize must not execute as a partial batch.
+    // OpenAI has no finish reason for this; providers signal terminal errors with
+    // unrecognized reasons (pi maps them to a thrown provider error), so the turn
+    // fails loudly instead of stalling on an absent or incomplete tool_calls array.
+    let has_unfinished_candidates =
+        reply.message.content.iter().any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
+    if finish_reason == "tool_calls" && (tool_calls.is_none() || has_unfinished_candidates) {
+        finish_reason = "malformed_tool_call".to_string();
+    }
+    let wrapped_arguments =
+        reply.message.tool_calls().iter().filter(|call| call.arguments.json.contains(UNPARSED_ARGUMENTS_KEY)).count();
+    let mut notes = Vec::new();
+    if has_unfinished_candidates {
+        notes.push("model generated unfinished tool call(s)".to_string());
+    }
+    if wrapped_arguments > 0 {
+        notes.push(format!("{wrapped_arguments} tool call(s) with unparseable arguments"));
+    }
+    log.finish(&finish_reason, Some(&reply.stats), notes);
+    let response = ChatCompletionResponse {
+        id,
+        object: "chat.completion".to_string(),
+        created,
+        model,
+        choices: vec![ChatCompletionChoice {
+            index: 0,
+            message: OaiMessage {
+                role: "assistant".to_string(),
+                content,
+                reasoning_content: reply.message.reasoning().filter(|reasoning| !reasoning.is_empty()),
+                tool_calls,
+                tool_call_id: None,
+            },
+            finish_reason,
+        }],
+        usage: usage_from_stats(&reply.stats, prefix_cache),
+    };
+    send_response(&sender, &response);
 }
 
 async fn run_stream(
@@ -749,26 +884,28 @@ async fn run_stream(
     model: String,
     created: i64,
     prefix_cache: bool,
+    parameter_types: ToolParameterTypes,
     sender: mpsc::UnboundedSender<Event>,
     log: RequestLog,
 ) {
-    let session = session.lock().await;
+    // Same as the blocking path: don't start generating for a client that
+    // disconnected while queued on the session.
+    let session = tokio::select! {
+        session = session.lock() => session,
+        () = sender.closed() => {
+            log.fail("client disconnected");
+            return;
+        },
+    };
     let has_tools = messages.iter().any(|message| !message.tool_namespaces().is_empty());
     let input = match prepare_input(&session, messages, prefix_cache).await {
         Ok(input) => input,
         Err(error) => {
             log.fail(&error.to_string());
-            let _ = sender.send(Event::data(chunk_json(
-                &id,
-                &model,
-                created,
-                StreamDelta {
-                    content: Some(format!("Error: {error}")),
-                    ..StreamDelta::default()
-                },
-                Some("stop".to_string()),
-                None,
-            )));
+            // The SSE response is already committed as 200, so the error travels
+            // as an OpenAI-style error event, the way OpenAI reports mid-stream.
+            let body = oai_error_body(Status::InternalServerError, "backend_error", &error.to_string());
+            let _ = sender.send(Event::data(serde_json::to_string(&body).unwrap_or_default()));
             let _ = sender.send(Event::data("[DONE]"));
             return;
         },
@@ -787,7 +924,6 @@ async fn run_stream(
     )));
 
     let stream = session.reply_with_stream(input, config).await;
-    let cancel_token = stream.cancel_token();
     let mut emitted = 0usize;
     let mut emitted_reasoning = 0usize;
     let mut emitted_tool_calls = 0usize;
@@ -807,8 +943,7 @@ async fn run_stream(
         let chunk = tokio::select! {
             chunk = stream.next() => chunk,
             () = sender.closed() => {
-                cancel_token.cancel();
-                cancel_token.cancel();
+                cancel_and_drain(&stream).await;
                 log.fail("client disconnected");
                 return;
             },
@@ -842,7 +977,7 @@ async fn run_stream(
                         None,
                     )));
                     if sent.is_err() {
-                        cancel_token.cancel();
+                        cancel_and_drain(&stream).await;
                         log.fail("client disconnected");
                         return;
                     }
@@ -864,7 +999,7 @@ async fn run_stream(
                         None,
                     )));
                     if sent.is_err() {
-                        cancel_token.cancel();
+                        cancel_and_drain(&stream).await;
                         log.fail("client disconnected");
                         return;
                     }
@@ -882,8 +1017,11 @@ async fn run_stream(
                     // candidates carry their partial text as a JSON string document, except
                     // object-valued ones (e.g. muse-glimmer's name-only progress objects)
                     let raw = serde_json::from_str::<String>(&value.json).unwrap_or_else(|_| value.json.clone());
-                    let deltas =
-                        tool_call_streamers.entry(index).or_insert_with(ToolCallStreamer::new).update(index, &raw);
+                    let deltas = tool_call_streamers.entry(index).or_insert_with(ToolCallStreamer::new).update(
+                        index,
+                        &raw,
+                        &parameter_types,
+                    );
                     for delta in deltas {
                         let sent = sender.send(Event::data(chunk_json(
                             &id,
@@ -897,7 +1035,7 @@ async fn run_stream(
                             None,
                         )));
                         if sent.is_err() {
-                            cancel_token.cancel();
+                            cancel_and_drain(&stream).await;
                             log.fail("client disconnected");
                             return;
                         }
@@ -908,13 +1046,13 @@ async fn run_stream(
                 while emitted_tool_calls < tool_calls.len() {
                     let index = emitted_tool_calls;
                     emitted_tool_calls += 1;
-                    let call = &tool_calls[index];
-                    if call.arguments.json.contains(UNPARSED_ARGUMENTS_KEY) {
+                    if tool_calls[index].arguments.json.contains(UNPARSED_ARGUMENTS_KEY) {
                         wrapped_arguments += 1;
                     }
+                    let call = coerce_tool_call(&tool_calls[index], &parameter_types);
                     let delta = match tool_call_streamers.remove(&index) {
-                        Some(mut streamer) => streamer.finish(index, call),
-                        None => oai_tool_call(Some(index), call),
+                        Some(mut streamer) => streamer.finish(index, &call),
+                        None => oai_tool_call(Some(index), &call),
                     };
                     let sent = sender.send(Event::data(chunk_json(
                         &id,
@@ -928,7 +1066,7 @@ async fn run_stream(
                         None,
                     )));
                     if sent.is_err() {
-                        cancel_token.cancel();
+                        cancel_and_drain(&stream).await;
                         log.fail("client disconnected");
                         return;
                     }
@@ -950,17 +1088,9 @@ async fn run_stream(
             } => {
                 errored = true;
                 log.fail(&error.to_string());
-                let _ = sender.send(Event::data(chunk_json(
-                    &id,
-                    &model,
-                    created,
-                    StreamDelta {
-                        content: Some(format!("Error: {error}")),
-                        ..StreamDelta::default()
-                    },
-                    Some("stop".to_string()),
-                    None,
-                )));
+                // Committed 200 stream: report as an OpenAI-style error event.
+                let body = oai_error_body(Status::BadRequest, "backend_error", &error.to_string());
+                let _ = sender.send(Event::data(serde_json::to_string(&body).unwrap_or_default()));
                 break;
             },
         }
@@ -984,7 +1114,7 @@ async fn run_stream(
                 None,
             )));
             if sent.is_err() {
-                cancel_token.cancel();
+                cancel_and_drain(&stream).await;
                 log.fail("client disconnected");
                 return;
             }
@@ -1056,6 +1186,10 @@ pub async fn handle_chat_completions(
         request.reasoning_effort.as_ref().and_then(serde_json::Value::as_str).or(Some("unspecified")),
     );
 
+    if let Err((param, message)) = validate_sampling(&request) {
+        log.fail(&message);
+        return invalid_request_response(param, "out_of_range", message);
+    }
     let config = match build_reply_config(&request) {
         Ok(config) => config,
         Err(error) => {
@@ -1074,6 +1208,10 @@ pub async fn handle_chat_completions(
         },
     };
 
+    // The parser cannot type scalar arguments; the declared schemas restore
+    // the types when replies cross back into the OpenAI wire format.
+    let parameter_types = ToolParameterTypes::from_tools(request.tools.as_deref());
+
     if is_stream {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Event>();
@@ -1085,6 +1223,7 @@ pub async fn handle_chat_completions(
             model,
             created,
             state.prefix_cache,
+            parameter_types,
             sender,
             log,
         ));
@@ -1092,8 +1231,24 @@ pub async fn handle_chat_completions(
         ChatCompletionResult::Stream(EventStream::from(body))
     } else {
         let session = Arc::clone(&state.session);
-        let response = run_blocking(session, messages, config, id, model, created, state.prefix_cache, log).await;
-        ChatCompletionResult::Json(Json(response))
+        let (sender, receiver) = mpsc::unbounded_channel::<Vec<u8>>();
+        rocket::tokio::spawn(run_blocking(
+            session,
+            messages,
+            config,
+            id,
+            model,
+            created,
+            state.prefix_cache,
+            parameter_types,
+            sender,
+            log,
+        ));
+        let body: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
+        // Hand the body to Rocket immediately so it can write keepalives and
+        // drop the receiver when the client disconnects. Any backend error
+        // occurs after the 200 response is committed and is sent in the body.
+        ChatCompletionResult::Json(Status::Ok, ByteStream::from(body))
     }
 }
 

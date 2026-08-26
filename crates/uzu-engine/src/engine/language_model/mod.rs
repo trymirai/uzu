@@ -5,7 +5,10 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
-    config::model::{generation::GenerationConfig, language_model::LanguageModelConfig},
+    config::{
+        model::{generation::GenerationConfig, language_model::LanguageModelConfig},
+        token_codec::AnyTokenCodecConfig,
+    },
     data_type::DataType,
     encodable_block::{
         decoder::{Decoder, DecoderError},
@@ -29,6 +32,9 @@ pub struct LanguageModel<B: Backend> {
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
+    /// The literal text the model emits between its reasoning and its final
+    /// answer (e.g. "</think>"); None when the model does not separate them.
+    end_of_thinking_tag: Option<String>,
     tokenizer: Arc<Tokenizer>,
     #[cfg(grammar)]
     vocab_size: usize,
@@ -99,6 +105,10 @@ impl<B: Backend> Engine<B> {
         weight_loader.tree().assert_all_tensors_validated()?;
 
         let generation_config = config.generation_config;
+        let end_of_thinking_tag = match &config.token_codec_config {
+            AnyTokenCodecConfig::ChatCodecConfig(token_codec_config) => token_codec_config.end_of_thinking_tag.clone(),
+            AnyTokenCodecConfig::RawTextCodecConfig(_) => None,
+        };
 
         #[cfg(grammar)]
         let vocab_size = config.decoder_config.vocab_size as usize;
@@ -110,6 +120,7 @@ impl<B: Backend> Engine<B> {
             sampling,
             context_ring_update,
             generation_config,
+            end_of_thinking_tag,
             tokenizer,
             #[cfg(grammar)]
             vocab_size,
@@ -166,6 +177,10 @@ impl<B: Backend> LanguageModel<B> {
 
     pub fn generation_config(&self) -> &GenerationConfig {
         &self.generation_config
+    }
+
+    pub fn end_of_thinking_tag(&self) -> Option<&str> {
+        self.end_of_thinking_tag.as_deref()
     }
 
     pub fn tokenizer(&self) -> &Arc<Tokenizer> {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::common::thinking::ReasoningEffortSet;
 
 fn request(json: &str) -> ChatCompletionRequest {
     serde_json::from_str(json).expect("valid request json")
@@ -81,7 +82,7 @@ fn response_format_validation_errors_are_request_errors() {
     let error = ResponseFormatError::GrammarUnsupported;
     match invalid_request_response("response_format", error.code(), error.message()) {
         ChatCompletionResult::Error(_) => {},
-        ChatCompletionResult::Json(_) | ChatCompletionResult::Stream(_) => {
+        ChatCompletionResult::Json(_, _) | ChatCompletionResult::Stream(_) => {
             panic!("response_format validation errors should be request errors")
         },
     }
@@ -98,6 +99,13 @@ fn malformed_response_format_passes_json_extraction() {
     }
 }
 
+fn any_levels() -> ThinkingSupport {
+    ThinkingSupport::Levels {
+        effort: ReasoningEffort::Default,
+        supported: ReasoningEffortSet::ALL,
+    }
+}
+
 fn messages_with_support(
     json: &str,
     thinking_support: ThinkingSupport,
@@ -111,7 +119,7 @@ fn reasoning_effort_prepends_system_message_for_levels_model() {
 
     let messages = messages_with_support(
         r#"{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}"#,
-        ThinkingSupport::Levels(ReasoningEffort::Default),
+        any_levels(),
     );
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].reasoning_effort(), Some(ReasoningEffort::High));
@@ -122,7 +130,7 @@ fn reasoning_effort_prepends_system_message_for_levels_model() {
 fn reasoning_effort_merges_into_leading_system_message() {
     let messages = messages_with_support(
         r#"{"messages":[{"role":"system","content":"be brief"},{"role":"user","content":"hi"}],"reasoning_effort":"high"}"#,
-        ThinkingSupport::Levels(ReasoningEffort::Default),
+        any_levels(),
     );
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].role, ChatRole::System {});
@@ -136,7 +144,7 @@ fn reasoning_effort_default_emits_no_system_message() {
         r#"{"messages":[{"role":"user","content":"hi"}]}"#,
         r#"{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"default"}"#,
     ] {
-        let messages = messages_with_support(body, ThinkingSupport::Levels(ReasoningEffort::Default));
+        let messages = messages_with_support(body, any_levels());
         assert_eq!(messages.len(), 1);
         assert!(messages.iter().all(|message| message.reasoning_effort().is_none()));
     }
@@ -196,10 +204,7 @@ fn enable_thinking_honored_for_toggle_model() {
 
 #[test]
 fn enable_thinking_honored_for_levels_model() {
-    let disabled = messages_with_support(
-        r#"{"messages":[],"enable_thinking":false}"#,
-        ThinkingSupport::Levels(ReasoningEffort::Default),
-    );
+    let disabled = messages_with_support(r#"{"messages":[],"enable_thinking":false}"#, any_levels());
     assert_eq!(disabled[0].reasoning_effort(), Some(ReasoningEffort::Disabled));
 }
 
@@ -221,17 +226,14 @@ fn enable_thinking_rejects_contradictions() {
         r#"{"messages":[],"enable_thinking":false,"reasoning_effort":"high"}"#,
         r#"{"messages":[],"enable_thinking":true,"reasoning_effort":"disabled"}"#,
     ] {
-        build_messages(&request(body), ThinkingSupport::Levels(ReasoningEffort::Default))
-            .expect_err("contradictory thinking requests should be rejected");
+        build_messages(&request(body), any_levels()).expect_err("contradictory thinking requests should be rejected");
     }
 }
 
 #[test]
 fn enable_thinking_agrees_with_compatible_reasoning_effort() {
-    let messages = messages_with_support(
-        r#"{"messages":[],"enable_thinking":true,"reasoning_effort":"low"}"#,
-        ThinkingSupport::Levels(ReasoningEffort::Default),
-    );
+    let messages =
+        messages_with_support(r#"{"messages":[],"enable_thinking":true,"reasoning_effort":"low"}"#, any_levels());
     assert_eq!(messages[0].reasoning_effort(), Some(ReasoningEffort::Low));
 }
 
@@ -375,7 +377,7 @@ fn assistant_reasoning_content_round_trips_in_session_block_order() {
             {"role":"assistant","reasoning_content":"","content":"no thinking"},
             {"role":"user","content":"again"}
         ]}"#,
-        ThinkingSupport::Levels(ReasoningEffort::Default),
+        any_levels(),
     );
     let assistant = &messages[1];
     let kinds = assistant
@@ -428,4 +430,85 @@ fn prefix_match_ignores_tool_call_identifiers() {
     });
     let not_matching = vec![ChatMessage::user().with_text("hi".to_string()), different];
     assert!(!messages_have_prefix(&not_matching, &current));
+}
+
+#[test]
+fn prefix_match_treats_coerced_arguments_as_equal() {
+    let assistant_call = |arguments: &str| {
+        ChatMessage::assistant().with_tool_call(uzu::types::basic::ToolCall {
+            identifier: Some("id".to_string()),
+            name: "search".to_string(),
+            arguments: uzu::types::basic::Value {
+                json: arguments.to_string(),
+            },
+        })
+    };
+
+    // the session stores the parser's stringified scalar; the client echoes the
+    // coerced typed value it received
+    let current = vec![assistant_call(r#"{"query":"cats","limit":"5"}"#)];
+    let extending =
+        vec![assistant_call(r#"{"query":"cats","limit":5}"#), ChatMessage::user().with_text("more".to_string())];
+    assert!(messages_have_prefix(&extending, &current));
+
+    // a genuinely different value is still a mismatch
+    let different =
+        vec![assistant_call(r#"{"query":"cats","limit":6}"#), ChatMessage::user().with_text("more".to_string())];
+    assert!(!messages_have_prefix(&different, &current));
+
+    // string-declared values that the parser typed by their braces also match their echo
+    let stored_object = vec![assistant_call(r#"{"content":{"a":1}}"#)];
+    let echoed_string =
+        vec![assistant_call(r#"{"content":"{\"a\":1}"}"#), ChatMessage::user().with_text("more".to_string())];
+    assert!(messages_have_prefix(&echoed_string, &stored_object));
+
+    // the session stores a Python-style boolean (qwen3.5 markup); the client
+    // echoes the coerced JSON boolean it received
+    let stored_python = vec![assistant_call(r#"{"metric":"True"}"#)];
+    let echoed_boolean = vec![assistant_call(r#"{"metric":true}"#), ChatMessage::user().with_text("more".to_string())];
+    assert!(messages_have_prefix(&echoed_boolean, &stored_python));
+}
+
+#[test]
+fn sampling_values_out_of_range_are_rejected() {
+    for body in [
+        r#"{"messages":[],"temperature":0}"#,
+        r#"{"messages":[],"temperature":2}"#,
+        r#"{"messages":[],"top_p":1}"#,
+        r#"{"messages":[],"top_p":0.01}"#,
+        r#"{"messages":[],"top_k":1}"#,
+    ] {
+        validate_sampling(&request(body)).unwrap_or_else(|(_, message)| panic!("expected {body} to pass: {message}"));
+    }
+
+    for (body, param) in [
+        (r#"{"messages":[],"temperature":-5}"#, "temperature"),
+        (r#"{"messages":[],"temperature":100}"#, "temperature"),
+        (r#"{"messages":[],"top_p":0}"#, "top_p"),
+        (r#"{"messages":[],"top_p":7}"#, "top_p"),
+        (r#"{"messages":[],"top_k":0}"#, "top_k"),
+        (r#"{"messages":[],"top_k":-3}"#, "top_k"),
+    ] {
+        let error = validate_sampling(&request(body)).expect_err("out-of-range value should be rejected");
+        assert_eq!(error.0, param, "for {body}");
+    }
+}
+
+#[test]
+fn backend_error_bodies_are_openai_errors_with_collapsed_prefixes() {
+    let body = serde_json::to_value(oai_error_body(
+        Status::BadRequest,
+        "backend_error",
+        "Backend error: Backend error: Role 'wizard' is not supported",
+    ))
+    .expect("serializable error body");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+    assert_eq!(body["error"]["code"], "backend_error");
+    assert_eq!(body["error"]["message"], "Role 'wizard' is not supported");
+
+    let body =
+        serde_json::to_value(oai_error_body(Status::InternalServerError, "no_response", "No response generated"))
+            .expect("serializable error body");
+    assert_eq!(body["error"]["type"], "server_error");
+    assert_eq!(body["error"]["message"], "No response generated");
 }

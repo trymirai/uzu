@@ -11,55 +11,160 @@ use crate::{
     encodable_block::mixer::{MixerState, attention::Attention},
 };
 
-pub(crate) const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
+pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
 
-pub enum AttentionStateType {
+#[derive(Clone, Copy)]
+pub struct KVCacheView {
+    prefix_len: u32,
+    ring: Option<RingParams>,
+}
+
+impl KVCacheView {
+    pub fn full(prefix_len: u32) -> Self {
+        Self {
+            prefix_len,
+            ring: None,
+        }
+    }
+
+    pub fn ring(
+        prefix_len: u32,
+        offset: u32,
+    ) -> Self {
+        Self {
+            prefix_len,
+            ring: Some(RingParams {
+                ring_offset: offset,
+                ring_length: prefix_len,
+            }),
+        }
+    }
+
+    pub fn prefix_len(self) -> u32 {
+        self.prefix_len
+    }
+
+    pub fn ring_params(self) -> Option<RingParams> {
+        self.ring
+    }
+}
+
+enum KVCacheState {
     Full {
         length: u32,
     },
     Ring {
         offset: u32,
         length: u32,
-        max_length: u32,
+        capacity: u32,
     },
 }
 
-impl AttentionStateType {
-    pub fn physical_prefix_length(&self) -> u32 {
-        match self {
-            Self::Full {
-                length,
-            } => *length,
-            Self::Ring {
-                max_length,
-                ..
-            } => *max_length,
+impl KVCacheState {
+    fn full() -> Self {
+        Self::Full {
+            length: 0,
         }
     }
 
-    pub fn ring_params(&self) -> Option<RingParams> {
-        let Self::Ring {
-            offset,
-            length,
-            max_length: _,
-        } = self
-        else {
-            return None;
-        };
+    fn ring(capacity: u32) -> Self {
+        assert!(capacity > 0, "zero ring capacity");
+        Self::Ring {
+            offset: 0,
+            length: 0,
+            capacity,
+        }
+    }
 
-        Some(RingParams {
-            ring_offset: *offset,
-            ring_length: *length,
-        })
+    pub fn view(&self) -> KVCacheView {
+        match self {
+            Self::Full {
+                length,
+            } => KVCacheView::full(*length),
+            Self::Ring {
+                offset,
+                length,
+                capacity: _,
+            } => KVCacheView::ring(*length, *offset),
+        }
+    }
+
+    fn required_prefix_len(
+        &self,
+        context_length: u32,
+    ) -> u32 {
+        match self {
+            Self::Full {
+                ..
+            } => context_length,
+            Self::Ring {
+                capacity,
+                ..
+            } => context_length.min(*capacity),
+        }
+    }
+
+    fn accept(
+        &mut self,
+        accepted_indices: &[u32],
+    ) -> Vec<Copy> {
+        assert!(accepted_indices.is_sorted_by(|a, b| a < b), "unsorted accept");
+        let suffix_base = self.view().prefix_len();
+
+        match self {
+            Self::Full {
+                length,
+            } => {
+                let mut copies = Vec::with_capacity(accepted_indices.len());
+                for (destination_index, accepted_index) in accepted_indices.iter().copied().enumerate() {
+                    let source = suffix_base + accepted_index;
+                    let destination = suffix_base + destination_index as u32;
+                    if source != destination {
+                        copies.push(Copy {
+                            source,
+                            destination,
+                        });
+                    }
+                }
+                *length += accepted_indices.len() as u32;
+                copies
+            },
+            Self::Ring {
+                offset,
+                length,
+                capacity,
+            } => {
+                let count = accepted_indices.len() as u32;
+                let mut copies = Vec::with_capacity(accepted_indices.len().min(*capacity as usize));
+                for (index, accepted_index) in accepted_indices.iter().copied().enumerate() {
+                    let source = suffix_base + accepted_index;
+                    let destination = (*offset + *length) % *capacity;
+                    // A copy is dead when a later accept in the same batch overwrites its
+                    // destination; emitting it would alias in a single kernel dispatch.
+                    if index as u32 + *capacity >= count && source != destination {
+                        copies.push(Copy {
+                            source,
+                            destination,
+                        });
+                    }
+
+                    if length < capacity {
+                        *length += 1;
+                    } else {
+                        *offset = (*offset + 1) % *capacity;
+                    }
+                }
+                copies
+            },
+        }
     }
 }
 
 pub struct AttentionState<B: Backend> {
-    pub cur_context_length: u32,
     pub elements_prepared: u32,
     pub element_dim: u32,
     pub data_type: DataType,
-    pub state_type: AttentionStateType,
+    cache: KVCacheState,
     pub is_sparse: bool,
     pub keys: Box<dyn Buffer<Backend = B>>,
     pub values: Box<dyn Buffer<Backend = B>>,
@@ -67,6 +172,10 @@ pub struct AttentionState<B: Backend> {
 }
 
 impl<B: Backend> AttentionState<B> {
+    pub fn view(&self) -> KVCacheView {
+        self.cache.view()
+    }
+
     pub fn create_empty(
         attention: &Attention<B>,
         max_context_length: Option<u32>,
@@ -75,42 +184,25 @@ impl<B: Backend> AttentionState<B> {
         if let Some(max_context_length) = max_context_length {
             assert!(
                 attention.max_rope_length.is_none_or(|max_rope_length| max_context_length <= max_rope_length),
-                "Attention state max_prefix_elements overflows RoPE"
+                "context exceeds RoPE length"
             );
         }
 
         let data_type = attention.data_type;
 
-        let max_prefix_elements = if attention.is_causal
-            && let Some(sliding_window_size) = attention.sliding_window_size
-        {
-            sliding_window_size
-        } else if let Some(max_context_length) = max_context_length {
+        let max_prefix_elements = attention.ring_capacity.unwrap_or_else(|| {
             max_context_length
-        } else {
-            attention
-                .max_rope_length
+                .or(attention.max_rope_length)
                 .expect("Cannot create full attention state with unlimited length for with no RoPE")
-        };
+        });
 
-        let state_type = if attention.is_causal && attention.sliding_window_size.is_some() {
-            AttentionStateType::Ring {
-                offset: 0,
-                length: 0,
-                max_length: max_prefix_elements,
-            }
-        } else {
-            AttentionStateType::Full {
-                length: 0,
-            }
-        };
+        let cache = attention.ring_capacity.map_or_else(KVCacheState::full, KVCacheState::ring);
 
         let max_elements = max_prefix_elements + ATTENTION_SUFFIX_CAPACITY;
         let element_size = attention.num_kv_heads.unwrap() * attention.head_dim;
         let kv_buffer_bytes = size_for_shape(&[max_elements, element_size], data_type);
 
-        let is_ring = matches!(state_type, AttentionStateType::Ring { .. });
-        let is_sparse = !is_ring && context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS);
+        let is_sparse = context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS);
 
         let (keys, values): (Box<dyn Buffer<Backend = B>>, Box<dyn Buffer<Backend = B>>) = if is_sparse {
             (
@@ -124,11 +216,10 @@ impl<B: Backend> AttentionState<B> {
         let kv_cache_update = <B::Kernels as Kernels>::KVCacheUpdateKernel::new(context, data_type)?;
 
         Ok(Self {
-            cur_context_length: 0,
             elements_prepared: 0,
             element_dim: element_size,
             data_type,
-            state_type,
+            cache,
             is_sparse,
             keys,
             values,
@@ -148,8 +239,8 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
             return Ok(());
         }
 
-        assert!(suffix_length <= ATTENTION_SUFFIX_CAPACITY, "attention suffix length exceeds hardcoded capacity");
-        let elements_required = context_length + suffix_length;
+        assert!(suffix_length <= ATTENTION_SUFFIX_CAPACITY, "suffix exceeds capacity");
+        let elements_required = self.cache.required_prefix_len(context_length) + suffix_length;
         let bytes_required = size_for_shape(&[elements_required, self.element_dim], self.data_type);
         let bytes_prepared = size_for_shape(&[self.elements_prepared, self.element_dim], self.data_type);
 
@@ -176,48 +267,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         accepted_indices: &[u32],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        assert!(accepted_indices.is_sorted_by(|a, b| a < b), "invalid accepted indicies");
-
-        let copies = match &mut self.state_type {
-            AttentionStateType::Full {
-                length,
-            } => {
-                let copies = accepted_indices
-                    .iter()
-                    .copied()
-                    .zip(0u32..)
-                    .filter(|&(accepted_index, index)| index != accepted_index)
-                    .map(|(accepted_index, index)| Copy {
-                        source: *length + accepted_index,
-                        destination: *length + index,
-                    })
-                    .collect::<Vec<Copy>>();
-
-                *length += accepted_indices.len() as u32;
-
-                copies
-            },
-            AttentionStateType::Ring {
-                offset,
-                length,
-                max_length,
-            } => {
-                let mut copies = Vec::new();
-                for accepted_index in accepted_indices {
-                    copies.push(Copy {
-                        source: *max_length + *accepted_index,
-                        destination: (*offset + *length) % *max_length,
-                    });
-
-                    if length < max_length {
-                        *length += 1;
-                    } else {
-                        *offset = (*offset + 1) % *max_length;
-                    }
-                }
-                copies
-            },
-        };
+        let copies = self.cache.accept(accepted_indices);
 
         for copies_chunk in copies.chunks(B::MAX_INLINE_BYTES / size_of::<Copy>()) {
             self.kv_cache_update.encode(
@@ -230,8 +280,10 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
             );
         }
 
-        self.cur_context_length += accepted_indices.len() as u32;
-
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../unit/encodable_block/kv_cache_state_test.rs"]
+mod tests;

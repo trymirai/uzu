@@ -941,15 +941,17 @@ public func FfiConverterTypeChatMessageMetadata_lower(_ value: ChatMessageMetada
 public struct ChatModelCapabilities: Equatable, Hashable, Codable {
     public var supportsReasoning: Bool
     public var supportsDisableReasoning: Bool
+    public var reasoningEfforts: [ReasoningEffort]
     public var supportsTools: Bool
     public var supportsMultipleToolCalls: Bool
     public var requiresTools: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(supportsReasoning: Bool, supportsDisableReasoning: Bool, supportsTools: Bool, supportsMultipleToolCalls: Bool, requiresTools: Bool) {
+    public init(supportsReasoning: Bool, supportsDisableReasoning: Bool, reasoningEfforts: [ReasoningEffort], supportsTools: Bool, supportsMultipleToolCalls: Bool, requiresTools: Bool) {
         self.supportsReasoning = supportsReasoning
         self.supportsDisableReasoning = supportsDisableReasoning
+        self.reasoningEfforts = reasoningEfforts
         self.supportsTools = supportsTools
         self.supportsMultipleToolCalls = supportsMultipleToolCalls
         self.requiresTools = requiresTools
@@ -973,6 +975,7 @@ public struct FfiConverterTypeChatModelCapabilities: FfiConverterRustBuffer {
             try ChatModelCapabilities(
                 supportsReasoning: FfiConverterBool.read(from: &buf), 
                 supportsDisableReasoning: FfiConverterBool.read(from: &buf), 
+                reasoningEfforts: FfiConverterSequenceTypeReasoningEffort.read(from: &buf), 
                 supportsTools: FfiConverterBool.read(from: &buf), 
                 supportsMultipleToolCalls: FfiConverterBool.read(from: &buf), 
                 requiresTools: FfiConverterBool.read(from: &buf)
@@ -982,6 +985,7 @@ public struct FfiConverterTypeChatModelCapabilities: FfiConverterRustBuffer {
     public static func write(_ value: ChatModelCapabilities, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.supportsReasoning, into: &buf)
         FfiConverterBool.write(value.supportsDisableReasoning, into: &buf)
+        FfiConverterSequenceTypeReasoningEffort.write(value.reasoningEfforts, into: &buf)
         FfiConverterBool.write(value.supportsTools, into: &buf)
         FfiConverterBool.write(value.supportsMultipleToolCalls, into: &buf)
         FfiConverterBool.write(value.requiresTools, into: &buf)
@@ -2047,11 +2051,11 @@ public struct Model: Equatable, Hashable, Codable {
     public var quantization: ModelQuantization?
     public var specializations: [ModelSpecialization]
     public var accessibility: ModelAccessibility
-    public var encodings: [Value]
+    public var encoding: Value?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(identifier: String, registry: ModelRegistry, backends: [ModelBackend], family: ModelFamily?, properties: ModelProperties?, quantization: ModelQuantization?, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encodings: [Value]) {
+    public init(identifier: String, registry: ModelRegistry, backends: [ModelBackend], family: ModelFamily?, properties: ModelProperties?, quantization: ModelQuantization?, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encoding: Value?) {
         self.identifier = identifier
         self.registry = registry
         self.backends = backends
@@ -2060,7 +2064,7 @@ public struct Model: Equatable, Hashable, Codable {
         self.quantization = quantization
         self.specializations = specializations
         self.accessibility = accessibility
-        self.encodings = encodings
+        self.encoding = encoding
     }
 
     
@@ -2207,7 +2211,7 @@ public struct FfiConverterTypeModel: FfiConverterRustBuffer {
                 quantization: FfiConverterOptionTypeModelQuantization.read(from: &buf), 
                 specializations: FfiConverterSequenceTypeModelSpecialization.read(from: &buf), 
                 accessibility: FfiConverterTypeModelAccessibility.read(from: &buf), 
-                encodings: FfiConverterSequenceTypeValue.read(from: &buf)
+                encoding: FfiConverterOptionTypeValue.read(from: &buf)
         )
     }
 
@@ -2220,7 +2224,7 @@ public struct FfiConverterTypeModel: FfiConverterRustBuffer {
         FfiConverterOptionTypeModelQuantization.write(value.quantization, into: &buf)
         FfiConverterSequenceTypeModelSpecialization.write(value.specializations, into: &buf)
         FfiConverterTypeModelAccessibility.write(value.accessibility, into: &buf)
-        FfiConverterSequenceTypeValue.write(value.encodings, into: &buf)
+        FfiConverterOptionTypeValue.write(value.encoding, into: &buf)
     }
 }
 
@@ -2789,6 +2793,76 @@ public func FfiConverterTypeRepository_lift(_ buf: RustBuffer) throws -> Reposit
 #endif
 public func FfiConverterTypeRepository_lower(_ value: Repository) -> RustBuffer {
     return FfiConverterTypeRepository.lower(value)
+}
+
+
+public struct SamplingParameters: Equatable, Hashable, Codable {
+    public var temperature: Double?
+    public var topK: Int64?
+    public var topP: Double?
+    public var minP: Double?
+    public var repetitionPenalty: Double?
+    public var suffixRepetitionLength: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(temperature: Double?, topK: Int64?, topP: Double?, minP: Double?, repetitionPenalty: Double?, suffixRepetitionLength: Int64?) {
+        self.temperature = temperature
+        self.topK = topK
+        self.topP = topP
+        self.minP = minP
+        self.repetitionPenalty = repetitionPenalty
+        self.suffixRepetitionLength = suffixRepetitionLength
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SamplingParameters: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSamplingParameters: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SamplingParameters {
+        return
+            try SamplingParameters(
+                temperature: FfiConverterOptionDouble.read(from: &buf), 
+                topK: FfiConverterOptionInt64.read(from: &buf), 
+                topP: FfiConverterOptionDouble.read(from: &buf), 
+                minP: FfiConverterOptionDouble.read(from: &buf), 
+                repetitionPenalty: FfiConverterOptionDouble.read(from: &buf), 
+                suffixRepetitionLength: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SamplingParameters, into buf: inout [UInt8]) {
+        FfiConverterOptionDouble.write(value.temperature, into: &buf)
+        FfiConverterOptionInt64.write(value.topK, into: &buf)
+        FfiConverterOptionDouble.write(value.topP, into: &buf)
+        FfiConverterOptionDouble.write(value.minP, into: &buf)
+        FfiConverterOptionDouble.write(value.repetitionPenalty, into: &buf)
+        FfiConverterOptionInt64.write(value.suffixRepetitionLength, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSamplingParameters_lift(_ buf: RustBuffer) throws -> SamplingParameters {
+    return try FfiConverterTypeSamplingParameters.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSamplingParameters_lower(_ value: SamplingParameters) -> RustBuffer {
+    return FfiConverterTypeSamplingParameters.lower(value)
 }
 
 
@@ -4548,6 +4622,7 @@ public enum ReasoningEffort: Equatable, Hashable, Codable {
     case low
     case medium
     case high
+    case xHigh
 
 
 
@@ -4579,6 +4654,8 @@ public struct FfiConverterTypeReasoningEffort: FfiConverterRustBuffer {
         
         case 5: return .high
         
+        case 6: return .xHigh
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -4605,6 +4682,10 @@ public struct FfiConverterTypeReasoningEffort: FfiConverterRustBuffer {
         
         case .high:
             writeInt(&buf, Int32(5))
+        
+        
+        case .xHigh:
+            writeInt(&buf, Int32(6))
         
         }
     }
@@ -5565,31 +5646,6 @@ fileprivate struct FfiConverterSequenceTypeToolNamespace: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeValue: FfiConverterRustBuffer {
-    typealias SwiftType = [Value]
-
-    public static func write(_ value: [Value], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeValue.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Value] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [Value]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeValue.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeChatContentBlock: FfiConverterRustBuffer {
     typealias SwiftType = [ChatContentBlock]
 
@@ -5632,6 +5688,31 @@ fileprivate struct FfiConverterSequenceTypeModelSpecialization: FfiConverterRust
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeModelSpecialization.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeReasoningEffort: FfiConverterRustBuffer {
+    typealias SwiftType = [ReasoningEffort]
+
+    public static func write(_ value: [ReasoningEffort], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeReasoningEffort.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ReasoningEffort] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ReasoningEffort]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeReasoningEffort.read(from: &buf))
         }
         return seq
     }
@@ -5726,7 +5807,7 @@ public func metadataExternal(name: String) -> Metadata  {
     )
 })
 }
-public func modelExternal(identifier: String, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encodings: [Value]) -> Model  {
+public func modelExternal(identifier: String, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encoding: Value?) -> Model  {
     return try!  FfiConverterTypeModel_lift(try! rustCall() {
     uniffi_shoji_fn_func_model_external(
         FfiConverterString.lower(identifier),
@@ -5737,7 +5818,7 @@ public func modelExternal(identifier: String, registryIdentifier: String, regist
         FfiConverterString.lower(backendVersion),
         FfiConverterSequenceTypeModelSpecialization.lower(specializations),
         FfiConverterTypeModelAccessibility_lower(accessibility),
-        FfiConverterSequenceTypeValue.lower(encodings),$0
+        FfiConverterOptionTypeValue.lower(encoding),$0
     )
 })
 }
@@ -5826,7 +5907,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_shoji_checksum_func_metadata_external() != 17881) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_shoji_checksum_func_model_external() != 25859) {
+    if (uniffi_shoji_checksum_func_model_external() != 45448) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_shoji_checksum_func_chat_config_create() != 48867) {

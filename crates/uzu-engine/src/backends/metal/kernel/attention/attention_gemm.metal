@@ -37,7 +37,7 @@ struct AttentionGemmLayout {
 };
 
 template <typename T, uint BK, uint BD, bool USE_MXU>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 VARIANTS(BK, 16, 32)
 VARIANTS(BD, 64, 128, 256)
 VARIANTS(USE_MXU, false, true)

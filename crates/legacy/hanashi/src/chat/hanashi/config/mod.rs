@@ -56,6 +56,8 @@ pub enum HanashiConfig {
     Qwen35,
     #[serde(rename = "qwen3.6")]
     Qwen36,
+    #[serde(rename = "qwen3.8")]
+    Qwen38,
     #[serde(rename = "muse-glimmer")]
     MuseGlimmer,
 }
@@ -76,15 +78,22 @@ impl HanashiConfig {
             })
             .is_none_or(|limit| limit > 1);
 
-        let supports_disable_reasoning = rendering
+        let reasoning_effort_mapping = rendering
             .get_rendering_field_for_block_type(&ChatContentBlockType::ReasoningEffort)
-            .is_some_and(|field| match &field.config {
+            .and_then(|field| match &field.config {
                 FieldConfig::Unique {
-                    mapping: Some(mapping),
+                    mapping,
                     ..
-                } => mapping.contains_key(ReasoningEffort::Disabled.to_string().as_str()),
-                _ => false,
+                } => mapping.as_ref(),
+                _ => None,
             });
+
+        let supports_disable_reasoning = reasoning_effort_mapping
+            .is_some_and(|mapping| mapping.contains_key(ReasoningEffort::Disabled.to_string().as_str()));
+
+        let reasoning_efforts = reasoning_effort_mapping
+            .map(|mapping| mapping.keys().filter_map(|key| key.parse::<ReasoningEffort>().ok()).collect::<Vec<_>>())
+            .unwrap_or_default();
 
         let tools_role_and_field = rendering.get_rendering_role_and_field_for_block_type(&ChatContentBlockType::Tools);
         let supports_tools = tools_role_and_field.is_some();
@@ -97,6 +106,7 @@ impl HanashiConfig {
                 .get_rendering_field_for_block_type(&ChatContentBlockType::Reasoning)
                 .is_some(),
             supports_disable_reasoning,
+            reasoning_efforts,
             supports_tools,
             supports_multiple_tool_calls,
             requires_tools,
@@ -118,6 +128,7 @@ impl HanashiConfig {
             HanashiConfig::Qwen3Thinking => resolve_bundled_config("qwen3-thinking"),
             HanashiConfig::Qwen35 => resolve_bundled_config("qwen3.5"),
             HanashiConfig::Qwen36 => resolve_bundled_config("qwen3.6"),
+            HanashiConfig::Qwen38 => resolve_bundled_config("qwen3.8"),
             HanashiConfig::MuseGlimmer => resolve_bundled_config("muse-glimmer"),
             HanashiConfig::Custom {
                 config,

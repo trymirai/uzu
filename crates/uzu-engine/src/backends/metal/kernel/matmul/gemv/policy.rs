@@ -1,24 +1,33 @@
-use crate::backends::metal::device_profile::{DeviceGeneration, DeviceProfile, DeviceSize};
+use crate::backends::metal::device_profile::{DeviceProfile, DeviceSize, GpuFamily};
+
+mod quantized;
+
+pub(super) use quantized::{gathered_tile, select as quantized_tile};
 
 // Full-precision GEMV accumulates four K values per SIMD lane, so one full
 // vectorized K block is 4 * 32 lanes.
-pub(crate) const FP_K_BLOCK: u32 = 128;
-pub(crate) const DEFAULT_RESULTS_PER_SIMDGROUP: u32 = 4;
-pub(crate) const DEFAULT_NUM_SIMDGROUPS: u32 = 8;
+pub(super) const FP_K_BLOCK: u32 = 128;
+pub(super) const DEFAULT_RESULTS_PER_SIMDGROUP: u32 = 4;
+pub(super) const DEFAULT_NUM_SIMDGROUPS: u32 = 8;
 
-/// Tile specialization selected for one GEMV dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GemvTile {
+pub struct GemvTile {
     /// SIMD groups launched in one threadgroup.
-    pub num_simdgroups: u32,
+    pub(super) num_simdgroups: u32,
     /// Number of split-K slices reduced by one threadgroup.
-    pub k_split: u32,
+    pub(super) k_split: u32,
     /// Output rows computed by each SIMD group.
-    pub results_per_simdgroup: u32,
+    pub(super) results_per_simdgroup: u32,
+    /// Input rows processed by one threadgroup.
+    pub(super) input_row_tile: u32,
+    /// SIMD lanes cooperating over K for one output-row block.
+    pub(super) reduction_lanes: u32,
+    /// SIMD lanes cooperating on one quantization group.
+    pub(super) group_lanes: u32,
 }
 
 const SMALL_G13_HUGE_N: u32 = 32768;
-const SMALL_G13_WIDE_ROW_N: u32 = 6144;
+const SMALL_G13_BROAD_ROW_N: u32 = 6144;
 const DEEP_K: u32 = 8192;
 const FP_LARGE_SPLIT_K_MIN_DEPTH: u32 = 4 * FP_K_BLOCK;
 const FP_K_DEPTH_N_MAX: u32 = 4095;
@@ -34,37 +43,50 @@ const fn tile(
         num_simdgroups,
         k_split,
         results_per_simdgroup,
+        input_row_tile: 1,
+        reduction_lanes: 32,
+        group_lanes: 1,
     }
 }
 
-const fn qtile(
-    num_simdgroups: u32,
-    results_per_simdgroup: u32,
-) -> GemvTile {
-    // Q4 table sweeps only covered KS1; quant split-K is a separate future grid.
-    tile(num_simdgroups, 1, results_per_simdgroup)
-}
+pub(super) const DEFAULT_TILE: GemvTile = tile(DEFAULT_NUM_SIMDGROUPS, 1, DEFAULT_RESULTS_PER_SIMDGROUP);
 
-pub(crate) const DEFAULT_TILE: GemvTile = qtile(DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP);
-// Qxy = qtile(num_simdgroups=x, results_per_simdgroup=y), with KS1.
-const Q21: GemvTile = qtile(2, 1);
-const Q22: GemvTile = qtile(2, 2);
-const Q24: GemvTile = qtile(2, 4);
-const Q42: GemvTile = qtile(4, 2);
-const Q44: GemvTile = qtile(4, 4);
-const Q48: GemvTile = qtile(4, 8);
-const Q82: GemvTile = qtile(8, 2);
-const QUANT_N_BUCKET_MAXES: [u32; 6] = [512, 2048, 4096, 8192, 16384, 32768];
-const QUANT_K_BUCKET_MAXES: [u32; 3] = [512, 2048, 8192];
-const QUANT_RHT_TUNED_N_MIN_EXCLUSIVE: u32 = 2048;
-const QUANT_RHT_TUNED_N_MAX: u32 = 4096;
-const QUANT_RHT_TUNED_K_MIN: u32 = 2048;
+impl GemvTile {
+    pub const fn quantized(
+        num_simdgroups: u32,
+        results_per_simdgroup: u32,
+        input_row_tile: u32,
+        reduction_lanes: u32,
+        group_lanes: u32,
+    ) -> Self {
+        Self {
+            num_simdgroups,
+            k_split: 1,
+            results_per_simdgroup,
+            input_row_tile,
+            reduction_lanes,
+            group_lanes,
+        }
+    }
 
-fn table_bucket_index(
-    value: u32,
-    bucket_maxes: &[u32],
-) -> usize {
-    bucket_maxes.partition_point(|&max| value > max)
+    pub const fn quantized_output_tile(
+        num_simdgroups: u32,
+        output_row_tile: u32,
+        input_row_tile: u32,
+        reduction_lanes: u32,
+        group_lanes: u32,
+    ) -> Self {
+        assert!(output_row_tile.is_multiple_of(num_simdgroups));
+        Self::quantized(num_simdgroups, output_row_tile / num_simdgroups, input_row_tile, reduction_lanes, group_lanes)
+    }
+
+    pub(super) const fn output_row_tile(self) -> u32 {
+        (self.num_simdgroups / self.k_split) * self.results_per_simdgroup
+    }
+
+    pub(super) const fn rows_per_lane(self) -> u32 {
+        self.results_per_simdgroup / (32 / self.reduction_lanes)
+    }
 }
 
 fn cap_k_split_to_complete_fp_k_blocks(
@@ -119,7 +141,7 @@ fn preferred_fp_k_split(
 
 /// Selects the full-precision GEMV tile. `m` is the input-vector count,
 /// `n` is the output row count, and `k` is the reduction depth.
-pub(crate) fn fp_tile(
+pub(super) fn fp_tile(
     m: u32,
     n: u32,
     k: u32,
@@ -127,12 +149,12 @@ pub(crate) fn fp_tile(
     profile: DeviceProfile,
 ) -> GemvTile {
     let size = profile.size();
-    let is_small_g13 = size == DeviceSize::Small && profile.generation() == DeviceGeneration::Legacy;
-    // FP sweeps covered SG2/SG4/SG8; SG changes did not produce portable
-    // confirmed wins, so shipped FP policy keeps SG8 and tunes KS/R only.
+    let gpu_family = profile.gpu_family();
+    let is_small_legacy = size == DeviceSize::Small && gpu_family == GpuFamily::Legacy;
+    // SG8 is the portable full-precision geometry.
     let should_disable_k_split = !input_aligned
         || (m == 1 && size == DeviceSize::Large && k < FP_LARGE_SPLIT_K_MIN_DEPTH)
-        || (m == 1 && is_small_g13 && n >= SMALL_G13_HUGE_N);
+        || (m == 1 && is_small_legacy && n >= SMALL_G13_HUGE_N);
 
     let k_split = if should_disable_k_split {
         1
@@ -140,9 +162,7 @@ pub(crate) fn fp_tile(
         cap_k_split_to_complete_fp_k_blocks(k, preferred_fp_k_split(m, n, k))
     };
 
-    // R1 won most single-row FP sweeps; Large devices only switch back to R4
-    // for deep-K rows, while legacy wide rows keep R4.
-    let results_per_simdgroup = if is_small_g13 && m == 1 && n >= SMALL_G13_WIDE_ROW_N {
+    let results_per_simdgroup = if is_small_legacy && m == 1 && n >= SMALL_G13_BROAD_ROW_N {
         DEFAULT_RESULTS_PER_SIMDGROUP
     } else if m == 1 && (k <= DEEP_K || size != DeviceSize::Large) {
         1
@@ -151,77 +171,6 @@ pub(crate) fn fp_tile(
     };
 
     tile(DEFAULT_NUM_SIMDGROUPS, k_split, results_per_simdgroup)
-}
-
-/// Selects the quantized GEMV tile. `m` is the input-vector count, `n` is the
-/// output row count, `k` is the reduction depth, and `bits` is the quant width.
-pub(crate) fn quant_tile(
-    m: u32,
-    n: u32,
-    k: u32,
-    bits: u32,
-    has_rht: bool,
-    profile: DeviceProfile,
-) -> GemvTile {
-    let size = profile.size();
-    let generation = profile.generation();
-    // These tables are fitted for batch-1 Q4 only; Q8/future widths keep the
-    // deterministic default until they have their own cold sweep.
-    if m != 1 || bits != 4 {
-        return DEFAULT_TILE;
-    }
-    if has_rht {
-        // This special case mirrors quant bucket edges: n in (2048, 4096]
-        // and k at or above the 2048 boundary.
-        return if size == DeviceSize::Large
-            && n > QUANT_RHT_TUNED_N_MIN_EXCLUSIVE
-            && n <= QUANT_RHT_TUNED_N_MAX
-            && k >= QUANT_RHT_TUNED_K_MIN
-        {
-            qtile(4, 8)
-        } else {
-            DEFAULT_TILE
-        };
-    }
-
-    let k_bucket = table_bucket_index(k, &QUANT_K_BUCKET_MAXES);
-    let n_bucket = table_bucket_index(n, &QUANT_N_BUCKET_MAXES);
-    // Q4 BF16 decode choices from June 2026 gemv_fine_tune sweeps; omitted
-    // cells keep SG8_KS1_R4. Other quant widths keep DEFAULT_TILE until swept.
-    let selected = match (size, generation, k_bucket, n_bucket) {
-        (DeviceSize::Large, _, 0, 1) => Q42,
-        (DeviceSize::Large, _, 1, 0) => Q21,
-        (DeviceSize::Large, _, 1, 1..=3) => Q22,
-        (DeviceSize::Large, _, 1, 4) => Q21,
-        (DeviceSize::Large, _, 1, 5) => Q24,
-        (DeviceSize::Large, _, 2, 1) => Q42,
-        (DeviceSize::Large, _, 3, 1) => Q22,
-
-        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 0, 1) => Q44,
-        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 1, 0) => Q42,
-        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 1, 1) => Q22,
-        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 1, 2) => Q42,
-        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 1, 4) => Q22,
-        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 1, 5) => Q42,
-        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 2, 1) => Q42,
-        (DeviceSize::Small, DeviceGeneration::Apple9 | DeviceGeneration::M5Plus, 3, 1) => Q22,
-
-        (DeviceSize::Small, DeviceGeneration::Apple8, 0, 1) => Q44,
-        (DeviceSize::Small, DeviceGeneration::Apple8, 1, _) | (DeviceSize::Small, DeviceGeneration::Apple8, 2, 1) => {
-            Q82
-        },
-
-        (DeviceSize::Small, DeviceGeneration::Legacy, 0, 1) => Q48,
-        (DeviceSize::Small, DeviceGeneration::Legacy, 1, 0..=3) => Q82,
-
-        _ => DEFAULT_TILE,
-    };
-    if n < selected.results_per_simdgroup {
-        // Coarse N buckets can include n < R; keep the default R4 tile for tiny rows.
-        DEFAULT_TILE
-    } else {
-        selected
-    }
 }
 
 #[cfg(test)]

@@ -1,11 +1,11 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
 use crate::array::ArrayElement;
 
 #[kernel(SigmoidGate)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, f32, bf16)]
 pub fn sigmoid_gate<T: ArrayElement + Float>(
     gate: *const T,
     output: *mut T,

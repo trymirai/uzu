@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        kernel::{AttentionPrepareKernel, SigmoidGateKernel},
+        kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel, SigmoidGateKernel},
     },
     config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
@@ -13,7 +13,6 @@ use crate::{
         mixer::{
             Mixer, MixerState,
             attention::{
-                core::{AttentionCoreNewArguments, AttentionCores},
                 mode::LinearProjection,
                 qkv_norm::{QKVNorm, QKVNormError},
                 rope::PrecalculatedRoPE,
@@ -24,12 +23,11 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-pub(crate) mod core;
 mod mode;
 mod qkv_norm;
 mod state;
 
-pub(crate) use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, AttentionStateType};
+pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCacheView};
 
 pub mod rope;
 
@@ -37,16 +35,14 @@ pub struct Attention<B: Backend> {
     head_dim: u32,
     num_q_heads: u32,
     num_kv_heads: Option<u32>,
-    is_causal: bool,
-    sliding_window_size: Option<u32>,
+    ring_capacity: Option<u32>,
     max_rope_length: Option<u32>,
     data_type: DataType,
     qkv: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     gate_projection: Option<Box<dyn Linear<B>>>,
     sinks: Option<Allocation<B>>,
-    flat_core: AttentionCores<B>,
-    trie_core: AttentionCores<B>,
+    kernel: <B::Kernels as Kernels>::AttentionKernel,
     gate_kernel: Option<<B::Kernels as Kernels>::SigmoidGateKernel>,
     out_projection: Box<dyn Linear<B>>,
 }
@@ -164,39 +160,23 @@ impl<B: Backend> Attention<B> {
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
 
-        let is_kv_cache_ring = is_causal && sliding_window_size.is_some();
+        assert!(sliding_window_size.is_none_or(|size| size > 0), "zero sliding window size");
+        let ring_capacity = sliding_window_size;
+        let is_kv_cache_ring = ring_capacity.is_some();
 
-        let flat_core = AttentionCores::new(
-            AttentionCoreNewArguments {
+        let kernel = <B::Kernels as Kernels>::AttentionKernel::new(
+            context,
+            AttentionKernelConfig {
                 head_dim,
                 num_groups,
                 num_q_heads,
                 has_sinks: sinks.is_some(),
                 is_kv_cache_ring,
                 is_causal,
-                is_trie: false,
                 sliding_window_size,
                 scale: config.scale,
                 data_type,
             },
-            context,
-        )
-        .map_err(AttentionNewError::Backend)?;
-
-        let trie_core = AttentionCores::new(
-            AttentionCoreNewArguments {
-                head_dim,
-                num_groups,
-                num_q_heads,
-                has_sinks: sinks.is_some(),
-                is_kv_cache_ring,
-                is_causal,
-                is_trie: true,
-                sliding_window_size,
-                scale: config.scale,
-                data_type,
-            },
-            context,
         )
         .map_err(AttentionNewError::Backend)?;
 
@@ -219,8 +199,7 @@ impl<B: Backend> Attention<B> {
                 head_dim,
                 num_q_heads,
                 num_kv_heads,
-                is_causal,
-                sliding_window_size,
+                ring_capacity,
                 max_rope_length,
                 data_type,
                 qkv: LinearProjection {
@@ -230,8 +209,7 @@ impl<B: Backend> Attention<B> {
                 prepare,
                 gate_projection,
                 sinks,
-                flat_core,
-                trie_core,
+                kernel,
                 gate_kernel,
                 out_projection,
             },

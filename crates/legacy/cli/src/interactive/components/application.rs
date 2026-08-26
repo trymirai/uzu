@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
 use iocraft::prelude::*;
-use shoji::types::{basic::ReasoningEffort, model::Model};
+use shoji::types::{
+    basic::{ReasoningEffort, SamplingParameters},
+    model::Model,
+};
 use uzu::{
     engine::Engine,
     settings::Settings,
@@ -9,7 +12,7 @@ use uzu::{
 };
 
 use crate::{
-    common::model_capabilities::{ModelCapabilities, ThinkingPreference},
+    common::thinking::{ThinkingPreference, ThinkingSupport},
     interactive::{
         APP_IDENTIFIER,
         components::{CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme},
@@ -34,7 +37,11 @@ pub struct ModelState {
     pub model: Model,
     pub download_state: DownloadState,
     pub session_state: Option<Box<dyn SessionState>>,
-    pub capabilities: ModelCapabilities,
+    pub thinking: ThinkingSupport,
+    pub sampling_defaults: SamplingParameters,
+    /// The thinking effort is baked into the prompt on the first turn and
+    /// cannot be changed afterwards.
+    pub thinking_locked: bool,
 }
 
 pub struct ApplicationState {
@@ -168,7 +175,9 @@ pub fn Application(
                         model,
                         download_state: DownloadState::not_downloaded(0),
                         session_state: None,
-                        capabilities: ModelCapabilities::default(),
+                        thinking: ThinkingSupport::default(),
+                        sampling_defaults: SamplingParameters::default(),
+                        thinking_locked: false,
                     });
                 },
                 Ok(None) => {

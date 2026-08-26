@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use uzu::session::chat::ChatSession;
 
-use crate::common::model_capabilities::ThinkingSupport;
+use crate::common::thinking::ThinkingSupport;
 
 pub struct ServerState {
     pub model_name: String,

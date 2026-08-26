@@ -13,7 +13,7 @@ using namespace uzu::ring;
 using namespace uzu::trie;
 
 template <typename T, uint HEAD_DIM>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 VARIANTS(HEAD_DIM, 64, 128, 256, 512)
 PUBLIC KERNEL(AttentionSinglePass)(
     const device T* queries,

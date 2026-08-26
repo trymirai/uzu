@@ -1,4 +1,5 @@
 mod kernel;
 mod policy;
 
-pub(crate) use kernel::{GemvDispatch, GemvSpecialization};
+pub(super) use kernel::{GemvKernel, GemvSpecialization};
+pub(super) use policy::GemvTile;
