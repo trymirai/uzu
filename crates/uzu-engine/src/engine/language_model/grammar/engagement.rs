@@ -1,9 +1,42 @@
+/// Decides when the grammar starts constraining sampling. `Always` engages from
+/// the first generated token. `Triggered` stays dormant until the generated
+/// stream contains the trigger token sequence (a reasoning model's
+/// end-of-thinking tag), so reasoning tokens flow unconstrained and only the
+/// final answer is grammar-constrained.
 pub enum GrammarEngagementState {
     Always,
     Triggered {
-        trigger_token_id: u64,
-        trigger_distance: Option<usize>,
+        trigger_sequence: Vec<u64>,
+        /// Match-automaton state after each accepted token: the length of the
+        /// longest prefix of `trigger_sequence` that is a suffix of the stream,
+        /// held at `trigger_sequence.len()` once the trigger has completed. One
+        /// entry per accepted token so `rollback` restores any earlier state
+        /// exactly.
+        match_history: Vec<usize>,
     },
+}
+
+/// The last `matched` tokens of the stream equal `trigger_sequence[..matched]`,
+/// so the new match length is the longest prefix of `trigger_sequence` that is
+/// a suffix of `trigger_sequence[..matched]` followed by `token_id`.
+fn advance(
+    trigger_sequence: &[u64],
+    matched: usize,
+    token_id: u64,
+) -> usize {
+    if matched == trigger_sequence.len() {
+        return matched;
+    }
+    let mut length = matched + 1;
+    while length > 0 {
+        if trigger_sequence[length - 1] == token_id
+            && trigger_sequence[matched + 1 - length..matched] == trigger_sequence[..length - 1]
+        {
+            return length;
+        }
+        length -= 1;
+    }
+    0
 }
 
 impl GrammarEngagementState {
@@ -11,9 +44,9 @@ impl GrammarEngagementState {
         match self {
             Self::Always => true,
             Self::Triggered {
-                trigger_token_id: _,
-                trigger_distance,
-            } => trigger_distance.is_some(),
+                trigger_sequence,
+                match_history,
+            } => match_history.last() == Some(&trigger_sequence.len()),
         }
     }
 
@@ -24,14 +57,11 @@ impl GrammarEngagementState {
         match self {
             Self::Always => (),
             Self::Triggered {
-                trigger_token_id,
-                trigger_distance,
+                trigger_sequence,
+                match_history,
             } => {
-                if let Some(trigger_distance) = trigger_distance {
-                    *trigger_distance += 1;
-                } else if token_id == *trigger_token_id {
-                    *trigger_distance = Some(0);
-                }
+                let matched = match_history.last().copied().unwrap_or(0);
+                match_history.push(advance(trigger_sequence, matched, token_id));
             },
         }
     }
@@ -43,13 +73,28 @@ impl GrammarEngagementState {
         match self {
             Self::Always => num_tokens,
             Self::Triggered {
-                trigger_token_id: _,
-                trigger_distance,
+                trigger_sequence,
+                match_history,
             } => {
-                let num_grammar_tokens = usize::min(trigger_distance.unwrap_or(0), num_tokens);
-                *trigger_distance = trigger_distance.and_then(|x| x.checked_sub(num_tokens));
+                let full_match = trigger_sequence.len();
+                let mut num_grammar_tokens = 0;
+                for _ in 0..num_tokens {
+                    if match_history.pop().is_none() {
+                        break;
+                    }
+                    // A token was fed to the matcher iff the trigger was already
+                    // complete when it was accepted, i.e. the state before it
+                    // was a full match.
+                    if match_history.last().copied().unwrap_or(0) == full_match {
+                        num_grammar_tokens += 1;
+                    }
+                }
                 num_grammar_tokens
             },
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../unit/engine/language_model/grammar/engagement_test.rs"]
+mod tests;

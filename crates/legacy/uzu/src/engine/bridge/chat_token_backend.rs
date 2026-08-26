@@ -35,7 +35,9 @@ use uzu_engine::{
 };
 
 #[cfg(feature = "capability-grammar")]
-use crate::engine::bridge::helpers::get_grammar;
+use crate::engine::bridge::helpers::{
+    get_grammar, grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt,
+};
 use crate::engine::bridge::{
     chat_token_state::UzuChatTokenBackendInstanceState,
     helpers::{error_stream, get_max_context_length, get_sampling_method},
@@ -47,6 +49,8 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     config: ChatConfig,
     stop_token_ids: Vec<i32>,
     max_context_length: Option<u32>,
+    #[cfg(feature = "capability-grammar")]
+    grammar_trigger_token_sequence: Option<Vec<u64>>,
 }
 
 impl<B: Backend> UzuChatTokenBackendInstance<B> {
@@ -60,6 +64,8 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
 
         let stop_token_ids = model.generation_config().stop_token_ids.iter().map(|id| *id as i32).collect();
         let max_context_length = get_max_context_length(&model, config.context_length.clone());
+        #[cfg(feature = "capability-grammar")]
+        let grammar_trigger_token_sequence = grammar_trigger_token_sequence(&model);
 
         Ok(Self {
             engine,
@@ -67,6 +73,8 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             config,
             stop_token_ids,
             max_context_length,
+            #[cfg(feature = "capability-grammar")]
+            grammar_trigger_token_sequence,
         })
     }
 }
@@ -116,7 +124,12 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         #[cfg(feature = "capability-grammar")]
         let grammar = if let Some(grammar_config) = config.grammar {
-            match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids) {
+            let trigger_token_sequence = grammar_trigger_token_sequence_for_prompt(
+                self.grammar_trigger_token_sequence.as_deref(),
+                input,
+                self.model.tokenizer(),
+            );
+            match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids, trigger_token_sequence) {
                 Ok(grammar) => Some(grammar),
                 Err(err) => {
                     return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
