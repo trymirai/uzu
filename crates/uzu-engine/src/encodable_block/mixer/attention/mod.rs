@@ -27,7 +27,7 @@ mod mode;
 mod qkv_norm;
 mod state;
 
-pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, AttentionStateType};
+pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCacheView};
 
 pub mod rope;
 
@@ -35,8 +35,7 @@ pub struct Attention<B: Backend> {
     head_dim: u32,
     num_q_heads: u32,
     num_kv_heads: Option<u32>,
-    is_causal: bool,
-    sliding_window_size: Option<u32>,
+    ring_capacity: Option<u32>,
     max_rope_length: Option<u32>,
     data_type: DataType,
     qkv: LinearProjection<B>,
@@ -161,7 +160,9 @@ impl<B: Backend> Attention<B> {
             .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
             .transpose()?;
 
-        let is_kv_cache_ring = is_causal && sliding_window_size.is_some();
+        assert!(sliding_window_size.is_none_or(|size| size > 0), "zero sliding window size");
+        let ring_capacity = sliding_window_size;
+        let is_kv_cache_ring = ring_capacity.is_some();
 
         let kernel = <B::Kernels as Kernels>::AttentionKernel::new(
             context,
@@ -198,8 +199,7 @@ impl<B: Backend> Attention<B> {
                 head_dim,
                 num_q_heads,
                 num_kv_heads,
-                is_causal,
-                sliding_window_size,
+                ring_capacity,
                 max_rope_length,
                 data_type,
                 qkv: LinearProjection {

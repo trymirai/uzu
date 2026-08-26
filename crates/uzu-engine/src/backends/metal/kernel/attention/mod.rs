@@ -106,9 +106,9 @@ impl AttentionMetalKernel {
         VT: BufferArg<'a, Metal>,
     {
         let suffix_length = arguments.suffix_length;
-        let kv_length = arguments.state_type.physical_prefix_length() + suffix_length;
+        let kv_length = arguments.cache.prefix_len() + suffix_length;
         let is_trie = arguments.trie.is_some();
-        let is_ring = arguments.state_type.ring_params().is_some();
+        let is_ring = arguments.cache.ring_params().is_some();
         let mask = MaskKind::for_attention(self.is_causal, is_trie);
 
         if !is_ring

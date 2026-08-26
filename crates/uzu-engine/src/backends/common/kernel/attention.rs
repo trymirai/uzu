@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{Allocation, Backend, BufferArg, Encoder, Kernels},
     data_type::DataType,
-    encodable_block::mixer::attention::AttentionStateType,
+    encodable_block::mixer::attention::KVCacheView,
 };
 
 pub trait AttentionKernel: Sized + Send + Sync {
@@ -42,5 +42,5 @@ pub struct AttentionArguments<'a, B: Backend, KT: BufferArg<'a, B>, VT: BufferAr
     pub suffix_length: u32,
     pub trie: Option<&'a Allocation<B>>,
     pub sinks: Option<&'a Allocation<B>>,
-    pub state_type: &'a AttentionStateType,
+    pub cache: KVCacheView,
 }

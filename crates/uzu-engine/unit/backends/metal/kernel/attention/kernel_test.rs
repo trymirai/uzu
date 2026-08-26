@@ -12,7 +12,7 @@ use crate::{
         cpu::Cpu,
         metal::Metal,
     },
-    encodable_block::{mixer::attention::AttentionStateType, sampling::PRng},
+    encodable_block::{mixer::attention::KVCacheView, sampling::PRng},
     tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
@@ -236,9 +236,7 @@ fn run_single_pass_attention(
             suffix_length: seq_len as u32,
             trie: None,
             sinks: sinks_buffer.as_ref(),
-            state_type: &AttentionStateType::Full {
-                length: 0,
-            },
+            cache: KVCacheView::full(0),
         },
         &mut encoder,
     )?;
@@ -298,10 +296,6 @@ fn run_gemm_attention(
     let value_allocation = create_attention_cache_allocation(values, seq_len, context);
 
     let sinks_allocation = sinks.map(|sinks| create_sinks_allocation(sinks, context));
-    let state_type = AttentionStateType::Full {
-        length: 0,
-    };
-
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     let args = AttentionArguments {
@@ -311,7 +305,7 @@ fn run_gemm_attention(
         suffix_length: seq_len as u32,
         trie: None,
         sinks: sinks_allocation.as_ref(),
-        state_type: &state_type,
+        cache: KVCacheView::full(0),
     };
 
     let pooled_output = kernel.encode(args, &mut encoder)?;
@@ -484,10 +478,6 @@ fn run_two_pass_attention(
     let keys_buffer = create_attention_cache_allocation(keys, seq_len, context);
     let values_buffer = create_attention_cache_allocation(values, seq_len, context);
     let sinks_buffer = sinks.map(|sinks| create_sinks_allocation(sinks, context));
-    let state_type = AttentionStateType::Full {
-        length: 0,
-    };
-
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     let pooled_output = kernel.encode(
@@ -498,7 +488,7 @@ fn run_two_pass_attention(
             suffix_length: seq_len as u32,
             trie: None,
             sinks: sinks_buffer.as_ref(),
-            state_type: &state_type,
+            cache: KVCacheView::full(0),
         },
         &mut encoder,
     )?;
@@ -591,9 +581,7 @@ fn run_attention<B: Backend>(
         shape,
         &keys,
         &values,
-        &AttentionStateType::Full {
-            length: prefix_length as u32,
-        },
+        KVCacheView::full(prefix_length as u32),
         trie_nodes,
     )
 }
@@ -604,7 +592,7 @@ fn run_attention_with_kernel<B: Backend>(
     shape: AttentionShape,
     keys_data: &[bf16],
     values_data: &[bf16],
-    state_type: &AttentionStateType,
+    cache: KVCacheView,
     trie_nodes: Option<&[GpuTrieNode]>,
 ) -> Vec<bf16> {
     let (head_dim, num_q_heads, _, suffix_length, _, _) = shape;
@@ -623,7 +611,7 @@ fn run_attention_with_kernel<B: Backend>(
         suffix_length: suffix_length as u32,
         trie: trie.as_ref(),
         sinks: None,
-        state_type,
+        cache,
     };
     let mut encoder = Encoder::<B>::new(context).expect("encoder");
     let pooled = kernel.encode(arguments, &mut encoder).expect("encode");
@@ -671,12 +659,10 @@ fn attention_kernel_reuses_instance_for_flat_and_trie() {
     )
     .expect("attention kernel");
     let (keys, values) = attention_data(shape);
-    let state = AttentionStateType::Full {
-        length: 1024,
-    };
-    let flat = run_attention_with_kernel::<Metal>(context.as_ref(), &kernel, shape, &keys, &values, &state, None);
+    let cache = KVCacheView::full(1024);
+    let flat = run_attention_with_kernel::<Metal>(context.as_ref(), &kernel, shape, &keys, &values, cache, None);
     let trie_output =
-        run_attention_with_kernel::<Metal>(context.as_ref(), &kernel, shape, &keys, &values, &state, Some(&trie));
+        run_attention_with_kernel::<Metal>(context.as_ref(), &kernel, shape, &keys, &values, cache, Some(&trie));
     let cpu_context = <Cpu as Backend>::Context::new().expect("CPU attention context");
     let cpu_kernel = <<Cpu as Backend>::Kernels as Kernels>::AttentionKernel::new(
         cpu_context.as_ref(),
@@ -684,9 +670,9 @@ fn attention_kernel_reuses_instance_for_flat_and_trie() {
     )
     .expect("CPU attention kernel");
     let expected_flat =
-        run_attention_with_kernel::<Cpu>(cpu_context.as_ref(), &cpu_kernel, shape, &keys, &values, &state, None);
+        run_attention_with_kernel::<Cpu>(cpu_context.as_ref(), &cpu_kernel, shape, &keys, &values, cache, None);
     let expected_trie =
-        run_attention_with_kernel::<Cpu>(cpu_context.as_ref(), &cpu_kernel, shape, &keys, &values, &state, Some(&trie));
+        run_attention_with_kernel::<Cpu>(cpu_context.as_ref(), &cpu_kernel, shape, &keys, &values, cache, Some(&trie));
     assert_eq_float::<bf16>(&expected_flat, &flat, 1e-2, "flat mask specialization");
     assert_eq_float::<bf16>(&expected_trie, &trie_output, 1e-2, "trie mask specialization");
 }
@@ -741,9 +727,7 @@ fn attention_kernel_ring_matches_full_on_wrap() {
         shape,
         &full_keys,
         &full_values,
-        &AttentionStateType::Full {
-            length: CONTEXT as u32,
-        },
+        KVCacheView::full(CONTEXT as u32),
         None,
     );
     let ring = run_attention_with_kernel::<Metal>(
@@ -752,11 +736,7 @@ fn attention_kernel_ring_matches_full_on_wrap() {
         shape,
         &ring_keys,
         &ring_values,
-        &AttentionStateType::Ring {
-            offset: ring_offset as u32,
-            length: CAPACITY as u32,
-            max_length: CAPACITY as u32,
-        },
+        KVCacheView::ring(CAPACITY as u32, ring_offset as u32),
         None,
     );
     assert_eq_float::<bf16>(&full, &ring, 1e-2, "wrapped ring attention");

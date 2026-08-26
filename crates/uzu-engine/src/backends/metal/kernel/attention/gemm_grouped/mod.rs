@@ -257,10 +257,10 @@ impl AttentionGemmGrouped {
         encoder: &mut Encoder<Metal>,
     ) -> Result<Allocation<Metal>, MetalError> {
         let suffix_length = arguments.suffix_length;
-        assert!(arguments.state_type.ring_params().is_none(), "ring KV cache is unsupported");
+        assert!(arguments.cache.ring_params().is_none(), "ring KV cache is unsupported");
         assert!(arguments.sinks.is_none(), "attention sinks are unsupported");
 
-        let kv_length = arguments.state_type.physical_prefix_length() + suffix_length;
+        let kv_length = arguments.cache.prefix_len() + suffix_length;
         let mut output =
             encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], DataType::BF16)?;
         let core = self.get_or_create(encoder.context(), mask)?;

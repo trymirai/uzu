@@ -15,7 +15,7 @@ use crate::{
         metal::Metal,
     },
     data_type::DataType,
-    encodable_block::mixer::attention::AttentionStateType,
+    encodable_block::mixer::attention::KVCacheView,
     tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
@@ -90,10 +90,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let values_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.values);
 
     let segment_prefix_length = input.sequence_length - input.suffix_length;
-    let state_type = AttentionStateType::Full {
-        length: segment_prefix_length as u32,
-    };
-
     let args = AttentionArguments {
         queries: &queries_allocation,
         keys: &keys_allocation,
@@ -101,7 +97,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         suffix_length: input.suffix_length as u32,
         trie: None,
         sinks: None,
-        state_type: &state_type,
+        cache: KVCacheView::full(segment_prefix_length as u32),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -124,9 +120,7 @@ fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let queries = alloc_allocation_with_data::<Metal, T>(context.as_ref(), &input.queries);
     let keys = alloc_allocation_with_data::<Metal, T>(context.as_ref(), &input.keys);
     let values = alloc_allocation_with_data::<Metal, T>(context.as_ref(), &input.values);
-    let state_type = AttentionStateType::Full {
-        length: (input.sequence_length - input.suffix_length) as u32,
-    };
+    let cache = KVCacheView::full((input.sequence_length - input.suffix_length) as u32);
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     let pooled = super::gemm::AttentionGemm::new(&config)
         .encode(
@@ -137,7 +131,7 @@ fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
                 suffix_length: input.suffix_length as u32,
                 trie: None,
                 sinks: None,
-                state_type: &state_type,
+                cache,
             },
             &mut encoder,
         )

@@ -18,7 +18,7 @@ use crate::{
     encodable_block::{
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError},
-        mixer::attention::{AttentionStateType, rope::PrecalculatedRoPE},
+        mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
         mlp::MlpBlockError,
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
@@ -325,9 +325,7 @@ impl<B: Backend> Weaver<B> {
             } = layer
                 .encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, encoder)
                 .map_err(WeaverEncodeError::Backend)?;
-            let state_type = AttentionStateType::Full {
-                length: 0,
-            };
+            let cache = KVCacheView::full(0);
             let kv_plane_bytes = size_for_shape(&[depth, self.model_dim], DATA_TYPE);
             let attention_output = layer
                 .prefix_attention
@@ -339,7 +337,7 @@ impl<B: Backend> Weaver<B> {
                         suffix_length: depth,
                         trie: None,
                         sinks: None,
-                        state_type: &state_type,
+                        cache,
                     },
                     encoder,
                 )

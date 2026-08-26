@@ -86,7 +86,7 @@ impl AttentionFallback {
     ) -> Result<Allocation<Metal>, MetalError> {
         assert!(arguments.trie.is_none(), "fallback does not support trie");
         let suffix_length = arguments.suffix_length;
-        let sequence_length = arguments.state_type.physical_prefix_length() + suffix_length;
+        let sequence_length = arguments.cache.prefix_len() + suffix_length;
         let gqa_factor = self.num_q_heads / self.num_groups;
         let scale = self.scale.unwrap_or(1.0 / (self.head_dim as f32).sqrt());
         let dt_bytes = self.data_type.size_in_bytes();
@@ -126,7 +126,7 @@ impl AttentionFallback {
             self.scatter_scores.encode(
                 &group_scores,
                 &mut scores,
-                arguments.state_type.ring_params(),
+                arguments.cache.ring_params(),
                 None::<&Allocation<Metal>>,
                 self.sliding_window_size,
                 group_index,
