@@ -8,6 +8,7 @@ mod attention;
 mod embedding;
 mod gated_act_mul;
 mod gdn;
+mod grouped_convolution;
 mod logit_transform;
 mod matmul;
 mod moe;
