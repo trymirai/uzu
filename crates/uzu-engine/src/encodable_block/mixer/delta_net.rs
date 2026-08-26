@@ -263,9 +263,9 @@ impl<B: Backend> DeltaNet<B> {
         let delta_net_norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, outer_data_type)
             .map_err(DeltaNetNewError::Backend)?;
         let tree_verify =
-            if <<B::Kernels as Kernels>::DeltaNetTreeVerify as DeltaNetTreeVerifyTrait<B>>::is_supported(context) {
+            if <<B::Kernels as Kernels>::DeltaNetTreeVerify as DeltaNetTreeVerifyTrait>::is_supported(context) {
                 Some(
-                    <<B::Kernels as Kernels>::DeltaNetTreeVerify as DeltaNetTreeVerifyTrait<B>>::new(
+                    <<B::Kernels as Kernels>::DeltaNetTreeVerify as DeltaNetTreeVerifyTrait>::new(
                         context,
                         &TreeVerifyNewArguments {
                             data_type: outer_data_type,
