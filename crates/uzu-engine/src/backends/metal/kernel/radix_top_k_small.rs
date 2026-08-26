@@ -30,7 +30,9 @@ pub struct MetalRadixTopKSmall {
     passes: u32,
 }
 
-impl RadixTopKSmall<Metal> for MetalRadixTopKSmall {
+impl RadixTopKSmall for MetalRadixTopKSmall {
+    type Backend = Metal;
+
     fn new(
         context: &MetalContext,
         columns: u32,

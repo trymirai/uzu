@@ -1,26 +1,28 @@
-use std::convert::Infallible;
-
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, Kernels},
+    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::Unsupported},
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
 };
 
-pub trait DeltaNetTreeVerify<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Self>>>: Sized + Send + Sync {
-    fn is_supported(context: &B::Context) -> bool;
+pub trait DeltaNetTreeVerify: Sized + Send + Sync {
+    type Backend: Backend<Kernels: Kernels<DeltaNetTreeVerify = Self>>;
+
+    fn is_supported(context: &<Self::Backend as Backend>::Context) -> bool;
 
     fn new(
-        context: &B::Context,
+        context: &<Self::Backend as Backend>::Context,
         arguments: &TreeVerifyNewArguments,
-    ) -> Result<Self, B::Error>;
+    ) -> Result<Self, <Self::Backend as Backend>::Error>;
 
     fn encode(
         &self,
-        arguments: TreeVerifyEncodeArguments<'_, B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error>;
+        arguments: TreeVerifyEncodeArguments<'_, Self::Backend>,
+        encoder: &mut Encoder<Self::Backend>,
+    ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error>;
 }
 
-impl<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Infallible>>> DeltaNetTreeVerify<B> for Infallible {
+impl<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Unsupported<B>>>> DeltaNetTreeVerify for Unsupported<B> {
+    type Backend = B;
+
     fn is_supported(_context: &B::Context) -> bool {
         false
     }

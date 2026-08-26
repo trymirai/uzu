@@ -6,7 +6,7 @@ use uzu::{
     engine::{Engine, EngineConfig},
     session::tool::{func_def::ToolDescriptor, uzu_tool_function},
     types::{
-        basic::{SamplingMethod, SamplingPolicy},
+        basic::SamplingSeed,
         session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatRole},
     },
 };
@@ -116,7 +116,15 @@ async fn run_tool_calls_test(
     for case in cases {
         println!("Prompt: {}", case.prompt);
 
-        let mut session = engine.chat(model.clone(), ChatConfig::default()).await.unwrap();
+        let mut session = engine
+            .chat(
+                model.clone(),
+                ChatConfig::default().with_sampling_seed(SamplingSeed::Custom {
+                    seed: 0,
+                }),
+            )
+            .await
+            .unwrap();
         session.add_tools(case.tools.iter().map(|definition| definition()).collect()).await.unwrap();
 
         let mut messages = Vec::new();
@@ -125,16 +133,7 @@ async fn run_tool_calls_test(
         }
         messages.push(ChatMessage::user().with_text(case.prompt.to_string()));
 
-        // Greedy sampling keeps these tests deterministic; with the default stochastic sampling
-        // the models occasionally skip a tool call, hallucinate that part of the answer, or
-        // finish without any text in the final reply.
-        let reply_config = ChatReplyConfig {
-            sampling_policy: SamplingPolicy::Custom {
-                method: SamplingMethod::Greedy {},
-            },
-            ..ChatReplyConfig::default()
-        };
-        let replies = session.reply(messages, reply_config).await.unwrap();
+        let replies = session.reply(messages, ChatReplyConfig::default()).await.unwrap();
         let final_reply = replies.last().expect("Expected at least one reply");
         assert_eq!(
             final_reply.finish_reason,

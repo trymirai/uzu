@@ -291,11 +291,9 @@ impl<'a> FlatTrie<'a> {
                 break;
             };
 
-            #[cfg(grammar)]
-            if let Some(grammar) = grammar.as_mut() {
-                assert!(!grammar.is_terminated(), "Grammar has terminated but llm continued generation");
-            }
-
+            // The grammar may already be terminated here: when the draft model
+            // proposed the grammar-closing token the trie descends one node
+            // further, where the mask only allows stop tokens.
             current_token = next_token;
         }
 

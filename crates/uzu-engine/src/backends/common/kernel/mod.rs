@@ -1,3 +1,5 @@
+use std::{convert::Infallible, marker::PhantomData};
+
 use crate::backends::common::Backend;
 
 pub mod activation_transform;
@@ -19,10 +21,15 @@ pub trait Kernels: Sized {
 
     autogen_kernels!();
     type AttentionKernel: attention::AttentionKernel<Self::Backend>;
-    type DeltaNetChunkedPrefill: delta_net_chunked_prefill::DeltaNetChunkedPrefill<Self::Backend>;
-    type DeltaNetTreeVerify: delta_net_tree_verify::DeltaNetTreeVerify<Self::Backend>;
+    type DeltaNetChunkedPrefill: delta_net_chunked_prefill::DeltaNetChunkedPrefill<Backend = Self::Backend>;
+    type DeltaNetTreeVerify: delta_net_tree_verify::DeltaNetTreeVerify<Backend = Self::Backend>;
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
-    type RadixTopKSmall: radix_top_k_small::RadixTopKSmall<Self::Backend>;
+    type RadixTopKSmall: radix_top_k_small::RadixTopKSmall<Backend = Self::Backend>;
+}
+
+pub struct Unsupported<B: Backend> {
+    never: Infallible,
+    _marker: PhantomData<fn() -> B>,
 }
 
 #[cfg(test)]
