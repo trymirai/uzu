@@ -7,8 +7,9 @@
 using namespace metal;
 using namespace uzu::router_topk;
 
+#define THREADS_PER_TG 256
+
 constant float NEG_INF = -INFINITY;
-constant uint THREADS_PER_TG = 256;
 
 template <typename ScalarT>
 VARIANTS(ScalarT, half, bfloat, float)
@@ -41,7 +42,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
     const ThreadContext thread_context,
     const uint tgpig_x GROUPS(1),
     const uint token_idx GROUPS(t),
-    const uint lid THREADS(256) // Must match THREADS_PER_TG.
+    const uint lid THREADS(THREADS_PER_TG)
 ) {
   if (d_model == 0 || e == 0 || k == 0) {
     return;
