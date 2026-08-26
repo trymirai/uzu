@@ -95,20 +95,12 @@ impl KVCacheState {
     ) -> u32 {
         match self {
             Self::Full {
-                length,
-            } => {
-                assert_eq!(*length, context_length, "cache length mismatch");
-                context_length
-            },
+                ..
+            } => context_length,
             Self::Ring {
-                length,
                 capacity,
                 ..
-            } => {
-                let required = context_length.min(*capacity);
-                assert_eq!(*length, required, "cache length mismatch");
-                required
-            },
+            } => context_length.min(*capacity),
         }
     }
 
@@ -142,12 +134,14 @@ impl KVCacheState {
                 length,
                 capacity,
             } => {
-                assert!(accepted_indices.len() as u32 <= *capacity, "accept exceeds ring capacity");
-                let mut copies = Vec::with_capacity(accepted_indices.len());
-                for accepted_index in accepted_indices {
-                    let source = suffix_base + *accepted_index;
+                let count = accepted_indices.len() as u32;
+                let mut copies = Vec::with_capacity(accepted_indices.len().min(*capacity as usize));
+                for (index, accepted_index) in accepted_indices.iter().copied().enumerate() {
+                    let source = suffix_base + accepted_index;
                     let destination = (*offset + *length) % *capacity;
-                    if source != destination {
+                    // A copy is dead when a later accept in the same batch overwrites its
+                    // destination; emitting it would alias in a single kernel dispatch.
+                    if index as u32 + *capacity >= count && source != destination {
                         copies.push(Copy {
                             source,
                             destination,
