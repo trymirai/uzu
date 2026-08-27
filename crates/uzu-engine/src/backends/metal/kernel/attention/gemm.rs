@@ -117,9 +117,9 @@ impl AttentionGemm {
             .allocate_constant_for_shape(&[arguments.suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
 
         let use_mxu = arguments.suffix_length >= 64
-            && encoder.context().supports_mxu()
             && matches!(self.data_type, DataType::BF16)
-            && matches!(self.head_dim, 64 | 128);
+            && matches!(self.head_dim, 64 | 128)
+            && encoder.context().supports_mxu;
         let (bq, bk) = if use_mxu {
             (64, 32)
         } else {

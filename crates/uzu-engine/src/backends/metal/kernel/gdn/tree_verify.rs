@@ -1,3 +1,5 @@
+use metal::MTLGPUFamily;
+
 use crate::{
     backends::{
         common::{
@@ -7,12 +9,7 @@ use crate::{
                 delta_net_tree_verify::DeltaNetTreeVerify,
             },
         },
-        metal::{
-            Metal, MetalContext,
-            device_profile::{DeviceSize, GpuTuningTier},
-            error::MetalError,
-            kernel::MetalKernels,
-        },
+        metal::{LARGE_MIN_GPU_CORES, Metal, MetalContext, error::MetalError, kernel::MetalKernels},
     },
     data_type::DataType,
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
@@ -73,10 +70,10 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
         context: &MetalContext,
         arguments: &TreeVerifyNewArguments,
     ) -> Result<Self, MetalError> {
-        let use_mxu = arguments.data_type == DataType::BF16 && context.supports_mxu();
+        let use_mxu = arguments.data_type == DataType::BF16 && context.supports_mxu;
         let transposed_h0 = !use_mxu
-            && context.device_profile().size() == DeviceSize::Small
-            && matches!(context.device_profile().tuning_tier(), GpuTuningTier::Legacy | GpuTuningTier::Apple8);
+            && context.gpu_core_count < LARGE_MIN_GPU_CORES
+            && matches!(context.apple_gpu_family, None | Some(MTLGPUFamily::Apple8));
         Ok(Self {
             arguments: *arguments,
             prefix: <MetalKernels as Kernels>::BuildTreePrefixKernel::new(context)?,

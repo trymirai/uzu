@@ -249,7 +249,7 @@ fn bench_bits(
 #[uzu_bench]
 fn bench_a8w(c: &mut Criterion) {
     let context = shared_metal_context();
-    if !context.supports_mxu() {
+    if !context.supports_mxu {
         return;
     }
     let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, 128, None).expect("prepare kernel");

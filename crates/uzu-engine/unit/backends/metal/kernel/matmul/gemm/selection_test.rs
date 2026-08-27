@@ -1,16 +1,14 @@
+use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 
 use super::{super::specialization::GemmSpecialization, *};
 use crate::backends::{
     common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
-    metal::{
-        device_profile::{DeviceProfile, DeviceSize, GpuTuningTier},
-        kernel::matmul::{MatmulDispatch, MatmulMetalKernel},
-    },
+    metal::kernel::matmul::MatmulMetalKernel,
 };
 
-const LEGACY_PROFILE: DeviceProfile = DeviceProfile::new(GpuTuningTier::Legacy, DeviceSize::Small, false);
-const APPLE9_PROFILE: DeviceProfile = DeviceProfile::new(GpuTuningTier::Apple9, DeviceSize::Small, false);
+const LEGACY_FAMILY: Option<MTLGPUFamily> = None;
+const APPLE9_FAMILY: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple9);
 
 fn shape(
     m: u32,
@@ -45,7 +43,7 @@ fn problem(
     shape: MatmulShape,
     output_data_type: DataType,
 ) -> GemmProblem {
-    GemmProblem::new(shape, DataType::BF16, output_data_type, true, LEGACY_PROFILE)
+    GemmProblem::new(shape, DataType::BF16, output_data_type, true, LEGACY_FAMILY)
 }
 
 fn plan(split_k: u32) -> GemmPlan {
@@ -96,12 +94,19 @@ fn policy_boundaries_are_preserved() {
         (64, 6143, 32, Tile32x32x32_Simdgroups2x2),
         (64, 6144, 32, Tile64x64x32_Simdgroups2x2),
     ] {
-        assert_eq!(policy::simdgroup_quant_tile(m, n, group_size, LEGACY_PROFILE), expected);
+        assert_eq!(policy::simdgroup_quant_tile(m, n, group_size, LEGACY_FAMILY), expected);
     }
 
-    // Apple9 and newer keep the narrow tile regardless.
-    for m in [9, 15, 31] {
-        assert_eq!(policy::simdgroup_quant_tile(m, 4096, 32, APPLE9_PROFILE), Tile8x32x32_Simdgroups1x1);
+    // Apple8 retains the older wide-tile policy; Apple9 and newer keep the narrow tile.
+    for apple_gpu_family in [None, Some(MTLGPUFamily::Apple8)] {
+        for m in [9, 15, 31] {
+            assert_eq!(policy::simdgroup_quant_tile(m, 4096, 32, apple_gpu_family), Tile32x32x32_Simdgroups2x2);
+        }
+    }
+    for apple_gpu_family in [APPLE9_FAMILY, Some(MTLGPUFamily::Apple10)] {
+        for m in [9, 15, 31] {
+            assert_eq!(policy::simdgroup_quant_tile(m, 4096, 32, apple_gpu_family), Tile8x32x32_Simdgroups1x1);
+        }
     }
 }
 
@@ -137,7 +142,7 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     let mut biased = quant(shape(16, 4096, 4096));
     biased.a_full_precision = false;
     biased.d_transform = GemmDTransform::BIAS;
-    assert_eq!(GemmProblem::new(biased, DataType::BF16, DataType::F32, true, LEGACY_PROFILE).select_plan().split_k, 1);
+    assert_eq!(GemmProblem::new(biased, DataType::BF16, DataType::F32, true, LEGACY_FAMILY).select_plan().split_k, 1);
 
     let mut zero = quant(shape(0, 1, 1));
     zero.b_prologue = GemmBPrologueKind::ScaleZeroPointDequant;
@@ -149,7 +154,7 @@ fn selection_fallbacks_and_split_k_are_preserved() {
 fn forced_engine_errors_are_preserved() {
     let huge = shape(u32::MAX, u32::MAX, u32::MAX);
     assert_eq!(
-        GemmProblem::new(huge, DataType::BF16, DataType::BF16, false, LEGACY_PROFILE)
+        GemmProblem::new(huge, DataType::BF16, DataType::BF16, false, LEGACY_FAMILY)
             .select_plan_for_engine(GemmEngine::Mxu),
         Err(GemmPlanError::MxuUnavailable)
     );
@@ -195,24 +200,11 @@ fn gemv_gemm_route_boundaries_are_preserved() {
         (shape(3, 4096, 8192), DataType::BF16, false),
         (shape(5, 4096, 8192), DataType::BF16, false),
     ] {
-        let plan = GemmProblem::new(shape, data_type, data_type, true, LEGACY_PROFILE).select_plan();
+        let plan = GemmProblem::new(shape, data_type, data_type, true, LEGACY_FAMILY).select_plan();
         assert_eq!(MatmulMetalKernel::prefer_gemm_over_gemv(shape, plan, data_type, data_type, data_type), prefer_gemm);
     }
     let mut gathered = shape(4, 4096, 8192);
     gathered.gathered = true;
     let plan = problem(gathered, DataType::BF16).select_plan();
     assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16, DataType::BF16,));
-}
-
-#[uzu_test]
-fn qwen_shape_uses_generic_gemv_without_device_identity() {
-    let mut qwen = quant(shape(2, 5120, 17408));
-    qwen.b_prologue = GemmBPrologueKind::ScaleZeroPointDequant;
-    qwen.b_group_size = Some(32);
-    let apple10_phone = DeviceProfile::new(GpuTuningTier::Apple10, DeviceSize::Small, false);
-
-    let dispatch =
-        MatmulMetalKernel::choose_dispatch(&qwen, apple10_phone, false, DataType::BF16, DataType::BF16, DataType::BF16);
-
-    assert!(matches!(dispatch, MatmulDispatch::Gemv(_)));
 }

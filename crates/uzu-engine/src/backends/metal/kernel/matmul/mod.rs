@@ -1,10 +1,14 @@
 pub mod gemm;
 mod gemv;
+mod qmv;
+
+use metal::MTLGPUFamily;
 
 pub use self::gemm::GemmKernel;
 use self::{
     gemm::{GemmPlan, GemmProblem},
     gemv::{GemvKernel, GemvSpecialization},
+    qmv::QmvRoute,
 };
 use crate::{
     backends::{
@@ -66,15 +70,35 @@ impl MatmulMetalKernel {
 
     fn choose_dispatch(
         shape: &MatmulShape,
-        profile: crate::backends::metal::device_profile::DeviceProfile,
+        device_name: &str,
+        gpu_core_count: u32,
+        apple_gpu_family: Option<MTLGPUFamily>,
         supports_mxu: bool,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> MatmulDispatch {
-        let gemv =
-            GemvSpecialization::select_shape(shape, weights_data_type, input_data_type, output_data_type, profile);
-        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, profile);
+        let all_bf16 = weights_data_type == DataType::BF16
+            && input_data_type == DataType::BF16
+            && output_data_type == DataType::BF16;
+        if let Some(route) = qmv::route(device_name, supports_mxu, shape, all_bf16) {
+            return match route {
+                QmvRoute::Tuned(tile) | QmvRoute::MainGemv(tile) => MatmulDispatch::Gemv(
+                    GemvSpecialization::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile)
+                        .expect("typed QMV route must contain a legal GEMV tile"),
+                ),
+                QmvRoute::MainGemm(plan) => MatmulDispatch::Gemm(plan),
+            };
+        }
+        let gemv = GemvSpecialization::select_shape(
+            shape,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+            gpu_core_count,
+            apple_gpu_family,
+        );
+        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, apple_gpu_family);
         let plan = problem.select_plan();
         match gemv {
             None => MatmulDispatch::Gemm(plan),
@@ -94,8 +118,10 @@ impl MatmulMetalKernel {
     ) -> MatmulDispatch {
         Self::choose_dispatch(
             shape,
-            context.device_profile(),
-            context.supports_mxu(),
+            &context.device_name,
+            context.gpu_core_count,
+            context.apple_gpu_family,
+            context.supports_mxu,
             self.weights_data_type,
             self.input_data_type,
             self.output_data_type,
@@ -136,7 +162,7 @@ impl MatmulKernel for MatmulMetalKernel {
         context: &MetalContext,
     ) -> Option<A8ActivationPlan> {
         let activation_group_size = ACTIVATION_SCALE_GROUP_SIZE;
-        if !context.supports_mxu()
+        if !context.supports_mxu
             || self.input_data_type != DataType::BF16
             || self.output_data_type != DataType::BF16
             || shape.a_full_precision

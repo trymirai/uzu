@@ -3,15 +3,23 @@ mod buffer;
 mod command_buffer;
 mod context;
 mod dense_buffer;
-mod device_profile;
 mod error;
 mod kernel;
 mod metal_extensions;
 mod sparse;
 
+use metal::MTLGPUFamily;
+
 use crate::backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE;
 
 const METAL_SIMD_SIZE: u32 = 32;
+const LARGE_MIN_GPU_CORES: u32 = 30;
+
+fn newest_supported_apple_gpu_family(mut supports_family: impl FnMut(MTLGPUFamily) -> bool) -> Option<MTLGPUFamily> {
+    [MTLGPUFamily::Apple10, MTLGPUFamily::Apple9, MTLGPUFamily::Apple8]
+        .into_iter()
+        .find(|family| supports_family(*family))
+}
 
 const _: () = {
     assert!(HADAMARD_TRANSFORM_BLOCK_SIZE == METAL_SIMD_SIZE);
@@ -21,3 +29,25 @@ pub use backend::Metal;
 pub use context::MetalContext;
 #[cfg(test)]
 pub use kernel::matmul::gemm::GemmEngine;
+
+#[cfg(test)]
+mod tests {
+    use uzu_engine_macros::uzu_test;
+
+    use super::*;
+
+    #[uzu_test]
+    fn classifies_supported_apple_gpu_family() {
+        fn classify(supported: &[MTLGPUFamily]) -> Option<MTLGPUFamily> {
+            newest_supported_apple_gpu_family(|family| supported.contains(&family))
+        }
+
+        assert_eq!(classify(&[]), None);
+        assert_eq!(classify(&[MTLGPUFamily::Apple8]), Some(MTLGPUFamily::Apple8));
+        assert_eq!(classify(&[MTLGPUFamily::Apple8, MTLGPUFamily::Apple9]), Some(MTLGPUFamily::Apple9));
+        assert_eq!(
+            classify(&[MTLGPUFamily::Apple8, MTLGPUFamily::Apple9, MTLGPUFamily::Apple10]),
+            Some(MTLGPUFamily::Apple10)
+        );
+    }
+}
