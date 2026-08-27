@@ -81,7 +81,7 @@ objc2-io-kit = { version = "0.3.2", default-features = false, features = ["libc"
 objc2-security = "0.3.2"
 obfstr = "0.4.4"
 zstd = "0.13.3"
-metal = { package = "mtl-rs", version = "0.1.14" }
+metal = { package = "mtl-rs", version = "0.2.0" }
 block2 = "0.6"
 bytemuck = "1.23"
 bytesize = "2"

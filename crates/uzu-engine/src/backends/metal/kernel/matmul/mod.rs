@@ -1,12 +1,10 @@
 pub mod gemm;
 mod gemv;
-mod qmv;
 
 pub use self::gemm::GemmKernel;
 use self::{
     gemm::{GemmPlan, GemmProblem},
     gemv::{GemvKernel, GemvSpecialization},
-    qmv::QmvRoute,
 };
 use crate::{
     backends::{
@@ -74,18 +72,6 @@ impl MatmulMetalKernel {
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> MatmulDispatch {
-        let all_bf16 = weights_data_type == DataType::BF16
-            && input_data_type == DataType::BF16
-            && output_data_type == DataType::BF16;
-        if let Some(route) = qmv::route(profile, shape, all_bf16) {
-            return match route {
-                QmvRoute::Tuned(tile) | QmvRoute::MainGemv(tile) => MatmulDispatch::Gemv(
-                    GemvSpecialization::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile)
-                        .expect("typed QMV route must contain a legal GEMV tile"),
-                ),
-                QmvRoute::MainGemm(plan) => MatmulDispatch::Gemm(plan),
-            };
-        }
         let gemv =
             GemvSpecialization::select_shape(shape, weights_data_type, input_data_type, output_data_type, profile);
         let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, profile);

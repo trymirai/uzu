@@ -1,4 +1,4 @@
-use crate::backends::metal::device_profile::{DeviceProfile, DeviceSize, GpuFamily};
+use crate::backends::metal::device_profile::{DeviceProfile, DeviceSize, GpuTuningTier};
 
 mod quantized;
 
@@ -67,17 +67,6 @@ impl GemvTile {
             reduction_lanes,
             group_lanes,
         }
-    }
-
-    pub const fn quantized_output_tile(
-        num_simdgroups: u32,
-        output_row_tile: u32,
-        input_row_tile: u32,
-        reduction_lanes: u32,
-        group_lanes: u32,
-    ) -> Self {
-        assert!(output_row_tile.is_multiple_of(num_simdgroups));
-        Self::quantized(num_simdgroups, output_row_tile / num_simdgroups, input_row_tile, reduction_lanes, group_lanes)
     }
 
     pub(super) const fn output_row_tile(self) -> u32 {
@@ -149,8 +138,8 @@ pub(super) fn fp_tile(
     profile: DeviceProfile,
 ) -> GemvTile {
     let size = profile.size();
-    let gpu_family = profile.gpu_family();
-    let is_small_legacy = size == DeviceSize::Small && gpu_family == GpuFamily::Legacy;
+    let tuning_tier = profile.tuning_tier();
+    let is_small_legacy = size == DeviceSize::Small && tuning_tier == GpuTuningTier::Legacy;
     // SG8 is the portable full-precision geometry.
     let should_disable_k_split = !input_aligned
         || (m == 1 && size == DeviceSize::Large && k < FP_LARGE_SPLIT_K_MIN_DEPTH)

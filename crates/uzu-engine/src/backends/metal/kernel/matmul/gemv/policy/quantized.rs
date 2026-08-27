@@ -1,7 +1,7 @@
 use super::{DEFAULT_RESULTS_PER_SIMDGROUP, GemvTile};
 use crate::backends::{
     common::gpu_types::gemm::GemmDTransform,
-    metal::device_profile::{DeviceProfile, DeviceSize, GpuFamily},
+    metal::device_profile::{DeviceProfile, DeviceSize, GpuTuningTier},
 };
 
 const QUANT_N_BUCKET_MAXES: [u32; 6] = [512, 2048, 4096, 8192, 16384, 32768];
@@ -63,7 +63,7 @@ fn lane_policy(
     profile: DeviceProfile,
 ) -> GemvTile {
     let size = profile.size();
-    let gpu_family = profile.gpu_family();
+    let tuning_tier = profile.tuning_tier();
     if m != 1 || bits != 4 {
         return lane_default(bits, group);
     }
@@ -81,7 +81,7 @@ fn lane_policy(
 
     let k_bucket = table_bucket_index(k, &QUANT_K_BUCKET_MAXES);
     let n_bucket = table_bucket_index(n, &QUANT_N_BUCKET_MAXES);
-    let (num_simdgroups, results_per_simdgroup) = match (size, gpu_family, k_bucket, n_bucket) {
+    let (num_simdgroups, results_per_simdgroup) = match (size, tuning_tier, k_bucket, n_bucket) {
         (DeviceSize::Large, _, 0, 1) => (4, 2),
         (DeviceSize::Large, _, 1, 0) => (2, 1),
         (DeviceSize::Large, _, 1, 1..=3) => (2, 2),
@@ -89,18 +89,18 @@ fn lane_policy(
         (DeviceSize::Large, _, 1, 5) => (2, 4),
         (DeviceSize::Large, _, 2, 1) => (4, 2),
         (DeviceSize::Large, _, 3, 1) => (2, 2),
-        (DeviceSize::Small, GpuFamily::Apple9, 0, 1) => (4, 4),
-        (DeviceSize::Small, GpuFamily::Apple9, 1, 0) => (4, 2),
-        (DeviceSize::Small, GpuFamily::Apple9, 1, 1) => (2, 2),
-        (DeviceSize::Small, GpuFamily::Apple9, 1, 2) => (4, 2),
-        (DeviceSize::Small, GpuFamily::Apple9, 1, 4) => (2, 2),
-        (DeviceSize::Small, GpuFamily::Apple9, 1, 5) => (4, 2),
-        (DeviceSize::Small, GpuFamily::Apple9, 2, 1) => (4, 2),
-        (DeviceSize::Small, GpuFamily::Apple9, 3, 1) => (2, 2),
-        (DeviceSize::Small, GpuFamily::Apple8, 0, 1) => (4, 4),
-        (DeviceSize::Small, GpuFamily::Apple8, 1, _) | (DeviceSize::Small, GpuFamily::Apple8, 2, 1) => (8, 2),
-        (DeviceSize::Small, GpuFamily::Legacy, 0, 1) => (4, 8),
-        (DeviceSize::Small, GpuFamily::Legacy, 1, 0..=3) => (8, 2),
+        (DeviceSize::Small, GpuTuningTier::Apple9, 0, 1) => (4, 4),
+        (DeviceSize::Small, GpuTuningTier::Apple9, 1, 0) => (4, 2),
+        (DeviceSize::Small, GpuTuningTier::Apple9, 1, 1) => (2, 2),
+        (DeviceSize::Small, GpuTuningTier::Apple9, 1, 2) => (4, 2),
+        (DeviceSize::Small, GpuTuningTier::Apple9, 1, 4) => (2, 2),
+        (DeviceSize::Small, GpuTuningTier::Apple9, 1, 5) => (4, 2),
+        (DeviceSize::Small, GpuTuningTier::Apple9, 2, 1) => (4, 2),
+        (DeviceSize::Small, GpuTuningTier::Apple9, 3, 1) => (2, 2),
+        (DeviceSize::Small, GpuTuningTier::Apple8, 0, 1) => (4, 4),
+        (DeviceSize::Small, GpuTuningTier::Apple8, 1, _) | (DeviceSize::Small, GpuTuningTier::Apple8, 2, 1) => (8, 2),
+        (DeviceSize::Small, GpuTuningTier::Legacy, 0, 1) => (4, 8),
+        (DeviceSize::Small, GpuTuningTier::Legacy, 1, 0..=3) => (8, 2),
         _ => (8, 4),
     };
     let selected = lane_tile(num_simdgroups, results_per_simdgroup, bits, group);

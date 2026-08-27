@@ -4,13 +4,13 @@ use super::{super::specialization::GemmSpecialization, *};
 use crate::backends::{
     common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
     metal::{
-        device_profile::{DeviceIdentity, DeviceProfile, DeviceSize},
-        kernel::matmul::MatmulMetalKernel,
+        device_profile::{DeviceProfile, DeviceSize, GpuTuningTier},
+        kernel::matmul::{MatmulDispatch, MatmulMetalKernel},
     },
 };
 
-const LEGACY_PROFILE: DeviceProfile = DeviceProfile::new(DeviceIdentity::M1, DeviceSize::Small, false);
-const APPLE9_PROFILE: DeviceProfile = DeviceProfile::new(DeviceIdentity::M4, DeviceSize::Small, false);
+const LEGACY_PROFILE: DeviceProfile = DeviceProfile::new(GpuTuningTier::Legacy, DeviceSize::Small, false);
+const APPLE9_PROFILE: DeviceProfile = DeviceProfile::new(GpuTuningTier::Apple9, DeviceSize::Small, false);
 
 fn shape(
     m: u32,
@@ -202,4 +202,17 @@ fn gemv_gemm_route_boundaries_are_preserved() {
     gathered.gathered = true;
     let plan = problem(gathered, DataType::BF16).select_plan();
     assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16, DataType::BF16,));
+}
+
+#[uzu_test]
+fn qwen_shape_uses_generic_gemv_without_device_identity() {
+    let mut qwen = quant(shape(2, 5120, 17408));
+    qwen.b_prologue = GemmBPrologueKind::ScaleZeroPointDequant;
+    qwen.b_group_size = Some(32);
+    let apple10_phone = DeviceProfile::new(GpuTuningTier::Apple10, DeviceSize::Small, false);
+
+    let dispatch =
+        MatmulMetalKernel::choose_dispatch(&qwen, apple10_phone, false, DataType::BF16, DataType::BF16, DataType::BF16);
+
+    assert!(matches!(dispatch, MatmulDispatch::Gemv(_)));
 }

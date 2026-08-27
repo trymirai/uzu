@@ -11,8 +11,8 @@ use std::{
 use metal::MTLSharedEvent;
 use metal::{
     MTL4CommandQueue, MTL4CommandQueueExt, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager,
-    MTLCommandBufferExt, MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
-    MTLEvent, MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
+    MTLCaptureTarget, MTLCommandBufferExt, MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice,
+    MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::{Mutex, MutexGuard};
@@ -156,8 +156,13 @@ impl Context for MetalContext {
 
         let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
 
-        let gpu_core_count = device.gpu_core_count();
-        let device_profile = classify_device(&device.name(), gpu_core_count, device.supports_mxu());
+        let device_profile = classify_device(
+            device.gpu_core_count(),
+            device.supports_family(metal::MTLGPUFamily::Apple8),
+            device.supports_family(metal::MTLGPUFamily::Apple9),
+            device.supports_family(metal::MTLGPUFamily::Apple10),
+            device.supports_mxu(),
+        );
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = Metal::ALLOCATION_GRANULARITY;
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
@@ -256,11 +261,12 @@ impl Context for MetalContext {
         capture_descriptor.set_output_path(Some(&trace_path.with_added_extension("gputrace")));
 
         self.command_queue.set_label(Some("uzu_command_queue"));
-        capture_descriptor.set_capture_object(Some(self.command_queue.as_ref()));
+        let capture_target = MTLCaptureTarget::CommandQueue(self.command_queue.clone());
+        capture_descriptor.set_capture_object(Some(&capture_target));
 
         capture_manager
-            .start_capture_with_descriptor_error(&capture_descriptor)
-            .map_err(|nserror| MetalError::CannotStartGpuCapture(nserror.to_string()))?;
+            .start_capture_with_descriptor(&capture_descriptor)
+            .map_err(|error| MetalError::CannotStartGpuCapture(error.to_string()))?;
 
         Ok(())
     }

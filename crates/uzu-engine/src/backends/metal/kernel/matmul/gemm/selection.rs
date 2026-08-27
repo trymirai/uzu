@@ -77,39 +77,6 @@ impl GemmProblem {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub fn plan_is_legal(
-        self,
-        plan: GemmPlan,
-    ) -> bool {
-        use super::specialization::GemmSpecialization;
-        use crate::backends::common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment};
-
-        if self.validate_engine(plan.engine).is_err()
-            || plan.engine == GemmEngine::Mxu && !plan.tiling.is_mxu_variant()
-            || plan.engine == GemmEngine::Simdgroup && plan.tiling.is_mxu_variant()
-            || plan.split_k == 0
-            || !self.shape.k.is_multiple_of(plan.split_k)
-        {
-            return false;
-        }
-        let alignment = GemmAlignment::new(
-            self.shape.m.is_multiple_of(plan.tiling.block_m()),
-            self.shape.n.is_multiple_of(plan.tiling.block_n()),
-            self.shape.k.is_multiple_of(plan.tiling.block_k()),
-        );
-        GemmSpecialization::from_plan(
-            plan,
-            self.shape,
-            self.weights_data_type,
-            self.shape.d_transform,
-            alignment,
-            GemmAPrologueKind::FullPrecision,
-            None,
-        )
-        .is_ok()
-    }
-
     fn finish_plan(
         &self,
         engine: GemmEngine,

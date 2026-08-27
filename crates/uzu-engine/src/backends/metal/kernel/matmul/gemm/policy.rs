@@ -6,7 +6,7 @@
 
 use crate::backends::{
     common::gpu_types::gemm::GemmTiling,
-    metal::device_profile::{DeviceProfile, GpuFamily},
+    metal::device_profile::{DeviceProfile, GpuTuningTier},
 };
 
 pub(super) const MXU_DEFAULT_TILE: GemmTiling = GemmTiling::Tile64x64x256_Simdgroups2x2;
@@ -103,7 +103,7 @@ pub(super) fn simdgroup_fp_tile(
 /// A partial trailing M block costs a second pass over the weights. Older GPUs are bound by that;
 /// Apple9 and newer would rather keep the narrow tile's parallelism.
 fn prefers_wide_partial_m_tile(profile: DeviceProfile) -> bool {
-    matches!(profile.gpu_family(), GpuFamily::Legacy | GpuFamily::Apple8)
+    matches!(profile.tuning_tier(), GpuTuningTier::Legacy | GpuTuningTier::Apple8)
 }
 
 pub(super) fn simdgroup_quant_tile(

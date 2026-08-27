@@ -34,18 +34,6 @@ pub struct GemvSpecialization {
 }
 
 impl GemvSpecialization {
-    #[cfg(test)]
-    pub fn tile(self) -> policy::GemvTile {
-        policy::GemvTile {
-            num_simdgroups: self.num_simdgroups,
-            k_split: self.k_split,
-            results_per_simdgroup: self.output_row_tile / (self.num_simdgroups / self.k_split),
-            input_row_tile: self.input_row_tile,
-            reduction_lanes: self.reduction_lanes,
-            group_lanes: self.group_lanes,
-        }
-    }
-
     pub fn select_shape(
         shape: &MatmulShape,
         weights_data_type: DataType,
