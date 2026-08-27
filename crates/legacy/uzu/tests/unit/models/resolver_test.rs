@@ -86,7 +86,7 @@ async fn unpinned_mirai_files_keep_crc_verification() -> Result<(), Box<dyn Erro
         "1".to_string(),
         Vec::new(),
         ModelAccessibility::OnDevice {
-            source: ModelSource::Managed {
+            source: ModelSource::Registry {
                 toolchain_version: "1".to_string(),
                 repository: None,
                 source_repository: None,

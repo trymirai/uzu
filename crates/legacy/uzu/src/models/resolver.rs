@@ -85,7 +85,7 @@ impl ModelsResolver {
     ) -> Result<ResolvedModel, RegistryError> {
         let ModelAccessibility::OnDevice {
             source:
-                ModelSource::Managed {
+                ModelSource::Registry {
                     repository,
                     files,
                     ..

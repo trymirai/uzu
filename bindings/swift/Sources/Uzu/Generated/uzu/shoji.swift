@@ -1798,14 +1798,6 @@ public func crc32c() -> String?  {
 })
 }
     
-public func md5() -> String?  {
-    return try!  FfiConverterOptionString.lift(try! rustCall() {
-    uniffi_shoji_fn_method_file_md5(
-            FfiConverterTypeFile_lower(self),$0
-    )
-})
-}
-    
 
     
 }
@@ -2091,7 +2083,7 @@ public func filesystemPath() -> String?  {
     )
 })
 }
-
+    
 public func isChatCapable() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_shoji_fn_method_model_is_chat_capable(
@@ -4089,7 +4081,6 @@ public func FfiConverterTypeGrammar_lower(_ value: Grammar) -> RustBuffer {
 public enum HashMethod: Equatable, Hashable, Codable {
     
     case crc32c
-    case md5
 
 
 
@@ -4113,8 +4104,6 @@ public struct FfiConverterTypeHashMethod: FfiConverterRustBuffer {
         
         case 1: return .crc32c
         
-        case 2: return .md5
-        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -4125,10 +4114,6 @@ public struct FfiConverterTypeHashMethod: FfiConverterRustBuffer {
         
         case .crc32c:
             writeInt(&buf, Int32(1))
-        
-        
-        case .md5:
-            writeInt(&buf, Int32(2))
         
         }
     }
@@ -4369,7 +4354,7 @@ public func FfiConverterTypeModelAccessibility_lower(_ value: ModelAccessibility
 
 public enum ModelSource: Equatable, Hashable, Codable {
     
-    case managed(toolchainVersion: String, repository: Repository?, sourceRepository: Repository?, files: [File]
+    case registry(toolchainVersion: String, repository: Repository?, sourceRepository: Repository?, files: [File]
     )
     case filesystem(path: String
     )
@@ -4394,7 +4379,7 @@ public struct FfiConverterTypeModelSource: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
         
-        case 1: return .managed(toolchainVersion: try FfiConverterString.read(from: &buf), repository: try FfiConverterOptionTypeRepository.read(from: &buf), sourceRepository: try FfiConverterOptionTypeRepository.read(from: &buf), files: try FfiConverterSequenceTypeFile.read(from: &buf)
+        case 1: return .registry(toolchainVersion: try FfiConverterString.read(from: &buf), repository: try FfiConverterOptionTypeRepository.read(from: &buf), sourceRepository: try FfiConverterOptionTypeRepository.read(from: &buf), files: try FfiConverterSequenceTypeFile.read(from: &buf)
         )
         
         case 2: return .filesystem(path: try FfiConverterString.read(from: &buf)
@@ -4408,7 +4393,7 @@ public struct FfiConverterTypeModelSource: FfiConverterRustBuffer {
         switch value {
         
         
-        case let .managed(toolchainVersion,repository,sourceRepository,files):
+        case let .registry(toolchainVersion,repository,sourceRepository,files):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(toolchainVersion, into: &buf)
             FfiConverterOptionTypeRepository.write(repository, into: &buf)

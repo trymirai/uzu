@@ -418,7 +418,6 @@ export declare class File {
   hashes: Array<Hash>
   constructor(url: string, name: string, size: number, hashes: Array<Hash>)
   get crc32C(): string | null
-  get md5(): string | null
 }
 
 export declare class GrammarJsonAny {
@@ -550,7 +549,7 @@ export declare class ModelSourceFilesystem {
   constructor(path: string)
 }
 
-export declare class ModelSourceManaged {
+export declare class ModelSourceRegistry {
   toolchainVersion: string
   repository?: Repository
   sourceRepository?: Repository
@@ -772,8 +771,7 @@ export type Grammar =
   GrammarJsonAny | GrammarJsonSchema | GrammarRegex
 
 export declare const enum HashMethod {
-  CRC32C = 'CRC32C',
-  MD5 = 'MD5'
+  CRC32C = 'CRC32C'
 }
 
 export declare const enum ImageFormat {
@@ -791,7 +789,7 @@ export type ModelAccessibility =
   ModelAccessibilityOnDevice | ModelAccessibilityRemote
 
 export type ModelSource =
-  ModelSourceManaged | ModelSourceFilesystem
+  ModelSourceRegistry | ModelSourceFilesystem
 
 export type ModelSpecialization =
   ModelSpecializationChat | ModelSpecializationClassification | ModelSpecializationTextToSpeech | ModelSpecializationTranslation | ModelSpecializationSpeculation

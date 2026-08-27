@@ -57,7 +57,7 @@ impl Model {
         matches!(
             self.accessibility,
             ModelAccessibility::OnDevice {
-                source: ModelSource::Managed { .. }
+                source: ModelSource::Registry { .. }
             }
         )
     }
@@ -79,7 +79,7 @@ impl Model {
                 source,
                 ..
             } => match source {
-                ModelSource::Managed {
+                ModelSource::Registry {
                     repository,
                     source_repository,
                     ..
@@ -117,7 +117,7 @@ impl Model {
                 source,
                 ..
             } => match source {
-                ModelSource::Managed {
+                ModelSource::Registry {
                     ..
                 } => None,
                 ModelSource::Filesystem {
@@ -150,7 +150,7 @@ impl Model {
                 source,
                 ..
             } => match source {
-                ModelSource::Managed {
+                ModelSource::Registry {
                     toolchain_version,
                     repository,
                     ..

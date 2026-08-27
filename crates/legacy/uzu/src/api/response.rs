@@ -205,7 +205,7 @@ impl From<&FetchedReference> for ModelSource {
                 repository,
                 source_repository,
                 files,
-            } => Self::Managed {
+            } => Self::Registry {
                 toolchain_version: toolchain_version.clone(),
                 repository: repository.clone(),
                 source_repository: source_repository.clone(),

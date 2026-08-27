@@ -37,7 +37,7 @@ pub fn mock_model(
         quantization: None,
         specializations: vec![],
         accessibility: ModelAccessibility::OnDevice {
-            source: ModelSource::Managed {
+            source: ModelSource::Registry {
                 toolchain_version: "1.0".to_string(),
                 repository: None,
                 source_repository: None,

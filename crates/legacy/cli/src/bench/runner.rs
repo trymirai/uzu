@@ -167,7 +167,7 @@ impl BenchRunner {
         for model in all_models {
             if let ModelAccessibility::OnDevice {
                 source:
-                    ModelSource::Managed {
+                    ModelSource::Registry {
                         toolchain_version: _toolchain_version,
                         repository,
                         source_repository,

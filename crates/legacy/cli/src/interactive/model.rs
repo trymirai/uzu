@@ -117,7 +117,7 @@ fn model_shorthand_matches(
 
 fn checkpoint_size_bytes(model: &Model) -> Option<u64> {
     if let ModelAccessibility::OnDevice {
-        source: ModelSource::Managed {
+        source: ModelSource::Registry {
             files,
             ..
         },

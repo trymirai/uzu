@@ -38,7 +38,7 @@ fn fetched_models_converts_one_complete_response() {
     assert!(matches!(
         &models[0].accessibility,
         ModelAccessibility::OnDevice {
-            source: ModelSource::Managed {
+            source: ModelSource::Registry {
                 toolchain_version,
                 repository: None,
                 source_repository: None,

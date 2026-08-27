@@ -125,7 +125,7 @@ fn checkpoint(
         }),
         specializations: vec![],
         accessibility: ModelAccessibility::OnDevice {
-            source: ModelSource::Managed {
+            source: ModelSource::Registry {
                 toolchain_version: "test".to_string(),
                 repository: None,
                 source_repository: None,

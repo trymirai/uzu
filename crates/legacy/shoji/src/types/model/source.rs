@@ -6,7 +6,8 @@ use crate::types::basic::{File, Repository};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ModelSource {
-    Managed {
+    #[serde(rename = "managed")]
+    Registry {
         toolchain_version: String,
         repository: Option<Repository>,
         source_repository: Option<Repository>,
@@ -20,9 +21,9 @@ pub enum ModelSource {
 impl ModelSource {
     pub fn name(&self) -> String {
         match self {
-            ModelSource::Managed {
+            ModelSource::Registry {
                 ..
-            } => "managed".to_string(),
+            } => "registry".to_string(),
             ModelSource::Filesystem {
                 ..
             } => "filesystem".to_string(),
