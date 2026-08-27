@@ -7,13 +7,16 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::SSDUpdateKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::SSDUpdateKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -98,19 +101,19 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let y_size = bsz * h * dh;
     let ns_size = bsz * h * dh * n;
 
-    let x = alloc_allocation_with_data::<B, T>(&context, &input.x);
-    let dt = alloc_allocation_with_data::<B, T>(&context, &input.dt);
-    let b = alloc_allocation_with_data::<B, T>(&context, &input.b);
-    let c = alloc_allocation_with_data::<B, T>(&context, &input.c);
-    let d = alloc_allocation_with_data::<B, T>(&context, &input.d);
-    let z = alloc_allocation_with_data::<B, T>(&context, &input.z);
+    let x = create_buffer_with_data::<B, T>(&context, &input.x);
+    let dt = create_buffer_with_data::<B, T>(&context, &input.dt);
+    let b = create_buffer_with_data::<B, T>(&context, &input.b);
+    let c = create_buffer_with_data::<B, T>(&context, &input.c);
+    let d = create_buffer_with_data::<B, T>(&context, &input.d);
+    let z = create_buffer_with_data::<B, T>(&context, &input.z);
 
-    let mut y = alloc_allocation::<B, T>(&context, y_size);
+    let mut y = create_buffer::<B, T>(&context, y_size);
 
     if input.state_in_place {
-        let mut next_state = alloc_allocation_with_data::<B, T>(&context, &input.state);
+        let mut next_state = create_buffer_with_data::<B, T>(&context, &input.state);
 
-        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
         kernel.encode(
             &x,
             &dt,
@@ -118,7 +121,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             &c,
             &d,
             &z,
-            None::<&Allocation<B>>,
+            None::<&B::GlobalBuffer>,
             &mut y,
             &mut next_state,
             (h / g) as u32,
@@ -130,19 +133,19 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             input.bsz,
             input.h,
             input.dh,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+        command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            y: allocation_to_vec(&y),
-            next_state: allocation_to_vec(&next_state),
+            y: buffer_to_vec(&y),
+            next_state: buffer_to_vec(&next_state),
         }
     } else {
-        let state = alloc_allocation_with_data::<B, T>(&context, &input.state);
-        let mut next_state = alloc_allocation::<B, T>(&context, ns_size);
+        let state = create_buffer_with_data::<B, T>(&context, &input.state);
+        let mut next_state = create_buffer::<B, T>(&context, ns_size);
 
-        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
         kernel.encode(
             &x,
             &dt,
@@ -162,13 +165,13 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             input.bsz,
             input.h,
             input.dh,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+        command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            y: allocation_to_vec(&y),
-            next_state: allocation_to_vec(&next_state),
+            y: buffer_to_vec(&y),
+            next_state: buffer_to_vec(&next_state),
         }
     }
 }

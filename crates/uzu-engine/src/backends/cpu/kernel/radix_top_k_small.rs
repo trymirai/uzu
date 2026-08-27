@@ -3,10 +3,12 @@ use half::bf16;
 use crate::{
     backends::{
         common::{
-            Allocation, AsBufferRangeMut, AsBufferRangeRef, Encoder,
+            BufferCpuAccessible, BufferMut, BufferRef,
             kernel::radix_top_k_small::{MAX_K, RadixTopKSmall},
         },
-        cpu::{Cpu, context::CpuContext, error::CpuError},
+        cpu::{
+            Cpu, buffer::CpuBufferExt, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError,
+        },
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -30,28 +32,30 @@ impl RadixTopKSmall for CpuRadixTopKSmall {
 
     fn encode(
         &self,
-        input: &Allocation<Cpu>,
-        output_ids: &mut Allocation<Cpu>,
-        output_scores: &mut Allocation<Cpu>,
+        input: impl BufferRef<Backend = Cpu>,
+        output_ids: impl BufferMut<Backend = Cpu>,
+        output_scores: impl BufferMut<Backend = Cpu>,
         rows: u32,
         k: u32,
-        encoder: &mut Encoder<Cpu>,
+        command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<(), CpuError> {
         let rows = rows as usize;
         let columns = self.columns;
         let k = k as usize;
         assert!(rows > 0 && k > 0 && k <= MAX_K as usize && k <= columns);
-        let input = input.as_buffer_range_ref();
-        let input = SendPtr(unsafe { (&*input.buffer().get()).as_ptr().add(input.range().start).cast::<bf16>() });
-        let output_ids = output_ids.as_buffer_range_mut();
-        let output_ids = SendPtrMut(unsafe {
-            (&mut *output_ids.buffer().get()).as_mut_ptr().add(output_ids.range().start).cast::<u32>()
-        });
-        let output_scores = output_scores.as_buffer_range_mut();
-        let output_scores = SendPtrMut(unsafe {
-            (&mut *output_scores.buffer().get()).as_mut_ptr().add(output_scores.range().start).cast::<f32>()
-        });
-        encoder.as_command_buffer_mut().push_command(move || {
+        let (input, input_range) = input.parts();
+        let (output_ids, output_ids_range) = output_ids.parts();
+        let (output_scores, output_scores_range) = output_scores.parts();
+        let input = SendPtr(
+            input.downcast().cpu_ptr().as_ptr().cast::<bf16>().cast_const().wrapping_byte_add(input_range.start),
+        );
+        let output_ids = SendPtrMut(
+            output_ids.downcast().cpu_ptr().as_ptr().cast::<u32>().wrapping_byte_add(output_ids_range.start),
+        );
+        let output_scores = SendPtrMut(
+            output_scores.downcast().cpu_ptr().as_ptr().cast::<f32>().wrapping_byte_add(output_scores_range.start),
+        );
+        command_buffer.push_command(move || {
             let output_ids = unsafe { std::slice::from_raw_parts_mut(output_ids.as_ptr(), rows * k) };
             let output_scores = unsafe { std::slice::from_raw_parts_mut(output_scores.as_ptr(), rows * k) };
             let values = unsafe { std::slice::from_raw_parts(input.as_ptr(), rows * columns) }

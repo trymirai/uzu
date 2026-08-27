@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+        Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         gpu_types::ActivationType,
         kernel::{
             Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDPrefill64Kernel, SSDPrefillKernel,
@@ -24,8 +24,8 @@ use crate::{
 const INNER_DATA_TYPE: DataType = DataType::F32;
 
 pub struct Mamba2State<B: Backend> {
-    conv_state: Allocation<B>,
-    ssm_state: Allocation<B>,
+    conv_state: B::GlobalBuffer,
+    ssm_state: B::GlobalBuffer,
     suffix_length: Option<u32>,
 }
 
@@ -42,7 +42,7 @@ impl<B: Backend> MixerState<B> for Mamba2State<B> {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-        _encoder: &mut Encoder<B>,
+        _command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), <B as Backend>::Error> {
         assert!(self.suffix_length.take() == Some(*accepted_indices.last().unwrap() + 1));
         Ok(())
@@ -64,14 +64,14 @@ pub struct Mamba2<B: Backend> {
     conv_dim: u32,
     activation_type: ActivationType,
     in_projection: Box<dyn Linear<B>>,
-    gate_bias: Allocation<B>,
+    gate_bias: B::GlobalBuffer,
     split_inproj: <B::Kernels as Kernels>::SplitInProjKernel,
-    conv_weight: Allocation<B>,
-    conv_bias: Option<Allocation<B>>,
+    conv_weight: B::GlobalBuffer,
+    conv_bias: Option<B::GlobalBuffer>,
     conv_decode: <B::Kernels as Kernels>::Conv1dDecodeKernel,
     conv_pack: <B::Kernels as Kernels>::Conv1dPackKernel,
     conv_scan: <B::Kernels as Kernels>::Conv1dScanKernel,
-    skip_connection_weight: Allocation<B>,
+    skip_connection_weight: B::GlobalBuffer,
     ssd_update: <B::Kernels as Kernels>::SSDUpdateKernel,
     ssd_prefill: Mamba2SSDPrefillVariant<B>,
     out_projection: Box<dyn Linear<B>>,
@@ -96,7 +96,7 @@ impl<B: Backend> Mamba2<B> {
         config: &Mamba2Config,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
-    ) -> Result<(Self, Option<Allocation<B>>), Mamba2NewError<B>> {
+    ) -> Result<(Self, Option<B::GlobalBuffer>), Mamba2NewError<B>> {
         let kernel_size = config.kernel_size;
         let num_heads = config.num_heads;
         let num_groups = config.num_groups;
@@ -124,7 +124,7 @@ impl<B: Backend> Mamba2<B> {
                 &parameter_tree.subtree("in_projection"),
             )?;
 
-        let gate_bias = parameter_tree.leaf("gate_bias")?.validate(&[inner_dim], INNER_DATA_TYPE)?.read_allocation()?;
+        let gate_bias = parameter_tree.leaf("gate_bias")?.validate(&[inner_dim], INNER_DATA_TYPE)?.read_buffer()?;
         let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, INNER_DATA_TYPE)
             .map_err(Mamba2NewError::Backend)?;
 
@@ -132,9 +132,9 @@ impl<B: Backend> Mamba2<B> {
         let conv_tree = parameter_tree.subtree("conv");
 
         let conv_weight =
-            conv_tree.leaf("weights")?.validate(&[conv_dim, kernel_size], INNER_DATA_TYPE)?.read_allocation()?;
+            conv_tree.leaf("weights")?.validate(&[conv_dim, kernel_size], INNER_DATA_TYPE)?.read_buffer()?;
         let conv_bias = if conv_config.has_biases {
-            Some(conv_tree.leaf("biases")?.validate(&[conv_dim], INNER_DATA_TYPE)?.read_allocation()?)
+            Some(conv_tree.leaf("biases")?.validate(&[conv_dim], INNER_DATA_TYPE)?.read_buffer()?)
         } else {
             None
         };
@@ -147,10 +147,8 @@ impl<B: Backend> Mamba2<B> {
             <B::Kernels as Kernels>::Conv1dScanKernel::new(context, INNER_DATA_TYPE, conv_config.has_biases)
                 .map_err(Mamba2NewError::Backend)?;
 
-        let skip_connection_weight = parameter_tree
-            .leaf("skip_connection_weight")?
-            .validate(&[num_heads], INNER_DATA_TYPE)?
-            .read_allocation()?;
+        let skip_connection_weight =
+            parameter_tree.leaf("skip_connection_weight")?.validate(&[num_heads], INNER_DATA_TYPE)?.read_buffer()?;
         let ssd_update = <B::Kernels as Kernels>::SSDUpdateKernel::new(context, INNER_DATA_TYPE, true)
             .map_err(Mamba2NewError::Backend)?;
 
@@ -219,20 +217,16 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         _max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
-        let mut conv_state = context.create_allocation(
-            size_for_shape(&[self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE),
-            AllocationType::Global,
-        )?;
+        let mut conv_state =
+            context.create_buffer(size_for_shape(&[self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE))?;
 
-        let mut ssm_state = context.create_allocation(
-            size_for_shape(&[self.num_heads, self.head_dim, self.state_dim], INNER_DATA_TYPE),
-            AllocationType::Global,
-        )?;
+        let mut ssm_state =
+            context.create_buffer(size_for_shape(&[self.num_heads, self.head_dim, self.state_dim], INNER_DATA_TYPE))?;
 
-        let mut zero_encoder = Encoder::<B>::new(context)?;
-        zero_encoder.encode_fill(&mut conv_state, 0);
-        zero_encoder.encode_fill(&mut ssm_state, 0);
-        zero_encoder.end_encoding().submit().wait_until_completed()?;
+        let mut zero_command_buffer = context.create_command_buffer(None, None)?;
+        zero_command_buffer.encode_fill(&mut conv_state, 0);
+        zero_command_buffer.encode_fill(&mut ssm_state, 0);
+        zero_command_buffer.end_encoding().submit().wait_until_completed()?;
 
         Ok(Box::new(Mamba2State {
             conv_state,
@@ -243,13 +237,13 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
     fn encode(
         &self,
-        hidden: Allocation<B>,
+        hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("mamba2");
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        command_buffer.push_debug_group("mamba2");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for mamba2 mixer");
 
@@ -265,13 +259,14 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         assert!(state.suffix_length.is_none(), "mamba2 called with state with unaccepted tokens");
 
-        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
+        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
 
         let mut conv_inputs =
-            encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.conv_dim], INNER_DATA_TYPE)?;
-        let mut gate =
-            encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
-        let mut time_step = encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
+            command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.conv_dim], INNER_DATA_TYPE)?;
+        let mut gate = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
+        let mut time_step =
+            command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
         self.split_inproj.encode(
             &in_projected,
             &mut conv_inputs,
@@ -283,14 +278,14 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
             self.conv_dim,
             self.inner_dim,
             self.num_heads,
-            encoder,
+            command_buffer,
         );
 
-        let mut conv_x =
-            encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
-        let mut state_b = encoder
+        let mut conv_x = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
+        let mut state_b = command_buffer
             .allocate_scratch_for_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
-        let mut state_c = encoder
+        let mut state_c = command_buffer
             .allocate_scratch_for_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
         let state_stride = self.kernel_size - 1;
         if batch_dim.size() == 1 {
@@ -298,7 +293,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 &conv_inputs,
                 &self.conv_weight,
                 self.conv_bias.as_ref(),
-                None::<&Allocation<B>>,
+                None::<&B::GlobalBuffer>,
                 &mut conv_x,
                 &mut state_b,
                 &mut state_c,
@@ -311,10 +306,10 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 self.inner_dim,
                 self.num_groups * self.state_dim,
                 self.activation_type,
-                encoder,
+                command_buffer,
             );
         } else {
-            let mut padded = encoder
+            let mut padded = command_buffer
                 .allocate_scratch_for_shape(&[batch_dim.size() + state_stride, self.conv_dim], INNER_DATA_TYPE)?;
             self.conv_pack.encode(
                 &state.conv_state,
@@ -324,7 +319,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 self.conv_dim,
                 batch_dim.size(),
                 self.conv_dim,
-                encoder,
+                command_buffer,
             );
             self.conv_scan.encode(
                 &padded,
@@ -342,12 +337,12 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 self.inner_dim,
                 self.num_groups * self.state_dim,
                 self.activation_type,
-                encoder,
+                command_buffer,
             );
         }
 
         let mut ssd_output =
-            encoder.allocate_scratch_for_shape(&[batch_dim.size(), self.inner_dim], INNER_DATA_TYPE)?;
+            command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.inner_dim], INNER_DATA_TYPE)?;
         let x_strides = [self.num_heads * self.head_dim, self.head_dim, 1];
         let dt_strides = [self.num_heads, 1];
         let cb_strides = [self.num_groups * self.state_dim, self.state_dim, 1];
@@ -362,7 +357,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 &state_c,
                 &self.skip_connection_weight,
                 &gate,
-                None::<&Allocation<B>>,
+                None::<&B::GlobalBuffer>,
                 &mut ssd_output,
                 &mut state.ssm_state,
                 group_size,
@@ -374,7 +369,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 batch_dim.size(),
                 self.num_heads,
                 self.head_dim,
-                encoder,
+                command_buffer,
             );
         } else {
             let state_strides = [self.head_dim * self.state_dim, self.state_dim, 1];
@@ -397,7 +392,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                     &state_strides,
                     self.num_heads,
                     self.head_dim,
-                    encoder,
+                    command_buffer,
                 ),
                 Mamba2SSDPrefillVariant::Special64(ssd_prefill) => ssd_prefill.encode(
                     &conv_x,
@@ -417,16 +412,16 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                     &state_strides,
                     self.num_heads,
                     self.head_dim,
-                    encoder,
+                    command_buffer,
                 ),
             }
         }
 
         state.suffix_length = Some(batch_dim.size());
 
-        let output = self.out_projection.encode(ssd_output, batch_dim.size(), encoder)?;
+        let output = self.out_projection.encode(ssd_output, batch_dim.size(), command_buffer)?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

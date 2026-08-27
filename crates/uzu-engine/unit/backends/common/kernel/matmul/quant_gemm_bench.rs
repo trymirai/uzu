@@ -57,10 +57,10 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
             ));
             group.throughput(Throughput::Elements((m * n * k) as u64));
             group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
-                iter_encode_loop::<Metal, _>(context, b, |encoder| {
+                iter_encode_loop::<Metal, _>(context, b, |command_buffer| {
                     matmul
                         .gemm
-                        .encode_with_engine(quant_arguments(&mut buffers, &input), engine, encoder)
+                        .encode_with_engine(quant_arguments(&mut buffers, &input), engine, command_buffer)
                         .expect("encode unified quant matmul");
                 });
             });

@@ -4,10 +4,10 @@ use uzu_engine_macros::kernel;
 
 use crate::array::ArrayElement;
 
-fn apply_rope<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
+fn apply_rope<ElementT: ArrayElement + Float>(
     head: *const ElementT,
-    cosines: *const RopeT,
-    sines: *const RopeT,
+    cosines: *const (impl ArrayElement + Float),
+    sines: *const (impl ArrayElement + Float),
     batch_idx: usize,
     head_dim_idx: usize,
     rope_dim: usize,

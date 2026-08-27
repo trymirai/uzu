@@ -7,13 +7,16 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeOutKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::BuildTreeOutKernel,
+        },
         cpu::Cpu,
         metal::Metal,
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -87,16 +90,16 @@ fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
         use_h0,
     )
     .expect("BuildTreeOutKernel");
-    let q = alloc_allocation_with_data::<B, T>(&context, &inputs.q);
-    let prefix = alloc_allocation_with_data::<B, f32>(&context, &inputs.prefix);
-    let qkd = alloc_allocation_with_data::<B, f32>(&context, &inputs.qkd);
-    let u = alloc_allocation_with_data::<B, f32>(&context, &inputs.u);
-    let h0 = use_h0.then(|| alloc_allocation_with_data::<B, f32>(&context, &inputs.h0));
-    let h0_indices = use_h0.then(|| alloc_allocation_with_data::<B, i32>(&context, &inputs.h0_indices));
+    let q = create_buffer_with_data::<B, T>(&context, &inputs.q);
+    let prefix = create_buffer_with_data::<B, f32>(&context, &inputs.prefix);
+    let qkd = create_buffer_with_data::<B, f32>(&context, &inputs.qkd);
+    let u = create_buffer_with_data::<B, f32>(&context, &inputs.u);
+    let h0 = use_h0.then(|| create_buffer_with_data::<B, f32>(&context, &inputs.h0));
+    let h0_indices = use_h0.then(|| create_buffer_with_data::<B, i32>(&context, &inputs.h0_indices));
     let mut o =
-        alloc_allocation::<B, T>(&context, shape.batch_size * shape.tree_size * shape.value_heads * shape.head_v_dim);
+        create_buffer::<B, T>(&context, shape.batch_size * shape.tree_size * shape.value_heads * shape.head_v_dim);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &q,
         &prefix,
@@ -112,10 +115,10 @@ fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
         shape.value_heads as u32,
         shape.head_k_dim as u32,
         shape.head_v_dim as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec(&o)
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec(&o)
 }
 
 fn check_shape<T: ArrayElement + Float + std::fmt::Display>(

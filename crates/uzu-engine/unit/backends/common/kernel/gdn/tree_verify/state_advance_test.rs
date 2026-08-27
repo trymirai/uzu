@@ -12,19 +12,22 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::StateAdvanceKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::StateAdvanceKernel,
+        },
         cpu::Cpu,
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 #[cfg(backend = "metal")]
 use crate::{
     backends::metal::Metal,
     data_type::DataType,
-    tests::{cold_pool::ColdPool, helpers::allocation_size_bytes, matmul::iter_encode_loop_named},
+    tests::{cold_pool::ColdPool, helpers::buffer_size_bytes, matmul::iter_encode_loop_named},
 };
 
 const TREE_SIZE: usize = 128;
@@ -53,15 +56,15 @@ fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32
     let beta = (0..scalar_len).map(|i| 0.2 + (i % 5) as f32 * 0.03).collect::<Vec<_>>();
     let initial_state = (0..state_len).map(|i| (i % 23) as f32 * 0.001 - 0.011).collect::<Vec<_>>();
 
-    let k_norm = alloc_allocation_with_data::<B, T>(&context, &k_norm);
-    let v = alloc_allocation_with_data::<B, T>(&context, &v);
-    let log_decay = alloc_allocation_with_data::<B, f32>(&context, &log_decay);
-    let beta = alloc_allocation_with_data::<B, f32>(&context, &beta);
+    let k_norm = create_buffer_with_data::<B, T>(&context, &k_norm);
+    let v = create_buffer_with_data::<B, T>(&context, &v);
+    let log_decay = create_buffer_with_data::<B, f32>(&context, &log_decay);
+    let beta = create_buffer_with_data::<B, f32>(&context, &beta);
     let accepted_len = accepted_indices.len();
-    let accepted_indices = alloc_allocation_with_data::<B, u32>(&context, accepted_indices);
-    let mut committed_state = alloc_allocation_with_data::<B, f32>(&context, &initial_state);
+    let accepted_indices = create_buffer_with_data::<B, u32>(&context, accepted_indices);
+    let mut committed_state = create_buffer_with_data::<B, f32>(&context, &initial_state);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     kernel.encode(
         &k_norm,
         &v,
@@ -70,10 +73,10 @@ fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32
         &accepted_indices,
         &mut committed_state,
         accepted_len as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec(&committed_state)
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec(&committed_state)
 }
 
 #[uzu_test]
@@ -102,38 +105,43 @@ fn bench_state_advance(c: &mut Criterion) {
         NUM_K_HEADS as u32,
     )
     .expect("kernel");
-    let k_norm = alloc_allocation_with_data::<Metal, bf16>(
+    let k_norm = create_buffer_with_data::<Metal, bf16>(
         &context,
         &vec![bf16::from_f32(0.001); TREE_SIZE * NUM_K_HEADS * HEAD_DIM],
     );
-    let v = alloc_allocation_with_data::<Metal, bf16>(
+    let v = create_buffer_with_data::<Metal, bf16>(
         &context,
         &vec![bf16::from_f32(0.01); TREE_SIZE * NUM_V_HEADS * HEAD_DIM],
     );
-    let log_decay = alloc_allocation_with_data::<Metal, f32>(&context, &vec![-0.01; TREE_SIZE * NUM_V_HEADS]);
-    let beta = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.2; TREE_SIZE * NUM_V_HEADS]);
+    let log_decay = create_buffer_with_data::<Metal, f32>(&context, &vec![-0.01; TREE_SIZE * NUM_V_HEADS]);
+    let beta = create_buffer_with_data::<Metal, f32>(&context, &vec![0.2; TREE_SIZE * NUM_V_HEADS]);
     let initial_state = vec![0.01; NUM_V_HEADS * HEAD_DIM * HEAD_DIM];
     let mut group = c.benchmark_group(BENCHMARK);
     group.sample_size(30).warm_up_time(Duration::from_millis(300)).measurement_time(Duration::from_secs(1));
 
     for accepted_len in [1usize, 4, 8, 16] {
-        let accepted_indices = alloc_allocation_with_data::<Metal, u32>(&context, &PATH[..accepted_len]);
-        let mut committed_states = ColdPool::new(allocation_size_bytes::<f32>(initial_state.len()), || {
-            alloc_allocation_with_data::<Metal, f32>(&context, &initial_state)
+        let accepted_indices = create_buffer_with_data::<Metal, u32>(&context, &PATH[..accepted_len]);
+        let mut committed_states = ColdPool::new(buffer_size_bytes::<f32>(initial_state.len()), || {
+            create_buffer_with_data::<Metal, f32>(&context, &initial_state)
         });
         group.bench_function(format!("L{accepted_len}"), |bencher| {
-            iter_encode_loop_named::<Metal, _>(&context, bencher, &format!("{BENCHMARK}/L{accepted_len}"), |encoder| {
-                kernel.encode(
-                    &k_norm,
-                    &v,
-                    &log_decay,
-                    &beta,
-                    &accepted_indices,
-                    committed_states.next_mut(),
-                    accepted_len as u32,
-                    encoder,
-                );
-            });
+            iter_encode_loop_named::<Metal, _>(
+                &context,
+                bencher,
+                &format!("{BENCHMARK}/L{accepted_len}"),
+                |command_buffer| {
+                    kernel.encode(
+                        &k_norm,
+                        &v,
+                        &log_decay,
+                        &beta,
+                        &accepted_indices,
+                        committed_states.next_mut(),
+                        accepted_len as u32,
+                        command_buffer,
+                    );
+                },
+            );
         });
     }
 }

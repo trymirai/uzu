@@ -32,7 +32,7 @@ impl Crc32c {
         let mut offset = 0_u64;
         while offset < length {
             let end = offset.saturating_add(READ_CHUNK_SIZE).min(length);
-            let chunk = fs::asyn::read_range(path, offset..end).await?;
+            let chunk = fs::asyn::read_range(path, (offset..end).into()).await?;
             if chunk.len() as u64 != end - offset {
                 return Err(IoError::new(ErrorKind::UnexpectedEof, "file changed during CRC verification"));
             }

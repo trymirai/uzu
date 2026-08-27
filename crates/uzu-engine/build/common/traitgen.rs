@@ -2,9 +2,9 @@ use std::{collections::HashMap, env, path::PathBuf};
 
 use anyhow::{Context, bail};
 use itertools::Itertools;
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Lifetime, Type};
+use syn::Type;
 
 use crate::common::{
     codegen::write_tokens,
@@ -29,30 +29,24 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         quote! { #name: #ty }
     });
 
-    let (encode_lifetime_generics, mut args) = kernel
+    let mut args = kernel
         .arguments
         .iter()
         .map(|a| {
             let name = format_ident!("{}", a.name.as_ref());
 
-            let (lifetime_generic, mut ty) = match &a.ty {
-                KernelArgumentType::Buffer(access) => {
-                    let buffer_lifetime = Lifetime::new(&format!("'{}", a.name.as_ref()), Span::call_site());
-                    (
-                        Some(quote! { #buffer_lifetime }),
-                        match access {
-                            KernelBufferAccess::Read => {
-                                quote! { impl crate::backends::common::BufferArg<#buffer_lifetime, Self::Backend> }
-                            },
-                            KernelBufferAccess::ReadWrite => {
-                                quote! { impl crate::backends::common::BufferArgMut<#buffer_lifetime, Self::Backend> }
-                            },
-                        },
-                    )
+            let mut ty = match &a.ty {
+                KernelArgumentType::Buffer(access) => match access {
+                    KernelBufferAccess::Read => {
+                        quote! { impl crate::backends::common::BufferRef<Backend = Self::Backend> }
+                    },
+                    KernelBufferAccess::ReadWrite => {
+                        quote! { impl crate::backends::common::BufferMut<Backend = Self::Backend> }
+                    },
                 },
                 KernelArgumentType::Constant(ty) => {
                     let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
-                    (None, quote! { #ty })
+                    quote! { #ty }
                 },
             };
 
@@ -60,13 +54,11 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                 ty = quote! { Option<#ty> };
             }
 
-            (lifetime_generic, quote! { #name: #ty })
+            quote! { #name: #ty }
         })
-        .collect::<(Vec<_>, Vec<_>)>();
+        .collect::<Vec<_>>();
 
-    let mut encode_generics = encode_lifetime_generics.into_iter().flatten().collect::<Vec<_>>();
-    encode_generics.push(quote! { 'encoder });
-    args.push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<Self::Backend> });
+    args.push(quote! { command_buffer: &mut <<Self::Backend as crate::backends::common::Backend>::CommandBuffer as crate::backends::common::CommandBuffer>::Encoding });
 
     let kernel_trait = quote! {
         #[allow(clippy::style, clippy::complexity, clippy::perf)]
@@ -76,7 +68,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
             #[allow(non_snake_case)]
             fn new(context: &<Self::Backend as crate::backends::common::Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as crate::backends::common::Backend>::Error>;
 
-            fn encode<#(#encode_generics),*>(&self, #(#args),*);
+            fn encode(&self, #(#args),*);
         }
     };
 

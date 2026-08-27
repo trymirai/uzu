@@ -11,7 +11,8 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder,
+            Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
+            Context,
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
@@ -24,7 +25,7 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
 };
 
 #[derive(Clone)]
@@ -231,13 +232,13 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             assert!(columns.is_multiple_of(group_size));
         }
         let context = <Cpu as Backend>::Context::new().expect("CPU context");
-        let input = alloc_allocation_with_data::<Cpu, T>(&context, &self.x);
-        let factors = alloc_allocation_with_data::<Cpu, i32>(&context, &vec![1; columns as usize]);
+        let input = create_buffer_with_data::<Cpu, T>(&context, &self.x);
+        let factors = create_buffer_with_data::<Cpu, i32>(&context, &vec![1; columns as usize]);
         let element_count = rows * columns;
-        let mut values = alloc_allocation::<Cpu, i8>(&context, element_count as usize);
-        let mut scales = alloc_allocation::<Cpu, f32>(&context, (element_count / activation_scale_group_size) as usize);
-        let mut group_sums = sum_group_size
-            .map(|group_size| alloc_allocation::<Cpu, i32>(&context, (element_count / group_size) as usize));
+        let mut values = create_buffer::<Cpu, i8>(&context, element_count as usize);
+        let mut scales = create_buffer::<Cpu, f32>(&context, (element_count / activation_scale_group_size) as usize);
+        let mut group_sums =
+            sum_group_size.map(|group_size| create_buffer::<Cpu, i32>(&context, (element_count / group_size) as usize));
         let quantization = ActivationQuantization::new(
             activation_scale_group_size,
             sum_group_size.unwrap_or(activation_scale_group_size),
@@ -247,7 +248,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         .expect("supported activation quantization");
         let transform = ActivationTransform::<Cpu>::quantize(&context, T::data_type(), quantization)
             .expect("CPU activation quantization transform");
-        let mut encoder = Encoder::<Cpu>::new(&context).expect("CPU encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).expect("CPU command buffer");
         transform.encode_quantize(
             &input,
             &mut values,
@@ -256,14 +257,14 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             &factors,
             rows,
             columns,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().expect("CPU activation quantization");
+        command_buffer.end_encoding().submit().wait_until_completed().expect("CPU activation quantization");
 
         self.prepared_a = Some(PreparedInt8A {
-            values: allocation_to_vec(&values),
-            scales: allocation_to_vec(&scales),
-            group_sums: group_sums.map_or_else(Vec::new, |sums| allocation_to_vec(&sums)),
+            values: buffer_to_vec(&values),
+            scales: buffer_to_vec(&scales),
+            group_sums: group_sums.map_or_else(Vec::new, |sums| buffer_to_vec(&sums)),
             quantization,
         });
         self
@@ -288,15 +289,15 @@ impl<T: ArrayElement + Float> QuantInput<T> {
 }
 
 pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
-    pub w: Allocation<B>,
-    pub scales: Allocation<B>,
-    pub zp: Option<Allocation<B>>,
-    pub bias: Option<Allocation<B>>,
-    pub x: Allocation<B>,
-    pub prepared_a: Option<Allocation<B>>,
-    pub prepared_a_scales: Option<Allocation<B>>,
-    pub prepared_a_group_sums: Option<Allocation<B>>,
-    pub y: Allocation<B>,
+    pub w: B::GlobalBuffer,
+    pub scales: B::GlobalBuffer,
+    pub zp: Option<B::GlobalBuffer>,
+    pub bias: Option<B::GlobalBuffer>,
+    pub x: B::GlobalBuffer,
+    pub prepared_a: Option<B::GlobalBuffer>,
+    pub prepared_a_scales: Option<B::GlobalBuffer>,
+    pub prepared_a_group_sums: Option<B::GlobalBuffer>,
+    pub y: B::GlobalBuffer,
     _t: std::marker::PhantomData<T>,
 }
 
@@ -311,31 +312,31 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         let metadata_elements = params.scale_shape().into_iter().product::<u32>() as usize;
         let zero_point_bytes = params.zero_point_shape(input.mode).into_iter().product::<u32>() as usize;
         let mut buffers = Self {
-            w: alloc_allocation_with_data::<B, u32>(context, &input.weights_for_upload()),
-            scales: alloc_allocation_with_data::<B, T>(context, &pad(&input.scales, metadata_elements)),
+            w: create_buffer_with_data::<B, u32>(context, &input.weights_for_upload()),
+            scales: create_buffer_with_data::<B, T>(context, &pad(&input.scales, metadata_elements)),
             zp: input
                 .zero_points
                 .as_ref()
-                .map(|zero_points| alloc_allocation_with_data::<B, u8>(context, &pad(zero_points, zero_point_bytes))),
+                .map(|zero_points| create_buffer_with_data::<B, u8>(context, &pad(zero_points, zero_point_bytes))),
             bias: input
                 .biases
                 .as_ref()
-                .map(|biases| alloc_allocation_with_data::<B, T>(context, &pad(biases, metadata_elements))),
-            x: alloc_allocation_with_data::<B, T>(context, &input.x),
+                .map(|biases| create_buffer_with_data::<B, T>(context, &pad(biases, metadata_elements))),
+            x: create_buffer_with_data::<B, T>(context, &input.x),
             prepared_a: input
                 .prepared_a
                 .as_ref()
-                .map(|prepared| alloc_allocation_with_data::<B, i8>(context, &prepared.values)),
+                .map(|prepared| create_buffer_with_data::<B, i8>(context, &prepared.values)),
             prepared_a_scales: input
                 .prepared_a
                 .as_ref()
-                .map(|prepared| alloc_allocation_with_data::<B, f32>(context, &prepared.scales)),
+                .map(|prepared| create_buffer_with_data::<B, f32>(context, &prepared.scales)),
             prepared_a_group_sums: input
                 .prepared_a
                 .as_ref()
                 .filter(|prepared| !prepared.group_sums.is_empty())
-                .map(|prepared| alloc_allocation_with_data::<B, i32>(context, &prepared.group_sums)),
-            y: alloc_allocation::<B, T>(context, (input.m as usize) * (input.n as usize)),
+                .map(|prepared| create_buffer_with_data::<B, i32>(context, &prepared.group_sums)),
+            y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
             _t: std::marker::PhantomData,
         };
         if params_layout == QuantParamsLayout::GroupOutput {
@@ -347,7 +348,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
     pub fn matmul_b<'a>(
         &'a self,
         input: &QuantInput<T>,
-    ) -> MatmulB<'a, B> {
+    ) -> MatmulB<&'a B::GlobalBuffer> {
         quant_b_variant(&self.w, &self.scales, self.zp.as_ref(), self.bias.as_ref(), input.params_layout, input)
     }
 
@@ -382,14 +383,14 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
     }
 }
 
-fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
-    w: &'a Allocation<B>,
-    scales: &'a Allocation<B>,
-    zero_points: Option<&'a Allocation<B>>,
-    biases: Option<&'a Allocation<B>>,
+fn quant_b_variant<TB: BufferRef, T: ArrayElement + Float>(
+    w: TB,
+    scales: TB,
+    zero_points: Option<TB>,
+    biases: Option<TB>,
     params_layout: QuantParamsLayout,
     input: &QuantInput<T>,
-) -> MatmulB<'a, B> {
+) -> MatmulB<TB> {
     let params = QuantParams::new(params_layout, input.n, input.k.div_ceil(input.group_size));
     let correction = match input.quant_method {
         QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(biases.expect("bias buffer")),
@@ -410,7 +411,7 @@ fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
 pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     buffers: &'a mut QuantBuffers<B, T>,
     input: &QuantInput<T>,
-) -> MatmulArguments<'a, 'a, 'a, B> {
+) -> MatmulArguments<'a, B, &'a B::GlobalBuffer, &'a B::GlobalBuffer, &'a mut B::GlobalBuffer, &'a B::GlobalBuffer> {
     let QuantBuffers {
         w,
         scales,
@@ -435,7 +436,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             code_layout: prepared.quantization.code_layout(),
         },
         None => MatmulA::FullPrecision {
-            values: x,
+            values: &*x,
             offset: 0,
         },
     };
@@ -463,10 +464,10 @@ pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
         T::data_type(),
     )
     .expect("MatmulCpuKernel");
-    let mut encoder = Encoder::<Cpu>::new(&context).expect("encoder");
-    matmul.encode(quant_arguments(&mut buffers, input), &mut encoder).expect("encode cpu quant");
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec::<Cpu, T>(&buffers.y)
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    matmul.encode(quant_arguments(&mut buffers, input), &mut command_buffer).expect("encode cpu quant");
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec::<Cpu, T>(&buffers.y)
 }
 
 #[cfg(backend = "metal")]
@@ -483,13 +484,13 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
         T::data_type(),
     )
     .expect("MatmulMetalKernel");
-    let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let args = quant_arguments(&mut buffers, input);
     if let Some(engine) = dispatch {
-        matmul.gemm.encode_with_engine(args, engine, &mut encoder).expect("forced GEMM engine encode failed");
+        matmul.gemm.encode_with_engine(args, engine, &mut command_buffer).expect("forced GEMM engine encode failed");
     } else {
-        matmul.encode(args, &mut encoder).expect("matmul encode failed");
+        matmul.encode(args, &mut command_buffer).expect("matmul encode failed");
     }
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec::<Metal, T>(&buffers.y)
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec::<Metal, T>(&buffers.y)
 }

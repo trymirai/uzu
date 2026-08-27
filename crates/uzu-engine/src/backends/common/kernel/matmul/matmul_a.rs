@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use crate::backends::common::{Allocation, Backend, gpu_types::gemm::GemmAPrologueKind};
+use crate::backends::common::{BufferRef, gpu_types::gemm::GemmAPrologueKind};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Int8CodeLayout {
@@ -46,21 +46,21 @@ impl Int8CodeLayout {
     }
 }
 
-pub enum MatmulA<'a, B: Backend> {
+pub enum MatmulA<T: BufferRef> {
     FullPrecision {
-        values: &'a Allocation<B>,
+        values: T,
         offset: usize,
     },
     Int8Symmetric {
-        values: &'a Allocation<B>,
-        scales: &'a Allocation<B>,
-        group_sums: Option<&'a Allocation<B>>,
+        values: T,
+        scales: T,
+        group_sums: Option<T>,
         scale_group_size: u32,
         code_layout: Int8CodeLayout,
     },
 }
 
-impl<'a, B: Backend> MatmulA<'a, B> {
+impl<T: BufferRef> MatmulA<T> {
     pub fn prologue_kind(&self) -> GemmAPrologueKind {
         match self {
             Self::FullPrecision {

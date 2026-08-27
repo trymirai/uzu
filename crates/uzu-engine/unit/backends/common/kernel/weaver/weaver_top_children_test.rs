@@ -3,12 +3,13 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Backend, Encoder, Kernels, gpu_types::weaver::MetadataIdx, kernel::WeaverTopChildrenKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            gpu_types::weaver::MetadataIdx, kernel::WeaverTopChildrenKernel,
+        },
         cpu::Cpu,
     },
-    tests::helpers::{
-        alloc_allocation, alloc_allocation_with_data, allocation_to_vec, create_context, for_each_non_cpu_backend,
-    },
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
 
 const CANDIDATES: usize = 512;
@@ -28,19 +29,19 @@ fn top_children<B: Backend>(
     assert_eq!(ids.len(), rows * CANDIDATES);
     assert!(rows <= DEPTHS.len());
     let context = create_context::<B>();
-    let residual = alloc_allocation_with_data::<B, bf16>(&context, residual);
-    let candidate_logits = alloc_allocation_with_data::<B, f32>(&context, candidate_logits);
-    let ids = alloc_allocation_with_data::<B, u32>(&context, ids);
-    let depth_seeds = alloc_allocation_with_data::<B, u64>(&context, &DEPTH_SEEDS);
+    let residual = create_buffer_with_data::<B, bf16>(&context, residual);
+    let candidate_logits = create_buffer_with_data::<B, f32>(&context, candidate_logits);
+    let ids = create_buffer_with_data::<B, u32>(&context, ids);
+    let depth_seeds = create_buffer_with_data::<B, u64>(&context, &DEPTH_SEEDS);
     let mut metadata_values = vec![0u32; rows * MetadataIdx::COUNT];
     for row in 0..rows {
         metadata_values[MetadataIdx::Depth as usize * rows + row] = DEPTHS[row];
     }
-    let node_metadata = alloc_allocation_with_data::<B, u32>(&context, &metadata_values);
-    let mut output_token_ids = alloc_allocation::<B, u32>(&context, rows * CHILDREN);
-    let mut output_model_logprobs = alloc_allocation::<B, f32>(&context, rows * CHILDREN);
+    let node_metadata = create_buffer_with_data::<B, u32>(&context, &metadata_values);
+    let mut output_token_ids = create_buffer::<B, u32>(&context, rows * CHILDREN);
+    let mut output_model_logprobs = create_buffer::<B, f32>(&context, rows * CHILDREN);
     let kernel = <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(&context).unwrap();
-    let mut encoder = Encoder::new(context.as_ref()).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &residual,
         &candidate_logits,
@@ -53,10 +54,10 @@ fn top_children<B: Backend>(
         CANDIDATES as u32,
         CHILDREN as u32,
         VOCAB_SIZE,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    (allocation_to_vec(&output_token_ids), allocation_to_vec(&output_model_logprobs))
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    (buffer_to_vec(&output_token_ids), buffer_to_vec(&output_model_logprobs))
 }
 
 #[uzu_test]

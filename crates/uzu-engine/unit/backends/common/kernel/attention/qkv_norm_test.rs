@@ -7,13 +7,16 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::QKVNormKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::QKVNormKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -133,12 +136,12 @@ fn get_output<
     )
     .expect("Failed to create QKVNormKernel");
 
-    let mut qkvg = alloc_allocation_with_data::<B, OutputT>(&context, &input.qkvg);
-    let scales = input.has_scales.then(|| alloc_allocation_with_data::<B, ScaleT>(&context, &input.scales));
+    let mut qkvg = create_buffer_with_data::<B, OutputT>(&context, &input.qkvg);
+    let scales = input.has_scales.then(|| create_buffer_with_data::<B, ScaleT>(&context, &input.scales));
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
-        None::<&Allocation<B>>,
+        None::<&B::GlobalBuffer>,
         scales.as_ref(),
         &mut qkvg,
         input.batch_size,
@@ -149,11 +152,11 @@ fn get_output<
         input.head_offset,
         input.head_count,
         input.full_layer,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    allocation_to_vec(&qkvg)
+    buffer_to_vec(&qkvg)
 }
 
 fn test_internal<

@@ -10,11 +10,11 @@ use uzu_engine_macros::uzu_bench;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Allocation, Backend, Context, Kernels, kernel::BuildTreeOutKernel},
+        common::{Backend, Context, Kernels, kernel::BuildTreeOutKernel},
         metal::Metal,
     },
     tests::{
-        helpers::{alloc_allocation, alloc_allocation_with_data},
+        helpers::{create_buffer, create_buffer_with_data},
         matmul::iter_encode_loop_named,
     },
 };
@@ -36,13 +36,13 @@ const BUILD_TREE_OUT_PATHS: &[(&str, bool, bool, usize)] = &[
 ];
 
 struct TreeOutBuffers {
-    q: Allocation<Metal>,
-    prefix: Allocation<Metal>,
-    qkd: Allocation<Metal>,
-    u: Allocation<Metal>,
-    h0: Allocation<Metal>,
-    h0_indices: Allocation<Metal>,
-    o: Allocation<Metal>,
+    q: <Metal as Backend>::GlobalBuffer,
+    prefix: <Metal as Backend>::GlobalBuffer,
+    qkd: <Metal as Backend>::GlobalBuffer,
+    u: <Metal as Backend>::GlobalBuffer,
+    h0: <Metal as Backend>::GlobalBuffer,
+    h0_indices: <Metal as Backend>::GlobalBuffer,
+    o: <Metal as Backend>::GlobalBuffer,
 }
 
 fn make_buffers<T: ArrayElement + Float>(
@@ -65,13 +65,13 @@ fn make_buffers<T: ArrayElement + Float>(
     let h0_indices = (0..batch_size as i32).collect::<Vec<_>>();
 
     TreeOutBuffers {
-        q: alloc_allocation_with_data::<Metal, T>(context, &q),
-        prefix: alloc_allocation_with_data::<Metal, f32>(context, &prefix),
-        qkd: alloc_allocation_with_data::<Metal, f32>(context, &qkd),
-        u: alloc_allocation_with_data::<Metal, f32>(context, &u),
-        h0: alloc_allocation_with_data::<Metal, f32>(context, &h0),
-        h0_indices: alloc_allocation_with_data::<Metal, i32>(context, &h0_indices),
-        o: alloc_allocation::<Metal, T>(context, uv_len),
+        q: create_buffer_with_data::<Metal, T>(context, &q),
+        prefix: create_buffer_with_data::<Metal, f32>(context, &prefix),
+        qkd: create_buffer_with_data::<Metal, f32>(context, &qkd),
+        u: create_buffer_with_data::<Metal, f32>(context, &u),
+        h0: create_buffer_with_data::<Metal, f32>(context, &h0),
+        h0_indices: create_buffer_with_data::<Metal, i32>(context, &h0_indices),
+        o: create_buffer::<Metal, T>(context, uv_len),
     }
 }
 
@@ -116,7 +116,7 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
                 )
                 .expect("BuildTreeOutKernel");
                 group.bench_function(benchmark_id, |bencher| {
-                    iter_encode_loop_named::<Metal, _>(context, bencher, &benchmark_path, |encoder| {
+                    iter_encode_loop_named::<Metal, _>(context, bencher, &benchmark_path, |command_buffer| {
                         kernel.encode(
                             &buffers.q,
                             &buffers.prefix,
@@ -132,7 +132,7 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
                             VALUE_HEADS as u32,
                             HEAD_K_DIM as u32,
                             HEAD_V_DIM as u32,
-                            encoder,
+                            command_buffer,
                         );
                     });
                 });

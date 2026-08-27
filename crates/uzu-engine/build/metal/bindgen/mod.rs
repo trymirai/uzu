@@ -9,9 +9,12 @@ use anyhow::Result;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use self::host_expression_rewriter::HostExpressionRewriter;
-use super::{ast::MetalKernelInfo, wrapper::SpecializeBaseIndices};
-use crate::common::{enum_paths::EnumPaths, kernel::Kernel, mangling::dynamic_mangle};
+use crate::{
+    common::{enum_paths::EnumPaths, kernel::Kernel, mangling::dynamic_mangle},
+    metal::{
+        ast::MetalKernelInfo, bindgen::host_expression_rewriter::HostExpressionRewriter, wrapper::SpecializeBaseIndices,
+    },
+};
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,
@@ -42,11 +45,10 @@ pub fn bindgen(
         argument_emissions.iter().filter_map(|argument| argument.struct_initializer()).collect();
     let mut encode_argument_definitions: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.encode_argument_definition()).collect();
-    let mut encode_lifetimes: Vec<TokenStream> =
-        argument_emissions.iter().filter_map(|argument| argument.encode_lifetime()).collect();
     let encode_deconstructs: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.encode_deconstruct()).collect();
-    let encode_set_calls: Vec<TokenStream> = argument_emissions.iter().map(|argument| argument.encode_set()).collect();
+    let encode_set_calls: Vec<TokenStream> =
+        argument_emissions.iter().filter_map(|argument| argument.encode_set()).collect();
     let encode_accesses_call = arguments::encode_accesses_call(&argument_emissions);
 
     let variant_struct_fields: Vec<TokenStream> =
@@ -81,9 +83,8 @@ pub fn bindgen(
     let associate_backend = &trait_wiring.associate_backend;
     let method_visibility = &trait_wiring.method_visibility;
 
-    encode_lifetimes.push(quote! { 'encoder });
     encode_argument_definitions.push(quote! {
-        encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::metal::Metal>
+        command_buffer: &mut <<crate::backends::metal::Metal as crate::backends::common::Backend>::CommandBuffer as crate::backends::common::CommandBuffer>::Encoding
     });
 
     let kernel_tokens = quote! {
@@ -114,19 +115,18 @@ pub fn bindgen(
                 })
             }
 
-            #method_visibility fn encode<#(#encode_lifetimes),*>(
+            #method_visibility fn encode(
                 &self,
                 #(#encode_argument_definitions),*
             ) {
                 #empty_dispatch_guards
-                encoder.push_debug_group(#kernel_name);
+                command_buffer.push_debug_group(#kernel_name);
                 #(#encode_deconstructs)*
                 #encode_accesses_call
-                let compute_encoder = encoder.as_command_buffer_mut().ensure_compute();
-                compute_encoder.set_compute_pipeline_state(&self.pipeline);
+                command_buffer.compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_set_calls)*
                 #dispatch_code
-                encoder.pop_debug_group();
+                command_buffer.pop_debug_group();
             }
         }
     };
@@ -153,15 +153,18 @@ pub fn bindgen_global(kernels: &[(impl AsRef<std::path::Path>, &[Kernel])]) -> R
     });
 
     let tokens = quote! {
-        use metal::{MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues, MTLSize};
+        use metal::{
+            MTL4ArgumentTable, MTL4ComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues,
+            MTLSize,
+        };
         use objc2::{rc::Retained, runtime::ProtocolObject};
 
-        use crate::backends::common::BufferGpuAddressRangeExt;
-        use crate::backends::metal::{
-            context::MetalContext,
-            error::MetalError,
-            metal_extensions::{
-                ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalDataTypeExt,
+        use crate::backends::{
+            common::{BufferRef, CommandBufferEncoding, BufferMut},
+            metal::{
+                context::MetalContext,
+                error::MetalError,
+                metal_extensions::{FunctionConstantValuesSetValue, MetalDataTypeExt},
             },
         };
 

@@ -7,12 +7,12 @@ use super::MoeGather;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Encoder},
+        common::{Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context},
         cpu::Cpu,
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation_with_data, allocation_to_vec, create_context, for_each_non_cpu_backend},
+        helpers::{buffer_readback, buffer_to_vec, create_buffer_with_data, create_context, for_each_non_cpu_backend},
     },
 };
 
@@ -28,26 +28,26 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = create_context::<B>();
 
     let sumk_data: [u32; 1] = [input.sum_k as u32];
-    let x_allocation = alloc_allocation_with_data::<B, T>(&context, &input.x);
-    let ids_allocation = alloc_allocation_with_data::<B, i32>(&context, &input.bucket_ids);
-    let sumk_allocation = alloc_allocation_with_data::<B, u32>(&context, &sumk_data);
+    let x_buffer = create_buffer_with_data::<B, T>(&context, &input.x);
+    let ids_buffer = create_buffer_with_data::<B, i32>(&context, &input.bucket_ids);
+    let sumk_buffer = create_buffer_with_data::<B, u32>(&context, &sumk_data);
     let gather = MoeGather::<B>::new(&context, T::data_type()).expect("MoeGather::new");
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    let x_perm_allocation = gather
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let x_perm_buffer = gather
         .encode(
-            &x_allocation,
-            &ids_allocation,
-            &sumk_allocation,
+            &x_buffer,
+            &ids_buffer,
+            &sumk_buffer,
             input.t as u32,
             (input.sum_k / input.t) as u32,
             input.d_model as u32,
-            &mut encoder,
+            &mut command_buffer,
         )
         .expect("Failed to encode MoE gather");
-    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let output = allocation_to_vec::<B, T>(&x_perm_allocation);
-    drop(x_perm_allocation);
+    let output = buffer_to_vec::<B, T>(&buffer_readback::<B>(&context, &x_perm_buffer));
+    drop(x_perm_buffer);
     drop(completed);
     output
 }

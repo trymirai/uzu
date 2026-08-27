@@ -7,12 +7,12 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Context, Kernels,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
             kernel::{DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel},
         },
         metal::Metal,
     },
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
 };
 
 type BackendKernels<B> = <B as Backend>::Kernels;
@@ -63,19 +63,19 @@ fn run_prefill<T: ArrayElement>(
     mode: PrefillMode,
 ) -> (Vec<f32>, Vec<f32>) {
     let in_proj_data: Vec<T> = case.in_proj.iter().copied().map(|value| cast(value).unwrap()).collect();
-    let in_proj = alloc_allocation_with_data::<Metal, T>(context, &in_proj_data);
-    let a_log = alloc_allocation_with_data::<Metal, f32>(context, &case.a_log);
-    let dt_bias = alloc_allocation_with_data::<Metal, f32>(context, &case.dt_bias);
-    let norm_weight = alloc_allocation_with_data::<Metal, f32>(context, &case.norm_weight);
+    let in_proj = create_buffer_with_data::<Metal, T>(context, &in_proj_data);
+    let a_log = create_buffer_with_data::<Metal, f32>(context, &case.a_log);
+    let dt_bias = create_buffer_with_data::<Metal, f32>(context, &case.dt_bias);
+    let norm_weight = create_buffer_with_data::<Metal, f32>(context, &case.norm_weight);
     let state_len = NUM_V_HEADS * HEAD_V_DIM * HEAD_K_DIM;
-    let mut state = alloc_allocation::<Metal, f32>(context, state_len);
-    let mut out = alloc_allocation::<Metal, T>(context, case.suffix_len * case.value_dim);
-    let mut q = alloc_allocation::<Metal, f32>(context, case.suffix_len * case.key_dim);
-    let mut k = alloc_allocation::<Metal, f32>(context, case.suffix_len * case.key_dim);
-    let mut beta = alloc_allocation::<Metal, f32>(context, case.suffix_len * NUM_V_HEADS);
-    let mut decay = alloc_allocation::<Metal, f32>(context, case.suffix_len * NUM_V_HEADS);
-    let mut encoder = Encoder::new(context).expect("encoder");
-    encoder.encode_fill(&mut state, 0);
+    let mut state = create_buffer::<Metal, f32>(context, state_len);
+    let mut out = create_buffer::<Metal, T>(context, case.suffix_len * case.value_dim);
+    let mut q = create_buffer::<Metal, f32>(context, case.suffix_len * case.key_dim);
+    let mut k = create_buffer::<Metal, f32>(context, case.suffix_len * case.key_dim);
+    let mut beta = create_buffer::<Metal, f32>(context, case.suffix_len * NUM_V_HEADS);
+    let mut decay = create_buffer::<Metal, f32>(context, case.suffix_len * NUM_V_HEADS);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    command_buffer.encode_fill(&mut state, 0);
 
     match mode {
         PrefillMode::Recurrent => {
@@ -94,7 +94,7 @@ fn run_prefill<T: ArrayElement>(
                 &dt_bias,
                 &mut q,
                 &mut k,
-                None::<&mut crate::backends::common::Allocation<Metal>>,
+                None::<&mut <Metal as Backend>::GlobalBuffer>,
                 &mut beta,
                 &mut decay,
                 NUM_V_HEADS as u32,
@@ -102,7 +102,7 @@ fn run_prefill<T: ArrayElement>(
                 case.key_dim as u32,
                 case.value_dim as u32,
                 case.suffix_len as u32,
-                &mut encoder,
+                &mut command_buffer,
             );
             <BackendKernels<Metal> as Kernels>::DeltaNetPrefillKernel::new(context, T::data_type(), HEAD_K_DIM as u32)
                 .expect("prefill")
@@ -121,7 +121,7 @@ fn run_prefill<T: ArrayElement>(
                     case.value_dim as u32,
                     case.suffix_len as u32,
                     HEAD_V_DIM.div_ceil(16) as u32,
-                    &mut encoder,
+                    &mut command_buffer,
                 );
         },
         PrefillMode::Chunked => {
@@ -142,7 +142,7 @@ fn run_prefill<T: ArrayElement>(
                         value_dim: case.value_dim as u32,
                         suffix_len: case.suffix_len as u32,
                     },
-                    &mut encoder,
+                    &mut command_buffer,
                 )
                 .expect("chunked encode");
         },
@@ -159,14 +159,11 @@ fn run_prefill<T: ArrayElement>(
         case.total_proj_dim as u32,
         1e-6,
         case.suffix_len as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    (
-        allocation_to_vec::<Metal, T>(&out).into_iter().map(|value| cast(value).unwrap()).collect(),
-        allocation_to_vec(&state),
-    )
+    (buffer_to_vec::<Metal, T>(&out).into_iter().map(|value| cast(value).unwrap()).collect(), buffer_to_vec(&state))
 }
 
 #[uzu_test]

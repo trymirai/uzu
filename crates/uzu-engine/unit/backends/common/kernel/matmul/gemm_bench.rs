@@ -17,7 +17,7 @@ use crate::{
         metal::{GemmEngine, Metal},
     },
     tests::{
-        helpers::alloc_allocation,
+        helpers::create_buffer,
         matmul::{bench_fp_gemm_shapes, iter_encode_loop},
         util::type_short_name,
     },
@@ -45,12 +45,12 @@ fn bench_gemm(c: &mut Criterion) {
 
         for shape in bench_fp_gemm_shapes() {
             let (m, k, n) = (shape.m, shape.k, shape.n);
-            let a = alloc_allocation::<Metal, bf16>(&context, m as usize * k as usize);
-            let b_weights = alloc_allocation::<Metal, bf16>(&context, n as usize * k as usize);
-            let mut d = alloc_allocation::<Metal, bf16>(&context, m as usize * n as usize);
+            let a = create_buffer::<Metal, bf16>(&context, m as usize * k as usize);
+            let b_weights = create_buffer::<Metal, bf16>(&context, n as usize * k as usize);
+            let mut d = create_buffer::<Metal, bf16>(&context, m as usize * n as usize);
             group.throughput(Throughput::Elements(2 * u64::from(m) * u64::from(k) * u64::from(n)));
             group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
-                iter_encode_loop::<Metal, _>(&context, b, |encoder| {
+                iter_encode_loop::<Metal, _>(&context, b, |command_buffer| {
                     kernel
                         .gemm
                         .encode_with_engine(
@@ -66,13 +66,13 @@ fn bench_gemm(c: &mut Criterion) {
                                 b_transpose: true,
                                 d: &mut d,
                                 d_transform: MatmulDOps::none(),
-                                gather_indices: None,
+                                gather_indices: None::<&<Metal as Backend>::GlobalBuffer>,
                                 m,
                                 n,
                                 k,
                             },
                             engine,
-                            encoder,
+                            command_buffer,
                         )
                         .expect("encode_plan failed");
                 });

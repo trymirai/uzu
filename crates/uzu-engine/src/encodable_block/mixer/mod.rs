@@ -3,7 +3,7 @@ use std::any::Any;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Backend, CommandBuffer},
     config::{rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
     data_type::DataType,
     encodable_block::{
@@ -35,7 +35,7 @@ pub trait MixerState<B: Backend>: Any + Send {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error>;
 }
 
@@ -61,12 +61,12 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
 
     fn encode(
         &self,
-        hidden: Allocation<B>,
+        hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error>;
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error>;
 }
 
 #[derive(Debug, Error)]
@@ -89,7 +89,7 @@ impl<B: Backend> dyn Mixer<B> {
         config: &AnyTokenMixerConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
-    ) -> Result<(Box<dyn Mixer<B>>, Option<Allocation<B>>), MixerNewError<B>> {
+    ) -> Result<(Box<dyn Mixer<B>>, Option<B::GlobalBuffer>), MixerNewError<B>> {
         match config {
             AnyTokenMixerConfig::AttentionConfig(config) => {
                 let (attention, in_projection_input_hadamard_factors) =

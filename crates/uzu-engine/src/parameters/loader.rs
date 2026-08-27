@@ -13,7 +13,7 @@ use thiserror::Error;
 use super::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata};
 use crate::{
     array::{ArrayElement, size_for_shape},
-    backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
+    backends::common::{Backend, BufferMut, Context},
     data_type::DataType,
     utils::strict_serde::DeserializeStrictOwned,
 };
@@ -163,22 +163,11 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
         Ok(data.into_boxed_slice())
     }
 
-    pub fn read_allocation(&self) -> Result<Allocation<B>, ParameterLoaderError<B>> {
-        let allocation = self
-            .loader
-            .context
-            .create_allocation(self.metadata.size, AllocationType::Global)
-            .map_err(ParameterLoaderError::BackendError)?;
-        let buffer_range = allocation.as_buffer_range_ref();
-        let range = buffer_range.range();
-        let destination = unsafe {
-            std::slice::from_raw_parts_mut(
-                (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
-                range.len(),
-            )
-        };
-        self.loader.file.read_exact_at(destination, self.metadata.offset as u64)?;
-        Ok(allocation)
+    pub fn read_buffer(&self) -> Result<B::GlobalBuffer, ParameterLoaderError<B>> {
+        let mut buffer =
+            self.loader.context.create_buffer(self.metadata.size).map_err(ParameterLoaderError::BackendError)?;
+        self.loader.file.read_exact_at(buffer.as_slice_mut::<u8>(), self.metadata.offset as u64)?;
+        Ok(buffer)
     }
 }
 

@@ -16,7 +16,9 @@ use thiserror::Error;
 use tokenizers::Tokenizer;
 
 use crate::{
-    backends::common::{AllocationType, Backend, Context, Encoder},
+    backends::common::{
+        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+    },
     config::{model::classifier_model::ClassifierModelConfig, token_codec::AnyTokenCodecConfig},
     data_type::DataType,
     encodable_block::classifier::{Classifier as ClassifierEncodable, ClassifierError as ClassifierEncodableError},
@@ -144,26 +146,26 @@ impl<B: Backend> ClassifierModel<B> {
             return Err(ClassifierModelClassifyError::ContextOverflow);
         }
 
-        let mut encoder = Encoder::<B>::new(&self.context).map_err(ClassifierModelClassifyError::Backend)?;
+        let mut command_buffer =
+            self.context.create_command_buffer(None, None).map_err(ClassifierModelClassifyError::Backend)?;
 
-        let mut token_ids = encoder
-            .allocate_constant(input.len() * DataType::U32.size_in_bytes())
+        let token_ids = command_buffer
+            .allocate_constant_from_slice(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>())
             .map_err(ClassifierModelClassifyError::Backend)?;
-        token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
-        let logits = self.classifier.encode(&token_ids, input.len() as u32, &mut encoder)?;
+        let logits = self.classifier.encode(&token_ids, input.len() as u32, &mut command_buffer)?;
 
         let mut output_buffer = self
             .context
-            .create_allocation(self.output_labels.len() * self.data_type.size_in_bytes(), AllocationType::Global)
+            .create_buffer(self.output_labels.len() * self.data_type.size_in_bytes())
             .map_err(ClassifierModelClassifyError::Backend)?;
 
-        encoder.encode_copy(&logits, .., &mut output_buffer, ..);
+        command_buffer.encode_copy(&logits, &mut output_buffer);
 
         drop(logits);
         drop(token_ids);
 
-        encoder.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
+        command_buffer.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
 
         assert!(self.data_type == DataType::BF16);
 

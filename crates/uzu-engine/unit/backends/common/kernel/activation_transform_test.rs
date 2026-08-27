@@ -8,12 +8,12 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE,
-            kernel::ActivationTransform,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+            gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE, kernel::ActivationTransform,
         },
         cpu::Cpu,
     },
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend},
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -36,21 +36,21 @@ fn run<T: ArrayElement + Float + Debug, B: Backend>(
     }
     .expect("activation transform");
 
-    let mut input = alloc_allocation_with_data::<B, T>(context.as_ref(), data);
-    let mut output = alloc_allocation::<B, T>(context.as_ref(), data.len());
-    let factors = alloc_allocation_with_data::<B, i32>(context.as_ref(), factors);
+    let mut input = create_buffer_with_data::<B, T>(context.as_ref(), data);
+    let mut output = create_buffer::<B, T>(context.as_ref(), data.len());
+    let factors = create_buffer_with_data::<B, i32>(context.as_ref(), factors);
     let batch_count = (data.len() / channel_count) as u32;
-    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     if in_place {
-        kernel.encode_fp_in_place(&mut input, &factors, batch_count, channel_count as u32, &mut encoder);
+        kernel.encode_fp_in_place(&mut input, &factors, batch_count, channel_count as u32, &mut command_buffer);
     } else {
-        kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut encoder);
+        kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut command_buffer);
     }
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     if !in_place {
-        assert_eq!(allocation_to_vec::<B, T>(&input), data);
+        assert_eq!(buffer_to_vec::<B, T>(&input), data);
     }
-    allocation_to_vec(if in_place {
+    buffer_to_vec(if in_place {
         &input
     } else {
         &output
@@ -107,6 +107,7 @@ fn input_and_output_rht_bf16() {
 }
 
 mod quantize {
+
     use rand::{RngExt, SeedableRng, rngs::SmallRng};
     use uzu_engine_macros::uzu_test;
 
@@ -114,13 +115,13 @@ mod quantize {
     use crate::{
         backends::{
             common::{
-                Backend, Context, Encoder,
+                Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
                 kernel::{ActivationQuantization, ActivationTransform, matmul::Int8CodeLayout},
             },
             cpu::Cpu,
         },
         data_type::DataType,
-        tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend},
+        tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
     };
 
     fn run<B: Backend>(
@@ -136,13 +137,13 @@ mod quantize {
         let scale_groups = columns / scale_group_size;
         let sum_groups = sum_group_size.map_or(0, |group_size| columns / group_size);
         let context = B::Context::new().expect("context");
-        let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), input_data);
-        let factors = alloc_allocation_with_data::<B, i32>(context.as_ref(), factors_data);
-        let mut values = alloc_allocation::<B, i8>(context.as_ref(), (rows * columns) as usize);
-        let mut scales = alloc_allocation::<B, f32>(context.as_ref(), (rows * scale_groups) as usize);
+        let input = create_buffer_with_data::<B, f32>(context.as_ref(), input_data);
+        let factors = create_buffer_with_data::<B, i32>(context.as_ref(), factors_data);
+        let mut values = create_buffer::<B, i8>(context.as_ref(), (rows * columns) as usize);
+        let mut scales = create_buffer::<B, f32>(context.as_ref(), (rows * scale_groups) as usize);
         let mut group_sums =
-            emit_group_sums.then(|| alloc_allocation::<B, i32>(context.as_ref(), (rows * sum_groups) as usize));
-        let kernel = ActivationTransform::quantize(
+            emit_group_sums.then(|| create_buffer::<B, i32>(context.as_ref(), (rows * sum_groups) as usize));
+        let kernel = ActivationTransform::<B>::quantize(
             context.as_ref(),
             DataType::F32,
             ActivationQuantization::new(
@@ -154,7 +155,7 @@ mod quantize {
             .expect("supported activation quantization"),
         )
         .expect("quantize transform");
-        let mut encoder = Encoder::<B>::new(context.as_ref()).expect("encoder");
+        let mut command_buffer = context.as_ref().create_command_buffer(None, None).expect("command buffer");
         kernel.encode_quantize(
             &input,
             &mut values,
@@ -163,11 +164,11 @@ mod quantize {
             &factors,
             rows,
             columns,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-        (allocation_to_vec(&values), allocation_to_vec(&scales), group_sums.as_ref().map(allocation_to_vec))
+        (buffer_to_vec(&values), buffer_to_vec(&scales), group_sums.as_ref().map(buffer_to_vec))
     }
 
     fn check_quantize(

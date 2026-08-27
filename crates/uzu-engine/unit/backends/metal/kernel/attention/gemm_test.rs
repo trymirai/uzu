@@ -8,7 +8,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
             kernel::{AttentionArguments, AttentionKernel, AttentionKernelConfig},
         },
         cpu::Cpu,
@@ -18,7 +18,7 @@ use crate::{
     encodable_block::mixer::attention::KVCacheView,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
     },
 };
 
@@ -85,43 +85,43 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let config = attention_config(input);
 
-    let queries_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.queries);
-    let keys_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.keys);
-    let values_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.values);
+    let queries_buffer = create_buffer_with_data::<B, T>(context.as_ref(), &input.queries);
+    let keys_buffer = create_buffer_with_data::<B, T>(context.as_ref(), &input.keys);
+    let values_buffer = create_buffer_with_data::<B, T>(context.as_ref(), &input.values);
 
     let segment_prefix_length = input.sequence_length - input.suffix_length;
     let args = AttentionArguments {
-        queries: &queries_allocation,
-        keys: &keys_allocation,
-        values: &values_allocation,
+        queries: &queries_buffer,
+        keys: &keys_buffer,
+        values: &values_buffer,
         suffix_length: input.suffix_length as u32,
-        trie: None,
+        trie: None::<&B::GlobalBuffer>,
         sinks: None,
         cache: KVCacheView::full(segment_prefix_length as u32),
     };
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     let kernel = <B::Kernels as Kernels>::AttentionKernel::new(context.as_ref(), config)
         .expect("Failed to create attention kernel");
-    let pooled_output = kernel.encode(args, &mut encoder).expect("Failed to encode attention");
-    let mut output_allocation =
-        alloc_allocation::<B, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
-    encoder.encode_copy(&pooled_output, .., &mut output_allocation, ..);
+    let pooled_output = kernel.encode(args, &mut command_buffer).expect("Failed to encode attention");
+    let mut output_buffer =
+        create_buffer::<B, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
+    command_buffer.encode_copy(&pooled_output, &mut output_buffer);
     drop(pooled_output);
-    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     drop(completed);
 
-    allocation_to_vec::<B, T>(&output_allocation)
+    buffer_to_vec::<B, T>(&output_buffer)
 }
 
 fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = <Metal as Backend>::Context::new().expect("Failed to create Metal context");
     let config = attention_config(input);
-    let queries = alloc_allocation_with_data::<Metal, T>(context.as_ref(), &input.queries);
-    let keys = alloc_allocation_with_data::<Metal, T>(context.as_ref(), &input.keys);
-    let values = alloc_allocation_with_data::<Metal, T>(context.as_ref(), &input.values);
+    let queries = create_buffer_with_data::<Metal, T>(context.as_ref(), &input.queries);
+    let keys = create_buffer_with_data::<Metal, T>(context.as_ref(), &input.keys);
+    let values = create_buffer_with_data::<Metal, T>(context.as_ref(), &input.values);
     let cache = KVCacheView::full((input.sequence_length - input.suffix_length) as u32);
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     let pooled = super::gemm::AttentionGemm::new(&config)
         .encode(
             AttentionArguments {
@@ -129,20 +129,20 @@ fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
                 keys: &keys,
                 values: &values,
                 suffix_length: input.suffix_length as u32,
-                trie: None,
+                trie: None::<&<Metal as Backend>::GlobalBuffer>,
                 sinks: None,
                 cache,
             },
-            &mut encoder,
+            &mut command_buffer,
         )
         .expect("Failed to encode AttentionGemm");
     let mut output =
-        alloc_allocation::<Metal, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
-    encoder.encode_copy(&pooled, .., &mut output, ..);
+        create_buffer::<Metal, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
+    command_buffer.encode_copy(&pooled, &mut output);
     drop(pooled);
-    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     drop(completed);
-    allocation_to_vec::<Metal, T>(&output)
+    buffer_to_vec::<Metal, T>(&output)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(

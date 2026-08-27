@@ -1,132 +1,116 @@
 use std::{
-    ops::Range,
+    fmt::Debug,
+    range::Range,
     sync::{
-        Arc, Weak,
+        Arc,
         atomic::{AtomicUsize, Ordering},
     },
 };
 
-use bytemuck::{AnyBitPattern, NoUninit};
 use parking_lot::Mutex;
 
 use crate::backends::common::{
-    AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, BufferRangeMut, BufferRangeRef, Context, DenseBuffer,
+    Backend, Buffer,
     allocator::{RangeAllocationType, RangeAllocator},
 };
 
-pub struct Allocation<B: Backend> {
-    allocator: Arc<Allocator<B>>,
-    buffer: Arc<B::DenseBuffer>,
+pub trait Storage: Debug + Send + Sync + 'static {
+    type Backend: Backend;
+
+    const MIN_ALLOCATION_ALIGNMENT: usize;
+    const MAX_ALLOCATION_ALIGNMENT: usize;
+    const ALLOCATION_GRANULARITY: usize;
+}
+
+pub struct Allocation<S: Storage> {
+    allocator: Arc<Allocator<S>>,
+    buffer: Arc<S>,
     range: Range<usize>,
     allocation_type: RangeAllocationType,
 }
 
-impl<B: Backend> Allocation<B> {
-    pub fn size(&self) -> usize {
-        self.range.len()
+impl<S: Storage> Allocation<S> {
+    pub(in crate::backends) fn buffer(&self) -> &S {
+        &self.buffer
     }
 
-    pub fn as_slice_mut<T: NoUninit + AnyBitPattern>(&mut self) -> &mut [T] {
-        let buffer_range = self.as_buffer_range_mut();
-        let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
-        let bytes = unsafe {
-            std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len())
-        };
-        bytemuck::cast_slice_mut(bytes)
-    }
-
-    pub fn copyin<T: NoUninit + AnyBitPattern>(
-        &mut self,
-        data: &[T],
-    ) {
-        self.as_slice_mut().copy_from_slice(data);
-    }
-
-    pub fn as_slice<T: AnyBitPattern>(&self) -> &[T] {
-        let buffer_range = self.as_buffer_range_ref();
-        let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
-        let bytes = unsafe {
-            std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
-        };
-        bytemuck::cast_slice(bytes)
-    }
-
-    pub fn copyout<T: AnyBitPattern>(&self) -> Vec<T> {
-        self.as_slice().to_vec()
+    pub(in crate::backends) fn offset(&self) -> usize {
+        self.range.start
     }
 }
 
-impl<B: Backend> AsBufferRangeRef for Allocation<B> {
-    type Buffer = B::DenseBuffer;
-
-    fn as_buffer_range_ref<'a>(&'a self) -> BufferRangeRef<'a, B::DenseBuffer> {
-        BufferRangeRef::new(self.buffer.as_ref(), self.range.clone())
+impl<S: Storage> std::fmt::Debug for Allocation<S> {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        f.debug_struct("Allocation").field("buffer", &self.buffer).field("range", &self.range).finish_non_exhaustive()
     }
 }
 
-impl<B: Backend> AsBufferRangeMut for Allocation<B> {
-    fn as_buffer_range_mut<'a>(&'a mut self) -> BufferRangeMut<'a, B::DenseBuffer> {
-        // SAFETY: allocator algorithm (hopefully if there is no bugs) guarantees no two overlapping live allocations can exist (which is the contract of BufferRangeMut)
-        unsafe { BufferRangeMut::new_shared(self.buffer.as_ref(), self.range.clone()) }
+impl<S: Storage> Buffer for Allocation<S> {
+    type Backend = S::Backend;
+
+    fn size(&self) -> usize {
+        self.range.iter().len()
     }
 }
 
-impl<B: Backend> Drop for Allocation<B> {
+impl<S: Storage> Drop for Allocation<S> {
     fn drop(&mut self) {
         self.allocator.free(self)
     }
 }
 
-pub struct AllocationPool<B: Backend> {
-    reusable: bool,
-    allocator: Arc<Allocator<B>>,
+pub struct AllocationPool<S: Storage> {
+    allocator: Arc<Allocator<S>>,
     pool_number: usize,
 }
 
-impl<B: Backend> Drop for AllocationPool<B> {
+impl<S: Storage> Drop for AllocationPool<S> {
     fn drop(&mut self) {
         self.allocator.free_pool(self)
     }
 }
 
-pub enum AllocationType<'a, B: Backend> {
+pub enum AllocationType<'a, S: Storage> {
     Global,
     Pooled {
-        pool: &'a AllocationPool<B>,
+        pool: &'a AllocationPool<S>,
         cpu_available: bool,
     },
 }
 
-struct AllocatorBuffer<B: Backend> {
-    buffer: Arc<B::DenseBuffer>,
+struct AllocatorBuffer<S: Storage> {
+    buffer: Arc<S>,
     range_allocator: RangeAllocator,
 }
 
-pub struct Allocator<B: Backend> {
-    context: Weak<B::Context>,
-    allocator_buffers: Mutex<Vec<AllocatorBuffer<B>>>,
+pub struct Allocator<S: Storage> {
+    create_storage: Box<dyn Fn(usize) -> Result<S, <S::Backend as Backend>::Error> + Send + Sync>,
+    allocator_buffers: Mutex<Vec<AllocatorBuffer<S>>>,
     next_pool_number: AtomicUsize,
-    peak_memory_usage: AtomicUsize,
 }
 
-impl<B: Backend> Allocator<B> {
-    pub fn new(context: Weak<B::Context>) -> Arc<Self> {
+impl<S: Storage> Allocator<S> {
+    pub(in crate::backends) fn new(
+        create_storage: impl Fn(usize) -> Result<S, <S::Backend as Backend>::Error> + Send + Sync + 'static
+    ) -> Arc<Self> {
         Arc::new(Self {
-            context,
+            create_storage: Box::new(create_storage),
             allocator_buffers: Mutex::new(Vec::new()),
             next_pool_number: AtomicUsize::new(0),
-            peak_memory_usage: AtomicUsize::new(0),
         })
     }
 
-    pub fn allocate(
+    pub(in crate::backends) fn allocate(
         self: &Arc<Self>,
         size: usize,
-        allocation_type: AllocationType<B>,
-    ) -> Result<Allocation<B>, B::Error> {
+        allocation_type: AllocationType<S>,
+    ) -> Result<Allocation<S>, <S::Backend as Backend>::Error> {
         assert!(size > 0, "allocation size must be greater than 0");
         let alignment =
-            usize::clamp(size.next_power_of_two(), B::MIN_ALLOCATION_ALIGNMENT, B::MAX_ALLOCATION_ALIGNMENT);
+            usize::clamp(size.next_power_of_two(), S::MIN_ALLOCATION_ALIGNMENT, S::MAX_ALLOCATION_ALIGNMENT);
         let allocation_type = match allocation_type {
             AllocationType::Global => RangeAllocationType::Global,
             AllocationType::Pooled {
@@ -135,7 +119,6 @@ impl<B: Backend> Allocator<B> {
             } => RangeAllocationType::Pooled {
                 pool: pool.pool_number,
                 can_alias_before: !cpu_available,
-                can_alias_after: !(cpu_available && pool.reusable),
             },
         };
 
@@ -152,11 +135,11 @@ impl<B: Backend> Allocator<B> {
 
             (buffer, range)
         } else {
-            let new_allocator_buffer_size = usize::max(size, B::ALLOCATION_GRANULARITY);
+            let new_allocator_buffer_size = usize::max(size, S::ALLOCATION_GRANULARITY);
 
-            let mut allocator_buffer = AllocatorBuffer::<B> {
-                buffer: Arc::new(self.context.upgrade().unwrap().create_buffer(new_allocator_buffer_size)?), // Upgrade can never fail
-                range_allocator: RangeAllocator::new(0..new_allocator_buffer_size),
+            let mut allocator_buffer = AllocatorBuffer::<S> {
+                buffer: Arc::new((self.create_storage)(new_allocator_buffer_size)?),
+                range_allocator: RangeAllocator::new((0..new_allocator_buffer_size).into()),
             };
 
             let buffer = allocator_buffer.buffer.clone();
@@ -166,11 +149,6 @@ impl<B: Backend> Allocator<B> {
             allocator_buffers.push(allocator_buffer);
             let allocator_buffer_index = allocator_buffers.len() - 1;
             Self::restore_buffer_order(&mut allocator_buffers, allocator_buffer_index);
-
-            self.peak_memory_usage.store(
-                allocator_buffers.iter().map(|allocator_buffer| allocator_buffer.buffer.size()).sum(),
-                Ordering::Relaxed,
-            );
 
             (buffer, range)
         };
@@ -183,28 +161,20 @@ impl<B: Backend> Allocator<B> {
         })
     }
 
-    pub fn create_pool(
-        self: &Arc<Self>,
-        reusable: bool,
-    ) -> AllocationPool<B> {
+    pub(in crate::backends) fn create_pool(self: &Arc<Self>) -> AllocationPool<S> {
         let pool_number = self.next_pool_number.fetch_add(1, Ordering::Relaxed);
 
         AllocationPool {
-            reusable,
             allocator: self.clone(),
             pool_number,
         }
-    }
-
-    pub fn peak_memory_usage(&self) -> usize {
-        self.peak_memory_usage.load(Ordering::Relaxed)
     }
 
     // TODO: Maybe hysteresis in free/free_pool?
 
     fn free(
         self: &Arc<Self>,
-        allocation: &Allocation<B>,
+        allocation: &Allocation<S>,
     ) {
         let mut allocator_buffers = self.allocator_buffers.lock();
 
@@ -215,7 +185,7 @@ impl<B: Backend> Allocator<B> {
 
         allocator_buffers[allocator_buffer_index]
             .range_allocator
-            .free_range(allocation.range.clone(), allocation.allocation_type);
+            .free_range(allocation.range, allocation.allocation_type);
 
         if allocator_buffers[allocator_buffer_index].range_allocator.is_empty() {
             allocator_buffers.remove(allocator_buffer_index);
@@ -226,7 +196,7 @@ impl<B: Backend> Allocator<B> {
 
     fn free_pool(
         self: &Arc<Self>,
-        pool: &AllocationPool<B>,
+        pool: &AllocationPool<S>,
     ) {
         let mut allocator_buffers = self.allocator_buffers.lock();
 
@@ -241,7 +211,7 @@ impl<B: Backend> Allocator<B> {
     }
 
     fn restore_buffer_order(
-        allocator_buffers: &mut [AllocatorBuffer<B>],
+        allocator_buffers: &mut [AllocatorBuffer<S>],
         mut index: usize,
     ) {
         while index > 0
@@ -261,7 +231,3 @@ impl<B: Backend> Allocator<B> {
         }
     }
 }
-
-#[cfg(all(test, backend = "metal"))]
-#[path = "../../../../unit/backends/common/allocator/allocator.rs"]
-mod tests;

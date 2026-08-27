@@ -3,13 +3,16 @@ use metal::MTLGPUFamily;
 use crate::{
     backends::{
         common::{
-            Allocation, Encoder, Kernels,
+            Backend, CommandBufferEncoding, Kernels,
             kernel::{
                 BuildTreeGramKernel, BuildTreeOutKernel, BuildTreePrefixKernel, TreeUpdateSolveKernel,
                 delta_net_tree_verify::DeltaNetTreeVerify,
             },
         },
-        metal::{Metal, MetalContext, context::LARGE_MIN_GPU_CORES, error::MetalError, kernel::MetalKernels},
+        metal::{
+            Metal, MetalContext, command_buffer::MetalCommandBufferEncoding, context::LARGE_MIN_GPU_CORES,
+            error::MetalError, kernel::MetalKernels,
+        },
     },
     data_type::DataType,
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
@@ -93,23 +96,23 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
     fn encode(
         &self,
         arguments: TreeVerifyEncodeArguments<'_, Metal>,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<Allocation<Metal>, MetalError> {
+        command_buffer: &mut MetalCommandBufferEncoding,
+    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let layout = Layout::new(arguments.tree_size, &self.arguments);
-        let mut h0_indices = encoder.allocate_constant(DataType::I32.size_in_bytes())?;
-        h0_indices.copyin(&[0i32]);
+        let mut h0_indices = command_buffer.allocate_scratch(DataType::I32.size_in_bytes())?;
+        command_buffer.encode_fill(&mut h0_indices, 0);
 
         let mut prefix =
-            encoder.allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads], INNER_DATA_TYPE)?;
-        let mut a_packed = encoder.allocate_scratch_for_shape(&layout.a_packed_shape(), INNER_DATA_TYPE)?;
-        let mut qkd = encoder
+            command_buffer.allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads], INNER_DATA_TYPE)?;
+        let mut a_packed = command_buffer.allocate_scratch_for_shape(&layout.a_packed_shape(), INNER_DATA_TYPE)?;
+        let mut qkd = command_buffer
             .allocate_scratch_for_shape(&[layout.num_v_heads, layout.tree_size, layout.tree_size], INNER_DATA_TYPE)?;
-        let mut a_inverse = encoder.allocate_scratch_for_shape(&layout.a_inverse_shape(), INNER_DATA_TYPE)?;
-        let mut kh0 = encoder
+        let mut a_inverse = command_buffer.allocate_scratch_for_shape(&layout.a_inverse_shape(), INNER_DATA_TYPE)?;
+        let mut kh0 = command_buffer
             .allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads, layout.head_v_dim], INNER_DATA_TYPE)?;
-        let mut u = encoder
+        let mut u = command_buffer
             .allocate_scratch_for_shape(&[layout.num_v_heads, layout.tree_size, layout.head_v_dim], INNER_DATA_TYPE)?;
-        let mut output = encoder.allocate_scratch_for_shape(
+        let mut output = command_buffer.allocate_scratch_for_shape(
             &[layout.tree_size, layout.num_v_heads, layout.head_v_dim],
             self.arguments.data_type,
         )?;
@@ -121,7 +124,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             1,
             arguments.tree_size,
             self.arguments.num_v_heads,
-            encoder,
+            command_buffer,
         );
         self.gram.encode(
             arguments.q,
@@ -142,7 +145,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             self.arguments.num_v_heads,
             self.arguments.head_k_dim,
             self.arguments.head_v_dim,
-            encoder,
+            command_buffer,
         );
         self.solve.encode(
             Some(&kh0),
@@ -157,7 +160,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             arguments.tree_size,
             self.arguments.num_v_heads,
             self.arguments.head_v_dim,
-            encoder,
+            command_buffer,
         );
         self.out.encode(
             arguments.q,
@@ -174,7 +177,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             self.arguments.num_v_heads,
             self.arguments.head_k_dim,
             self.arguments.head_v_dim,
-            encoder,
+            command_buffer,
         );
         Ok(output)
     }

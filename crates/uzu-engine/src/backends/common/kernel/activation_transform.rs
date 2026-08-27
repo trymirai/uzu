@@ -1,6 +1,6 @@
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::{ActivationTransformKernel, matmul::Int8CodeLayout},
     },
@@ -129,61 +129,61 @@ impl<B: Backend> ActivationTransform<B> {
     /// `input` and `output` must be distinct buffers.
     pub fn encode_fp(
         &self,
-        input: &Allocation<B>,
-        output: &mut Allocation<B>,
-        rht_factors: &Allocation<B>,
+        input: impl BufferRef<Backend = B>,
+        output: impl BufferMut<Backend = B>,
+        rht_factors: impl BufferRef<Backend = B>,
         batch_size: u32,
         element_count: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         assert!(self.quantization.is_none() && !self.in_place);
         assert_row_width(element_count);
         self.kernel.encode(
             Some(input),
             Some(output),
-            None::<&mut Allocation<B>>,
-            None::<&mut Allocation<B>>,
-            None::<&mut Allocation<B>>,
+            None::<&mut B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
             rht_factors,
             batch_size,
             element_count,
-            encoder,
+            command_buffer,
         );
     }
 
     pub fn encode_fp_in_place(
         &self,
-        data: &mut Allocation<B>,
-        rht_factors: &Allocation<B>,
+        data: impl BufferMut<Backend = B>,
+        rht_factors: impl BufferRef<Backend = B>,
         batch_size: u32,
         element_count: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         assert!(self.quantization.is_none() && self.in_place);
         assert_row_width(element_count);
         self.kernel.encode(
-            None::<&Allocation<B>>,
+            None::<&B::ScratchBuffer>,
             Some(data),
-            None::<&mut Allocation<B>>,
-            None::<&mut Allocation<B>>,
-            None::<&mut Allocation<B>>,
+            None::<&mut B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
             rht_factors,
             batch_size,
             element_count,
-            encoder,
+            command_buffer,
         );
     }
 
     pub fn encode_quantize(
         &self,
-        input: &Allocation<B>,
-        q_out: &mut Allocation<B>,
-        scales_out: &mut Allocation<B>,
-        group_sums_out: Option<&mut Allocation<B>>,
-        rht_factors: &Allocation<B>,
+        input: impl BufferRef<Backend = B>,
+        q_out: impl BufferMut<Backend = B>,
+        scales_out: impl BufferMut<Backend = B>,
+        group_sums_out: Option<impl BufferMut<Backend = B>>,
+        rht_factors: impl BufferRef<Backend = B>,
         batch_size: u32,
         element_count: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         let quantization = self.quantization.expect("quantized activation transform required");
         assert_row_width(element_count);
@@ -197,14 +197,14 @@ impl<B: Backend> ActivationTransform<B> {
         }
         self.kernel.encode(
             Some(input),
-            None::<&mut Allocation<B>>,
+            None::<&mut B::ScratchBuffer>,
             Some(q_out),
             Some(scales_out),
             group_sums_out,
             rht_factors,
             batch_size,
             element_count,
-            encoder,
+            command_buffer,
         );
     }
 }

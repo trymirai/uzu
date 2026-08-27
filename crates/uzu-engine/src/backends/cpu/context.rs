@@ -1,17 +1,21 @@
 use std::{
     path::Path,
-    sync::{Arc, mpsc},
+    sync::{Arc, Weak, mpsc},
     thread,
 };
 
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
-    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, dense_buffer::CpuBuffer, error::CpuError},
+    common::{
+        Backend, Context, DeviceCapabilities,
+        allocator::{AllocationType, Allocator},
+    },
+    cpu::{Cpu, buffer::dense::CpuBuffer, command_buffer::CpuCommandBufferEncoding, error::CpuError},
 };
 
 pub struct CpuContext {
-    allocator: Arc<Allocator<Cpu>>,
-    command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>,
+    pub(super) allocator: Arc<Allocator<CpuBuffer>>,
+    pub(super) command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>,
+    weak_self: Weak<CpuContext>,
 }
 
 impl Context for CpuContext {
@@ -27,8 +31,9 @@ impl Context for CpuContext {
         });
 
         Ok(Arc::new_cyclic(|weak_self| CpuContext {
-            allocator: Allocator::new(weak_self.clone()),
+            allocator: Allocator::new(|size| Ok(CpuBuffer::new(size))),
             command_queue: command_queue_sender,
+            weak_self: weak_self.clone(),
         }))
     }
 
@@ -36,33 +41,22 @@ impl Context for CpuContext {
         None
     }
 
-    fn create_buffer(
-        &self,
-        size: usize,
-    ) -> Result<CpuBuffer, CpuError> {
-        Ok(CpuBuffer::new(size))
-    }
-
-    fn create_allocation(
-        &self,
-        size: usize,
-        allocation_type: AllocationType<Cpu>,
-    ) -> Result<Allocation<Cpu>, CpuError> {
-        self.allocator.allocate(size, allocation_type)
-    }
-
-    fn create_allocation_pool(
-        &self,
-        reusable: bool,
-    ) -> AllocationPool<Cpu> {
-        self.allocator.create_pool(reusable)
-    }
-
     fn create_command_buffer(
         &self,
         _name: Option<&str>,
-    ) -> Result<CpuCommandBufferInitial, CpuError> {
-        Ok(CpuCommandBufferInitial::new(self.command_queue.clone()))
+        allocation_pool: Option<Arc<<Cpu as Backend>::AllocationPool>>,
+    ) -> Result<CpuCommandBufferEncoding, CpuError> {
+        Ok(CpuCommandBufferEncoding::new(
+            self.weak_self.upgrade().unwrap(),
+            allocation_pool.unwrap_or_else(|| self.create_allocation_pool()),
+        ))
+    }
+
+    fn create_buffer(
+        &self,
+        size: usize,
+    ) -> Result<<Cpu as Backend>::GlobalBuffer, CpuError> {
+        self.allocator.allocate(size, AllocationType::Global)
     }
 
     fn create_sparse_buffer(
@@ -70,6 +64,10 @@ impl Context for CpuContext {
         _capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
         Err(CpuError::NotSupported)
+    }
+
+    fn create_allocation_pool(&self) -> Arc<<Cpu as Backend>::AllocationPool> {
+        Arc::new(self.allocator.create_pool())
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {

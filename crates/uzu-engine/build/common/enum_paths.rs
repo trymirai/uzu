@@ -14,7 +14,6 @@ pub enum GpuTypeKind {
 #[derive(Clone)]
 struct GpuTypeEntry {
     path: GpuTypePath,
-    #[allow(dead_code)]
     kind: GpuTypeKind,
 }
 

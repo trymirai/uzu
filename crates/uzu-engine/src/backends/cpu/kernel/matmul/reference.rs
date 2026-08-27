@@ -3,10 +3,10 @@ use half::{bf16, f16};
 use crate::{
     backends::{
         common::{
-            AsBufferRangeRef, BufferArg,
+            BufferCpuAccessible, BufferRef,
             kernel::matmul::{MatmulB, MatmulError, QuantParamsStrides},
         },
-        cpu::Cpu,
+        cpu::{Cpu, buffer::CpuBufferExt},
     },
     data_type::DataType,
     utils::pointers::SendPtr,
@@ -31,17 +31,17 @@ pub(super) enum WeightData {
 }
 
 impl WeightData {
-    pub(super) fn from_b<'a, TB: BufferArg<'a, Cpu>>(
-        b: MatmulB<'a, Cpu, TB>,
+    pub(super) fn from_b(
+        b: MatmulB<impl BufferRef<Backend = Cpu>>,
         b_leading_dimension: Option<u32>,
         b_transpose: bool,
         k: usize,
         n: usize,
     ) -> Result<Self, MatmulError<Cpu>> {
-        let alloc_ptr = |a: &crate::backends::common::Allocation<Cpu>| {
-            let r = a.as_buffer_range_ref();
-            SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
-        };
+        fn buffer_ptr(view: impl BufferRef<Backend = Cpu>) -> SendPtr<u8> {
+            let (buffer, range) = view.parts();
+            SendPtr(buffer.downcast().cpu_ptr().as_ptr().cast::<u8>().cast_const().wrapping_byte_add(range.start))
+        }
         match b {
             MatmulB::FullPrecision {
                 b: weights,
@@ -51,18 +51,17 @@ impl WeightData {
                 } else {
                     n
                 });
-                let (buffer, byte_off, _) = weights.into_parts();
                 Ok(WeightData::FullPrecision {
-                    ptr: SendPtr(unsafe { &*buffer.downcast().get() }.as_ptr().wrapping_byte_add(byte_off)),
+                    ptr: buffer_ptr(weights),
                     leading_dimension,
                     transpose: b_transpose,
                 })
             },
             MatmulB::Quantized(quantized) => Ok(WeightData::Quantized {
-                weights: alloc_ptr(quantized.codes),
-                scales: alloc_ptr(quantized.scales),
-                zero_points: quantized.zero_points().map(|values| (alloc_ptr(values), quantized.zero_point_strides())),
-                biases: quantized.biases().map(alloc_ptr),
+                weights: buffer_ptr(quantized.codes),
+                scales: buffer_ptr(quantized.scales),
+                zero_points: quantized.zero_points().map(|values| (buffer_ptr(values), quantized.zero_point_strides())),
+                biases: quantized.biases().map(buffer_ptr),
                 scale_strides: quantized.params.scale_strides(),
                 bits: quantized.bits() as usize,
                 group_size: quantized.group_size as usize,

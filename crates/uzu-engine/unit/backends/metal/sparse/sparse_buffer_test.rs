@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::range::Range;
 
 use uzu_engine_macros::uzu_test;
 
@@ -25,7 +25,7 @@ fn pages_for_heaps(
     heap_count: usize,
 ) -> Range<usize> {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
-    (heap_offset * pages_per_heap)..((heap_offset + heap_count) * pages_per_heap)
+    ((heap_offset * pages_per_heap)..((heap_offset + heap_count) * pages_per_heap)).into()
 }
 
 #[uzu_test]
@@ -35,7 +35,7 @@ fn test_mapping_succeeds() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, 4);
 
     let mut sparse_buffer = sparse_buffer_create::<Metal>(&ctx, capacity);
-    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), pages).expect("Failed to map sparse buffer");
 }
 
 #[uzu_test]
@@ -45,8 +45,8 @@ fn test_unmapping_succeeds() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, 4);
 
     let mut sparse_buffer = sparse_buffer_create::<Metal>(&ctx, capacity);
-    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
-    sparse_buffer.unmap(ctx.as_ref(), &pages).expect("Failed to unmap sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), pages).expect("Failed to map sparse buffer");
+    sparse_buffer.unmap(ctx.as_ref(), pages).expect("Failed to unmap sparse buffer");
 }
 
 #[uzu_test]
@@ -57,8 +57,8 @@ fn test_partial_unmapping_succeeds() {
     let unmapped = pages_for_heaps(ctx.as_ref(), 1, 2);
 
     let mut sparse_buffer = sparse_buffer_create::<Metal>(&ctx, capacity);
-    sparse_buffer.map(ctx.as_ref(), &mapped).expect("Failed to map sparse buffer");
-    sparse_buffer.unmap(ctx.as_ref(), &unmapped).expect("Failed to unmap sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), mapped).expect("Failed to map sparse buffer");
+    sparse_buffer.unmap(ctx.as_ref(), unmapped).expect("Failed to unmap sparse buffer");
 }
 
 #[uzu_test]
@@ -69,10 +69,10 @@ fn test_mapping_uses_minimum_heaps() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, heap_count);
 
     let mut sparse_buffer = sparse_buffer_create::<Metal>(&ctx, capacity);
-    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), pages).expect("Failed to map sparse buffer");
 
     let heaps = ctx.sparse_heap_pool();
-    let expected = pages.len().div_ceil(heaps.heap_capacity_pages());
+    let expected = pages.iter().len().div_ceil(heaps.heap_capacity_pages());
     assert_eq!(heaps.heaps_count(), expected, "mapping should allocate the minimum number of heaps");
 }
 
@@ -85,11 +85,11 @@ fn test_remapping_reuses_freed_pages() {
     let extra_pages = pages_for_heaps(ctx.as_ref(), 4, 1);
 
     let mut sparse_buffer = sparse_buffer_create::<Metal>(&ctx, capacity);
-    sparse_buffer.map(ctx.as_ref(), &initial_pages).expect("Failed to map sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), initial_pages).expect("Failed to map sparse buffer");
     let initial_heaps = ctx.sparse_heap_pool().heaps_count();
 
-    sparse_buffer.unmap(ctx.as_ref(), &unmapped_pages).expect("Failed to unmap sparse buffer");
-    sparse_buffer.map(ctx.as_ref(), &extra_pages).expect("Failed to remap sparse buffer");
+    sparse_buffer.unmap(ctx.as_ref(), unmapped_pages).expect("Failed to unmap sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), extra_pages).expect("Failed to remap sparse buffer");
 
     assert_eq!(
         ctx.sparse_heap_pool().heaps_count(),
@@ -105,11 +105,11 @@ fn test_full_unmap_then_remap_reuses_heaps() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, 4);
 
     let mut sparse_buffer = sparse_buffer_create::<Metal>(&ctx, capacity);
-    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), pages).expect("Failed to map sparse buffer");
     let initial_heaps = ctx.sparse_heap_pool().heaps_count();
 
-    sparse_buffer.unmap(ctx.as_ref(), &pages).expect("Failed to unmap sparse buffer");
-    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to remap sparse buffer");
+    sparse_buffer.unmap(ctx.as_ref(), pages).expect("Failed to unmap sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), pages).expect("Failed to remap sparse buffer");
 
     assert_eq!(
         ctx.sparse_heap_pool().heaps_count(),
@@ -125,10 +125,10 @@ fn test_remapping_same_pages_is_noop() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, 4);
 
     let mut sparse_buffer = sparse_buffer_create::<Metal>(&ctx, capacity);
-    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), pages).expect("Failed to map sparse buffer");
     let initial_heaps = ctx.sparse_heap_pool().heaps_count();
 
-    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to remap sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), pages).expect("Failed to remap sparse buffer");
 
     assert_eq!(
         ctx.sparse_heap_pool().heaps_count(),
@@ -144,8 +144,8 @@ fn test_mapping_multiple_gaps_reserves_pages_between_gaps() {
     let capacity = buffer_capacity(ctx.as_ref(), 2);
 
     let mut sparse_buffer = sparse_buffer_create::<Metal>(&ctx, capacity);
-    sparse_buffer.map(ctx.as_ref(), &(1..2)).expect("Failed to map initial page");
-    sparse_buffer.map(ctx.as_ref(), &(0..pages_per_heap + 1)).expect("Failed to map range with multiple gaps");
+    sparse_buffer.map(ctx.as_ref(), 1..2).expect("Failed to map initial page");
+    sparse_buffer.map(ctx.as_ref(), 0..pages_per_heap + 1).expect("Failed to map range with multiple gaps");
 
     assert_eq!(
         ctx.sparse_heap_pool().heaps_count(),
@@ -164,7 +164,7 @@ fn test_drop_releases_pool_heaps() {
 
     {
         let mut sparse_buffer = sparse_buffer_create::<Metal>(&ctx, capacity);
-        sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+        sparse_buffer.map(ctx.as_ref(), pages).expect("Failed to map sparse buffer");
         assert!(ctx.sparse_heap_pool().heaps_count() > 0);
     }
 
@@ -184,12 +184,12 @@ fn test_drop_does_not_disturb_other_buffer_mappings() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, 1);
 
     let mut keeper = sparse_buffer_create::<Metal>(&ctx, capacity);
-    keeper.map(ctx.as_ref(), &pages).expect("Failed to map keeper buffer");
+    keeper.map(ctx.as_ref(), pages).expect("Failed to map keeper buffer");
     let baseline = ctx.sparse_heap_pool().heaps_count();
 
     {
         let mut transient = sparse_buffer_create::<Metal>(&ctx, capacity);
-        transient.map(ctx.as_ref(), &pages).expect("Failed to map transient buffer");
+        transient.map(ctx.as_ref(), pages).expect("Failed to map transient buffer");
     }
 
     let current_heaps = ctx.sparse_heap_pool().heaps_count();
@@ -204,11 +204,11 @@ fn test_sequential_mappings_are_compact() {
     let second = pages_for_heaps(ctx.as_ref(), 2, 2);
 
     let mut sparse_buffer = sparse_buffer_create::<Metal>(&ctx, capacity);
-    sparse_buffer.map(ctx.as_ref(), &first).expect("Failed to map first range");
-    sparse_buffer.map(ctx.as_ref(), &second).expect("Failed to map second range");
+    sparse_buffer.map(ctx.as_ref(), first).expect("Failed to map first range");
+    sparse_buffer.map(ctx.as_ref(), second).expect("Failed to map second range");
 
     let heaps = ctx.sparse_heap_pool();
-    let total_pages = first.len() + second.len();
+    let total_pages = first.iter().len() + second.iter().len();
     let expected = total_pages.div_ceil(heaps.heap_capacity_pages());
     assert_eq!(
         heaps.heaps_count(),

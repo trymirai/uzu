@@ -1,6 +1,6 @@
 use crate::{
     backends::common::{
-        Backend, BufferArg, Encoder, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         kernel::{
             ActivationQuantization,
             matmul::{
@@ -22,10 +22,17 @@ pub trait MatmulKernel: Sized + Send + Sync {
         output_data_type: DataType,
     ) -> Result<Self, <Self::Backend as Backend>::Error>;
 
-    fn encode<'a, 'b, 'd, TB: BufferArg<'b, Self::Backend>>(
+    fn encode(
         &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Self::Backend, TB>,
-        encoder: &mut Encoder<Self::Backend>,
+        arguments: MatmulArguments<
+            '_,
+            Self::Backend,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferMut<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+        >,
+        command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 
     fn select_activation_quantization(

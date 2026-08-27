@@ -1,3 +1,5 @@
+use crate::backends::common::Backend;
+
 pub mod ancestor_attention;
 pub mod attention_prepare;
 pub mod attention_single_pass;
@@ -9,10 +11,10 @@ mod mask;
 
 use crate::backends::{
     common::{
-        Allocation, BufferArg, Encoder,
+        BufferRef, CommandBufferEncoding,
         kernel::{AttentionArguments, AttentionKernel, AttentionKernelConfig, AttentionSinglePassKernel},
     },
-    cpu::{Cpu, context::CpuContext, error::CpuError},
+    cpu::{Cpu, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError},
 };
 
 pub struct AttentionCpuKernel {
@@ -31,23 +33,26 @@ impl AttentionKernel for AttentionCpuKernel {
         })
     }
 
-    fn encode<'a, KT, VT>(
+    fn encode(
         &self,
-        arguments: AttentionArguments<'a, Cpu, KT, VT>,
-        encoder: &mut Encoder<Cpu>,
-    ) -> Result<Allocation<Cpu>, CpuError>
-    where
-        KT: BufferArg<'a, Cpu>,
-        VT: BufferArg<'a, Cpu>,
-    {
+        arguments: AttentionArguments<
+            '_,
+            Cpu,
+            impl BufferRef<Backend = Cpu>,
+            impl BufferRef<Backend = Cpu>,
+            impl BufferRef<Backend = Cpu>,
+            impl BufferRef<Backend = Cpu>,
+        >,
+        command_buffer: &mut CpuCommandBufferEncoding,
+    ) -> Result<<Cpu as Backend>::ScratchBuffer, CpuError> {
         let config = self.config;
-        let mut output = encoder.allocate_constant_for_shape(
+        let mut output = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, config.head_dim],
             config.data_type,
         )?;
 
         let single_pass = <attention_single_pass::AttentionSinglePassCpuKernel as AttentionSinglePassKernel>::new(
-            encoder.context(),
+            command_buffer.context(),
             config.data_type,
             config.head_dim,
             config.has_sinks,
@@ -56,7 +61,7 @@ impl AttentionKernel for AttentionCpuKernel {
             arguments.trie.is_some(),
             config.sliding_window_size.is_some(),
         )?;
-        encoder.push_debug_group("attention core");
+        command_buffer.push_debug_group("attention core");
         single_pass.encode(
             arguments.queries,
             arguments.keys,
@@ -75,9 +80,9 @@ impl AttentionKernel for AttentionCpuKernel {
             arguments.sinks,
             config.num_q_heads,
             arguments.suffix_length,
-            encoder,
+            command_buffer,
         );
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
         Ok(output)
     }
 }
