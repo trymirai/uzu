@@ -1,13 +1,12 @@
 use std::{
-    iter::{chain, once},
-    sync::{Arc, LazyLock},
+    sync::{Arc, mpsc},
     time::Duration,
 };
 
-use itertools::Itertools;
 use metal::{
-    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferStatus,
-    MTLCommandEncoder, MTLCommandEncoderExt, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandEncoder, MTL4CommandEncoderExt, MTL4CommandQueueExt,
+    MTL4CommitFeedback, MTL4CommitFeedbackExt, MTL4CommitFeedbackHandler, MTL4CommitOptions, MTL4ComputeCommandEncoder,
+    MTL4ComputeCommandEncoderExt, MTL4VisibilityOptions, MTLStages,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -18,8 +17,6 @@ use crate::backends::{
     },
     metal::{Metal, MetalContext, error::MetalError},
 };
-
-static DEBUG_ENCODER_LABELS: LazyLock<bool> = LazyLock::new(|| std::env::var("UZU_METAL_DEBUG_ENCODER_LABELS").is_ok());
 
 pub struct MetalCommandBuffer;
 
@@ -34,16 +31,19 @@ impl CommandBuffer for MetalCommandBuffer {
 }
 
 pub struct MetalCommandBufferInitial {
-    command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
+    command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
     context: Arc<MetalContext>,
 }
 
 impl MetalCommandBufferInitial {
     pub fn new(
-        command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
+        command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
         context: Arc<MetalContext>,
     ) -> Self {
         Self {
+            command_allocator,
             command_buffer,
             context,
         }
@@ -54,104 +54,45 @@ impl CommandBufferInitial for MetalCommandBufferInitial {
     type CommandBuffer = MetalCommandBuffer;
 
     fn start_encoding(self) -> MetalCommandBufferEncoding {
+        self.command_buffer.begin_command_buffer_with_allocator(&self.command_allocator);
+
+        let compute_encoder = self.command_buffer.compute_command_encoder().unwrap();
+
+        compute_encoder.barrier_after_queue_stages_before_stages_visibility_options(
+            MTLStages::Dispatch | MTLStages::Blit | MTLStages::ResourceState,
+            MTLStages::Dispatch | MTLStages::Blit,
+            MTL4VisibilityOptions::Device,
+        );
+
         MetalCommandBufferEncoding {
+            command_allocator: self.command_allocator,
             command_buffer: self.command_buffer,
-            encoding_state: MetalCommandBufferEncodingEncodingState::None,
-            debug_group_stack: vec![],
+            compute_encoder,
             context: self.context,
         }
     }
 }
 
-enum MetalCommandBufferEncodingEncodingState {
-    None,
-    Compute(Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>),
-    Blit(Retained<ProtocolObject<dyn MTLBlitCommandEncoder>>),
-}
-
 pub struct MetalCommandBufferEncoding {
-    command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-    encoding_state: MetalCommandBufferEncodingEncodingState,
-    debug_group_stack: Vec<String>,
-    context: Arc<MetalContext>,
+    command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
+    command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
+    pub(super) compute_encoder: Retained<ProtocolObject<dyn MTL4ComputeCommandEncoder>>,
+    pub(super) context: Arc<MetalContext>,
 }
 
-impl MetalCommandBufferEncoding {
-    fn ensure_none(&mut self) {
-        let encoder: &ProtocolObject<dyn MTLCommandEncoder> = match &self.encoding_state {
-            MetalCommandBufferEncodingEncodingState::None => return,
-            MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) => compute_encoder.as_ref(),
-            MetalCommandBufferEncodingEncodingState::Blit(blit_encoder) => blit_encoder.as_ref(),
-        };
+impl From<AccessFlags> for MTLStages {
+    fn from(val: AccessFlags) -> Self {
+        let mut render_stages = MTLStages::empty();
 
-        for _ in &self.debug_group_stack {
-            encoder.pop_debug_group();
+        if val.compute_read || val.compute_write {
+            render_stages |= MTLStages::Dispatch;
         }
 
-        encoder.end_encoding();
-
-        self.encoding_state = MetalCommandBufferEncodingEncodingState::None;
-    }
-
-    pub(super) fn ensure_compute(&mut self) -> &mut Retained<ProtocolObject<dyn MTLComputeCommandEncoder>> {
-        if !matches!(self.encoding_state, MetalCommandBufferEncodingEncodingState::Compute(_)) {
-            self.ensure_none();
-            let compute_encoder =
-                self.command_buffer.compute_command_encoder().expect("Failed to create compute command encoder");
-            self.ensure_common(compute_encoder.as_ref());
-            self.encoding_state = MetalCommandBufferEncodingEncodingState::Compute(compute_encoder);
+        if val.copy_read || val.copy_write {
+            render_stages |= MTLStages::Blit;
         }
 
-        let MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) = &mut self.encoding_state else {
-            unreachable!()
-        };
-        compute_encoder
-    }
-
-    fn ensure_blit(&mut self) -> &mut Retained<ProtocolObject<dyn MTLBlitCommandEncoder>> {
-        if !matches!(self.encoding_state, MetalCommandBufferEncodingEncodingState::Blit(_)) {
-            self.ensure_none();
-            let blit_encoder =
-                self.command_buffer.blit_command_encoder().expect("Failed to create blit command encoder");
-            self.ensure_common(blit_encoder.as_ref());
-            self.encoding_state = MetalCommandBufferEncodingEncodingState::Blit(blit_encoder);
-        }
-
-        let MetalCommandBufferEncodingEncodingState::Blit(blit_encoder) = &mut self.encoding_state else {
-            unreachable!()
-        };
-        blit_encoder
-    }
-
-    fn ensure_common(
-        &self,
-        encoder: &ProtocolObject<dyn MTLCommandEncoder>,
-    ) {
-        let command_buffer_label = self.command_buffer.label();
-        let label = if *DEBUG_ENCODER_LABELS && (command_buffer_label.is_some() || !self.debug_group_stack.is_empty()) {
-            Some(
-                chain(
-                    once(command_buffer_label.as_deref()),
-                    self.debug_group_stack.iter().map(|label| Some(label.as_str())),
-                )
-                .flatten()
-                .join("."),
-            )
-        } else {
-            command_buffer_label
-        };
-        if label.is_some() {
-            encoder.set_label(label.as_deref());
-        }
-        for debug_group in &self.debug_group_stack {
-            encoder.push_debug_group(debug_group);
-        }
-    }
-}
-
-impl Drop for MetalCommandBufferEncoding {
-    fn drop(&mut self) {
-        self.ensure_none();
+        render_stages
     }
 }
 
@@ -167,7 +108,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         let dst_range = dst.range();
         assert_eq!(src_range.len(), dst_range.len());
 
-        self.ensure_blit().copy_buffer_to_buffer(
+        self.compute_encoder.copy_from_buffer_source_offset_to_buffer_destination_offset_size(
             (src.buffer() as &dyn Buffer<Backend = Metal>).downcast(),
             src_range.start,
             (dst.buffer() as &dyn Buffer<Backend = Metal>).downcast(),
@@ -185,7 +126,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         assert!(range.end > range.start);
         assert!(range.start.is_multiple_of(4) && range.end.is_multiple_of(4));
 
-        self.ensure_blit().fill_buffer_range_value(
+        self.compute_encoder.fill_buffer_range_value(
             (dst.buffer() as &dyn Buffer<Backend = Metal>).downcast(),
             range,
             value,
@@ -194,60 +135,53 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn encode_barrier(
         &mut self,
-        _after: AccessFlags,
-        _before: AccessFlags,
+        after: AccessFlags,
+        before: AccessFlags,
     ) {
+        self.compute_encoder.barrier_after_encoder_stages_before_encoder_stages_visibility_options(
+            after.into(),
+            before.into(),
+            MTL4VisibilityOptions::Device,
+        );
     }
 
+    // TODO: maybe port previous debug encoder labels
     fn push_debug_group(
         &mut self,
         name: &str,
     ) {
-        if *DEBUG_ENCODER_LABELS {
-            self.ensure_none();
-        }
-
-        self.debug_group_stack.push(name.to_string());
-
-        match &self.encoding_state {
-            MetalCommandBufferEncodingEncodingState::None => (),
-            MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) => compute_encoder.push_debug_group(name),
-            MetalCommandBufferEncodingEncodingState::Blit(blit_encoder) => {
-                let encoder: &ProtocolObject<dyn MTLCommandEncoder> = blit_encoder.as_ref();
-                encoder.push_debug_group(name);
-            },
-        }
+        let command_encoder: &ProtocolObject<dyn MTL4CommandEncoder> = self.compute_encoder.as_ref();
+        command_encoder.push_debug_group(name);
     }
 
     fn pop_debug_group(&mut self) {
-        if *DEBUG_ENCODER_LABELS {
-            self.ensure_none();
-        }
-
-        self.debug_group_stack.pop().expect("debug group stack underflow");
-
-        match &self.encoding_state {
-            MetalCommandBufferEncodingEncodingState::None => (),
-            MetalCommandBufferEncodingEncodingState::Compute(compute_encoder) => compute_encoder.pop_debug_group(),
-            MetalCommandBufferEncodingEncodingState::Blit(blit_encoder) => {
-                let encoder: &ProtocolObject<dyn MTLCommandEncoder> = blit_encoder.as_ref();
-                encoder.pop_debug_group();
-            },
-        }
+        self.compute_encoder.pop_debug_group();
     }
 
-    fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
-        self.ensure_none();
-
+    fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
         MetalCommandBufferExecutable {
+            command_allocator: self.command_allocator.clone(),
             command_buffer: self.command_buffer.clone(),
             context: self.context.clone(),
         }
     }
 }
 
+impl Drop for MetalCommandBufferEncoding {
+    fn drop(&mut self) {
+        self.compute_encoder.barrier_after_stages_before_queue_stages_visibility_options(
+            MTLStages::Dispatch | MTLStages::Blit,
+            MTLStages::Dispatch | MTLStages::Blit | MTLStages::ResourceState,
+            MTL4VisibilityOptions::Device,
+        );
+        self.compute_encoder.end_encoding();
+        self.command_buffer.end_command_buffer();
+    }
+}
+
 pub struct MetalCommandBufferExecutable {
-    command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
+    command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
     context: Arc<MetalContext>,
 }
 
@@ -255,66 +189,57 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
     type CommandBuffer = MetalCommandBuffer;
 
     fn submit(self) -> MetalCommandBufferPending {
-        let cmd_queue = self.command_buffer.command_queue();
-        let wait_value = self.context.timeline_get_and_increment();
+        let (sender, receiver) = mpsc::channel();
 
-        {
-            let cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
-            cmd_buffer.set_label(Some("sync (wait)"));
-            cmd_buffer.encode_wait_for_event_value(self.context.timeline_event(), wait_value);
-            cmd_buffer.commit();
-        }
+        let feedback_handler = move |feedback: &ProtocolObject<dyn MTL4CommitFeedback>| {
+            let message = if let Some(error) = feedback.error() {
+                Err(error.to_string())
+            } else {
+                Ok(Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()))
+            };
+            let _ = sender.send(message);
+        };
 
-        self.command_buffer.commit();
-
-        {
-            let cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
-            cmd_buffer.set_label(Some("sync (signal)"));
-            cmd_buffer.encode_signal_event_value(self.context.timeline_event(), wait_value + 1);
-            cmd_buffer.commit();
-        }
+        let options = MTL4CommitOptions::new();
+        options.add_feedback_handler(&MTL4CommitFeedbackHandler::new(feedback_handler));
+        self.context.command_queue.commit_with_options(&[&self.command_buffer], &options);
 
         MetalCommandBufferPending {
-            command_buffer: self.command_buffer,
+            _command_allocator: self.command_allocator,
+            _command_buffer: self.command_buffer,
+            receiver,
         }
     }
 }
 
 pub struct MetalCommandBufferPending {
-    command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    _command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
+    _command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
+    receiver: mpsc::Receiver<Result<Duration, String>>,
 }
 
 impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
 
     fn wait_until_completed(self) -> Result<MetalCommandBufferCompleted, MetalError> {
-        self.command_buffer.wait_until_completed();
-
-        match (self.command_buffer.status(), self.command_buffer.error()) {
-            (MTLCommandBufferStatus::Completed, None) => (),
-            (status, Some(nserror)) => {
-                return Err(MetalError::CommandBufferExecutionFailed(format!("{status:?}: {nserror:?}")));
-            },
-            (status, None) => return Err(MetalError::CommandBufferExecutionFailed(format!("{status:?}"))),
-        }
-
         Ok(MetalCommandBufferCompleted {
-            command_buffer: self.command_buffer,
+            gpu_execution_time: self
+                .receiver
+                .recv_timeout(Duration::from_secs(60))
+                .map_err(MetalError::CommandBufferWait)?
+                .map_err(MetalError::CommandBufferExecution)?,
         })
     }
 }
 
 pub struct MetalCommandBufferCompleted {
-    command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    gpu_execution_time: Duration,
 }
 
 impl CommandBufferCompleted for MetalCommandBufferCompleted {
     type CommandBuffer = MetalCommandBuffer;
 
     fn gpu_execution_time(&self) -> Duration {
-        // They're always present, https://developer.apple.com/documentation/metal/mtlcommandbuffer/gpustarttime?language=objc
-        let start = self.command_buffer.gpu_start_time();
-        let end = self.command_buffer.gpu_end_time();
-        Duration::from_secs_f64(end - start)
+        self.gpu_execution_time
     }
 }

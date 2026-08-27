@@ -1,4 +1,4 @@
-use std::error::Error as StdError;
+use std::{error::Error as StdError, sync::mpsc::RecvTimeoutError};
 
 use thiserror::Error;
 
@@ -11,6 +11,8 @@ use crate::backends::{
 pub enum MetalError {
     #[error("Cannot open device")]
     CannotOpenDevice,
+    #[error("Cannot create residency set: {0}")]
+    CannotCreateResidencySet(String),
     #[error("Cannot start gpu capture {0}")]
     CannotStartGpuCapture(String),
     #[error("Cannot create library: {0}")]
@@ -19,16 +21,14 @@ pub enum MetalError {
     CannotDecompressLibrary(#[source] std::io::Error),
     #[error("Cannot create command queue")]
     CannotCreateCommandQueue,
-    #[error("Cannot create command Metal 4 queue")]
-    CannotCreateCommandQueueMtl4,
     #[error("Cannot create buffer")]
     CannotCreateBuffer,
     #[error("Cannot create command buffer")]
     CannotCreateCommandBuffer,
+    #[error("Error waiting for command buffer: {0}")]
+    CommandBufferWait(RecvTimeoutError),
     #[error("Command buffer execution failed: {0}")]
-    CommandBufferExecutionFailed(String),
-    #[error("Cannot create event")]
-    CannotCreateEvent,
+    CommandBufferExecution(String),
     #[error("Cannot create function: {0}")]
     CannotCreateFunction(String),
     #[error("Cannot create pipeline state for {function_name}: {error}")]
@@ -36,6 +36,8 @@ pub enum MetalError {
         function_name: String,
         error: String,
     },
+    #[error("Cannot create argument table: {0}")]
+    CannotCreateArgumentTable(String),
     #[error("Can not allocate buffer with size={0}")]
     SparseBufferAlloc(usize),
     #[error("Can not allocate heap with size={0} and page size={1}")]

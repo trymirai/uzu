@@ -65,7 +65,7 @@ fn build_axis_dispatch(
     let (threads, threads_per_group): (Vec<TokenStream>, Vec<TokenStream>) = axis_pairs.into_iter().unzip();
 
     let dispatch_code = quote! {
-        compute_encoder.dispatch_threads(
+        compute_encoder.dispatch_threads_threads_per_threadgroup(
             MTLSize::new(#((#threads) as usize, )*),
             MTLSize::new(#((#threads_per_group) as usize, )*),
         );
@@ -84,9 +84,8 @@ fn build_indirect_dispatch(
     threads.extend(repeat_n(quote! { 1 }, 3 - threads.len()));
 
     let dispatch_code = quote! {
-        compute_encoder.dispatch_threadgroups_indirect(
-            __dsl_indirect_dispatch_buffer.0.downcast(),
-            __dsl_indirect_dispatch_buffer.1,
+        compute_encoder.dispatch_threadgroups_with_indirect_buffer_threads_per_threadgroup(
+            __dsl_indirect_dispatch_buffer.0.downcast().gpu_address() + __dsl_indirect_dispatch_buffer.1 as u64,
             MTLSize::new(#((#threads) as usize, )*),
         );
     };
@@ -114,7 +113,7 @@ fn build_direct_dispatch(
     groups.extend(repeat_n(quote! { 1 }, 3 - groups.len()));
 
     let dispatch_code = quote! {
-        compute_encoder.dispatch_threadgroups(
+        compute_encoder.dispatch_threadgroups_threads_per_threadgroup(
             MTLSize::new(#((#groups) as usize, )*),
             MTLSize::new(#((#threads) as usize, )*),
         );

@@ -46,7 +46,8 @@ pub fn bindgen(
         argument_emissions.iter().filter_map(|argument| argument.encode_lifetime()).collect();
     let encode_deconstructs: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.encode_deconstruct()).collect();
-    let encode_set_calls: Vec<TokenStream> = argument_emissions.iter().map(|argument| argument.encode_set()).collect();
+    let (encode_set_calls, encode_set_uses_binding_slot): (Vec<TokenStream>, Vec<bool>) =
+        argument_emissions.iter().filter_map(|argument| argument.encode_set()).collect();
     let encode_accesses_call = arguments::encode_accesses_call(&argument_emissions);
 
     let variant_struct_fields: Vec<TokenStream> =
@@ -77,6 +78,10 @@ pub fn bindgen(
         quote! { #library_const[(xxhash_rust::xxh3::xxh3_64(entry_name.as_bytes()) % #num_shards) as usize] }
     };
 
+    // TODO: overpessimistic, not all are always used at the same time, should really go over variants
+    let max_buffer_bind_count = encode_set_uses_binding_slot.iter().filter(|v| **v).count();
+    assert!(max_buffer_bind_count <= 31, "metal 4 doesn't support more than 31 bindings");
+
     let trait_implementation_for = &trait_wiring.trait_implementation_for;
     let associate_backend = &trait_wiring.associate_backend;
     let method_visibility = &trait_wiring.method_visibility;
@@ -89,6 +94,7 @@ pub fn bindgen(
     let kernel_tokens = quote! {
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+            argument_table: Retained<ProtocolObject<dyn MTL4ArgumentTable>>,
             #(#conditional_buffer_fields,)*
             #(#variant_struct_fields,)*
             #(#retained_specialization_fields,)*
@@ -106,8 +112,12 @@ pub fn bindgen(
                 let entry_name = #entry_name;
                 #function_constants_initialization
                 let pipeline = context.compute_pipeline_state(#library_data, #library_compressed, #cache_key, &entry_name, #function_constants_argument)?;
+                let argument_table_descriptor = MTL4ArgumentTableDescriptor::new();
+                argument_table_descriptor.set_max_buffer_bind_count(#max_buffer_bind_count);
+                let argument_table = context.device.new_argument_table_with_descriptor(&argument_table_descriptor).map_err(|e| MetalError::CannotCreateArgumentTable(e.to_string()))?;
                 Ok(Self {
-                    pipeline
+                    pipeline,
+                    argument_table
                     #(, #conditional_buffer_initializers)*
                     #(, #variant_struct_initializers)*
                     #(, #retained_specialization_initializers)*
@@ -122,11 +132,13 @@ pub fn bindgen(
                 encoder.push_debug_group(#kernel_name);
                 #(#encode_deconstructs)*
                 #encode_accesses_call
-                let compute_encoder = encoder.as_command_buffer_mut().ensure_compute();
+                let compute_encoder = &encoder.as_command_buffer_mut().compute_encoder;
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_set_calls)*
+                compute_encoder.set_argument_table(Some(&self.argument_table));
                 #dispatch_code
-                encoder.pop_debug_group();
+                let command_encoder: &ProtocolObject<dyn MTL4CommandEncoder> = compute_encoder.as_ref();
+                command_encoder.pop_debug_group();
             }
         }
     };
@@ -153,15 +165,18 @@ pub fn bindgen_global(kernels: &[(impl AsRef<std::path::Path>, &[Kernel])]) -> R
     });
 
     let tokens = quote! {
-        use metal::{MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues, MTLSize};
+        use metal::{
+            MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandEncoder, MTL4ComputeCommandEncoder, MTLBuffer,
+            MTLComputePipelineState, MTLDeviceExt, MTLFunctionConstantValues, MTLSize,
+        };
         use objc2::{rc::Retained, runtime::ProtocolObject};
 
-        use crate::backends::common::BufferGpuAddressRangeExt;
-        use crate::backends::metal::{
-            context::MetalContext,
-            error::MetalError,
-            metal_extensions::{
-                ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalDataTypeExt,
+        use crate::backends::{
+            common::{BufferArg, BufferGpuAddressRangeExt},
+            metal::{
+                context::MetalContext,
+                error::MetalError,
+                metal_extensions::{FunctionConstantValuesSetValue, MetalDataTypeExt},
             },
         };
 

@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions, MTLSparsePageSize};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResidencySet, MTLResourceOptions, MTLSparsePageSize};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeSet;
 
@@ -38,6 +38,10 @@ impl MetalSparseBuffer {
                 page_size,
             )
             .ok_or(MetalError::SparseBufferAlloc(aligned_capacity))?;
+
+        context.residency_set.add_allocation(buffer.as_ref());
+        context.residency_set.commit();
+        context.residency_set.request_residency();
 
         Ok(Self {
             buffer,
