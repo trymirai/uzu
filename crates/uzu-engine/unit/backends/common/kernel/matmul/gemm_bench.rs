@@ -50,7 +50,7 @@ fn bench_gemm(c: &mut Criterion) {
             let mut d = alloc_allocation::<Metal, bf16>(&context, m as usize * n as usize);
             group.throughput(Throughput::Elements(2 * u64::from(m) * u64::from(k) * u64::from(n)));
             group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
-                iter_encode_loop::<Metal, _>(&context, b, |encoder| {
+                iter_encode_loop::<Metal, _>(&context, b, |command_buffer| {
                     kernel
                         .gemm
                         .encode_with_engine(
@@ -72,7 +72,7 @@ fn bench_gemm(c: &mut Criterion) {
                                 k,
                             },
                             engine,
-                            encoder,
+                            command_buffer,
                         )
                         .expect("encode_plan failed");
                 });

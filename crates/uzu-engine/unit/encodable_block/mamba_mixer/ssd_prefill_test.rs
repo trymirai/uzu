@@ -2,7 +2,8 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::common::{
-        Backend, Context, Encoder, Kernels,
+        AsBufferRangeMut, AsBufferRangeRef, Backend, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferPending, Context, Kernels,
         gpu_types::ActivationType,
         kernel::{Conv1dScanKernel, SSDPrefill64Kernel, SSDPrefillKernel},
     },
@@ -160,7 +161,7 @@ fn run_prefill_kernel_mode<B: Backend>(
     let cb_strides = fixture.cb_strides.map(|stride| stride as u32);
     let state_strides = fixture.state_strides.map(|stride| stride as u32);
 
-    let mut encoder = Encoder::new(ctx).unwrap();
+    let mut command_buffer = ctx.create_command_buffer(None, None).unwrap();
     match mode {
         SSDPrefillMode::Universal => {
             let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(ctx, DataType::F32)
@@ -183,7 +184,7 @@ fn run_prefill_kernel_mode<B: Backend>(
                 &state_strides,
                 fixture.num_heads as u32,
                 fixture.head_dim as u32,
-                &mut encoder,
+                &mut command_buffer,
             );
         },
         SSDPrefillMode::Special64 => {
@@ -208,11 +209,11 @@ fn run_prefill_kernel_mode<B: Backend>(
                 &state_strides,
                 fixture.num_heads as u32,
                 fixture.head_dim as u32,
-                &mut encoder,
+                &mut command_buffer,
             );
         },
     }
-    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_vec = allocation_to_vec::<B, f32>(&y_buf);
     let state_vec = allocation_to_vec::<B, f32>(&state_buf);
@@ -265,9 +266,9 @@ fn run_conv_scan_once<B: Backend>(
     }
     let padded_buf = alloc_allocation_with_data::<B, _>(ctx, &padded_host);
 
-    let mut encoder = Encoder::new(ctx).unwrap();
+    let mut command_buffer = ctx.create_command_buffer(None, None).unwrap();
     if use_scratch && tap_count > 0 {
-        encoder.encode_fill(&mut scratch_buf, 0);
+        command_buffer.encode_fill(scratch_buf.as_buffer_range_mut(), 0);
     }
     kernel.encode(
         &padded_buf,
@@ -285,15 +286,18 @@ fn run_conv_scan_once<B: Backend>(
         channels as u32,
         0u32,
         ActivationType::SILU,
-        &mut encoder,
+        &mut command_buffer,
     );
 
     if use_scratch && tap_count > 0 {
         let bytes = channels * tap_count * size_of::<f32>();
-        encoder.encode_copy(&scratch_buf, 0..bytes, &mut state_buf, 0..bytes);
+        command_buffer.encode_copy(
+            scratch_buf.as_buffer_range_ref().subrange(0..bytes),
+            state_buf.as_buffer_range_mut().subrange(0..bytes),
+        );
     }
 
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_vec = allocation_to_vec::<B, f32>(&y_buf);
     let state_vec = allocation_to_vec::<B, f32>(&state_buf);

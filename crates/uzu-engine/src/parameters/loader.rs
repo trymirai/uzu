@@ -13,7 +13,7 @@ use thiserror::Error;
 use super::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata};
 use crate::{
     array::{ArrayElement, size_for_shape},
-    backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
+    backends::common::{Allocation, AsBufferRangeRef, Backend, Context, DenseBuffer},
     data_type::DataType,
     utils::strict_serde::DeserializeStrictOwned,
 };
@@ -164,11 +164,8 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
     }
 
     pub fn read_allocation(&self) -> Result<Allocation<B>, ParameterLoaderError<B>> {
-        let allocation = self
-            .loader
-            .context
-            .create_allocation(self.metadata.size, AllocationType::Global)
-            .map_err(ParameterLoaderError::BackendError)?;
+        let allocation =
+            self.loader.context.create_allocation(self.metadata.size).map_err(ParameterLoaderError::BackendError)?;
         let buffer_range = allocation.as_buffer_range_ref();
         let range = buffer_range.range();
         let destination = unsafe {

@@ -6,7 +6,10 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddSwapKernel},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+        kernel::TensorAddSwapKernel,
+    },
     tests::helpers::{alloc_allocation_with_data, allocation_to_vec, for_each_backend},
 };
 
@@ -48,9 +51,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let mut skip_allocation = alloc_allocation_with_data::<B, T>(&context, &input.skip_buffer[..size]);
     let mut main_allocation = alloc_allocation_with_data::<B, T>(&context, &input.main_buffer[..size]);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(&mut skip_allocation, &mut main_allocation, input.length, &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    kernel.encode(&mut skip_allocation, &mut main_allocation, input.length, &mut command_buffer);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     (allocation_to_vec::<B, T>(&skip_allocation), allocation_to_vec::<B, T>(&main_allocation))
 }

@@ -12,7 +12,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::StateAdvanceKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::StateAdvanceKernel,
+        },
         cpu::Cpu,
     },
     tests::{
@@ -61,7 +64,7 @@ fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32
     let accepted_indices = alloc_allocation_with_data::<B, u32>(&context, accepted_indices);
     let mut committed_state = alloc_allocation_with_data::<B, f32>(&context, &initial_state);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     kernel.encode(
         &k_norm,
         &v,
@@ -70,9 +73,9 @@ fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32
         &accepted_indices,
         &mut committed_state,
         accepted_len as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec(&committed_state)
 }
 
@@ -122,18 +125,23 @@ fn bench_state_advance(c: &mut Criterion) {
             alloc_allocation_with_data::<Metal, f32>(&context, &initial_state)
         });
         group.bench_function(format!("L{accepted_len}"), |bencher| {
-            iter_encode_loop_named::<Metal, _>(&context, bencher, &format!("{BENCHMARK}/L{accepted_len}"), |encoder| {
-                kernel.encode(
-                    &k_norm,
-                    &v,
-                    &log_decay,
-                    &beta,
-                    &accepted_indices,
-                    committed_states.next_mut(),
-                    accepted_len as u32,
-                    encoder,
-                );
-            });
+            iter_encode_loop_named::<Metal, _>(
+                &context,
+                bencher,
+                &format!("{BENCHMARK}/L{accepted_len}"),
+                |command_buffer| {
+                    kernel.encode(
+                        &k_norm,
+                        &v,
+                        &log_decay,
+                        &beta,
+                        &accepted_indices,
+                        committed_states.next_mut(),
+                        accepted_len as u32,
+                        command_buffer,
+                    );
+                },
+            );
         });
     }
 }

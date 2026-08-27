@@ -1,5 +1,5 @@
 use crate::{
-    backends::common::{Allocation, Backend, BufferArg, Encoder, Kernels},
+    backends::common::{Allocation, Backend, BufferArg, CommandBuffer, Kernels},
     data_type::DataType,
     encodable_block::mixer::attention::KVCacheView,
 };
@@ -15,7 +15,7 @@ pub trait AttentionKernel: Sized + Send + Sync {
     fn encode<'a, KT, VT>(
         &self,
         arguments: AttentionArguments<'a, Self::Backend, KT, VT>,
-        encoder: &mut Encoder<Self::Backend>,
+        command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error>
     where
         KT: BufferArg<'a, Self::Backend>,

@@ -8,7 +8,10 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,
-    backends::common::{AllocationType, Backend, Context, Encoder, gpu_types::trie::TrieNode},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+        gpu_types::trie::TrieNode,
+    },
     data_type::DataType,
     dispatch_dtype,
     encodable_block::{
@@ -43,18 +46,17 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
 ) -> Result<SamplingTestResults, TestCaseError> {
     let sampling = Sampling::new(T::data_type(), vocab_size as u32);
 
-    let mut logits_allocation =
-        context.create_allocation(logits.len() * T::data_type().size_in_bytes(), AllocationType::Global).unwrap();
+    let mut logits_allocation = context.create_allocation(logits.len() * T::data_type().size_in_bytes()).unwrap();
     logits_allocation.copyin(logits);
     let seeds_allocation = if let Some(seeds) = seeds {
-        let mut seeds_allocation = context.create_allocation(seeds.len() * 8, AllocationType::Global).unwrap();
+        let mut seeds_allocation = context.create_allocation(seeds.len() * 8).unwrap();
         seeds_allocation.copyin(seeds);
         Some(seeds_allocation)
     } else {
         None
     };
     let bitmask_allocation = if let Some(bitmask) = bitmask {
-        let mut bitmask_allocation = context.create_allocation(bitmask.len() * 4, AllocationType::Global).unwrap();
+        let mut bitmask_allocation = context.create_allocation(bitmask.len() * 4).unwrap();
         bitmask_allocation.copyin(bitmask);
         Some(bitmask_allocation)
     } else {
@@ -70,7 +72,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
         .collect::<Box<[_]>>();
     let batch_topology = BatchTopology::new(&nodes, true);
 
-    let mut encoder = Encoder::new(context).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let sampled_allocation = sampling
         .encode(
             &logits_allocation,
@@ -81,10 +83,10 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
             method,
             &batch_topology,
             0..batch_size,
-            &mut encoder,
+            &mut command_buffer,
         )
         .unwrap();
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let sampled = sampled_allocation.copyout::<u32>();
 

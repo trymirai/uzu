@@ -1,6 +1,6 @@
 use crate::{
     backends::common::{
-        Backend, BufferArg, Encoder, Kernels,
+        Backend, BufferArg, CommandBuffer, Kernels,
         kernel::matmul::{
             arguments::MatmulArguments,
             routing::{A8ActivationPlan, ActivationFormat, MatmulShape},
@@ -22,7 +22,7 @@ pub trait MatmulKernel: Sized + Send + Sync {
     fn encode<'a, 'b, 'd, TB: BufferArg<'b, Self::Backend>>(
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Self::Backend, TB>,
-        encoder: &mut Encoder<Self::Backend>,
+        command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 
     fn a8_activation_plan(

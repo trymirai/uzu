@@ -1,15 +1,15 @@
 use std::{
-    sync::mpsc,
+    sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
 
 use crate::{
     backends::{
         common::{
-            AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
-            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Allocation, AllocationPool, AllocationType, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer,
+            CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
         },
-        cpu::{Cpu, error::CpuError},
+        cpu::{Cpu, context::CpuContext, error::CpuError},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -19,44 +19,32 @@ pub struct CpuCommandBuffer;
 impl CommandBuffer for CpuCommandBuffer {
     type Backend = Cpu;
 
-    type Initial = CpuCommandBufferInitial;
     type Encoding = CpuCommandBufferEncoding;
     type Executable = CpuCommandBufferExecutable;
     type Pending = CpuCommandBufferPending;
     type Completed = CpuCommandBufferCompleted;
 }
 
-pub struct CpuCommandBufferInitial {
-    command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>,
-}
-
-impl CpuCommandBufferInitial {
-    pub fn new(command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>) -> CpuCommandBufferInitial {
-        CpuCommandBufferInitial {
-            command_queue,
-        }
-    }
-}
-
-impl CommandBufferInitial for CpuCommandBufferInitial {
-    type CommandBuffer = CpuCommandBuffer;
-
-    fn start_encoding(self) -> CpuCommandBufferEncoding {
-        CpuCommandBufferEncoding {
-            command_queue: self.command_queue,
-            commands: Vec::new(),
-            completion_handlers: Vec::new(),
-        }
-    }
-}
-
 pub struct CpuCommandBufferEncoding {
-    command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>,
     commands: Vec<Box<dyn FnOnce() + Send>>,
     completion_handlers: Vec<Box<dyn FnOnce(Result<&CpuCommandBufferCompleted, CpuError>) + Send + 'static>>,
+    context: Arc<CpuContext>,
+    allocation_pool: Arc<AllocationPool<Cpu>>,
 }
 
 impl CpuCommandBufferEncoding {
+    pub fn new(
+        context: Arc<CpuContext>,
+        allocation_pool: Arc<AllocationPool<Cpu>>,
+    ) -> CpuCommandBufferEncoding {
+        CpuCommandBufferEncoding {
+            commands: Vec::new(),
+            completion_handlers: Vec::new(),
+            context,
+            allocation_pool,
+        }
+    }
+
     pub fn push_command(
         &mut self,
         command: impl FnOnce() + Send + 'static,
@@ -67,6 +55,36 @@ impl CpuCommandBufferEncoding {
 
 impl CommandBufferEncoding for CpuCommandBufferEncoding {
     type CommandBuffer = CpuCommandBuffer;
+
+    fn context(&self) -> &CpuContext {
+        &self.context
+    }
+
+    fn allocate_constant(
+        &mut self,
+        size: usize,
+    ) -> Result<Allocation<Cpu>, CpuError> {
+        self.context.allocator.allocate(
+            size,
+            AllocationType::Pooled {
+                pool: &self.allocation_pool,
+                cpu_available: true,
+            },
+        )
+    }
+
+    fn allocate_scratch(
+        &mut self,
+        size: usize,
+    ) -> Result<Allocation<Cpu>, CpuError> {
+        self.context.allocator.allocate(
+            size,
+            AllocationType::Pooled {
+                pool: &self.allocation_pool,
+                cpu_available: false,
+            },
+        )
+    }
 
     fn encode_copy<Src: Buffer<Backend = Cpu>, Dst: Buffer<Backend = Cpu>>(
         &mut self,
@@ -103,13 +121,6 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         });
     }
 
-    fn encode_barrier(
-        &mut self,
-        _after: AccessFlags,
-        _before: AccessFlags,
-    ) {
-    }
-
     fn push_debug_group(
         &mut self,
         _name: &str,
@@ -120,17 +131,19 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn end_encoding(self) -> CpuCommandBufferExecutable {
         CpuCommandBufferExecutable {
-            command_queue: self.command_queue,
             commands: self.commands,
             completion_handlers: self.completion_handlers,
+            context: self.context,
+            allocation_pool: self.allocation_pool,
         }
     }
 }
 
 pub struct CpuCommandBufferExecutable {
-    command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>,
     commands: Vec<Box<dyn FnOnce() + Send>>,
     completion_handlers: Vec<Box<dyn FnOnce(Result<&CpuCommandBufferCompleted, CpuError>) + Send + 'static>>,
+    context: Arc<CpuContext>,
+    allocation_pool: Arc<AllocationPool<Cpu>>,
 }
 
 impl CommandBufferExecutable for CpuCommandBufferExecutable {
@@ -139,7 +152,9 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
     fn submit(self) -> CpuCommandBufferPending {
         let (return_sender, return_receiver) = mpsc::channel();
 
-        self.command_queue
+        let allocation_pool = self.allocation_pool;
+        self.context
+            .command_queue
             .send(Box::new(move || {
                 let start = Instant::now();
 
@@ -151,6 +166,7 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
 
                 let completed = CpuCommandBufferCompleted {
                     gpu_execution_time,
+                    _allocation_pool: allocation_pool,
                 };
 
                 for handler in self.completion_handlers {
@@ -181,6 +197,7 @@ impl CommandBufferPending for CpuCommandBufferPending {
 
 pub struct CpuCommandBufferCompleted {
     gpu_execution_time: Duration,
+    _allocation_pool: Arc<AllocationPool<Cpu>>,
 }
 
 impl CommandBufferCompleted for CpuCommandBufferCompleted {

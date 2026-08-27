@@ -8,7 +8,8 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dDecodeKernel,
+            Allocation, Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+            Kernels, gpu_types::ActivationType, kernel::Conv1dDecodeKernel,
         },
         cpu::Cpu,
     },
@@ -116,7 +117,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     if input.state_in_place {
         let mut next_state = alloc_allocation_with_data::<B, T>(&context, &input.state);
 
-        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
         kernel.encode(
             &x,
             &w,
@@ -134,9 +135,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             input.inner_dim,
             input.proj_dim,
             input.activation_type,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+        command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
             x_out: allocation_to_vec(&x_out),
@@ -148,7 +149,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         let state = alloc_allocation_with_data::<B, T>(&context, &input.state);
         let mut next_state = alloc_allocation::<B, T>(&context, state_size);
 
-        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
         kernel.encode(
             &x,
             &w,
@@ -166,9 +167,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             input.inner_dim,
             input.proj_dim,
             input.activation_type,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+        command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
             x_out: allocation_to_vec(&x_out),

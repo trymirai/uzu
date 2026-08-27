@@ -1,4 +1,4 @@
-use crate::backends::common::{Allocation, Backend, Encoder, Kernels};
+use crate::backends::common::{Allocation, Backend, CommandBuffer, Kernels};
 
 pub const MAX_K: u32 = 512;
 
@@ -17,6 +17,6 @@ pub trait RadixTopKSmall: Sized + Send + Sync {
         output_scores: &mut Allocation<Self::Backend>,
         rows: u32,
         k: u32,
-        encoder: &mut Encoder<Self::Backend>,
+        command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 }

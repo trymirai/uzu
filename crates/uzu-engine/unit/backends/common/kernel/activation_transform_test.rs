@@ -8,8 +8,8 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE,
-            kernel::ActivationTransform,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+            gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE, kernel::ActivationTransform,
         },
         cpu::Cpu,
     },
@@ -40,13 +40,13 @@ fn run<T: ArrayElement + Float, B: Backend>(
     let mut output = alloc_allocation::<B, T>(context.as_ref(), data.len());
     let factors = alloc_allocation_with_data::<B, i32>(context.as_ref(), factors);
     let batch_count = (data.len() / channel_count) as u32;
-    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     if in_place {
-        kernel.encode_fp_in_place(&mut input, &factors, batch_count, channel_count as u32, &mut encoder);
+        kernel.encode_fp_in_place(&mut input, &factors, batch_count, channel_count as u32, &mut command_buffer);
     } else {
-        kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut encoder);
+        kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut command_buffer);
     }
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec(if in_place {
         &input
     } else {
@@ -104,13 +104,17 @@ fn input_and_output_rht_bf16() {
 }
 
 mod quantize {
+
     use rand::{RngExt, SeedableRng, rngs::SmallRng};
     use uzu_engine_macros::uzu_test;
 
     use super::BLOCK_SIZE;
     use crate::{
         backends::{
-            common::{Backend, Context, Encoder, kernel::ActivationTransform},
+            common::{
+                Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+                kernel::ActivationTransform,
+            },
             cpu::Cpu,
         },
         data_type::DataType,
@@ -138,7 +142,7 @@ mod quantize {
         let kernel =
             ActivationTransform::quantize(context.as_ref(), DataType::F32, activation_group_size, sum_group_size)
                 .expect("quantize transform");
-        let mut encoder = Encoder::<B>::new(context.as_ref()).expect("encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
         kernel.encode_quantize(
             &input,
             &mut values,
@@ -147,9 +151,9 @@ mod quantize {
             &factors,
             rows,
             columns,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
         (allocation_to_vec(&values), allocation_to_vec(&scales), group_sums.as_ref().map(allocation_to_vec))
     }

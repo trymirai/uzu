@@ -7,7 +7,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::SigmoidGateKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::SigmoidGateKernel,
+        },
         cpu::Cpu,
     },
     tests::helpers::{alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
@@ -31,10 +34,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let gate_allocation = alloc_allocation_with_data::<B, T>(&context, gate_data);
     let mut output = alloc_allocation_with_data::<B, T>(&context, output_data);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     let total_elements = config.suffix_length * config.num_heads * config.head_dim;
-    kernel.encode(&gate_allocation, &mut output, total_elements, &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    kernel.encode(&gate_allocation, &mut output, total_elements, &mut command_buffer);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     allocation_to_vec(&output)
 }

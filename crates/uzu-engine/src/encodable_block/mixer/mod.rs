@@ -3,7 +3,7 @@ use std::any::Any;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, CommandBuffer},
     config::{rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
     data_type::DataType,
     encodable_block::{
@@ -35,7 +35,7 @@ pub trait MixerState<B: Backend>: Any + Send {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error>;
 }
 
@@ -65,7 +65,7 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error>;
 }
 

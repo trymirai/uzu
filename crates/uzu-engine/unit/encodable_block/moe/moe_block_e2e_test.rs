@@ -5,7 +5,7 @@ use uzu_engine_macros::uzu_test;
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGather};
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         gpu_types::{ActivationType, activation_silu_alpha},
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
@@ -313,7 +313,7 @@ fn run_moe_parity_test_internal<B: Backend>(
 
     // Encode ALL kernels in one command buffer
     eprintln!("[E2E] Encoding entire MoE pipeline in single command buffer...");
-    let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
+    let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
 
     // Router + TopK (fused kernel)
     let router_topk =
@@ -334,7 +334,7 @@ fn run_moe_parity_test_internal<B: Backend>(
         true,
         None::<f32>,
         None::<f32>,
-        &mut encoder,
+        &mut command_buffer,
     );
 
     let fused_kernel = <B::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(ctx).expect("fused kernel");
@@ -346,7 +346,7 @@ fn run_moe_parity_test_internal<B: Backend>(
         t as u32,
         e as u32,
         k as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
 
     let scatter_bases_kernel =
@@ -359,7 +359,7 @@ fn run_moe_parity_test_internal<B: Backend>(
         num_blocks as u32,
         num_tiles as u32,
         0u32,
-        &mut encoder,
+        &mut command_buffer,
     );
 
     let scatter_map_kernel = <B::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(ctx, DataType::BF16)
@@ -378,12 +378,12 @@ fn run_moe_parity_test_internal<B: Backend>(
         num_blocks as u32,
         num_tiles as u32,
         &mut tok2row_buf,
-        &mut encoder,
+        &mut command_buffer,
     );
 
     let gather = MoeGather::<B>::new(ctx, DataType::BF16).expect("gather");
     let x_perm_buf = gather
-        .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k as u32, d_model as u32, &mut encoder)
+        .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k as u32, d_model as u32, &mut command_buffer)
         .expect("gather");
 
     let total_rows = t * k;
@@ -406,7 +406,7 @@ fn run_moe_parity_test_internal<B: Backend>(
         up_clip_max: up_clip.1,
         silu_alpha,
     };
-    let y_partial_buf = experts.encode(args, &mut encoder).expect("failed to encode MoE experts");
+    let y_partial_buf = experts.encode(args, &mut command_buffer).expect("failed to encode MoE experts");
 
     let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(ctx, DataType::BF16).expect("finalize");
     finalize.encode(
@@ -417,11 +417,11 @@ fn run_moe_parity_test_internal<B: Backend>(
         t as u32,
         d_model as u32,
         k as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
 
     eprintln!("[E2E] All kernels encoded. Committing ONCE and waiting...");
-    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     eprintln!("[E2E] GPU execution completed");
 
     // Read GPU output

@@ -7,7 +7,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::SSDUpdateKernel},
+        common::{
+            Allocation, Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+            Kernels, kernel::SSDUpdateKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -110,7 +113,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     if input.state_in_place {
         let mut next_state = alloc_allocation_with_data::<B, T>(&context, &input.state);
 
-        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
         kernel.encode(
             &x,
             &dt,
@@ -130,9 +133,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             input.bsz,
             input.h,
             input.dh,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+        command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
             y: allocation_to_vec(&y),
@@ -142,7 +145,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         let state = alloc_allocation_with_data::<B, T>(&context, &input.state);
         let mut next_state = alloc_allocation::<B, T>(&context, ns_size);
 
-        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
         kernel.encode(
             &x,
             &dt,
@@ -162,9 +165,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             input.bsz,
             input.h,
             input.dh,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+        command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
             y: allocation_to_vec(&y),

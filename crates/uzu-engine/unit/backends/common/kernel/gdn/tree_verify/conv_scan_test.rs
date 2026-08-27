@@ -16,7 +16,10 @@ use crate::{
 };
 use crate::{
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::ConvTreeScanKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::ConvTreeScanKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -81,7 +84,7 @@ fn run<B: Backend>(
     let mut output = alloc_allocation::<B, f32>(&context, tree_size * TOTAL_PROJ_DIM);
     let mut suffix_state = alloc_allocation::<B, f32>(&context, tree_size * CONV_DIM * STATE_STRIDE);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     kernel.encode(
         &input,
         &weights,
@@ -93,9 +96,9 @@ fn run<B: Backend>(
         tree_size as u32,
         TOTAL_PROJ_DIM as u32,
         CONV_DIM as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     assert_eq_float(
         &base_state,
         &allocation_to_vec(&base_state_buffer),
@@ -165,22 +168,27 @@ fn bench_conv_tree_scan(c: &mut Criterion) {
             suffix_state: alloc_allocation::<Metal, f32>(&context, state_len),
         });
         group.bench_function(format!("T{tree_size}"), |bencher| {
-            iter_encode_loop_named::<Metal, _>(&context, bencher, &format!("{BENCHMARK}/T{tree_size}"), |encoder| {
-                let buffers = buffers.next_mut();
-                kernel.encode(
-                    &buffers.input,
-                    &weights,
-                    Some(&bias),
-                    &base_state,
-                    &parents,
-                    &mut buffers.output,
-                    &mut buffers.suffix_state,
-                    tree_size as u32,
-                    BENCH_TOTAL_PROJ_DIM as u32,
-                    BENCH_CONV_DIM as u32,
-                    encoder,
-                );
-            });
+            iter_encode_loop_named::<Metal, _>(
+                &context,
+                bencher,
+                &format!("{BENCHMARK}/T{tree_size}"),
+                |command_buffer| {
+                    let buffers = buffers.next_mut();
+                    kernel.encode(
+                        &buffers.input,
+                        &weights,
+                        Some(&bias),
+                        &base_state,
+                        &parents,
+                        &mut buffers.output,
+                        &mut buffers.suffix_state,
+                        tree_size as u32,
+                        BENCH_TOTAL_PROJ_DIM as u32,
+                        BENCH_CONV_DIM as u32,
+                        command_buffer,
+                    );
+                },
+            );
         });
     }
 }

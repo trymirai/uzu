@@ -58,7 +58,7 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         let beta = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.2; tree_size * V_HEADS]);
         let benchmark_path = format!("Metal/Kernel/GDNTreeVerify/T{tree_size}");
         group.bench_function(format!("T{tree_size}"), |bencher| {
-            iter_encode_loop_named(context.as_ref(), bencher, &benchmark_path, |encoder| {
+            iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |command_buffer| {
                 tree_verify
                     .encode(
                         TreeVerifyEncodeArguments {
@@ -71,7 +71,7 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
                             h0: &h0,
                             tree_size: tree_size as u32,
                         },
-                        encoder,
+                        command_buffer,
                     )
                     .unwrap();
             })

@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer, DeviceCapabilities};
+use crate::backends::common::{Allocation, AllocationPool, Backend, CommandBuffer, DeviceCapabilities};
 
 pub trait Context: Sized + Send + Sync {
     type Backend: Backend<Context = Self>;
@@ -12,7 +12,8 @@ pub trait Context: Sized + Send + Sync {
     fn create_command_buffer(
         &self,
         name: Option<&str>,
-    ) -> Result<<<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Initial, <Self::Backend as Backend>::Error>;
+        allocation_pool: Option<Arc<AllocationPool<Self::Backend>>>,
+    ) -> Result<<<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding, <Self::Backend as Backend>::Error>;
 
     fn create_buffer(
         &self,
@@ -22,13 +23,9 @@ pub trait Context: Sized + Send + Sync {
     fn create_allocation(
         &self,
         size: usize,
-        allocation_type: AllocationType<Self::Backend>,
     ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error>;
 
-    fn create_allocation_pool(
-        &self,
-        reusable: bool,
-    ) -> AllocationPool<Self::Backend>;
+    fn create_allocation_pool(&self) -> Arc<AllocationPool<Self::Backend>>;
 
     fn create_sparse_buffer(
         &self,

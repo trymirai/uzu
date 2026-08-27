@@ -1,9 +1,10 @@
 use parking_lot::Mutex;
 
 use crate::{
+    array::size_for_shape,
     backends::{
         common::{
-            Allocation, BufferArg, Encoder, Kernels,
+            Allocation, BufferArg, CommandBufferEncoding, Kernels,
             kernel::{
                 AttentionArguments, AttentionKernelConfig, SoftmaxKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -11,6 +12,7 @@ use crate::{
         },
         metal::{
             Metal,
+            command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
             kernel::{
@@ -82,7 +84,7 @@ impl AttentionFallback {
     pub fn encode<'a, KT: BufferArg<'a, Metal>, VT: BufferArg<'a, Metal>>(
         &self,
         arguments: AttentionArguments<'a, Metal, KT, VT>,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<Allocation<Metal>, MetalError> {
         assert!(arguments.trie.is_none(), "fallback does not support trie");
         let suffix_length = arguments.suffix_length;
@@ -92,12 +94,12 @@ impl AttentionFallback {
         let dt_bytes = self.data_type.size_in_bytes();
         let head_dim_bytes = self.head_dim as usize * dt_bytes;
         let group_rows = (gqa_factor * suffix_length) as usize;
-        let mut output =
-            encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
-        let mut scores =
-            encoder.allocate_scratch_for_shape(&[self.num_q_heads, suffix_length, sequence_length], self.data_type)?;
-        let mut group_scores =
-            encoder.allocate_scratch_for_shape(&[gqa_factor * suffix_length, sequence_length], self.data_type)?;
+        let mut output = command_buffer
+            .allocate_scratch(size_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type))?;
+        let mut scores = command_buffer
+            .allocate_scratch(size_for_shape(&[self.num_q_heads, suffix_length, sequence_length], self.data_type))?;
+        let mut group_scores = command_buffer
+            .allocate_scratch(size_for_shape(&[gqa_factor * suffix_length, sequence_length], self.data_type))?;
 
         for group_index in 0..self.num_groups {
             self.matmul.lock().encode(
@@ -121,7 +123,7 @@ impl AttentionFallback {
                     n: sequence_length,
                     k: self.head_dim,
                 },
-                encoder,
+                command_buffer,
             )?;
             self.scatter_scores.encode(
                 &group_scores,
@@ -134,13 +136,20 @@ impl AttentionFallback {
                 sequence_length,
                 suffix_length,
                 gqa_factor * suffix_length * sequence_length,
-                encoder,
+                command_buffer,
             );
         }
 
-        self.softmax.encode(&mut scores, arguments.sinks, sequence_length, self.num_q_heads, suffix_length, encoder);
-        let mut group_output =
-            encoder.allocate_scratch_for_shape(&[gqa_factor * suffix_length, self.head_dim], self.data_type)?;
+        self.softmax.encode(
+            &mut scores,
+            arguments.sinks,
+            sequence_length,
+            self.num_q_heads,
+            suffix_length,
+            command_buffer,
+        );
+        let mut group_output = command_buffer
+            .allocate_scratch(size_for_shape(&[gqa_factor * suffix_length, self.head_dim], self.data_type))?;
         for group_index in 0..self.num_groups {
             self.matmul.lock().encode(
                 MatmulArguments {
@@ -160,7 +169,7 @@ impl AttentionFallback {
                     n: self.head_dim,
                     k: sequence_length,
                 },
-                encoder,
+                command_buffer,
             )?;
             self.scatter_values.encode(
                 &group_output,
@@ -171,7 +180,7 @@ impl AttentionFallback {
                 self.num_q_heads,
                 self.head_dim,
                 gqa_factor * suffix_length * self.head_dim,
-                encoder,
+                command_buffer,
             );
         }
         Ok(output)

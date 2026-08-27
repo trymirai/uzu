@@ -1,10 +1,10 @@
 use crate::{
     backends::{
         common::{
-            Allocation, AsBufferRangeMut, AsBufferRangeRef, Encoder,
+            Allocation, AsBufferRangeMut, AsBufferRangeRef,
             kernel::radix_top_k_small::{MAX_K, RadixTopKSmall},
         },
-        cpu::{Cpu, context::CpuContext, error::CpuError},
+        cpu::{Cpu, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -33,7 +33,7 @@ impl RadixTopKSmall for CpuRadixTopKSmall {
         output_scores: &mut Allocation<Cpu>,
         rows: u32,
         k: u32,
-        encoder: &mut Encoder<Cpu>,
+        command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<(), CpuError> {
         let rows = rows as usize;
         let columns = self.columns;
@@ -49,7 +49,7 @@ impl RadixTopKSmall for CpuRadixTopKSmall {
         let output_scores = SendPtrMut(unsafe {
             (&mut *output_scores.buffer().get()).as_mut_ptr().add(output_scores.range().start).cast::<f32>()
         });
-        encoder.as_command_buffer_mut().push_command(move || {
+        command_buffer.push_command(move || {
             let values = unsafe { std::slice::from_raw_parts(input.as_ptr(), rows * columns) };
             let output_ids = unsafe { std::slice::from_raw_parts_mut(output_ids.as_ptr(), rows * k) };
             let output_scores = unsafe { std::slice::from_raw_parts_mut(output_scores.as_ptr(), rows * k) };

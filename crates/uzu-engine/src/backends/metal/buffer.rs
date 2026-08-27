@@ -12,7 +12,7 @@ impl dyn Buffer<Backend = Metal> {
     pub fn downcast(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
         let buffer = self as &dyn Any;
         if let Some(buffer) = buffer.downcast_ref::<<Metal as Backend>::DenseBuffer>() {
-            buffer
+            buffer.mtl_buffer()
         } else if let Some(buffer) = buffer.downcast_ref::<MetalSparseBuffer>() {
             buffer.mtl_buffer()
         } else {

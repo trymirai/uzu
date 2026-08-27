@@ -10,8 +10,9 @@ use gather::MoeGather;
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, AsBufferRangeMut, Backend, CommandBuffer, CommandBufferEncoding, Kernels,
         gpu_types::{
             ActivationType,
             router_topk::{ROUTER_TOPK_MAX_EXPERTS, ROUTER_TOPK_MAX_MODEL_DIM, ROUTER_TOPK_MAX_SELECTED_EXPERTS},
@@ -220,19 +221,20 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         &self,
         input: Allocation<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("mlp (moe)");
+        command_buffer.push_debug_group("mlp (moe)");
 
         let total_rows = batch_dim * self.num_active_experts;
         let num_blocks = batch_dim.div_ceil(256);
         let num_tiles = self.num_routed_experts.div_ceil(512);
 
-        let mut topk_ids = encoder.allocate_scratch_for_shape(&[batch_dim, self.num_active_experts], DataType::I32)?;
+        let mut topk_ids =
+            command_buffer.allocate_scratch(size_for_shape(&[batch_dim, self.num_active_experts], DataType::I32))?;
         let mut topk_probs =
-            encoder.allocate_scratch_for_shape(&[batch_dim, self.num_active_experts], self.data_type)?;
+            command_buffer.allocate_scratch(size_for_shape(&[batch_dim, self.num_active_experts], self.data_type))?;
 
-        encoder.encode_fill(&mut topk_ids, 0xFF);
+        command_buffer.encode_fill(topk_ids.as_buffer_range_mut(), 0xFF);
 
         self.router_topk_kernel.encode(
             &input,
@@ -249,13 +251,14 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             self.router_renorm,
             None::<f32>,
             None::<f32>,
-            encoder,
+            command_buffer,
         );
 
-        let mut offsets = encoder.allocate_scratch_for_shape(&[self.num_routed_experts + 1], DataType::U32)?;
-        let mut sumk = encoder.allocate_scratch_for_shape(&[1], DataType::U32)?;
+        let mut offsets =
+            command_buffer.allocate_scratch(size_for_shape(&[self.num_routed_experts + 1], DataType::U32))?;
+        let mut sumk = command_buffer.allocate_scratch(size_for_shape(&[1], DataType::U32))?;
         let scatter_entries = num_blocks * num_tiles * 512;
-        let mut partials = encoder.allocate_scratch_for_shape(&[scatter_entries], DataType::U32)?;
+        let mut partials = command_buffer.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
         self.counts_offsets_kernel.encode(
             &topk_ids,
             &mut offsets,
@@ -264,16 +267,16 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             batch_dim,
             self.num_routed_experts,
             self.num_active_experts,
-            encoder,
+            command_buffer,
         );
 
-        let mut block_bases = encoder.allocate_scratch_for_shape(&[scatter_entries], DataType::U32)?;
-        let mut block_alloc = encoder.allocate_scratch_for_shape(&[scatter_entries], DataType::U32)?;
-        let mut bucketed_ids = encoder.allocate_scratch_for_shape(&[total_rows], DataType::I32)?;
-        let mut bucketed_probs = encoder.allocate_scratch_for_shape(&[total_rows], self.data_type)?;
-        let mut tok2row = encoder.allocate_scratch_for_shape(&[total_rows], DataType::I32)?;
+        let mut block_bases = command_buffer.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
+        let mut block_alloc = command_buffer.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
+        let mut bucketed_ids = command_buffer.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
+        let mut bucketed_probs = command_buffer.allocate_scratch(size_for_shape(&[total_rows], self.data_type))?;
+        let mut tok2row = command_buffer.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
 
-        encoder.encode_fill(&mut tok2row, 0xFF);
+        command_buffer.encode_fill(tok2row.as_buffer_range_mut(), 0xFF);
 
         self.scatter_bases_kernel.encode(
             &partials,
@@ -283,7 +286,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             num_blocks,
             num_tiles,
             0u32,
-            encoder,
+            command_buffer,
         );
         self.scatter_map_kernel.encode(
             &topk_ids,
@@ -299,7 +302,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             num_blocks,
             num_tiles,
             &mut tok2row,
-            encoder,
+            command_buffer,
         );
 
         let x_perm = self.gather.encode(
@@ -309,7 +312,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             batch_dim,
             self.num_active_experts,
             self.model_dim,
-            encoder,
+            command_buffer,
         )?;
 
         let args = MoeExpertsTwoPassArguments {
@@ -331,12 +334,13 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         };
 
         let y_partial = if batch_dim == 1 {
-            self.experts_two_pass_decode_block.encode(args, encoder)?
+            self.experts_two_pass_decode_block.encode(args, command_buffer)?
         } else {
-            self.experts_two_pass_prefill_block.encode(args, encoder)?
+            self.experts_two_pass_prefill_block.encode(args, command_buffer)?
         };
 
-        let mut output = encoder.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
+        let mut output =
+            command_buffer.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
         self.finalize_kernel.encode(
             &tok2row,
             &topk_probs,
@@ -345,10 +349,10 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             batch_dim,
             self.model_dim,
             self.num_active_experts,
-            encoder,
+            command_buffer,
         );
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

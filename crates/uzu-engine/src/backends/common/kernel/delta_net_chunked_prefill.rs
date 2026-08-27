@@ -1,5 +1,5 @@
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::Unsupported},
+    backends::common::{Allocation, Backend, CommandBuffer, Kernels, kernel::Unsupported},
     data_type::DataType,
 };
 
@@ -34,7 +34,7 @@ pub trait DeltaNetChunkedPrefill: Sized + Send + Sync {
     fn encode(
         &self,
         args: DeltaNetChunkedPrefillArgs<'_, Self::Backend>,
-        encoder: &mut Encoder<Self::Backend>,
+        command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 }
 
@@ -59,7 +59,7 @@ impl<B: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Unsupported<B>>>> Delt
     fn encode(
         &self,
         _args: DeltaNetChunkedPrefillArgs<'_, B>,
-        _encoder: &mut Encoder<B>,
+        _command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         match self.never {}
     }

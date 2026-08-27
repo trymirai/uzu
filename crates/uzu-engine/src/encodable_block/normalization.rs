@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, Backend, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, NormalizationKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
@@ -117,14 +117,15 @@ impl<B: Backend> Normalization<B> {
         row_offset: u32,
         row_count: u32,
         shortcut: Option<&mut Allocation<B>>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("normalization");
+        command_buffer.push_debug_group("normalization");
 
         let row_size = size_for_shape(&[self.element_count], self.data_type);
         let row_offset_bytes = row_offset as usize * row_size;
         let shortcut = shortcut.map(|shortcut| (shortcut, row_offset_bytes));
-        let mut output = encoder.allocate_scratch_for_shape(&[row_count, self.element_count], self.data_type)?;
+        let mut output =
+            command_buffer.allocate_scratch(size_for_shape(&[row_count, self.element_count], self.data_type))?;
         self.kernel.encode(
             Some((input, row_offset_bytes)),
             self.scales.as_ref(),
@@ -137,10 +138,10 @@ impl<B: Backend> Normalization<B> {
             self.epsilon,
             self.scale_offset.unwrap_or(0.0),
             self.post_layer_scalar_value,
-            encoder,
+            command_buffer,
         );
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

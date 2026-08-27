@@ -3,7 +3,10 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Backend, Encoder, Kernels, gpu_types::weaver::MetadataIdx, kernel::WeaverTopChildrenKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            gpu_types::weaver::MetadataIdx, kernel::WeaverTopChildrenKernel,
+        },
         cpu::Cpu,
     },
     tests::helpers::{
@@ -40,7 +43,7 @@ fn top_children<B: Backend>(
     let mut output_token_ids = alloc_allocation::<B, u32>(&context, rows * CHILDREN);
     let mut output_model_logprobs = alloc_allocation::<B, f32>(&context, rows * CHILDREN);
     let kernel = <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(&context).unwrap();
-    let mut encoder = Encoder::new(context.as_ref()).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &residual,
         &candidate_logits,
@@ -53,9 +56,9 @@ fn top_children<B: Backend>(
         CANDIDATES as u32,
         CHILDREN as u32,
         VOCAB_SIZE,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     (allocation_to_vec(&output_token_ids), allocation_to_vec(&output_model_logprobs))
 }
 

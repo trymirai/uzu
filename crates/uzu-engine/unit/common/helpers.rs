@@ -3,8 +3,8 @@ use std::{mem::size_of, sync::Arc};
 use crate::{
     array::ArrayElement,
     backends::common::{
-        Allocation, AllocationType, AsBufferRangeMut, Backend, Context, DenseBuffer, Encoder, SparseBuffer,
-        SparseBufferExt,
+        Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferPending, Context, DenseBuffer, SparseBuffer, SparseBufferExt,
     },
 };
 
@@ -49,18 +49,15 @@ pub fn alloc_allocation<B: Backend, T>(
     context: &B::Context,
     elements_count: usize,
 ) -> Allocation<B> {
-    context
-        .create_allocation(allocation_size_bytes::<T>(elements_count), AllocationType::Global)
-        .expect("Failed to create allocation")
+    context.create_allocation(allocation_size_bytes::<T>(elements_count)).expect("Failed to create allocation")
 }
 
 pub fn alloc_allocation_with_data<B: Backend, T: ArrayElement>(
     context: &B::Context,
     data: &[T],
 ) -> Allocation<B> {
-    let mut allocation = context
-        .create_allocation(allocation_size_bytes::<T>(data.len()), AllocationType::Global)
-        .expect("Failed to create allocation");
+    let mut allocation =
+        context.create_allocation(allocation_size_bytes::<T>(data.len())).expect("Failed to create allocation");
     write_allocation(&mut allocation, data);
     allocation
 }
@@ -99,8 +96,8 @@ pub fn create_context<B: Backend>() -> Arc<<B as Backend>::Context> {
     B::Context::new().unwrap_or_else(|_| panic!("Failed to create context for {}", std::any::type_name::<B>()))
 }
 
-pub fn submit_encoder<B: Backend>(encoder: Encoder<B>) {
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+pub fn submit_command_buffer<E: CommandBufferEncoding>(command_buffer: E) {
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 }
 
 pub fn sparse_buffer_create<B: Backend>(
@@ -137,9 +134,12 @@ pub fn sparse_buffer_read_allocation<B: Backend>(
     let mut allocation = alloc_allocation::<B, u8>(context, size);
     let range = 0..size;
 
-    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
-    encoder.encode_copy(buffer, range.clone(), &mut allocation, range.clone());
-    submit_encoder(encoder);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    command_buffer.encode_copy(
+        buffer.as_buffer_range_ref().subrange(range.clone()),
+        allocation.as_buffer_range_mut().subrange(range),
+    );
+    submit_command_buffer(command_buffer);
 
     allocation
 }
@@ -162,7 +162,10 @@ pub fn sparse_buffer_write<B: Backend, T: ArrayElement>(
     let data_allocation = alloc_allocation_with_data::<B, T>(context, data);
     let data_range = 0..allocation_size_bytes::<T>(data.len());
 
-    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
-    encoder.encode_copy(&data_allocation, data_range.clone(), buffer, data_range.clone());
-    submit_encoder(encoder);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    command_buffer.encode_copy(
+        data_allocation.as_buffer_range_ref().subrange(data_range.clone()),
+        buffer.as_buffer_range_mut().subrange(data_range),
+    );
+    submit_command_buffer(command_buffer);
 }

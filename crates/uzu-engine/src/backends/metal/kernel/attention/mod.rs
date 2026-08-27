@@ -6,10 +6,10 @@ mod two_pass;
 
 use crate::backends::{
     common::{
-        Allocation, BufferArg, Encoder,
+        Allocation, BufferArg, CommandBufferEncoding,
         kernel::{AttentionArguments, AttentionKernel, AttentionKernelConfig},
     },
-    metal::{Metal, context::MetalContext, error::MetalError},
+    metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,15 +82,15 @@ impl AttentionKernel for AttentionMetalKernel {
     fn encode<'a, KT, VT>(
         &self,
         arguments: AttentionArguments<'a, Metal, KT, VT>,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<Allocation<Metal>, MetalError>
     where
         KT: BufferArg<'a, Metal>,
         VT: BufferArg<'a, Metal>,
     {
-        encoder.push_debug_group("attention core");
-        let result = self.encode_impl(arguments, encoder);
-        encoder.pop_debug_group();
+        command_buffer.push_debug_group("attention core");
+        let result = self.encode_impl(arguments, command_buffer);
+        command_buffer.pop_debug_group();
         result
     }
 }
@@ -99,7 +99,7 @@ impl AttentionMetalKernel {
     fn encode_impl<'a, KT, VT>(
         &self,
         arguments: AttentionArguments<'a, Metal, KT, VT>,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<Allocation<Metal>, MetalError>
     where
         KT: BufferArg<'a, Metal>,
@@ -116,36 +116,36 @@ impl AttentionMetalKernel {
             && let Some(grouped) = &self.grouped
         {
             if grouped.should_encode(mask, suffix_length, kv_length) {
-                return grouped.encode(mask, arguments, encoder);
+                return grouped.encode(mask, arguments, command_buffer);
             }
 
             // These measured sibling exceptions apply only when the
             // grouped core was built for this layer.
             if self.head_dim == 256 && (1..=16).contains(&suffix_length) && kv_length > D256_SINGLE_PASS_KV_THRESHOLD {
-                return self.single_pass.encode(arguments, encoder);
+                return self.single_pass.encode(arguments, command_buffer);
             }
             if (self.head_dim == 256 && (9..=16).contains(&suffix_length))
                 || (self.head_dim == 128
                     && (9..=16).contains(&suffix_length)
                     && kv_length > D128_SHORT_KV_GEMM_THRESHOLD)
             {
-                return self.two_pass.encode(arguments, encoder);
+                return self.two_pass.encode(arguments, command_buffer);
             }
         }
 
         if suffix_length > 8 {
             if let Some(gemm) = &self.gemm {
-                return gemm.encode(arguments, encoder);
+                return gemm.encode(arguments, command_buffer);
             }
             if !is_trie && let Some(fallback) = &self.fallback {
-                return fallback.encode(arguments, encoder);
+                return fallback.encode(arguments, command_buffer);
             }
         }
 
         if kv_length > SINGLE_PASS_KV_THRESHOLD {
-            self.two_pass.encode(arguments, encoder)
+            self.two_pass.encode(arguments, command_buffer)
         } else {
-            self.single_pass.encode(arguments, encoder)
+            self.single_pass.encode(arguments, command_buffer)
         }
     }
 }

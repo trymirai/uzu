@@ -1,5 +1,5 @@
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, CommandBuffer, CommandBufferEncoding},
     config::rope::AnyRoPEConfig,
 };
 
@@ -13,7 +13,7 @@ impl<B: Backend> PrecalculatedRoPE<B> {
     pub fn precalculate(
         rope_config: &AnyRoPEConfig,
         token_positions: &[u32],
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Self, B::Error> {
         let head_dim = *rope_config.head_dim();
         assert!(head_dim > 0 && head_dim.is_multiple_of(2), "RoPE head_dim must be positive and even");
@@ -101,9 +101,9 @@ impl<B: Backend> PrecalculatedRoPE<B> {
             }
         }
 
-        let mut sines_allocation = encoder.allocate_constant(sines.len() * std::mem::size_of::<f32>())?;
+        let mut sines_allocation = command_buffer.allocate_constant(sines.len() * std::mem::size_of::<f32>())?;
         sines_allocation.copyin(sines.as_ref());
-        let mut cosines_allocation = encoder.allocate_constant(cosines.len() * std::mem::size_of::<f32>())?;
+        let mut cosines_allocation = command_buffer.allocate_constant(cosines.len() * std::mem::size_of::<f32>())?;
         cosines_allocation.copyin(cosines.as_ref());
 
         Ok(Self {

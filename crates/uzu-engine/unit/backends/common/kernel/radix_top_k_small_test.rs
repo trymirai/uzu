@@ -4,10 +4,13 @@ use std::time::Instant;
 use uzu_engine_macros::uzu_test;
 
 #[cfg(backend = "metal")]
-use crate::backends::metal::Metal;
+use crate::backends::{common::CommandBufferCompleted, metal::Metal};
 use crate::{
     backends::{
-        common::{Backend, Encoder, Kernels, kernel::radix_top_k_small::RadixTopKSmall},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::radix_top_k_small::RadixTopKSmall,
+        },
         cpu::Cpu,
     },
     tests::helpers::{
@@ -36,9 +39,9 @@ fn radix_top_k_small<B: Backend>(
     let mut ids = alloc_allocation::<B, u32>(&context, rows * k);
     let mut scores = alloc_allocation::<B, f32>(&context, rows * k);
     let kernel = <B::Kernels as Kernels>::RadixTopKSmall::new(&context, columns as u32).unwrap();
-    let mut encoder = Encoder::new(context.as_ref()).unwrap();
-    kernel.encode(&input, &mut ids, &mut scores, rows as u32, k as u32, &mut encoder).unwrap();
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    kernel.encode(&input, &mut ids, &mut scores, rows as u32, k as u32, &mut command_buffer).unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     (allocation_to_vec(&ids), allocation_to_vec(&scores))
 }
 
@@ -126,11 +129,11 @@ fn benchmark_radix_top_k_small() {
         <<Metal as Backend>::Kernels as Kernels>::RadixTopKSmall::new(&context, TARGET_COLUMNS as u32).unwrap();
     let mut run = || {
         let start = Instant::now();
-        let mut encoder = Encoder::new(context.as_ref()).unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None).unwrap();
         for _ in 0..BATCH {
-            kernel.encode(&input, &mut ids, &mut scores, ROWS as u32, TARGET_K as u32, &mut encoder).unwrap();
+            kernel.encode(&input, &mut ids, &mut scores, ROWS as u32, TARGET_K as u32, &mut command_buffer).unwrap();
         }
-        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         (completed.gpu_execution_time().div_f64(BATCH as f64), start.elapsed().div_f64(BATCH as f64))
     };
     for _ in 0..5 {

@@ -1,14 +1,16 @@
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
 use crate::{
+    array::size_for_shape,
     backends::{
         common::{
-            Allocation, BufferArg, BufferArgMut, Encoder,
+            Allocation, BufferArg, BufferArgMut, CommandBufferEncoding,
             gpu_types::AttnParams,
             kernel::{AttentionArguments, AttentionKernelConfig},
         },
         metal::{
             Metal,
+            command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
             kernel::{AttentionGemmGroupedCombineMetalKernel, AttentionGemmGroupedMetalKernel},
@@ -90,7 +92,7 @@ impl AttentionGemmGroupedMetal {
         kv_length: u32,
         q_replicas: u32,
         num_splits: u32,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let params = self.params(suffix_length, kv_length);
         let grouped_rows = self.num_q_heads / self.num_groups * suffix_length;
@@ -114,15 +116,16 @@ impl AttentionGemmGroupedMetal {
                 self.num_groups,
                 q_replicas,
                 1,
-                encoder,
+                command_buffer,
             );
             return Ok(());
         }
 
         let partial_rows = q_replicas * self.num_groups * m_tiles * num_splits * self.block_rows;
-        let mut partials = encoder.allocate_scratch_for_shape(&[partial_rows, self.head_dim], DataType::F32)?;
-        let mut partial_maxs = encoder.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
-        let mut partial_sums = encoder.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
+        let mut partials =
+            command_buffer.allocate_scratch(size_for_shape(&[partial_rows, self.head_dim], DataType::F32))?;
+        let mut partial_maxs = command_buffer.allocate_scratch(size_for_shape(&[partial_rows], DataType::F32))?;
+        let mut partial_sums = command_buffer.allocate_scratch(size_for_shape(&[partial_rows], DataType::F32))?;
 
         self.split_kernel.encode(
             queries,
@@ -138,7 +141,7 @@ impl AttentionGemmGroupedMetal {
             self.num_groups,
             q_replicas,
             num_splits,
-            encoder,
+            command_buffer,
         );
 
         self.combine.encode(
@@ -153,7 +156,7 @@ impl AttentionGemmGroupedMetal {
             self.num_groups,
             q_replicas,
             num_splits,
-            encoder,
+            command_buffer,
         );
         Ok(())
     }
@@ -252,17 +255,17 @@ impl AttentionGemmGrouped {
         &self,
         mask: MaskKind,
         arguments: AttentionArguments<'a, Metal, KT, VT>,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<Allocation<Metal>, MetalError> {
         let suffix_length = arguments.suffix_length;
         assert!(arguments.cache.ring_params().is_none(), "ring KV cache is unsupported");
         assert!(arguments.sinks.is_none(), "attention sinks are unsupported");
 
         let kv_length = arguments.cache.prefix_len() + suffix_length;
-        let mut output =
-            encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], DataType::BF16)?;
-        let gpu_core_count = encoder.context().gpu_core_count;
-        let core = self.get_or_create(encoder.context(), mask)?;
+        let mut output = command_buffer
+            .allocate_scratch(size_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], DataType::BF16))?;
+        let gpu_core_count = command_buffer.context().gpu_core_count;
+        let core = self.get_or_create(command_buffer.context(), mask)?;
         let num_splits = choose_splits(
             core.head_dim,
             suffix_length,
@@ -281,7 +284,7 @@ impl AttentionGemmGrouped {
             kv_length,
             1,
             num_splits,
-            encoder,
+            command_buffer,
         )?;
         Ok(output)
     }

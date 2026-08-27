@@ -3,13 +3,17 @@ use std::collections::{HashMap, hash_map::Entry};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
 use crate::{
+    array::size_for_shape,
     backends::{
         common::{
-            Allocation, BufferArg, Encoder,
+            Allocation, BufferArg, CommandBufferEncoding,
             gpu_types::AttnParams,
             kernel::{AttentionArguments, AttentionKernelConfig},
         },
-        metal::{Metal, context::MetalContext, error::MetalError, kernel::AttentionGemmMetalKernel},
+        metal::{
+            Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
+            kernel::AttentionGemmMetalKernel,
+        },
     },
     data_type::DataType,
 };
@@ -111,15 +115,17 @@ impl AttentionGemm {
     pub fn encode<'a, KT: BufferArg<'a, Metal>, VT: BufferArg<'a, Metal>>(
         &self,
         arguments: AttentionArguments<'a, Metal, KT, VT>,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<Allocation<Metal>, MetalError> {
-        let mut output = encoder
-            .allocate_constant_for_shape(&[arguments.suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
+        let mut output = command_buffer.allocate_scratch(size_for_shape(
+            &[arguments.suffix_length, self.num_q_heads, self.head_dim],
+            self.data_type,
+        ))?;
 
         let use_mxu = arguments.suffix_length >= 64
             && matches!(self.data_type, DataType::BF16)
             && matches!(self.head_dim, 64 | 128)
-            && encoder.context().supports_mxu;
+            && command_buffer.context().supports_mxu;
         let (bq, bk) = if use_mxu {
             (64, 32)
         } else {
@@ -151,7 +157,7 @@ impl AttentionGemm {
             align_k: params.k_rem == 0,
             is_trie: arguments.trie.is_some(),
         };
-        let kernel = self.get_or_create(encoder.context(), key)?;
+        let kernel = self.get_or_create(command_buffer.context(), key)?;
         kernel.encode(
             arguments.queries,
             arguments.keys,
@@ -164,7 +170,7 @@ impl AttentionGemm {
             arguments.sinks,
             self.num_q_heads,
             arguments.suffix_length,
-            encoder,
+            command_buffer,
         );
         Ok(output)
     }

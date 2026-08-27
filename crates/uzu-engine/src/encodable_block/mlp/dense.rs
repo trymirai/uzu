@@ -1,7 +1,7 @@
 //! MLP block encodable.
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, CommandBuffer, CommandBufferEncoding},
     encodable_block::{
         linear::Linear,
         mlp::{Mlp, gate_act_mul::MlpGateActMulEncodable},
@@ -33,16 +33,16 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         &self,
         input: Allocation<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("mlp (dense)");
+        command_buffer.push_debug_group("mlp (dense)");
 
-        let fused_up = self.up.encode(input, batch_dim, encoder)?;
-        let act_format = self.down.select_activation_format(batch_dim, encoder.context());
-        let down_input = self.gate.encode_for_linear(encoder, &fused_up, batch_dim, act_format)?;
-        let output = self.down.encode_input(down_input, batch_dim, encoder)?;
+        let fused_up = self.up.encode(input, batch_dim, command_buffer)?;
+        let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
+        let down_input = self.gate.encode_for_linear(command_buffer, &fused_up, batch_dim, act_format)?;
+        let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

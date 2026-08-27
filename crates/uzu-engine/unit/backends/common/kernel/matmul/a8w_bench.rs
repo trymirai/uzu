@@ -9,7 +9,7 @@ use uzu_engine_macros::uzu_bench;
 use crate::{
     backends::{
         common::{
-            Allocation, Backend, Encoder,
+            Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, CommandBuffer, CommandBufferEncoding,
             gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
             kernel::{
                 ActivationTransform, Kernels,
@@ -148,7 +148,7 @@ fn encode_step(
     prepare: &ActivationTransform<Metal>,
     hadamard: &ActivationTransform<Metal>,
     matmul: &mut MetalMatmul,
-    encoder: &mut Encoder<Metal>,
+    command_buffer: &mut <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding,
 ) {
     match path {
         BenchPath::A8GemmMxu => {
@@ -160,7 +160,7 @@ fn encode_step(
                 &data.rht_factors,
                 data.m,
                 data.k,
-                encoder,
+                command_buffer,
             );
             let args: MatmulArguments<'_, '_, '_, Metal, &Allocation<Metal>> = MatmulArguments {
                 a: MatmulA::Int8Symmetric {
@@ -185,19 +185,19 @@ fn encode_step(
                 n: data.n,
                 k: data.k,
             };
-            matmul.gemm.encode_with_engine(args, GemmEngine::Mxu, encoder).expect("a8 gemm mxu encode");
+            matmul.gemm.encode_with_engine(args, GemmEngine::Mxu, command_buffer).expect("a8 gemm mxu encode");
         },
         BenchPath::Bf16GemmMxu => {
-            encoder.encode_copy(&data.activations, .., &mut data.a_working, ..);
-            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
+            command_buffer.encode_copy(data.activations.as_buffer_range_ref(), data.a_working.as_buffer_range_mut());
+            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, command_buffer);
             let args = data.bf16_arguments(output);
-            matmul.gemm.encode_with_engine(args, GemmEngine::Mxu, encoder).expect("bf16 gemm mxu encode");
+            matmul.gemm.encode_with_engine(args, GemmEngine::Mxu, command_buffer).expect("bf16 gemm mxu encode");
         },
         BenchPath::Bf16Routed => {
-            encoder.encode_copy(&data.activations, .., &mut data.a_working, ..);
-            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
+            command_buffer.encode_copy(data.activations.as_buffer_range_ref(), data.a_working.as_buffer_range_mut());
+            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, command_buffer);
             let args = data.bf16_arguments(output);
-            matmul.encode(args, encoder).expect("routed bf16 matmul encode");
+            matmul.encode(args, command_buffer).expect("routed bf16 matmul encode");
         },
     }
 }
@@ -237,8 +237,8 @@ fn bench_bits(
             group.bench_function(BenchmarkId::new(path.label(), &shape_label), |bench| {
                 let benchmark_path =
                     format!("{}/Kernel/A8W/w{bits}/{}/{shape_label}", type_short_name::<Metal>(), path.label());
-                iter_encode_loop_named::<Metal, _>(context, bench, &benchmark_path, |encoder| {
-                    encode_step(path, &mut data, &mut output, prepare, hadamard, &mut matmul, encoder);
+                iter_encode_loop_named::<Metal, _>(context, bench, &benchmark_path, |command_buffer| {
+                    encode_step(path, &mut data, &mut output, prepare, hadamard, &mut matmul, command_buffer);
                 });
             });
         }

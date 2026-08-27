@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, Backend, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel, SigmoidGateKernel},
     },
     config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
@@ -241,17 +241,17 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("attention");
+        command_buffer.push_debug_group("attention");
 
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        let output = self.attend(hidden, precalculated_rope, batch_dim, state, encoder)?;
+        let output = self.attend(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

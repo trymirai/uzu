@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, Backend, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, SeparableCausalConvKernel},
     },
     config::token_mixer::convolutions::SeparableCausalConvConfig,
@@ -76,11 +76,12 @@ impl<B: Backend> SeparableCausalConv<B> {
         coefficient_row_stride: u32,
         coefficient_column_offset: u32,
         sequence_length: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("SeparableCausalConv");
+        command_buffer.push_debug_group("SeparableCausalConv");
 
-        let mut output = encoder.allocate_scratch_for_shape(&[sequence_length, self.model_dim], self.data_type)?;
+        let mut output =
+            command_buffer.allocate_scratch(size_for_shape(&[sequence_length, self.model_dim], self.data_type))?;
         let coefficients_offset_bytes = size_for_shape(&[coefficient_column_offset], self.data_type);
         self.kernel.encode(
             input,
@@ -90,10 +91,10 @@ impl<B: Backend> SeparableCausalConv<B> {
             &mut output,
             sequence_length,
             coefficient_row_stride,
-            encoder,
+            command_buffer,
         );
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
         Ok(output)
     }
 }

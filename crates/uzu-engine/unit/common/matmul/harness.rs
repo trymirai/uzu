@@ -7,7 +7,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            AllocationType, Backend, Context, Encoder,
+            Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             kernel::{
                 Kernels,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -128,7 +128,11 @@ fn run<B: Backend, T: ArrayElement + Float>(
     context: &B::Context,
     kernel: &mut <B::Kernels as Kernels>::MatmulKernel,
     input: &Input<T>,
-    encode: impl for<'a> FnOnce(&mut <B::Kernels as Kernels>::MatmulKernel, MatmulArguments<'a, 'a, 'a, B>, &mut Encoder<B>),
+    encode: impl for<'a> FnOnce(
+        &mut <B::Kernels as Kernels>::MatmulKernel,
+        MatmulArguments<'a, 'a, 'a, B>,
+        &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ),
 ) -> Vec<T> {
     let Shape {
         m,
@@ -140,9 +144,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
     let mut d_allocation = if let Some(ref prefill) = input.d_prefill {
         alloc_allocation_with_data::<B, T>(context, prefill)
     } else {
-        context
-            .create_allocation(m as usize * n as usize * std::mem::size_of::<T>(), AllocationType::Global)
-            .expect("create d allocation")
+        context.create_allocation(m as usize * n as usize * std::mem::size_of::<T>()).expect("create d allocation")
     };
     let rht_allocation =
         input.rht_factors.as_ref().map(|factors| alloc_allocation_with_data::<B, i32>(context, factors));
@@ -156,7 +158,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
         soft_cap: None,
     };
 
-    let mut encoder = Encoder::new(context).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     encode(
         kernel,
         MatmulArguments {
@@ -176,9 +178,9 @@ fn run<B: Backend, T: ArrayElement + Float>(
             n,
             k,
         },
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<B, T>(&d_allocation)
 }
 
@@ -191,8 +193,8 @@ pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         T::data_type(),
     )
     .expect("CPU MatmulKernel");
-    run::<Cpu, T>(&context, &mut kernel, input, |kernel, args, encoder| {
-        kernel.encode(args, encoder).expect("encode failed");
+    run::<Cpu, T>(&context, &mut kernel, input, |kernel, args, command_buffer| {
+        kernel.encode(args, command_buffer).expect("encode failed");
     })
 }
 
@@ -203,11 +205,11 @@ pub fn run_metal<T: ArrayElement + Float>(
     input: &Input<T>,
     dispatch: TestDispatch,
 ) -> Vec<T> {
-    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
+    run::<Metal, T>(context, kernel, input, |kernel, args, command_buffer| {
         if let Some(engine) = dispatch {
-            kernel.gemm.encode_with_engine(args, engine, encoder).expect("forced GEMM engine encode failed");
+            kernel.gemm.encode_with_engine(args, engine, command_buffer).expect("forced GEMM engine encode failed");
         } else {
-            kernel.encode(args, encoder).expect("matmul encode failed");
+            kernel.encode(args, command_buffer).expect("matmul encode failed");
         }
     })
 }

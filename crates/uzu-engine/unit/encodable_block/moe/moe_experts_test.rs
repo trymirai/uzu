@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     backends::common::{
-        Encoder,
+        CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
         gpu_types::{ActivationType, activation_silu_alpha},
     },
     data_type::DataType,
@@ -370,7 +370,7 @@ fn test_two_pass_decode_correctness() {
 
         let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code)
             .expect("MoeExpertsTwoPassDecodeKernel::new");
-        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+        let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
 
         let y_partial_buf = experts_kernel
             .encode(
@@ -391,11 +391,11 @@ fn test_two_pass_decode_correctness() {
                     up_clip_max: f32::INFINITY,
                     silu_alpha,
                 },
-                &mut encoder,
+                &mut command_buffer,
             )
             .expect("failed to encode MoE experts");
 
-        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
         // Read GPU partial output and do CPU finalize (weighted sum)
         let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
@@ -493,7 +493,7 @@ fn test_two_pass_decode_multi_token() {
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
 
         let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code).expect("kernel");
-        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+        let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
         let y_partial_buf = experts_kernel
             .encode(
                 MoeExpertsTwoPassArguments {
@@ -513,10 +513,10 @@ fn test_two_pass_decode_multi_token() {
                     up_clip_max: f32::INFINITY,
                     silu_alpha,
                 },
-                &mut encoder,
+                &mut command_buffer,
             )
             .expect("failed to encode MoE experts");
-        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
         let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
         let y_gpu = gather_and_finalize(&y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
@@ -578,7 +578,7 @@ fn test_two_pass_prefill_correctness() {
 
         let experts_kernel =
             MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx, DataType::BF16, gating_code).expect("kernel");
-        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+        let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
         let args = MoeExpertsTwoPassArguments {
             x_perm: &x_perm_buf,
             expert_offsets: &offsets_buf,
@@ -596,8 +596,8 @@ fn test_two_pass_prefill_correctness() {
             up_clip_max: f32::INFINITY,
             silu_alpha,
         };
-        let y_partial_buf = experts_kernel.encode(args, &mut encoder).expect("failed to encode MoE experts");
-        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let y_partial_buf = experts_kernel.encode(args, &mut command_buffer).expect("failed to encode MoE experts");
+        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
         let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
         let y_gpu = gather_and_finalize(&y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);

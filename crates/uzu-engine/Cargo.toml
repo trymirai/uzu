@@ -19,10 +19,12 @@ cpu = [] # TODO: move libm here
 
 metal = [
     "dep:clang-ast",
+    "dep:depfile",
     "dep:tempfile",
     "dep:serde_json",
     "dep:objc2",
     "dep:obfstr",
+    "dep:blake3",
     "dep:xxhash-rust",
     "dep:zstd",
     "dep:metal",
@@ -34,12 +36,10 @@ grammar = ["dep:xgrammar", "dep:schemars"]
 anyhow.workspace = true
 async-trait.workspace = true
 walkdir.workspace = true
-depfile.workspace = true
 derive_more.workspace = true
 serde.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["full"] }
-blake3.workspace = true
 quote.workspace = true
 proc-macro2.workspace = true
 syn.workspace = true
@@ -49,8 +49,10 @@ rhai.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
 clang-ast = { workspace = true, optional = true }
+depfile = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
+blake3 = { workspace = true, optional = true }
 xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 zstd = { workspace = true, optional = true }
 
