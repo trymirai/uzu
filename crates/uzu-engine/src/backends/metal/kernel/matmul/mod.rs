@@ -13,7 +13,7 @@ use self::{
 use crate::{
     backends::{
         common::{
-            Allocation, BufferArg, Encoder,
+            Backend, BufferMut, BufferRef, CommandBufferEncoding,
             gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
             kernel::{
                 ActivationQuantization, ActivationTransform,
@@ -24,7 +24,7 @@ use crate::{
                 },
             },
         },
-        metal::{Metal, context::MetalContext, error::MetalError},
+        metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError},
     },
     data_type::DataType,
 };
@@ -67,19 +67,19 @@ impl MatmulOutputWork {
 
     fn apply(
         &self,
-        output: &mut Allocation<Metal>,
-        factors: &Allocation<Metal>,
-        bias: Option<&Allocation<Metal>>,
+        output: impl BufferMut<Backend = Metal>,
+        factors: impl BufferRef<Backend = Metal>,
+        bias: Option<&<Metal as Backend>::GlobalBuffer>,
         m: u32,
         n: u32,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) {
         let transform = if bias.is_some() {
             &self.output_rht_with_bias
         } else {
             &self.output_rht
         };
-        transform.encode_fp_in_place(output, factors, bias, m, n, encoder);
+        transform.encode_fp_in_place(output, factors, bias, m, n, command_buffer);
     }
 }
 
@@ -261,15 +261,22 @@ impl MatmulKernel for MatmulMetalKernel {
         }
     }
 
-    fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+    fn encode(
         &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
-        encoder: &mut Encoder<Metal>,
+        arguments: MatmulArguments<
+            '_,
+            Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferMut<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+        >,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = match self.select_dispatch(&shape, encoder.context()) {
+        let plan = match self.select_dispatch(&shape, command_buffer.context()) {
             MatmulDispatch::Gemv(gemv) => {
-                return self.gemv.encode(arguments, gemv, &self.output_work, encoder).map_err(MetalError::from);
+                return self.gemv.encode(arguments, gemv, &self.output_work, command_buffer).map_err(MetalError::from);
             },
             MatmulDispatch::Gemm(plan) => plan,
         };
@@ -284,20 +291,27 @@ impl MatmulKernel for MatmulMetalKernel {
                 .into(),
             ));
         }
-        self.gemm.encode_plan(arguments, plan, &self.output_work, encoder)
+        self.gemm.encode_plan(arguments, plan, &self.output_work, command_buffer)
     }
 }
 
 #[cfg(test)]
 impl MatmulMetalKernel {
-    pub fn encode_with_gemm_engine<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+    pub fn encode_with_gemm_engine(
         &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
+        arguments: MatmulArguments<
+            '_,
+            Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferMut<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+        >,
         engine: gemm::GemmEngine,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = self.gemm.select_plan_for_engine(&shape, engine, encoder.context())?;
-        self.gemm.encode_plan(arguments, plan, &self.output_work, encoder)
+        let plan = self.gemm.select_plan_for_engine(&shape, engine, command_buffer.context())?;
+        self.gemm.encode_plan(arguments, plan, &self.output_work, command_buffer)
     }
 }

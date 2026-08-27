@@ -7,13 +7,16 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::ShortConvPackKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::ShortConvPackKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -32,14 +35,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvPackKernel::new(&context, T::data_type())
         .expect("Failed to create ShortConvPackKernel");
 
-    let state_in = alloc_allocation_with_data::<B, T>(&context, &input.state_in);
-    let in_proj = alloc_allocation_with_data::<B, T>(&context, &input.in_proj);
+    let state_in = create_buffer_with_data::<B, T>(&context, &input.state_in);
+    let in_proj = create_buffer_with_data::<B, T>(&context, &input.in_proj);
 
     let padded_rows = (input.state_stride + input.suffix_len) as usize;
     let padded_size = padded_rows * input.model_dim as usize;
-    let mut padded = alloc_allocation::<B, T>(&context, padded_size);
+    let mut padded = create_buffer::<B, T>(&context, padded_size);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &state_in,
         &in_proj,
@@ -48,11 +51,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         input.suffix_len,
         input.in_proj_stride,
         input.model_dim,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec(&padded)
+    buffer_to_vec(&padded)
 }
 
 /// Build test input for ShortConvPack.

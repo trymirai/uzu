@@ -1,18 +1,17 @@
 use std::{error::Error, fmt::Debug};
 
-use super::{CommandBuffer, Context, DenseBuffer, Kernels, SparseBuffer};
+use super::{CommandBuffer, ConstantBuffer, Context, GlobalBuffer, Kernels, ScratchBuffer, SparseBuffer};
 
 pub trait Backend: Debug + Clone + Send + Sync + 'static {
     type Context: Context<Backend = Self>;
     type CommandBuffer: CommandBuffer<Backend = Self>;
-    type DenseBuffer: DenseBuffer<Backend = Self>;
+    type GlobalBuffer: GlobalBuffer<Backend = Self>;
+    type ConstantBuffer: ConstantBuffer<Backend = Self>;
+    type ScratchBuffer: ScratchBuffer<Backend = Self>;
     type SparseBuffer: SparseBuffer<Backend = Self>;
+    type AllocationPool: Send + Sync;
     type Kernels: Kernels<Backend = Self>;
     type Error: Error + Debug;
 
     const NAME: &'static str;
-    const MIN_ALLOCATION_ALIGNMENT: usize;
-    const MAX_ALLOCATION_ALIGNMENT: usize;
-    const ALLOCATION_GRANULARITY: usize;
-    const MAX_INLINE_BYTES: usize;
 }

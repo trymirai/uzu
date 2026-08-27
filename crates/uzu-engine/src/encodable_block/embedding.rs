@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             LogitTransformKernel,
@@ -84,7 +84,7 @@ impl<B: Backend> Embedding<B> {
         config: &AnyEmbeddingConfig,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
-    ) -> Result<(Self, Option<Allocation<B>>), EmbeddingError<B>> {
+    ) -> Result<(Self, Option<B::GlobalBuffer>), EmbeddingError<B>> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
@@ -124,13 +124,13 @@ impl<B: Backend> Embedding<B> {
                             incoherence_signs_tree
                                 .leaf("output_signs")?
                                 .validate(&[model_dim], DataType::I32)?
-                                .read_allocation()?,
+                                .read_buffer()?,
                         );
                         let readout_input_hadamard_factors = Some(
                             incoherence_signs_tree
                                 .leaf("output_signs")?
                                 .validate(&[model_dim], DataType::I32)?
-                                .read_allocation()?,
+                                .read_buffer()?,
                         );
 
                         let table = EmbeddingTable::load_with_spec(
@@ -172,7 +172,7 @@ impl<B: Backend> Embedding<B> {
                                 .subtree("incoherence_signs")
                                 .leaf("output_signs")?
                                 .validate(&[model_dim], DataType::I32)?
-                                .read_allocation()?,
+                                .read_buffer()?,
                         );
                         EmbeddingTable::load_with_spec(
                             context,
@@ -248,13 +248,13 @@ impl<B: Backend> Embedding<B> {
 
     pub fn encode_lookup(
         &self,
-        token_ids: &Allocation<B>,
+        token_ids: impl BufferRef<Backend = B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, EmbeddingError<B>> {
-        encoder.push_debug_group("embedding lookup");
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
+        command_buffer.push_debug_group("embedding lookup");
 
-        let mut output = encoder
+        let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
 
@@ -268,9 +268,9 @@ impl<B: Backend> Embedding<B> {
                 ..
             } => input_table,
         };
-        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, encoder);
+        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }
@@ -278,16 +278,16 @@ impl<B: Backend> Embedding<B> {
     pub fn encode_readout(
         &self,
         batch_dim: u32,
-        input_allocation: &Allocation<B>,
+        input_buffer: impl BufferRef<Backend = B>,
         output_dim: u32,
-        gather_indices: Option<&Allocation<B>>,
+        gather_indices: Option<impl BufferRef<Backend = B>>,
         apply_logit_transform: bool,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, EmbeddingError<B>> {
-        encoder.push_debug_group("embedding readout");
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
+        command_buffer.push_debug_group("embedding readout");
 
         assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
-        let mut output_allocation = match &self.tying {
+        let mut output_buffer = match &self.tying {
             EmbeddingTying::Untied {
                 output,
                 ..
@@ -296,18 +296,18 @@ impl<B: Backend> Embedding<B> {
                     indices,
                     output_dim,
                 });
-                output.encode(input_allocation, batch_dim, gather, encoder).map_err(EmbeddingError::BackendError)?
+                output.encode(input_buffer, batch_dim, gather, command_buffer).map_err(EmbeddingError::BackendError)?
             },
             EmbeddingTying::Tied {
                 table,
                 readout,
             } => {
-                let mut output = encoder
+                let mut output = command_buffer
                     .allocate_scratch_for_shape(&[batch_dim, output_dim], self.data_type)
                     .map_err(EmbeddingError::BackendError)?;
                 let arguments = MatmulArguments {
                     a: MatmulA::FullPrecision {
-                        values: input_allocation,
+                        values: input_buffer,
                         offset: 0,
                     },
                     b: table.matrix().matmul_b(),
@@ -320,7 +320,7 @@ impl<B: Backend> Embedding<B> {
                     n: output_dim,
                     k: self.model_dim,
                 };
-                readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+                readout.lock().encode(arguments, command_buffer).map_err(EmbeddingError::BackendError)?;
                 output
             },
         };
@@ -328,17 +328,17 @@ impl<B: Backend> Embedding<B> {
         if apply_logit_transform && let Some(logit_transform) = &self.logit_transform {
             let length = batch_dim * output_dim;
             logit_transform.kernel.encode(
-                &mut output_allocation,
+                &mut output_buffer,
                 length,
                 logit_transform.scale,
                 logit_transform.soft_cap.unwrap_or(0.0),
-                encoder,
+                command_buffer,
             );
         }
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
-        Ok(output_allocation)
+        Ok(output_buffer)
     }
 }
 fn readout_kernel<B: Backend>(

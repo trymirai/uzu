@@ -3,11 +3,14 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::MoeCountsOffsetsFusedKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::MoeCountsOffsetsFusedKernel,
+        },
         cpu::Cpu,
     },
     tests::helpers::{
-        alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, for_each_backend,
+        buffer_prefix_to_vec, buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend,
         for_each_non_cpu_backend,
     },
 };
@@ -40,32 +43,32 @@ fn get_output<B: Backend>(
         .expect("Failed to create MoeCountsOffsetsFusedKernel");
 
     let topk_ids_len = (t * k).max(1);
-    let topk_ids_allocation = if topk_ids.is_empty() {
-        alloc_allocation::<B, i32>(&context, topk_ids_len)
+    let topk_ids_buffer = if topk_ids.is_empty() {
+        create_buffer::<B, i32>(&context, topk_ids_len)
     } else {
-        alloc_allocation_with_data::<B, i32>(&context, topk_ids)
+        create_buffer_with_data::<B, i32>(&context, topk_ids)
     };
-    let mut offsets = alloc_allocation::<B, u32>(&context, e + 1);
-    let mut sum_k = alloc_allocation::<B, u32>(&context, 1);
+    let mut offsets = create_buffer::<B, u32>(&context, e + 1);
+    let mut sum_k = create_buffer::<B, u32>(&context, 1);
     let num_tiles = e.div_ceil(512).max(1);
-    let mut partials = alloc_allocation::<B, u32>(&context, num_tiles * 512);
+    let mut partials = create_buffer::<B, u32>(&context, num_tiles * 512);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
-        &topk_ids_allocation,
+        &topk_ids_buffer,
         &mut offsets,
         &mut sum_k,
         &mut partials,
         t as u32,
         e as u32,
         k as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let offsets = allocation_to_vec::<B, u32>(&offsets);
-    let sum_k = allocation_to_vec::<B, u32>(&sum_k)[0];
-    let partials = allocation_prefix_to_vec::<B, u32>(&partials, e);
+    let offsets = buffer_to_vec::<B, u32>(&offsets);
+    let sum_k = buffer_to_vec::<B, u32>(&sum_k)[0];
+    let partials = buffer_prefix_to_vec::<B, u32>(&partials, e);
 
     (offsets, sum_k, partials)
 }

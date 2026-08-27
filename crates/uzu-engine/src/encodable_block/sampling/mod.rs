@@ -1,15 +1,15 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
     mem::size_of,
-    ops::Range,
+    range::Range,
 };
 
 use parking_lot::Mutex;
 
 use crate::{
     backends::common::{
-        Allocation, AllocationType, AsBufferRangeRef, Backend, Context, Encoder, Kernels,
-        kernel::{RepetitionPenaltyKernel, TensorCopyKernel, UnifiedSamplingKernel},
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
+        kernel::{RepetitionPenaltyKernel, UnifiedSamplingKernel},
     },
     data_type::DataType,
     encodable_block::batch_topology::BatchTopology,
@@ -82,17 +82,17 @@ struct UnifiedSamplingKey {
 impl<B: Backend> Sampling<B> {
     pub fn encode(
         &self,
-        logits: &Allocation<B>,
-        seeds: Option<&Allocation<B>>,
-        bitmask: Option<&Allocation<B>>,
-        context_ring: Option<&Allocation<B>>,
-        token_ids: Option<&Allocation<B>>,
+        logits: impl BufferRef<Backend = B, Buffer: Sized>,
+        seeds: Option<impl BufferRef<Backend = B>>,
+        bitmask: Option<impl BufferRef<Backend = B>>,
+        context_ring: Option<impl BufferRef<Backend = B>>,
+        token_ids: Option<impl BufferRef<Backend = B>>,
         sampling_method: &SamplingMethod,
         batch_dim: &BatchTopology,
         sampling_range: Range<u32>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("sampling");
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::GlobalBuffer, B::Error> {
+        command_buffer.push_debug_group("sampling");
 
         let sampling_length = sampling_range.end - sampling_range.start;
 
@@ -126,12 +126,12 @@ impl<B: Backend> Sampling<B> {
             let suffix_repetition_length =
                 suffix_repetition_length.expect("suffix_repetition_length is required for repetition_penalty");
 
-            let mut logits_copy = encoder.allocate_scratch(logits.as_buffer_range_ref().range().len())?;
-            let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(encoder.context(), self.data_type)?;
-            tensor_copy.encode(logits, &mut logits_copy, self.vocab_size * sampling_length, encoder);
+            let mut logits_copy = command_buffer.allocate_scratch(logits.size())?;
+            let copy_size = self.vocab_size as usize * sampling_length as usize * self.data_type.size_in_bytes();
+            command_buffer.encode_copy(logits.subrange(..copy_size), logits_copy.subrange_mut(..copy_size));
 
             let repetition_penalty_kernel =
-                <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(encoder.context(), self.data_type)?;
+                <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(command_buffer.context(), self.data_type)?;
             repetition_penalty_kernel.encode(
                 logits,
                 &mut logits_copy,
@@ -142,13 +142,19 @@ impl<B: Backend> Sampling<B> {
                 self.vocab_size,
                 sampling_range.start,
                 sampling_length,
-                encoder,
+                command_buffer,
             );
             Some(logits_copy)
         } else {
             None
         };
-        let logits = penalized_logits.as_ref().unwrap_or(logits);
+        let logits = match &penalized_logits {
+            Some(logits) => (logits as &dyn Buffer<Backend = B>).subrange(..),
+            None => {
+                let (buffer, range) = logits.parts();
+                (buffer as &dyn Buffer<Backend = B>).subrange(range)
+            },
+        };
 
         let mut unified_kernels = self.unified_kernels.lock();
         let entry = unified_kernels.entry(key);
@@ -158,7 +164,7 @@ impl<B: Backend> Sampling<B> {
                 let key = vacant.key();
 
                 let kernel = <B::Kernels as Kernels>::UnifiedSamplingKernel::new(
-                    encoder.context(),
+                    command_buffer.context(),
                     self.data_type,
                     key.is_stochastic,
                     key.has_bitmask,
@@ -172,8 +178,7 @@ impl<B: Backend> Sampling<B> {
             },
         };
 
-        let mut output =
-            encoder.context().create_allocation(sampling_length as usize * size_of::<u32>(), AllocationType::Global)?;
+        let mut output = command_buffer.context().create_buffer(sampling_length as usize * size_of::<u32>())?;
 
         kernel.encode(
             logits,
@@ -186,10 +191,10 @@ impl<B: Backend> Sampling<B> {
             min_p,
             self.vocab_size,
             sampling_length,
-            encoder,
+            command_buffer,
         );
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

@@ -3,11 +3,14 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::AttentionPrepareKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::AttentionPrepareKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
 };
 
 struct Output {
@@ -31,19 +34,19 @@ fn run<B: Backend>() -> Output {
         18.0, 111.0, 112.0, 113.0, 114.0,
     ]
     .map(bf16::from_f32);
-    let qkvg = alloc_allocation_with_data::<B, bf16>(&context, &qkvg);
-    let mut queries = alloc_allocation::<B, bf16>(&context, 8);
-    let mut keys = alloc_allocation::<B, bf16>(&context, 4);
-    let mut values = alloc_allocation::<B, bf16>(&context, 4);
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let qkvg = create_buffer_with_data::<B, bf16>(&context, &qkvg);
+    let mut queries = create_buffer::<B, bf16>(&context, 8);
+    let mut keys = create_buffer::<B, bf16>(&context, 4);
+    let mut values = create_buffer::<B, bf16>(&context, 4);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
 
     kernel.encode(
         &qkvg,
         &mut queries,
         Some(&mut keys),
         Some(&mut values),
-        None::<&Allocation<B>>,
-        None::<&Allocation<B>>,
+        None::<&B::GlobalBuffer>,
+        None::<&B::GlobalBuffer>,
         2,
         Some(1),
         2,
@@ -51,14 +54,14 @@ fn run<B: Backend>() -> Output {
         Some(0),
         12,
         2,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
-        queries: allocation_to_vec(&queries),
-        keys: allocation_to_vec(&keys),
-        values: allocation_to_vec(&values),
+        queries: buffer_to_vec(&queries),
+        keys: buffer_to_vec(&keys),
+        values: buffer_to_vec(&values),
     }
 }
 
@@ -87,17 +90,17 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
     .expect("Failed to create AttentionPrepareKernel");
     let qg = [1.0, 2.0, 3.0, 4.0, 101.0, 102.0, 103.0, 104.0, 11.0, 12.0, 13.0, 14.0, 111.0, 112.0, 113.0, 114.0]
         .map(bf16::from_f32);
-    let qg = alloc_allocation_with_data::<B, bf16>(&context, &qg);
-    let mut queries = alloc_allocation::<B, bf16>(&context, 8);
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let qg = create_buffer_with_data::<B, bf16>(&context, &qg);
+    let mut queries = create_buffer::<B, bf16>(&context, 8);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
 
     kernel.encode(
         &qg,
         &mut queries,
-        None::<&mut Allocation<B>>,
-        None::<&mut Allocation<B>>,
-        None::<&Allocation<B>>,
-        None::<&Allocation<B>>,
+        None::<&mut B::GlobalBuffer>,
+        None::<&mut B::GlobalBuffer>,
+        None::<&B::GlobalBuffer>,
+        None::<&B::GlobalBuffer>,
         2,
         None,
         2,
@@ -105,11 +108,11 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
         None,
         8,
         2,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    allocation_to_vec(&queries)
+    buffer_to_vec(&queries)
 }
 
 #[uzu_test]

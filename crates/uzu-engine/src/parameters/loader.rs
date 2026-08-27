@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     array::{ArrayElement, size_for_shape},
-    backends::common::{Allocation, AllocationType, Backend, Context},
+    backends::common::{Backend, BufferMut, Context},
     data_type::DataType,
     utils::strict_serde::DeserializeStrictOwned,
 };
@@ -133,14 +133,11 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
         Ok(data.into_boxed_slice())
     }
 
-    pub fn read_allocation(&self) -> Result<Allocation<B>, ParameterLoaderError<B>> {
-        let mut allocation = self
-            .loader
-            .context
-            .create_allocation(self.metadata.size, AllocationType::Global)
-            .map_err(ParameterLoaderError::BackendError)?;
-        self.loader.file.read_exact_at(allocation.as_slice_mut(), self.metadata.offset as u64)?;
-        Ok(allocation)
+    pub fn read_buffer(&self) -> Result<B::GlobalBuffer, ParameterLoaderError<B>> {
+        let mut buffer =
+            self.loader.context.create_buffer(self.metadata.size).map_err(ParameterLoaderError::BackendError)?;
+        self.loader.file.read_exact_at(buffer.as_slice_mut::<u8>(), self.metadata.offset as u64)?;
+        Ok(buffer)
     }
 }
 

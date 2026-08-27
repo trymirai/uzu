@@ -8,7 +8,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{ActivationTransform, QuantizedEmbeddingLookupKernel},
         },
@@ -17,9 +17,7 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{
-            alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend, for_each_non_cpu_backend,
-        },
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend, for_each_non_cpu_backend},
     },
 };
 
@@ -218,34 +216,34 @@ fn get_output_with_hadamard<T: ArrayElement + Float, B: Backend>(
     )
     .expect("Failed to create QuantizedEmbeddingLookupKernel");
 
-    let token_ids_allocation = alloc_allocation_with_data::<B, u32>(&context, &input.token_ids);
-    let weights_allocation = alloc_allocation_with_data::<B, u8>(&context, &input.weights);
-    let scales_allocation = alloc_allocation_with_data::<B, T>(&context, &input.scales);
-    let zero_points_allocation =
-        input.zero_points.as_ref().map(|zero_points| alloc_allocation_with_data::<B, u8>(&context, zero_points));
-    let biases_allocation = input.biases.as_ref().map(|biases| alloc_allocation_with_data::<B, T>(&context, biases));
-    let hadamard_factors_allocation =
-        hadamard_factors.map(|hadamard_factors| alloc_allocation_with_data::<B, i32>(&context, hadamard_factors));
-    let mut output = alloc_allocation::<B, T>(&context, input.batch_size as usize * input.model_dim as usize);
+    let token_ids_buffer = create_buffer_with_data::<B, u32>(&context, &input.token_ids);
+    let weights_buffer = create_buffer_with_data::<B, u8>(&context, &input.weights);
+    let scales_buffer = create_buffer_with_data::<B, T>(&context, &input.scales);
+    let zero_points_buffer =
+        input.zero_points.as_ref().map(|zero_points| create_buffer_with_data::<B, u8>(&context, zero_points));
+    let biases_buffer = input.biases.as_ref().map(|biases| create_buffer_with_data::<B, T>(&context, biases));
+    let hadamard_factors_buffer =
+        hadamard_factors.map(|hadamard_factors| create_buffer_with_data::<B, i32>(&context, hadamard_factors));
+    let mut output = create_buffer::<B, T>(&context, input.batch_size as usize * input.model_dim as usize);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
-        &token_ids_allocation,
-        &weights_allocation,
-        &scales_allocation,
-        zero_points_allocation.as_ref(),
-        biases_allocation.as_ref(),
+        &token_ids_buffer,
+        &weights_buffer,
+        &scales_buffer,
+        zero_points_buffer.as_ref(),
+        biases_buffer.as_ref(),
         &mut output,
-        hadamard_factors_allocation.as_ref(),
+        hadamard_factors_buffer.as_ref(),
         input.batch_size,
         input.vocab_size,
         input.model_dim,
         input.input_scale,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec(&output)
+    buffer_to_vec(&output)
 }
 
 fn test_zero_point_group16<T: ArrayElement + Float + Debug + Display>() {
@@ -324,20 +322,20 @@ fn test_zero_point_group16_hadamard<T: ArrayElement + Float + Debug + Display>()
     let context = <Cpu as Backend>::Context::new().expect("Failed to create Context");
     let output_rht = ActivationTransform::<Cpu>::output_rht(context.as_ref(), T::data_type(), None, false)
         .expect("Failed to create ActivationTransform");
-    let plain_allocation = alloc_allocation_with_data::<Cpu, T>(&context, &plain);
-    let hadamard_factors_allocation = alloc_allocation_with_data::<Cpu, i32>(&context, &hadamard_factors);
-    let mut expected_allocation = alloc_allocation::<Cpu, T>(&context, plain.len());
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let plain_buffer = create_buffer_with_data::<Cpu, T>(&context, &plain);
+    let hadamard_factors_buffer = create_buffer_with_data::<Cpu, i32>(&context, &hadamard_factors);
+    let mut expected_buffer = create_buffer::<Cpu, T>(&context, plain.len());
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     output_rht.encode_fp(
-        &plain_allocation,
-        &mut expected_allocation,
-        &hadamard_factors_allocation,
+        &plain_buffer,
+        &mut expected_buffer,
+        &hadamard_factors_buffer,
         input.batch_size,
         input.model_dim,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    let expected = allocation_to_vec::<Cpu, T>(&expected_allocation);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let expected = buffer_to_vec::<Cpu, T>(&expected_buffer);
 
     for_each_backend!(|B| {
         let output = get_output_with_hadamard::<T, B>(&input, Some(&hadamard_factors));

@@ -4,12 +4,15 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::BuildTreePrefixKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::BuildTreePrefixKernel,
+        },
         cpu::Cpu,
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -18,14 +21,14 @@ fn run<B: Backend>(tree_size: usize) -> Vec<f32> {
     let context = B::Context::new().unwrap();
     let trie = (0..tree_size as u32).flat_map(|node| [node, tree_size as u32 - 1, node]).collect::<Vec<_>>();
     let log_decay = (0..tree_size * HEADS).map(|i| -0.001 - i as f32 * 0.0001).collect::<Vec<_>>();
-    let trie = alloc_allocation_with_data::<B, u32>(&context, &trie);
-    let log_decay = alloc_allocation_with_data::<B, f32>(&context, &log_decay);
-    let mut prefix = alloc_allocation::<B, f32>(&context, tree_size * HEADS);
+    let trie = create_buffer_with_data::<B, u32>(&context, &trie);
+    let log_decay = create_buffer_with_data::<B, f32>(&context, &log_decay);
+    let mut prefix = create_buffer::<B, f32>(&context, tree_size * HEADS);
     let kernel = <B::Kernels as Kernels>::BuildTreePrefixKernel::new(&context).unwrap();
-    let mut encoder = Encoder::new(context.as_ref()).unwrap();
-    kernel.encode(&trie, &log_decay, &mut prefix, 1, tree_size as u32, HEADS as u32, &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec(&prefix)
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    kernel.encode(&trie, &log_decay, &mut prefix, 1, tree_size as u32, HEADS as u32, &mut command_buffer);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec(&prefix)
 }
 
 #[uzu_test]

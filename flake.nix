@@ -116,6 +116,7 @@
             cargo-nextest
             cargo-hack
             cargo-expand
+            samply
             cargo-flamegraph
             cargo-show-asm
             critcmp

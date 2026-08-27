@@ -7,10 +7,13 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::SigmoidGateKernel},
+        common::{
+            Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::SigmoidGateKernel,
+        },
         cpu::Cpu,
     },
-    tests::helpers::{alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+    tests::helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
 };
 
 struct Config {
@@ -29,24 +32,25 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let kernel = <<B as Backend>::Kernels as Kernels>::SigmoidGateKernel::new(&context, T::data_type())
         .expect("Failed to create SigmoidGateKernel");
 
-    let qkvg = alloc_allocation_with_data::<B, T>(&context, qkvg_data);
-    let mut output = alloc_allocation_with_data::<B, T>(&context, output_data);
+    let qkvg = create_buffer_with_data::<B, T>(&context, qkvg_data);
+    let mut output = create_buffer_with_data::<B, T>(&context, output_data);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer =
+        context.as_ref().create_command_buffer(None, None).expect("Failed to create command buffer");
     let gate_dim = config.num_heads * config.head_dim;
     let gate_offset = (config.num_heads + 2 * config.num_kv_heads) * config.head_dim;
     let qkvg_dim = gate_offset + gate_dim;
     kernel.encode(
-        (&qkvg, gate_offset as usize * size_of::<T>()),
+        qkvg.subrange(gate_offset as usize * size_of::<T>()..),
         &mut output,
         gate_dim,
         config.suffix_length,
         qkvg_dim,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec(&output)
+    buffer_to_vec(&output)
 }
 
 fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {

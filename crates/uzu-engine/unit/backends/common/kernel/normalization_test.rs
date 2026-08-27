@@ -8,7 +8,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder, Kernels,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
             kernel::{ActivationTransform, NormalizationKernel},
         },
         cpu::Cpu,
@@ -16,9 +16,7 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{
-            alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend, for_each_non_cpu_backend,
-        },
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend, for_each_non_cpu_backend},
     },
 };
 
@@ -56,30 +54,30 @@ fn get_output<
     )
     .expect("Failed to create NormalizationKernel");
 
-    let input_allocation = alloc_allocation_with_data::<B, InputT>(&context, input);
-    let scales_allocation = scales.map(|scales| alloc_allocation_with_data::<B, AffineT>(&context, scales));
-    let hadamard_factors_allocation =
-        hadamard_factors.map(|hadamard_factors| alloc_allocation_with_data::<B, i32>(&context, hadamard_factors));
-    let mut output_allocation = alloc_allocation_with_data::<B, OutputT>(&context, &vec![OutputT::zero(); input.len()]);
+    let input_buffer = create_buffer_with_data::<B, InputT>(&context, input);
+    let scales_buffer = scales.map(|scales| create_buffer_with_data::<B, AffineT>(&context, scales));
+    let hadamard_factors_buffer =
+        hadamard_factors.map(|hadamard_factors| create_buffer_with_data::<B, i32>(&context, hadamard_factors));
+    let mut output_buffer = create_buffer_with_data::<B, OutputT>(&context, &vec![OutputT::zero(); input.len()]);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
-        Some((&input_allocation, 0)),
-        scales_allocation.as_ref(),
-        None::<&Allocation<B>>,
-        &mut output_allocation,
-        None::<(&mut Allocation<B>, usize)>,
-        hadamard_factors_allocation.as_ref(),
+        Some(&input_buffer),
+        scales_buffer.as_ref(),
+        None::<&B::GlobalBuffer>,
+        &mut output_buffer,
+        None::<&mut B::GlobalBuffer>,
+        hadamard_factors_buffer.as_ref(),
         batch_size,
         element_count,
         epsilon,
         0.0,
         1.0,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    allocation_to_vec::<B, OutputT>(&output_allocation)
+    buffer_to_vec::<B, OutputT>(&output_buffer)
 }
 
 fn test_internal<
@@ -175,20 +173,20 @@ fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
     let context = <Cpu as Backend>::Context::new().expect("Failed to create Context");
     let input_rht = ActivationTransform::<Cpu>::input_rht(context.as_ref(), T::data_type(), false)
         .expect("Failed to create ActivationTransform");
-    let plain_allocation = alloc_allocation_with_data::<Cpu, T>(&context, &plain);
-    let hadamard_factors_allocation = alloc_allocation_with_data::<Cpu, i32>(&context, &hadamard_factors);
-    let mut expected_allocation = alloc_allocation::<Cpu, T>(&context, plain.len());
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let plain_buffer = create_buffer_with_data::<Cpu, T>(&context, &plain);
+    let hadamard_factors_buffer = create_buffer_with_data::<Cpu, i32>(&context, &hadamard_factors);
+    let mut expected_buffer = create_buffer::<Cpu, T>(&context, plain.len());
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     input_rht.encode_fp(
-        &plain_allocation,
-        &mut expected_allocation,
-        &hadamard_factors_allocation,
+        &plain_buffer,
+        &mut expected_buffer,
+        &hadamard_factors_buffer,
         batch_size,
         element_count,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
-    let expected = allocation_to_vec::<Cpu, T>(&expected_allocation);
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    let expected = buffer_to_vec::<Cpu, T>(&expected_buffer);
 
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         1e-2

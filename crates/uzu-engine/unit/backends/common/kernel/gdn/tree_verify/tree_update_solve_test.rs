@@ -6,13 +6,16 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::TreeUpdateSolveKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -152,16 +155,16 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
         (0..batch_size).map(|batch| batch as i32).collect::<Vec<_>>()
     };
 
-    let kh0 = alloc_allocation_with_data::<B, f32>(&context, &kh0);
-    let v = alloc_allocation_with_data::<B, T>(&context, &v);
-    let prefix = alloc_allocation_with_data::<B, f32>(&context, &prefix);
-    let beta = alloc_allocation_with_data::<B, f32>(&context, &beta);
-    let a = alloc_allocation_with_data::<B, f32>(&context, &a_f32);
-    let a_inv = alloc_allocation_with_data::<B, f32>(&context, &a_inv);
-    let h0_idx = alloc_allocation_with_data::<B, i32>(&context, &h0_idx);
-    let mut u = alloc_allocation::<B, f32>(&context, u_len);
+    let kh0 = create_buffer_with_data::<B, f32>(&context, &kh0);
+    let v = create_buffer_with_data::<B, T>(&context, &v);
+    let prefix = create_buffer_with_data::<B, f32>(&context, &prefix);
+    let beta = create_buffer_with_data::<B, f32>(&context, &beta);
+    let a = create_buffer_with_data::<B, f32>(&context, &a_f32);
+    let a_inv = create_buffer_with_data::<B, f32>(&context, &a_inv);
+    let h0_idx = create_buffer_with_data::<B, i32>(&context, &h0_idx);
+    let mut u = create_buffer::<B, f32>(&context, u_len);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     kernel.encode(
         use_h0.then_some(&kh0),
         &v,
@@ -175,11 +178,11 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
         case.tree_size,
         case.num_v_heads,
         case.head_v_dim,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec(&u)
+    buffer_to_vec(&u)
 }
 
 #[uzu_test]

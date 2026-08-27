@@ -1,6 +1,6 @@
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::matmul::{ActivationFormat, MatmulA},
     },
@@ -61,7 +61,7 @@ impl<B: Backend> UntiedReadout<B> {
             .subtree("incoherence_signs")
             .leaf("input_signs")?
             .validate(&[model_dim], DataType::I32)?
-            .read_allocation()?;
+            .read_buffer()?;
         let preparation = LinearInputPreparation {
             rht_signs,
             activation_quantization: linear.prepare_a8(context),
@@ -77,25 +77,25 @@ impl<B: Backend> UntiedReadout<B> {
 
     pub fn encode(
         &self,
-        input: &Allocation<B>,
+        input: impl BufferRef<Backend = B>,
         batch_dim: u32,
-        gather: Option<Gather<'_, B>>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
+        gather: Option<Gather<impl BufferRef<Backend = B>>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
         let Some(input_rht) = &self.input_rht else {
             let a = MatmulA::FullPrecision {
                 values: input,
                 offset: 0,
             };
-            return self.linear.encode_with_a(a, batch_dim, gather, encoder);
+            return self.linear.encode_with_a(a, batch_dim, gather, command_buffer);
         };
 
         let format = if gather.is_some() {
             ActivationFormat::Bf16
         } else {
-            self.linear.select_activation_format(batch_dim, encoder.context())
+            self.linear.select_activation_format(batch_dim, command_buffer.context())
         };
-        let input = input_rht.prepare(input, batch_dim, format, encoder)?;
-        self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, encoder)
+        let input = input_rht.prepare(input, batch_dim, format, command_buffer)?;
+        self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, command_buffer)
     }
 }
