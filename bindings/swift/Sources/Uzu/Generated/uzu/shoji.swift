@@ -2084,6 +2084,14 @@ public func checkpointVersion() -> String?  {
 })
 }
     
+public func filesystemPath() -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_shoji_fn_method_model_filesystem_path(
+            FfiConverterTypeModel_lower(self),$0
+    )
+})
+}
+
 public func isChatCapable() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_shoji_fn_method_model_is_chat_capable(
@@ -2108,9 +2116,9 @@ public func isDownloadable() -> Bool  {
 })
 }
     
-public func isLocal() -> Bool  {
+public func isOnDevice() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
-    uniffi_shoji_fn_method_model_is_local(
+    uniffi_shoji_fn_method_model_is_on_device(
             FfiConverterTypeModel_lower(self),$0
     )
 })
@@ -2151,14 +2159,6 @@ public func isTextToSpeechCapable() -> Bool  {
 public func isTranslationCapable() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_shoji_fn_method_model_is_translation_capable(
-            FfiConverterTypeModel_lower(self),$0
-    )
-})
-}
-    
-public func localExternalPath() -> String?  {
-    return try!  FfiConverterOptionString.lift(try! rustCall() {
-    uniffi_shoji_fn_method_model_local_external_path(
             FfiConverterTypeModel_lower(self),$0
     )
 })
@@ -4296,7 +4296,7 @@ public func FfiConverterTypeImageTheme_lower(_ value: ImageTheme) -> RustBuffer 
 
 public enum ModelAccessibility: Equatable, Hashable, Codable {
     
-    case local(reference: ModelReference
+    case onDevice(source: ModelSource
     )
     case remote(repository: Repository?
     )
@@ -4321,7 +4321,7 @@ public struct FfiConverterTypeModelAccessibility: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
         
-        case 1: return .local(reference: try FfiConverterTypeModelReference.read(from: &buf)
+        case 1: return .onDevice(source: try FfiConverterTypeModelSource.read(from: &buf)
         )
         
         case 2: return .remote(repository: try FfiConverterOptionTypeRepository.read(from: &buf)
@@ -4335,9 +4335,9 @@ public struct FfiConverterTypeModelAccessibility: FfiConverterRustBuffer {
         switch value {
         
         
-        case let .local(reference):
+        case let .onDevice(source):
             writeInt(&buf, Int32(1))
-            FfiConverterTypeModelReference.write(reference, into: &buf)
+            FfiConverterTypeModelSource.write(source, into: &buf)
             
         
         case let .remote(repository):
@@ -4367,13 +4367,11 @@ public func FfiConverterTypeModelAccessibility_lower(_ value: ModelAccessibility
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
-public enum ModelReference: Equatable, Hashable, Codable {
+public enum ModelSource: Equatable, Hashable, Codable {
     
-    case mirai(toolchainVersion: String, repository: Repository?, sourceRepository: Repository?, files: [File]
+    case managed(toolchainVersion: String, repository: Repository?, sourceRepository: Repository?, files: [File]
     )
-    case huggingFace(repository: Repository
-    )
-    case local(path: String
+    case filesystem(path: String
     )
 
 
@@ -4383,37 +4381,34 @@ public enum ModelReference: Equatable, Hashable, Codable {
 }
 
 #if compiler(>=6)
-extension ModelReference: Sendable {}
+extension ModelSource: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeModelReference: FfiConverterRustBuffer {
-    typealias SwiftType = ModelReference
+public struct FfiConverterTypeModelSource: FfiConverterRustBuffer {
+    typealias SwiftType = ModelSource
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelReference {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelSource {
         let variant: Int32 = try readInt(&buf)
         switch variant {
         
-        case 1: return .mirai(toolchainVersion: try FfiConverterString.read(from: &buf), repository: try FfiConverterOptionTypeRepository.read(from: &buf), sourceRepository: try FfiConverterOptionTypeRepository.read(from: &buf), files: try FfiConverterSequenceTypeFile.read(from: &buf)
+        case 1: return .managed(toolchainVersion: try FfiConverterString.read(from: &buf), repository: try FfiConverterOptionTypeRepository.read(from: &buf), sourceRepository: try FfiConverterOptionTypeRepository.read(from: &buf), files: try FfiConverterSequenceTypeFile.read(from: &buf)
         )
         
-        case 2: return .huggingFace(repository: try FfiConverterTypeRepository.read(from: &buf)
-        )
-        
-        case 3: return .local(path: try FfiConverterString.read(from: &buf)
+        case 2: return .filesystem(path: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
-    public static func write(_ value: ModelReference, into buf: inout [UInt8]) {
+    public static func write(_ value: ModelSource, into buf: inout [UInt8]) {
         switch value {
         
         
-        case let .mirai(toolchainVersion,repository,sourceRepository,files):
+        case let .managed(toolchainVersion,repository,sourceRepository,files):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(toolchainVersion, into: &buf)
             FfiConverterOptionTypeRepository.write(repository, into: &buf)
@@ -4421,13 +4416,8 @@ public struct FfiConverterTypeModelReference: FfiConverterRustBuffer {
             FfiConverterSequenceTypeFile.write(files, into: &buf)
             
         
-        case let .huggingFace(repository):
+        case let .filesystem(path):
             writeInt(&buf, Int32(2))
-            FfiConverterTypeRepository.write(repository, into: &buf)
-            
-        
-        case let .local(path):
-            writeInt(&buf, Int32(3))
             FfiConverterString.write(path, into: &buf)
             
         }
@@ -4438,15 +4428,15 @@ public struct FfiConverterTypeModelReference: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeModelReference_lift(_ buf: RustBuffer) throws -> ModelReference {
-    return try FfiConverterTypeModelReference.lift(buf)
+public func FfiConverterTypeModelSource_lift(_ buf: RustBuffer) throws -> ModelSource {
+    return try FfiConverterTypeModelSource.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeModelReference_lower(_ value: ModelReference) -> RustBuffer {
-    return FfiConverterTypeModelReference.lower(value)
+public func FfiConverterTypeModelSource_lower(_ value: ModelSource) -> RustBuffer {
+    return FfiConverterTypeModelSource.lower(value)
 }
 
 

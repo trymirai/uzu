@@ -1,14 +1,13 @@
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{DownloadId, FileCheck};
+use crate::{DownloadId, FileCheck, HttpDownloadRequest};
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DownloadConfig {
     pub download_id: DownloadId,
-    pub source_url: String,
+    pub request: HttpDownloadRequest,
     pub destination: PathBuf,
     pub file_check: FileCheck,
     pub expected_bytes: Option<u64>,

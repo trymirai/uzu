@@ -74,7 +74,7 @@ async fn download_internal(
         fs::asyn::remove_file(&file_path).await?;
     }
 
-    let task = manager.file_download_task(&url, &file_path, FileCheck::None, None).await?;
+    let task = manager.file_download_task((&url).into(), &file_path, FileCheck::None, None).await?;
     let mut progress_stream = task.progress().await?;
     task.download().await?;
 

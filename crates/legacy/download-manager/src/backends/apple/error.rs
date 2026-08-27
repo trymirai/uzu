@@ -8,4 +8,6 @@ pub enum AppleBackendError {
     Io(String),
     #[error("task enumeration error: {0}")]
     TaskEnumeration(String),
+    #[error("authentication error: {0}")]
+    Authentication(String),
 }

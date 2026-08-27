@@ -31,7 +31,7 @@ pub fn decide(
                 part_path: observation
                     .resume_artifact_path
                     .clone()
-                    .unwrap_or_else(|| observation.destination_path.with_extension("part")),
+                    .unwrap_or_else(|| observation.destination_path.with_added_extension("part")),
             }
         },
         CheckedFileState::Invalid | CheckedFileState::Missing => InitialLifecycleState::NotDownloaded,
@@ -96,11 +96,9 @@ fn decide_actions(
             path: observation.destination_path.clone(),
         });
 
-        if observation.crc_state == FileState::Exists
-            && let Some(path) = observation.crc_path.clone()
-        {
-            actions.push(Action::DeleteCrcCache {
-                path,
+        if observation.integrity_state == FileState::Exists {
+            actions.push(Action::DeleteIntegrityCache {
+                path: observation.integrity_path.clone(),
             });
         }
     }

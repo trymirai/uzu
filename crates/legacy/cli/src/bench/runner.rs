@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use shoji::types::model::{ModelFamily, ModelReference};
+use shoji::types::model::{ModelFamily, ModelSource};
 use sysinfo::System;
 use uzu::{
     engine::{Engine, EngineConfig},
@@ -165,9 +165,9 @@ impl BenchRunner {
             .to_lowercase();
         let all_models = engine.models().await?;
         for model in all_models {
-            if let ModelAccessibility::Local {
-                reference:
-                    ModelReference::Mirai {
+            if let ModelAccessibility::OnDevice {
+                source:
+                    ModelSource::Managed {
                         toolchain_version: _toolchain_version,
                         repository,
                         source_repository,
