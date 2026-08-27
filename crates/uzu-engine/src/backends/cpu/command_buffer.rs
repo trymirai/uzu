@@ -6,8 +6,8 @@ use std::{
 use crate::{
     backends::{
         common::{
-            AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
-            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
+            CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
         },
         cpu::{Cpu, error::CpuError},
     },
@@ -101,13 +101,6 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         self.push_command(move || unsafe {
             dst.as_ptr().write_bytes(value, size);
         });
-    }
-
-    fn encode_barrier(
-        &mut self,
-        _after: AccessFlags,
-        _before: AccessFlags,
-    ) {
     }
 
     fn push_debug_group(

@@ -10,10 +10,9 @@ use bytemuck::{AnyBitPattern, NoUninit};
 use crate::{
     array::size_for_shape,
     backends::common::{
-        AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer,
-        BufferGpuAddressRangeExt, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-        CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
-        hazard_tracker::{Access, HazardTracker},
+        Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, CommandBuffer,
+        CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
+        CommandBufferPending, Context,
     },
     data_type::DataType,
 };
@@ -42,7 +41,6 @@ pub struct Encoder<'encoding, B: Backend> {
     context: &'encoding B::Context,
     command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
     allocation_pool: Arc<AllocationPool<B>>,
-    hazard_tracker: HazardTracker,
 }
 
 impl<'encoding, B: Backend> Encoder<'encoding, B> {
@@ -63,13 +61,11 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         name: Option<&str>,
     ) -> Result<Self, B::Error> {
         let command_buffer = context.create_command_buffer(name)?.start_encoding();
-        let hazard_tracker = HazardTracker::new();
 
         Ok(Self {
             context,
             command_buffer,
             allocation_pool,
-            hazard_tracker,
         })
     }
 
@@ -145,16 +141,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         assert!(byte_len > 0, "zero-sized copies are not allowed");
         let src_buffer_range = src_buffer_range.subrange(src_range);
         let dst_buffer_range = dst_buffer_range.subrange(dst_range);
-        self.access(&[
-            Access {
-                range: src_buffer_range.buffer().gpu_address_subrange(src_buffer_range.range()),
-                flags: AccessFlags::copy_read(),
-            },
-            Access {
-                range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
-                flags: AccessFlags::copy_write(),
-            },
-        ]);
         self.command_buffer.encode_copy(src_buffer_range, dst_buffer_range);
     }
 
@@ -165,10 +151,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
     ) {
         let dst_buffer_range = dst.as_buffer_range_mut();
         assert!(!dst_buffer_range.range().is_empty(), "zero-sized fills are not allowed");
-        self.access(&[Access {
-            range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
-            flags: AccessFlags::copy_write(),
-        }]);
         self.command_buffer.encode_fill(dst_buffer_range, value);
     }
 
@@ -181,15 +163,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
     pub fn pop_debug_group(&mut self) {
         self.command_buffer.pop_debug_group();
-    }
-
-    pub fn access(
-        &mut self,
-        accesses: &[Access],
-    ) {
-        if let Some((after, before)) = self.hazard_tracker.access(accesses) {
-            self.command_buffer.encode_barrier(after, before);
-        }
     }
 
     pub fn as_command_buffer_mut(&mut self) -> &mut <B::CommandBuffer as CommandBuffer>::Encoding {
