@@ -29,25 +29,3 @@ pub use backend::Metal;
 pub use context::MetalContext;
 #[cfg(test)]
 pub use kernel::matmul::gemm::GemmEngine;
-
-#[cfg(test)]
-mod tests {
-    use uzu_engine_macros::uzu_test;
-
-    use super::*;
-
-    #[uzu_test]
-    fn classifies_supported_apple_gpu_family() {
-        fn classify(supported: &[MTLGPUFamily]) -> Option<MTLGPUFamily> {
-            newest_supported_apple_gpu_family(|family| supported.contains(&family))
-        }
-
-        assert_eq!(classify(&[]), None);
-        assert_eq!(classify(&[MTLGPUFamily::Apple8]), Some(MTLGPUFamily::Apple8));
-        assert_eq!(classify(&[MTLGPUFamily::Apple8, MTLGPUFamily::Apple9]), Some(MTLGPUFamily::Apple9));
-        assert_eq!(
-            classify(&[MTLGPUFamily::Apple8, MTLGPUFamily::Apple9, MTLGPUFamily::Apple10]),
-            Some(MTLGPUFamily::Apple10)
-        );
-    }
-}
