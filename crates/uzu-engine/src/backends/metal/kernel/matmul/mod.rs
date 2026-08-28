@@ -81,7 +81,7 @@ impl MatmulMetalKernel {
         let all_bf16 = weights_data_type == DataType::BF16
             && input_data_type == DataType::BF16
             && output_data_type == DataType::BF16;
-        if let Some(route) = qmv::route(device_name, supports_mxu, shape, all_bf16) {
+        if let Some(route) = qmv::route(device_name, apple_gpu_family, supports_mxu, shape, all_bf16) {
             return match route {
                 QmvRoute::Tuned(tile) | QmvRoute::MainGemv(tile) => MatmulDispatch::Gemv(
                     GemvSpecialization::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile)
@@ -162,6 +162,9 @@ impl MatmulKernel for MatmulMetalKernel {
         context: &MetalContext,
     ) -> Option<A8ActivationPlan> {
         let activation_group_size = ACTIVATION_SCALE_GROUP_SIZE;
+        let Some(weight_group_size @ (32 | 64 | 128)) = shape.b_group_size else {
+            return None;
+        };
         if !context.supports_mxu
             || self.input_data_type != DataType::BF16
             || self.output_data_type != DataType::BF16
@@ -171,9 +174,8 @@ impl MatmulKernel for MatmulMetalKernel {
             || !shape.b_transpose
             || shape.b_leading_dimension.is_some()
             || !matches!(shape.b_bits, Some(4 | 8))
-            || !matches!(shape.b_group_size, Some(32 | 64 | 128))
             || !shape.k.is_multiple_of(activation_group_size)
-            || !shape.k.is_multiple_of(shape.b_group_size.unwrap())
+            || !shape.k.is_multiple_of(weight_group_size)
         {
             return None;
         }
@@ -181,7 +183,7 @@ impl MatmulKernel for MatmulMetalKernel {
         let sum_group_size = match shape.b_prologue {
             GemmBPrologueKind::ScaleSymmetricDequant => None,
             GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant => {
-                Some(shape.b_group_size.unwrap().min(activation_group_size))
+                Some(weight_group_size.min(activation_group_size))
             },
             GemmBPrologueKind::FullPrecision => return None,
         };
