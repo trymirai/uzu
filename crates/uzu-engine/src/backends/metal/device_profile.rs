@@ -1,5 +1,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DeviceIdentity {
+    A18Pro,
     M1,
     M1Pro,
     M1Max,
@@ -21,6 +22,9 @@ pub(super) enum DeviceIdentity {
 
 impl DeviceIdentity {
     fn from_name(device_name: &str) -> Self {
+        if device_name == "Apple A18 Pro" {
+            return Self::A18Pro;
+        }
         let Some(chip) = device_name.strip_prefix("Apple M") else {
             panic!("unsupported Metal device {device_name:?}; add its DeviceIdentity mapping");
         };
@@ -48,6 +52,7 @@ impl DeviceIdentity {
 
     const fn gpu_family(self) -> GpuFamily {
         match self {
+            Self::A18Pro => GpuFamily::Apple9,
             Self::M1 | Self::M1Pro | Self::M1Max | Self::M1Ultra => GpuFamily::Legacy,
             Self::M2 | Self::M2Pro | Self::M2Max | Self::M2Ultra => GpuFamily::Apple8,
             Self::M3 | Self::M3Pro | Self::M3Max | Self::M4 | Self::M4Pro | Self::M4Max => GpuFamily::Apple9,

@@ -5,6 +5,7 @@ use super::*;
 #[uzu_test]
 fn device_profile_detection() {
     let cases = [
+        ("Apple A18 Pro", 6, false, DeviceIdentity::A18Pro, GpuFamily::Apple9, DeviceSize::Small),
         ("Apple M4 Max", 40, false, DeviceIdentity::M4Max, GpuFamily::Apple9, DeviceSize::Large),
         ("Apple M5 Max", 40, true, DeviceIdentity::M5Max, GpuFamily::M5Plus, DeviceSize::Large),
         ("Apple M3 Pro", 20, false, DeviceIdentity::M3Pro, GpuFamily::Apple9, DeviceSize::Small),
