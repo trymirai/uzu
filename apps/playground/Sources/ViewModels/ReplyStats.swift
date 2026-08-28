@@ -7,7 +7,8 @@ struct ReplyStats: Equatable {
     let memoryUsedBytes: Int64?
     let totalPower: Double?
     let totalEnergy: Double?
-    let joulesPerToken: Double?
+    let inputJoulesPerToken: ChatReplyJoulesPerToken?
+    let outputJoulesPerToken: ChatReplyJoulesPerToken?
     let totalTime: Double
 
     init(stats: ChatReplyStats) {
@@ -16,7 +17,8 @@ struct ReplyStats: Equatable {
         memoryUsedBytes = stats.memoryUsedBytes
         totalPower = stats.powerStats?.averageTotalWatts
         totalEnergy = stats.powerStats?.energyJoules
-        joulesPerToken = stats.joulesPerToken()
+        inputJoulesPerToken = stats.inputJoulesPerToken()
+        outputJoulesPerToken = stats.outputJoulesPerToken()
         totalTime = stats.duration
     }
 }

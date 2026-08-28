@@ -22,8 +22,11 @@ struct ReplyStatsView: View {
             if let energy = stats.totalEnergy {
                 metricRow(label: "Energy:", value: ReplyStatsFormat.energy(energy))
             }
-            if let joulesPerToken = stats.joulesPerToken {
-                metricRow(label: "Energy / token:", value: ReplyStatsFormat.energyPerToken(joulesPerToken))
+            if let inputJoulesPerToken = stats.inputJoulesPerToken {
+                metricRow(label: "Input energy / token:", value: ReplyStatsFormat.energyPerToken(inputJoulesPerToken))
+            }
+            if let outputJoulesPerToken = stats.outputJoulesPerToken {
+                metricRow(label: "Output energy / token:", value: ReplyStatsFormat.energyPerToken(outputJoulesPerToken))
             }
             metricRow(label: "Total time:", value: String(format: "%.3f s", stats.totalTime))
         }

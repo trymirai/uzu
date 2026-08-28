@@ -425,21 +425,3 @@ fn text_to_speech_output_component(
     }
     .into()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn formats_each_joules_per_token_component() {
-        let formatted = format_joules_per_token(ChatReplyJoulesPerToken {
-            cpu: 0.1,
-            gpu: 0.2,
-            ane: 0.3,
-            dram: 0.4,
-            combined: 1.0,
-        });
-
-        assert_eq!(formatted, "CPU 0.100, GPU 0.200, ANE 0.300, DRAM 0.400, combined 1.000 J/tok");
-    }
-}

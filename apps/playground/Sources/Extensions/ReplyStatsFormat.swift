@@ -1,4 +1,5 @@
 import Foundation
+import Uzu
 
 // Shared reply-stat formatting: fixed-unit MeasurementFormatter + ByteCountFormatter.
 enum ReplyStatsFormat {
@@ -24,9 +25,13 @@ enum ReplyStatsFormat {
         measurement.string(from: Measurement(value: joules, unit: UnitEnergy.joules))
     }
 
-    static func energyPerToken(_ joulesPerToken: Double) -> String {
-        let value = number.string(from: NSNumber(value: joulesPerToken)) ?? placeholder
-        return "\(value) J/tok"
+    static func energyPerToken(_ stats: ChatReplyJoulesPerToken) -> String {
+        let cpu = number.string(from: NSNumber(value: stats.cpu)) ?? placeholder
+        let gpu = number.string(from: NSNumber(value: stats.gpu)) ?? placeholder
+        let ane = number.string(from: NSNumber(value: stats.ane)) ?? placeholder
+        let dram = number.string(from: NSNumber(value: stats.dram)) ?? placeholder
+        let combined = number.string(from: NSNumber(value: stats.combined)) ?? placeholder
+        return "CPU \(cpu), GPU \(gpu), ANE \(ane), DRAM \(dram), combined \(combined) J/tok"
     }
 
     static func memory(_ bytes: Int64?) -> String {

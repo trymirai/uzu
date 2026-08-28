@@ -1415,17 +1415,6 @@ public func inputJoulesPerToken() -> ChatReplyJoulesPerToken?  {
 }
     
     /**
-     * Energy spent per processed token, counting both input and output tokens.
-     */
-public func joulesPerToken() -> Double?  {
-    return try!  FfiConverterOptionDouble.lift(try! rustCall() {
-    uniffi_shoji_fn_method_chatreplystats_joules_per_token(
-            FfiConverterTypeChatReplyStats_lower(self),$0
-    )
-})
-}
-    
-    /**
      * Average energy per generated output token, split by hardware component.
      */
 public func outputJoulesPerToken() -> ChatReplyJoulesPerToken?  {
