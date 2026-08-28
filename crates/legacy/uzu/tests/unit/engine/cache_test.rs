@@ -11,7 +11,10 @@ use tempfile::tempdir;
 use tokio::fs::read as tokio_read;
 
 use super::*;
-use crate::{models::ResolvedModel, registry::FixedRegistry};
+use crate::{
+    models::{ModelCatalog, ModelsResolver, ResolvedModel, ResolvedModels},
+    registry::FixedRegistry,
+};
 
 struct FailingRegistry(&'static str);
 
@@ -52,6 +55,7 @@ async fn failed_refresh_preserves_snapshot_and_registry_changes_roll_back() -> R
     let previous = ResolvedModels::new(vec![ResolvedModel::passthrough(model)]);
     resolver.save_cache(&previous).await?;
     let cached = tokio_read(&cache_path).await?;
+    let catalog = ModelCatalog::new(None, cache_path.clone()).await?;
 
     let mut registry = MergedRegistry::new(Vec::new());
     registry.add(Box::new(FailingRegistry("failing")))?;
@@ -62,17 +66,16 @@ async fn failed_refresh_preserves_snapshot_and_registry_changes_roll_back() -> R
     let engine = Engine {
         settings: SharedAccess::new(None),
         registry: SharedAccess::new(registry),
-        registry_refresh_lock: SharedAccess::new(()),
+        catalog,
+        catalog_refresh_lock: SharedAccess::new(()),
         storage: SharedAccess::new(Storage::new(runtime_handle, storage_config).await?),
         backends: SharedAccess::new(HashMap::new()),
         callback: SharedAccess::new(None),
         telemetry: SharedAccess::new(Telemetry::disabled()),
-        models_resolver: resolver,
-        resolved_models: SharedAccess::new(previous),
         huggingface_api_key: None,
     };
 
-    engine.handle_initial_registry_refresh().await?;
+    engine.handle_initial_catalog_refresh().await?;
     let registries = engine.registry.lock().await.indentifier();
 
     assert!(engine.add_registry(Box::new(FixedRegistry::new("working".to_string(), Vec::new()))).await.is_err());

@@ -37,7 +37,7 @@ use crate::{
     engine::bridge::UzuLlmBackend,
     helpers::{SharedAccess, is_endpoint_reachable},
     logs,
-    models::{ModelsResolver, ResolvedModels},
+    models::ModelCatalog,
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
@@ -59,13 +59,12 @@ use crate::{
 pub struct Engine {
     settings: SharedAccess<Option<Settings>>,
     registry: SharedAccess<MergedRegistry>,
-    registry_refresh_lock: SharedAccess<()>,
+    catalog: ModelCatalog,
+    catalog_refresh_lock: SharedAccess<()>,
     storage: SharedAccess<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
     callback: SharedAccess<Option<Arc<EngineCallback>>>,
     telemetry: SharedAccess<Telemetry>,
-    models_resolver: ModelsResolver,
-    resolved_models: SharedAccess<ResolvedModels>,
     huggingface_api_key: Option<Arc<str>>,
 }
 
@@ -113,28 +112,19 @@ impl Engine {
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
         let huggingface_api_key = config.huggingface_api_key.clone().map(Arc::<str>::from);
-        let models_resolver =
-            ModelsResolver::new(huggingface_api_key.clone(), storage_cache_path.join("resolved-models.json"))?;
-        let resolved_models = match models_resolver.load_cache().await {
-            Ok(Some(models)) => models,
-            Ok(None) => ResolvedModels::default(),
-            Err(error) => {
-                tracing::warn!(?error, "failed to load resolved models cache");
-                ResolvedModels::default()
-            },
-        };
+        let catalog =
+            ModelCatalog::new(huggingface_api_key.clone(), storage_cache_path.join("resolved-models.json")).await?;
         let storage = SharedAccess::new(Storage::new(runtime_handle, storage_config).await?);
 
         let engine = Self {
             settings: SharedAccess::new(settings),
             storage,
             registry,
-            registry_refresh_lock: SharedAccess::new(()),
+            catalog,
+            catalog_refresh_lock: SharedAccess::new(()),
             backends: SharedAccess::new(HashMap::new()),
             callback: SharedAccess::new(None),
             telemetry,
-            models_resolver,
-            resolved_models: SharedAccess::new(resolved_models),
             huggingface_api_key,
         };
         engine.spawn_storage_listener().await;
@@ -214,7 +204,7 @@ impl Engine {
             engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
         }
 
-        engine.handle_initial_registry_refresh().await?;
+        engine.handle_initial_catalog_refresh().await?;
         Ok(engine)
     }
 }
@@ -249,9 +239,9 @@ impl Engine {
         registry: Box<dyn Registry<Error = RegistryError>>,
     ) -> Result<(), EngineError> {
         let identifier = registry.indentifier();
-        let refresh = self.registry_refresh_lock.lock().await;
+        let refresh = self.catalog_refresh_lock.lock().await;
         self.registry.lock().await.add(Box::new(CachedRegistry::new(registry)))?;
-        if let Err(error) = self.refresh_registry().await {
+        if let Err(error) = self.refresh_catalog().await {
             self.registry.lock().await.remove(&identifier);
             return Err(error);
         }
@@ -275,9 +265,9 @@ impl Engine {
         &self,
         registry_identifier: String,
     ) -> Result<(), EngineError> {
-        let refresh = self.registry_refresh_lock.lock().await;
+        let refresh = self.catalog_refresh_lock.lock().await;
         let removed = self.registry.lock().await.remove(&registry_identifier);
-        if let Err(error) = self.refresh_registry().await {
+        if let Err(error) = self.refresh_catalog().await {
             if let Some((index, registry)) = removed {
                 self.registry.lock().await.restore(index, registry);
             }
@@ -301,7 +291,7 @@ impl Engine {
 impl Engine {
     #[bindings::export(Method(Getter))]
     pub async fn models(&self) -> Result<Vec<Model>, EngineError> {
-        Ok(self.resolved_models.lock().await.models())
+        Ok(self.catalog.models().await)
     }
 
     #[bindings::export(Method(Getter))]
@@ -618,24 +608,20 @@ impl Engine {
         self.storage.lock().await.subscribe()
     }
 
-    async fn refresh_registry(&self) -> Result<(), EngineError> {
-        let previous = self.resolved_models.lock().await.clone();
+    async fn refresh_catalog(&self) -> Result<(), EngineError> {
         let models = self.registry.lock().await.models().await?;
-        let resolved = self.models_resolver.resolve(models, &previous).await?;
+        let resolved = self.catalog.resolve(models).await?;
         self.storage.lock().await.refresh(&resolved, self.huggingface_api_key.clone()).await?;
-        if let Err(error) = self.models_resolver.save_cache(&resolved).await {
-            tracing::warn!(?error, "failed to save resolved models cache");
-        }
-        *self.resolved_models.lock().await = resolved;
+        self.catalog.commit(resolved).await;
         Ok(())
     }
 
-    async fn handle_initial_registry_refresh(&self) -> Result<(), EngineError> {
-        let _refresh = self.registry_refresh_lock.lock().await;
-        match self.refresh_registry().await {
+    async fn handle_initial_catalog_refresh(&self) -> Result<(), EngineError> {
+        let _refresh = self.catalog_refresh_lock.lock().await;
+        match self.refresh_catalog().await {
             Ok(()) => Ok(()),
             Err(error) => {
-                let previous = self.resolved_models.lock().await.clone();
+                let previous = self.catalog.snapshot().await;
                 if previous.is_empty() {
                     return Err(error);
                 }
