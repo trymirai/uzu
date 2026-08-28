@@ -22,7 +22,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 from rich.table import Table
-from typer import Argument, Option, Typer
+from typer import Argument, Exit, Option, Typer
 
 from .model import (
     BenchmarkTask,
@@ -93,11 +93,12 @@ def build_device() -> Device:
     )
 
 
-def load_registry() -> Registry:
+def load_registry(show_all: bool = False) -> Registry:
     payload = {
         "device": {key: value for key, value in asdict(build_device()).items() if value is not None},
         "backends": [{"identifier": "uzu", "version": get_toolchain_version()}],
         "include_traces": True,
+        "show_all": show_all,
     }
     response = requests.post(MIRAI_API_URL, json=payload, timeout=10)
     response.raise_for_status()
@@ -155,13 +156,12 @@ def download(
             transient=True,
         ) as progress:
             task = progress.add_task("Loading registry...", total=None)
-            registry = load_registry()
+            registry = load_registry(show_all=True)
             progress.update(task, completed=True)
 
         model = next((m for m in registry.models if model_repo in {m.id, m.repo_id, m.name}), None)
         if not model:
-            err_console.print(f"[red]Error: Model '{model_repo}' not found in registry[/red]")
-            return
+            raise ValueError(f"Model '{model_repo}' not found in registry")
 
         engine_version = get_uzu_version()
         engine_path = MODELS_PATH / engine_version
@@ -221,6 +221,7 @@ def download(
 
     except USER_FACING_ERRORS as error:
         err_console.print(f"[red]Error: {error}[/red]")
+        raise Exit(code=1) from error
 
 
 def generate_benchmark_task(model: Model) -> BenchmarkTask:
