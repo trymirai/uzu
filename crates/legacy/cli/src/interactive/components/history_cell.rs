@@ -1,6 +1,8 @@
 use iocraft::prelude::*;
 use shoji::types::session::{
-    chat::ChatReplyStats, classification::ClassificationOutput, text_to_speech::TextToSpeechStats,
+    chat::{ChatReplyJoulesPerToken, ChatReplyStats},
+    classification::ClassificationOutput,
+    text_to_speech::TextToSpeechStats,
 };
 
 use crate::interactive::{
@@ -320,10 +322,10 @@ fn chat_reply_stats_component(
         .as_ref()
         .map(|power| format!("{:.2} J", power.energy_joules))
         .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
-    let energy_per_token = stats
-        .joules_per_token()
-        .map(|joules_per_token| format!("{joules_per_token:.3} J/tok"))
-        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let input_energy_per_token =
+        stats.input_joules_per_token().map(format_joules_per_token).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let output_energy_per_token =
+        stats.output_joules_per_token().map(format_joules_per_token).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let duration = format!("{:.2} s", stats.duration);
 
     element! {
@@ -360,7 +362,11 @@ fn chat_reply_stats_component(
                 color: subtitle_color,
             )
             Text(
-                content: format!("energy per token: {energy_per_token}"),
+                content: format!("input energy per token: {input_energy_per_token}"),
+                color: subtitle_color,
+            )
+            Text(
+                content: format!("output energy per token: {output_energy_per_token}"),
                 color: subtitle_color,
             )
             Text(
@@ -370,6 +376,13 @@ fn chat_reply_stats_component(
         }
     }
     .into()
+}
+
+fn format_joules_per_token(stats: ChatReplyJoulesPerToken) -> String {
+    format!(
+        "CPU {:.3}, GPU {:.3}, ANE {:.3}, DRAM {:.3}, combined {:.3} J/tok",
+        stats.cpu, stats.gpu, stats.ane, stats.dram, stats.combined
+    )
 }
 
 fn format_memory_used(bytes: i64) -> String {
@@ -411,4 +424,22 @@ fn text_to_speech_output_component(
         }
     }
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_each_joules_per_token_component() {
+        let formatted = format_joules_per_token(ChatReplyJoulesPerToken {
+            cpu: 0.1,
+            gpu: 0.2,
+            ane: 0.3,
+            dram: 0.4,
+            combined: 1.0,
+        });
+
+        assert_eq!(formatted, "CPU 0.100, GPU 0.200, ANE 0.300, DRAM 0.400, combined 1.000 J/tok");
+    }
 }

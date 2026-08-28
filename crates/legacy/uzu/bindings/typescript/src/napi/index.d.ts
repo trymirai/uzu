@@ -289,6 +289,15 @@ export declare class ChatReplyConfig {
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
 }
 
+export declare class ChatReplyJoulesPerToken {
+  cpu: number
+  gpu: number
+  ane: number
+  dram: number
+  combined: number
+  constructor(cpu: number, gpu: number, ane: number, dram: number, combined: number)
+}
+
 export declare class ChatReplyPowerStats {
   samplesCount: number
   averageCpuWatts: number
@@ -321,6 +330,10 @@ export declare class ChatReplyStats {
   get tokensCount(): number | null
   /** Energy spent per processed token, counting both input and output tokens. */
   get joulesPerToken(): number | null
+  /** Average energy per uncached input token, split by hardware component. */
+  get inputJoulesPerToken(): ChatReplyJoulesPerToken | null
+  /** Average energy per generated output token, split by hardware component. */
+  get outputJoulesPerToken(): ChatReplyJoulesPerToken | null
 }
 
 export declare class ChatRoleAssistant {
