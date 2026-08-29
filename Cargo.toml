@@ -62,7 +62,7 @@ keisoku = { path = "crates/legacy/keisoku", default-features = false }
 kanka = { path = "crates/legacy/kanka", default-features = false }
 kiban = { path = "crates/legacy/kiban", default-features = false }
 uzu = { path = "crates/legacy/uzu", default-features = false }
-xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", branch = "unbreak_cargo_vendor", features = ["tokenizers"] }
+xgrammar = { package = "xgrammar-rs", git = "https://github.com/trymirai/xgrammar-rs.git", branch = "remove_wasi_sdk", features = ["tokenizers"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
