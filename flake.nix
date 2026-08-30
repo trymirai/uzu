@@ -95,13 +95,8 @@
           };
         };
 
-        buildInputs = with pkgs; (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [apple-sdk_26]);
-        nativeBuildInputs = with pkgs;
-          [
-            # for xgrammar-rs
-            cmake
-          ]
-          ++ (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [metal-toolchain]);
+        buildInputs = with pkgs; (lib.optionals pkgs.stdenv.hostPlatform.isLinux [pkg-config alsa-lib]) ++ (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [apple-sdk_26]);
+        nativeBuildInputs = with pkgs; [cmake] ++ (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [metal-toolchain]);
 
         mirai = craneLib.buildPackage {
           pname = "mirai";
@@ -143,13 +138,7 @@
                 cargo-flamegraph
                 cargo-show-asm
                 critcmp
-              ])
-              ++ (with pkgs; (pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-                pkg-config
-                openssl
-                alsa-lib
-                clang
-              ]));
+              ]);
             inherit buildInputs;
           }
           // (pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
