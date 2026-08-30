@@ -46,16 +46,7 @@ impl Parser for TokenStreamParser {
         &mut self,
         input: &Token,
     ) -> Result<(), TokenStreamParserError> {
-        let event = match self.framing.push(input) {
-            Ok(event) => event,
-            Err(infallible) => match infallible {},
-        };
-        self.reduction.push(&event)?;
-        match self.extraction.push(self.reduction.state()) {
-            Ok(()) => {},
-            Err(infallible) => match infallible {},
-        }
-        Ok(())
+        self.push_inner(input, true)
     }
 
     fn state(&self) -> &ExtractionParserState {
@@ -70,6 +61,39 @@ impl Parser for TokenStreamParser {
 }
 
 impl TokenStreamParser {
+    fn push_inner(
+        &mut self,
+        input: &Token,
+        extract: bool,
+    ) -> Result<(), TokenStreamParserError> {
+        let event = match self.framing.push(input) {
+            Ok(event) => event,
+            Err(infallible) => match infallible {},
+        };
+        self.reduction.push(&event)?;
+        if extract {
+            self.flush_extraction();
+        }
+        Ok(())
+    }
+
+    /// Framing and reduction only: extraction output is recomputed from the whole reduction
+    /// state on every push, which is quadratic over bulk loads. Call `flush_extraction` once
+    /// after the last `push_bulk`.
+    pub fn push_bulk(
+        &mut self,
+        input: &Token,
+    ) -> Result<(), TokenStreamParserError> {
+        self.push_inner(input, false)
+    }
+
+    pub fn flush_extraction(&mut self) {
+        match self.extraction.push(self.reduction.state()) {
+            Ok(()) => {},
+            Err(infallible) => match infallible {},
+        }
+    }
+
     /// Exposes `value` to every transformation pipeline as `$<name>`.
     pub fn set_variable(
         &mut self,
