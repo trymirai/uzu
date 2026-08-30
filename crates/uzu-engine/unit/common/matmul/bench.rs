@@ -6,8 +6,8 @@ use std::{
 };
 
 use criterion::Bencher;
-use test_runner::env_vars;
 
+use super::super::env_vars;
 use crate::backends::common::{Backend, Context, Encoder};
 
 static CAPTURE_TAKEN: AtomicBool = AtomicBool::new(false);

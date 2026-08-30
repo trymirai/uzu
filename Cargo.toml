@@ -17,7 +17,6 @@ members = [
     "crates/legacy/uzu",
     "crates/legacy/cli",
     "crates/legacy/cli-tools",
-    "crates/legacy/test-runner",
     "crates/legacy/keisoku",
     "crates/legacy/kanka",
     "crates/legacy/kiban",
@@ -46,7 +45,6 @@ keywords = [
 ]
 
 [workspace.dependencies]
-test-runner = { path = "crates/legacy/test-runner" }
 bindings-types = { path = "crates/legacy/bindings-types", default-features = false }
 bindings = { path = "crates/legacy/bindings", default-features = false }
 shoji = { path = "crates/legacy/shoji", default-features = false }
