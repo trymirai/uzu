@@ -37,6 +37,15 @@ pub enum Encoding {
     Harmony(HarmonyEncodingImpl),
 }
 
+impl Encoding {
+    pub fn tokenize(
+        &self,
+        text: &str,
+    ) -> Result<Vec<TokenId>, Error> {
+        dispatch!(self, tokenize, text)
+    }
+}
+
 impl EncodingTrait for Encoding {
     type Config = EncodingConfig;
     type Input = Vec<ChatMessage>;
