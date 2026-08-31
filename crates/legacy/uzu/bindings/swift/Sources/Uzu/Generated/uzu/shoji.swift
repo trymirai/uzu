@@ -1219,10 +1219,10 @@ public struct FfiConverterTypeChatReplyPowerStats: FfiConverterRustBuffer {
         return
             try ChatReplyPowerStats(
                 samplesCount: FfiConverterInt64.read(from: &buf), 
-                averageCpuWatts: FfiConverterOptionDouble.read(from: &buf),
-                averageGpuWatts: FfiConverterOptionDouble.read(from: &buf),
-                averageAneWatts: FfiConverterOptionDouble.read(from: &buf),
-                averageRamWatts: FfiConverterOptionDouble.read(from: &buf),
+                averageCpuWatts: FfiConverterOptionDouble.read(from: &buf), 
+                averageGpuWatts: FfiConverterOptionDouble.read(from: &buf), 
+                averageAneWatts: FfiConverterOptionDouble.read(from: &buf), 
+                averageRamWatts: FfiConverterOptionDouble.read(from: &buf), 
                 averageTotalWatts: FfiConverterDouble.read(from: &buf), 
                 energyJoules: FfiConverterDouble.read(from: &buf)
         )
@@ -3776,7 +3776,7 @@ public func FfiConverterTypeChatReplyFinishReason_lower(_ value: ChatReplyFinish
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ChatReplyJoulesPerToken: Equatable, Hashable, Codable {
-
+    
     case total(total: Double
     )
     case components(cpu: Double, gpu: Double, ane: Double, dram: Double
@@ -3812,33 +3812,33 @@ public struct FfiConverterTypeChatReplyJoulesPerToken: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatReplyJoulesPerToken {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .total(total: try FfiConverterDouble.read(from: &buf)
         )
-
+        
         case 2: return .components(cpu: try FfiConverterDouble.read(from: &buf), gpu: try FfiConverterDouble.read(from: &buf), ane: try FfiConverterDouble.read(from: &buf), dram: try FfiConverterDouble.read(from: &buf)
         )
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: ChatReplyJoulesPerToken, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case let .total(total):
             writeInt(&buf, Int32(1))
             FfiConverterDouble.write(total, into: &buf)
-
-
+            
+        
         case let .components(cpu,gpu,ane,dram):
             writeInt(&buf, Int32(2))
             FfiConverterDouble.write(cpu, into: &buf)
             FfiConverterDouble.write(gpu, into: &buf)
             FfiConverterDouble.write(ane, into: &buf)
             FfiConverterDouble.write(dram, into: &buf)
-
+            
         }
     }
 }
