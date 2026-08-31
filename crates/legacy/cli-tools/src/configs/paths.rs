@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use crate::types::Language;
 
 pub struct Paths {
+    pub manifest_path: PathBuf,
     pub root_path: PathBuf,
     pub main_crate: String,
 }
@@ -12,7 +13,8 @@ pub struct Paths {
 impl Paths {
     pub fn new() -> Result<Self> {
         let error_message = "ROOT_PATH not found";
-        let root_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root_path = manifest_path
             .parent()
             .context(error_message)?
             .parent()
@@ -21,6 +23,7 @@ impl Paths {
             .context(error_message)?
             .to_path_buf();
         Ok(Self {
+            manifest_path,
             root_path,
             main_crate: "uzu".to_string(),
         })
@@ -42,12 +45,16 @@ impl Paths {
         self.root_path.join(".config").join("platforms.toml")
     }
 
+    pub fn readme_path(&self) -> PathBuf {
+        self.manifest_path.join("readme")
+    }
+
     pub fn readme_template_path(&self) -> PathBuf {
-        self.root_path.join("workspace").join("readme").join("template.md")
+        self.readme_path().join("template.md")
     }
 
     pub fn readme_fragments_path(&self) -> PathBuf {
-        self.root_path.join("workspace").join("readme").join("fragments")
+        self.readme_path().join("fragments")
     }
 
     pub fn workspace_manifest_path(&self) -> PathBuf {
