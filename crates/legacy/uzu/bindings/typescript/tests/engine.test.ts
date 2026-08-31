@@ -1,4 +1,11 @@
-import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig } from '@trymirai/uzu';
+import {
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    SamplingMethodGreedy,
+} from '@trymirai/uzu';
 
 jest.setTimeout(600_000);
 
@@ -19,7 +26,10 @@ test('chat reply produces text', async () => {
         ChatMessage.user().withText('Hi'),
     ];
 
-    const reply = await session.reply(messages, ChatReplyConfig.create());
+    const reply = await session.reply(
+        messages,
+        ChatReplyConfig.create().withSamplingMethod(new SamplingMethodGreedy()),
+    );
     const message = reply[reply.length - 1]?.message;
 
     expect(message).toBeDefined();
