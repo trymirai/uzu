@@ -44,6 +44,7 @@ impl fmt::Display for Component {
 
 pub fn classify(name: &str) -> Component {
     let name = name.to_ascii_lowercase();
+    let thermal_probe = thermal_probe_component(&name);
 
     if name.contains("battery") || name.contains("gas gauge") || name.contains("fuel gauge") {
         return Component::Battery;
@@ -60,17 +61,13 @@ pub fn classify(name: &str) -> Component {
     if name.contains("ane") || name.contains("neural") {
         return Component::NeuralEngine;
     }
-    if name.contains("gpu") || thermal_probe_block(&name) == Some('g') {
+    if name.contains("gpu") || thermal_probe == Component::Gpu {
         return Component::Gpu;
     }
     if name.contains("cpu") || name.contains("pcore") || name.contains("ecore") {
         return Component::Cpu;
     }
-    if name.contains("soc")
-        || name.contains("tdie")
-        || name.contains("tjunc")
-        || thermal_probe_block(&name) == Some('s')
-    {
+    if name.contains("soc") || name.contains("tdie") || name.contains("tjunc") || thermal_probe == Component::Soc {
         return Component::Soc;
     }
     if name.contains("pmu")
@@ -84,15 +81,21 @@ pub fn classify(name: &str) -> Component {
     Component::Unknown
 }
 
-fn thermal_probe_block(name: &str) -> Option<char> {
-    name.split_whitespace().find_map(|token| {
-        let rest = token.strip_prefix("tp")?;
-        let block = rest.chars().last()?;
-        let digits = &rest[..rest.len() - block.len_utf8()];
-        if block.is_ascii_alphabetic() && !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()) {
-            Some(block)
-        } else {
-            None
-        }
-    })
+fn thermal_probe_component(name: &str) -> Component {
+    name.split_whitespace()
+        .find_map(|token| {
+            let rest = token.strip_prefix("tp")?;
+            let block = rest.chars().last()?;
+            let digits = &rest[..rest.len() - block.len_utf8()];
+            if block.is_ascii_alphabetic() && !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                Some(match block {
+                    'g' => Component::Gpu,
+                    's' => Component::Soc,
+                    _ => Component::Unknown,
+                })
+            } else {
+                None
+            }
+        })
+        .unwrap_or(Component::Unknown)
 }
