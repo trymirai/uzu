@@ -13,9 +13,10 @@ use crate::{
 pub fn stage_binaries(
     paths: &Paths,
     platforms: &PlatformsConfig,
+    release_path: &Path,
 ) -> Result<()> {
     for (binary_name, binary_config) in &platforms.binaries {
-        let root = paths.release_binary_path(binary_name);
+        let root = release_path.join("binaries").join(binary_name);
         if root.exists() {
             fs::remove_dir_all(&root)?;
         }

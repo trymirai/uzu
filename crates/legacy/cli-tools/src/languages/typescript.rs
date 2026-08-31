@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Path};
 
 use anyhow::Result;
 
@@ -89,6 +89,7 @@ impl LanguageBackend for TypeScriptLanguageBackend {
     fn release(
         &self,
         _version: &str,
+        release_path: &Path,
     ) -> Result<()> {
         self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
 
@@ -98,7 +99,7 @@ impl LanguageBackend for TypeScriptLanguageBackend {
             anyhow::bail!("Missing dist folder at {}", source.display());
         }
 
-        let destination = paths.release_typescript_npm_path();
+        let destination = release_path.join("typescript-npm");
         if destination.exists() {
             fs::remove_dir_all(&destination)?;
         }

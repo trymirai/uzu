@@ -106,37 +106,6 @@ impl Paths {
         self.artifacts_path().join("swift").join("slices")
     }
 
-    pub fn release_workspace_path(&self) -> PathBuf {
-        self.root_path.join("workspace").join("release")
-    }
-
-    pub fn release_platform_path(&self) -> PathBuf {
-        self.release_workspace_path().join("platform")
-    }
-
-    pub fn release_binaries_path(&self) -> PathBuf {
-        self.release_workspace_path().join("binaries")
-    }
-
-    pub fn release_binary_path(
-        &self,
-        binary_name: &str,
-    ) -> PathBuf {
-        self.release_binaries_path().join(binary_name)
-    }
-
-    pub fn release_swift_spm_path(&self) -> PathBuf {
-        self.release_workspace_path().join("swift-spm")
-    }
-
-    pub fn release_typescript_npm_path(&self) -> PathBuf {
-        self.release_workspace_path().join("typescript-npm")
-    }
-
-    pub fn release_python_pypi_path(&self) -> PathBuf {
-        self.release_workspace_path().join("python-pypi")
-    }
-
     pub fn root_package_swift_path(&self) -> PathBuf {
         self.root_path.join("Package.swift")
     }

@@ -1440,23 +1440,7 @@ To unify cross-language development we introduce <code>cargo tools</code>:
 
 ## Model Format
 
-`uzu` uses its own model format. You can download a test model:
-
-```bash
-./scripts/download_test_model.sh
-```
-
-Or download any supported model that has already been converted:
-
-```bash
-cd ./tools/
-uv run downloader list             # show the list of supported models
-uv run downloader download {REPO}  # download a specific model
-```
-
-Models downloaded for development are stored at `./workspace/models/0.5.22/`.
-
-You can also export a model yourself with [lalamo](https://github.com/trymirai/lalamo):
+`uzu` uses its own model format. You can export a model yourself with [lalamo](https://github.com/trymirai/lalamo):
 
 ```bash
 git clone https://github.com/trymirai/lalamo.git
@@ -1485,13 +1469,11 @@ If the model is not downloaded yet, the CLI starts downloading it automatically.
 
 ## Benchmarks
 
-To run benchmarks:
+To run benchmarks, pass a downloaded model path, a benchmark task file, and an output path:
 
 ```bash
-cargo run --release -p cli -- bench ./workspace/models/0.5.22/{MODEL_NAME} ./workspace/models/0.5.22/{MODEL_NAME}/benchmark_task.json ./workspace/models/0.5.22/{MODEL_NAME}/benchmark_result.json
+cargo run --release -p cli -- bench {MODEL_PATH} {TASK_PATH} {OUTPUT_PATH}
 ```
-
-`benchmark_task.json` is automatically generated after the model is downloaded via `./tools/`.
 
 ## Server
 
