@@ -15,6 +15,11 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+defaults:
+  run:
+    # For pipefail - https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#exit-codes-and-error-action-preference
+    shell: bash
+
 jobs:
   release:
     runs-on: macos-26
@@ -164,8 +169,14 @@ jobs:
       - name: "Release: Sync"
         run: cargo tools sync
 
+      - name: "Release: Create staging directory"
+        run: |
+          release_path="$(mktemp -d -t uzu-release)"
+          chmod 700 "$release_path"
+          echo "UZU_RELEASE_PATH=$release_path" >> "$GITHUB_ENV"
+
       - name: "Release: Build artifacts"
-        run: cargo tools release "${VERSION}"
+        run: cargo tools release "${VERSION}" "$UZU_RELEASE_PATH"
 
       - name: "Binaries: Codesign"
         shell: bash
@@ -182,7 +193,7 @@ jobs:
               "$binary_path"
             codesign --verify --strict --verbose=2 "$binary_path"
             signed=$((signed + 1))
-          done < <(find workspace/release/binaries \
+          done < <(find "$UZU_RELEASE_PATH/binaries" \
             -type f \
             ! -name '.DS_Store' \
             ! -name '*.zip' \
@@ -190,7 +201,7 @@ jobs:
             -print0)
 
           if [ "$signed" -eq 0 ]; then
-            echo "No binaries found under workspace/release/binaries" >&2
+            echo "No binaries found under $UZU_RELEASE_PATH/binaries" >&2
             exit 1
           fi
 
@@ -199,7 +210,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          zip_root="workspace/release/notarization"
+          zip_root="$UZU_RELEASE_PATH/notarization"
           mkdir -p "$zip_root"
 
           packaged=0
@@ -213,7 +224,7 @@ jobs:
             ditto -c -k --sequesterRsrc --keepParent "$binary_path" "$zip_path"
             tar -czf "$tarball_path" -C "$binary_dir" "$artifact_name"
             packaged=$((packaged + 1))
-          done < <(find workspace/release/binaries \
+          done < <(find "$UZU_RELEASE_PATH/binaries" \
             -type f \
             ! -name '.DS_Store' \
             ! -name '*.zip' \
@@ -221,7 +232,7 @@ jobs:
             -print0)
 
           if [ "$packaged" -eq 0 ]; then
-            echo "No binaries found under workspace/release/binaries" >&2
+            echo "No binaries found under $UZU_RELEASE_PATH/binaries" >&2
             exit 1
           fi
 
@@ -242,17 +253,15 @@ jobs:
               --password "$APPLE_APP_SPECIFIC_PASSWORD" \
               --wait
             notarized=$((notarized + 1))
-          done < <(find workspace/release/notarization -type f -name '*.zip' -print0)
+          done < <(find "$UZU_RELEASE_PATH/notarization" -type f -name '*.zip' -print0)
 
           if [ "$notarized" -eq 0 ]; then
-            echo "No notarization zips found under workspace/release/notarization" >&2
+            echo "No notarization zips found under $UZU_RELEASE_PATH/notarization" >&2
             exit 1
           fi
 
       # ---------------------------------------------------------------
-      # Commit + tag locally now, while the workspace only contains
-      # sync/build output. Publishes below write credential files into
-      # the workspace, which would otherwise be swept into `git add -A`.
+      # Commit + tag locally now that sync/build output is in the tree.
       # The push happens at the very end, after every publish step has
       # succeeded.
       # ---------------------------------------------------------------
@@ -281,7 +290,7 @@ jobs:
 
       - name: "Publish Platform: Upload snippets"
         run: |
-          gcloud storage rsync workspace/release/platform \
+          gcloud storage rsync "$UZU_RELEASE_PATH/platform" \
             "gs://platform-bucket-0485e11/snippets" \
             --recursive --delete-unmatched-destination-objects
 
@@ -303,13 +312,13 @@ jobs:
           if gsutil -q stat "$GS_URI"; then
             echo "Release zip already exists at $GS_URI"; exit 1
           fi
-          gsutil cp "workspace/release/swift-spm/${VERSION}.zip" "$GS_URI"
+          gsutil cp "$UZU_RELEASE_PATH/swift-spm/${VERSION}.zip" "$GS_URI"
 
       # ---------------------------------------------------------------
       # Publish TypeScript
       # ---------------------------------------------------------------
       - name: "Publish TypeScript"
-        working-directory: workspace/release/typescript-npm
+        working-directory: ${{ env.UZU_RELEASE_PATH }}/typescript-npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm publish --access public --no-git-checks
@@ -321,13 +330,11 @@ jobs:
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
-          uv publish workspace/release/python-pypi/*.whl
+          uv publish "$UZU_RELEASE_PATH"/python-pypi/*.whl
 
       # ---------------------------------------------------------------
       # Push the release commit and tag now that every publish has
-      # succeeded. The commit and tag were created locally before any
-      # publish step ran, so the workspace pollution from publishes
-      # never makes it into the commit.
+      # succeeded.
       # ---------------------------------------------------------------
       - name: "Release: Generate GitHub App token"
         id: release-token
@@ -353,5 +360,5 @@ jobs:
           token: ${{ steps.release-token.outputs.token }}
           tag_name: ${{ env.VERSION }}
           name: ${{ env.VERSION }}
-          files: workspace/release/binaries/**/*.tar.gz
+          files: ${{ env.UZU_RELEASE_PATH }}/binaries/**/*.tar.gz
           fail_on_unmatched_files: true

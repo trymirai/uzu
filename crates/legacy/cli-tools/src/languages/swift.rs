@@ -118,6 +118,7 @@ impl LanguageBackend for SwiftLanguageBackend {
     fn release(
         &self,
         version: &str,
+        release_path: &Path,
     ) -> Result<()> {
         self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
 
@@ -127,7 +128,7 @@ impl LanguageBackend for SwiftLanguageBackend {
             anyhow::bail!("Missing xcframework at {}", xcframework_path.display());
         }
 
-        let spm_root = paths.release_swift_spm_path();
+        let spm_root = release_path.join("swift-spm");
         if spm_root.exists() {
             fs::remove_dir_all(&spm_root)?;
         }

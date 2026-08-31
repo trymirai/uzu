@@ -1,4 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 
@@ -99,6 +102,7 @@ impl LanguageBackend for PythonLanguageBackend {
     fn release(
         &self,
         _version: &str,
+        release_path: &Path,
     ) -> Result<()> {
         let paths = Paths::new()?;
         let wheels_root = paths.target_wheels_path();
@@ -108,7 +112,7 @@ impl LanguageBackend for PythonLanguageBackend {
 
         self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
 
-        let destination = paths.release_python_pypi_path();
+        let destination = release_path.join("python-pypi");
         if destination.exists() {
             fs::remove_dir_all(&destination)?;
         }

@@ -4,6 +4,8 @@ mod swift;
 mod swift_extensions;
 mod typescript;
 
+use std::path::Path;
+
 use anyhow::{Result, anyhow};
 use colored::Colorize;
 pub use python::PythonLanguageBackend;
@@ -124,6 +126,7 @@ pub trait LanguageBackend {
     fn release(
         &self,
         _version: &str,
+        _release_path: &Path,
     ) -> Result<()> {
         Ok(())
     }

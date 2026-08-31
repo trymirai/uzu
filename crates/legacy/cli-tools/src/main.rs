@@ -61,6 +61,8 @@ enum Commands {
     /// Bump version, sync, build all languages, and stage release artifacts
     Release {
         version: String,
+        /// Directory to stage release artifacts into
+        path: std::path::PathBuf,
     },
 }
 
@@ -153,7 +155,8 @@ fn main() -> Result<()> {
         Some(Commands::Verify) => run_verify(&config)?,
         Some(Commands::Release {
             version,
-        }) => run_release(&version)?,
+            path,
+        }) => run_release(&version, &path)?,
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

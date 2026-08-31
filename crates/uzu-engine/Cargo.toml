@@ -105,5 +105,7 @@ objc2-foundation.workspace = true
 keisoku.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+uzu.workspace = true
 criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }
