@@ -10,6 +10,7 @@
 /crates/legacy/bindings @alexxale
 /crates/legacy/cli @alexxale
 /crates/legacy/cli/src/storage @eugenebokhan
+/crates/legacy/cli-tools/readme @alexxale
 /crates/legacy/download-manager @uuuvn @eugenebokhan
 /crates/legacy/hanashi @alexxale
 /crates/legacy/json-transform @alexxale
@@ -19,4 +20,3 @@
 /crates/legacy/uzu @alexxale
 /scripts @uuuvn
 /tools @alexxale
-/workspace @alexxale

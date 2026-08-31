@@ -3,7 +3,7 @@ import ProjectDescription
 let projectName = "Mirai"
 
 let packages: [Package] = [
-    .package(path: "../../bindings/swift"),
+    .package(path: "../../crates/legacy/uzu/bindings/swift"),
     .package(url: "https://github.com/Rspoon3/SFSymbols", .exact("2.6.1")),
     .package(url: "https://github.com/firebase/firebase-ios-sdk", .exact("11.15.0")),
 ]

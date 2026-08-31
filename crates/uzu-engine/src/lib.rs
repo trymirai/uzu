@@ -1,5 +1,5 @@
 #![cfg_attr(test, feature(custom_test_frameworks, test))]
-#![cfg_attr(test, test_runner(test_runner::uzu_harness))]
+#![cfg_attr(test, test_runner(crate::tests::harness::uzu_harness))]
 #![cfg_attr(target_family = "wasm", feature(wasi_ext))]
 
 mod array;

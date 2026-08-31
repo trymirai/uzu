@@ -1,10 +1,12 @@
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion};
-use test_runner::path::get_test_model_path;
 use uzu_engine_macros::uzu_bench;
 
-use crate::{engine::Engine, tests::helpers::for_each_non_cpu_backend};
+use crate::{
+    engine::Engine,
+    tests::{helpers::for_each_non_cpu_backend, path::get_test_model_path},
+};
 
 #[uzu_bench]
 fn bench_model_loading(c: &mut Criterion) {

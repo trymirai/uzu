@@ -118,6 +118,7 @@ impl LanguageBackend for SwiftLanguageBackend {
     fn release(
         &self,
         version: &str,
+        release_path: &Path,
     ) -> Result<()> {
         self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
 
@@ -127,7 +128,7 @@ impl LanguageBackend for SwiftLanguageBackend {
             anyhow::bail!("Missing xcframework at {}", xcframework_path.display());
         }
 
-        let spm_root = paths.release_swift_spm_path();
+        let spm_root = release_path.join("swift-spm");
         if spm_root.exists() {
             fs::remove_dir_all(&spm_root)?;
         }
@@ -155,9 +156,9 @@ impl LanguageBackend for SwiftLanguageBackend {
         // Inject `path:` after `dependencies:` so the resulting argument order
         // matches PackageDescription's Target initializer (name, dependencies, path, ...).
         let target_paths = [
-            (r"\.target\(", "Uzu", "bindings/swift/Sources/Uzu"),
-            (r"\.executableTarget\(", "Examples", "bindings/swift/Sources/Examples"),
-            (r"\.testTarget\(", "UzuTests", "bindings/swift/Tests/UzuTests"),
+            (r"\.target\(", "Uzu", "crates/legacy/uzu/bindings/swift/Sources/Uzu"),
+            (r"\.executableTarget\(", "Examples", "crates/legacy/uzu/bindings/swift/Sources/Examples"),
+            (r"\.testTarget\(", "UzuTests", "crates/legacy/uzu/bindings/swift/Tests/UzuTests"),
         ];
         let mut body = body;
         for (target_kind, name, source_path) in target_paths {

@@ -1,4 +1,0 @@
-{
-  "python.defaultInterpreterPath": "${workspaceFolder}/bindings/python/.venv/bin/python",
-  "ruff.path": ["${workspaceFolder}/bindings/python/.venv/bin/ruff"]
-}
