@@ -62,7 +62,7 @@ impl Paths {
     }
 
     pub fn bindings_path(&self) -> PathBuf {
-        self.root_path.join("bindings")
+        self.crate_path(&self.main_crate).join("bindings")
     }
 
     pub fn bindings_for_language_path(
