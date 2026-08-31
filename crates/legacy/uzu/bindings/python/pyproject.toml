@@ -45,7 +45,7 @@ features = ["bindings-pyo3"]
 module-name = "uzu"
 bindings = "pyo3"
 strip = true
-manifest-path = "../../crates/legacy/uzu/Cargo.toml"
+manifest-path = "../../Cargo.toml"
 python-source = "."
 
 [tool.pytest.ini_options]
