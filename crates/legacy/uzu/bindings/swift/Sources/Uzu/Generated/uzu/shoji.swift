@@ -1181,84 +1181,18 @@ public func FfiConverterTypeChatReplyConfig_lower(_ value: ChatReplyConfig) -> R
 }
 
 
-public struct ChatReplyJoulesPerToken: Equatable, Hashable, Codable {
-    public var cpu: Double
-    public var gpu: Double
-    public var ane: Double
-    public var dram: Double
-    public var combined: Double
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(cpu: Double, gpu: Double, ane: Double, dram: Double, combined: Double) {
-        self.cpu = cpu
-        self.gpu = gpu
-        self.ane = ane
-        self.dram = dram
-        self.combined = combined
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension ChatReplyJoulesPerToken: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeChatReplyJoulesPerToken: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatReplyJoulesPerToken {
-        return
-            try ChatReplyJoulesPerToken(
-                cpu: FfiConverterDouble.read(from: &buf), 
-                gpu: FfiConverterDouble.read(from: &buf), 
-                ane: FfiConverterDouble.read(from: &buf), 
-                dram: FfiConverterDouble.read(from: &buf), 
-                combined: FfiConverterDouble.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: ChatReplyJoulesPerToken, into buf: inout [UInt8]) {
-        FfiConverterDouble.write(value.cpu, into: &buf)
-        FfiConverterDouble.write(value.gpu, into: &buf)
-        FfiConverterDouble.write(value.ane, into: &buf)
-        FfiConverterDouble.write(value.dram, into: &buf)
-        FfiConverterDouble.write(value.combined, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeChatReplyJoulesPerToken_lift(_ buf: RustBuffer) throws -> ChatReplyJoulesPerToken {
-    return try FfiConverterTypeChatReplyJoulesPerToken.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeChatReplyJoulesPerToken_lower(_ value: ChatReplyJoulesPerToken) -> RustBuffer {
-    return FfiConverterTypeChatReplyJoulesPerToken.lower(value)
-}
-
-
 public struct ChatReplyPowerStats: Equatable, Hashable, Codable {
     public var samplesCount: Int64
-    public var averageCpuWatts: Double
-    public var averageGpuWatts: Double
-    public var averageAneWatts: Double
-    public var averageRamWatts: Double
+    public var averageCpuWatts: Double?
+    public var averageGpuWatts: Double?
+    public var averageAneWatts: Double?
+    public var averageRamWatts: Double?
     public var averageTotalWatts: Double
     public var energyJoules: Double
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(samplesCount: Int64, averageCpuWatts: Double, averageGpuWatts: Double, averageAneWatts: Double, averageRamWatts: Double, averageTotalWatts: Double, energyJoules: Double) {
+    public init(samplesCount: Int64, averageCpuWatts: Double?, averageGpuWatts: Double?, averageAneWatts: Double?, averageRamWatts: Double?, averageTotalWatts: Double, energyJoules: Double) {
         self.samplesCount = samplesCount
         self.averageCpuWatts = averageCpuWatts
         self.averageGpuWatts = averageGpuWatts
@@ -1285,10 +1219,10 @@ public struct FfiConverterTypeChatReplyPowerStats: FfiConverterRustBuffer {
         return
             try ChatReplyPowerStats(
                 samplesCount: FfiConverterInt64.read(from: &buf), 
-                averageCpuWatts: FfiConverterDouble.read(from: &buf), 
-                averageGpuWatts: FfiConverterDouble.read(from: &buf), 
-                averageAneWatts: FfiConverterDouble.read(from: &buf), 
-                averageRamWatts: FfiConverterDouble.read(from: &buf), 
+                averageCpuWatts: FfiConverterOptionDouble.read(from: &buf),
+                averageGpuWatts: FfiConverterOptionDouble.read(from: &buf),
+                averageAneWatts: FfiConverterOptionDouble.read(from: &buf),
+                averageRamWatts: FfiConverterOptionDouble.read(from: &buf),
                 averageTotalWatts: FfiConverterDouble.read(from: &buf), 
                 energyJoules: FfiConverterDouble.read(from: &buf)
         )
@@ -1296,10 +1230,10 @@ public struct FfiConverterTypeChatReplyPowerStats: FfiConverterRustBuffer {
 
     public static func write(_ value: ChatReplyPowerStats, into buf: inout [UInt8]) {
         FfiConverterInt64.write(value.samplesCount, into: &buf)
-        FfiConverterDouble.write(value.averageCpuWatts, into: &buf)
-        FfiConverterDouble.write(value.averageGpuWatts, into: &buf)
-        FfiConverterDouble.write(value.averageAneWatts, into: &buf)
-        FfiConverterDouble.write(value.averageRamWatts, into: &buf)
+        FfiConverterOptionDouble.write(value.averageCpuWatts, into: &buf)
+        FfiConverterOptionDouble.write(value.averageGpuWatts, into: &buf)
+        FfiConverterOptionDouble.write(value.averageAneWatts, into: &buf)
+        FfiConverterOptionDouble.write(value.averageRamWatts, into: &buf)
         FfiConverterDouble.write(value.averageTotalWatts, into: &buf)
         FfiConverterDouble.write(value.energyJoules, into: &buf)
     }
@@ -1404,7 +1338,7 @@ public struct ChatReplyStats: Equatable, Hashable, Codable {
 
     
     /**
-     * Average energy per uncached input token, split by hardware component.
+     * Average energy per uncached input token, with a component breakdown when available.
      */
 public func inputJoulesPerToken() -> ChatReplyJoulesPerToken?  {
     return try!  FfiConverterOptionTypeChatReplyJoulesPerToken.lift(try! rustCall() {
@@ -1415,7 +1349,7 @@ public func inputJoulesPerToken() -> ChatReplyJoulesPerToken?  {
 }
     
     /**
-     * Average energy per generated output token, split by hardware component.
+     * Average energy per generated output token, with a component breakdown when available.
      */
 public func outputJoulesPerToken() -> ChatReplyJoulesPerToken?  {
     return try!  FfiConverterOptionTypeChatReplyJoulesPerToken.lift(try! rustCall() {
@@ -3841,6 +3775,93 @@ public func FfiConverterTypeChatReplyFinishReason_lower(_ value: ChatReplyFinish
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum ChatReplyJoulesPerToken: Equatable, Hashable, Codable {
+
+    case total(total: Double
+    )
+    case components(cpu: Double, gpu: Double, ane: Double, dram: Double
+    )
+
+
+
+    /**
+     * Returns total energy per token, summing the component values when present.
+     */
+public func total() -> Double  {
+    return try!  FfiConverterDouble.lift(try! rustCall() {
+    uniffi_shoji_fn_method_chatreplyjoulespertoken_total(
+            FfiConverterTypeChatReplyJoulesPerToken_lower(self),$0
+    )
+})
+}
+
+
+
+}
+
+#if compiler(>=6)
+extension ChatReplyJoulesPerToken: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChatReplyJoulesPerToken: FfiConverterRustBuffer {
+    typealias SwiftType = ChatReplyJoulesPerToken
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatReplyJoulesPerToken {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .total(total: try FfiConverterDouble.read(from: &buf)
+        )
+
+        case 2: return .components(cpu: try FfiConverterDouble.read(from: &buf), gpu: try FfiConverterDouble.read(from: &buf), ane: try FfiConverterDouble.read(from: &buf), dram: try FfiConverterDouble.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ChatReplyJoulesPerToken, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .total(total):
+            writeInt(&buf, Int32(1))
+            FfiConverterDouble.write(total, into: &buf)
+
+
+        case let .components(cpu,gpu,ane,dram):
+            writeInt(&buf, Int32(2))
+            FfiConverterDouble.write(cpu, into: &buf)
+            FfiConverterDouble.write(gpu, into: &buf)
+            FfiConverterDouble.write(ane, into: &buf)
+            FfiConverterDouble.write(dram, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatReplyJoulesPerToken_lift(_ buf: RustBuffer) throws -> ChatReplyJoulesPerToken {
+    return try FfiConverterTypeChatReplyJoulesPerToken.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatReplyJoulesPerToken_lower(_ value: ChatReplyJoulesPerToken) -> RustBuffer {
+    return FfiConverterTypeChatReplyJoulesPerToken.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum ChatRole: Equatable, Hashable, Codable {
     
     case user
@@ -5234,30 +5255,6 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeChatReplyJoulesPerToken: FfiConverterRustBuffer {
-    typealias SwiftType = ChatReplyJoulesPerToken?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeChatReplyJoulesPerToken.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeChatReplyJoulesPerToken.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeChatReplyPowerStats: FfiConverterRustBuffer {
     typealias SwiftType = ChatReplyPowerStats?
 
@@ -5442,6 +5439,30 @@ fileprivate struct FfiConverterOptionTypeChatReplyFinishReason: FfiConverterRust
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeChatReplyFinishReason.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeChatReplyJoulesPerToken: FfiConverterRustBuffer {
+    typealias SwiftType = ChatReplyJoulesPerToken?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeChatReplyJoulesPerToken.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeChatReplyJoulesPerToken.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

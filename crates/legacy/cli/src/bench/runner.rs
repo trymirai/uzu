@@ -193,16 +193,18 @@ impl BenchRunner {
 }
 
 fn aggregate_power_stats(power_stats_list: &[&ChatReplyPowerStats]) -> Option<ChatReplyPowerStats> {
-    let average_watts =
-        |rail: fn(&ChatReplyPowerStats) -> f64| mean(&power_stats_list.iter().copied().map(rail).collect::<Vec<f64>>());
+    let average_watts = |rail: fn(&ChatReplyPowerStats) -> Option<f64>| {
+        let watts = power_stats_list.iter().copied().map(rail).collect::<Option<Vec<_>>>()?;
+        mean(&watts)
+    };
 
     Some(ChatReplyPowerStats {
         samples_count: power_stats_list.iter().map(|power| power.samples_count).sum(),
-        average_cpu_watts: average_watts(|power| power.average_cpu_watts)?,
-        average_gpu_watts: average_watts(|power| power.average_gpu_watts)?,
-        average_ane_watts: average_watts(|power| power.average_ane_watts)?,
-        average_ram_watts: average_watts(|power| power.average_ram_watts)?,
-        average_total_watts: average_watts(|power| power.average_total_watts)?,
+        average_cpu_watts: average_watts(|power| power.average_cpu_watts),
+        average_gpu_watts: average_watts(|power| power.average_gpu_watts),
+        average_ane_watts: average_watts(|power| power.average_ane_watts),
+        average_ram_watts: average_watts(|power| power.average_ram_watts),
+        average_total_watts: average_watts(|power| Some(power.average_total_watts))?,
         energy_joules: power_stats_list.iter().map(|power| power.energy_joules).sum(),
     })
 }

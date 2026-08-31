@@ -61,13 +61,14 @@ pub fn classify(name: &str) -> Component {
     if name.contains("ane") || name.contains("neural") {
         return Component::NeuralEngine;
     }
-    if name.contains("gpu") || thermal_probe == Component::Gpu {
+    if name.contains("gpu") || thermal_probe == Some(Component::Gpu) {
         return Component::Gpu;
     }
     if name.contains("cpu") || name.contains("pcore") || name.contains("ecore") {
         return Component::Cpu;
     }
-    if name.contains("soc") || name.contains("tdie") || name.contains("tjunc") || thermal_probe == Component::Soc {
+    if name.contains("soc") || name.contains("tdie") || name.contains("tjunc") || thermal_probe == Some(Component::Soc)
+    {
         return Component::Soc;
     }
     if name.contains("pmu")
@@ -81,21 +82,18 @@ pub fn classify(name: &str) -> Component {
     Component::Unknown
 }
 
-fn thermal_probe_component(name: &str) -> Component {
-    name.split_whitespace()
-        .find_map(|token| {
-            let rest = token.strip_prefix("tp")?;
-            let block = rest.chars().last()?;
-            let digits = &rest[..rest.len() - block.len_utf8()];
-            if block.is_ascii_alphabetic() && !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()) {
-                Some(match block {
-                    'g' => Component::Gpu,
-                    's' => Component::Soc,
-                    _ => Component::Unknown,
-                })
-            } else {
-                None
-            }
-        })
-        .unwrap_or(Component::Unknown)
+fn thermal_probe_component(name: &str) -> Option<Component> {
+    name.split_whitespace().find_map(|token| {
+        let rest = token.strip_prefix("tp")?;
+        let block = rest.chars().last()?;
+        let digits = &rest[..rest.len() - block.len_utf8()];
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        match block {
+            'g' => Some(Component::Gpu),
+            's' => Some(Component::Soc),
+            _ => None,
+        }
+    })
 }

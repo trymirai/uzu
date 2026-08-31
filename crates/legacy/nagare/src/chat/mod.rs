@@ -792,20 +792,23 @@ fn aggregate_power_stats(stats: &[&ChatReplyStats]) -> Option<ChatReplyPowerStat
         average_gpu_watts: duration_weighted_power(&stats, |power| power.average_gpu_watts),
         average_ane_watts: duration_weighted_power(&stats, |power| power.average_ane_watts),
         average_ram_watts: duration_weighted_power(&stats, |power| power.average_ram_watts),
-        average_total_watts: duration_weighted_power(&stats, |power| power.average_total_watts),
+        average_total_watts: duration_weighted_power(&stats, |power| Some(power.average_total_watts))?,
         energy_joules: stats.iter().map(|(_, power)| power.energy_joules).sum(),
     })
 }
 
 fn duration_weighted_power(
     stats: &[(&ChatReplyStats, &ChatReplyPowerStats)],
-    value: impl Fn(&ChatReplyPowerStats) -> f64,
-) -> f64 {
+    value: impl Fn(&ChatReplyPowerStats) -> Option<f64>,
+) -> Option<f64> {
     let duration = stats.iter().map(|(stats, _)| stats.duration).sum::<f64>();
     if duration > 0.0 {
-        stats.iter().map(|(stats, power)| value(power) * stats.duration).sum::<f64>() / duration
+        stats
+            .iter()
+            .try_fold(0.0, |sum, (stats, power)| Some(sum + value(power)? * stats.duration))
+            .map(|sum| sum / duration)
     } else {
-        stats.iter().map(|(_, power)| value(power)).sum::<f64>() / stats.len() as f64
+        stats.iter().try_fold(0.0, |sum, (_, power)| Some(sum + value(power)?)).map(|sum| sum / stats.len() as f64)
     }
 }
 

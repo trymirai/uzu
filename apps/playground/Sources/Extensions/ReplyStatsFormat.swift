@@ -5,17 +5,15 @@ import Uzu
 enum ReplyStatsFormat {
     static let placeholder = "—"
 
-    // macOS = SoC package power; iOS = whole-device charger "wall" power.
+    // macOS measures SoC rails; iOS measures charger input or battery discharge.
     static var powerLabel: String {
         #if os(macOS)
         return "Power (SoC):"
         #else
-        return "Power (wall):"
+        return "Power (device):"
         #endif
     }
 
-    // Power/energy values are uncertain on iOS (and unset until a run completes), so the
-    // caller renders these rows only when the values are present — these just format.
     static func power(average: Double) -> String {
         let avg = measurement.string(from: Measurement(value: average, unit: UnitPower.watts))
         return "\(avg) avg"
@@ -26,17 +24,22 @@ enum ReplyStatsFormat {
     }
 
     static func energyPerToken(_ stats: ChatReplyJoulesPerToken) -> String {
-        let cpu = number.string(from: NSNumber(value: stats.cpu)) ?? placeholder
-        let gpu = number.string(from: NSNumber(value: stats.gpu)) ?? placeholder
-        let ane = number.string(from: NSNumber(value: stats.ane)) ?? placeholder
-        let dram = number.string(from: NSNumber(value: stats.dram)) ?? placeholder
-        let combined = number.string(from: NSNumber(value: stats.combined)) ?? placeholder
-        return "CPU \(cpu), GPU \(gpu), ANE \(ane), DRAM \(dram), combined \(combined) J/tok"
+        let total = formattedNumber(stats.total())
+        switch stats {
+        case .total:
+            return "\(total) J/tok"
+        case let .components(cpu, gpu, ane, dram):
+            return "CPU \(formattedNumber(cpu)), GPU \(formattedNumber(gpu)), ANE \(formattedNumber(ane)), DRAM \(formattedNumber(dram)), total \(total) J/tok"
+        }
     }
 
     static func memory(_ bytes: Int64?) -> String {
         guard let bytes else { return placeholder }
         return byteCount.string(fromByteCount: max(bytes, 0))
+    }
+
+    private static func formattedNumber(_ value: Double) -> String {
+        number.string(from: NSNumber(value: value)) ?? placeholder
     }
 
     private static let number: NumberFormatter = {

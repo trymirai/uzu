@@ -30,7 +30,7 @@ impl PowerRecorder for ApplePowerRecorder {
 }
 
 fn stats(reading: PowerReading) -> ChatReplyPowerStats {
-    let watts = |value: Option<Watts>| value.map_or(0.0, |watts| watts.value() as f64);
+    let watts = |value: Option<Watts>| value.map(|watts| watts.value() as f64);
     ChatReplyPowerStats {
         samples_count: reading.samples as i64,
         average_cpu_watts: watts(reading.cpu),

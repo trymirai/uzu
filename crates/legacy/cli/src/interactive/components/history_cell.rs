@@ -379,10 +379,18 @@ fn chat_reply_stats_component(
 }
 
 fn format_joules_per_token(stats: ChatReplyJoulesPerToken) -> String {
-    format!(
-        "CPU {:.3}, GPU {:.3}, ANE {:.3}, DRAM {:.3}, combined {:.3} J/tok",
-        stats.cpu, stats.gpu, stats.ane, stats.dram, stats.combined
-    )
+    let total = stats.total();
+    match stats {
+        ChatReplyJoulesPerToken::Total {
+            ..
+        } => format!("{total:.3} J/tok"),
+        ChatReplyJoulesPerToken::Components {
+            cpu,
+            gpu,
+            ane,
+            dram,
+        } => format!("CPU {cpu:.3}, GPU {gpu:.3}, ANE {ane:.3}, DRAM {dram:.3}, total {total:.3} J/tok"),
+    }
 }
 
 fn format_memory_used(bytes: i64) -> String {

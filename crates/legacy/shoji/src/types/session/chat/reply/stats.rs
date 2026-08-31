@@ -4,10 +4,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ChatReplyPowerStats {
     pub samples_count: i64,
-    pub average_cpu_watts: f64,
-    pub average_gpu_watts: f64,
-    pub average_ane_watts: f64,
-    pub average_ram_watts: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_cpu_watts: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_gpu_watts: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_ane_watts: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_ram_watts: Option<f64>,
     pub average_total_watts: f64,
     pub energy_joules: f64,
 }
@@ -22,24 +26,55 @@ impl ChatReplyPowerStats {
             return None;
         }
 
-        Some(ChatReplyJoulesPerToken {
-            cpu: self.average_cpu_watts / tokens_per_second,
-            gpu: self.average_gpu_watts / tokens_per_second,
-            ane: self.average_ane_watts / tokens_per_second,
-            dram: self.average_ram_watts / tokens_per_second,
-            combined: self.average_total_watts / tokens_per_second,
-        })
+        let component_watts =
+            (self.average_cpu_watts, self.average_gpu_watts, self.average_ane_watts, self.average_ram_watts);
+        let energy = match component_watts {
+            (Some(cpu), Some(gpu), Some(ane), Some(dram)) => ChatReplyJoulesPerToken::Components {
+                cpu: cpu / tokens_per_second,
+                gpu: gpu / tokens_per_second,
+                ane: ane / tokens_per_second,
+                dram: dram / tokens_per_second,
+            },
+            _ => ChatReplyJoulesPerToken::Total {
+                total: self.average_total_watts / tokens_per_second,
+            },
+        };
+        Some(energy)
     }
 }
 
-#[bindings::export(Structure(Class))]
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
-pub struct ChatReplyJoulesPerToken {
-    pub cpu: f64,
-    pub gpu: f64,
-    pub ane: f64,
-    pub dram: f64,
-    pub combined: f64,
+#[bindings::export(Enumeration)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ChatReplyJoulesPerToken {
+    Total {
+        total: f64,
+    },
+    Components {
+        cpu: f64,
+        gpu: f64,
+        ane: f64,
+        dram: f64,
+    },
+}
+
+// The generic exporter cannot attach methods to NAPI's union representation of data enums.
+#[cfg_attr(feature = "bindings-uniffi", uniffi::export)]
+impl ChatReplyJoulesPerToken {
+    /// Returns total energy per token, summing the component values when present.
+    pub fn total(&self) -> f64 {
+        match self {
+            Self::Total {
+                total,
+            } => *total,
+            Self::Components {
+                cpu,
+                gpu,
+                ane,
+                dram,
+            } => cpu + gpu + ane + dram,
+        }
+    }
 }
 
 #[bindings::export(Structure(Class))]
@@ -71,13 +106,13 @@ impl ChatReplyStats {
         self.tokens_count_input.and_then(|input| self.tokens_count_output.map(|output| input + output))
     }
 
-    /// Average energy per uncached input token, split by hardware component.
+    /// Average energy per uncached input token, with a component breakdown when available.
     #[bindings::export(Method(Getter))]
     pub fn input_joules_per_token(&self) -> Option<ChatReplyJoulesPerToken> {
         self.power_stats.as_ref()?.per_token(self.prefill_tokens_per_second)
     }
 
-    /// Average energy per generated output token, split by hardware component.
+    /// Average energy per generated output token, with a component breakdown when available.
     #[bindings::export(Method(Getter))]
     pub fn output_joules_per_token(&self) -> Option<ChatReplyJoulesPerToken> {
         self.power_stats.as_ref()?.per_token(self.generate_tokens_per_second)

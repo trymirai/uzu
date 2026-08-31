@@ -20,7 +20,7 @@ struct ReplyStatsView: View {
                 metricRow(label: ReplyStatsFormat.powerLabel, value: ReplyStatsFormat.power(average: power))
             }
             if let energy = stats.totalEnergy {
-                metricRow(label: "Energy:", value: ReplyStatsFormat.energy(energy))
+                metricRow(label: "Total energy:", value: ReplyStatsFormat.energy(energy))
             }
             if let inputJoulesPerToken = stats.inputJoulesPerToken {
                 metricRow(label: "Input energy / token:", value: ReplyStatsFormat.energyPerToken(inputJoulesPerToken))

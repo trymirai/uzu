@@ -289,24 +289,28 @@ export declare class ChatReplyConfig {
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
 }
 
-export declare class ChatReplyJoulesPerToken {
+export declare class ChatReplyJoulesPerTokenComponents {
   cpu: number
   gpu: number
   ane: number
   dram: number
-  combined: number
-  constructor(cpu: number, gpu: number, ane: number, dram: number, combined: number)
+  constructor(cpu: number, gpu: number, ane: number, dram: number)
+}
+
+export declare class ChatReplyJoulesPerTokenTotal {
+  total: number
+  constructor(total: number)
 }
 
 export declare class ChatReplyPowerStats {
   samplesCount: number
-  averageCpuWatts: number
-  averageGpuWatts: number
-  averageAneWatts: number
-  averageRamWatts: number
+  averageCpuWatts?: number
+  averageGpuWatts?: number
+  averageAneWatts?: number
+  averageRamWatts?: number
   averageTotalWatts: number
   energyJoules: number
-  constructor(samplesCount: number, averageCpuWatts: number, averageGpuWatts: number, averageAneWatts: number, averageRamWatts: number, averageTotalWatts: number, energyJoules: number)
+  constructor(samplesCount: number, averageCpuWatts?: number, averageGpuWatts?: number, averageAneWatts?: number, averageRamWatts?: number, averageTotalWatts: number, energyJoules: number)
 }
 
 export declare class ChatReplySpeculatorStats {
@@ -328,9 +332,9 @@ export declare class ChatReplyStats {
   powerStats?: ChatReplyPowerStats
   constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountInputCached?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, powerStats?: ChatReplyPowerStats)
   get tokensCount(): number | null
-  /** Average energy per uncached input token, split by hardware component. */
+  /** Average energy per uncached input token, with a component breakdown when available. */
   get inputJoulesPerToken(): ChatReplyJoulesPerToken | null
-  /** Average energy per generated output token, split by hardware component. */
+  /** Average energy per generated output token, with a component breakdown when available. */
   get outputJoulesPerToken(): ChatReplyJoulesPerToken | null
 }
 
@@ -768,6 +772,9 @@ export declare const enum ChatReplyFinishReason {
   ToolCalls = 'ToolCalls',
   Rejected = 'Rejected'
 }
+
+export type ChatReplyJoulesPerToken =
+  ChatReplyJoulesPerTokenTotal | ChatReplyJoulesPerTokenComponents
 
 export type ChatRole =
   ChatRoleUser | ChatRoleAssistant | ChatRoleSystem | ChatRoleDeveloper | ChatRoleTool | ChatRoleCustom
