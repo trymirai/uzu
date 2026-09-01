@@ -20,7 +20,7 @@ pub struct IntervalHandle<M: IntervalSet> {
 unsafe impl<M: IntervalSet> Send for IntervalHandle<M> {}
 
 impl<M: IntervalSet> IntervalHandle<M> {
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         let _ = M::TYPE_MASK;
         Self {
             engine: IntervalEngine::new(M::GROUPS),

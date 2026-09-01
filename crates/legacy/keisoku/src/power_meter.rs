@@ -96,7 +96,7 @@ mod inner {
 #[cfg(target_os = "ios")]
 mod inner {
     use std::{
-        sync::{Arc, Mutex, mpsc},
+        sync::mpsc,
         thread::{self, JoinHandle},
         time::{Duration, Instant},
     };
@@ -108,101 +108,140 @@ mod inner {
 
     #[derive(Default)]
     struct Accumulator {
-        energy_joules: f64,
-        samples: u64,
+        joules: Option<f64>,
+    }
+
+    enum Command {
+        Split {
+            boundary: Instant,
+            response: mpsc::Sender<Result<PowerReading, KeisokuError>>,
+        },
+        Stop {
+            boundary: Instant,
+            response: mpsc::Sender<Result<PowerReading, KeisokuError>>,
+        },
     }
 
     struct Sampler {
-        stop: mpsc::Sender<()>,
-        worker: JoinHandle<Result<(), KeisokuError>>,
+        commands: mpsc::Sender<Command>,
+        worker: JoinHandle<()>,
     }
 
     pub struct Inner {
-        accumulator: Arc<Mutex<Accumulator>>,
         sampler: Option<Sampler>,
     }
 
     impl Inner {
         pub fn new() -> Self {
             Self {
-                accumulator: Arc::new(Mutex::new(Accumulator::default())),
                 sampler: None,
             }
         }
 
         pub fn start(&mut self) -> Result<(), KeisokuError> {
-            if self.sampler.is_some() {
-                self.stop_sampler()?;
+            if let Some(sampler) = self.sampler.take() {
+                sampler.shutdown()?;
             }
-            *self.accumulator.lock()? = Accumulator::default();
-            let accumulator = self.accumulator.clone();
-            let (stop, stop_receiver) = mpsc::channel();
-            let worker = thread::spawn(move || -> Result<(), KeisokuError> {
-                let mut device = Device::new();
-                let mut last = Instant::now();
-                loop {
-                    match stop_receiver.recv_timeout(SAMPLE_INTERVAL) {
-                        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                        Err(mpsc::RecvTimeoutError::Timeout) => {},
-                    }
-
-                    let now = Instant::now();
-                    let elapsed = now.duration_since(last);
-                    last = now;
-                    let Some(energy) = device.rail_energy(elapsed) else {
-                        continue;
-                    };
-                    let mut accumulator = accumulator.lock()?;
-                    accumulator.energy_joules += energy.value() as f64;
-                    accumulator.samples += 1;
-                }
-                Ok(())
-            });
+            let (commands, receiver) = mpsc::channel();
+            let worker = thread::spawn(move || run(receiver));
             self.sampler = Some(Sampler {
-                stop,
+                commands,
                 worker,
             });
             Ok(())
         }
 
         pub fn split(&mut self) -> Result<PowerReading, KeisokuError> {
-            if self.sampler.is_none() {
-                return Err(KeisokuError::PowerMeterNotStarted);
-            }
-            let accumulator = {
-                let mut accumulator = self.accumulator.lock()?;
-                std::mem::take(&mut *accumulator)
-            };
-            Self::reading(accumulator)
+            self.sampler.as_ref().ok_or(KeisokuError::PowerMeterNotStarted)?.split()
         }
 
         pub fn stop(&mut self) -> Result<PowerReading, KeisokuError> {
-            if self.sampler.is_none() {
-                return Err(KeisokuError::PowerMeterNotStarted);
-            }
-            self.stop_sampler()?;
-            let accumulator = {
-                let mut accumulator = self.accumulator.lock()?;
-                std::mem::take(&mut *accumulator)
-            };
-            Self::reading(accumulator)
+            self.sampler.take().ok_or(KeisokuError::PowerMeterNotStarted)?.stop()
+        }
+    }
+
+    impl Sampler {
+        fn split(&self) -> Result<PowerReading, KeisokuError> {
+            let (response, receiver) = mpsc::channel();
+            self.commands
+                .send(Command::Split {
+                    boundary: Instant::now(),
+                    response,
+                })
+                .map_err(|_| KeisokuError::SamplingTaskDisconnected)?;
+            receiver.recv().map_err(|_| KeisokuError::SamplingTaskDisconnected)?
         }
 
-        fn stop_sampler(&mut self) -> Result<(), KeisokuError> {
-            let Some(sampler) = self.sampler.take() else {
-                return Ok(());
-            };
-            drop(sampler.stop);
-            sampler.worker.join().map_err(|_| KeisokuError::SamplingTaskPanicked)?
+        fn stop(self) -> Result<PowerReading, KeisokuError> {
+            let (response, receiver) = mpsc::channel();
+            let reading = self
+                .commands
+                .send(Command::Stop {
+                    boundary: Instant::now(),
+                    response,
+                })
+                .map_err(|_| KeisokuError::SamplingTaskDisconnected)
+                .and_then(|()| receiver.recv().map_err(|_| KeisokuError::SamplingTaskDisconnected))
+                .and_then(|reading| reading);
+            self.worker.join().map_err(|_| KeisokuError::SamplingTaskPanicked)?;
+            reading
         }
 
-        fn reading(accumulator: Accumulator) -> Result<PowerReading, KeisokuError> {
-            if accumulator.samples == 0 {
-                return Err(KeisokuError::PowerReadingUnavailable);
+        fn shutdown(self) -> Result<(), KeisokuError> {
+            drop(self.commands);
+            self.worker.join().map_err(|_| KeisokuError::SamplingTaskPanicked)
+        }
+    }
+
+    fn run(commands: mpsc::Receiver<Command>) {
+        let mut device = Device::new();
+        let mut accumulator = Accumulator::default();
+        let mut last_sample = Instant::now();
+
+        loop {
+            match commands.recv_timeout(SAMPLE_INTERVAL) {
+                Ok(Command::Split {
+                    boundary,
+                    response,
+                }) => {
+                    sample(&mut device, &mut accumulator, &mut last_sample, boundary);
+                    let _ = response.send(reading(std::mem::take(&mut accumulator)));
+                },
+                Ok(Command::Stop {
+                    boundary,
+                    response,
+                }) => {
+                    sample(&mut device, &mut accumulator, &mut last_sample, boundary);
+                    let _ = response.send(reading(accumulator));
+                    break;
+                },
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    sample(&mut device, &mut accumulator, &mut last_sample, Instant::now());
+                },
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
-            Ok(PowerReading::Total {
-                total: Joules(accumulator.energy_joules as f32),
+        }
+    }
+
+    fn sample(
+        device: &mut Device,
+        accumulator: &mut Accumulator,
+        last_sample: &mut Instant,
+        boundary: Instant,
+    ) {
+        let elapsed = boundary.saturating_duration_since(*last_sample);
+        *last_sample = boundary;
+        if let Some(energy) = device.rail_energy(elapsed) {
+            *accumulator.joules.get_or_insert(0.0) += f64::from(energy.value());
+        }
+    }
+
+    fn reading(accumulator: Accumulator) -> Result<PowerReading, KeisokuError> {
+        accumulator
+            .joules
+            .map(|joules| PowerReading::Total {
+                total: Joules(joules as f32),
             })
-        }
+            .ok_or(KeisokuError::PowerReadingUnavailable)
     }
 }

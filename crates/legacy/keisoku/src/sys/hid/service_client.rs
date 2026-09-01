@@ -4,7 +4,7 @@ use objc2_core_foundation::{CFNumber, CFRetained, CFString, CFType, ConcreteType
 
 use super::{IOHIDEvent, IOHIDServiceClient, IOKit};
 
-pub(super) struct ServiceClient {
+pub struct ServiceClient {
     io_kit: &'static IOKit,
     inner: CFRetained<IOHIDServiceClient>,
 }
@@ -29,21 +29,21 @@ impl ServiceClient {
         value.downcast::<T>().ok()
     }
 
-    pub(super) fn string(
+    pub fn string(
         &self,
         key: &str,
     ) -> Option<String> {
         self.property::<CFString>(key).map(|string| string.to_string())
     }
 
-    pub(super) fn i64_value(
+    pub fn i64_value(
         &self,
         key: &str,
     ) -> Option<i64> {
         self.property::<CFNumber>(key).and_then(|number| number.as_i64())
     }
 
-    pub(super) fn f64_value(
+    pub fn f64_value(
         &self,
         event_type: i64,
         event_field: i32,
@@ -53,7 +53,7 @@ impl ServiceClient {
         Some(unsafe { (self.io_kit.get_float_value)(&event, event_field) })
     }
 
-    pub(super) fn registry_id(&self) -> u64 {
+    pub fn registry_id(&self) -> u64 {
         unsafe { (self.io_kit.get_registry_id)(&self.inner) }
     }
 }

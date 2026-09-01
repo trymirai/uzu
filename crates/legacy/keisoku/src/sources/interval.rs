@@ -3,28 +3,28 @@ use crate::{
     sys::ioreport::{IoReport, IoReportGroups, RawIOReportSample},
 };
 
-pub(crate) struct IntervalEngine {
+pub struct IntervalEngine {
     ioreport: Option<IoReport>,
 }
 
-pub(crate) struct IntervalSession {
+pub struct IntervalSession {
     begin: Option<RawIOReportSample>,
 }
 
 impl IntervalEngine {
-    pub(crate) fn new(groups: IoReportGroups) -> Self {
+    pub fn new(groups: IoReportGroups) -> Self {
         Self {
             ioreport: (!groups.is_empty()).then(|| IoReport::for_groups(groups)).flatten(),
         }
     }
 
-    pub(crate) fn begin(&self) -> IntervalSession {
+    pub fn begin(&self) -> IntervalSession {
         IntervalSession {
             begin: self.ioreport.as_ref().and_then(IoReport::snapshot),
         }
     }
 
-    pub(crate) fn fold_end<M: IntervalSet>(
+    pub fn fold_end<M: IntervalSet>(
         &self,
         session: IntervalSession,
         values: &mut M::Value,
