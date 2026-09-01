@@ -106,11 +106,6 @@ mod inner {
 
     const SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
-    #[derive(Default)]
-    struct Accumulator {
-        joules: Option<f64>,
-    }
-
     enum Command {
         Split {
             boundary: Instant,
@@ -169,7 +164,7 @@ mod inner {
                     response,
                 })
                 .map_err(|_| KeisokuError::SamplingTaskDisconnected)?;
-            receiver.recv().map_err(|_| KeisokuError::SamplingTaskDisconnected)?
+            receive_reading(receiver)
         }
 
         fn stop(self) -> Result<PowerReading, KeisokuError> {
@@ -181,8 +176,7 @@ mod inner {
                     response,
                 })
                 .map_err(|_| KeisokuError::SamplingTaskDisconnected)
-                .and_then(|()| receiver.recv().map_err(|_| KeisokuError::SamplingTaskDisconnected))
-                .and_then(|reading| reading);
+                .and_then(|()| receive_reading(receiver));
             self.worker.join().map_err(|_| KeisokuError::SamplingTaskPanicked)?;
             reading
         }
@@ -195,7 +189,7 @@ mod inner {
 
     fn run(commands: mpsc::Receiver<Command>) {
         let mut device = Device::new();
-        let mut accumulator = Accumulator::default();
+        let mut joules = None;
         let mut last_sample = Instant::now();
 
         loop {
@@ -204,19 +198,19 @@ mod inner {
                     boundary,
                     response,
                 }) => {
-                    sample(&mut device, &mut accumulator, &mut last_sample, boundary);
-                    let _ = response.send(reading(std::mem::take(&mut accumulator)));
+                    sample(&mut device, &mut joules, &mut last_sample, boundary);
+                    let _ = response.send(reading(joules.take()));
                 },
                 Ok(Command::Stop {
                     boundary,
                     response,
                 }) => {
-                    sample(&mut device, &mut accumulator, &mut last_sample, boundary);
-                    let _ = response.send(reading(accumulator));
+                    sample(&mut device, &mut joules, &mut last_sample, boundary);
+                    let _ = response.send(reading(joules));
                     break;
                 },
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    sample(&mut device, &mut accumulator, &mut last_sample, Instant::now());
+                    sample(&mut device, &mut joules, &mut last_sample, Instant::now());
                 },
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
@@ -225,23 +219,28 @@ mod inner {
 
     fn sample(
         device: &mut Device,
-        accumulator: &mut Accumulator,
+        joules: &mut Option<f64>,
         last_sample: &mut Instant,
         boundary: Instant,
     ) {
         let elapsed = boundary.saturating_duration_since(*last_sample);
         *last_sample = boundary;
         if let Some(energy) = device.rail_energy(elapsed) {
-            *accumulator.joules.get_or_insert(0.0) += f64::from(energy.value());
+            *joules.get_or_insert(0.0) += f64::from(energy.value());
         }
     }
 
-    fn reading(accumulator: Accumulator) -> Result<PowerReading, KeisokuError> {
-        accumulator
-            .joules
+    fn reading(joules: Option<f64>) -> Result<PowerReading, KeisokuError> {
+        joules
             .map(|joules| PowerReading::Total {
                 total: Joules(joules as f32),
             })
             .ok_or(KeisokuError::PowerReadingUnavailable)
+    }
+
+    fn receive_reading(
+        receiver: mpsc::Receiver<Result<PowerReading, KeisokuError>>
+    ) -> Result<PowerReading, KeisokuError> {
+        receiver.recv().map_err(|_| KeisokuError::SamplingTaskDisconnected)?
     }
 }
