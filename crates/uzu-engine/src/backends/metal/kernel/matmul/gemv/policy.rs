@@ -1,6 +1,6 @@
 use metal::MTLGPUFamily;
 
-use crate::backends::metal::LARGE_MIN_GPU_CORES;
+use crate::backends::metal::context::LARGE_MIN_GPU_CORES;
 
 mod quantized;
 
@@ -152,7 +152,7 @@ pub(super) fn fp_tile(
     input_aligned: bool,
 ) -> GemvTile {
     let is_large_gpu = gpu_core_count >= LARGE_MIN_GPU_CORES;
-    let is_small_legacy = !is_large_gpu && apple_gpu_family.is_none();
+    let is_small_legacy = !is_large_gpu && apple_gpu_family < Some(MTLGPUFamily::Apple8);
     // SG8 is the portable full-precision geometry.
     let should_disable_k_split = !input_aligned
         || (m == 1 && is_large_gpu && k < FP_LARGE_SPLIT_K_MIN_DEPTH)

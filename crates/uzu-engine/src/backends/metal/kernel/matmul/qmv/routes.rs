@@ -60,7 +60,7 @@ macro_rules! qmv_format { (w4_zp_g32) => { (4, 32) }; (w4_zp_g64) => { (4, 64) }
 #[rustfmt::skip]
 macro_rules! measured_device_name { (M1) => { "Apple M1" }; (M2) => { "Apple M2" }; (M2Pro) => { "Apple M2 Pro" }; (M3Max) => { "Apple M3 Max" }; (M4) => { "Apple M4" }; (M4Pro) => { "Apple M4 Pro" }; (M5Max) => { "Apple M5 Max" }; }
 #[rustfmt::skip]
-macro_rules! measured_apple_gpu_family { (M1) => { None }; (M2) => { Some(MTLGPUFamily::Apple8) }; (M2Pro) => { Some(MTLGPUFamily::Apple8) }; (M3Max) => { Some(MTLGPUFamily::Apple9) }; (M4) => { Some(MTLGPUFamily::Apple9) }; (M4Pro) => { Some(MTLGPUFamily::Apple9) }; (M5Max) => { Some(MTLGPUFamily::Apple10) }; }
+macro_rules! measured_apple_gpu_family { (M1) => { Some(MTLGPUFamily::Apple7) }; (M2) => { Some(MTLGPUFamily::Apple8) }; (M2Pro) => { Some(MTLGPUFamily::Apple8) }; (M3Max) => { Some(MTLGPUFamily::Apple9) }; (M4) => { Some(MTLGPUFamily::Apple9) }; (M4Pro) => { Some(MTLGPUFamily::Apple9) }; (M5Max) => { Some(MTLGPUFamily::Apple10) }; }
 #[rustfmt::skip]
 macro_rules! row { ($device:ident, $format:ident, $m:literal, $shapes:expr, $route:expr) => { RouteRow { device_name: measured_device_name!($device), apple_gpu_family: measured_apple_gpu_family!($device), bits: qmv_format!($format).0, group: qmv_format!($format).1, m: $m, shapes: $shapes, route: $route } }; }
 
@@ -400,11 +400,7 @@ pub fn route(
         |row: &&RouteRow| row.bits == bits && row.group == group && row.m == shape.m && row.shapes & mask != 0;
     let route =
         ROWS.iter().filter(matches).find(|row| row.device_name == device_name).map(|row| row.route).or_else(|| {
-            let is_legacy_apple_device = device_name == "Apple M1" || device_name.starts_with("Apple M1 ");
-            let same_family = |row: &&RouteRow| match apple_gpu_family {
-                Some(family) => row.apple_gpu_family == Some(family),
-                None => is_legacy_apple_device && row.apple_gpu_family.is_none(),
-            };
+            let same_family = |row: &&RouteRow| row.apple_gpu_family == apple_gpu_family;
             let mut routes = ROWS.iter().filter(matches).filter(same_family).map(|row| row.route);
             let route = routes.next()?;
             routes.all(|candidate| candidate == route).then_some(route)

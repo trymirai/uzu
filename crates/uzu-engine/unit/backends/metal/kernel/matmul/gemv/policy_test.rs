@@ -12,6 +12,7 @@ use crate::{
 
 const SMALL_GPU_CORE_COUNT: u32 = 29;
 const LARGE_GPU_CORE_COUNT: u32 = 30;
+const APPLE7: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple7);
 const APPLE8: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple8);
 const APPLE9: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple9);
 const APPLE10: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple10);
@@ -32,7 +33,7 @@ fn fp_policy_cases() {
         (SMALL_GPU_CORE_COUNT, APPLE9, 1, 1536, 256, true, tile(8, 2, 1)),
         (LARGE_GPU_CORE_COUNT, APPLE9, 8, 12288, 1536, true, tile(8, 1, 4)),
         (LARGE_GPU_CORE_COUNT, APPLE9, 1, 1536, 12288, true, tile(8, 8, 4)),
-        (SMALL_GPU_CORE_COUNT, None, 1, 262144, 1536, true, tile(8, 1, 4)),
+        (SMALL_GPU_CORE_COUNT, APPLE7, 1, 262144, 1536, true, tile(8, 1, 4)),
     ];
 
     for (gpu_core_count, apple_gpu_family, m, n, k, aligned, expected) in cases {
@@ -48,7 +49,7 @@ fn quant_policy_cases() {
         (SMALL_GPU_CORE_COUNT, APPLE9, 1, 1536, 256, 4, false, qtile(4, 4)),
         (SMALL_GPU_CORE_COUNT, APPLE10, 1, 1536, 256, 4, false, qtile(8, 4)),
         (SMALL_GPU_CORE_COUNT, APPLE8, 1, 2048, 1536, 4, false, qtile(8, 2)),
-        (SMALL_GPU_CORE_COUNT, None, 1, 256, 1536, 4, false, qtile(8, 2)),
+        (SMALL_GPU_CORE_COUNT, APPLE7, 1, 256, 1536, 4, false, qtile(8, 2)),
         (SMALL_GPU_CORE_COUNT, None, 1, 1536, 256, 4, false, qtile(4, 8)),
         (LARGE_GPU_CORE_COUNT, APPLE9, 2, 2048, 1536, 4, false, qtile(8, 4)),
         (LARGE_GPU_CORE_COUNT, APPLE9, 4, 5120, 5120, 4, false, qtile(8, 4)),

@@ -102,7 +102,7 @@ pub(super) fn simdgroup_fp_tile(
 /// A partial trailing M block costs a second pass over the weights. Older GPUs are bound by that;
 /// Apple9 and newer would rather keep the narrow tile's parallelism.
 fn prefers_wide_partial_m_tile(apple_gpu_family: Option<MTLGPUFamily>) -> bool {
-    matches!(apple_gpu_family, None | Some(MTLGPUFamily::Apple8))
+    apple_gpu_family <= Some(MTLGPUFamily::Apple8)
 }
 
 pub(super) fn simdgroup_quant_tile(

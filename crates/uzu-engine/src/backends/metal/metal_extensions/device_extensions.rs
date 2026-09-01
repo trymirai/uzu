@@ -1,13 +1,15 @@
 use core::mem::transmute;
 use std::ffi::CString;
 
-use metal::MTLDevice;
+use metal::{MTLDevice, MTLGPUFamily};
 use obfstr::obfstr;
 use objc2::{
     Message,
     ffi::objc_msgSend,
     runtime::{NSObjectProtocol, ProtocolObject, Sel},
 };
+
+use super::GpuFamilyExt;
 
 // Used to bypass objc2's debug-mode class validation for proxy objects like
 // `CaptureMTLDevice` which forward messages at the ObjC runtime level (via
@@ -69,6 +71,11 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
     /// Whether the GPU supports placement sparse resources.
     fn supports_placement_sparse_resources(&self) -> bool {
         optional_selector_value(self, obfstr!("supportsPlacementSparse"), false)
+    }
+
+    /// Newest Apple GPU family the device supports; `None` for non-Apple GPUs.
+    fn newest_supported_apple_gpu_family(&self) -> Option<MTLGPUFamily> {
+        MTLGPUFamily::all_cases().into_iter().rev().find(|family| self.supports_family(*family))
     }
 }
 

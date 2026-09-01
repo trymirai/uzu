@@ -21,7 +21,6 @@ use super::{
     Metal,
     error::MetalError,
     metal_extensions::{DeviceExt, LibraryPipelineExtensions},
-    newest_supported_apple_gpu_family,
 };
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
@@ -30,6 +29,8 @@ use crate::backends::{
         sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
     },
 };
+
+pub(super) const LARGE_MIN_GPU_CORES: u32 = 30;
 
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
@@ -145,7 +146,7 @@ impl Context for MetalContext {
             <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
         let device_name = device.name();
         let gpu_core_count = device.gpu_core_count();
-        let apple_gpu_family = newest_supported_apple_gpu_family(|family| device.supports_family(family));
+        let apple_gpu_family = device.newest_supported_apple_gpu_family();
         let supports_mxu = device.supports_mxu();
 
         let command_queue =

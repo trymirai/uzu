@@ -7,7 +7,7 @@ use crate::backends::{
     metal::kernel::matmul::MatmulMetalKernel,
 };
 
-const LEGACY_FAMILY: Option<MTLGPUFamily> = None;
+const LEGACY_FAMILY: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple7);
 const APPLE9_FAMILY: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple9);
 
 fn shape(
@@ -98,7 +98,7 @@ fn policy_boundaries_are_preserved() {
     }
 
     // Apple8 retains the older wide-tile policy; Apple9 and newer keep the narrow tile.
-    for apple_gpu_family in [None, Some(MTLGPUFamily::Apple8)] {
+    for apple_gpu_family in [None, Some(MTLGPUFamily::Apple7), Some(MTLGPUFamily::Apple8)] {
         for m in [9, 15, 31] {
             assert_eq!(policy::simdgroup_quant_tile(m, 4096, 32, apple_gpu_family), Tile32x32x32_Simdgroups2x2);
         }

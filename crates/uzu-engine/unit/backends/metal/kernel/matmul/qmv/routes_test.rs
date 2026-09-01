@@ -17,12 +17,13 @@ use crate::{
 };
 
 const FROZEN_PLAN_FINGERPRINT: u64 = 5_839_212_743_558_880_136;
+const APPLE7: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple7);
 const APPLE8: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple8);
 const APPLE9: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple9);
 const APPLE10: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple10);
 
 const DEVICES: [(&str, &str, u32, Option<MTLGPUFamily>, bool); 7] = [
-    ("m1", "Apple M1", 8, None, false),
+    ("m1", "Apple M1", 8, APPLE7, false),
     ("m2", "Apple M2", 10, APPLE8, false),
     ("m2-pro", "Apple M2 Pro", 19, APPLE8, false),
     ("m3-max", "Apple M3 Max", 40, APPLE9, false),
@@ -149,7 +150,7 @@ fn table_is_complete_and_fingerprint_is_stable() {
 #[uzu_test]
 fn exact_lookup_rejects_non_matrix_inputs() {
     let p = problem(2, 5120, 17408, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
-    assert!(route("Apple M1", None, false, &p, true).is_some());
+    assert!(route("Apple M1", APPLE7, false, &p, true).is_some());
     for mutate in [
         |p: &mut MatmulShape| p.m = 1,
         |p: &mut MatmulShape| p.n = 1,
@@ -158,14 +159,14 @@ fn exact_lookup_rejects_non_matrix_inputs() {
     ] {
         let mut rejected = p;
         mutate(&mut rejected);
-        assert!(route("Apple M1", None, false, &rejected, true).is_none());
+        assert!(route("Apple M1", APPLE7, false, &rejected, true).is_none());
     }
-    assert!(route("Apple M1", None, false, &p, false).is_none());
+    assert!(route("Apple M1", APPLE7, false, &p, false).is_none());
 
     let mut rht = p;
     rht.d_transform = GemmDTransform::RHT;
     rht.signed_codes = true;
-    let selected = route("Apple M1", None, false, &rht, true).expect("RHT must preserve the exact route");
+    let selected = route("Apple M1", APPLE7, false, &rht, true).expect("RHT must preserve the exact route");
     let QmvRoute::Tuned(tile) = selected else {
         panic!("test anchor must use a tuned tile");
     };
@@ -182,16 +183,16 @@ fn exact_lookup_rejects_non_matrix_inputs() {
 fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
     for (m, n, k) in [(1, 5120, 17408), (2, 4096, 5120)] {
         let problem = problem(m, n, k, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
-        assert_eq!(route("Apple M1", None, false, &problem, true), None);
+        assert_eq!(route("Apple M1", APPLE7, false, &problem, true), None);
         let specialization =
-            GemvSpecialization::select_shape(&problem, DataType::BF16, DataType::BF16, DataType::BF16, 8, None)
+            GemvSpecialization::select_shape(&problem, DataType::BF16, DataType::BF16, DataType::BF16, 8, APPLE7)
                 .expect("normal M1 policy should select GEMV for this anchor");
         assert!(matches!(
             MatmulMetalKernel::choose_dispatch(
                 &problem,
                 "Apple M1",
                 8,
-                None,
+                APPLE7,
                 false,
                 DataType::BF16,
                 DataType::BF16,
@@ -205,9 +206,9 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
 #[uzu_test]
 fn family_lookup_requires_one_unanimous_route() {
     let m1_route = problem(4, 8192, 5120, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
-    let measured_m1 = route("Apple M1", None, false, &m1_route, true);
+    let measured_m1 = route("Apple M1", APPLE7, false, &m1_route, true);
     for device_name in ["Apple M1 Pro", "Apple M1 Max", "Apple M1 Ultra"] {
-        assert_eq!(route(device_name, None, false, &m1_route, true), measured_m1);
+        assert_eq!(route(device_name, APPLE7, false, &m1_route, true), measured_m1);
     }
 
     let unanimous = problem(6, 5120, 17408, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);

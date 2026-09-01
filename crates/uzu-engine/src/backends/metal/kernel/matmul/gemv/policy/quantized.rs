@@ -1,7 +1,7 @@
 use metal::MTLGPUFamily;
 
 use super::{DEFAULT_RESULTS_PER_SIMDGROUP, GemvTile};
-use crate::backends::{common::gpu_types::gemm::GemmDTransform, metal::LARGE_MIN_GPU_CORES};
+use crate::backends::{common::gpu_types::gemm::GemmDTransform, metal::context::LARGE_MIN_GPU_CORES};
 
 const QUANT_N_BUCKET_MAXES: [u32; 6] = [512, 2048, 4096, 8192, 16384, 32768];
 const QUANT_K_BUCKET_MAXES: [u32; 3] = [512, 2048, 8192];
@@ -98,8 +98,8 @@ fn lane_policy(
         (false, Some(MTLGPUFamily::Apple9), 3, 1) => (2, 2),
         (false, Some(MTLGPUFamily::Apple8), 0, 1) => (4, 4),
         (false, Some(MTLGPUFamily::Apple8), 1, _) | (false, Some(MTLGPUFamily::Apple8), 2, 1) => (8, 2),
-        (false, None, 0, 1) => (4, 8),
-        (false, None, 1, 0..=3) => (8, 2),
+        (false, family, 0, 1) if family < Some(MTLGPUFamily::Apple8) => (4, 8),
+        (false, family, 1, 0..=3) if family < Some(MTLGPUFamily::Apple8) => (8, 2),
         _ => (8, 4),
     };
     let selected = lane_tile(num_simdgroups, results_per_simdgroup, bits, group);
