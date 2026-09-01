@@ -16,9 +16,6 @@ struct ReplyStatsView: View {
                 metricRow(label: "Tokens per second:", value: String(format: "%.3f t/s", stats.tokensPerSecond))
             }
             metricRow(label: "Memory used:", value: ReplyStatsFormat.memory(stats.memoryUsedBytes))
-            if let power = stats.totalPower {
-                metricRow(label: ReplyStatsFormat.powerLabel, value: ReplyStatsFormat.power(average: power))
-            }
             if let energy = stats.totalEnergy {
                 metricRow(label: "Total energy:", value: ReplyStatsFormat.energy(energy))
             }

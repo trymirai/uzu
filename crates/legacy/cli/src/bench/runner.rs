@@ -11,7 +11,7 @@ use uzu::{
     types::{
         basic::SamplingMethod,
         model::ModelAccessibility,
-        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyPowerStats},
+        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyEnergy},
     },
 };
 use uzu_engine::{VERSION, data_type::DataType};
@@ -103,13 +103,13 @@ impl BenchRunner {
             }
             let generate_tokens_per_second = mean(&generate_tokens_per_second);
 
-            let power_stats_list =
-                replies.iter().filter_map(|reply| reply.stats.power_stats.as_ref()).collect::<Vec<_>>();
-            let power_stats = aggregate_power_stats(&power_stats_list);
-            let joules_per_token = power_stats.as_ref().and_then(|power| {
-                let tokens_count = tokens_count_input + tokens_count_output;
-                (tokens_count > 0).then(|| power.energy_joules / tokens_count as f64)
-            });
+            let input_energy = aggregate_energy(replies.iter().filter_map(|reply| reply.stats.input_energy.as_ref()));
+            let output_energy = aggregate_energy(replies.iter().filter_map(|reply| reply.stats.output_energy.as_ref()));
+            let mut phases = input_energy.iter().chain(output_energy.iter()).map(ChatReplyEnergy::total);
+            let total_joules = phases.next().map(|first| first + phases.sum::<f64>());
+            let tokens_count = tokens_count_input + tokens_count_output;
+            let joules_per_token =
+                total_joules.and_then(|joules| (tokens_count > 0).then(|| joules / tokens_count as f64));
 
             let result = BenchResult {
                 task: self.task.clone(),
@@ -123,7 +123,8 @@ impl BenchRunner {
                 time_to_first_token,
                 prompt_tokens_per_second,
                 generate_tokens_per_second,
-                power_stats,
+                input_energy,
+                output_energy,
                 joules_per_token,
                 text: text.unwrap_or("".to_string()),
             };
@@ -192,19 +193,6 @@ impl BenchRunner {
     }
 }
 
-fn aggregate_power_stats(power_stats_list: &[&ChatReplyPowerStats]) -> Option<ChatReplyPowerStats> {
-    let average_watts = |rail: fn(&ChatReplyPowerStats) -> Option<f64>| {
-        let watts = power_stats_list.iter().copied().map(rail).collect::<Option<Vec<_>>>()?;
-        mean(&watts)
-    };
-
-    Some(ChatReplyPowerStats {
-        samples_count: power_stats_list.iter().map(|power| power.samples_count).sum(),
-        average_cpu_watts: average_watts(|power| power.average_cpu_watts),
-        average_gpu_watts: average_watts(|power| power.average_gpu_watts),
-        average_ane_watts: average_watts(|power| power.average_ane_watts),
-        average_ram_watts: average_watts(|power| power.average_ram_watts),
-        average_total_watts: average_watts(|power| Some(power.average_total_watts))?,
-        energy_joules: power_stats_list.iter().map(|power| power.energy_joules).sum(),
-    })
+fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ChatReplyEnergy>) -> Option<ChatReplyEnergy> {
+    energy.into_iter().cloned().reduce(|total, energy| total + energy)
 }

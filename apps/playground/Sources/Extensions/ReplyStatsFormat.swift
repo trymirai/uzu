@@ -5,20 +5,6 @@ import Uzu
 enum ReplyStatsFormat {
     static let placeholder = "—"
 
-    // macOS measures SoC rails; iOS measures charger input or battery discharge.
-    static var powerLabel: String {
-        #if os(macOS)
-        return "Power (SoC):"
-        #else
-        return "Power (device):"
-        #endif
-    }
-
-    static func power(average: Double) -> String {
-        let avg = measurement.string(from: Measurement(value: average, unit: UnitPower.watts))
-        return "\(avg) avg"
-    }
-
     static func energy(_ joules: Double) -> String {
         measurement.string(from: Measurement(value: joules, unit: UnitEnergy.joules))
     }

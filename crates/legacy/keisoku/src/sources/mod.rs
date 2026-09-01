@@ -3,19 +3,24 @@ mod deferred;
 #[cfg(target_os = "macos")]
 pub(crate) mod interval;
 mod memory;
+#[cfg(target_os = "ios")]
 mod rail_power;
 mod sensors;
 mod thermal;
+
+#[cfg(target_os = "ios")]
+use std::time::Duration;
 
 use deferred::Deferred;
 
 #[cfg(target_os = "macos")]
 use crate::sys::{smc::Smc, soc::SocInfo};
+#[cfg(target_os = "ios")]
+use crate::units::Joules;
 use crate::{
     metrics::FanMetrics,
     sensor::{Sensor, SensorKind},
     sys::hid::SensorReader,
-    units::Watts,
 };
 
 pub(crate) struct Sources {
@@ -109,10 +114,14 @@ impl Sources {
         thermal::read_thermal()
     }
 
-    pub(crate) fn rail_power(&mut self) -> Option<Watts> {
+    #[cfg(target_os = "ios")]
+    pub fn rail_energy(
+        &mut self,
+        elapsed: Duration,
+    ) -> Option<Joules> {
         let voltage = self.voltage_sensors();
         let current = self.current_sensors();
-        rail_power::rail_power(&voltage, &current)
+        rail_power::rail_energy(&voltage, &current, elapsed)
     }
 
     pub(crate) fn fans(&self) -> Option<FanMetrics> {

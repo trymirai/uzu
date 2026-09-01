@@ -1,5 +1,4 @@
 use core::marker::PhantomData;
-use std::time::Instant;
 
 use crate::{
     marker::{IntervalSet, Sample},
@@ -11,7 +10,6 @@ use crate::{
 pub struct IntervalHandle<M: IntervalSet> {
     engine: IntervalEngine,
     session: Option<IntervalSession>,
-    started: Option<Instant>,
     marker: PhantomData<M>,
 }
 
@@ -27,7 +25,6 @@ impl<M: IntervalSet> IntervalHandle<M> {
         Self {
             engine: IntervalEngine::new(M::GROUPS),
             session: None,
-            started: None,
             marker: PhantomData,
         }
     }
@@ -36,7 +33,6 @@ impl<M: IntervalSet> IntervalHandle<M> {
     pub fn start(&mut self) {
         debug_assert!(self.session.is_none(), "start without stop");
         drop(self.session.take());
-        self.started = Some(Instant::now());
         self.session = Some(self.engine.begin());
     }
 
@@ -46,9 +42,5 @@ impl<M: IntervalSet> IntervalHandle<M> {
         let mut values = M::default_values();
         self.engine.fold_end::<M>(session, &mut values);
         Some(Sample::new(values))
-    }
-
-    pub(crate) fn elapsed(&self) -> std::time::Duration {
-        self.started.map(|started| started.elapsed()).unwrap_or_default()
     }
 }

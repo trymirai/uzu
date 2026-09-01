@@ -289,6 +289,19 @@ export declare class ChatReplyConfig {
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
 }
 
+export declare class ChatReplyEnergyComponents {
+  cpu: number
+  gpu: number
+  ane: number
+  dram: number
+  constructor(cpu: number, gpu: number, ane: number, dram: number)
+}
+
+export declare class ChatReplyEnergyTotal {
+  total: number
+  constructor(total: number)
+}
+
 export declare class ChatReplyJoulesPerTokenComponents {
   cpu: number
   gpu: number
@@ -300,17 +313,6 @@ export declare class ChatReplyJoulesPerTokenComponents {
 export declare class ChatReplyJoulesPerTokenTotal {
   total: number
   constructor(total: number)
-}
-
-export declare class ChatReplyPowerStats {
-  samplesCount: number
-  averageTotalWatts: number
-  energyJoules: number
-  averageCpuWatts?: number
-  averageGpuWatts?: number
-  averageAneWatts?: number
-  averageRamWatts?: number
-  constructor(samplesCount: number, averageTotalWatts: number, energyJoules: number, averageCpuWatts?: number, averageGpuWatts?: number, averageAneWatts?: number, averageRamWatts?: number)
 }
 
 export declare class ChatReplySpeculatorStats {
@@ -329,11 +331,11 @@ export declare class ChatReplyStats {
   tokensCountOutput?: number
   memoryUsedBytes?: number
   speculatorStats?: ChatReplySpeculatorStats
-  powerStats?: ChatReplyPowerStats
-  inputPowerStats?: ChatReplyPowerStats
-  outputPowerStats?: ChatReplyPowerStats
-  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountInputCached?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, powerStats?: ChatReplyPowerStats, inputPowerStats?: ChatReplyPowerStats, outputPowerStats?: ChatReplyPowerStats)
+  inputEnergy?: ChatReplyEnergy
+  outputEnergy?: ChatReplyEnergy
+  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountInputCached?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, inputEnergy?: ChatReplyEnergy, outputEnergy?: ChatReplyEnergy)
   get tokensCount(): number | null
+  get totalJoules(): number | null
   /** Average energy per uncached input token, with a component breakdown when available. */
   get inputJoulesPerToken(): ChatReplyJoulesPerToken | null
   /** Average energy per generated output token, with a component breakdown when available. */
@@ -765,6 +767,9 @@ export declare const enum ChatContentBlockType {
 export interface ChatMessageMetadata {
   values: Record<string, any>
 }
+
+export type ChatReplyEnergy =
+  ChatReplyEnergyTotal | ChatReplyEnergyComponents
 
 export declare const enum ChatReplyFinishReason {
   Stop = 'Stop',

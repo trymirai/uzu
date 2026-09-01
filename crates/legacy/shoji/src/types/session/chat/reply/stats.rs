@@ -1,45 +1,102 @@
+use std::ops::Add;
+
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Structure(Class))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct ChatReplyPowerStats {
-    pub samples_count: i64,
-    pub average_total_watts: f64,
-    pub energy_joules: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub average_cpu_watts: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub average_gpu_watts: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub average_ane_watts: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub average_ram_watts: Option<f64>,
+#[bindings::export(Enumeration)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ChatReplyEnergy {
+    Total {
+        total: f64,
+    },
+    Components {
+        cpu: f64,
+        gpu: f64,
+        ane: f64,
+        dram: f64,
+    },
 }
 
-impl ChatReplyPowerStats {
+#[cfg_attr(feature = "bindings-uniffi", uniffi::export)]
+impl ChatReplyEnergy {
+    pub fn total(&self) -> f64 {
+        match self {
+            Self::Total {
+                total,
+            } => *total,
+            Self::Components {
+                cpu,
+                gpu,
+                ane,
+                dram,
+            } => cpu + gpu + ane + dram,
+        }
+    }
+}
+
+impl ChatReplyEnergy {
     fn per_token(
         &self,
-        tokens_per_second: Option<f64>,
+        tokens_count: Option<u32>,
     ) -> Option<ChatReplyJoulesPerToken> {
-        let tokens_per_second = tokens_per_second?;
-        if !tokens_per_second.is_finite() || tokens_per_second <= 0.0 {
+        let tokens_count = tokens_count?;
+        if tokens_count == 0 {
             return None;
         }
+        let tokens_count = f64::from(tokens_count);
 
-        let component_watts =
-            (self.average_cpu_watts, self.average_gpu_watts, self.average_ane_watts, self.average_ram_watts);
-        let energy = match component_watts {
-            (Some(cpu), Some(gpu), Some(ane), Some(dram)) => ChatReplyJoulesPerToken::Components {
-                cpu: cpu / tokens_per_second,
-                gpu: gpu / tokens_per_second,
-                ane: ane / tokens_per_second,
-                dram: dram / tokens_per_second,
+        Some(match self {
+            Self::Total {
+                total,
+            } => ChatReplyJoulesPerToken::Total {
+                total: total / tokens_count,
             },
-            _ => ChatReplyJoulesPerToken::Total {
-                total: self.average_total_watts / tokens_per_second,
+            Self::Components {
+                cpu,
+                gpu,
+                ane,
+                dram,
+            } => ChatReplyJoulesPerToken::Components {
+                cpu: cpu / tokens_count,
+                gpu: gpu / tokens_count,
+                ane: ane / tokens_count,
+                dram: dram / tokens_count,
             },
-        };
-        Some(energy)
+        })
+    }
+}
+
+impl Add for ChatReplyEnergy {
+    type Output = Self;
+
+    fn add(
+        self,
+        other: Self,
+    ) -> Self {
+        match (self, other) {
+            (
+                Self::Components {
+                    cpu: left_cpu,
+                    gpu: left_gpu,
+                    ane: left_ane,
+                    dram: left_dram,
+                },
+                Self::Components {
+                    cpu: right_cpu,
+                    gpu: right_gpu,
+                    ane: right_ane,
+                    dram: right_dram,
+                },
+            ) => Self::Components {
+                cpu: left_cpu + right_cpu,
+                gpu: left_gpu + right_gpu,
+                ane: left_ane + right_ane,
+                dram: left_dram + right_dram,
+            },
+            (left, right) => Self::Total {
+                total: left.total() + right.total(),
+            },
+        }
     }
 }
 
@@ -58,10 +115,8 @@ pub enum ChatReplyJoulesPerToken {
     },
 }
 
-// The generic exporter cannot attach methods to NAPI's union representation of data enums.
 #[cfg_attr(feature = "bindings-uniffi", uniffi::export)]
 impl ChatReplyJoulesPerToken {
-    /// Returns total energy per token, summing the component values when present.
     pub fn total(&self) -> f64 {
         match self {
             Self::Total {
@@ -96,9 +151,8 @@ pub struct ChatReplyStats {
     pub tokens_count_output: Option<u32>,
     pub memory_used_bytes: Option<i64>,
     pub speculator_stats: Option<ChatReplySpeculatorStats>,
-    pub power_stats: Option<ChatReplyPowerStats>,
-    pub input_power_stats: Option<ChatReplyPowerStats>,
-    pub output_power_stats: Option<ChatReplyPowerStats>,
+    pub input_energy: Option<ChatReplyEnergy>,
+    pub output_energy: Option<ChatReplyEnergy>,
 }
 
 #[bindings::export(Implementation)]
@@ -108,15 +162,20 @@ impl ChatReplyStats {
         self.tokens_count_input.and_then(|input| self.tokens_count_output.map(|output| input + output))
     }
 
+    #[bindings::export(Method(Getter))]
+    pub fn total_joules(&self) -> Option<f64> {
+        self.input_energy.iter().chain(self.output_energy.iter()).map(ChatReplyEnergy::total).reduce(f64::add)
+    }
+
     /// Average energy per uncached input token, with a component breakdown when available.
     #[bindings::export(Method(Getter))]
     pub fn input_joules_per_token(&self) -> Option<ChatReplyJoulesPerToken> {
-        self.input_power_stats.as_ref()?.per_token(self.prefill_tokens_per_second)
+        self.input_energy.as_ref()?.per_token(self.tokens_count_input)
     }
 
     /// Average energy per generated output token, with a component breakdown when available.
     #[bindings::export(Method(Getter))]
     pub fn output_joules_per_token(&self) -> Option<ChatReplyJoulesPerToken> {
-        self.output_power_stats.as_ref()?.per_token(self.generate_tokens_per_second)
+        self.output_energy.as_ref()?.per_token(self.tokens_count_output)
     }
 }

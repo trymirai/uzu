@@ -24,7 +24,7 @@ use shoji::{
         basic::{SamplingParameters, TokenId},
         model::Model,
         session::chat::{
-            ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyPowerStats,
+            ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyEnergy, ChatReplyFinishReason,
             ChatReplySpeculatorStats, ChatReplyStats,
         },
     },
@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     chat::ChatSessionError,
-    util::{helpers::error_stream, power::PowerRecorder},
+    util::{helpers::error_stream, power::EnergyRecorder},
 };
 
 pub struct Session {
@@ -42,7 +42,7 @@ pub struct Session {
     encoding: Encoding,
     input_tokens: Vec<u64>,
     stop_token_ids: Box<[u64]>,
-    power_recorder: Option<PowerRecorder>,
+    energy_recorder: Option<EnergyRecorder>,
 }
 
 impl Session {
@@ -102,10 +102,10 @@ impl Session {
             message: "stop_token_ids is None".to_string(),
         })?;
 
-        #[cfg(target_vendor = "apple")]
-        let power_recorder = Some(PowerRecorder::new());
-        #[cfg(not(target_vendor = "apple"))]
-        let power_recorder = None;
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let energy_recorder = Some(EnergyRecorder::new());
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        let energy_recorder = None;
 
         Ok(Self {
             instance,
@@ -113,7 +113,7 @@ impl Session {
             encoding,
             input_tokens: Vec::new(),
             stop_token_ids,
-            power_recorder,
+            energy_recorder,
         })
     }
 
@@ -178,8 +178,8 @@ impl Session {
 
         let instance = self.instance.as_ref();
         let time_prefill_start = Instant::now();
-        if let Some(power_recorder) = self.power_recorder.as_mut()
-            && let Err(error) = power_recorder.begin()
+        if let Some(energy_recorder) = self.energy_recorder.as_mut()
+            && let Err(error) = energy_recorder.begin()
         {
             return error_stream(error.into());
         }
@@ -191,13 +191,13 @@ impl Session {
             encoding: &mut self.encoding,
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
-            power_recorder: self.power_recorder.as_mut(),
+            energy_recorder: self.energy_recorder.as_mut(),
 
             time_start,
             time_last_token: None,
             time_prefill_start,
             time_first_token: None,
-            input_power_stats: None,
+            input_energy: None,
             total_tokens_input: self.input_tokens.len(),
             cached_tokens_input,
             total_tokens_output: 0,
@@ -273,8 +273,8 @@ impl Session {
             StreamOutput::Token(token) => {
                 if state.total_tokens_output == 0 {
                     state.time_first_token = Some(now);
-                    if let Some(power_recorder) = state.power_recorder.as_deref_mut() {
-                        state.input_power_stats = Some(power_recorder.split()?);
+                    if let Some(energy_recorder) = state.energy_recorder.as_deref_mut() {
+                        state.input_energy = Some(energy_recorder.split()?);
                     }
                 }
                 state.total_tokens_output += 1;
@@ -359,13 +359,13 @@ struct StreamingState<'a> {
     encoding: &'a mut Encoding,
     max_context_length: Option<usize>,
     stop_token_ids: Box<[u64]>,
-    power_recorder: Option<&'a mut PowerRecorder>,
+    energy_recorder: Option<&'a mut EnergyRecorder>,
 
     time_start: Instant,
     time_last_token: Option<Instant>,
     time_prefill_start: Instant,
     time_first_token: Option<Instant>,
-    input_power_stats: Option<ChatReplyPowerStats>,
+    input_energy: Option<ChatReplyEnergy>,
     total_tokens_input: usize,
     cached_tokens_input: usize,
     total_tokens_output: usize,
@@ -425,34 +425,20 @@ impl StreamingState<'_> {
         };
         let generate_tps = calculate_rate(self.total_tokens_output, generate_duration);
 
-        let completed_power_stats = if last_stat {
-            if let Some(power_recorder) = self.power_recorder.as_deref_mut() {
-                Some(power_recorder.finish()?)
+        let completed_energy = if last_stat {
+            if let Some(energy_recorder) = self.energy_recorder.as_deref_mut() {
+                Some(energy_recorder.finish()?)
             } else {
                 None
             }
         } else {
             None
         };
-        let (input_power_stats, output_power_stats) = if self.time_first_token.is_some() {
-            (self.input_power_stats.clone(), completed_power_stats)
+        let (input_energy, output_energy) = if self.time_first_token.is_some() {
+            (self.input_energy.clone(), completed_energy)
         } else {
-            (completed_power_stats, None)
+            (completed_energy, None)
         };
-        let input_power_duration = ttft_duration.unwrap_or(total_duration).as_secs_f64();
-        let output_power_duration = generate_duration.unwrap_or_default().as_secs_f64();
-        let power_stats = last_stat
-            .then(|| {
-                super::aggregate_power_stats(
-                    input_power_stats
-                        .as_ref()
-                        .map(|stats| (stats, input_power_duration))
-                        .into_iter()
-                        .chain(output_power_stats.as_ref().map(|stats| (stats, output_power_duration))),
-                )
-            })
-            .flatten();
-
         Ok(ChatReplyStats {
             duration: total_duration.as_secs_f64(),
             time_to_first_token: ttft_duration.map(|time| time.as_secs_f64()),
@@ -463,9 +449,8 @@ impl StreamingState<'_> {
             tokens_count_output: Some(self.total_tokens_output as u32),
             memory_used_bytes: last_stat.then(|| self.memory_usage.map(|bytes| bytes as i64)).flatten(),
             speculator_stats,
-            power_stats,
-            input_power_stats,
-            output_power_stats,
+            input_energy,
+            output_energy,
         })
     }
 }

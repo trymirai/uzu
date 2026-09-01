@@ -1,24 +1,24 @@
 mod error;
 
 pub use error::Error;
-#[cfg(target_vendor = "apple")]
-use keisoku::{PowerMeter, PowerReading, Watts};
-use shoji::types::session::chat::ChatReplyPowerStats;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use keisoku::{PowerMeter, PowerReading};
+use shoji::types::session::chat::ChatReplyEnergy;
 
-pub enum PowerRecorder {
-    #[cfg(target_vendor = "apple")]
+pub enum EnergyRecorder {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     Apple(PowerMeter),
 }
 
-impl PowerRecorder {
-    #[cfg(target_vendor = "apple")]
+impl EnergyRecorder {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn new() -> Self {
         Self::Apple(PowerMeter::new())
     }
 
     pub fn begin(&mut self) -> Result<(), Error> {
         match self {
-            #[cfg(target_vendor = "apple")]
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
             Self::Apple(meter) => {
                 meter.start()?;
                 Ok(())
@@ -26,31 +26,39 @@ impl PowerRecorder {
         }
     }
 
-    pub fn split(&mut self) -> Result<ChatReplyPowerStats, Error> {
+    pub fn split(&mut self) -> Result<ChatReplyEnergy, Error> {
         match self {
-            #[cfg(target_vendor = "apple")]
-            Self::Apple(meter) => Ok(stats(meter.split()?)),
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            Self::Apple(meter) => Ok(energy(meter.split()?)),
         }
     }
 
-    pub fn finish(&mut self) -> Result<ChatReplyPowerStats, Error> {
+    pub fn finish(&mut self) -> Result<ChatReplyEnergy, Error> {
         match self {
-            #[cfg(target_vendor = "apple")]
-            Self::Apple(meter) => Ok(stats(meter.stop()?)),
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            Self::Apple(meter) => Ok(energy(meter.stop()?)),
         }
     }
 }
 
-#[cfg(target_vendor = "apple")]
-fn stats(reading: PowerReading) -> ChatReplyPowerStats {
-    let watts = |value: Option<Watts>| value.map(|watts| watts.value() as f64);
-    ChatReplyPowerStats {
-        samples_count: reading.samples as i64,
-        average_cpu_watts: watts(reading.cpu),
-        average_gpu_watts: watts(reading.gpu),
-        average_ane_watts: watts(reading.ane),
-        average_ram_watts: watts(reading.ram),
-        average_total_watts: reading.total.value() as f64,
-        energy_joules: reading.energy.value() as f64,
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn energy(reading: PowerReading) -> ChatReplyEnergy {
+    match reading {
+        PowerReading::Total {
+            total,
+        } => ChatReplyEnergy::Total {
+            total: total.value() as f64,
+        },
+        PowerReading::Components {
+            cpu,
+            gpu,
+            ane,
+            ram,
+        } => ChatReplyEnergy::Components {
+            cpu: cpu.value() as f64,
+            gpu: gpu.value() as f64,
+            ane: ane.value() as f64,
+            dram: ram.value() as f64,
+        },
     }
 }

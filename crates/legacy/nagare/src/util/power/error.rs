@@ -1,7 +1,7 @@
-#[cfg(not(target_vendor = "apple"))]
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 pub type Error = std::convert::Infallible;
 
-#[cfg(target_vendor = "apple")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]

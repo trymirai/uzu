@@ -153,9 +153,8 @@ impl StreamState {
             tokens_count_output: self.tokens_output,
             memory_used_bytes: None,
             speculator_stats: None,
-            power_stats: None,
-            input_power_stats: None,
-            output_power_stats: None,
+            input_energy: None,
+            output_energy: None,
         }
     }
 }

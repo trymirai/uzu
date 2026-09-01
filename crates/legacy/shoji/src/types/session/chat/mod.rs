@@ -10,7 +10,7 @@ pub use config::ChatConfig;
 pub use content_block::{ChatContentBlock, ChatContentBlockType};
 pub use message::{ChatMessage, ChatMessageList, ChatMessageMetadata};
 pub use reply::{
-    ChatReply, ChatReplyConfig, ChatReplyFinishReason, ChatReplyJoulesPerToken, ChatReplyPowerStats,
+    ChatReply, ChatReplyConfig, ChatReplyEnergy, ChatReplyFinishReason, ChatReplyJoulesPerToken,
     ChatReplySpeculatorStats, ChatReplyStats,
 };
 pub use role::ChatRole;

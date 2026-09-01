@@ -1,16 +1,15 @@
-use crate::{
-    error::KeisokuError,
-    units::{Joules, Watts},
-};
+use crate::{error::KeisokuError, units::Joules};
 
-pub struct PowerReading {
-    pub cpu: Option<Watts>,
-    pub gpu: Option<Watts>,
-    pub ane: Option<Watts>,
-    pub ram: Option<Watts>,
-    pub total: Watts,
-    pub energy: Joules,
-    pub samples: u64,
+pub enum PowerReading {
+    Total {
+        total: Joules,
+    },
+    Components {
+        cpu: Joules,
+        gpu: Joules,
+        ane: Joules,
+        ram: Joules,
+    },
 }
 
 pub struct PowerMeter {
@@ -49,7 +48,6 @@ mod inner {
     use crate::{
         Device, Select,
         marker::{Ane, Cpu, EnergyRail, Gpu, Ram},
-        units::{Joules, Watts},
     };
 
     type Rails = Select![EnergyRail<Cpu>, EnergyRail<Gpu>, EnergyRail<Ane>, EnergyRail<Ram>];
@@ -76,24 +74,14 @@ mod inner {
             let Some(mut handle) = self.handle.take() else {
                 return Err(KeisokuError::PowerMeterNotStarted);
             };
-            let elapsed = handle.elapsed().as_secs_f64().max(0.001);
             let Some(sample) = handle.stop() else {
                 return Err(KeisokuError::PowerReadingUnavailable);
             };
-            let cpu_j = sample.get::<EnergyRail<Cpu>>().value() as f64;
-            let gpu_j = sample.get::<EnergyRail<Gpu>>().value() as f64;
-            let ane_j = sample.get::<EnergyRail<Ane>>().value() as f64;
-            let ram_j = sample.get::<EnergyRail<Ram>>().value() as f64;
-            let total_j = cpu_j + gpu_j + ane_j + ram_j;
-            let to_watts = |joules: f64| Watts((joules / elapsed) as f32);
-            Ok(PowerReading {
-                cpu: Some(to_watts(cpu_j)),
-                gpu: Some(to_watts(gpu_j)),
-                ane: Some(to_watts(ane_j)),
-                ram: Some(to_watts(ram_j)),
-                total: to_watts(total_j),
-                energy: Joules(total_j as f32),
-                samples: 1,
+            Ok(PowerReading::Components {
+                cpu: *sample.get::<EnergyRail<Cpu>>(),
+                gpu: *sample.get::<EnergyRail<Gpu>>(),
+                ane: *sample.get::<EnergyRail<Ane>>(),
+                ram: *sample.get::<EnergyRail<Ram>>(),
             })
         }
 
@@ -105,7 +93,7 @@ mod inner {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "ios")]
 mod inner {
     use std::{
         sync::{Arc, Mutex, mpsc},
@@ -114,17 +102,13 @@ mod inner {
     };
 
     use super::{KeisokuError, PowerReading};
-    use crate::{
-        Device,
-        units::{Joules, Watts},
-    };
+    use crate::{Device, units::Joules};
 
     const SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
     #[derive(Default)]
     struct Accumulator {
         energy_joules: f64,
-        elapsed_seconds: f64,
         samples: u64,
     }
 
@@ -163,15 +147,13 @@ mod inner {
                     }
 
                     let now = Instant::now();
-                    let seconds = now.duration_since(last).as_secs_f64();
+                    let elapsed = now.duration_since(last);
                     last = now;
-                    let Some(watts) = device.rail_power() else {
+                    let Some(energy) = device.rail_energy(elapsed) else {
                         continue;
                     };
-                    let watts = watts.value() as f64;
                     let mut accumulator = accumulator.lock()?;
-                    accumulator.energy_joules += watts * seconds;
-                    accumulator.elapsed_seconds += seconds;
+                    accumulator.energy_joules += energy.value() as f64;
                     accumulator.samples += 1;
                 }
                 Ok(())
@@ -218,19 +200,8 @@ mod inner {
             if accumulator.samples == 0 {
                 return Err(KeisokuError::PowerReadingUnavailable);
             }
-            let total = if accumulator.elapsed_seconds > 0.0 {
-                (accumulator.energy_joules / accumulator.elapsed_seconds) as f32
-            } else {
-                0.0
-            };
-            Ok(PowerReading {
-                cpu: None,
-                gpu: None,
-                ane: None,
-                ram: None,
-                total: Watts(total),
-                energy: Joules(accumulator.energy_joules as f32),
-                samples: accumulator.samples,
+            Ok(PowerReading::Total {
+                total: Joules(accumulator.energy_joules as f32),
             })
         }
     }
