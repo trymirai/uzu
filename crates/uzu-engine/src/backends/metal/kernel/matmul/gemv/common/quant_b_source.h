@@ -32,12 +32,14 @@ struct QuantBSource {
     const uint row_stride = Slice::row_stride(params);
     const uint group_slot = tile.reduction_lane / Tile::GROUP_LANES;
     const uint group_offset = (tile.reduction_lane % Tile::GROUP_LANES) * Slice::VALUES_PER_LANE;
+    const uint last_row = params.out_vec_size > 0 ? params.out_vec_size - 1 : 0;
     uint weight_row_indices[Tile::ROWS_PER_LANE];
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
       const uint output_row = tile.row0 + R;
+      const uint lookup_row = FULL_TILE ? output_row : min(output_row, last_row);
       weight_row_indices[R] =
-          params.gathered ? ops.gather_indices[tile.input_row * params.out_vec_size + output_row] : output_row;
+          params.gathered ? ops.gather_indices[tile.input_row * params.out_vec_size + lookup_row] : lookup_row;
     });
 
     const device uint8_t* weights = reinterpret_cast<const device uint8_t*>(ops.b);

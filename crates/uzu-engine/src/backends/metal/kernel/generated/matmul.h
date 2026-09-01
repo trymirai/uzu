@@ -17,5 +17,6 @@ typedef struct {
   uint32_t aligned_inner_iterations;
   bool use_morton;
   float ab_scale;
+  float soft_cap;
 } GemmParams;
 } // namespace uzu::matmul
