@@ -3627,15 +3627,6 @@ public enum ChatReplyEnergy: Equatable, Hashable, Codable {
 
 
 
-public func perToken(tokensCount: UInt32?) -> ChatReplyJoulesPerToken?  {
-    return try!  FfiConverterOptionTypeChatReplyJoulesPerToken.lift(try! rustCall() {
-    uniffi_shoji_fn_method_chatreplyenergy_per_token(
-            FfiConverterTypeChatReplyEnergy_lower(self),
-        FfiConverterOptionUInt32.lower(tokensCount),$0
-    )
-})
-}
-
 public func total() -> Double  {
     return try!  FfiConverterDouble.lift(try! rustCall() {
     uniffi_shoji_fn_method_chatreplyenergy_total(
@@ -3815,9 +3806,6 @@ public enum ChatReplyJoulesPerToken: Equatable, Hashable, Codable {
 
 
 
-    /**
-     * Returns total energy per token, summing the component values when present.
-     */
 public func total() -> Double  {
     return try!  FfiConverterDouble.lift(try! rustCall() {
     uniffi_shoji_fn_method_chatreplyjoulespertoken_total(
