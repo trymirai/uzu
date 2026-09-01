@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::util::power::Error as PowerError;
+
 #[bindings::export(Error)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error)]
 #[non_exhaustive]
@@ -22,4 +24,12 @@ pub enum ChatSessionError {
     ToolTurnLimitExceeded {
         limit: u32,
     },
+}
+
+impl From<PowerError> for ChatSessionError {
+    fn from(error: PowerError) -> Self {
+        Self::Backend {
+            message: error.to_string(),
+        }
+    }
 }

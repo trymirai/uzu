@@ -1183,23 +1183,23 @@ public func FfiConverterTypeChatReplyConfig_lower(_ value: ChatReplyConfig) -> R
 
 public struct ChatReplyPowerStats: Equatable, Hashable, Codable {
     public var samplesCount: Int64
+    public var averageTotalWatts: Double
+    public var energyJoules: Double
     public var averageCpuWatts: Double?
     public var averageGpuWatts: Double?
     public var averageAneWatts: Double?
     public var averageRamWatts: Double?
-    public var averageTotalWatts: Double
-    public var energyJoules: Double
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(samplesCount: Int64, averageCpuWatts: Double?, averageGpuWatts: Double?, averageAneWatts: Double?, averageRamWatts: Double?, averageTotalWatts: Double, energyJoules: Double) {
+    public init(samplesCount: Int64, averageTotalWatts: Double, energyJoules: Double, averageCpuWatts: Double?, averageGpuWatts: Double?, averageAneWatts: Double?, averageRamWatts: Double?) {
         self.samplesCount = samplesCount
+        self.averageTotalWatts = averageTotalWatts
+        self.energyJoules = energyJoules
         self.averageCpuWatts = averageCpuWatts
         self.averageGpuWatts = averageGpuWatts
         self.averageAneWatts = averageAneWatts
         self.averageRamWatts = averageRamWatts
-        self.averageTotalWatts = averageTotalWatts
-        self.energyJoules = energyJoules
     }
 
     
@@ -1219,23 +1219,23 @@ public struct FfiConverterTypeChatReplyPowerStats: FfiConverterRustBuffer {
         return
             try ChatReplyPowerStats(
                 samplesCount: FfiConverterInt64.read(from: &buf), 
+                averageTotalWatts: FfiConverterDouble.read(from: &buf), 
+                energyJoules: FfiConverterDouble.read(from: &buf), 
                 averageCpuWatts: FfiConverterOptionDouble.read(from: &buf), 
                 averageGpuWatts: FfiConverterOptionDouble.read(from: &buf), 
                 averageAneWatts: FfiConverterOptionDouble.read(from: &buf), 
-                averageRamWatts: FfiConverterOptionDouble.read(from: &buf), 
-                averageTotalWatts: FfiConverterDouble.read(from: &buf), 
-                energyJoules: FfiConverterDouble.read(from: &buf)
+                averageRamWatts: FfiConverterOptionDouble.read(from: &buf)
         )
     }
 
     public static func write(_ value: ChatReplyPowerStats, into buf: inout [UInt8]) {
         FfiConverterInt64.write(value.samplesCount, into: &buf)
+        FfiConverterDouble.write(value.averageTotalWatts, into: &buf)
+        FfiConverterDouble.write(value.energyJoules, into: &buf)
         FfiConverterOptionDouble.write(value.averageCpuWatts, into: &buf)
         FfiConverterOptionDouble.write(value.averageGpuWatts, into: &buf)
         FfiConverterOptionDouble.write(value.averageAneWatts, into: &buf)
         FfiConverterOptionDouble.write(value.averageRamWatts, into: &buf)
-        FfiConverterDouble.write(value.averageTotalWatts, into: &buf)
-        FfiConverterDouble.write(value.energyJoules, into: &buf)
     }
 }
 
@@ -1320,10 +1320,12 @@ public struct ChatReplyStats: Equatable, Hashable, Codable {
     public var memoryUsedBytes: Int64?
     public var speculatorStats: ChatReplySpeculatorStats?
     public var powerStats: ChatReplyPowerStats?
+    public var inputPowerStats: ChatReplyPowerStats?
+    public var outputPowerStats: ChatReplyPowerStats?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(duration: Double, timeToFirstToken: Double?, prefillTokensPerSecond: Double?, generateTokensPerSecond: Double?, tokensCountInput: UInt32?, tokensCountInputCached: UInt32?, tokensCountOutput: UInt32?, memoryUsedBytes: Int64?, speculatorStats: ChatReplySpeculatorStats?, powerStats: ChatReplyPowerStats?) {
+    public init(duration: Double, timeToFirstToken: Double?, prefillTokensPerSecond: Double?, generateTokensPerSecond: Double?, tokensCountInput: UInt32?, tokensCountInputCached: UInt32?, tokensCountOutput: UInt32?, memoryUsedBytes: Int64?, speculatorStats: ChatReplySpeculatorStats?, powerStats: ChatReplyPowerStats?, inputPowerStats: ChatReplyPowerStats?, outputPowerStats: ChatReplyPowerStats?) {
         self.duration = duration
         self.timeToFirstToken = timeToFirstToken
         self.prefillTokensPerSecond = prefillTokensPerSecond
@@ -1334,6 +1336,8 @@ public struct ChatReplyStats: Equatable, Hashable, Codable {
         self.memoryUsedBytes = memoryUsedBytes
         self.speculatorStats = speculatorStats
         self.powerStats = powerStats
+        self.inputPowerStats = inputPowerStats
+        self.outputPowerStats = outputPowerStats
     }
 
     
@@ -1391,7 +1395,9 @@ public struct FfiConverterTypeChatReplyStats: FfiConverterRustBuffer {
                 tokensCountOutput: FfiConverterOptionUInt32.read(from: &buf), 
                 memoryUsedBytes: FfiConverterOptionInt64.read(from: &buf), 
                 speculatorStats: FfiConverterOptionTypeChatReplySpeculatorStats.read(from: &buf), 
-                powerStats: FfiConverterOptionTypeChatReplyPowerStats.read(from: &buf)
+                powerStats: FfiConverterOptionTypeChatReplyPowerStats.read(from: &buf), 
+                inputPowerStats: FfiConverterOptionTypeChatReplyPowerStats.read(from: &buf), 
+                outputPowerStats: FfiConverterOptionTypeChatReplyPowerStats.read(from: &buf)
         )
     }
 
@@ -1406,6 +1412,8 @@ public struct FfiConverterTypeChatReplyStats: FfiConverterRustBuffer {
         FfiConverterOptionInt64.write(value.memoryUsedBytes, into: &buf)
         FfiConverterOptionTypeChatReplySpeculatorStats.write(value.speculatorStats, into: &buf)
         FfiConverterOptionTypeChatReplyPowerStats.write(value.powerStats, into: &buf)
+        FfiConverterOptionTypeChatReplyPowerStats.write(value.inputPowerStats, into: &buf)
+        FfiConverterOptionTypeChatReplyPowerStats.write(value.outputPowerStats, into: &buf)
     }
 }
 

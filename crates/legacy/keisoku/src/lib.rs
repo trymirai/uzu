@@ -9,12 +9,14 @@ mod sources;
 mod sys;
 
 mod component;
+mod error;
 mod power_meter;
 mod sensor;
 mod units;
 
 pub use component::{Component, classify};
 pub use device::Device;
+pub use error::KeisokuError;
 #[cfg(target_os = "macos")]
 pub use marker::{
     Ane, AneBandwidth, Cons, Cpu, DramBytes, DramHistogram, DramRead, DramWrite, EnergyRail, Gpu, Nil, Ram, Sample,

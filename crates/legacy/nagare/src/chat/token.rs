@@ -24,7 +24,7 @@ use shoji::{
         basic::{SamplingParameters, TokenId},
         model::Model,
         session::chat::{
-            ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason,
+            ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyPowerStats,
             ChatReplySpeculatorStats, ChatReplyStats,
         },
     },
@@ -42,7 +42,7 @@ pub struct Session {
     encoding: Encoding,
     input_tokens: Vec<u64>,
     stop_token_ids: Box<[u64]>,
-    power_recorder: Box<dyn PowerRecorder>,
+    power_recorder: Option<PowerRecorder>,
 }
 
 impl Session {
@@ -102,13 +102,18 @@ impl Session {
             message: "stop_token_ids is None".to_string(),
         })?;
 
+        #[cfg(target_vendor = "apple")]
+        let power_recorder = Some(PowerRecorder::new());
+        #[cfg(not(target_vendor = "apple"))]
+        let power_recorder = None;
+
         Ok(Self {
             instance,
             state,
             encoding,
             input_tokens: Vec::new(),
             stop_token_ids,
-            power_recorder: <dyn PowerRecorder>::create(),
+            power_recorder,
         })
     }
 
@@ -127,7 +132,6 @@ impl Session {
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
         let time_start = Instant::now();
-        self.power_recorder.begin();
 
         let curr_all_tokens = self.encoding.state().tokens.clone();
         let new_all_tokens = match self.build_input(input) {
@@ -173,6 +177,12 @@ impl Session {
         };
 
         let instance = self.instance.as_ref();
+        let time_prefill_start = Instant::now();
+        if let Some(power_recorder) = self.power_recorder.as_mut()
+            && let Err(error) = power_recorder.begin()
+        {
+            return error_stream(error.into());
+        }
         let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
 
         let stream_state = StreamingState {
@@ -181,12 +191,13 @@ impl Session {
             encoding: &mut self.encoding,
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
-            power_recorder: &mut *self.power_recorder,
+            power_recorder: self.power_recorder.as_mut(),
 
             time_start,
             time_last_token: None,
-            time_prefill_start: Instant::now(),
+            time_prefill_start,
             time_first_token: None,
+            input_power_stats: None,
             total_tokens_input: self.input_tokens.len(),
             cached_tokens_input,
             total_tokens_output: 0,
@@ -205,13 +216,13 @@ impl Session {
                     Some(event) => {
                         state.metrics = inner.metrics();
                         state.memory_usage = instance.peak_memory_usage();
-                        let output = Self::build_output(event, &mut state);
+                        let output = Self::build_output(event, &mut state).await;
                         let terminated = terminated || matches!(&output, Ok(out) if out.finish_reason.is_some());
                         Some((output, (inner, state, terminated, false)))
                     },
                     None => {
                         if !terminated && state.cancel_token.is_cancelled() {
-                            let output = Ok(Self::render_output(&state, Some(ChatReplyFinishReason::Cancelled)));
+                            let output = Self::render_output(&mut state, Some(ChatReplyFinishReason::Cancelled)).await;
                             Some((output, (inner, state, true, true)))
                         } else {
                             None
@@ -248,9 +259,9 @@ impl Session {
         Ok(all_tokens)
     }
 
-    fn build_output(
+    async fn build_output(
         event: Result<StreamOutput, Error>,
-        state: &mut StreamingState,
+        state: &mut StreamingState<'_>,
     ) -> Result<Output, ChatSessionError> {
         let now = Instant::now();
         let result = event.map_err(|err| ChatSessionError::Backend {
@@ -258,10 +269,13 @@ impl Session {
         })?;
 
         match result {
-            StreamOutput::LimitReached => Ok(Self::render_output(state, Some(ChatReplyFinishReason::Length))),
+            StreamOutput::LimitReached => Self::render_output(state, Some(ChatReplyFinishReason::Length)).await,
             StreamOutput::Token(token) => {
                 if state.total_tokens_output == 0 {
-                    state.time_first_token = Some(now)
+                    state.time_first_token = Some(now);
+                    if let Some(power_recorder) = state.power_recorder.as_deref_mut() {
+                        state.input_power_stats = Some(power_recorder.split()?);
+                    }
                 }
                 state.total_tokens_output += 1;
                 state.time_last_token = Some(now);
@@ -273,22 +287,23 @@ impl Session {
                 }
 
                 let finish_reason = state.get_finish_reason(token);
-                Ok(Self::render_output(state, finish_reason))
+                Self::render_output(state, finish_reason).await
             },
         }
     }
 
-    fn render_output(
-        state: &StreamingState,
+    async fn render_output(
+        state: &mut StreamingState<'_>,
         finish_reason: Option<ChatReplyFinishReason>,
-    ) -> Output {
+    ) -> Result<Output, ChatSessionError> {
         let have_finish_reason = finish_reason.is_some();
+        let stats = state.get_stats(have_finish_reason).await?;
         let Some(message) = state.encoding.state().messages.last() else {
-            return Output {
+            return Ok(Output {
                 finish_reason,
-                stats: state.get_stats(have_finish_reason),
+                stats,
                 ..Default::default()
-            };
+            });
         };
 
         let tool_calls = message
@@ -316,13 +331,13 @@ impl Session {
             finish_reason
         };
 
-        Output {
+        Ok(Output {
             reasoning: message.reasoning(),
             text: message.text(),
             tool_calls,
             finish_reason,
-            stats: state.get_stats(have_finish_reason),
-        }
+            stats,
+        })
     }
 
     pub fn supports_tool_calls(&self) -> bool {
@@ -344,12 +359,13 @@ struct StreamingState<'a> {
     encoding: &'a mut Encoding,
     max_context_length: Option<usize>,
     stop_token_ids: Box<[u64]>,
-    power_recorder: &'a mut dyn PowerRecorder,
+    power_recorder: Option<&'a mut PowerRecorder>,
 
     time_start: Instant,
     time_last_token: Option<Instant>,
     time_prefill_start: Instant,
     time_first_token: Option<Instant>,
+    input_power_stats: Option<ChatReplyPowerStats>,
     total_tokens_input: usize,
     cached_tokens_input: usize,
     total_tokens_output: usize,
@@ -380,10 +396,10 @@ impl StreamingState<'_> {
         }
     }
 
-    fn get_stats(
-        &self,
+    async fn get_stats(
+        &mut self,
         last_stat: bool,
-    ) -> ChatReplyStats {
+    ) -> Result<ChatReplyStats, ChatSessionError> {
         let speculator_stats = if let Some(metrics) = self.metrics.as_ref() {
             let num_forward_passes = metrics.num_prefill_forward_passes + metrics.num_decode_forward_passes;
             (num_forward_passes > 0).then(|| ChatReplySpeculatorStats {
@@ -393,8 +409,6 @@ impl StreamingState<'_> {
         } else {
             None
         };
-
-        let power_stats = last_stat.then(|| self.power_recorder.finish()).flatten();
 
         let total_duration = self.time_last_token.unwrap_or(Instant::now()).duration_since(self.time_start);
         let ttft_duration =
@@ -411,7 +425,35 @@ impl StreamingState<'_> {
         };
         let generate_tps = calculate_rate(self.total_tokens_output, generate_duration);
 
-        ChatReplyStats {
+        let completed_power_stats = if last_stat {
+            if let Some(power_recorder) = self.power_recorder.as_deref_mut() {
+                Some(power_recorder.finish()?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let (input_power_stats, output_power_stats) = if self.time_first_token.is_some() {
+            (self.input_power_stats.clone(), completed_power_stats)
+        } else {
+            (completed_power_stats, None)
+        };
+        let input_power_duration = ttft_duration.unwrap_or(total_duration).as_secs_f64();
+        let output_power_duration = generate_duration.unwrap_or_default().as_secs_f64();
+        let power_stats = last_stat
+            .then(|| {
+                super::aggregate_power_stats(
+                    input_power_stats
+                        .as_ref()
+                        .map(|stats| (stats, input_power_duration))
+                        .into_iter()
+                        .chain(output_power_stats.as_ref().map(|stats| (stats, output_power_duration))),
+                )
+            })
+            .flatten();
+
+        Ok(ChatReplyStats {
             duration: total_duration.as_secs_f64(),
             time_to_first_token: ttft_duration.map(|time| time.as_secs_f64()),
             prefill_tokens_per_second: prefill_tps,
@@ -422,7 +464,9 @@ impl StreamingState<'_> {
             memory_used_bytes: last_stat.then(|| self.memory_usage.map(|bytes| bytes as i64)).flatten(),
             speculator_stats,
             power_stats,
-        }
+            input_power_stats,
+            output_power_stats,
+        })
     }
 }
 

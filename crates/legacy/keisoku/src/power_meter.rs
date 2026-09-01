@@ -1,4 +1,7 @@
-use crate::units::{Joules, Watts};
+use crate::{
+    error::KeisokuError,
+    units::{Joules, Watts},
+};
 
 pub struct PowerReading {
     pub cpu: Option<Watts>,
@@ -21,11 +24,15 @@ impl PowerMeter {
         }
     }
 
-    pub fn start(&mut self) {
-        self.inner.start();
+    pub fn start(&mut self) -> Result<(), KeisokuError> {
+        self.inner.start()
     }
 
-    pub fn stop(&mut self) -> Option<PowerReading> {
+    pub fn split(&mut self) -> Result<PowerReading, KeisokuError> {
+        self.inner.split()
+    }
+
+    pub fn stop(&mut self) -> Result<PowerReading, KeisokuError> {
         self.inner.stop()
     }
 }
@@ -38,7 +45,7 @@ impl Default for PowerMeter {
 
 #[cfg(target_os = "macos")]
 mod inner {
-    use super::PowerReading;
+    use super::{KeisokuError, PowerReading};
     use crate::{
         Device, Select,
         marker::{Ane, Cpu, EnergyRail, Gpu, Ram},
@@ -47,34 +54,39 @@ mod inner {
 
     type Rails = Select![EnergyRail<Cpu>, EnergyRail<Gpu>, EnergyRail<Ane>, EnergyRail<Ram>];
 
-    pub(super) struct Inner {
+    pub struct Inner {
         handle: Option<crate::device::IntervalHandle<Rails>>,
     }
 
     impl Inner {
-        pub(super) fn new() -> Self {
+        pub fn new() -> Self {
             Self {
                 handle: None,
             }
         }
 
-        pub(super) fn start(&mut self) {
+        pub fn start(&mut self) -> Result<(), KeisokuError> {
             let mut handle = Device::interval_measurement::<Rails>();
             handle.start();
             self.handle = Some(handle);
+            Ok(())
         }
 
-        pub(super) fn stop(&mut self) -> Option<PowerReading> {
-            let mut handle = self.handle.take()?;
+        pub fn stop(&mut self) -> Result<PowerReading, KeisokuError> {
+            let Some(mut handle) = self.handle.take() else {
+                return Err(KeisokuError::PowerMeterNotStarted);
+            };
             let elapsed = handle.elapsed().as_secs_f64().max(0.001);
-            let sample = handle.stop()?;
+            let Some(sample) = handle.stop() else {
+                return Err(KeisokuError::PowerReadingUnavailable);
+            };
             let cpu_j = sample.get::<EnergyRail<Cpu>>().value() as f64;
             let gpu_j = sample.get::<EnergyRail<Gpu>>().value() as f64;
             let ane_j = sample.get::<EnergyRail<Ane>>().value() as f64;
             let ram_j = sample.get::<EnergyRail<Ram>>().value() as f64;
             let total_j = cpu_j + gpu_j + ane_j + ram_j;
             let to_watts = |joules: f64| Watts((joules / elapsed) as f32);
-            Some(PowerReading {
+            Ok(PowerReading {
                 cpu: Some(to_watts(cpu_j)),
                 gpu: Some(to_watts(gpu_j)),
                 ane: Some(to_watts(ane_j)),
@@ -84,21 +96,24 @@ mod inner {
                 samples: 1,
             })
         }
+
+        pub fn split(&mut self) -> Result<PowerReading, KeisokuError> {
+            let reading = self.stop();
+            self.start()?;
+            reading
+        }
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod inner {
     use std::{
-        sync::{
-            Arc, Mutex,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::{Arc, Mutex, mpsc},
         thread::{self, JoinHandle},
         time::{Duration, Instant},
     };
 
-    use super::PowerReading;
+    use super::{KeisokuError, PowerReading};
     use crate::{
         Device,
         units::{Joules, Watts},
@@ -113,31 +128,40 @@ mod inner {
         samples: u64,
     }
 
-    pub(super) struct Inner {
-        running: Arc<AtomicBool>,
+    struct Sampler {
+        stop: mpsc::Sender<()>,
+        worker: JoinHandle<Result<(), KeisokuError>>,
+    }
+
+    pub struct Inner {
         accumulator: Arc<Mutex<Accumulator>>,
-        worker: Option<JoinHandle<()>>,
+        sampler: Option<Sampler>,
     }
 
     impl Inner {
-        pub(super) fn new() -> Self {
+        pub fn new() -> Self {
             Self {
-                running: Arc::new(AtomicBool::new(false)),
                 accumulator: Arc::new(Mutex::new(Accumulator::default())),
-                worker: None,
+                sampler: None,
             }
         }
 
-        pub(super) fn start(&mut self) {
-            *self.accumulator.lock().expect("power meter accumulator poisoned") = Accumulator::default();
-            self.running.store(true, Ordering::Relaxed);
-            let running = self.running.clone();
+        pub fn start(&mut self) -> Result<(), KeisokuError> {
+            if self.sampler.is_some() {
+                self.stop_sampler()?;
+            }
+            *self.accumulator.lock()? = Accumulator::default();
             let accumulator = self.accumulator.clone();
-            self.worker = Some(thread::spawn(move || {
+            let (stop, stop_receiver) = mpsc::channel();
+            let worker = thread::spawn(move || -> Result<(), KeisokuError> {
                 let mut device = Device::new();
                 let mut last = Instant::now();
-                while running.load(Ordering::Relaxed) {
-                    thread::sleep(SAMPLE_INTERVAL);
+                loop {
+                    match stop_receiver.recv_timeout(SAMPLE_INTERVAL) {
+                        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {},
+                    }
+
                     let now = Instant::now();
                     let seconds = now.duration_since(last).as_secs_f64();
                     last = now;
@@ -145,29 +169,61 @@ mod inner {
                         continue;
                     };
                     let watts = watts.value() as f64;
-                    let mut accumulator = accumulator.lock().expect("power meter accumulator poisoned");
+                    let mut accumulator = accumulator.lock()?;
                     accumulator.energy_joules += watts * seconds;
                     accumulator.elapsed_seconds += seconds;
                     accumulator.samples += 1;
                 }
-            }));
+                Ok(())
+            });
+            self.sampler = Some(Sampler {
+                stop,
+                worker,
+            });
+            Ok(())
         }
 
-        pub(super) fn stop(&mut self) -> Option<PowerReading> {
-            self.running.store(false, Ordering::Relaxed);
-            if let Some(worker) = self.worker.take() {
-                let _ = worker.join();
+        pub fn split(&mut self) -> Result<PowerReading, KeisokuError> {
+            if self.sampler.is_none() {
+                return Err(KeisokuError::PowerMeterNotStarted);
             }
-            let accumulator = self.accumulator.lock().expect("power meter accumulator poisoned");
+            let accumulator = {
+                let mut accumulator = self.accumulator.lock()?;
+                std::mem::take(&mut *accumulator)
+            };
+            Self::reading(accumulator)
+        }
+
+        pub fn stop(&mut self) -> Result<PowerReading, KeisokuError> {
+            if self.sampler.is_none() {
+                return Err(KeisokuError::PowerMeterNotStarted);
+            }
+            self.stop_sampler()?;
+            let accumulator = {
+                let mut accumulator = self.accumulator.lock()?;
+                std::mem::take(&mut *accumulator)
+            };
+            Self::reading(accumulator)
+        }
+
+        fn stop_sampler(&mut self) -> Result<(), KeisokuError> {
+            let Some(sampler) = self.sampler.take() else {
+                return Ok(());
+            };
+            drop(sampler.stop);
+            sampler.worker.join().map_err(|_| KeisokuError::SamplingTaskPanicked)?
+        }
+
+        fn reading(accumulator: Accumulator) -> Result<PowerReading, KeisokuError> {
             if accumulator.samples == 0 {
-                return None;
+                return Err(KeisokuError::PowerReadingUnavailable);
             }
             let total = if accumulator.elapsed_seconds > 0.0 {
                 (accumulator.energy_joules / accumulator.elapsed_seconds) as f32
             } else {
                 0.0
             };
-            Some(PowerReading {
+            Ok(PowerReading {
                 cpu: None,
                 gpu: None,
                 ane: None,

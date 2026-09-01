@@ -17,8 +17,8 @@ pub struct IntervalHandle<M: IntervalSet> {
 
 // SAFETY: `IntervalHandle` wraps CoreFoundation IOReport objects that are not `Sync`.
 // Callers must use a handle only from the thread that created it (same contract as the
-// previous `Interval`/`Session` types). `Send` is asserted so `PowerMeter` can live in
-// `RefCell` behind `Send` trait objects such as nagare's `PowerRecorder`.
+// previous `Interval`/`Session` types). `Send` is asserted so the owning `PowerMeter`
+// can move with nagare's `Send` reply stream.
 unsafe impl<M: IntervalSet> Send for IntervalHandle<M> {}
 
 impl<M: IntervalSet> IntervalHandle<M> {

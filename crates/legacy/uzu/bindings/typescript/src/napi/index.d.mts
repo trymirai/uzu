@@ -304,13 +304,13 @@ export declare class ChatReplyJoulesPerTokenTotal {
 
 export declare class ChatReplyPowerStats {
   samplesCount: number
+  averageTotalWatts: number
+  energyJoules: number
   averageCpuWatts?: number
   averageGpuWatts?: number
   averageAneWatts?: number
   averageRamWatts?: number
-  averageTotalWatts: number
-  energyJoules: number
-  constructor(samplesCount: number, averageCpuWatts?: number, averageGpuWatts?: number, averageAneWatts?: number, averageRamWatts?: number, averageTotalWatts: number, energyJoules: number)
+  constructor(samplesCount: number, averageTotalWatts: number, energyJoules: number, averageCpuWatts?: number, averageGpuWatts?: number, averageAneWatts?: number, averageRamWatts?: number)
 }
 
 export declare class ChatReplySpeculatorStats {
@@ -330,7 +330,9 @@ export declare class ChatReplyStats {
   memoryUsedBytes?: number
   speculatorStats?: ChatReplySpeculatorStats
   powerStats?: ChatReplyPowerStats
-  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountInputCached?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, powerStats?: ChatReplyPowerStats)
+  inputPowerStats?: ChatReplyPowerStats
+  outputPowerStats?: ChatReplyPowerStats
+  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountInputCached?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, powerStats?: ChatReplyPowerStats, inputPowerStats?: ChatReplyPowerStats, outputPowerStats?: ChatReplyPowerStats)
   get tokensCount(): number | null
   /** Average energy per uncached input token, with a component breakdown when available. */
   get inputJoulesPerToken(): ChatReplyJoulesPerToken | null

@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ChatReplyPowerStats {
     pub samples_count: i64,
+    pub average_total_watts: f64,
+    pub energy_joules: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub average_cpu_watts: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -12,8 +14,6 @@ pub struct ChatReplyPowerStats {
     pub average_ane_watts: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub average_ram_watts: Option<f64>,
-    pub average_total_watts: f64,
-    pub energy_joules: f64,
 }
 
 impl ChatReplyPowerStats {
@@ -97,6 +97,8 @@ pub struct ChatReplyStats {
     pub memory_used_bytes: Option<i64>,
     pub speculator_stats: Option<ChatReplySpeculatorStats>,
     pub power_stats: Option<ChatReplyPowerStats>,
+    pub input_power_stats: Option<ChatReplyPowerStats>,
+    pub output_power_stats: Option<ChatReplyPowerStats>,
 }
 
 #[bindings::export(Implementation)]
@@ -109,12 +111,12 @@ impl ChatReplyStats {
     /// Average energy per uncached input token, with a component breakdown when available.
     #[bindings::export(Method(Getter))]
     pub fn input_joules_per_token(&self) -> Option<ChatReplyJoulesPerToken> {
-        self.power_stats.as_ref()?.per_token(self.prefill_tokens_per_second)
+        self.input_power_stats.as_ref()?.per_token(self.prefill_tokens_per_second)
     }
 
     /// Average energy per generated output token, with a component breakdown when available.
     #[bindings::export(Method(Getter))]
     pub fn output_joules_per_token(&self) -> Option<ChatReplyJoulesPerToken> {
-        self.power_stats.as_ref()?.per_token(self.generate_tokens_per_second)
+        self.output_power_stats.as_ref()?.per_token(self.generate_tokens_per_second)
     }
 }
