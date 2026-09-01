@@ -1,8 +1,6 @@
 use iocraft::prelude::*;
 use shoji::types::session::{
-    chat::{ChatReplyJoulesPerToken, ChatReplyStats},
-    classification::ClassificationOutput,
-    text_to_speech::TextToSpeechStats,
+    chat::ChatReplyStats, classification::ClassificationOutput, text_to_speech::TextToSpeechStats,
 };
 
 use crate::interactive::{
@@ -315,9 +313,11 @@ fn chat_reply_stats_component(
     let energy =
         stats.total_joules().map(|energy| format!("{energy:.2} J")).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let input_energy_per_token =
-        stats.input_joules_per_token().map(format_joules_per_token).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
-    let output_energy_per_token =
-        stats.output_joules_per_token().map(format_joules_per_token).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+        stats.input_joules_per_token().map(|energy| energy.to_string()).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let output_energy_per_token = stats
+        .output_joules_per_token()
+        .map(|energy| energy.to_string())
+        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let duration = format!("{:.2} s", stats.duration);
 
     element! {
@@ -364,21 +364,6 @@ fn chat_reply_stats_component(
         }
     }
     .into()
-}
-
-fn format_joules_per_token(stats: ChatReplyJoulesPerToken) -> String {
-    let total = stats.total();
-    match stats {
-        ChatReplyJoulesPerToken::Total {
-            ..
-        } => format!("{total:.3} J/tok"),
-        ChatReplyJoulesPerToken::Components {
-            cpu,
-            gpu,
-            ane,
-            dram,
-        } => format!("CPU {cpu:.3}, GPU {gpu:.3}, ANE {ane:.3}, DRAM {dram:.3}, total {total:.3} J/tok"),
-    }
 }
 
 fn format_memory_used(bytes: i64) -> String {
