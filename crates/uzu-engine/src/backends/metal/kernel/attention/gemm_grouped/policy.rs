@@ -17,7 +17,7 @@ pub fn is_supported(
 ) -> bool {
     GEMM_GROUPED_HEAD_DIMS.contains(&arguments.head_dim)
         && arguments.data_type == DataType::BF16
-        && context.supports_mxu()
+        && context.supports_mxu
         && !arguments.has_sinks
         && !arguments.is_kv_cache_ring
         && arguments.sliding_window_size.is_none()
