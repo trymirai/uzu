@@ -1,7 +1,6 @@
 import Foundation
 import Uzu
 
-// Shared reply-stat formatting: fixed-unit MeasurementFormatter + ByteCountFormatter.
 enum ReplyStatsFormat {
     static let placeholder = "—"
 

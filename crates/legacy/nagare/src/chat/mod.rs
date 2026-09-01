@@ -802,10 +802,6 @@ fn sum_optional_u32(
 fn aggregate_input_energy(stats: &[&ChatReplyStats]) -> Option<ChatReplyEnergy> {
     let mut phases = Vec::with_capacity(stats.len());
     for stats in stats {
-        let tokens = stats.tokens_count_input?;
-        if tokens == 0 {
-            continue;
-        }
         phases.push(stats.input_energy.as_ref()?);
     }
     aggregate_energy(phases)

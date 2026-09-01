@@ -224,7 +224,7 @@ mod inner {
         boundary: Instant,
     ) {
         let elapsed = boundary.saturating_duration_since(*last_sample);
-        *last_sample = boundary;
+        *last_sample = (*last_sample).max(boundary);
         if let Some(energy) = device.rail_energy(elapsed) {
             *joules.get_or_insert(0.0) += f64::from(energy.value());
         }

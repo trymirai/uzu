@@ -1,6 +1,5 @@
 import SwiftUI
 
-// Shared stats footer shown under a chat reply, classification result, or summary.
 struct ReplyStatsView: View {
     let stats: ReplyStats
 

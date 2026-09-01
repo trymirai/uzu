@@ -9,6 +9,8 @@ use hanashi::{
     Encoding as EncodingTrait,
     chat::{Encoding, EncodingConfig, TokenizerLocation, hanashi::HanashiEncodingImpl, harmony::HarmonyEncodingImpl},
 };
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use keisoku::KeisokuError;
 use shoji::{
     traits::{
         State,
@@ -31,10 +33,9 @@ use shoji::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    chat::ChatSessionError,
-    util::{helpers::error_stream, power::EnergyRecorder},
-};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use crate::util::power::{EnergyRecorder, Error as EnergyError};
+use crate::{chat::ChatSessionError, util::helpers::error_stream};
 
 pub struct Session {
     instance: Arc<dyn ChatTokenBackendInstance>,
@@ -42,7 +43,8 @@ pub struct Session {
     encoding: Encoding,
     input_tokens: Vec<u64>,
     stop_token_ids: Box<[u64]>,
-    energy_recorder: Option<EnergyRecorder>,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    energy_recorder: EnergyRecorder,
 }
 
 impl Session {
@@ -102,18 +104,14 @@ impl Session {
             message: "stop_token_ids is None".to_string(),
         })?;
 
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        let energy_recorder = Some(EnergyRecorder::new());
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-        let energy_recorder = None;
-
         Ok(Self {
             instance,
             state,
             encoding,
             input_tokens: Vec::new(),
             stop_token_ids,
-            energy_recorder,
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            energy_recorder: EnergyRecorder::new(),
         })
     }
 
@@ -178,10 +176,11 @@ impl Session {
 
         let instance = self.instance.as_ref();
         let time_prefill_start = Instant::now();
-        if let Some(energy_recorder) = self.energy_recorder.as_mut()
-            && let Err(error) = energy_recorder.begin()
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         {
-            return error_stream(error.into());
+            if let Err(error) = self.energy_recorder.begin() {
+                return error_stream(error.into());
+            }
         }
         let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
 
@@ -191,7 +190,8 @@ impl Session {
             encoding: &mut self.encoding,
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
-            energy_recorder: self.energy_recorder.as_mut(),
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            energy_recorder: &mut self.energy_recorder,
 
             time_start,
             time_last_token: None,
@@ -216,13 +216,13 @@ impl Session {
                     Some(event) => {
                         state.metrics = inner.metrics();
                         state.memory_usage = instance.peak_memory_usage();
-                        let output = Self::build_output(event, &mut state).await;
+                        let output = Self::build_output(event, &mut state);
                         let terminated = terminated || matches!(&output, Ok(out) if out.finish_reason.is_some());
                         Some((output, (inner, state, terminated, false)))
                     },
                     None => {
                         if !terminated && state.cancel_token.is_cancelled() {
-                            let output = Self::render_output(&mut state, Some(ChatReplyFinishReason::Cancelled)).await;
+                            let output = Self::render_output(&mut state, Some(ChatReplyFinishReason::Cancelled));
                             Some((output, (inner, state, true, true)))
                         } else {
                             None
@@ -259,7 +259,7 @@ impl Session {
         Ok(all_tokens)
     }
 
-    async fn build_output(
+    fn build_output(
         event: Result<StreamOutput, Error>,
         state: &mut StreamingState<'_>,
     ) -> Result<Output, ChatSessionError> {
@@ -269,12 +269,17 @@ impl Session {
         })?;
 
         match result {
-            StreamOutput::LimitReached => Self::render_output(state, Some(ChatReplyFinishReason::Length)).await,
+            StreamOutput::LimitReached => Self::render_output(state, Some(ChatReplyFinishReason::Length)),
             StreamOutput::Token(token) => {
                 if state.total_tokens_output == 0 {
                     state.time_first_token = Some(now);
-                    if let Some(energy_recorder) = state.energy_recorder.as_deref_mut() {
-                        state.input_energy = Some(energy_recorder.split()?);
+                    #[cfg(any(target_os = "macos", target_os = "ios"))]
+                    {
+                        match state.energy_recorder.split() {
+                            Ok(energy) => state.input_energy = Some(energy),
+                            Err(EnergyError::Keisoku(KeisokuError::PowerReadingUnavailable)) => {},
+                            Err(error) => return Err(error.into()),
+                        }
                     }
                 }
                 state.total_tokens_output += 1;
@@ -287,17 +292,17 @@ impl Session {
                 }
 
                 let finish_reason = state.get_finish_reason(token);
-                Self::render_output(state, finish_reason).await
+                Self::render_output(state, finish_reason)
             },
         }
     }
 
-    async fn render_output(
+    fn render_output(
         state: &mut StreamingState<'_>,
         finish_reason: Option<ChatReplyFinishReason>,
     ) -> Result<Output, ChatSessionError> {
         let have_finish_reason = finish_reason.is_some();
-        let stats = state.get_stats(have_finish_reason).await?;
+        let stats = state.get_stats(have_finish_reason)?;
         let Some(message) = state.encoding.state().messages.last() else {
             return Ok(Output {
                 finish_reason,
@@ -359,7 +364,8 @@ struct StreamingState<'a> {
     encoding: &'a mut Encoding,
     max_context_length: Option<usize>,
     stop_token_ids: Box<[u64]>,
-    energy_recorder: Option<&'a mut EnergyRecorder>,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    energy_recorder: &'a mut EnergyRecorder,
 
     time_start: Instant,
     time_last_token: Option<Instant>,
@@ -396,7 +402,7 @@ impl StreamingState<'_> {
         }
     }
 
-    async fn get_stats(
+    fn get_stats(
         &mut self,
         last_stat: bool,
     ) -> Result<ChatReplyStats, ChatSessionError> {
@@ -425,15 +431,18 @@ impl StreamingState<'_> {
         };
         let generate_tps = calculate_rate(self.total_tokens_output, generate_duration);
 
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         let completed_energy = if last_stat {
-            if let Some(energy_recorder) = self.energy_recorder.as_deref_mut() {
-                Some(energy_recorder.finish()?)
-            } else {
-                None
+            match self.energy_recorder.finish() {
+                Ok(energy) => Some(energy),
+                Err(EnergyError::Keisoku(KeisokuError::PowerReadingUnavailable)) => None,
+                Err(error) => return Err(error.into()),
             }
         } else {
             None
         };
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        let completed_energy = None;
         let (input_energy, output_energy) = if self.time_first_token.is_some() {
             (self.input_energy.clone(), completed_energy)
         } else {

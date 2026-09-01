@@ -32,7 +32,6 @@ pub async fn run_bench(
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     progress_bar.finish();
 
-    // Results
     let results_data = serde_json::to_string_pretty(&results).context("Failed to serialize benchmark results")?;
     fs::write(&output_path, results_data)
         .await

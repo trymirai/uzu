@@ -37,9 +37,8 @@ impl ChatReplyEnergy {
 impl ChatReplyEnergy {
     fn per_token(
         &self,
-        tokens_count: Option<u32>,
+        tokens_count: u32,
     ) -> Option<ChatReplyJoulesPerToken> {
-        let tokens_count = tokens_count?;
         if tokens_count == 0 {
             return None;
         }
@@ -167,15 +166,13 @@ impl ChatReplyStats {
         self.input_energy.iter().chain(self.output_energy.iter()).map(ChatReplyEnergy::total).reduce(f64::add)
     }
 
-    /// Average energy per uncached input token, with a component breakdown when available.
     #[bindings::export(Method(Getter))]
     pub fn input_joules_per_token(&self) -> Option<ChatReplyJoulesPerToken> {
-        self.input_energy.as_ref()?.per_token(self.tokens_count_input)
+        self.input_energy.as_ref()?.per_token(self.tokens_count_input?)
     }
 
-    /// Average energy per generated output token, with a component breakdown when available.
     #[bindings::export(Method(Getter))]
     pub fn output_joules_per_token(&self) -> Option<ChatReplyJoulesPerToken> {
-        self.output_energy.as_ref()?.per_token(self.tokens_count_output)
+        self.output_energy.as_ref()?.per_token(self.tokens_count_output?.checked_sub(1)?)
     }
 }

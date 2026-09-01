@@ -1265,9 +1265,6 @@ public struct ChatReplyStats: Equatable, Hashable, Codable {
     }
 
     
-    /**
-     * Average energy per uncached input token, with a component breakdown when available.
-     */
 public func inputJoulesPerToken() -> ChatReplyJoulesPerToken?  {
     return try!  FfiConverterOptionTypeChatReplyJoulesPerToken.lift(try! rustCall() {
     uniffi_shoji_fn_method_chatreplystats_input_joules_per_token(
@@ -1276,9 +1273,6 @@ public func inputJoulesPerToken() -> ChatReplyJoulesPerToken?  {
 })
 }
     
-    /**
-     * Average energy per generated output token, with a component breakdown when available.
-     */
 public func outputJoulesPerToken() -> ChatReplyJoulesPerToken?  {
     return try!  FfiConverterOptionTypeChatReplyJoulesPerToken.lift(try! rustCall() {
     uniffi_shoji_fn_method_chatreplystats_output_joules_per_token(

@@ -336,9 +336,7 @@ export declare class ChatReplyStats {
   constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountInputCached?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, inputEnergy?: ChatReplyEnergy, outputEnergy?: ChatReplyEnergy)
   get tokensCount(): number | null
   get totalJoules(): number | null
-  /** Average energy per uncached input token, with a component breakdown when available. */
   get inputJoulesPerToken(): ChatReplyJoulesPerToken | null
-  /** Average energy per generated output token, with a component breakdown when available. */
   get outputJoulesPerToken(): ChatReplyJoulesPerToken | null
 }
 

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::util::power::Error as PowerError;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use crate::util::power::Error as EnergyError;
 
 #[bindings::export(Error)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error)]
@@ -26,8 +27,9 @@ pub enum ChatSessionError {
     },
 }
 
-impl From<PowerError> for ChatSessionError {
-    fn from(error: PowerError) -> Self {
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+impl From<EnergyError> for ChatSessionError {
+    fn from(error: EnergyError) -> Self {
         Self::Backend {
             message: error.to_string(),
         }

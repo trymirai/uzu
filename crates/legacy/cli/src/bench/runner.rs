@@ -105,8 +105,8 @@ impl BenchRunner {
 
             let input_energy = aggregate_energy(replies.iter().filter_map(|reply| reply.stats.input_energy.as_ref()));
             let output_energy = aggregate_energy(replies.iter().filter_map(|reply| reply.stats.output_energy.as_ref()));
-            let mut phases = input_energy.iter().chain(output_energy.iter()).map(ChatReplyEnergy::total);
-            let total_joules = phases.next().map(|first| first + phases.sum::<f64>());
+            let total_joules =
+                aggregate_energy(input_energy.iter().chain(output_energy.iter())).map(|energy| energy.total());
             let tokens_count = tokens_count_input + tokens_count_output;
             let joules_per_token =
                 total_joules.and_then(|joules| (tokens_count > 0).then(|| joules / tokens_count as f64));

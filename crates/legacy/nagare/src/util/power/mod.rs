@@ -1,47 +1,34 @@
 mod error;
 
 pub use error::Error;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
 use keisoku::{PowerMeter, PowerReading};
 use shoji::types::session::chat::ChatReplyEnergy;
 
-pub enum EnergyRecorder {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    Apple(PowerMeter),
+pub struct EnergyRecorder {
+    meter: PowerMeter,
 }
 
 impl EnergyRecorder {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn new() -> Self {
-        Self::Apple(PowerMeter::new())
+        Self {
+            meter: PowerMeter::new(),
+        }
     }
 
     pub fn begin(&mut self) -> Result<(), Error> {
-        match self {
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            Self::Apple(meter) => {
-                meter.start()?;
-                Ok(())
-            },
-        }
+        self.meter.start()?;
+        Ok(())
     }
 
     pub fn split(&mut self) -> Result<ChatReplyEnergy, Error> {
-        match self {
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            Self::Apple(meter) => Ok(energy(meter.split()?)),
-        }
+        Ok(energy(self.meter.split()?))
     }
 
     pub fn finish(&mut self) -> Result<ChatReplyEnergy, Error> {
-        match self {
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            Self::Apple(meter) => Ok(energy(meter.stop()?)),
-        }
+        Ok(energy(self.meter.stop()?))
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
 fn energy(reading: PowerReading) -> ChatReplyEnergy {
     match reading {
         PowerReading::Total {
