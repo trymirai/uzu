@@ -73,9 +73,13 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         optional_selector_value(self, obfstr!("supportsPlacementSparse"), false)
     }
 
-    /// Newest Apple GPU family the device supports; `None` for non-Apple GPUs.
-    fn newest_supported_apple_gpu_family(&self) -> Option<MTLGPUFamily> {
-        MTLGPUFamily::all_cases().into_iter().rev().find(|family| self.supports_family(*family))
+    /// Newest Apple GPU family the device supports.
+    fn newest_supported_apple_gpu_family(&self) -> MTLGPUFamily {
+        MTLGPUFamily::all_cases()
+            .into_iter()
+            .rev()
+            .find(|family| self.supports_family(*family))
+            .expect("unsupported Metal device: uzu requires an Apple GPU")
     }
 }
 

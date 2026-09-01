@@ -73,7 +73,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
         let use_mxu = arguments.data_type == DataType::BF16 && context.supports_mxu;
         let transposed_h0 = !use_mxu
             && context.gpu_core_count < LARGE_MIN_GPU_CORES
-            && context.apple_gpu_family <= Some(MTLGPUFamily::Apple8);
+            && context.apple_gpu_family <= MTLGPUFamily::Apple8;
         Ok(Self {
             arguments: *arguments,
             prefix: <MetalKernels as Kernels>::BuildTreePrefixKernel::new(context)?,

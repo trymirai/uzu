@@ -12,10 +12,6 @@ use crate::{
 
 const SMALL_GPU_CORE_COUNT: u32 = 29;
 const LARGE_GPU_CORE_COUNT: u32 = 30;
-const APPLE7: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple7);
-const APPLE8: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple8);
-const APPLE9: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple9);
-const APPLE10: Option<MTLGPUFamily> = Some(MTLGPUFamily::Apple10);
 
 fn qtile(
     num_simdgroups: u32,
@@ -27,13 +23,13 @@ fn qtile(
 #[uzu_test]
 fn fp_policy_cases() {
     let cases = [
-        (LARGE_GPU_CORE_COUNT, APPLE9, 1, 12288, 1536, true, tile(8, 8, 1)),
-        (LARGE_GPU_CORE_COUNT, APPLE9, 1, 12288, 1536, false, tile(8, 1, 1)),
-        (LARGE_GPU_CORE_COUNT, APPLE9, 1, 1536, 256, true, tile(8, 1, 1)),
-        (SMALL_GPU_CORE_COUNT, APPLE9, 1, 1536, 256, true, tile(8, 2, 1)),
-        (LARGE_GPU_CORE_COUNT, APPLE9, 8, 12288, 1536, true, tile(8, 1, 4)),
-        (LARGE_GPU_CORE_COUNT, APPLE9, 1, 1536, 12288, true, tile(8, 8, 4)),
-        (SMALL_GPU_CORE_COUNT, APPLE7, 1, 262144, 1536, true, tile(8, 1, 4)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 12288, 1536, true, tile(8, 8, 1)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 12288, 1536, false, tile(8, 1, 1)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 256, true, tile(8, 1, 1)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 256, true, tile(8, 2, 1)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 8, 12288, 1536, true, tile(8, 1, 4)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 12288, true, tile(8, 8, 4)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple7, 1, 262144, 1536, true, tile(8, 1, 4)),
     ];
 
     for (gpu_core_count, apple_gpu_family, m, n, k, aligned, expected) in cases {
@@ -44,17 +40,17 @@ fn fp_policy_cases() {
 #[uzu_test]
 fn quant_policy_cases() {
     let cases = [
-        (LARGE_GPU_CORE_COUNT, APPLE9, 1, 256, 1536, 4, false, qtile(2, 1)),
-        (LARGE_GPU_CORE_COUNT, APPLE9, 1, 262144, 1536, 4, false, qtile(8, 4)),
-        (SMALL_GPU_CORE_COUNT, APPLE9, 1, 1536, 256, 4, false, qtile(4, 4)),
-        (SMALL_GPU_CORE_COUNT, APPLE10, 1, 1536, 256, 4, false, qtile(8, 4)),
-        (SMALL_GPU_CORE_COUNT, APPLE8, 1, 2048, 1536, 4, false, qtile(8, 2)),
-        (SMALL_GPU_CORE_COUNT, APPLE7, 1, 256, 1536, 4, false, qtile(8, 2)),
-        (SMALL_GPU_CORE_COUNT, None, 1, 1536, 256, 4, false, qtile(4, 8)),
-        (LARGE_GPU_CORE_COUNT, APPLE9, 2, 2048, 1536, 4, false, qtile(8, 4)),
-        (LARGE_GPU_CORE_COUNT, APPLE9, 4, 5120, 5120, 4, false, qtile(8, 4)),
-        (LARGE_GPU_CORE_COUNT, APPLE9, 1, 2048, 1536, 8, false, GemvTile::quantized(8, 4, 1, 32, 4)),
-        (LARGE_GPU_CORE_COUNT, APPLE9, 1, 2560, 9216, 4, true, qtile(4, 8)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 256, 1536, 4, false, qtile(2, 1)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 262144, 1536, 4, false, qtile(8, 4)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 256, 4, false, qtile(4, 4)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 1, 1536, 256, 4, false, qtile(8, 4)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple8, 1, 2048, 1536, 4, false, qtile(8, 2)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple7, 1, 256, 1536, 4, false, qtile(8, 2)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple7, 1, 1536, 256, 4, false, qtile(4, 8)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 2, 2048, 1536, 4, false, qtile(8, 4)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 5120, 5120, 4, false, qtile(8, 4)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 2048, 1536, 8, false, GemvTile::quantized(8, 4, 1, 32, 4)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 2560, 9216, 4, true, qtile(4, 8)),
     ];
 
     for (gpu_core_count, apple_gpu_family, m, n, k, bits, has_rht, expected) in cases {
@@ -84,8 +80,10 @@ fn quant_policy_cases() {
 #[uzu_test]
 fn gpu_core_count_boundary_selects_large_policy() {
     let transform = GemmDTransform::empty();
-    let small = quantized(SMALL_GPU_CORE_COUNT, APPLE9, 4, 32, 1, 256, 1536, transform).expect("small GPU route");
-    let large = quantized(LARGE_GPU_CORE_COUNT, APPLE9, 4, 32, 1, 256, 1536, transform).expect("large GPU route");
+    let small =
+        quantized(SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 32, 1, 256, 1536, transform).expect("small GPU route");
+    let large =
+        quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 32, 1, 256, 1536, transform).expect("large GPU route");
 
     assert_eq!(small, qtile(4, 2));
     assert_eq!(large, qtile(2, 1));
@@ -93,7 +91,7 @@ fn gpu_core_count_boundary_selects_large_policy() {
 
 fn quantized(
     gpu_core_count: u32,
-    apple_gpu_family: Option<MTLGPUFamily>,
+    apple_gpu_family: MTLGPUFamily,
     bits: u32,
     group: u32,
     m: u32,
@@ -107,9 +105,9 @@ fn quantized(
 #[uzu_test]
 fn quantized_policy_edges() {
     for (gpu_core_count, apple_gpu_family, m, group, expected) in [
-        (LARGE_GPU_CORE_COUNT, APPLE10, 2, 32, GemvTile::quantized(8, 4, 1, 32, 4)),
-        (LARGE_GPU_CORE_COUNT, APPLE10, 3, 32, GemvTile::quantized(8, 4, 1, 32, 4)),
-        (SMALL_GPU_CORE_COUNT, APPLE8, 4, 64, GemvTile::quantized(8, 4, 1, 32, 8)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 2, 32, GemvTile::quantized(8, 4, 1, 32, 4)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 3, 32, GemvTile::quantized(8, 4, 1, 32, 4)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple8, 4, 64, GemvTile::quantized(8, 4, 1, 32, 8)),
     ] {
         assert_eq!(
             quantized(gpu_core_count, apple_gpu_family, 8, group, m, 4096, 4096, GemmDTransform::RHT),
@@ -118,26 +116,49 @@ fn quantized_policy_edges() {
     }
     let none = GemmDTransform::empty();
     assert_eq!(
-        quantized(LARGE_GPU_CORE_COUNT, APPLE10, 4, 64, 4, 8192, 4100, none),
+        quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 64, 4, 8192, 4100, none),
         Some(GemvTile::quantized(8, 4, 1, 32, 4))
     );
-    assert!(quantized(LARGE_GPU_CORE_COUNT, APPLE10, 4, 32, 4, 8, 4096, none).is_some());
-    assert!(quantized(LARGE_GPU_CORE_COUNT, APPLE10, 4, 32, 1, 8192, 4096, none).is_some());
-    assert_eq!(quantized(LARGE_GPU_CORE_COUNT, APPLE10, 4, 32, 9, 8192, 4096, none), None);
+    assert!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8, 4096, none).is_some());
+    assert!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 1, 8192, 4096, none).is_some());
+    assert_eq!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 9, 8192, 4096, none), None);
     assert_eq!(
-        quantized_tile(LARGE_GPU_CORE_COUNT, APPLE10, 4, 32, 4, 8192, 4096, none, true),
+        quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8192, 4096, none, true),
         Some(GemvTile::quantized(8, 4, 1, 32, 2))
     );
 }
 
 #[uzu_test]
 fn untuned_quantized_io_uses_only_the_generated_fallback() {
-    assert_eq!(quantized_tile(LARGE_GPU_CORE_COUNT, APPLE10, 4, 32, 4, 3, 4096, GemmDTransform::empty(), false,), None);
-    let tile = quantized_tile(LARGE_GPU_CORE_COUNT, APPLE10, 4, 32, 4, 4096, 4096, GemmDTransform::empty(), false)
-        .expect("mixed-IO fallback");
+    assert_eq!(
+        quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 3, 4096, GemmDTransform::empty(), false,),
+        None
+    );
+    let tile = quantized_tile(
+        LARGE_GPU_CORE_COUNT,
+        MTLGPUFamily::Apple10,
+        4,
+        32,
+        4,
+        4096,
+        4096,
+        GemmDTransform::empty(),
+        false,
+    )
+    .expect("mixed-IO fallback");
     assert_eq!(tile, GemvTile::quantized(8, 4, 1, 32, 2));
     assert_eq!(
-        quantized_tile(LARGE_GPU_CORE_COUNT, APPLE10, 4, 32, 5, 4096, 4096, GemmDTransform::empty(), false,),
+        quantized_tile(
+            LARGE_GPU_CORE_COUNT,
+            MTLGPUFamily::Apple10,
+            4,
+            32,
+            5,
+            4096,
+            4096,
+            GemmDTransform::empty(),
+            false,
+        ),
         None
     );
 }
@@ -186,7 +207,7 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
             DataType::BF16,
             DataType::BF16,
             LARGE_GPU_CORE_COUNT,
-            APPLE10,
+            MTLGPUFamily::Apple10,
         )
         .is_some()
     );
@@ -201,7 +222,7 @@ fn specialization_preserves_quantized_route_and_accumulate_tail() {
             DataType::BF16,
             DataType::BF16,
             LARGE_GPU_CORE_COUNT,
-            APPLE10,
+            MTLGPUFamily::Apple10,
         )
     };
     let clean = select(8192, GemmDTransform::empty()).expect("quantized specialization");

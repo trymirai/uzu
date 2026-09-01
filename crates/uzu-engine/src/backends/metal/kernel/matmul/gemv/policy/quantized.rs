@@ -54,7 +54,7 @@ fn table_bucket_index(
 
 fn lane_policy(
     gpu_core_count: u32,
-    apple_gpu_family: Option<MTLGPUFamily>,
+    apple_gpu_family: MTLGPUFamily,
     m: u32,
     n: u32,
     k: u32,
@@ -88,18 +88,18 @@ fn lane_policy(
         (true, _, 1, 5) => (2, 4),
         (true, _, 2, 1) => (4, 2),
         (true, _, 3, 1) => (2, 2),
-        (false, Some(MTLGPUFamily::Apple9), 0, 1) => (4, 4),
-        (false, Some(MTLGPUFamily::Apple9), 1, 0) => (4, 2),
-        (false, Some(MTLGPUFamily::Apple9), 1, 1) => (2, 2),
-        (false, Some(MTLGPUFamily::Apple9), 1, 2) => (4, 2),
-        (false, Some(MTLGPUFamily::Apple9), 1, 4) => (2, 2),
-        (false, Some(MTLGPUFamily::Apple9), 1, 5) => (4, 2),
-        (false, Some(MTLGPUFamily::Apple9), 2, 1) => (4, 2),
-        (false, Some(MTLGPUFamily::Apple9), 3, 1) => (2, 2),
-        (false, Some(MTLGPUFamily::Apple8), 0, 1) => (4, 4),
-        (false, Some(MTLGPUFamily::Apple8), 1, _) | (false, Some(MTLGPUFamily::Apple8), 2, 1) => (8, 2),
-        (false, family, 0, 1) if family < Some(MTLGPUFamily::Apple8) => (4, 8),
-        (false, family, 1, 0..=3) if family < Some(MTLGPUFamily::Apple8) => (8, 2),
+        (false, MTLGPUFamily::Apple9, 0, 1) => (4, 4),
+        (false, MTLGPUFamily::Apple9, 1, 0) => (4, 2),
+        (false, MTLGPUFamily::Apple9, 1, 1) => (2, 2),
+        (false, MTLGPUFamily::Apple9, 1, 2) => (4, 2),
+        (false, MTLGPUFamily::Apple9, 1, 4) => (2, 2),
+        (false, MTLGPUFamily::Apple9, 1, 5) => (4, 2),
+        (false, MTLGPUFamily::Apple9, 2, 1) => (4, 2),
+        (false, MTLGPUFamily::Apple9, 3, 1) => (2, 2),
+        (false, MTLGPUFamily::Apple8, 0, 1) => (4, 4),
+        (false, MTLGPUFamily::Apple8, 1, _) | (false, MTLGPUFamily::Apple8, 2, 1) => (8, 2),
+        (false, family, 0, 1) if family < MTLGPUFamily::Apple8 => (4, 8),
+        (false, family, 1, 0..=3) if family < MTLGPUFamily::Apple8 => (8, 2),
         _ => (8, 4),
     };
     let selected = lane_tile(num_simdgroups, results_per_simdgroup, bits, group);
@@ -112,7 +112,7 @@ fn lane_policy(
 
 pub fn select(
     gpu_core_count: u32,
-    apple_gpu_family: Option<MTLGPUFamily>,
+    apple_gpu_family: MTLGPUFamily,
     bits: u32,
     group: u32,
     m: u32,

@@ -145,14 +145,14 @@ fn preferred_fp_k_split(
 /// `n` is the output row count, and `k` is the reduction depth.
 pub(super) fn fp_tile(
     gpu_core_count: u32,
-    apple_gpu_family: Option<MTLGPUFamily>,
+    apple_gpu_family: MTLGPUFamily,
     m: u32,
     n: u32,
     k: u32,
     input_aligned: bool,
 ) -> GemvTile {
     let is_large_gpu = gpu_core_count >= LARGE_MIN_GPU_CORES;
-    let is_small_legacy = !is_large_gpu && apple_gpu_family < Some(MTLGPUFamily::Apple8);
+    let is_small_legacy = !is_large_gpu && apple_gpu_family < MTLGPUFamily::Apple8;
     // SG8 is the portable full-precision geometry.
     let should_disable_k_split = !input_aligned
         || (m == 1 && is_large_gpu && k < FP_LARGE_SPLIT_K_MIN_DEPTH)

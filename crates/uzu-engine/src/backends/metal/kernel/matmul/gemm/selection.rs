@@ -16,7 +16,7 @@ pub struct GemmProblem {
     weights_data_type: DataType,
     output_data_type: DataType,
     supports_mxu: bool,
-    apple_gpu_family: Option<MTLGPUFamily>,
+    apple_gpu_family: MTLGPUFamily,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
@@ -33,7 +33,7 @@ impl GemmProblem {
         weights_data_type: DataType,
         output_data_type: DataType,
         supports_mxu: bool,
-        apple_gpu_family: Option<MTLGPUFamily>,
+        apple_gpu_family: MTLGPUFamily,
     ) -> Self {
         Self {
             shape,
@@ -164,7 +164,7 @@ fn mxu_is_eligible(shape: MatmulShape) -> bool {
 fn select_tiling(
     shape: MatmulShape,
     engine: GemmEngine,
-    apple_gpu_family: Option<MTLGPUFamily>,
+    apple_gpu_family: MTLGPUFamily,
 ) -> GemmTiling {
     match engine {
         GemmEngine::Simdgroup if shape.is_quant() => {

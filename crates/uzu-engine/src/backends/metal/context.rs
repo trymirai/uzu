@@ -35,7 +35,7 @@ pub(super) const LARGE_MIN_GPU_CORES: u32 = 30;
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub gpu_core_count: u32,
-    pub apple_gpu_family: Option<MTLGPUFamily>,
+    pub apple_gpu_family: MTLGPUFamily,
     pub supports_mxu: bool,
     pub device_name: String,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,

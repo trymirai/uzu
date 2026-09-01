@@ -72,7 +72,7 @@ impl MatmulMetalKernel {
         shape: &MatmulShape,
         device_name: &str,
         gpu_core_count: u32,
-        apple_gpu_family: Option<MTLGPUFamily>,
+        apple_gpu_family: MTLGPUFamily,
         supports_mxu: bool,
         weights_data_type: DataType,
         input_data_type: DataType,

@@ -25,7 +25,7 @@ const READOUT: u8 = 1 << 6;
 #[derive(Clone, Copy)]
 struct RouteRow {
     device_name: &'static str,
-    apple_gpu_family: Option<MTLGPUFamily>,
+    apple_gpu_family: MTLGPUFamily,
     bits: u32,
     group: u32,
     m: u32,
@@ -60,7 +60,7 @@ macro_rules! qmv_format { (w4_zp_g32) => { (4, 32) }; (w4_zp_g64) => { (4, 64) }
 #[rustfmt::skip]
 macro_rules! measured_device_name { (M1) => { "Apple M1" }; (M2) => { "Apple M2" }; (M2Pro) => { "Apple M2 Pro" }; (M3Max) => { "Apple M3 Max" }; (M4) => { "Apple M4" }; (M4Pro) => { "Apple M4 Pro" }; (M5Max) => { "Apple M5 Max" }; }
 #[rustfmt::skip]
-macro_rules! measured_apple_gpu_family { (M1) => { Some(MTLGPUFamily::Apple7) }; (M2) => { Some(MTLGPUFamily::Apple8) }; (M2Pro) => { Some(MTLGPUFamily::Apple8) }; (M3Max) => { Some(MTLGPUFamily::Apple9) }; (M4) => { Some(MTLGPUFamily::Apple9) }; (M4Pro) => { Some(MTLGPUFamily::Apple9) }; (M5Max) => { Some(MTLGPUFamily::Apple10) }; }
+macro_rules! measured_apple_gpu_family { (M1) => { MTLGPUFamily::Apple7 }; (M2) => { MTLGPUFamily::Apple8 }; (M2Pro) => { MTLGPUFamily::Apple8 }; (M3Max) => { MTLGPUFamily::Apple9 }; (M4) => { MTLGPUFamily::Apple9 }; (M4Pro) => { MTLGPUFamily::Apple9 }; (M5Max) => { MTLGPUFamily::Apple10 }; }
 #[rustfmt::skip]
 macro_rules! row { ($device:ident, $format:ident, $m:literal, $shapes:expr, $route:expr) => { RouteRow { device_name: measured_device_name!($device), apple_gpu_family: measured_apple_gpu_family!($device), bits: qmv_format!($format).0, group: qmv_format!($format).1, m: $m, shapes: $shapes, route: $route } }; }
 
@@ -376,7 +376,7 @@ fn qmv_format(shape: &MatmulShape) -> Option<(u32, u32)> {
 
 pub fn route(
     device_name: &str,
-    apple_gpu_family: Option<MTLGPUFamily>,
+    apple_gpu_family: MTLGPUFamily,
     supports_mxu: bool,
     shape: &MatmulShape,
     all_bf16: bool,

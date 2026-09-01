@@ -101,15 +101,15 @@ pub(super) fn simdgroup_fp_tile(
 
 /// A partial trailing M block costs a second pass over the weights. Older GPUs are bound by that;
 /// Apple9 and newer would rather keep the narrow tile's parallelism.
-fn prefers_wide_partial_m_tile(apple_gpu_family: Option<MTLGPUFamily>) -> bool {
-    apple_gpu_family <= Some(MTLGPUFamily::Apple8)
+fn prefers_wide_partial_m_tile(apple_gpu_family: MTLGPUFamily) -> bool {
+    apple_gpu_family <= MTLGPUFamily::Apple8
 }
 
 pub(super) fn simdgroup_quant_tile(
     m: u32,
     n: u32,
     group_size: u32,
-    apple_gpu_family: Option<MTLGPUFamily>,
+    apple_gpu_family: MTLGPUFamily,
 ) -> GemmTiling {
     if group_size < 32 {
         GemmTiling::Tile64x64x16_Simdgroups2x2

@@ -42,7 +42,7 @@ impl GemvSpecialization {
         input_data_type: DataType,
         output_data_type: DataType,
         gpu_core_count: u32,
-        apple_gpu_family: Option<MTLGPUFamily>,
+        apple_gpu_family: MTLGPUFamily,
     ) -> Option<Self> {
         let is_quant = shape.is_quant();
         let bits = shape.b_bits.unwrap_or(0);
