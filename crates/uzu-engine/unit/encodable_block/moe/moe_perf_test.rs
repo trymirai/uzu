@@ -1,6 +1,5 @@
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use test_runner::perf::run_perf_with_warmup;
 use uzu_engine_macros::uzu_test;
 
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGather};
@@ -13,7 +12,10 @@ use crate::{
         },
     },
     data_type::DataType,
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, create_context, for_each_non_cpu_backend},
+    tests::{
+        helpers::{alloc_allocation, alloc_allocation_with_data, create_context, for_each_non_cpu_backend},
+        perf::run_perf_with_warmup,
+    },
 };
 
 // Test E2E MoE performance with timing breakdown (decode mode, T=1)

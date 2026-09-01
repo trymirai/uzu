@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Path};
 
 use anyhow::Result;
 
@@ -7,8 +7,9 @@ use crate::configs::{Paths, PlatformsConfig};
 pub fn stage_platform(
     paths: &Paths,
     platforms: &PlatformsConfig,
+    release_path: &Path,
 ) -> Result<()> {
-    let root = paths.release_platform_path();
+    let root = release_path.join("platform");
     if root.exists() {
         fs::remove_dir_all(&root)?;
     }

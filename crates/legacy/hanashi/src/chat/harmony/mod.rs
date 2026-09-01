@@ -203,6 +203,13 @@ impl EncodingTrait for HarmonyEncodingImpl {
 }
 
 impl HarmonyEncodingImpl {
+    pub fn tokenize(
+        &self,
+        text: &str,
+    ) -> Result<Vec<TokenId>, Error> {
+        Ok(self.encoding.tokenizer().encode_with_special_tokens(text))
+    }
+
     fn process(
         &mut self,
         token_id: TokenId,

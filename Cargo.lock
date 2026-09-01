@@ -1031,7 +1031,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1393,7 +1393,7 @@ checksum = "fb22e947478ccf9dc44d8922042c677a63fbb88f2cb468521d1145816e5087cb"
 [[package]]
 name = "cxx"
 version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#b616fe260d36353919d9f7e13754cd88064118a3"
+source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
 dependencies = [
  "cxx-build",
  "cxx-cc",
@@ -1406,7 +1406,7 @@ dependencies = [
 [[package]]
 name = "cxx-build"
 version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#b616fe260d36353919d9f7e13754cd88064118a3"
+source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
 dependencies = [
  "cc",
  "codespan-reporting",
@@ -1421,7 +1421,7 @@ dependencies = [
 [[package]]
 name = "cxx-cc"
 version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#b616fe260d36353919d9f7e13754cd88064118a3"
+source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
 dependencies = [
  "cc",
  "cxxbridge-flags",
@@ -1430,7 +1430,7 @@ dependencies = [
 [[package]]
 name = "cxxbridge-cmd"
 version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#b616fe260d36353919d9f7e13754cd88064118a3"
+source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
 dependencies = [
  "clap",
  "codespan-reporting",
@@ -1443,12 +1443,12 @@ dependencies = [
 [[package]]
 name = "cxxbridge-flags"
 version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#b616fe260d36353919d9f7e13754cd88064118a3"
+source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
 
 [[package]]
 name = "cxxbridge-macro"
 version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#b616fe260d36353919d9f7e13754cd88064118a3"
+source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
 dependencies = [
  "indexmap 2.14.0",
  "proc-macro2",
@@ -1703,7 +1703,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1849,7 +1849,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2960,7 +2960,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3908,7 +3908,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4875,7 +4875,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.4",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5612,7 +5612,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5670,7 +5670,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6516,7 +6516,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6602,16 +6602,6 @@ dependencies = [
  "wezterm-dynamic",
  "wezterm-input-types",
  "winapi",
-]
-
-[[package]]
-name = "test-runner"
-version = "0.5.22"
-dependencies = [
- "criterion",
- "keisoku",
- "objc2",
- "objc2-foundation",
 ]
 
 [[package]]
@@ -7614,6 +7604,7 @@ dependencies = [
  "half",
  "is_close",
  "itertools 0.14.0",
+ "keisoku",
  "libm",
  "monostate",
  "mtl-rs",
@@ -7621,6 +7612,7 @@ dependencies = [
  "num-traits",
  "obfstr",
  "objc2",
+ "objc2-foundation",
  "parking_lot",
  "prettyplease",
  "proc-macro2",
@@ -7637,11 +7629,11 @@ dependencies = [
  "shoji",
  "syn 2.0.118",
  "tempfile",
- "test-runner",
  "test-tag",
  "thiserror 2.0.18",
  "tokenizers",
  "tokio",
+ "uzu",
  "uzu-engine-macros",
  "walkdir",
  "xgrammar-rs",
@@ -7947,15 +7939,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "which"
-version = "8.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f3ef584124b911bcc3875c2f1472e80f24361ceb789bd1c62b3e9a3df9ff43c"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7977,7 +7960,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8386,7 +8369,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 [[package]]
 name = "xgrammar-rs"
 version = "0.2.3"
-source = "git+https://github.com/trymirai/xgrammar-rs.git?tag=0.2.3#e1e0f27df369c5d6027cc89ba4801fcda10e7b9e"
+source = "git+https://github.com/trymirai/xgrammar-rs.git?branch=main#04995a307d58f3b2cd015cd5bfd4d7bbeab98f3e"
 dependencies = [
  "cc",
  "cmake",
@@ -8395,7 +8378,6 @@ dependencies = [
  "serde_json",
  "tokenizers",
  "walkdir",
- "which",
 ]
 
 [[package]]
