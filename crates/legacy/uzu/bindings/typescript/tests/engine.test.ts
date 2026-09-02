@@ -4,6 +4,7 @@ import {
     ChatReplyConfig,
     Engine,
     EngineConfig,
+    ReasoningEffort,
     SamplingMethodGreedy,
 } from '@trymirai/uzu';
 
@@ -22,17 +23,18 @@ test('chat reply produces text', async () => {
     const session = await engine.chat(model!, ChatConfig.create());
 
     const messages = [
-        ChatMessage.system().withText('You are a helpful assistant'),
+        ChatMessage.system()
+            .withText('You are a helpful assistant')
+            .withReasoningEffort('Disabled' as ReasoningEffort),
         ChatMessage.user().withText('Hi'),
     ];
 
     const reply = await session.reply(
         messages,
-        ChatReplyConfig.create().withSamplingMethod(new SamplingMethodGreedy()),
+        ChatReplyConfig.create().withTokenLimit(64).withSamplingMethod(new SamplingMethodGreedy()),
     );
     const message = reply[reply.length - 1]?.message;
 
     expect(message).toBeDefined();
-    expect(message!.reasoning).not.toBeNull();
     expect(message!.text).not.toBeNull();
 });

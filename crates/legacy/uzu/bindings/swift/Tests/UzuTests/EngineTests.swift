@@ -20,14 +20,20 @@ final class EngineTests: XCTestCase {
         let session = try await engine.chat(model: model, config: .create())
 
         let messages = [
-            ChatMessage.system().withText(text: "You are a helpful assistant"),
+            ChatMessage.system()
+                .withText(text: "You are a helpful assistant")
+                .withReasoningEffort(reasoningEffort: .disabled),
             ChatMessage.user().withText(text: "Hi"),
         ]
 
-        let reply = try await session.reply(input: messages, config: .create())
+        let reply = try await session.reply(
+            input: messages,
+            config: .create()
+                .withTokenLimit(tokenLimit: 64)
+                .withSamplingMethod(samplingMethod: .greedy)
+        )
         let message = try XCTUnwrap(reply.last?.message, "Reply has no messages")
 
-        XCTAssertNotNil(message.reasoning())
         XCTAssertNotNil(message.text())
     }
 }

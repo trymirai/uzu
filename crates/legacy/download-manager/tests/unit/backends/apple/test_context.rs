@@ -269,13 +269,18 @@ async fn apple_authenticated_pause_restarts_once_without_resume_data() -> Result
 
 #[tokio::test(flavor = "multi_thread")]
 async fn registry_distinguishes_generations_for_same_download_id() -> Result<(), Box<dyn Error>> {
-    let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
-    let served_file = registry.file("config.json")?;
+    let bytes = b"model";
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/model.bin"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes.as_slice()).set_delay(Duration::from_secs(5)))
+        .mount(&server)
+        .await;
     let temporary_directory = tempdir()?;
-    let destination = temporary_directory.path().join(&served_file.file.name);
+    let destination = temporary_directory.path().join("model.bin");
     let download_id = compute_download_id(&destination);
     let context = AppleBackendContext::new(RuntimeHandle::current());
-    let config = download_config(served_file.file.url.clone(), destination, served_file.file.size as u64);
+    let config = download_config(format!("{}/model.bin", server.uri()), destination, bytes.len() as u64);
     let destination_lease = destination_lease(&config).await?;
 
     let (backend_event_sender_first, _backend_event_receiver_first) = backend_event_sender();
