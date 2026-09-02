@@ -3,11 +3,12 @@
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../common/threadgroup_reduce.h"
+#include "../generated/router_topk.h"
 using namespace metal;
+using namespace uzu::router_topk;
 
-constant uint THREADS_PER_TG = 256; // 8 simdgroups
-constant uint MAX_EXPERTS = 512;
-constant uint MAX_TOPK = 128;
+#define THREADS_PER_TG 256
+
 constant float NEG_INF = -INFINITY;
 
 template <typename ScalarT>
@@ -32,8 +33,8 @@ PUBLIC KERNEL(MoeRouterTopK)(
     const bool has_per_expert_scales SPECIALIZE,
     const bool has_router_input_scale SPECIALIZE,
     const bool normalize_router_input SPECIALIZE,
-    threadgroup float4 x_cache[1024],
-    threadgroup float logits_shared[MAX_EXPERTS],
+    threadgroup float4 x_cache[ROUTER_TOPK_MAX_MODEL_DIM / 4],
+    threadgroup float logits_shared[ROUTER_TOPK_MAX_EXPERTS],
     threadgroup float reduce_tmp[THREADS_PER_TG],
     threadgroup uint reduce_tmp_u[THREADS_PER_TG],
     threadgroup uint shared_best_idx[1],
@@ -41,7 +42,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
     const ThreadContext thread_context,
     const uint tgpig_x GROUPS(1),
     const uint token_idx GROUPS(t),
-    const uint lid THREADS(256)
+    const uint lid THREADS(THREADS_PER_TG)
 ) {
   if (d_model == 0 || e == 0 || k == 0) {
     return;
@@ -102,7 +103,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  const uint effective_k = min(k, MAX_TOPK);
+  const uint effective_k = min(k, ROUTER_TOPK_MAX_SELECTED_EXPERTS);
   for (uint sel = 0; sel < effective_k; ++sel) {
     float local_best = NEG_INF;
     uint local_idx = 0xFFFFFFFFu;
@@ -129,7 +130,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
 
     uint winner_idx = shared_best_idx[0];
     float winner_val = shared_best_val[0];
-    if (lid == 0 && winner_idx < MAX_EXPERTS) {
+    if (lid == 0 && winner_idx < ROUTER_TOPK_MAX_EXPERTS) {
       if (!renorm && has_per_expert_scales) {
         winner_val *= float(per_expert_scale[winner_idx]);
       }
