@@ -203,37 +203,70 @@ impl<B: Backend> TransformerLayer<B> {
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
 
+        let hidden = self.encode_mixer_input(input, shortcut, batch_dim.size(), encoder)?;
+
+        // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
+        let hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
+
+        let hidden = self.encode_mlp_input(hidden, shortcut, batch_dim.size(), encoder)?;
+
+        let hidden = self.mlp.encode(hidden, batch_dim.size(), encoder)?;
+
+        let hidden = self.encode_layer_output(hidden, shortcut, per_layer_inputs, batch_dim.size(), encoder)?;
+
+        encoder.pop_debug_group();
+
+        Ok(hidden)
+    }
+
+    pub(super) fn encode_mixer_input(
+        &self,
+        input: Allocation<B>,
+        shortcut: &mut Allocation<B>,
+        batch_size: u32,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
         let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
-            pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut), encoder)?
+            pre_mixer_norm.encode(&input, 0, batch_size, Some(shortcut), encoder)?
         } else {
             assert!(self.layer_index == 0);
             encoder.encode_copy(&input, .., shortcut, ..);
             input
         };
+        Ok(hidden)
+    }
 
-        // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
-        let mut hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
-
+    pub(super) fn encode_mlp_input(
+        &self,
+        mut hidden: Allocation<B>,
+        shortcut: &mut Allocation<B>,
+        batch_size: u32,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
-            hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
+            hidden = post_mixer_norm.encode(&hidden, 0, batch_size, None, encoder)?;
         }
 
-        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), encoder)?;
+        self.pre_mlp_norm.encode(&hidden, 0, batch_size, Some(shortcut), encoder)
+    }
 
-        hidden = self.mlp.encode(hidden, batch_dim.size(), encoder)?;
-
+    pub(super) fn encode_layer_output(
+        &self,
+        mut hidden: Allocation<B>,
+        shortcut: &mut Allocation<B>,
+        per_layer_inputs: Option<&Allocation<B>>,
+        batch_size: u32,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
+            hidden = post_mlp_norm.encode(&hidden, 0, batch_size, None, encoder)?;
         }
 
         if let Some(ple_projection) = &self.ple_projection {
             let per_layer_inputs = per_layer_inputs.expect("per-layer inputs required for PLE layer");
-            ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_dim.size(), encoder)?;
+            ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_size, encoder)?;
             encoder.encode_fill(&mut hidden, 0);
         }
-
-        encoder.pop_debug_group();
-
         Ok(hidden)
     }
 }
