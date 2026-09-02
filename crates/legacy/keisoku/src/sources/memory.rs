@@ -1,12 +1,12 @@
 use crate::metrics::MemoryMetrics;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn read_memory() -> Option<MemoryMetrics> {
+pub fn read_memory() -> Option<MemoryMetrics> {
     crate::sys::read_memory()
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn read_memory() -> Option<MemoryMetrics> {
+pub fn read_memory() -> Option<MemoryMetrics> {
     use sysinfo::System;
 
     use crate::units::Bytes;

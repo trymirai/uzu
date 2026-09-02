@@ -1,5 +1,5 @@
 #[derive(Default)]
-pub(crate) struct ResidencyState {
-    pub(crate) name: String,
-    pub(crate) residency: i64,
+pub struct ResidencyState {
+    pub name: String,
+    pub residency: i64,
 }

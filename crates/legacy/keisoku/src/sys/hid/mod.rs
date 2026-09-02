@@ -66,7 +66,7 @@ struct CachedSensor {
     value: f64,
 }
 
-pub(crate) struct SensorReader {
+pub struct SensorReader {
     kind: SensorKind,
     event_type: i64,
     event_field: i32,
@@ -76,7 +76,7 @@ pub(crate) struct SensorReader {
 }
 
 impl SensorReader {
-    pub(crate) fn new(kind: SensorKind) -> Option<Self> {
+    pub fn new(kind: SensorKind) -> Option<Self> {
         let client = EventSystemClient::new()?;
         let (page, usage) = kind.matching();
         let event_type = kind.event_type();
@@ -112,7 +112,7 @@ impl SensorReader {
         })
     }
 
-    pub(crate) fn read(&mut self) -> Box<[Sensor]> {
+    pub fn read(&mut self) -> Box<[Sensor]> {
         let refresh_cold = self.last_cold_read.is_none_or(|at| at.elapsed() >= COLD_REFRESH);
         if refresh_cold {
             self.last_cold_read = Some(Instant::now());

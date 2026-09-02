@@ -6,7 +6,7 @@ use objc2_io_kit::{
 
 use crate::{metrics::BatteryMetrics, sys::registry::dictionary_get, units::Percent};
 
-pub(crate) fn read_battery() -> Option<BatteryMetrics> {
+pub fn read_battery() -> Option<BatteryMetrics> {
     let info = IOPSCopyPowerSourcesInfo()?;
     let info_ref: &CFType = &info;
     let list = unsafe { IOPSCopyPowerSourcesList(Some(info_ref)) }?;

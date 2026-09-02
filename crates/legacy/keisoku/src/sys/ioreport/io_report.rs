@@ -6,7 +6,7 @@ use crate::sys::ioreport::{
     decode::{Channel, RawChannel},
 };
 
-pub(crate) struct IoReport {
+pub struct IoReport {
     functions: &'static IoReportFunctions,
     subscription: Subscription,
 }
@@ -21,11 +21,11 @@ impl IoReport {
         })
     }
 
-    pub(crate) fn snapshot(&self) -> Option<RawIOReportSample> {
+    pub fn snapshot(&self) -> Option<RawIOReportSample> {
         self.subscription.snapshot(self.functions).map(RawIOReportSample)
     }
 
-    pub(crate) fn for_each_channel(
+    pub fn for_each_channel(
         &self,
         begin: &RawIOReportSample,
         end: &RawIOReportSample,

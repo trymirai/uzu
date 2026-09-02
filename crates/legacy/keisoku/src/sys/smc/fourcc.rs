@@ -1,4 +1,4 @@
-pub(super) fn fourcc(key: &str) -> Option<u32> {
+pub fn fourcc(key: &str) -> Option<u32> {
     let bytes = key.as_bytes();
     if bytes.len() != 4 {
         return None;
