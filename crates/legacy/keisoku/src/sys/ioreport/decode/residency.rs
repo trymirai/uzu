@@ -2,7 +2,7 @@ use obfstr::obfstr;
 
 use super::residency_state::ResidencyState;
 
-pub(crate) fn residency_active_percent(states: &[ResidencyState]) -> f32 {
+pub fn residency_active_percent(states: &[ResidencyState]) -> f32 {
     let total: f64 = states.iter().map(|state| state.residency as f64).sum();
     if total <= 0.0 {
         return 0.0;
@@ -12,7 +12,7 @@ pub(crate) fn residency_active_percent(states: &[ResidencyState]) -> f32 {
     (active / total * 100.0) as f32
 }
 
-pub(crate) fn residency_weighted_gbps(states: &[ResidencyState]) -> f32 {
+pub fn residency_weighted_gbps(states: &[ResidencyState]) -> f32 {
     let mut weighted = 0f64;
     let mut total = 0f64;
     for state in states {
@@ -32,7 +32,7 @@ fn parse_leading_number(name: &str) -> f64 {
     digits.parse().unwrap_or(0.0)
 }
 
-pub(crate) fn is_idle_state(name: &str) -> bool {
+pub fn is_idle_state(name: &str) -> bool {
     name == obfstr!("OFF")
         || name == obfstr!("IDLE")
         || name == obfstr!("DOWN")

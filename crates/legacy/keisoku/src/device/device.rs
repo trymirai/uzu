@@ -1,12 +1,16 @@
+#[cfg(target_os = "ios")]
+use std::time::Duration;
+
 #[cfg(target_os = "macos")]
 use super::IntervalHandle;
 #[cfg(target_os = "macos")]
 use crate::marker::IntervalSet;
+#[cfg(target_os = "ios")]
+use crate::units::Joules;
 use crate::{
     metrics::{BatteryMetrics, FanMetrics, MemoryMetrics, ThermalPressure},
     sensor::Sensor,
     sources::Sources,
-    units::Watts,
 };
 
 /// Instantaneous device facts and gauges (chip, memory, sensors, …).
@@ -65,8 +69,12 @@ impl Device {
         self.sources.current_sensors()
     }
 
-    pub fn rail_power(&mut self) -> Option<Watts> {
-        self.sources.rail_power()
+    #[cfg(target_os = "ios")]
+    pub fn rail_energy(
+        &mut self,
+        elapsed: Duration,
+    ) -> Option<Joules> {
+        self.sources.rail_energy(elapsed)
     }
 
     /// Starts an IOReport interval measurement for the channels in `M`.

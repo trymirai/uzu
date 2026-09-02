@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shoji::types::session::chat::ChatReplyStats;
+use shoji::types::session::chat::{ChatReplyJoulesPerToken, ChatReplyStats};
 
 /// Reply stats plus the metrics `ChatReplyStats` exposes as getters, which serde
 /// would otherwise leave out of the reported payload.
@@ -8,13 +8,15 @@ use shoji::types::session::chat::ChatReplyStats;
 pub struct TelemetryStats {
     #[serde(flatten)]
     pub stats: ChatReplyStats,
-    pub joules_per_token: Option<f64>,
+    pub input_joules_per_token: Option<ChatReplyJoulesPerToken>,
+    pub output_joules_per_token: Option<ChatReplyJoulesPerToken>,
 }
 
 impl From<ChatReplyStats> for TelemetryStats {
     fn from(stats: ChatReplyStats) -> Self {
         Self {
-            joules_per_token: stats.joules_per_token(),
+            input_joules_per_token: stats.input_joules_per_token(),
+            output_joules_per_token: stats.output_joules_per_token(),
             stats,
         }
     }
