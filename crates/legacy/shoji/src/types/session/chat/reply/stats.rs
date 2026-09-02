@@ -122,18 +122,7 @@ impl Display for ChatReplyJoulesPerToken {
         &self,
         formatter: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
-        let total = self.total();
-        match self {
-            Self::Total {
-                ..
-            } => write!(formatter, "{total:.3} J/tok"),
-            Self::Components {
-                cpu,
-                gpu,
-                ane,
-                dram,
-            } => write!(formatter, "CPU {cpu:.3}, GPU {gpu:.3}, ANE {ane:.3}, DRAM {dram:.3}, total {total:.3} J/tok"),
-        }
+        write!(formatter, "CPU+GPU+DRAM {:.2} J/tok", self.total())
     }
 }
 

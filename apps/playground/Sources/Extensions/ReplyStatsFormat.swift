@@ -9,13 +9,7 @@ enum ReplyStatsFormat {
     }
 
     static func energyPerToken(_ stats: ChatReplyJoulesPerToken) -> String {
-        let total = formattedNumber(stats.total())
-        switch stats {
-        case .total:
-            return "\(total) J/tok"
-        case let .components(cpu, gpu, ane, dram):
-            return "CPU \(formattedNumber(cpu)), GPU \(formattedNumber(gpu)), ANE \(formattedNumber(ane)), DRAM \(formattedNumber(dram)), total \(total) J/tok"
-        }
+        "CPU+GPU+DRAM \(formattedNumber(stats.total())) J/tok"
     }
 
     static func memory(_ bytes: Int64?) -> String {
