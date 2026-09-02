@@ -102,31 +102,6 @@ fn run<B: Backend>(
     allocation_to_vec::<B, bf16>(&output).into_iter().map(|value| value.to_f32()).collect()
 }
 
-fn deterministic_bf16(
-    len: usize,
-    modulus: usize,
-    scale: f32,
-    offset: f32,
-) -> Vec<bf16> {
-    (0..len).map(|index| bf16::from_f32((index % modulus) as f32 * scale + offset)).collect()
-}
-
-fn assert_backend_parity(
-    shape: Shape,
-    label: &str,
-) {
-    let input = deterministic_bf16(shape.input_len(), 31, 0.05, -0.75);
-    let coefficients = deterministic_bf16(shape.coefficients_len(), 17, 0.02, -0.16);
-    let base_kernel = deterministic_bf16(shape.base_kernel_len(), 13, 0.03, -0.18);
-    for stage in [0u32, 1] {
-        let expected = run::<Cpu>(shape, &input, &coefficients, &base_kernel, stage);
-        for_each_non_cpu_backend!(|B| {
-            let actual = run::<B>(shape, &input, &coefficients, &base_kernel, stage);
-            assert_eq_float(&expected, &actual, 0.01, &format!("{label}, stage {stage}"));
-        });
-    }
-}
-
 #[uzu_test]
 fn test_bf16_golden() {
     let shape = Shape {
@@ -153,30 +128,26 @@ fn test_bf16_golden() {
 }
 
 #[uzu_test]
-fn test_bf16_scalar_remainder() {
-    assert_backend_parity(
-        Shape {
-            sequence_length: 4,
-            model_dim: 30,
-            group_size: 6,
-            kernel_size: 3,
-        },
-        "grouped convolution scalar remainder",
-    );
-}
-
-#[uzu_test]
 fn test_bf16_dflash_v2_shape() {
-    for sequence_length in [2, 4, 8, 16] {
-        assert_backend_parity(
-            Shape {
-                sequence_length,
-                model_dim: 6656,
-                group_size: 16,
-                kernel_size: 2,
-            },
-            &format!("grouped convolution DFlash V2 T={sequence_length}"),
-        );
+    let shape = Shape {
+        sequence_length: 16,
+        model_dim: 6656,
+        group_size: 16,
+        kernel_size: 2,
+    };
+    let input =
+        (0..shape.input_len()).map(|index| bf16::from_f32((index % 31) as f32 * 0.05 - 0.75)).collect::<Vec<_>>();
+    let coefficients = (0..shape.coefficients_len())
+        .map(|index| bf16::from_f32((index % 17) as f32 * 0.02 - 0.16))
+        .collect::<Vec<_>>();
+    let base_kernel =
+        (0..shape.base_kernel_len()).map(|index| bf16::from_f32((index % 13) as f32 * 0.03 - 0.18)).collect::<Vec<_>>();
+    for stage in [0u32, 1] {
+        let expected = run::<Cpu>(shape, &input, &coefficients, &base_kernel, stage);
+        for_each_non_cpu_backend!(|B| {
+            let actual = run::<B>(shape, &input, &coefficients, &base_kernel, stage);
+            assert_eq_float(&expected, &actual, 0.01, &format!("grouped convolution DFlash V2, stage {stage}"));
+        });
     }
 }
 

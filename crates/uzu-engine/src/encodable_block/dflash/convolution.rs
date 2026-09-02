@@ -27,7 +27,7 @@ enum Stage {
     Output = 1,
 }
 
-pub(super) struct GroupedConvolution<B: Backend> {
+pub struct GroupedConvolution<B: Backend> {
     base_kernel: Allocation<B>,
     projection: Box<dyn Linear<B>>,
     kernel: <B::Kernels as Kernels>::GroupedConvolutionKernel,
@@ -38,7 +38,7 @@ pub(super) struct GroupedConvolution<B: Backend> {
 }
 
 impl<B: Backend> GroupedConvolution<B> {
-    pub(super) fn new(
+    pub fn new(
         context: &B::Context,
         config: &GroupedConvolutionConfig,
         model_dim: u32,
@@ -88,7 +88,7 @@ impl<B: Backend> GroupedConvolution<B> {
         })
     }
 
-    pub(super) fn prepare(
+    pub fn prepare(
         &self,
         input: Allocation<B>,
         sequence_length: u32,
@@ -99,7 +99,7 @@ impl<B: Backend> GroupedConvolution<B> {
         Ok((input, coefficients))
     }
 
-    pub(super) fn finish(
+    pub fn finish(
         &self,
         output: Allocation<B>,
         coefficients: Allocation<B>,

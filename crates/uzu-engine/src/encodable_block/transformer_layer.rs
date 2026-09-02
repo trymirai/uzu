@@ -219,7 +219,7 @@ impl<B: Backend> TransformerLayer<B> {
         Ok(hidden)
     }
 
-    pub(super) fn encode_mixer_input(
+    pub fn encode_mixer_input(
         &self,
         input: Allocation<B>,
         shortcut: &mut Allocation<B>,
@@ -236,7 +236,7 @@ impl<B: Backend> TransformerLayer<B> {
         Ok(hidden)
     }
 
-    pub(super) fn encode_mlp_input(
+    pub fn encode_mlp_input(
         &self,
         mut hidden: Allocation<B>,
         shortcut: &mut Allocation<B>,
@@ -250,7 +250,7 @@ impl<B: Backend> TransformerLayer<B> {
         self.pre_mlp_norm.encode(&hidden, 0, batch_size, Some(shortcut), encoder)
     }
 
-    pub(super) fn encode_layer_output(
+    pub fn encode_layer_output(
         &self,
         mut hidden: Allocation<B>,
         shortcut: &mut Allocation<B>,
