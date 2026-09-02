@@ -1,0 +1,371 @@
+<p align="center">
+  <picture>
+    <img alt="Mirai" src="https://artifacts.trymirai.com/social/github/uzu-typescript.jpg" style="max-width: 100%;">
+  </picture>
+</p>
+
+<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](crates/legacy/uzu/bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.22)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.22)](https://www.npmjs.com/package/@trymirai/uzu) 
+
+# uzu
+
+A high-performance inference engine for AI models. It allows you to deploy AI directly in your app with **zero latency**, **full data privacy**, and **no inference costs**. Key features:
+
+- Simple, high-level API
+- Unified model configurations, making it easy to add support for new models
+- Traceable computations to ensure correctness against the source-of-truth implementation
+- Utilizes unified memory on Apple devices
+- [Broad model support](https://trymirai.com/models)
+
+## Quick Start
+
+
+
+Add the dependency:
+
+```bash
+pnpm add @trymirai/uzu@0.5.22
+```
+
+Run the code below:
+
+```ts
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig } from '@trymirai/uzu';
+
+async function main() {
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
+
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
+
+    let session = await engine.chat(model, ChatConfig.create());
+
+    let messages = [
+        ChatMessage.system().withText('You are a helpful assistant'),
+        ChatMessage.user().withText('Tell me a short, funny story about a robot')
+    ];
+
+    let reply = await session.reply(messages, ChatReplyConfig.create());
+    let message = reply[0]?.message;
+
+    if (message) {
+        console.log('Reasoning: ', message.reasoning);
+        console.log('Text: ', message.text);
+    }
+}
+
+main().catch((error) => {
+    console.error(error);
+});
+```
+
+
+<br>
+
+Everything from model downloading to inference configuration is handled automatically. Refer to the [documentation](https://docs.trymirai.com) for details on how to customize each step of the process.
+
+## Examples
+
+You can run any example via `cargo tools example` \<**typescript**\> \<**chat** | **chat-cloud** | **chat-shared-instance** | **chat-structured-output** | **quick-start** | **tool-calls**\>:
+
+### Chat
+
+In this example, we will download a model and get a reply to a specific list of messages:
+
+```ts
+import {
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    ChatSessionStreamChunkError,
+    ChatSessionStreamChunkReplies,
+    Engine,
+    EngineConfig
+} from '@trymirai/uzu';
+
+async function main() {
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
+
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
+
+    let messages = [
+        ChatMessage.system().withText('You are a helpful assistant'),
+        ChatMessage.user().withText('Tell me a short, funny story about a robot')
+    ];
+    let session = await engine.chat(model, ChatConfig.create());
+    let stream = await session.replyWithStream(messages, ChatReplyConfig.create());
+    let message: ChatMessage | undefined;
+    for await (const chunk of stream) {
+        if (chunk instanceof ChatSessionStreamChunkReplies) {
+            message = chunk.replies[0]?.message;
+            console.log('Generated tokens: ', chunk.replies[0]?.stats.tokensCountOutput);
+        } else if (chunk instanceof ChatSessionStreamChunkError) {
+            console.error('Error: ', chunk.error);
+        }
+    }
+    console.log('Reasoning: ', message?.reasoning);
+    console.log('Text: ', message?.text);
+}
+
+main().catch((error) => {
+    console.error(error);
+});
+```
+
+<br>Once loaded, the same `ChatSession` can be reused for multiple requests until you drop it. Each model may consume a significant amount of RAM, so it's important to keep only one session loaded at a time. For iOS apps, we recommend adding the [Increased Memory Capability](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.kernel.increased-memory-limit) entitlement to ensure your app can allocate the required memory.
+
+### Chat with the cloud model
+
+In this example, we will get a reply to a specific list of messages from a cloud model:
+
+```ts
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig, ReasoningEffort } from '@trymirai/uzu';
+
+async function main() {
+    let engineConfig = EngineConfig.create().withOpenaiApiKey('OPENAI_API_KEY');
+    let engine = await Engine.create(engineConfig);
+
+    let model = await engine.model('gpt-5');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+
+    let messages = [
+        ChatMessage.system().withReasoningEffort("Low" as ReasoningEffort),
+        ChatMessage.user().withText('How LLMs work')
+    ];
+
+    let session = await engine.chat(model, ChatConfig.create());
+    let reply = await session.reply(messages, ChatReplyConfig.create());
+    let message = reply[0]?.message;
+    if (message) {
+        console.log('Reasoning: ', message.reasoning);
+        console.log('Text: ', message.text);
+    }
+}
+
+main().catch((error) => {
+    console.error(error);
+});
+```
+
+### Chat with shared instance
+
+This example shows how to reuse chat instance without reloading model into memory:
+
+```ts
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig } from '@trymirai/uzu';
+
+async function main() {
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
+
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
+
+    // The chat instance owns the loaded model and can be shared between sessions.
+    let chatInstance = await engine.chatInstance(model, ChatConfig.create());
+
+    let firstSession = await engine.chatWithInstance(chatInstance);
+    let replies = await firstSession.reply(
+        [ChatMessage.user().withText('Tell me a short, funny story about a robot')],
+        ChatReplyConfig.create(),
+    );
+    let reply = replies[replies.length - 1];
+    if (reply) {
+        console.log('First session reasoning: ', reply.message.reasoning);
+        console.log('First session text: ', reply.message.text);
+    }
+
+    // The second session reuses the already-loaded weights instead of loading the model again.
+    let secondSession = await engine.chatWithInstance(chatInstance);
+    replies = await secondSession.reply(
+        [ChatMessage.user().withText('What is the capital of France?')],
+        ChatReplyConfig.create(),
+    );
+    reply = replies[replies.length - 1];
+    if (reply) {
+        console.log('\nSecond session reasoning: ', reply.message.reasoning);
+        console.log('Second session text: ', reply.message.text);
+    }
+}
+
+main().catch((error) => {
+    console.error(error);
+});
+```
+
+### Chat with structured output
+
+Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema for the response you want to receive:
+
+```ts
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig, GrammarJsonSchema, ReasoningEffort } from '@trymirai/uzu';
+import * as z from "zod";
+
+const CountryType = z.object({
+    name: z.string(),
+    capital: z.string(),
+});
+const CountryListType = z.array(CountryType);
+
+function structuredResponse<T extends z.ZodType>(response: string | null | undefined, type: T): z.infer<T> | undefined {
+    if (!response) {
+        return undefined;
+    }
+    const data = JSON.parse(response);
+    const result = type.parse(data);
+    return result;
+}
+
+async function main() {
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
+
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
+
+    let schema = z.toJSONSchema(CountryListType);
+    let schemaString = JSON.stringify(schema);
+    let messages = [
+        ChatMessage.system().withReasoningEffort("Disabled" as ReasoningEffort),
+        ChatMessage.user().withText('Give me a JSON object containing a list of 3 countries, where each country has name and capital fields')
+    ];
+
+    let session = await engine.chat(model, ChatConfig.create());
+    let reply = await session.reply(messages, ChatReplyConfig.create().withGrammar(new GrammarJsonSchema(schemaString)));
+    let message = reply[0]?.message;
+    let countries = structuredResponse(message?.text, CountryListType);
+    console.log(countries);
+}
+
+main().catch((error) => {
+    console.error(error);
+});
+```
+
+### Tool calls
+
+This example shows how to use external tools:
+
+```ts
+import {
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    SamplingMethodGreedy,
+    SamplingPolicyCustom,
+    uzuToolFunction,
+} from '@trymirai/uzu';
+import * as z from 'zod';
+
+
+const Coordinate = z.object({
+    latitude: z.number().describe('Latitude in decimal degrees.'),
+    longitude: z.number().describe('Longitude in decimal degrees.'),
+});
+
+type Coordinate = z.infer<typeof Coordinate>;
+
+
+const getCurrentLocation = uzuToolFunction({
+    name: 'get_location',
+    description: 'Return the current location in coordinates',
+    parameters: z.object({}),
+    returns: Coordinate,
+    handler: (): Coordinate => ({
+        latitude: 51.5074,
+        longitude: -0.1278,
+    }),
+});
+
+
+async function calculateCurrentTemperature({latitude, longitude}: Coordinate): Promise<number> {
+    if (!Number.isFinite(Math.hypot(latitude, longitude))) {
+        throw new RangeError('Coordinates must be finite');
+    }
+    return 25;
+}
+
+const getCurrentTemperature = uzuToolFunction({
+    name: 'get_current_temperature',
+    description: 'Return the temperature at the provided coordinates',
+    parameters: Coordinate,
+    returns: z.number(),
+    handler: calculateCurrentTemperature,
+});
+
+
+async function main() {
+    const engine = await Engine.create(EngineConfig.create());
+    const model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    process.stdout.write('\n');
+
+    const session = await engine.chat(model, ChatConfig.create());
+    await session.addTool(getCurrentLocation);
+    await session.addTool(getCurrentTemperature);
+
+    const messages = [
+        ChatMessage.system().withText('You are a helpful assistant'),
+        ChatMessage.user().withText('What temperature is it now at my location?'),
+    ];
+    const config = ChatReplyConfig.create().withSamplingPolicy(
+        new SamplingPolicyCustom(new SamplingMethodGreedy()),
+    );
+    const replies = await session.reply(messages, config);
+    const message = replies[replies.length - 1]?.message;
+    if (message) {
+        console.log('Reasoning:', message.reasoning ?? '');
+        console.log('Text:', message.text ?? '');
+    }
+}
+
+main().catch((error: unknown) => {
+    console.error(error);
+});
+```
+
+
+
+## Troubleshooting
+
+If you experience any problems, please contact us via [Discord](https://discord.com/invite/trymirai) or [email](mailto:contact@getmirai.co).
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

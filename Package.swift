@@ -17,13 +17,13 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "uzu",
-            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.5.21.zip",
-            checksum: "be6ff62a702368cf07715e8437be2415534762efd23cafd099d912fc8cf75816"
+            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.5.22.zip",
+            checksum: "8ed3b3eea7f8ebcf235e7509f7e96a53eea5b09f1a58f98cddbdade17befd93b"
         ),
         .target(
             name: "Uzu",
             dependencies: ["uzu", "UzuMetalIOSimulatorStubs"],
-            path: "bindings/swift/Sources/Uzu",
+            path: "crates/legacy/uzu/bindings/swift/Sources/Uzu",
             linkerSettings: [
                 .linkedLibrary("c++"),
                 .linkedFramework("SystemConfiguration"),
@@ -44,12 +44,12 @@ let package = Package(
                 "Uzu",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "bindings/swift/Sources/Examples"
+            path: "crates/legacy/uzu/bindings/swift/Sources/Examples"
         ),
         .testTarget(
             name: "UzuTests",
             dependencies: ["Uzu"],
-            path: "bindings/swift/Tests/UzuTests",
+            path: "crates/legacy/uzu/bindings/swift/Tests/UzuTests",
         ),
     ]
 )

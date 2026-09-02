@@ -2,20 +2,14 @@ use crate::{
     backends::common::{
         Allocation, Backend, BufferArgMut, Encoder,
         gpu_types::trie::TrieNode,
-        kernel::{AttentionPrepareKernel, SigmoidGateKernel},
+        kernel::{AttentionArguments, AttentionKernel, AttentionPrepareKernel, SigmoidGateKernel},
     },
     encodable_block::{
         batch_topology::BatchTopology,
         linear::Linear,
         mixer::{
             MixerState,
-            attention::{
-                Attention,
-                core::AttentionCoreEncodeArguments,
-                qkv_norm::QKVNorm,
-                rope::PrecalculatedRoPE,
-                state::{AttentionState, AttentionStateType},
-            },
+            attention::{Attention, KVCacheView, qkv_norm::QKVNorm, rope::PrecalculatedRoPE, state::AttentionState},
         },
     },
     utils::maybe_mut::MaybeMut,
@@ -63,11 +57,12 @@ impl<B: Backend> Attention<B> {
         let mut attention_output = match state {
             Some(MaybeMut::Mut(state)) => {
                 let qkv = self.qkv.project(hidden, batch_dim.size(), encoder)?;
+                let prefix_len = state.view().prefix_len();
                 let queries = self.prepare_kv_and_queries(
                     &qkv,
                     state.keys.as_mut(),
                     state.values.as_mut(),
-                    state.state_type.physical_prefix_length(),
+                    prefix_len,
                     self.num_q_heads,
                     precalculated_rope,
                     batch_dim.size(),
@@ -104,28 +99,17 @@ impl<B: Backend> Attention<B> {
                     encoder,
                 )?;
 
-                // HACK: state_type should be Option.
-                let state_type = if self.sliding_window_size.is_some() {
-                    AttentionStateType::Ring {
-                        offset: 0,
-                        length: 0,
-                        max_length: 0,
-                    }
-                } else {
-                    AttentionStateType::Full {
-                        length: 0,
-                    }
-                };
+                let cache = self.ring_capacity.map_or_else(|| KVCacheView::full(0), |_| KVCacheView::ring(0, 0));
 
-                self.flat_core.encode(
-                    AttentionCoreEncodeArguments {
+                self.kernel.encode(
+                    AttentionArguments {
                         queries: &queries,
                         keys: &keys,
                         values: &values,
                         suffix_length: batch_dim.size(),
                         trie: None,
                         sinks: self.sinks.as_ref(),
-                        state_type: &state_type,
+                        cache,
                     },
                     encoder,
                 )?
@@ -154,11 +138,12 @@ impl<B: Backend> Attention<B> {
         if let Some(norm) = &self.qkv.norm {
             norm.encode_key_value(&mut key_value, batch_dim, encoder)?;
         }
+        let prefix_len = state.view().prefix_len();
         self.prepare_kv_and_queries(
             &key_value,
             state.keys.as_mut(),
             state.values.as_mut(),
-            state.state_type.physical_prefix_length(),
+            prefix_len,
             0,
             Some(precalculated_rope),
             batch_dim,
@@ -175,23 +160,23 @@ impl<B: Backend> Attention<B> {
         state: &AttentionState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let (core, trie) = if batch_dim.is_flat() {
-            (&self.flat_core, None)
+        let trie = if batch_dim.is_flat() {
+            None
         } else {
             let mut trie = encoder.allocate_constant(batch_dim.size() as usize * size_of::<TrieNode>())?;
             trie.copyin(batch_dim.nodes());
-            (&self.trie_core, Some(trie))
+            Some(trie)
         };
 
-        core.encode(
-            AttentionCoreEncodeArguments {
+        self.kernel.encode(
+            AttentionArguments {
                 queries,
                 keys: state.keys.as_ref(),
                 values: state.values.as_ref(),
                 suffix_length: batch_dim.size(),
                 trie: trie.as_ref(),
                 sinks: self.sinks.as_ref(),
-                state_type: &state.state_type,
+                cache: state.view(),
             },
             encoder,
         )

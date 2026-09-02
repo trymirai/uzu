@@ -11,8 +11,8 @@ using namespace uzu::ring;
 using namespace uzu::trie;
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
-PUBLIC KERNEL(AttentionFallbackScatterScores)(
+VARIANTS(T, float, bfloat)
+KERNEL(AttentionFallbackScatterScores)(
     const device T* group_scores,
     device T* scores,
     const constant RingParams& ring_params OPTIONAL(is_kv_cache_ring),
@@ -59,8 +59,8 @@ PUBLIC KERNEL(AttentionFallbackScatterScores)(
 }
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
-PUBLIC KERNEL(AttentionFallbackScatterValues)(
+VARIANTS(T, float, bfloat)
+KERNEL(AttentionFallbackScatterValues)(
     const device T* group_output,
     device T* out,
     const constant uint& group_index,

@@ -1,10 +1,14 @@
 pub mod gemm;
-pub mod gemv;
+mod gemv;
+mod qmv;
+
+use metal::MTLGPUFamily;
 
 pub use self::gemm::GemmKernel;
 use self::{
     gemm::{GemmPlan, GemmProblem},
-    gemv::{GemvDispatch, GemvSpecialization},
+    gemv::{GemvKernel, GemvSpecialization},
+    qmv::QmvRoute,
 };
 use crate::{
     backends::{
@@ -22,7 +26,7 @@ use crate::{
 };
 
 pub struct MatmulMetalKernel {
-    gemv: GemvDispatch,
+    gemv: GemvKernel,
     pub gemm: GemmKernel,
     weights_data_type: DataType,
     input_data_type: DataType,
@@ -64,41 +68,64 @@ impl MatmulMetalKernel {
         matches!(plan.tiling, GemmTiling::Tile16x32x256_Simdgroups1x1 | GemmTiling::Tile16x128x256_Simdgroups1x4)
     }
 
-    fn select_dispatch(
-        &self,
+    fn choose_dispatch(
         shape: &MatmulShape,
-        context: &MetalContext,
+        device_name: &str,
+        gpu_core_count: u32,
+        apple_gpu_family: MTLGPUFamily,
+        supports_mxu: bool,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> MatmulDispatch {
+        let all_bf16 = weights_data_type == DataType::BF16
+            && input_data_type == DataType::BF16
+            && output_data_type == DataType::BF16;
+        if let Some(route) = qmv::route(device_name, apple_gpu_family, supports_mxu, shape, all_bf16) {
+            return match route {
+                QmvRoute::Tuned(tile) | QmvRoute::MainGemv(tile) => MatmulDispatch::Gemv(
+                    GemvSpecialization::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile)
+                        .expect("typed QMV route must contain a legal GEMV tile"),
+                ),
+                QmvRoute::MainGemm(plan) => MatmulDispatch::Gemm(plan),
+            };
+        }
         let gemv = GemvSpecialization::select_shape(
             shape,
-            self.weights_data_type,
-            self.input_data_type,
-            self.output_data_type,
-            context.device_profile(),
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+            gpu_core_count,
+            apple_gpu_family,
         );
-        let problem = GemmProblem::new(
-            *shape,
-            self.weights_data_type,
-            self.output_data_type,
-            context.supports_mxu(),
-            context.device_profile(),
-        );
+        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, apple_gpu_family);
         let plan = problem.select_plan();
         match gemv {
             None => MatmulDispatch::Gemm(plan),
             Some(_)
-                if Self::prefer_gemm_over_gemv(
-                    *shape,
-                    plan,
-                    self.weights_data_type,
-                    self.input_data_type,
-                    self.output_data_type,
-                ) =>
+                if Self::prefer_gemm_over_gemv(*shape, plan, weights_data_type, input_data_type, output_data_type) =>
             {
                 MatmulDispatch::Gemm(plan)
             },
             Some(gemv) => MatmulDispatch::Gemv(gemv),
         }
+    }
+
+    fn select_dispatch(
+        &self,
+        shape: &MatmulShape,
+        context: &MetalContext,
+    ) -> MatmulDispatch {
+        Self::choose_dispatch(
+            shape,
+            &context.device_name,
+            context.gpu_core_count,
+            context.apple_gpu_family,
+            context.supports_mxu,
+            self.weights_data_type,
+            self.input_data_type,
+            self.output_data_type,
+        )
     }
 }
 
@@ -118,7 +145,7 @@ impl MatmulKernel for MatmulMetalKernel {
         }
 
         let gemm = GemmKernel::new(context, weights_data_type, input_data_type, output_data_type)?;
-        let gemv = GemvDispatch::new(weights_data_type, input_data_type, output_data_type);
+        let gemv = GemvKernel::new(weights_data_type, input_data_type, output_data_type);
 
         Ok(Self {
             gemv,
@@ -135,7 +162,10 @@ impl MatmulKernel for MatmulMetalKernel {
         context: &MetalContext,
     ) -> Option<A8ActivationPlan> {
         let activation_group_size = ACTIVATION_SCALE_GROUP_SIZE;
-        if !context.supports_mxu()
+        let Some(weight_group_size @ (32 | 64 | 128)) = shape.b_group_size else {
+            return None;
+        };
+        if !context.supports_mxu
             || self.input_data_type != DataType::BF16
             || self.output_data_type != DataType::BF16
             || shape.a_full_precision
@@ -144,9 +174,8 @@ impl MatmulKernel for MatmulMetalKernel {
             || !shape.b_transpose
             || shape.b_leading_dimension.is_some()
             || !matches!(shape.b_bits, Some(4 | 8))
-            || !matches!(shape.b_group_size, Some(32 | 64 | 128))
             || !shape.k.is_multiple_of(activation_group_size)
-            || !shape.k.is_multiple_of(shape.b_group_size.unwrap())
+            || !shape.k.is_multiple_of(weight_group_size)
         {
             return None;
         }
@@ -154,7 +183,7 @@ impl MatmulKernel for MatmulMetalKernel {
         let sum_group_size = match shape.b_prologue {
             GemmBPrologueKind::ScaleSymmetricDequant => None,
             GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant => {
-                Some(shape.b_group_size.unwrap().min(activation_group_size))
+                Some(weight_group_size.min(activation_group_size))
             },
             GemmBPrologueKind::FullPrecision => return None,
         };

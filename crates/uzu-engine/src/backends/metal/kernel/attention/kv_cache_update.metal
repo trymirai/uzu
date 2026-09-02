@@ -4,7 +4,7 @@
 #include "kv_cache_update.h"
 
 template <typename T>
-VARIANTS(T, float, bfloat, half)
+VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(KVCacheUpdate) (
     device T* in_place_keys,
     device T* in_place_values,

@@ -140,9 +140,11 @@ pub async fn ensure_session(
         },
     };
 
+    let sampling_defaults = session.sampling_defaults().await.unwrap_or_default();
     {
         let mut state = state.write();
         if let Some(model_state) = state.model_state.as_mut() {
+            model_state.sampling_defaults = sampling_defaults;
             model_state.session_state = Some(Box::new(ChatSessionState::idle(session.clone())));
         }
     }
@@ -158,7 +160,7 @@ pub async fn run_session(
     let (thinking_support, thinking_override, thinking) = {
         let state = state.read();
         (
-            state.model_state.as_ref().map(|model_state| model_state.capabilities.thinking).unwrap_or_default(),
+            state.model_state.as_ref().map(|model_state| model_state.thinking).unwrap_or_default(),
             state.reasoning_effort_override(),
             state.thinking(),
         )
@@ -189,6 +191,9 @@ pub async fn run_session(
     let reply_config = ChatReplyConfig::default().with_sampling_policy(state.read().preferences().sampling.policy());
     {
         let mut state = state.write();
+        if let Some(model_state) = state.model_state.as_mut() {
+            model_state.thinking_locked = true;
+        }
         if let Some(chat_state) = chat_state_mut(&mut state) {
             chat_state.pending_items = Vec::new();
             chat_state.pending_stats = None;

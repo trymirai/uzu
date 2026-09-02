@@ -1,12 +1,11 @@
 use std::fs::File;
 
-use test_runner::path::get_test_weights_path;
 use uzu_engine_macros::uzu_test;
 
-use crate::parameters::safetensors_metadata::read_metadata;
+use crate::{parameters::safetensors_metadata::read_metadata, tests::path::get_test_weights_path};
 
 #[uzu_test]
-#[ignore] // TODO: test data downloading
+#[ignore] // downloads the test model from the registry
 fn test_metadata_loading() {
     let path = get_test_weights_path();
     let file = File::open(&path).expect("weights not found");

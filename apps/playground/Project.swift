@@ -3,7 +3,7 @@ import ProjectDescription
 let projectName = "Mirai"
 
 let packages: [Package] = [
-    .package(path: "../../bindings/swift"),
+    .package(path: "../../crates/legacy/uzu/bindings/swift"),
     .package(url: "https://github.com/Rspoon3/SFSymbols", .exact("2.6.1")),
     .package(url: "https://github.com/firebase/firebase-ios-sdk", .exact("11.15.0")),
 ]
@@ -18,7 +18,7 @@ let settings: Settings = .settings(
         "DEVELOPMENT_TEAM": "C39GZ239GY",
         "TARGETED_DEVICE_FAMILY": "1,2",
         "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "NO",
-        "MARKETING_VERSION": "0.5.21",
+        "MARKETING_VERSION": "0.5.22",
         "CURRENT_PROJECT_VERSION": "2",
     ],
     configurations: [

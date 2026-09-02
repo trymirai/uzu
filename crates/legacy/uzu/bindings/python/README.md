@@ -1,0 +1,378 @@
+<p align="center">
+  <picture>
+    <img alt="Mirai" src="https://artifacts.trymirai.com/social/github/uzu-python.jpg" style="max-width: 100%;">
+  </picture>
+</p>
+
+<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](crates/legacy/uzu/bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.5.22)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.5.22)](https://pypi.org/project/uzu/) 
+
+# uzu
+
+A high-performance inference engine for AI models. It allows you to deploy AI directly in your app with **zero latency**, **full data privacy**, and **no inference costs**. Key features:
+
+- Simple, high-level API
+- Unified model configurations, making it easy to add support for new models
+- Traceable computations to ensure correctness against the source-of-truth implementation
+- Utilizes unified memory on Apple devices
+- [Broad model support](https://trymirai.com/models)
+
+## Quick Start
+
+
+
+Add the dependency:
+
+```bash
+uv add uzu==0.5.22
+```
+
+Run the code below:
+
+```python
+import asyncio
+
+from uzu import ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig
+
+
+async def main() -> None:
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
+
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        return
+
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
+
+    session = await engine.chat(model, ChatConfig.create())
+
+    messages = [
+        ChatMessage.system().with_text("You are a helpful assistant"),
+        ChatMessage.user().with_text("Tell me a short, funny story about a robot"),
+    ]
+
+    replies = await session.reply(messages, ChatReplyConfig.create())
+    if not replies:
+        return
+
+    message = replies[-1].message
+    print(f"Reasoning: {message.reasoning}")
+    print(f"Text: {message.text}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+
+<br>
+
+Everything from model downloading to inference configuration is handled automatically. Refer to the [documentation](https://docs.trymirai.com) for details on how to customize each step of the process.
+
+## Examples
+
+You can run any example via `cargo tools example` \<**python**\> \<**chat** | **chat-cloud** | **chat-shared-instance** | **chat-structured-output** | **quick-start** | **tool-calls**\>:
+
+### Chat
+
+In this example, we will download a model and get a reply to a specific list of messages:
+
+```python
+import asyncio
+
+from uzu import (
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    ChatSessionStreamChunk,
+    Engine,
+    EngineConfig,
+)
+
+
+async def main() -> None:
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
+
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
+
+    messages = [
+        ChatMessage.system().with_text("You are a helpful assistant"),
+        ChatMessage.user().with_text("Tell me a short, funny story about a robot"),
+    ]
+    session = await engine.chat(model, ChatConfig.create())
+    stream = await session.reply_with_stream(messages, ChatReplyConfig.create())
+    message: ChatMessage | None = None
+    async for chunk in stream.iterator():
+        if isinstance(chunk, ChatSessionStreamChunk.Replies):
+            replies = chunk.replies
+            if replies:
+                reply = replies[0]
+                message = reply.message
+                print(f"Generated tokens: {reply.stats.tokens_count_output}")
+        elif isinstance(chunk, ChatSessionStreamChunk.Error):
+            print(f"Error: {chunk.error}")
+    if message is not None:
+        print(f"Reasoning: {message.reasoning}")
+        print(f"Text: {message.text}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+<br>Once loaded, the same `ChatSession` can be reused for multiple requests until you drop it. Each model may consume a significant amount of RAM, so it's important to keep only one session loaded at a time. For iOS apps, we recommend adding the [Increased Memory Capability](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.kernel.increased-memory-limit) entitlement to ensure your app can allocate the required memory.
+
+### Chat with the cloud model
+
+In this example, we will get a reply to a specific list of messages from a cloud model:
+
+```python
+import asyncio
+
+from uzu import ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig, ReasoningEffort
+
+
+async def main() -> None:
+    engine_config = EngineConfig.create().with_openai_api_key("OPENAI_API_KEY")
+    engine = await Engine.create(engine_config)
+    model = await engine.model("gpt-5")
+    if model is None:
+        raise RuntimeError("Model not found")
+
+    messages = [
+        ChatMessage.system().with_reasoning_effort(ReasoningEffort.Low),
+        ChatMessage.user().with_text("How LLMs work"),
+    ]
+
+    session = await engine.chat(model, ChatConfig.create())
+    replies = await session.reply(messages, ChatReplyConfig.create())
+    if replies:
+        message = replies[0].message
+        print(f"Reasoning: {message.reasoning}")
+        print(f"Text: {message.text}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Chat with shared instance
+
+This example shows how to reuse chat instance without reloading model into memory:
+
+```python
+import asyncio
+
+from uzu import ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig
+
+
+async def main() -> None:
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
+
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
+
+    # The chat_instance owns the loaded model and can be shared between sessions.
+    chat_instance = await engine.chat_instance(model, ChatConfig.create())
+
+    first_session = await engine.chat_with_instance(chat_instance)
+    replies = await first_session.reply(
+        [ChatMessage.user().with_text("Tell me a short, funny story about a robot")],
+        ChatReplyConfig.create(),
+    )
+    if replies:
+        message = replies[-1].message
+        print(f"First session reasoning: {message.reasoning}")
+        print(f"First session text: {message.text}")
+
+    # The second session reuses the already-loaded weights instead of loading the model again.
+    second_session = await engine.chat_with_instance(chat_instance)
+    replies = await second_session.reply(
+        [ChatMessage.user().with_text("What is the capital of France?")],
+        ChatReplyConfig.create(),
+    )
+    if replies:
+        message = replies[-1].message
+        print(f"\nSecond session reasoning: {message.reasoning}")
+        print(f"Second session text: {message.text}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Chat with structured output
+
+Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema for the response you want to receive:
+
+```python
+import asyncio
+import json
+
+from pydantic import BaseModel
+
+from uzu import (
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    Grammar,
+    ReasoningEffort,
+)
+
+
+class Country(BaseModel):
+    name: str
+    capital: str
+
+
+class CountryList(BaseModel):
+    countries: list[Country]
+
+
+def structured_response(response: str | None, model_type: type[BaseModel]) -> BaseModel | None:
+    if not response:
+        return None
+    return model_type.model_validate_json(response)
+
+
+async def main() -> None:
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
+
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
+
+    schema_string = json.dumps(CountryList.model_json_schema())
+    messages = [
+        ChatMessage.system().with_reasoning_effort(ReasoningEffort.Disabled),
+        ChatMessage.user().with_text(
+            "Give me a JSON object containing a list of 3 countries, where each country has name and capital fields"
+        ),
+    ]
+
+    session = await engine.chat(model, ChatConfig.create())
+    replies = await session.reply(
+        messages,
+        ChatReplyConfig.create().with_grammar(Grammar.JsonSchema(schema_string)),
+    )
+    if replies:
+        countries = structured_response(replies[0].message.text, CountryList)
+        print(countries)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Tool calls
+
+This example shows how to use external tools:
+
+```python
+import asyncio
+from typing import Annotated
+
+from pydantic import BaseModel
+
+from uzu import (
+    ChatConfig,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    SamplingMethod,
+    SamplingPolicy,
+    uzu_tool_function,
+)
+
+
+class Coordinate(BaseModel):
+    """A geographic coordinate.
+
+    Attributes:
+        latitude: Latitude in decimal degrees.
+        longitude: Longitude in decimal degrees.
+    """
+
+    latitude: float
+    longitude: Annotated[float, "Longitude in decimal degrees."]
+
+
+@uzu_tool_function(name="get_location", description="Return the current location in coordinates")
+def get_current_location() -> Coordinate:
+    return Coordinate(latitude=51.5074, longitude=-0.1278)
+
+
+@uzu_tool_function
+def get_current_temperature(
+    latitude: float,
+    longitude: Annotated[float, "Longitude in decimal degrees."],
+) -> float:
+    """Return the temperature at the provided coordinates.
+
+    Args:
+        latitude: Latitude in decimal degrees.
+        longitude: This is overridden by the Annotated description.
+    """
+    _ = latitude, longitude
+    return 25.0
+
+
+async def main() -> None:
+    engine = await Engine.create(EngineConfig.create())
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
+
+    session = await engine.chat(model, ChatConfig.create())
+    await session.add_tool(get_current_location)
+    await session.add_tool(get_current_temperature)
+
+    messages = [
+        ChatMessage.system().with_text("You are a helpful assistant"),
+        ChatMessage.user().with_text("What temperature is it now at my location?"),
+    ]
+    config = ChatReplyConfig.create().with_sampling_policy(SamplingPolicy.Custom(method=SamplingMethod.Greedy()))
+    replies = await session.reply(messages, config)
+    if replies:
+        message = replies[-1].message
+        print(f"Reasoning: {message.reasoning or ''}")
+        print(f"Text: {message.text or ''}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+
+
+## Troubleshooting
+
+If you experience any problems, please contact us via [Discord](https://discord.com/invite/trymirai) or [email](mailto:contact@getmirai.co).
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

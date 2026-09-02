@@ -116,10 +116,10 @@ impl EncodingTrait for HanashiEncodingImpl {
         let text_encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
         for token_id in text_encoding.get_ids() {
             let token = self.resolve_token(*token_id, true)?;
-            self.push_token_to_parser(&token)?;
+            self.push_token_to_parser(&token, true)?;
             self.state.tokens.push(token);
         }
-
+        self.parser.flush_extraction();
         self.update_messages_from_parser_state()?;
         Ok(())
     }
@@ -130,7 +130,7 @@ impl EncodingTrait for HanashiEncodingImpl {
     ) -> Result<(), Self::Error> {
         for token_id in &token_ids {
             let token = self.resolve_token(*token_id, true)?;
-            self.push_token_to_parser(&token)?;
+            self.push_token_to_parser(&token, false)?;
             self.state.tokens.push(token);
         }
 
@@ -148,14 +148,28 @@ impl EncodingTrait for HanashiEncodingImpl {
 }
 
 impl HanashiEncodingImpl {
+    pub fn tokenize(
+        &self,
+        text: &str,
+    ) -> Result<Vec<TokenId>, Error> {
+        let encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
+        Ok(encoding.get_ids().to_vec())
+    }
+
     fn push_token_to_parser(
         &mut self,
         token: &Token,
+        defer_extraction: bool,
     ) -> Result<(), Error> {
         if token.is_special && !self.framing_tokens.contains(&token.value) {
             return Ok(());
         }
-        self.parser.push(&token.clone().to_parser_token())?;
+        let parser_token = token.clone().to_parser_token();
+        if defer_extraction {
+            self.parser.push_bulk(&parser_token)?;
+        } else {
+            self.parser.push(&parser_token)?;
+        }
         Ok(())
     }
 

@@ -5,13 +5,13 @@ use objc2_core_foundation::{CFArray, CFDictionary, CFNumber, CFRetained, CFStrin
 
 use super::{IOHIDEventSystemClient, IOHIDServiceClient, IOKit, service_client::ServiceClient};
 
-pub(super) struct EventSystemClient {
+pub struct EventSystemClient {
     io_kit: &'static IOKit,
     inner: CFRetained<IOHIDEventSystemClient>,
 }
 
 impl EventSystemClient {
-    pub(super) fn new() -> Option<Self> {
+    pub fn new() -> Option<Self> {
         let io_kit = IOKit::get()?;
         let pointer = unsafe { (io_kit.create)(None) };
         let inner = unsafe { CFRetained::from_raw(NonNull::new(pointer)?) };
@@ -21,7 +21,7 @@ impl EventSystemClient {
         })
     }
 
-    pub(super) fn services(
+    pub fn services(
         &self,
         page: i32,
         usage: i32,

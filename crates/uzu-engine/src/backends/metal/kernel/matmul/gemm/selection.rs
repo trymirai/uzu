@@ -1,13 +1,11 @@
+use metal::MTLGPUFamily;
 use thiserror::Error;
 
 use super::{GemmEngine, GemmPlan, policy};
 use crate::{
-    backends::{
-        common::{
-            gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
-            kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
-        },
-        metal::device_profile::DeviceProfile,
+    backends::common::{
+        gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
+        kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
     },
     data_type::DataType,
 };
@@ -18,7 +16,7 @@ pub struct GemmProblem {
     weights_data_type: DataType,
     output_data_type: DataType,
     supports_mxu: bool,
-    profile: DeviceProfile,
+    apple_gpu_family: MTLGPUFamily,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
@@ -35,14 +33,14 @@ impl GemmProblem {
         weights_data_type: DataType,
         output_data_type: DataType,
         supports_mxu: bool,
-        profile: DeviceProfile,
+        apple_gpu_family: MTLGPUFamily,
     ) -> Self {
         Self {
             shape,
             weights_data_type,
             output_data_type,
             supports_mxu,
-            profile,
+            apple_gpu_family,
         }
     }
 
@@ -52,7 +50,7 @@ impl GemmProblem {
         } else {
             GemmEngine::Simdgroup
         };
-        self.finish_plan(engine, select_tiling(self.shape, engine, self.profile))
+        self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family))
     }
 
     #[cfg(test)]
@@ -61,7 +59,7 @@ impl GemmProblem {
         engine: GemmEngine,
     ) -> Result<GemmPlan, GemmPlanError> {
         self.validate_engine(engine)?;
-        Ok(self.finish_plan(engine, select_tiling(self.shape, engine, self.profile)))
+        Ok(self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family)))
     }
 
     pub(super) fn validate_engine(
@@ -166,11 +164,11 @@ fn mxu_is_eligible(shape: MatmulShape) -> bool {
 fn select_tiling(
     shape: MatmulShape,
     engine: GemmEngine,
-    profile: DeviceProfile,
+    apple_gpu_family: MTLGPUFamily,
 ) -> GemmTiling {
     match engine {
         GemmEngine::Simdgroup if shape.is_quant() => {
-            policy::simdgroup_quant_tile(shape.m, shape.n, shape.b_group_size.unwrap_or(0), profile)
+            policy::simdgroup_quant_tile(shape.m, shape.n, shape.b_group_size.unwrap_or(0), apple_gpu_family)
         },
         GemmEngine::Simdgroup => policy::simdgroup_fp_tile(shape.m, shape.n, shape.k),
         GemmEngine::Mxu if !shape.a_full_precision || shape.is_quant() => select_mxu_quant_tiling(shape),

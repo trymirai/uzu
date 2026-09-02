@@ -2,7 +2,7 @@ mod binaries;
 mod platform;
 mod version;
 
-use std::fs;
+use std::{fs, path::Path};
 
 use anyhow::{Result, anyhow};
 pub use version::bump_workspace_version;
@@ -16,7 +16,10 @@ use crate::{
     types::Language,
 };
 
-pub fn run_release(version: &str) -> Result<()> {
+pub fn run_release(
+    version: &str,
+    release_path: &Path,
+) -> Result<()> {
     let paths = Paths::new()?;
 
     bump_workspace_version(version)?;
@@ -28,18 +31,14 @@ pub fn run_release(version: &str) -> Result<()> {
         return Err(anyhow!("Workspace version mismatch after sync"));
     }
 
-    let release_path = paths.release_workspace_path();
-    if release_path.exists() {
-        fs::remove_dir_all(&release_path)?;
-    }
-    fs::create_dir_all(&release_path)?;
+    fs::create_dir_all(release_path)?;
 
-    platform::stage_platform(&paths, &platforms)?;
-    binaries::stage_binaries(&paths, &platforms)?;
+    platform::stage_platform(&paths, &platforms, release_path)?;
+    binaries::stage_binaries(&paths, &platforms, release_path)?;
 
     for language in platforms.languages.keys() {
         let backend = backend_for_language(*language, platforms.clone());
-        backend.release(version)?;
+        backend.release(version, release_path)?;
     }
 
     Ok(())

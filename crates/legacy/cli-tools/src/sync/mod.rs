@@ -66,32 +66,35 @@ pub fn run_sync(check: bool) -> Result<()> {
         check,
     )?;
 
-    PyprojectSyncTask.run(&platforms, &workspace, &root_path.join("bindings/python/pyproject.toml"), check)?;
-    LicenseSyncTask.run(&platforms, &workspace, &root_path.join("bindings/python/LICENSE"), check)?;
+    let python_bindings_path = paths.bindings_for_language_path(Language::Python);
+    PyprojectSyncTask.run(&platforms, &workspace, &python_bindings_path.join("pyproject.toml"), check)?;
+    LicenseSyncTask.run(&platforms, &workspace, &python_bindings_path.join("LICENSE"), check)?;
     ReadmeSyncTask::new(vec![Language::Python]).run(
         &platforms,
         &workspace,
-        &root_path.join("bindings/python/README.md"),
+        &python_bindings_path.join("README.md"),
         check,
     )?;
 
-    SwiftPackageSyncTask.run(&platforms, &workspace, &root_path.join("bindings/swift/Package.swift"), check)?;
-    LicenseSyncTask.run(&platforms, &workspace, &root_path.join("bindings/swift/LICENSE"), check)?;
+    let swift_bindings_path = paths.bindings_for_language_path(Language::Swift);
+    SwiftPackageSyncTask.run(&platforms, &workspace, &swift_bindings_path.join("Package.swift"), check)?;
+    LicenseSyncTask.run(&platforms, &workspace, &swift_bindings_path.join("LICENSE"), check)?;
     ReadmeSyncTask::new(vec![Language::Swift]).run(
         &platforms,
         &workspace,
-        &root_path.join("bindings/swift/README.md"),
+        &swift_bindings_path.join("README.md"),
         check,
     )?;
 
-    PackageJsonSyncTask.run(&platforms, &workspace, &root_path.join("bindings/typescript/package.json"), check)?;
-    JsrSyncTask.run(&platforms, &workspace, &root_path.join("bindings/typescript/jsr.json"), check)?;
-    JsrSyncTask.run(&platforms, &workspace, &root_path.join("bindings/typescript/jsr.json.orig"), check)?;
-    LicenseSyncTask.run(&platforms, &workspace, &root_path.join("bindings/typescript/LICENSE"), check)?;
+    let typescript_bindings_path = paths.bindings_for_language_path(Language::TypeScript);
+    PackageJsonSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("package.json"), check)?;
+    JsrSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("jsr.json"), check)?;
+    JsrSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("jsr.json.orig"), check)?;
+    LicenseSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("LICENSE"), check)?;
     ReadmeSyncTask::new(vec![Language::TypeScript]).run(
         &platforms,
         &workspace,
-        &root_path.join("bindings/typescript/README.md"),
+        &typescript_bindings_path.join("README.md"),
         check,
     )?;
 

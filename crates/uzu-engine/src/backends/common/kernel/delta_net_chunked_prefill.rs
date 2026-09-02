@@ -1,7 +1,5 @@
-use std::convert::Infallible;
-
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::Unsupported},
     data_type::DataType,
 };
 
@@ -19,12 +17,14 @@ pub struct DeltaNetChunkedPrefillArgs<'a, B: Backend> {
     pub suffix_len: u32,
 }
 
-pub trait DeltaNetChunkedPrefill<B: Backend>: Sized + Send + Sync {
+pub trait DeltaNetChunkedPrefill: Sized + Send + Sync {
+    type Backend: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Self>>;
+
     fn new(
-        context: &B::Context,
+        context: &<Self::Backend as Backend>::Context,
         outer_data_type: DataType,
         head_dim: u32,
-    ) -> Result<Option<Self>, B::Error>;
+    ) -> Result<Option<Self>, <Self::Backend as Backend>::Error>;
 
     fn should_use(
         &self,
@@ -33,12 +33,14 @@ pub trait DeltaNetChunkedPrefill<B: Backend>: Sized + Send + Sync {
 
     fn encode(
         &self,
-        args: DeltaNetChunkedPrefillArgs<'_, B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error>;
+        args: DeltaNetChunkedPrefillArgs<'_, Self::Backend>,
+        encoder: &mut Encoder<Self::Backend>,
+    ) -> Result<(), <Self::Backend as Backend>::Error>;
 }
 
-impl<B: Backend> DeltaNetChunkedPrefill<B> for Infallible {
+impl<B: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Unsupported<B>>>> DeltaNetChunkedPrefill for Unsupported<B> {
+    type Backend = B;
+
     fn new(
         _context: &B::Context,
         _outer_data_type: DataType,
@@ -51,7 +53,7 @@ impl<B: Backend> DeltaNetChunkedPrefill<B> for Infallible {
         &self,
         _suffix_len: u32,
     ) -> bool {
-        match *self {}
+        match self.never {}
     }
 
     fn encode(
@@ -59,6 +61,6 @@ impl<B: Backend> DeltaNetChunkedPrefill<B> for Infallible {
         _args: DeltaNetChunkedPrefillArgs<'_, B>,
         _encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        match *self {}
+        match self.never {}
     }
 }

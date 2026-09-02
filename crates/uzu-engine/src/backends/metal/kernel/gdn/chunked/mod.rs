@@ -32,7 +32,9 @@ pub struct MetalDeltaNetChunkedPrefill {
     output_and_state: DeltaNetChunkedOutputAndStateMetalKernel,
 }
 
-impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
+impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
+    type Backend = Metal;
+
     fn new(
         context: &MetalContext,
         outer_data_type: DataType,
@@ -42,7 +44,7 @@ impl DeltaNetChunkedPrefill<Metal> for MetalDeltaNetChunkedPrefill {
             return Ok(None);
         }
 
-        if !context.supports_mxu() {
+        if !context.supports_mxu {
             return Ok(None);
         }
 

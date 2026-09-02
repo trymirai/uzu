@@ -1,13 +1,15 @@
-use crate::units::{Joules, Watts};
+use crate::{error::KeisokuError, units::Joules};
 
-pub struct PowerReading {
-    pub cpu: Option<Watts>,
-    pub gpu: Option<Watts>,
-    pub ane: Option<Watts>,
-    pub ram: Option<Watts>,
-    pub total: Watts,
-    pub energy: Joules,
-    pub samples: u64,
+pub enum PowerReading {
+    Total {
+        total: Joules,
+    },
+    Components {
+        cpu: Joules,
+        gpu: Joules,
+        ane: Joules,
+        ram: Joules,
+    },
 }
 
 pub struct PowerMeter {
@@ -21,11 +23,15 @@ impl PowerMeter {
         }
     }
 
-    pub fn start(&mut self) {
-        self.inner.start();
+    pub fn start(&mut self) -> Result<(), KeisokuError> {
+        self.inner.start()
     }
 
-    pub fn stop(&mut self) -> Option<PowerReading> {
+    pub fn split(&mut self) -> Result<PowerReading, KeisokuError> {
+        self.inner.split()
+    }
+
+    pub fn stop(&mut self) -> Result<PowerReading, KeisokuError> {
         self.inner.stop()
     }
 }
@@ -38,144 +44,203 @@ impl Default for PowerMeter {
 
 #[cfg(target_os = "macos")]
 mod inner {
-    use super::PowerReading;
+    use super::{KeisokuError, PowerReading};
     use crate::{
         Device, Select,
         marker::{Ane, Cpu, EnergyRail, Gpu, Ram},
-        units::{Joules, Watts},
     };
 
     type Rails = Select![EnergyRail<Cpu>, EnergyRail<Gpu>, EnergyRail<Ane>, EnergyRail<Ram>];
 
-    pub(super) struct Inner {
+    pub struct Inner {
         handle: Option<crate::device::IntervalHandle<Rails>>,
     }
 
     impl Inner {
-        pub(super) fn new() -> Self {
+        pub fn new() -> Self {
             Self {
                 handle: None,
             }
         }
 
-        pub(super) fn start(&mut self) {
+        pub fn start(&mut self) -> Result<(), KeisokuError> {
             let mut handle = Device::interval_measurement::<Rails>();
             handle.start();
             self.handle = Some(handle);
+            Ok(())
         }
 
-        pub(super) fn stop(&mut self) -> Option<PowerReading> {
-            let mut handle = self.handle.take()?;
-            let elapsed = handle.elapsed().as_secs_f64().max(0.001);
-            let sample = handle.stop()?;
-            let cpu_j = sample.get::<EnergyRail<Cpu>>().value() as f64;
-            let gpu_j = sample.get::<EnergyRail<Gpu>>().value() as f64;
-            let ane_j = sample.get::<EnergyRail<Ane>>().value() as f64;
-            let ram_j = sample.get::<EnergyRail<Ram>>().value() as f64;
-            let total_j = cpu_j + gpu_j + ane_j + ram_j;
-            let to_watts = |joules: f64| Watts((joules / elapsed) as f32);
-            Some(PowerReading {
-                cpu: Some(to_watts(cpu_j)),
-                gpu: Some(to_watts(gpu_j)),
-                ane: Some(to_watts(ane_j)),
-                ram: Some(to_watts(ram_j)),
-                total: to_watts(total_j),
-                energy: Joules(total_j as f32),
-                samples: 1,
+        pub fn stop(&mut self) -> Result<PowerReading, KeisokuError> {
+            let Some(mut handle) = self.handle.take() else {
+                return Err(KeisokuError::PowerMeterNotStarted);
+            };
+            let Some(sample) = handle.stop() else {
+                return Err(KeisokuError::PowerReadingUnavailable);
+            };
+            Ok(PowerReading::Components {
+                cpu: *sample.get::<EnergyRail<Cpu>>(),
+                gpu: *sample.get::<EnergyRail<Gpu>>(),
+                ane: *sample.get::<EnergyRail<Ane>>(),
+                ram: *sample.get::<EnergyRail<Ram>>(),
             })
+        }
+
+        pub fn split(&mut self) -> Result<PowerReading, KeisokuError> {
+            let reading = self.stop();
+            self.start()?;
+            reading
         }
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "ios")]
 mod inner {
     use std::{
-        sync::{
-            Arc, Mutex,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::mpsc,
         thread::{self, JoinHandle},
         time::{Duration, Instant},
     };
 
-    use super::PowerReading;
-    use crate::{
-        Device,
-        units::{Joules, Watts},
-    };
+    use super::{KeisokuError, PowerReading};
+    use crate::{Device, units::Joules};
 
     const SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
-    #[derive(Default)]
-    struct Accumulator {
-        energy_joules: f64,
-        elapsed_seconds: f64,
-        samples: u64,
+    enum Command {
+        Split {
+            boundary: Instant,
+            response: mpsc::Sender<Result<PowerReading, KeisokuError>>,
+        },
+        Stop {
+            boundary: Instant,
+            response: mpsc::Sender<Result<PowerReading, KeisokuError>>,
+        },
     }
 
-    pub(super) struct Inner {
-        running: Arc<AtomicBool>,
-        accumulator: Arc<Mutex<Accumulator>>,
-        worker: Option<JoinHandle<()>>,
+    struct Sampler {
+        commands: mpsc::Sender<Command>,
+        worker: JoinHandle<()>,
+    }
+
+    pub struct Inner {
+        sampler: Option<Sampler>,
     }
 
     impl Inner {
-        pub(super) fn new() -> Self {
+        pub fn new() -> Self {
             Self {
-                running: Arc::new(AtomicBool::new(false)),
-                accumulator: Arc::new(Mutex::new(Accumulator::default())),
-                worker: None,
+                sampler: None,
             }
         }
 
-        pub(super) fn start(&mut self) {
-            *self.accumulator.lock().expect("power meter accumulator poisoned") = Accumulator::default();
-            self.running.store(true, Ordering::Relaxed);
-            let running = self.running.clone();
-            let accumulator = self.accumulator.clone();
-            self.worker = Some(thread::spawn(move || {
-                let mut device = Device::new();
-                let mut last = Instant::now();
-                while running.load(Ordering::Relaxed) {
-                    thread::sleep(SAMPLE_INTERVAL);
-                    let now = Instant::now();
-                    let seconds = now.duration_since(last).as_secs_f64();
-                    last = now;
-                    let Some(watts) = device.rail_power() else {
-                        continue;
-                    };
-                    let watts = watts.value() as f64;
-                    let mut accumulator = accumulator.lock().expect("power meter accumulator poisoned");
-                    accumulator.energy_joules += watts * seconds;
-                    accumulator.elapsed_seconds += seconds;
-                    accumulator.samples += 1;
-                }
-            }));
+        pub fn start(&mut self) -> Result<(), KeisokuError> {
+            if let Some(sampler) = self.sampler.take() {
+                sampler.shutdown()?;
+            }
+            let (commands, receiver) = mpsc::channel();
+            let worker = thread::spawn(move || run(receiver));
+            self.sampler = Some(Sampler {
+                commands,
+                worker,
+            });
+            Ok(())
         }
 
-        pub(super) fn stop(&mut self) -> Option<PowerReading> {
-            self.running.store(false, Ordering::Relaxed);
-            if let Some(worker) = self.worker.take() {
-                let _ = worker.join();
+        pub fn split(&mut self) -> Result<PowerReading, KeisokuError> {
+            self.sampler.as_ref().ok_or(KeisokuError::PowerMeterNotStarted)?.split()
+        }
+
+        pub fn stop(&mut self) -> Result<PowerReading, KeisokuError> {
+            self.sampler.take().ok_or(KeisokuError::PowerMeterNotStarted)?.stop()
+        }
+    }
+
+    impl Sampler {
+        fn split(&self) -> Result<PowerReading, KeisokuError> {
+            let (response, receiver) = mpsc::channel();
+            self.commands
+                .send(Command::Split {
+                    boundary: Instant::now(),
+                    response,
+                })
+                .map_err(|_| KeisokuError::SamplingTaskDisconnected)?;
+            receive_reading(receiver)
+        }
+
+        fn stop(self) -> Result<PowerReading, KeisokuError> {
+            let (response, receiver) = mpsc::channel();
+            let reading = self
+                .commands
+                .send(Command::Stop {
+                    boundary: Instant::now(),
+                    response,
+                })
+                .map_err(|_| KeisokuError::SamplingTaskDisconnected)
+                .and_then(|()| receive_reading(receiver));
+            self.worker.join().map_err(|_| KeisokuError::SamplingTaskPanicked)?;
+            reading
+        }
+
+        fn shutdown(self) -> Result<(), KeisokuError> {
+            drop(self.commands);
+            self.worker.join().map_err(|_| KeisokuError::SamplingTaskPanicked)
+        }
+    }
+
+    fn run(commands: mpsc::Receiver<Command>) {
+        let mut device = Device::new();
+        let mut joules = None;
+        let mut last_sample = Instant::now();
+
+        loop {
+            match commands.recv_timeout(SAMPLE_INTERVAL) {
+                Ok(Command::Split {
+                    boundary,
+                    response,
+                }) => {
+                    sample(&mut device, &mut joules, &mut last_sample, boundary);
+                    let _ = response.send(reading(joules.take()));
+                },
+                Ok(Command::Stop {
+                    boundary,
+                    response,
+                }) => {
+                    sample(&mut device, &mut joules, &mut last_sample, boundary);
+                    let _ = response.send(reading(joules));
+                    break;
+                },
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    sample(&mut device, &mut joules, &mut last_sample, Instant::now());
+                },
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
-            let accumulator = self.accumulator.lock().expect("power meter accumulator poisoned");
-            if accumulator.samples == 0 {
-                return None;
-            }
-            let total = if accumulator.elapsed_seconds > 0.0 {
-                (accumulator.energy_joules / accumulator.elapsed_seconds) as f32
-            } else {
-                0.0
-            };
-            Some(PowerReading {
-                cpu: None,
-                gpu: None,
-                ane: None,
-                ram: None,
-                total: Watts(total),
-                energy: Joules(accumulator.energy_joules as f32),
-                samples: accumulator.samples,
+        }
+    }
+
+    fn sample(
+        device: &mut Device,
+        joules: &mut Option<f64>,
+        last_sample: &mut Instant,
+        boundary: Instant,
+    ) {
+        let elapsed = boundary.saturating_duration_since(*last_sample);
+        *last_sample = (*last_sample).max(boundary);
+        if let Some(energy) = device.rail_energy(elapsed) {
+            *joules.get_or_insert(0.0) += f64::from(energy.value());
+        }
+    }
+
+    fn reading(joules: Option<f64>) -> Result<PowerReading, KeisokuError> {
+        joules
+            .map(|joules| PowerReading::Total {
+                total: Joules(joules as f32),
             })
-        }
+            .ok_or(KeisokuError::PowerReadingUnavailable)
+    }
+
+    fn receive_reading(
+        receiver: mpsc::Receiver<Result<PowerReading, KeisokuError>>
+    ) -> Result<PowerReading, KeisokuError> {
+        receiver.recv().map_err(|_| KeisokuError::SamplingTaskDisconnected)?
     }
 }

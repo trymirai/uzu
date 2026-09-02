@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -94,20 +94,6 @@ fn test_sigmoid_gate_f32() {
         num_heads: 2,
         head_dim: 64,
         suffix_length: 8,
-    });
-}
-
-#[uzu_test]
-fn test_sigmoid_gate_f16() {
-    run_test::<f16>(&Config {
-        num_heads: 8,
-        head_dim: 64,
-        suffix_length: 4,
-    });
-    run_test::<f16>(&Config {
-        num_heads: 16,
-        head_dim: 256,
-        suffix_length: 1,
     });
 }
 

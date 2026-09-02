@@ -3,6 +3,7 @@ mod config;
 use std::{fs, future::Future, path::Path, pin::Pin};
 
 pub use config::Config;
+use hanashi::chat::EncodingConfig;
 use shoji::{
     traits::Registry as RegistryTrait,
     types::{
@@ -102,22 +103,23 @@ impl Registry {
                     path: path.to_string_lossy().to_string(),
                 },
             },
-            load_encodings(&path),
+            load_encoding(&path),
         )
     }
 }
 
-fn load_encodings(model_path: &Path) -> Vec<Value> {
+fn load_encoding(model_path: &Path) -> Option<Value> {
     let Ok(text) = fs::read_to_string(model_path.join("encoding.json")) else {
-        return vec![];
+        return None;
     };
     let parsed = serde_json::from_str::<serde_json::Value>(&text);
-    match parsed {
+    let encodings: Vec<Value> = match parsed {
         Ok(serde_json::Value::Array(entries)) => entries.into_iter().map(Value::from).collect(),
         Ok(entry) => vec![Value::from(entry)],
         Err(error) => {
             tracing::warn!(?error, path = %model_path.display(), "ignoring invalid encoding.json");
             vec![]
         },
-    }
+    };
+    EncodingConfig::select(&encodings)
 }

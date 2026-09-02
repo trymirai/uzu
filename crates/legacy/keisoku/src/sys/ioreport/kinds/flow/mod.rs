@@ -1,4 +1,4 @@
-pub(crate) trait FlowKind: 'static {
+pub trait FlowKind: 'static {
     const FLOW: DramFlow;
     const TYPE_BIT_BYTES: u128;
     const TYPE_BIT_HIST: u128;

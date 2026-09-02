@@ -10,13 +10,13 @@ pub(super) use selection::GemmProblem;
 
 use crate::backends::common::gpu_types::gemm::GemmTiling;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GemmEngine {
     Simdgroup,
     Mxu,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GemmPlan {
     pub(super) engine: GemmEngine,
     pub(super) tiling: GemmTiling,
