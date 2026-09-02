@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "common/dsl.h"
+#include "../common/dsl.h"
 
 template <typename T>
 VARIANTS(T, bfloat)

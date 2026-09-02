@@ -34,6 +34,7 @@ Benchmarks live inside the `uzu-engine` library test target (registered with `#[
 | `Metal/Kernel/UnifiedQuantizedGemm/...` | `Metal/Kernel/UnifiedQuantizedGemm` |
 | `Metal/Kernel/Gemv/...`                 | `Metal/Kernel/Gemv`                 |
 | `Metal/Kernel/Qwen3Layers/...`          | `Metal/Kernel/Qwen3Layers`          |
+| `Metal/Kernel/GroupedConvolution`       | `Metal/Kernel/GroupedConvolution`   |
 | `Metal/Kernel/RMSNorm`                  | `Metal/Kernel/RMSNorm`              |
 | `Metal/Kernel/Sampling/Argmax`          | `Metal/Kernel/Sampling/Argmax`      |
 | `ChatSession run`                       | `ChatSession run`                   |
@@ -41,6 +42,10 @@ Benchmarks live inside the `uzu-engine` library test target (registered with `#[
 
 The prefix `Metal/Kernel/Matmul` runs both `GEMM` and `GEMM_MXU` in one pass. The session and language-model groups
 require the test model path configured by the test helpers.
+
+`Metal/Kernel/GroupedConvolution` uses the DFlash V2 BF16 shape (`D=6656`, group size 16, kernel size 2) at sequence
+lengths 2, 4, 8, and 16. Each timed iteration dispatches both the input and output convolution stages; dynamic input,
+coefficient, and output buffers cycle through the cold pool while the base kernel remains fixed.
 
 ## Output layout
 
