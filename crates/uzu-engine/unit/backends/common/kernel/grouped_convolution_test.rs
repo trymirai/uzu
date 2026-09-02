@@ -51,6 +51,18 @@ impl Shape {
     fn base_kernel_len(self) -> usize {
         2 * self.kernel_size * self.model_dim
     }
+
+    fn stage_offsets(
+        self,
+        stage: u32,
+    ) -> (usize, usize) {
+        let stage = stage as usize;
+        let element_size = bf16::data_type().size_in_bytes();
+        (
+            stage * self.kernel_size * self.groups() * element_size,
+            stage * self.kernel_size * self.model_dim * element_size,
+        )
+    }
 }
 
 fn run<B: Backend>(
@@ -64,23 +76,26 @@ fn run<B: Backend>(
     assert_eq!(coefficients.len(), shape.coefficients_len());
     assert_eq!(base_kernel.len(), shape.base_kernel_len());
     let context = B::Context::new().unwrap();
-    let kernel = <B::Kernels as Kernels>::GroupedConvolutionKernel::new(&context, bf16::data_type()).unwrap();
+    let kernel = <B::Kernels as Kernels>::GroupedConvolutionKernel::new(
+        &context,
+        bf16::data_type(),
+        shape.model_dim as u32,
+        shape.group_size as u32,
+        shape.kernel_size as u32,
+    )
+    .unwrap();
     let input = alloc_allocation_with_data::<B, bf16>(&context, input);
     let coefficients = alloc_allocation_with_data::<B, bf16>(&context, coefficients);
     let base_kernel = alloc_allocation_with_data::<B, bf16>(&context, base_kernel);
     let mut output = alloc_allocation::<B, bf16>(&context, shape.input_len());
     let mut encoder = Encoder::new(context.as_ref()).unwrap();
+    let (coefficient_offset, base_kernel_offset) = shape.stage_offsets(stage);
     kernel.encode(
         &input,
-        &coefficients,
-        &base_kernel,
+        (&coefficients, coefficient_offset),
+        (&base_kernel, base_kernel_offset),
         &mut output,
         shape.sequence_length as u32,
-        shape.model_dim as u32,
-        shape.groups() as u32,
-        shape.group_size as u32,
-        shape.kernel_size as u32,
-        stage,
         &mut encoder,
     );
     submit_encoder(encoder);
@@ -182,8 +197,14 @@ fn bench_dflash_v2(c: &mut Criterion) {
     const KERNEL_SIZE: usize = 2;
 
     let context = crate::tests::util::shared_metal_context();
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::GroupedConvolutionKernel::new(&context, bf16::data_type())
-        .expect("kernel");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::GroupedConvolutionKernel::new(
+        &context,
+        bf16::data_type(),
+        MODEL_DIM as u32,
+        GROUP_SIZE as u32,
+        KERNEL_SIZE as u32,
+    )
+    .expect("kernel");
     let base_kernel =
         alloc_allocation_with_data::<Metal, bf16>(&context, &vec![bf16::from_f32(0.01); 2 * KERNEL_SIZE * MODEL_DIM]);
     let mut group = c.benchmark_group(BENCHMARK);
@@ -214,30 +235,22 @@ fn bench_dflash_v2(c: &mut Criterion) {
                 &format!("{BENCHMARK}/T{sequence_length}"),
                 |encoder| {
                     let buffers = buffers.next_mut();
+                    let (input_coefficient_offset, input_base_kernel_offset) = shape.stage_offsets(0);
                     kernel.encode(
                         &buffers.input,
-                        &buffers.coefficients,
-                        &base_kernel,
+                        (&buffers.coefficients, input_coefficient_offset),
+                        (&base_kernel, input_base_kernel_offset),
                         &mut buffers.input_stage_output,
                         shape.sequence_length as u32,
-                        shape.model_dim as u32,
-                        shape.groups() as u32,
-                        shape.group_size as u32,
-                        shape.kernel_size as u32,
-                        0,
                         encoder,
                     );
+                    let (output_coefficient_offset, output_base_kernel_offset) = shape.stage_offsets(1);
                     kernel.encode(
                         &buffers.input,
-                        &buffers.coefficients,
-                        &base_kernel,
+                        (&buffers.coefficients, output_coefficient_offset),
+                        (&base_kernel, output_base_kernel_offset),
                         &mut buffers.output_stage_output,
                         shape.sequence_length as u32,
-                        shape.model_dim as u32,
-                        shape.groups() as u32,
-                        shape.group_size as u32,
-                        shape.kernel_size as u32,
-                        1,
                         encoder,
                     );
                 },

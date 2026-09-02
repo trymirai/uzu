@@ -33,7 +33,6 @@ pub(super) struct GroupedConvolution<B: Backend> {
     kernel: <B::Kernels as Kernels>::GroupedConvolutionKernel,
     model_dim: u32,
     groups: u32,
-    group_size: u32,
     kernel_size: u32,
     data_type: DataType,
 }
@@ -70,15 +69,20 @@ impl<B: Backend> GroupedConvolution<B> {
             data_type,
             &parameters.subtree("kernel_projection"),
         )?;
-        let kernel = <B::Kernels as Kernels>::GroupedConvolutionKernel::new(context, data_type)
-            .map_err(ConvolutionNewError::Backend)?;
+        let kernel = <B::Kernels as Kernels>::GroupedConvolutionKernel::new(
+            context,
+            data_type,
+            model_dim,
+            config.group_size,
+            config.kernel_size,
+        )
+        .map_err(ConvolutionNewError::Backend)?;
         Ok(Self {
             base_kernel,
             projection,
             kernel,
             model_dim,
             groups,
-            group_size: config.group_size,
             kernel_size: config.kernel_size,
             data_type,
         })
@@ -125,17 +129,16 @@ impl<B: Backend> GroupedConvolution<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let mut output = encoder.allocate_scratch_for_shape(&[sequence_length, self.model_dim], self.data_type)?;
+        let stage = stage as usize;
+        let element_size = self.data_type.size_in_bytes();
+        let coefficient_offset = stage * self.kernel_size as usize * self.groups as usize * element_size;
+        let base_kernel_offset = stage * self.kernel_size as usize * self.model_dim as usize * element_size;
         self.kernel.encode(
             input,
-            coefficients,
-            &self.base_kernel,
+            (coefficients, coefficient_offset),
+            (&self.base_kernel, base_kernel_offset),
             &mut output,
             sequence_length,
-            self.model_dim,
-            self.groups,
-            self.group_size,
-            self.kernel_size,
-            stage as u32,
             encoder,
         );
         Ok(output)
