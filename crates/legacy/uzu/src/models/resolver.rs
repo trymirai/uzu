@@ -2,14 +2,14 @@ use std::{collections::HashSet, io::ErrorKind, path::PathBuf, sync::Arc, time::D
 
 use download_manager::FileCheck;
 use futures_util::{StreamExt, TryStreamExt, stream};
+use kiban::fs::asyn::{
+    create_dir_all as kiban_create_dir_all, read as kiban_read, rename as kiban_rename, write as kiban_write,
+};
 use reqwest::{Client, Url};
 use serde_json::{from_slice, to_vec};
 use shoji::types::{
     basic::{File, Repository},
     model::{Model, ModelAccessibility, ModelSource},
-};
-use tokio::fs::{
-    create_dir_all as tokio_create_dir_all, read as tokio_read, rename as tokio_rename, write as tokio_write,
 };
 use uuid::Uuid;
 
@@ -48,7 +48,7 @@ impl ModelsResolver {
     }
 
     pub async fn load_cache(&self) -> Result<Option<ResolvedModels>, RegistryError> {
-        let contents = match tokio_read(&self.cache_path).await {
+        let contents = match kiban_read(&self.cache_path).await {
             Ok(contents) => contents,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(resolution_error(error)),
@@ -62,10 +62,10 @@ impl ModelsResolver {
         models: &ResolvedModels,
     ) -> Result<(), RegistryError> {
         let parent = self.cache_path.parent().ok_or_else(|| resolution_error("invalid resolved models cache path"))?;
-        tokio_create_dir_all(parent).await.map_err(resolution_error)?;
+        kiban_create_dir_all(parent).await.map_err(resolution_error)?;
         let temporary = self.cache_path.with_added_extension(format!("{}.tmp", Uuid::new_v4()));
-        tokio_write(&temporary, to_vec(models).map_err(resolution_error)?).await.map_err(resolution_error)?;
-        tokio_rename(temporary, &self.cache_path).await.map_err(resolution_error)
+        kiban_write(&temporary, to_vec(models).map_err(resolution_error)?).await.map_err(resolution_error)?;
+        kiban_rename(temporary, &self.cache_path).await.map_err(resolution_error)
     }
 
     pub async fn resolve(

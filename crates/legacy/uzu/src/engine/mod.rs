@@ -14,7 +14,7 @@ pub use download_manager::DownloadManagerType;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
 use indexmap::{IndexMap, IndexSet};
-use kiban::rt::RuntimeHandle;
+use kiban::rt::{RuntimeHandle as KibanRuntimeHandle, spawn as kiban_spawn};
 use nagare::{
     api::Config as ClientConfig,
     chat::{ChatInstance, ChatSession},
@@ -29,7 +29,6 @@ use shoji::{
         session::chat::ChatConfig,
     },
 };
-use tokio::spawn as tokio_spawn;
 use tokio_stream::{StreamExt as TokioStreamExt, wrappers::BroadcastStream as TokioBroadcastStream};
 
 use crate::{
@@ -70,7 +69,7 @@ pub struct Engine {
 
 impl Engine {
     pub async fn new(config: EngineConfig) -> Result<Self, EngineError> {
-        let runtime_handle = RuntimeHandle::try_current().map_err(|error| EngineError::TokioError {
+        let runtime_handle = KibanRuntimeHandle::try_current().map_err(|error| EngineError::TokioError {
             message: error.to_string(),
         })?;
 
@@ -642,7 +641,7 @@ impl Engine {
         let mut stream = self.storage_subscribe().await;
         let callback = self.callback.clone();
         let telemetry = self.telemetry.lock().await.clone();
-        tokio_spawn(async move {
+        kiban_spawn(async move {
             let mut last_phase: HashMap<String, DownloadPhase> = HashMap::new();
             while let Some(update) = stream.next().await {
                 let Ok((id, state)) = update else {

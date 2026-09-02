@@ -1,7 +1,7 @@
 use std::{sync::Weak, time::Duration};
 
+use kiban::time::sleep as kiban_sleep;
 use serde::{Deserialize, Serialize};
-use tokio::time::sleep as tokio_sleep;
 use tokio_stream::{StreamExt as TokioStreamExt, wrappers::BroadcastStream as TokioBroadcastStream};
 
 use crate::{
@@ -170,7 +170,7 @@ impl DownloaderStream {
                 Some(_) => {},
                 None => return true,
             }
-            tokio_sleep(Duration::from_millis(20)).await;
+            kiban_sleep(Duration::from_millis(20)).await;
         }
         true
     }

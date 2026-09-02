@@ -1,3 +1,7 @@
+use std::io::Error as IoError;
+
+use serde_json::Error as JsonError;
+
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
 pub enum DownloadError {
     #[error("io error: {0}")]
@@ -66,6 +70,3 @@ impl From<JsonError> for DownloadError {
         Self::SerdeJson(error.to_string())
     }
 }
-use std::io::Error as IoError;
-
-use serde_json::Error as JsonError;
