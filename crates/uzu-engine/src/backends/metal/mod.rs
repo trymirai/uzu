@@ -3,7 +3,6 @@ mod buffer;
 mod command_buffer;
 mod context;
 mod dense_buffer;
-mod device_profile;
 mod error;
 mod kernel;
 mod metal_extensions;

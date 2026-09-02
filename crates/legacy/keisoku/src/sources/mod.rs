@@ -1,24 +1,29 @@
 mod battery;
 mod deferred;
 #[cfg(target_os = "macos")]
-pub(crate) mod interval;
+pub mod interval;
 mod memory;
+#[cfg(target_os = "ios")]
 mod rail_power;
 mod sensors;
 mod thermal;
+
+#[cfg(target_os = "ios")]
+use std::time::Duration;
 
 use deferred::Deferred;
 
 #[cfg(target_os = "macos")]
 use crate::sys::{smc::Smc, soc::SocInfo};
+#[cfg(target_os = "ios")]
+use crate::units::Joules;
 use crate::{
     metrics::FanMetrics,
     sensor::{Sensor, SensorKind},
     sys::hid::SensorReader,
-    units::Watts,
 };
 
-pub(crate) struct Sources {
+pub struct Sources {
     temperature: Deferred<Option<SensorReader>>,
     voltage: Deferred<Option<SensorReader>>,
     current: Deferred<Option<SensorReader>>,
@@ -41,7 +46,7 @@ impl Sources {
         }
     }
 
-    pub(crate) fn chip(&self) -> String {
+    pub fn chip(&self) -> String {
         #[cfg(target_os = "macos")]
         {
             self.soc().map(|soc| soc.chip_name.clone()).unwrap_or_default()
@@ -52,7 +57,7 @@ impl Sources {
         }
     }
 
-    pub(crate) fn efficiency_cores(&self) -> u8 {
+    pub fn efficiency_cores(&self) -> u8 {
         #[cfg(target_os = "macos")]
         {
             self.soc().map(|soc| soc.ecpu_cores).unwrap_or(0)
@@ -63,7 +68,7 @@ impl Sources {
         }
     }
 
-    pub(crate) fn performance_cores(&self) -> u8 {
+    pub fn performance_cores(&self) -> u8 {
         #[cfg(target_os = "macos")]
         {
             self.soc().map(|soc| soc.pcpu_cores).unwrap_or(0)
@@ -74,7 +79,7 @@ impl Sources {
         }
     }
 
-    pub(crate) fn gpu_cores(&self) -> u8 {
+    pub fn gpu_cores(&self) -> u8 {
         #[cfg(target_os = "macos")]
         {
             self.soc().map(|soc| soc.gpu_cores).unwrap_or(0)
@@ -85,37 +90,41 @@ impl Sources {
         }
     }
 
-    pub(crate) fn temperature_sensors(&mut self) -> Box<[Sensor]> {
+    pub fn temperature_sensors(&mut self) -> Box<[Sensor]> {
         self.temperature.get().as_mut().map(sensors::read_reader).unwrap_or_default()
     }
 
-    pub(crate) fn voltage_sensors(&mut self) -> Box<[Sensor]> {
+    pub fn voltage_sensors(&mut self) -> Box<[Sensor]> {
         self.voltage.get().as_mut().map(sensors::read_reader).unwrap_or_default()
     }
 
-    pub(crate) fn current_sensors(&mut self) -> Box<[Sensor]> {
+    pub fn current_sensors(&mut self) -> Box<[Sensor]> {
         self.current.get().as_mut().map(sensors::read_reader).unwrap_or_default()
     }
 
-    pub(crate) fn memory(&mut self) -> Option<crate::metrics::MemoryMetrics> {
+    pub fn memory(&mut self) -> Option<crate::metrics::MemoryMetrics> {
         memory::read_memory()
     }
 
-    pub(crate) fn battery(&mut self) -> Option<crate::metrics::BatteryMetrics> {
+    pub fn battery(&mut self) -> Option<crate::metrics::BatteryMetrics> {
         battery::read_battery()
     }
 
-    pub(crate) fn thermal(&mut self) -> Option<crate::metrics::ThermalPressure> {
+    pub fn thermal(&mut self) -> Option<crate::metrics::ThermalPressure> {
         thermal::read_thermal()
     }
 
-    pub(crate) fn rail_power(&mut self) -> Option<Watts> {
+    #[cfg(target_os = "ios")]
+    pub fn rail_energy(
+        &mut self,
+        elapsed: Duration,
+    ) -> Option<Joules> {
         let voltage = self.voltage_sensors();
         let current = self.current_sensors();
-        rail_power::rail_power(&voltage, &current)
+        rail_power::rail_energy(&voltage, &current, elapsed)
     }
 
-    pub(crate) fn fans(&self) -> Option<FanMetrics> {
+    pub fn fans(&self) -> Option<FanMetrics> {
         #[cfg(target_os = "macos")]
         {
             self.smc().map(Smc::fans)
@@ -127,12 +136,12 @@ impl Sources {
     }
 
     #[cfg(target_os = "macos")]
-    pub(crate) fn soc(&self) -> Option<&SocInfo> {
+    pub fn soc(&self) -> Option<&SocInfo> {
         self.soc.get_or_init(SocInfo::new).as_ref()
     }
 
     #[cfg(target_os = "macos")]
-    pub(crate) fn smc(&self) -> Option<&Smc> {
+    pub fn smc(&self) -> Option<&Smc> {
         self.smc.get_or_init(Smc::new).as_ref()
     }
 }

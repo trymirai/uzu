@@ -4,10 +4,10 @@ use objc2_core_foundation::{CFMutableDictionary, CFRetained, CFString};
 use super::IoReportFunctions;
 use crate::sys::ioreport::IoReportGroups;
 
-pub(super) struct Channels(pub(super) CFRetained<CFMutableDictionary>);
+pub struct Channels(pub CFRetained<CFMutableDictionary>);
 
 impl Channels {
-    pub(super) fn from_groups(
+    pub fn from_groups(
         groups: IoReportGroups,
         functions: &IoReportFunctions,
     ) -> Option<Self> {

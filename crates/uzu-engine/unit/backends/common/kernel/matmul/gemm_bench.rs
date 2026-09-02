@@ -34,7 +34,7 @@ fn bench_gemm(c: &mut Criterion) {
     )
     .expect("MatmulKernel");
 
-    let engines: &[(&str, GemmEngine)] = if context.supports_mxu() {
+    let engines: &[(&str, GemmEngine)] = if context.supports_mxu {
         &[("GEMM", GemmEngine::Simdgroup), ("GEMM_MXU", GemmEngine::Mxu)]
     } else {
         &[("GEMM", GemmEngine::Simdgroup)]

@@ -1,4 +1,6 @@
-use crate::backends::metal::device_profile::{DeviceProfile, DeviceSize, GpuFamily};
+use metal::MTLGPUFamily;
+
+use crate::backends::metal::context::LARGE_MIN_GPU_CORES;
 
 mod quantized;
 
@@ -142,18 +144,18 @@ fn preferred_fp_k_split(
 /// Selects the full-precision GEMV tile. `m` is the input-vector count,
 /// `n` is the output row count, and `k` is the reduction depth.
 pub(super) fn fp_tile(
+    gpu_core_count: u32,
+    apple_gpu_family: MTLGPUFamily,
     m: u32,
     n: u32,
     k: u32,
     input_aligned: bool,
-    profile: DeviceProfile,
 ) -> GemvTile {
-    let size = profile.size();
-    let gpu_family = profile.gpu_family();
-    let is_small_legacy = size == DeviceSize::Small && gpu_family == GpuFamily::Legacy;
+    let is_large_gpu = gpu_core_count >= LARGE_MIN_GPU_CORES;
+    let is_small_legacy = !is_large_gpu && apple_gpu_family < MTLGPUFamily::Apple8;
     // SG8 is the portable full-precision geometry.
     let should_disable_k_split = !input_aligned
-        || (m == 1 && size == DeviceSize::Large && k < FP_LARGE_SPLIT_K_MIN_DEPTH)
+        || (m == 1 && is_large_gpu && k < FP_LARGE_SPLIT_K_MIN_DEPTH)
         || (m == 1 && is_small_legacy && n >= SMALL_G13_HUGE_N);
 
     let k_split = if should_disable_k_split {
@@ -164,7 +166,7 @@ pub(super) fn fp_tile(
 
     let results_per_simdgroup = if is_small_legacy && m == 1 && n >= SMALL_G13_BROAD_ROW_N {
         DEFAULT_RESULTS_PER_SIMDGROUP
-    } else if m == 1 && (k <= DEEP_K || size != DeviceSize::Large) {
+    } else if m == 1 && (k <= DEEP_K || !is_large_gpu) {
         1
     } else {
         DEFAULT_RESULTS_PER_SIMDGROUP

@@ -1,5 +1,5 @@
 use rocket::serde::{Deserialize, Serialize};
-use uzu::types::session::chat::{ChatMessage, ChatReplyPowerStats, ChatRole};
+use uzu::types::session::chat::{ChatMessage, ChatReplyEnergy, ChatRole};
 use uzu_engine::data_type::DataType;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,7 +64,8 @@ pub struct BenchResult {
     pub time_to_first_token: f64,
     pub prompt_tokens_per_second: f64,
     pub generate_tokens_per_second: Option<f64>,
-    pub power_stats: Option<ChatReplyPowerStats>,
+    pub input_energy: Option<ChatReplyEnergy>,
+    pub output_energy: Option<ChatReplyEnergy>,
     pub joules_per_token: Option<f64>,
     pub text: String,
 }

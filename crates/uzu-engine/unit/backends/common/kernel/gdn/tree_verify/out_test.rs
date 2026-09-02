@@ -146,7 +146,7 @@ fn check_shape<T: ArrayElement + Float + std::fmt::Display>(
             }
         });
 
-        if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu() {
+        if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu {
             for &(path, use_mxu, transposed_h0) in BUILD_TREE_OUT_PATHS {
                 if !use_mxu || transposed_h0 && !use_h0 {
                     continue;
