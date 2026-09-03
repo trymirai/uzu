@@ -75,6 +75,16 @@ impl<B: Backend> ForwardPassChaining<B> {
             },
         }
     }
+
+    fn drop_output_norm(&mut self) {
+        match self {
+            Self::Constant {
+                output_norm,
+                ..
+            } => drop(output_norm.take()),
+            Self::InFlight(pending) => drop(pending.output_norm.take()),
+        }
+    }
 }
 
 struct DecodingStatePending<B: Backend> {
@@ -570,8 +580,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 &self.model_state.prng,
                 self.allocation_pool.clone(),
             )?;
+            prev_output.drop_output_norm();
             (trie, None, false)
         } else {
+            prev_output.drop_output_norm();
             let (token, chain_copy) = match &prev_output {
                 ForwardPassChaining::Constant {
                     token,
@@ -583,12 +595,15 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         };
         let input_flat_trie = input_trie.linearize();
 
-        let mut encoder = if let Some(encoder) = encoder {
-            encoder
-        } else {
+        if let Some(accept_encoder) = encoder.take() {
+            pending.push(accept_encoder.end_encoding().submit());
+        }
+
+        self.allocation_pool = Arc::new(self.model.engine.context.create_allocation_pool(false));
+
+        let mut encoder =
             Encoder::<B>::new_with_pool_name(&self.model.engine.context, self.allocation_pool.clone(), Some("decode"))
-                .map_err(LanguageModelStreamError::Backend)?
-        };
+                .map_err(LanguageModelStreamError::Backend)?;
 
         let token_ids = if let Some(chain_copy) = chain_copy {
             let mut token_ids =
