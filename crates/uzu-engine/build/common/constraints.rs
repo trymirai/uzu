@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use rhai::EvalAltResult;
 use rhai::{AST, Dynamic, Engine, Module, Scope};
 
 struct CompiledConstraint {
@@ -50,14 +52,10 @@ impl Constraints {
         }
     }
 
-    pub fn satisfied(
+    fn scope(
         &self,
         bindings: impl IntoIterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
-    ) -> bool {
-        if self.constraints.is_empty() {
-            return true;
-        }
-
+    ) -> Scope<'static> {
         let bindings = bindings.into_iter();
         let mut scope = Scope::with_capacity(bindings.size_hint().0);
         for (name, val) in bindings {
@@ -69,6 +67,39 @@ impl Constraints {
                 self.engine.eval_expression::<Dynamic>(val).unwrap_or_else(|_| val.to_owned().into()),
             );
         }
+        scope
+    }
+
+    /// Test partial bindings, treating a missing variable as a constraint that may still become true.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub fn could_satisfy(
+        &self,
+        bindings: impl IntoIterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
+    ) -> bool {
+        if self.constraints.is_empty() {
+            return true;
+        }
+
+        let mut scope = self.scope(bindings);
+        self.constraints.iter().all(|constraint| {
+            match self.engine.eval_ast_with_scope::<bool>(&mut scope, &constraint.ast) {
+                Ok(satisfied) => satisfied,
+                Err(error) if matches!(error.as_ref(), EvalAltResult::ErrorVariableNotFound(..)) => true,
+                Err(error) => panic!("constraint `{}` failed to evaluate: {error}", constraint.source),
+            }
+        })
+    }
+
+    /// Test complete bindings, requiring every constraint to evaluate successfully to `true`.
+    pub fn satisfied(
+        &self,
+        bindings: impl IntoIterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
+    ) -> bool {
+        if self.constraints.is_empty() {
+            return true;
+        }
+
+        let mut scope = self.scope(bindings);
         self.constraints.iter().all(|constraint| {
             self.engine
                 .eval_ast_with_scope::<bool>(&mut scope, &constraint.ast)
