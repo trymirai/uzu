@@ -71,7 +71,7 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
             Self::Microfloat {
                 metadata,
                 ..
-            } => Some(metadata.bits()),
+            } => Some(metadata.encoding.bits),
             Self::ScaleBiasDequant {
                 mode,
                 ..
@@ -95,7 +95,7 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
             Self::Microfloat {
                 metadata,
                 ..
-            } => Some(metadata.group_size()),
+            } => Some(metadata.encoding.group_size),
             Self::ScaleBiasDequant {
                 group_size,
                 ..

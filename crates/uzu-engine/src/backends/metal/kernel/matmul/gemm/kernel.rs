@@ -195,7 +195,7 @@ impl GemmKernel {
                 metadata,
                 ..
             } => {
-                return Err(MatmulError::UnsupportedMicrofloat(metadata.format()).into());
+                return Err(MatmulError::UnsupportedMicrofloat(metadata.encoding.format).into());
             },
             MatmulB::FullPrecision {
                 b: weights,

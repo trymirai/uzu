@@ -33,6 +33,7 @@ fn packed_codes() -> Vec<u8> {
 fn cpu_executes_dense_mxfp4_matmul() {
     for row_count in [1, 5] {
         for group_size in [16, 32] {
+            // Given packed MXFP4 weights with multiple batch and scale-group shapes.
             let input_values: Vec<f32> = (0..row_count * K).map(|index| (index % 13) as f32 * 0.125 - 0.5).collect();
             let codes = packed_codes();
             let scales: Vec<u8> = (0..N * K / group_size).map(|index| 126 + (index % 3) as u8).collect();
@@ -55,6 +56,8 @@ fn cpu_executes_dense_mxfp4_matmul() {
             )
             .expect("create CPU matmul kernel");
             let mut encoder = Encoder::<Cpu>::new(context.as_ref()).expect("create CPU encoder");
+
+            // When the CPU backend executes a dense microfloat matrix multiplication.
             kernel
                 .encode(
                     MatmulArguments {
@@ -83,6 +86,7 @@ fn cpu_executes_dense_mxfp4_matmul() {
             encoder.end_encoding().submit().wait_until_completed().expect("execute dense MXFP4 matmul");
             let actual = allocation_to_vec::<Cpu, f32>(&output);
 
+            // Then its output agrees with independently decoded scalar accumulation.
             let codes: &[u8] = codes.as_slice();
             let scales: &[u8] = scales.as_slice();
             let mut expected = vec![0.0f32; row_count * N];

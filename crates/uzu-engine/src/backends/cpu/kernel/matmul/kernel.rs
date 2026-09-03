@@ -65,11 +65,11 @@ impl MatmulKernel for MatmulCpuKernel {
             metadata,
         } = &arguments.b
         {
-            let rows_match = arguments.gather_indices.is_some() || metadata.rows() == arguments.n;
+            let rows_match = arguments.gather_indices.is_some() || metadata.rows == arguments.n;
             if !arguments.b_transpose
                 || arguments.b_leading_dimension.is_some()
                 || !rows_match
-                || metadata.columns() != arguments.k
+                || metadata.columns != arguments.k
                 || codes.size() < metadata.required_code_bytes()
                 || scales.size() < metadata.required_scale_bytes()
                 || outer_scales.size() < self.weights_data_type.size_in_bytes()
@@ -309,8 +309,8 @@ impl MatmulKernel for MatmulCpuKernel {
                                     } else {
                                         packed >> 4
                                     };
-                                    let scale_index =
-                                        b_col * metadata.scale_row_stride() + inner / metadata.group_size() as usize;
+                                    let scale_index = b_col * metadata.scale_row_stride()
+                                        + inner / metadata.encoding.group_size as usize;
                                     let exponent = *scales.as_ptr().add(scale_index);
                                     let outer_scale = read_f32(outer_scales.as_ptr(), weights_data_type, 0);
                                     crate::backends::common::microfloat::decode_mxfp4(code, exponent, outer_scale)

@@ -294,7 +294,7 @@ impl GemvKernel {
                 metadata,
                 ..
             } => {
-                return Err(MatmulError::UnsupportedMicrofloat(metadata.format()));
+                return Err(MatmulError::UnsupportedMicrofloat(metadata.encoding.format));
             },
             MatmulB::FullPrecision {
                 b: weights,

@@ -225,7 +225,7 @@ impl MatmulKernel for MatmulMetalKernel {
             ..
         } = &arguments.b
         {
-            return Err(MatmulError::UnsupportedMicrofloat(metadata.format()).into());
+            return Err(MatmulError::UnsupportedMicrofloat(metadata.encoding.format).into());
         }
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, encoder.context()) {

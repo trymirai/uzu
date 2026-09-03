@@ -20,38 +20,37 @@ pub enum WeightMatrixError<B: Backend> {
     UnsupportedConfiguration(String),
 }
 
-#[derive(Clone, Copy)]
-pub struct QuantizationInfo {
-    pub mode: QuantizationMode,
-    pub method: QuantizationMethod,
-    pub group_size: u32,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuantizationInfo {
+    Integer {
+        mode: QuantizationMode,
+        method: QuantizationMethod,
+        group_size: u32,
+    },
+    Microfloat(MicrofloatEncoding),
 }
 
 pub struct ParsedWeightSpec {
     pub layout: Layout,
     pub quantization: Option<QuantizationInfo>,
-    pub microfloat: Option<MicrofloatEncoding>,
 }
 
 pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeightSpec, WeightMatrixError<B>> {
-    let (layout, quantized, microfloat) = match spec {
-        AnyWeightMatrixSpec::FullPrecisionSpec(spec) => (spec.layout.clone(), None, None),
+    let (layout, quantization) = match spec {
+        AnyWeightMatrixSpec::FullPrecisionSpec(spec) => (spec.layout.clone(), None),
         AnyWeightMatrixSpec::MLXSpec(spec) => {
-            (spec.layout.clone(), Some((spec.bits, spec.group_size, QuantizationMethod::ScaleBias)), None)
+            let quantization = integer_quantization::<B>(spec.bits, spec.group_size, QuantizationMethod::ScaleBias)?;
+            (spec.layout.clone(), Some(quantization))
         },
-        AnyWeightMatrixSpec::IntSpec(spec) => (
-            spec.layout.clone(),
-            Some((
-                spec.bits,
-                spec.group_size,
-                if spec.is_symmetric {
-                    QuantizationMethod::ScaleSymmetric
-                } else {
-                    QuantizationMethod::ScaleZeroPoint
-                },
-            )),
-            None,
-        ),
+        AnyWeightMatrixSpec::IntSpec(spec) => {
+            let method = if spec.is_symmetric {
+                QuantizationMethod::ScaleSymmetric
+            } else {
+                QuantizationMethod::ScaleZeroPoint
+            };
+            let quantization = integer_quantization::<B>(spec.bits, spec.group_size, method)?;
+            (spec.layout.clone(), Some(quantization))
+        },
         AnyWeightMatrixSpec::MicrofloatSpec(MicrofloatSpec {
             bits,
             group_size,
@@ -69,36 +68,37 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
             })?;
             let encoding = MicrofloatEncoding::new(*scale_mode, *bits, group_size)
                 .map_err(|error| WeightMatrixError::UnsupportedConfiguration(error.to_string()))?;
-            (layout.clone(), None, Some(encoding))
+            (layout.clone(), Some(QuantizationInfo::Microfloat(encoding)))
         },
         spec => return Err(WeightMatrixError::UnsupportedConfiguration(format!("{spec:?}"))),
-    };
-    let quantization = match quantized {
-        None => None,
-        Some((bits, group_size, method)) => {
-            let mode = match bits {
-                4 => QuantizationMode::U4,
-                8 => QuantizationMode::U8,
-                _ => {
-                    return Err(WeightMatrixError::UnsupportedConfiguration(format!(
-                        "{method} bits={bits}, group_size={group_size}"
-                    )));
-                },
-            };
-            if group_size == 0 {
-                return Err(WeightMatrixError::UnsupportedConfiguration("group size must be non-zero".into()));
-            }
-            Some(QuantizationInfo {
-                mode,
-                method,
-                group_size,
-            })
-        },
     };
     Ok(ParsedWeightSpec {
         layout,
         quantization,
-        microfloat,
+    })
+}
+
+fn integer_quantization<B: Backend>(
+    bits: u32,
+    group_size: u32,
+    method: QuantizationMethod,
+) -> Result<QuantizationInfo, WeightMatrixError<B>> {
+    let mode = match bits {
+        4 => QuantizationMode::U4,
+        8 => QuantizationMode::U8,
+        _ => {
+            return Err(WeightMatrixError::UnsupportedConfiguration(format!(
+                "{method} bits={bits}, group_size={group_size}"
+            )));
+        },
+    };
+    if group_size == 0 {
+        return Err(WeightMatrixError::UnsupportedConfiguration("group size must be non-zero".into()));
+    }
+    Ok(QuantizationInfo::Integer {
+        mode,
+        method,
+        group_size,
     })
 }
 
@@ -111,7 +111,9 @@ enum QuantizedCorrection<B: Backend> {
 struct Quantized<B: Backend> {
     scales: Allocation<B>,
     correction: QuantizedCorrection<B>,
-    info: QuantizationInfo,
+    mode: QuantizationMode,
+    method: QuantizationMethod,
+    group_size: u32,
     signed_codes: bool,
 }
 
@@ -144,7 +146,6 @@ impl<B: Backend> WeightMatrix<B> {
         let ParsedWeightSpec {
             layout,
             quantization,
-            microfloat,
         } = parse_spec(&spec)?;
         if layout != required_layout {
             return Err(WeightMatrixError::UnsupportedConfiguration(format!(
@@ -153,27 +154,7 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
-        if let Some(encoding) = microfloat {
-            let metadata = MicrofloatMetadata::new(encoding, rows, columns)
-                .map_err(|error| WeightMatrixError::UnsupportedConfiguration(error.to_string()))?;
-            let group_size = encoding.group_size();
-            let values = tree.leaf("weights")?.validate(&[rows, columns / 2], DataType::U8)?.read_allocation()?;
-            let scales =
-                tree.leaf("scales")?.validate(&[rows, columns / group_size], DataType::U8)?.read_allocation()?;
-            // The artifact retains its established tensor name; at runtime this is
-            // the one outer scale applied after block-scale decoding.
-            let outer_scales = tree.leaf("global_scale")?.validate(&[1], data_type)?.read_allocation()?;
-            return Ok(Self {
-                values,
-                format: WeightFormat::Microfloat(Microfloat {
-                    scales,
-                    outer_scales,
-                    metadata,
-                }),
-            });
-        }
-
-        let Some(info) = quantization else {
+        let Some(quantization) = quantization else {
             let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_allocation()?;
             return Ok(Self {
                 values,
@@ -181,9 +162,35 @@ impl<B: Backend> WeightMatrix<B> {
             });
         };
 
-        let group_size = info.group_size;
-        let packing_divisor = info.mode.packing_divisor();
-        let storage_data_type = info.mode.storage_type();
+        let (mode, method, group_size) = match quantization {
+            QuantizationInfo::Microfloat(encoding) => {
+                let metadata = MicrofloatMetadata::new(encoding, rows, columns)
+                    .map_err(|error| WeightMatrixError::UnsupportedConfiguration(error.to_string()))?;
+                let values = tree.leaf("weights")?.validate(&[rows, columns / 2], DataType::U8)?.read_allocation()?;
+                let scales = tree
+                    .leaf("scales")?
+                    .validate(&[rows, columns / encoding.group_size], DataType::U8)?
+                    .read_allocation()?;
+                // Preserving the artifact's established tensor name for the outer scale.
+                let outer_scales = tree.leaf("global_scale")?.validate(&[1], data_type)?.read_allocation()?;
+                return Ok(Self {
+                    values,
+                    format: WeightFormat::Microfloat(Microfloat {
+                        scales,
+                        outer_scales,
+                        metadata,
+                    }),
+                });
+            },
+            QuantizationInfo::Integer {
+                mode,
+                method,
+                group_size,
+            } => (mode, method, group_size),
+        };
+
+        let packing_divisor = mode.packing_divisor();
+        let storage_data_type = mode.storage_type();
         if !columns.is_multiple_of(packing_divisor) {
             return Err(WeightMatrixError::UnsupportedConfiguration(format!(
                 "stored columns {columns} are not divisible by packing divisor {packing_divisor}"
@@ -193,7 +200,7 @@ impl<B: Backend> WeightMatrix<B> {
         let values =
             tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_allocation()?;
         let scales = tree.leaf("scales")?.validate(&[rows, groups], data_type)?.read_allocation()?;
-        let correction = match info.method {
+        let correction = match method {
             QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(
                 tree.leaf("biases")?.validate(&[rows, groups], data_type)?.read_allocation()?,
             ),
@@ -209,7 +216,9 @@ impl<B: Backend> WeightMatrix<B> {
             format: WeightFormat::Integer(Quantized {
                 scales,
                 correction,
-                info,
+                mode,
+                method,
+                group_size,
                 signed_codes: false,
             }),
         })
@@ -221,8 +230,13 @@ impl<B: Backend> WeightMatrix<B> {
 
     pub fn quantization(&self) -> Option<QuantizationInfo> {
         match &self.format {
-            WeightFormat::Integer(quantized) => Some(quantized.info),
-            WeightFormat::FullPrecision | WeightFormat::Microfloat(_) => None,
+            WeightFormat::FullPrecision => None,
+            WeightFormat::Integer(quantized) => Some(QuantizationInfo::Integer {
+                mode: quantized.mode,
+                method: quantized.method,
+                group_size: quantized.group_size,
+            }),
+            WeightFormat::Microfloat(microfloat) => Some(QuantizationInfo::Microfloat(microfloat.metadata.encoding)),
         }
     }
 
@@ -271,8 +285,8 @@ impl<B: Backend> WeightMatrix<B> {
             },
             WeightFormat::Integer(quantized) => quantized,
         };
-        let mode = quantized.info.mode;
-        let group_size = quantized.info.group_size;
+        let mode = quantized.mode;
+        let group_size = quantized.group_size;
         let signed_codes = quantized.signed_codes;
         match &quantized.correction {
             QuantizedCorrection::Biases(biases) => MatmulB::ScaleBiasDequant {
@@ -308,7 +322,7 @@ impl<B: Backend> WeightMatrix<B> {
         if quantized.signed_codes {
             return;
         }
-        let Some(sign_flip_mask) = quantized.info.mode.weight_codes_sign_flip_mask() else {
+        let Some(sign_flip_mask) = quantized.mode.weight_codes_sign_flip_mask() else {
             return;
         };
         let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
@@ -331,94 +345,5 @@ fn physical_shape(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::io::Write;
-
-    use half::bf16;
-    use serde_json::{Map, Value, json};
-    use tempfile::NamedTempFile;
-    use uzu_engine_macros::uzu_test;
-
-    use super::*;
-    use crate::{
-        backends::{common::Context, cpu::Cpu},
-        parameters::ParameterLoader,
-    };
-
-    fn add_tensor(
-        header: &mut Map<String, Value>,
-        payload: &mut Vec<u8>,
-        name: &str,
-        shape: &[u32],
-        data_type: &str,
-        data: &[u8],
-    ) {
-        let begin = payload.len();
-        payload.extend_from_slice(data);
-        header.insert(
-            name.into(),
-            json!({
-                "dtype": data_type,
-                "shape": shape,
-                "data_offsets": [begin, payload.len()]
-            }),
-        );
-    }
-
-    fn dense_microfloat_parameter_file() -> NamedTempFile {
-        const ROWS: u32 = 2;
-        const COLUMNS: u32 = 32;
-        const GROUP_SIZE: u32 = 16;
-
-        let mut header = Map::new();
-        header.insert(
-            "__metadata__".into(),
-            json!({
-                "spec": json!({
-                    "type": "MicrofloatSpec",
-                    "bits": 4,
-                    "group_size": GROUP_SIZE,
-                    "scale_mode": "mxfp4",
-                    "layout": "output_input"
-                }).to_string()
-            }),
-        );
-        let mut payload = Vec::new();
-        let codes: Vec<u8> = (0..ROWS * COLUMNS / 2).map(|index| 0x10 | (index % 8) as u8).collect();
-        let scales: Vec<u8> = (0..ROWS * COLUMNS / GROUP_SIZE).map(|index| 126 + (index % 3) as u8).collect();
-        let global_scale = bf16::from_f32(0.75).to_le_bytes();
-        add_tensor(&mut header, &mut payload, "weights", &[ROWS, COLUMNS / 2], "U8", &codes);
-        add_tensor(&mut header, &mut payload, "scales", &[ROWS, COLUMNS / GROUP_SIZE], "U8", &scales);
-        add_tensor(&mut header, &mut payload, "global_scale", &[1], "BF16", &global_scale);
-
-        let mut header = serde_json::to_vec(&Value::Object(header)).expect("serialize safetensors header");
-        header.extend(std::iter::repeat_n(b' ', (8 - header.len() % 8) % 8));
-        let mut file = NamedTempFile::new().expect("create dense MXFP4 fixture");
-        file.write_all(&(header.len() as u64).to_le_bytes()).expect("write safetensors header length");
-        file.write_all(&header).expect("write safetensors header");
-        file.write_all(&payload).expect("write safetensors payload");
-        file
-    }
-
-    #[uzu_test]
-    fn loads_dense_mxfp4_storage() {
-        let context = <Cpu as Backend>::Context::new().expect("create CPU context");
-        let file = dense_microfloat_parameter_file();
-        let loader = ParameterLoader::<Cpu>::new(file.as_file(), context.as_ref()).expect("load dense MXFP4 fixture");
-        let tree = loader.tree();
-        let spec = tree.metadata::<AnyWeightMatrixSpec>("spec").expect("load dense MXFP4 spec");
-
-        let matrix = WeightMatrix::load(&tree, spec, Layout::OutputInput, 2, 32, DataType::BF16)
-            .expect("load dense MXFP4 matrix");
-        let MatmulB::Microfloat {
-            metadata,
-            ..
-        } = matrix.matmul_b()
-        else {
-            panic!("dense MXFP4 matrix did not preserve its operand format");
-        };
-        assert_eq!(metadata.rows(), 2);
-        assert_eq!(metadata.columns(), 32);
-        tree.assert_all_tensors_validated().expect("validate dense MXFP4 tensors");
-    }
-}
+#[path = "../../unit/encodable_block/weight_matrix/microfloat_test.rs"]
+mod microfloat_test;
