@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::{error::Error, sync::Arc};
 
 use download_manager::{DownloadError, FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
 use kiban::rt::RuntimeHandle;
 use rstest::rstest;
+use tempfile::tempdir;
 
 use crate::common::{Behavior, MockRegistry, wait_for_phase};
 
@@ -12,22 +13,22 @@ use crate::common::{Behavior, MockRegistry, wait_for_phase};
 #[tokio::test(flavor = "multi_thread")]
 async fn test_concurrent_task_creation_returns_same_task(
     #[case] download_manager_type: FileDownloadManagerType
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let registry = MockRegistry::start().await?;
     let tokenizer = registry.file("tokenizer.json")?;
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
     let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
 
     let (first, second) = tokio::join!(
         manager.file_download_task(
-            &tokenizer.file.url,
+            (&tokenizer.file.url).into(),
             &destination,
             FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64),
         ),
         manager.file_download_task(
-            &tokenizer.file.url,
+            (&tokenizer.file.url).into(),
             &destination,
             FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64),
@@ -40,73 +41,41 @@ async fn test_concurrent_task_creation_returns_same_task(
     Ok(())
 }
 
-#[rstest]
-#[case::universal(FileDownloadManagerType::Universal)]
-#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
-async fn different_urls_targeting_same_destination_are_rejected(
-    #[case] download_manager_type: FileDownloadManagerType
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn conflicting_task_configuration_is_rejected() -> Result<(), Box<dyn Error>> {
     let registry = MockRegistry::start().await?;
     let tokenizer = registry.file("tokenizer.json")?;
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
+    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, RuntimeHandle::current()).await?;
 
-    let _first = manager
+    manager
         .file_download_task(
-            &tokenizer.file.url,
+            (&tokenizer.file.url).into(),
             &destination,
             FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64),
         )
-        .await
-        .unwrap();
-    let second = manager
+        .await?;
+    let different_url = manager
         .file_download_task(
-            "http://example.invalid/different-url",
+            "http://example.invalid/different-url".into(),
             &destination,
             FileCheck::None,
             Some(tokenizer.file.size as u64),
         )
         .await;
-
-    assert!(matches!(second, Err(DownloadError::ConflictingConfig(_))));
-    Ok(())
-}
-
-#[rstest]
-#[case::universal(FileDownloadManagerType::Universal)]
-#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
-#[tokio::test(flavor = "multi_thread")]
-async fn different_expected_bytes_targeting_same_destination_are_rejected(
-    #[case] download_manager_type: FileDownloadManagerType
-) -> Result<(), Box<dyn std::error::Error>> {
-    let registry = MockRegistry::start().await?;
-    let tokenizer = registry.file("tokenizer.json")?;
-    let temp_dir = tempfile::tempdir().unwrap();
-    let destination = temp_dir.path().join(&tokenizer.file.name);
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
-
-    let _first = manager
+    let different_size = manager
         .file_download_task(
-            &tokenizer.file.url,
-            &destination,
-            FileCheck::CRC(tokenizer.crc32c()?),
-            Some(tokenizer.file.size as u64),
-        )
-        .await
-        .unwrap();
-    let second = manager
-        .file_download_task(
-            &tokenizer.file.url,
+            (&tokenizer.file.url).into(),
             &destination,
             FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64 + 1),
         )
         .await;
 
-    assert!(matches!(second, Err(DownloadError::ConflictingConfig(_))));
+    assert!(matches!(different_url, Err(DownloadError::ConflictingConfig(_))));
+    assert!(matches!(different_size, Err(DownloadError::ConflictingConfig(_))));
     Ok(())
 }
 
@@ -116,16 +85,16 @@ async fn different_expected_bytes_targeting_same_destination_are_rejected(
 #[tokio::test(flavor = "multi_thread")]
 async fn separate_managers_in_same_process_cannot_share_destination_lock(
     #[case] download_manager_type: FileDownloadManagerType
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let tokenizer = registry.file("tokenizer.json")?;
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
 
     let manager_a = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
     let task_a = manager_a
         .file_download_task(
-            &tokenizer.file.url,
+            (&tokenizer.file.url).into(),
             &destination,
             FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64),
@@ -139,7 +108,7 @@ async fn separate_managers_in_same_process_cannot_share_destination_lock(
     let manager_b = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
     let task_b = manager_b
         .file_download_task(
-            &tokenizer.file.url,
+            (&tokenizer.file.url).into(),
             &destination,
             FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64),

@@ -1,13 +1,14 @@
 use std::{path::Path, sync::Arc};
 
 use kiban::fs;
+use uuid::Uuid;
 
 use crate::{
-    DownloadError, DownloadId, FileCheck, FileState, LockFileState,
+    DownloadError, DownloadId, FileCheck, FileState, HttpDownloadRequest, LockFileState,
     backends::common::{Backend, action_executor::apply_actions},
     check_lock_file,
-    crc_utils::crc_path_for_file,
     file_download_task_actor::{ProgressCounters, PublicProjection},
+    integrity::integrity_receipt_path,
     lock_manager::{DestinationLockLease, lock_path_for_destination},
     reducer::{ActionPlan, DiskObservation, InitialLifecycleState, LockObservation, decide, validate},
     traits::DownloadConfig,
@@ -26,19 +27,16 @@ pub struct Startup {
 impl Startup {
     pub async fn observe<B: Backend>(
         download_id: DownloadId,
-        source_url: &str,
+        request: HttpDownloadRequest,
         destination_path: &Path,
         file_check: FileCheck,
         expected_bytes: Option<u64>,
         manager_id: &str,
-        manager_instance_id: uuid::Uuid,
+        manager_instance_id: Uuid,
     ) -> Result<Self, DownloadError> {
-        let resume_artifact_path = destination_path.with_extension(B::RESUME_ARTIFACT_EXTENSION);
-        let expected_crc = match &file_check {
-            FileCheck::CRC(crc) => Some(crc.clone()),
-            FileCheck::None => None,
-        };
-        let crc_path = crc_path_for_file(destination_path);
+        request.validate()?;
+        let resume_artifact_path = destination_path.with_added_extension(B::RESUME_ARTIFACT_EXTENSION);
+        let integrity_path = integrity_receipt_path(destination_path);
         let resume_state = file_state(&resume_artifact_path).await;
         let resume_size = match resume_state {
             FileState::Exists => B::read_resume_progress(&resume_artifact_path).await,
@@ -46,14 +44,14 @@ impl Startup {
         };
         let observation = DiskObservation {
             destination_state: file_state(destination_path).await,
-            crc_state: file_state(&crc_path).await,
+            integrity_state: file_state(&integrity_path).await,
             resume_state,
             destination_size: fs::asyn::file_length(destination_path).await.ok(),
             resume_size,
-            expected_crc,
+            file_check: file_check.clone(),
             expected_bytes,
             destination_path: destination_path.to_path_buf(),
-            crc_path: Some(crc_path),
+            integrity_path,
             resume_artifact_path: Some(resume_artifact_path),
         };
         let lock_state = check_lock_file(
@@ -66,11 +64,11 @@ impl Startup {
         let lock_observation = LockObservation {
             state: lock_state.clone(),
         };
-        let validation = validate(&observation).await;
+        let validation = validate(&observation).await?;
         let decision = decide(&observation, &lock_observation, &validation);
         let config = Arc::new(DownloadConfig {
             download_id,
-            source_url: source_url.to_string(),
+            request,
             destination: destination_path.to_path_buf(),
             file_check,
             expected_bytes,

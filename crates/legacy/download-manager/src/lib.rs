@@ -1,5 +1,8 @@
+use std::path::Path;
+
+use uuid::Uuid;
+
 mod checked_file_state;
-mod crc_utils;
 mod download_error;
 mod download_info;
 mod download_log_event;
@@ -11,6 +14,8 @@ mod file_download_phase;
 mod file_download_state;
 mod file_download_task;
 mod file_state;
+mod http_download_request;
+mod integrity;
 mod lock_file_info;
 mod lock_file_state;
 mod lock_manager;
@@ -33,11 +38,12 @@ pub use file_download_phase::FileDownloadPhase;
 pub use file_download_state::FileDownloadState;
 pub use file_download_task::FileDownloadTask;
 pub use file_state::FileState;
+pub use http_download_request::HttpDownloadRequest;
 pub use lock_file_info::LockFileInfo;
 pub use lock_file_state::LockFileState;
 pub use lock_manager::{acquire_lock, check_lock_file, release_lock_if_owned, try_acquire_lock};
+pub type DownloadId = Uuid;
 
-pub type DownloadId = uuid::Uuid;
-pub fn compute_download_id(destination_path: &std::path::Path) -> DownloadId {
-    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, destination_path.display().to_string().as_bytes())
+pub fn compute_download_id(destination_path: &Path) -> DownloadId {
+    Uuid::new_v5(&Uuid::NAMESPACE_URL, destination_path.display().to_string().as_bytes())
 }

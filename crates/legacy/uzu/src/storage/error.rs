@@ -1,4 +1,4 @@
-use crate::{registry::RegistryError, storage::types::DownloadPhase};
+use crate::storage::types::DownloadPhase;
 
 #[bindings::export(Error)]
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -8,18 +8,9 @@ pub enum StorageError {
     UnableToCreateDirectory {
         path: String,
     },
-    #[error("Unable to create download manager: {message}")]
-    UnableToCreateDownloadManager {
-        message: String,
-    },
     #[error("Download manager error: {message}")]
     DownloadManager {
         message: String,
-    },
-    #[error("Hash not found for file: {identifier}/{name}")]
-    HashNotFound {
-        identifier: String,
-        name: String,
     },
     #[error("Invalid state transition from {from:?} to {to:?}")]
     InvalidStateTransition {
@@ -34,8 +25,6 @@ pub enum StorageError {
     ItemNotFound {
         identifier: String,
     },
-    #[error(transparent)]
-    Registry(#[from] RegistryError),
     #[error("Unsupported item: {identifier}")]
     UnsupportedItem {
         identifier: String,

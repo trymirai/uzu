@@ -77,8 +77,8 @@ impl Config {
     }
 
     fn resolve_model(mut model: Model) -> Result<Model, RegistryError> {
-        let model_path = model.local_external_path().ok_or_else(|| RegistryError::UnableToGetModels {
-            message: format!("Local model {} has no local path", model.identifier),
+        let model_path = model.filesystem_path().ok_or_else(|| RegistryError::UnableToGetModels {
+            message: format!("Filesystem model {} has no path", model.identifier),
         })?;
         let model_path = PathBuf::from(model_path);
         let specialization = Self::resolve_model_specialization(&model_path)?;

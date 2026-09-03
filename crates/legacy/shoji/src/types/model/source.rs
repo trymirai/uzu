@@ -5,33 +5,28 @@ use crate::types::basic::{File, Repository};
 #[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum ModelReference {
-    Mirai {
+pub enum ModelSource {
+    #[serde(rename = "managed")]
+    Registry {
         toolchain_version: String,
         repository: Option<Repository>,
         source_repository: Option<Repository>,
         files: Vec<File>,
     },
-    HuggingFace {
-        repository: Repository,
-    },
-    Local {
+    Filesystem {
         path: String,
     },
 }
 
-impl ModelReference {
+impl ModelSource {
     pub fn name(&self) -> String {
         match self {
-            ModelReference::Mirai {
+            ModelSource::Registry {
                 ..
-            } => "mirai".to_string(),
-            ModelReference::HuggingFace {
+            } => "registry".to_string(),
+            ModelSource::Filesystem {
                 ..
-            } => "huggingface".to_string(),
-            ModelReference::Local {
-                ..
-            } => "local".to_string(),
+            } => "filesystem".to_string(),
         }
     }
 }

@@ -2,19 +2,21 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::FileCheck;
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
     DeleteFile {
         path: PathBuf,
     },
-    DeleteCrcCache {
+    DeleteIntegrityCache {
         path: PathBuf,
     },
     DeleteResumeArtifact {
         path: PathBuf,
     },
-    SaveCrcCache {
+    SaveIntegrityCache {
         destination: PathBuf,
-        crc: String,
+        file_check: FileCheck,
     },
 }

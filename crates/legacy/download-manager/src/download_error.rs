@@ -1,3 +1,7 @@
+use std::io::Error as IoError;
+
+use serde_json::Error as JsonError;
+
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
 pub enum DownloadError {
     #[error("io error: {0}")]
@@ -12,6 +16,10 @@ pub enum DownloadError {
     ResumeUnsupported,
     #[error("bad url")]
     BadUrl,
+    #[error("authenticated downloads require HTTPS")]
+    InsecureAuthenticatedRequest,
+    #[error("download authentication is no longer available")]
+    AuthenticationUnavailable,
     #[error("missing download info for task")]
     MissingDownloadInfo,
     #[error("resume data read failed")]
@@ -40,16 +48,25 @@ pub enum DownloadError {
     ChannelClosed,
     #[error("backend error: {0}")]
     Backend(String),
+    #[error("invalid expected {algorithm} digest")]
+    InvalidDigest {
+        algorithm: &'static str,
+    },
+    #[error("integrity verification I/O failed for {path}: {message}")]
+    IntegrityIo {
+        path: String,
+        message: String,
+    },
 }
 
-impl From<std::io::Error> for DownloadError {
-    fn from(error: std::io::Error) -> Self {
+impl From<IoError> for DownloadError {
+    fn from(error: IoError) -> Self {
         Self::Io(error.to_string())
     }
 }
 
-impl From<serde_json::Error> for DownloadError {
-    fn from(error: serde_json::Error) -> Self {
+impl From<JsonError> for DownloadError {
+    fn from(error: JsonError) -> Self {
         Self::SerdeJson(error.to_string())
     }
 }
