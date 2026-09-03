@@ -7,7 +7,9 @@ use super::{
     ast::{MetalArgument, MetalArgumentType, MetalKernelInfo, shared_element_type},
     enum_path_rewrite::is_enum_c_type,
 };
-use crate::common::{enum_paths::EnumPaths, identifiers::KernelName, mangling::static_mangle};
+use crate::common::{
+    constraints::Constraints, enum_paths::EnumPaths, identifiers::KernelName, mangling::static_mangle,
+};
 
 pub type SpecializeBaseIndices = HashMap<KernelName, usize>;
 
@@ -145,8 +147,9 @@ fn kernel_wrappers(
 
     let header = base_index.map(|&base| kernel_header(&bindings, base).into_boxed_str());
 
-    let evaluator = crate::common::constraints::Evaluator::new(
+    let constraints = Constraints::new(
         kernel.variants.as_deref().into_iter().flatten().flat_map(|tp| tp.variants.iter().map(|v| v.as_ref())),
+        &kernel.constraints,
     );
     for type_variant in if let Some(variants) = &kernel.variants {
         variants
@@ -167,7 +170,7 @@ fn kernel_wrappers(
         vec![None]
     } {
         if let Some(ref tv) = type_variant
-            && !evaluator.satisfied(tv, &kernel.constraints)
+            && !constraints.satisfied(tv.iter().map(|(name, value)| (name, value)))
         {
             continue;
         }

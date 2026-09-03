@@ -6,10 +6,6 @@ use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::quote;
 
-pub fn unqualify_variant(value: &str) -> &str {
-    value.rsplit("::").next().unwrap_or(value)
-}
-
 pub fn static_mangle(
     function_name: impl AsRef<str>,
     variant: impl IntoIterator<Item = impl AsRef<str>>,
@@ -21,7 +17,8 @@ pub fn static_mangle(
         variant
             .into_iter()
             .map(|v| {
-                let v = unqualify_variant(v.as_ref()).replace('-', "n");
+                let v = v.as_ref();
+                let v = v.rsplit_once("::").map_or(v, |(_, v)| v).replace('-', "n");
                 format!("S{}V{}", v.len(), v)
             })
             .join("")

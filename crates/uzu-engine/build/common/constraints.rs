@@ -1,21 +1,22 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rhai::{Dynamic, Engine, Module, Scope};
+use rhai::{AST, Dynamic, Engine, Module, Scope};
 
-#[cfg(all(feature = "metal", target_os = "macos"))]
-use crate::common::mangling::unqualify_variant;
-
-#[cfg(not(all(feature = "metal", target_os = "macos")))]
-fn unqualify_variant(value: &str) -> &str {
-    value.rsplit("::").next().unwrap_or(value)
+struct CompiledConstraint {
+    source: Box<str>,
+    ast: AST,
 }
 
-pub struct Evaluator {
+pub struct Constraints {
     engine: Engine,
+    constraints: Box<[CompiledConstraint]>,
 }
 
-impl Evaluator {
-    pub fn new<'a>(variant_values: impl IntoIterator<Item = &'a str>) -> Self {
+impl Constraints {
+    pub fn new<'a>(
+        variant_values: impl IntoIterator<Item = &'a str>,
+        constraints: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> Self {
         let mut engine = Engine::new();
         let mut namespaces: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
         for value in variant_values {
@@ -30,31 +31,48 @@ impl Evaluator {
             }
             engine.register_static_module(namespace, module.into());
         }
+        let constraints = constraints
+            .into_iter()
+            .map(|constraint| {
+                let source: Box<str> = constraint.as_ref().into();
+                let ast = engine
+                    .compile_expression(&source)
+                    .unwrap_or_else(|error| panic!("constraint `{source}` failed to compile: {error}"));
+                CompiledConstraint {
+                    source,
+                    ast,
+                }
+            })
+            .collect();
         Self {
             engine,
+            constraints,
         }
     }
 
-    pub fn satisfied<N: AsRef<str>, V: AsRef<str>>(
+    pub fn satisfied(
         &self,
-        bindings: &[(N, V)],
-        constraints: &[impl AsRef<str>],
+        bindings: impl IntoIterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
     ) -> bool {
-        if constraints.is_empty() {
+        if self.constraints.is_empty() {
             return true;
         }
-        let mut scope = Scope::with_capacity(bindings.len());
+
+        let bindings = bindings.into_iter();
+        let mut scope = Scope::with_capacity(bindings.size_hint().0);
         for (name, val) in bindings {
-            let val = unqualify_variant(val.as_ref());
+            let name = name.as_ref();
+            let val = val.as_ref();
+            let val = val.rsplit_once("::").map_or(val, |(_, val)| val);
             scope.push(
-                name.as_ref().to_owned(),
+                name.to_owned(),
                 self.engine.eval_expression::<Dynamic>(val).unwrap_or_else(|_| val.to_owned().into()),
             );
         }
-        constraints.iter().all(|c| {
+        self.constraints.iter().all(|constraint| {
             self.engine
-                .eval_expression_with_scope::<bool>(&mut scope, c.as_ref())
-                .unwrap_or_else(|e| panic!("constraint `{}` failed to evaluate: {e}", c.as_ref()))
+                .eval_ast_with_scope::<bool>(&mut scope, &constraint.ast)
+                .unwrap_or_else(|error| panic!("constraint `{}` failed to evaluate: {error}", constraint.source))
         })
     }
 }
