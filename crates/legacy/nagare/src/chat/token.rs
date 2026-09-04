@@ -181,8 +181,8 @@ impl Session {
                 return error_stream(error.into());
             }
         }
-        let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
         let time_prefill_start = Instant::now();
+        let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
 
         let stream_state = StreamingState {
             config: config.clone(),
