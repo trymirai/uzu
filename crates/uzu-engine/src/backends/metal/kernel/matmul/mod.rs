@@ -17,7 +17,10 @@ use crate::{
             gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
             kernel::{
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{A8ActivationPlan, ActivationFormat, MatmulArguments, MatmulError, MatmulKernel, MatmulShape},
+                matmul::{
+                    A8ActivationPlan, ActivationFormat, MatmulArguments, MatmulB, MatmulError, MatmulKernel,
+                    MatmulShape,
+                },
             },
         },
         metal::{Metal, context::MetalContext, error::MetalError},
@@ -217,6 +220,13 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        if let MatmulB::Microfloat {
+            metadata,
+            ..
+        } = &arguments.b
+        {
+            return Err(MatmulError::UnsupportedMicrofloat(metadata.encoding.format).into());
+        }
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, encoder.context()) {
             MatmulDispatch::Gemv(gemv) => {
