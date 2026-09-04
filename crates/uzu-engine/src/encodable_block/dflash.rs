@@ -105,24 +105,11 @@ impl<B: Backend> DFlash<B> {
             context,
         )?;
         let layers_tree = parameter_tree.subtree("layers");
-        let mut layer_kv_dim = None;
-        for layer_config in &config.layer_configs {
-            let AnyTokenMixerConfig::AttentionConfig(attention_config) = &layer_config.mixer_config else {
-                return Err(DFlashNewError::InvalidAttentionConfig("DFlash layers must use attention mixers"));
-            };
-            let current_layer_kv_dim = 2u32
-                .checked_mul(attention_config.num_groups)
-                .and_then(|dimension| dimension.checked_mul(attention_config.head_dim))
-                .ok_or(DFlashNewError::InvalidAttentionConfig("DFlash attention key/value dimension overflow"))?;
-            if layer_kv_dim.is_some_and(|dimension| dimension != current_layer_kv_dim) {
-                return Err(DFlashNewError::InvalidAttentionConfig(
-                    "DFlash layers must use matching key/value dimensions",
-                ));
-            }
-            layer_kv_dim = Some(current_layer_kv_dim);
-        }
-        let layer_kv_dim = layer_kv_dim
-            .ok_or(DFlashNewError::InvalidAttentionConfig("DFlash draft model must have at least one layer"))?;
+        let first_layer_config = config.layer_configs.first().expect("DFlash draft model must have at least one layer");
+        let AnyTokenMixerConfig::AttentionConfig(attention_config) = &first_layer_config.mixer_config else {
+            return Err(DFlashNewError::InvalidAttentionConfig("DFlash layers must use attention mixers"));
+        };
+        let layer_kv_dim = 2 * attention_config.num_groups * attention_config.head_dim;
         let num_layers = config.layer_configs.len() as u32;
         let state_kv_projection = <dyn Linear<B>>::new(
             config.model_dim,

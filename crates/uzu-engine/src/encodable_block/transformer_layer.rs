@@ -1,6 +1,6 @@
 mod convolution;
 
-use convolution::{ConvolutionNewError, GroupedConvolutions};
+use convolution::{ConvolutionNewError, LayerConvolutions};
 use thiserror::Error;
 
 use crate::{
@@ -50,7 +50,7 @@ pub struct TransformerLayer<B: Backend> {
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<Normalization<B>>,
     pub ple_projection: Option<PerLayerEmbeddingProjection<B>>,
-    grouped_convolutions: Option<GroupedConvolutions<B>>,
+    layer_convolutions: Option<LayerConvolutions<B>>,
 }
 
 impl<B: Backend> TransformerLayer<B> {
@@ -98,10 +98,10 @@ impl<B: Backend> TransformerLayer<B> {
             context,
         )?;
 
-        let grouped_convolutions = layer_config
+        let layer_convolutions = layer_config
             .grouped_convolution_config
             .as_ref()
-            .map(|config| GroupedConvolutions::new(context, config, model_dim, parameter_tree, data_type))
+            .map(|config| LayerConvolutions::new(context, config, model_dim, parameter_tree, data_type))
             .transpose()?;
 
         let pre_mixer_norm = if let Some(pre_mixer_norm_config) = &layer_config.pre_mixer_norm_config {
@@ -200,7 +200,7 @@ impl<B: Backend> TransformerLayer<B> {
             mlp,
             post_mlp_norm,
             ple_projection,
-            grouped_convolutions,
+            layer_convolutions,
         })
     }
 
@@ -217,7 +217,7 @@ impl<B: Backend> TransformerLayer<B> {
         encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
 
         let batch_size = batch_dim.size();
-        let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
+        let mut hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
             pre_mixer_norm.encode(&input, 0, batch_size, Some(shortcut), encoder)?
         } else {
             assert!(self.layer_index == 0);
@@ -225,34 +225,28 @@ impl<B: Backend> TransformerLayer<B> {
             input
         };
 
-        // TODO: In prefill outside of sampling suffix in last layer part of mixer
-        // (ie out projection) and everything after is dead code
-        let hidden = match &self.grouped_convolutions {
-            Some(grouped_convolutions) => {
-                grouped_convolutions.attention.encode_around(hidden, batch_size, encoder, |hidden, encoder| {
+        // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
+        hidden = match &self.layer_convolutions {
+            Some(convolutions) => {
+                convolutions.attention.encode_around(hidden, batch_size, encoder, |hidden, encoder| {
                     self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)
                 })?
             },
             None => self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?,
         };
 
-        let hidden = if let Some(post_mixer_norm) = &self.post_mixer_norm {
-            post_mixer_norm.encode(&hidden, 0, batch_size, None, encoder)?
-        } else {
-            hidden
-        };
-        let hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_size, Some(shortcut), encoder)?;
+        if let Some(post_mixer_norm) = &self.post_mixer_norm {
+            hidden = post_mixer_norm.encode(&hidden, 0, batch_size, None, encoder)?;
+        }
+        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_size, Some(shortcut), encoder)?;
 
-        let hidden = match &self.grouped_convolutions {
-            Some(grouped_convolutions) => {
-                grouped_convolutions.mlp.encode_around(hidden, batch_size, encoder, |hidden, encoder| {
-                    self.mlp.encode(hidden, batch_size, encoder)
-                })?
-            },
+        hidden = match &self.layer_convolutions {
+            Some(convolutions) => convolutions.mlp.encode_around(hidden, batch_size, encoder, |hidden, encoder| {
+                self.mlp.encode(hidden, batch_size, encoder)
+            })?,
             None => self.mlp.encode(hidden, batch_size, encoder)?,
         };
 
-        let mut hidden = hidden;
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
             hidden = post_mlp_norm.encode(&hidden, 0, batch_size, None, encoder)?;
         }
