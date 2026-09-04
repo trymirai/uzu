@@ -10,7 +10,7 @@ use nagare::api::{Client, Error as ApiError, IsTransient};
 use shoji::{traits::Registry as RegistryTrait, types::model::Model};
 
 use super::{
-    endpoint::Endpoint,
+    fetch_models::FetchModels,
     request::{Backend, FetchModelsRequest},
     types::Response,
 };
@@ -91,7 +91,7 @@ impl Registry {
             .include_traces(self.include_traces)
             .show_all(std::env::var("UZU_REGISTRY_SHOW_ALL").is_ok())
             .build();
-        let response: Response = self.client.post(Endpoint::FetchModels.path(), &request).await?;
+        let response: Response = self.client.call::<FetchModels>(&request).await?;
         response.models().ok_or_else(|| ApiError::Decode("response contained no models".to_string()))
     }
 

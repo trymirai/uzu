@@ -44,7 +44,6 @@ impl Telemetry {
     #[builder]
     pub fn new(
         #[builder(into)] base_url: String,
-        #[builder(into)] path: String,
         context: TelemetryContext,
     ) -> Self {
         // Telemetry is a background best-effort sender, so it waits far longer
@@ -62,7 +61,7 @@ impl Telemetry {
             },
         };
         let (sender, receiver) = TokioMpscChannel::<TelemetryRecord>(CAPACITY);
-        tokio::spawn(super::worker::run(client, path, context, receiver));
+        tokio::spawn(super::worker::run(client, context, receiver));
         Self {
             sender: Some(sender),
         }

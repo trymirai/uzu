@@ -1,4 +1,4 @@
-mod endpoint;
+mod fetch_models;
 mod registry;
 mod request;
 mod types;

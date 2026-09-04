@@ -88,11 +88,7 @@ impl Engine {
                     is_environment_sandboxed: crate::device::is_environment_sandboxed(),
                 },
             );
-            Telemetry::builder()
-                .base_url("https://sdk.trymirai.com/api/v2")
-                .path("telemetry/events")
-                .context(context)
-                .build()
+            Telemetry::builder().base_url("https://sdk.trymirai.com/api/v2").context(context).build()
         });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));

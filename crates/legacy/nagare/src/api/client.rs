@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use bon::bon;
 use reqwest::{Client as ReqwestClient, RequestBuilder, Response};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 
-use crate::api::{Error, RetryConfig};
+use crate::api::{Endpoint, Error, RetryConfig};
 
 pub struct Client {
     client: ReqwestClient,
@@ -32,23 +32,21 @@ impl Client {
         })
     }
 
-    /// POST `body` as JSON and decode the response.
-    pub async fn post<T: DeserializeOwned>(
+    /// POST `request` as JSON and decode `E::Response`.
+    pub async fn call<E: Endpoint>(
         &self,
-        path: &str,
-        body: &impl Serialize,
-    ) -> Result<T, Error> {
-        let response = self.checked(path, body).await?;
-        response.json::<T>().await.map_err(|error| Error::Decode(error.to_string()))
+        request: &E::Request,
+    ) -> Result<E::Response, Error> {
+        let response = self.checked(E::PATH, request).await?;
+        response.json::<E::Response>().await.map_err(|error| Error::Decode(error.to_string()))
     }
 
-    /// POST `body` as JSON and discard the response, checking only the status.
-    pub async fn send(
+    /// POST `request` as JSON and discard the response, checking only the status.
+    pub async fn send<E: Endpoint>(
         &self,
-        path: &str,
-        body: &impl Serialize,
+        request: &E::Request,
     ) -> Result<(), Error> {
-        self.checked(path, body).await?;
+        self.checked(E::PATH, request).await?;
         Ok(())
     }
 }
