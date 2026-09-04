@@ -114,7 +114,11 @@ impl ModelsResolver {
                 .collect::<Result<Vec<_>, RegistryError>>()?;
             return Ok(ResolvedModel::downloadable(model, files));
         };
-        if let Some(files) = previous.reusable_hugging_face_files(&model) {
+        if let Some(mut files) = previous.reusable_hugging_face_files(&model) {
+            let requires_authentication = self.api_key.is_some();
+            for file in &mut files {
+                file.requires_authentication = requires_authentication;
+            }
             return Ok(ResolvedModel::downloadable(model, files));
         }
         let files = self.resolve_hugging_face(repository, revision).await?;
