@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use crate::device::Device;
@@ -16,6 +18,7 @@ pub struct Config {
     pub device: Device,
     pub backends: Vec<Backend>,
     pub include_traces: bool,
+    pub cache_path: PathBuf,
 }
 
 impl Config {
@@ -24,12 +27,14 @@ impl Config {
         device: Device,
         backends: Vec<Backend>,
         include_traces: bool,
+        cache_path: PathBuf,
     ) -> Self {
         Self {
             api_key,
             device,
             backends,
             include_traces,
+            cache_path,
         }
     }
 }

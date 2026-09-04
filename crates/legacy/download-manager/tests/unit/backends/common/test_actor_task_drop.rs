@@ -1,10 +1,8 @@
-use std::{error::Error, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
 use download_manager::{DownloadError, FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
 use kiban::rt::RuntimeHandle;
 use rstest::rstest;
-use tempfile::tempdir;
-use tokio::{fs::write as tokio_write, time::sleep as tokio_sleep};
 
 use crate::common::{Behavior, MockRegistry, wait_for_phase};
 
@@ -15,15 +13,15 @@ use crate::common::{Behavior, MockRegistry, wait_for_phase};
 async fn remove_paused_task_deletes_resume_artifact(
     #[case] download_manager_type: FileDownloadManagerType,
     #[case] resume_artifact_extension: &str,
-) -> Result<(), Box<dyn Error>> {
-    let temporary_directory = tempdir()?;
+) -> Result<(), Box<dyn std::error::Error>> {
+    let temporary_directory = tempfile::tempdir()?;
     let destination = temporary_directory.path().join("model.bin");
-    let resume_artifact = destination.with_added_extension(resume_artifact_extension);
-    tokio_write(&resume_artifact, b"partial").await?;
+    let resume_artifact = destination.with_extension(resume_artifact_extension);
+    tokio::fs::write(&resume_artifact, b"partial").await?;
 
     let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await?;
     let task = manager
-        .file_download_task("http://example.invalid/model.bin".into(), &destination, FileCheck::None, Some(100))
+        .file_download_task("http://example.invalid/model.bin", &destination, FileCheck::None, Some(100))
         .await?;
 
     assert!(matches!(task.state().await.phase, FileDownloadPhase::Paused));
@@ -42,17 +40,17 @@ async fn remove_paused_task_deletes_resume_artifact(
 async fn dropping_active_download_cancels_backend_before_releasing_lock(
     #[case] download_manager_type: FileDownloadManagerType,
     #[case] resume_artifact_extension: &str,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let tokenizer = registry.file("tokenizer.json")?;
-    let temp_dir = tempdir()?;
+    let temp_dir = tempfile::tempdir()?;
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let lock_path = destination.with_added_extension("lock");
-    let resume_artifact = destination.with_added_extension(resume_artifact_extension);
+    let lock_path = PathBuf::from(format!("{}.lock", destination.display()));
+    let resume_artifact = destination.with_extension(resume_artifact_extension);
     let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
     let task = manager
         .file_download_task(
-            (&tokenizer.file.url).into(),
+            &tokenizer.file.url,
             &destination,
             FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64),
@@ -69,7 +67,7 @@ async fn dropping_active_download_cancels_backend_before_releasing_lock(
     assert!(matches!(task.download().await, Err(DownloadError::TaskStopped)));
     let replacement_task = manager
         .file_download_task(
-            (&tokenizer.file.url).into(),
+            &tokenizer.file.url,
             &destination,
             FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64),
@@ -85,13 +83,13 @@ async fn dropping_active_download_cancels_backend_before_releasing_lock(
             lock_released = true;
             break;
         }
-        tokio_sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert!(lock_released);
     assert!(!resume_artifact.exists());
 
     let destination_size_at_release = destination.metadata().map(|m| m.len()).unwrap_or(0);
-    tokio_sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let destination_size_after = destination.metadata().map(|m| m.len()).unwrap_or(0);
     assert_eq!(destination_size_at_release, destination_size_after);
     Ok(())

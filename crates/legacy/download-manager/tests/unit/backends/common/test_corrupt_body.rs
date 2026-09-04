@@ -18,7 +18,7 @@ async fn test_corrupt_body_fails_crc(
     let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await.unwrap();
     let task = manager
         .file_download_task(
-            (&tokenizer.file.url).into(),
+            &tokenizer.file.url,
             &destination,
             FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64),
@@ -48,7 +48,7 @@ async fn test_corrupt_body_cancel_resets_error_state(
     let manager = <dyn FileDownloadManager>::new(download_manager_type, RuntimeHandle::current()).await?;
     let task = manager
         .file_download_task(
-            (&tokenizer.file.url).into(),
+            &tokenizer.file.url,
             &destination,
             FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64),

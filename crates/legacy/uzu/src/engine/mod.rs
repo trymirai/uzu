@@ -14,7 +14,7 @@ pub use download_manager::DownloadManagerType;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
 use indexmap::{IndexMap, IndexSet};
-use kiban::rt::{RuntimeHandle as KibanRuntimeHandle, spawn as kiban_spawn};
+use kiban::rt::RuntimeHandle;
 use nagare::{
     api::Config as ClientConfig,
     chat::{ChatInstance, ChatSession},
@@ -29,21 +29,17 @@ use shoji::{
         session::chat::ChatConfig,
     },
 };
-use tokio_stream::{StreamExt as TokioStreamExt, wrappers::BroadcastStream as TokioBroadcastStream};
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
     device::Device,
     engine::bridge::UzuLlmBackend,
     helpers::{SharedAccess, is_endpoint_reachable},
     logs,
-    models::ModelCatalog,
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
-        mirai::{
-            Backend as MiraiBackend, Config as MiraiRegistryConfig, MIRAI_API_HOST, MIRAI_API_SCHEME,
-            Registry as MiraiRegistry,
-        },
+        mirai::{Backend as MiraiBackend, Config as MiraiRegistryConfig, Registry as MiraiRegistry},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
     settings::Settings,
@@ -58,18 +54,15 @@ use crate::{
 pub struct Engine {
     settings: SharedAccess<Option<Settings>>,
     registry: SharedAccess<MergedRegistry>,
-    catalog: ModelCatalog,
-    catalog_refresh_lock: SharedAccess<()>,
     storage: SharedAccess<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
     callback: SharedAccess<Option<Arc<EngineCallback>>>,
     telemetry: SharedAccess<Telemetry>,
-    huggingface_api_key: Option<Arc<str>>,
 }
 
 impl Engine {
     pub async fn new(config: EngineConfig) -> Result<Self, EngineError> {
-        let runtime_handle = KibanRuntimeHandle::try_current().map_err(|error| EngineError::TokioError {
+        let runtime_handle = RuntimeHandle::try_current().map_err(|error| EngineError::TokioError {
             message: error.to_string(),
         })?;
 
@@ -87,7 +80,7 @@ impl Engine {
 
         let telemetry = SharedAccess::new({
             let client_config = ClientConfig::new(
-                format!("{MIRAI_API_SCHEME}://{MIRAI_API_HOST}/api/v2"),
+                "https://sdk.trymirai.com/api/v2".to_string(),
                 Duration::from_secs(10),
                 IndexMap::new(),
             );
@@ -110,21 +103,15 @@ impl Engine {
         let storage_cache_path = storage_config.cache_path();
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
-        let huggingface_api_key = config.huggingface_api_key.clone().map(Arc::<str>::from);
-        let catalog =
-            ModelCatalog::new(huggingface_api_key.clone(), storage_cache_path.join("resolved-models.json")).await?;
         let storage = SharedAccess::new(Storage::new(runtime_handle, storage_config).await?);
 
         let engine = Self {
             settings: SharedAccess::new(settings),
             storage,
             registry,
-            catalog,
-            catalog_refresh_lock: SharedAccess::new(()),
             backends: SharedAccess::new(HashMap::new()),
             callback: SharedAccess::new(None),
             telemetry,
-            huggingface_api_key,
         };
         engine.spawn_storage_listener().await;
 
@@ -141,11 +128,12 @@ impl Engine {
                     version: uzu_backend_version.clone(),
                 }],
                 include_traces: false,
+                cache_path: storage_cache_path,
             };
             let mirai_registry = Box::new(MiraiRegistry::new(mirai_registry_config)?);
 
             engine.add_backend(Arc::new(uzu_backend) as Arc<dyn Backend>).await;
-            engine.registry.lock().await.add(Box::new(CachedRegistry::new(mirai_registry)))?;
+            engine.add_registry(mirai_registry).await?;
 
             if let Some(lalamo_path) = config.lalamo_path {
                 let lalamo_registry = LocalRegistry::new(LocalRegistryConfig::lalamo(
@@ -153,7 +141,7 @@ impl Engine {
                     uzu_backend_version.clone(),
                     lalamo_path,
                 ))?;
-                engine.registry.lock().await.add(Box::new(CachedRegistry::new(Box::new(lalamo_registry))))?;
+                engine.add_registry(Box::new(lalamo_registry)).await?;
             }
             if let Some(local_path) = config.local_path {
                 let local_registry = LocalRegistry::new(LocalRegistryConfig::local(
@@ -161,7 +149,7 @@ impl Engine {
                     uzu_backend_version.clone(),
                     local_path,
                 ))?;
-                engine.registry.lock().await.add(Box::new(CachedRegistry::new(Box::new(local_registry))))?;
+                engine.add_registry(Box::new(local_registry)).await?;
             }
         }
 
@@ -199,18 +187,13 @@ impl Engine {
         for config in openai_configs {
             let registry = OpenAIRegistry::new(config.clone())?;
             let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
-            engine.registry.lock().await.add(Box::new(CachedRegistry::new(Box::new(registry))))?;
+            engine.add_registry(Box::new(registry)).await?;
             engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
         }
 
-        engine.handle_initial_catalog_refresh().await?;
         Ok(engine)
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/engine/cache_test.rs"]
-mod tests;
 
 #[bindings::export(Implementation)]
 impl Engine {
@@ -237,15 +220,8 @@ impl Engine {
         &self,
         registry: Box<dyn Registry<Error = RegistryError>>,
     ) -> Result<(), EngineError> {
-        let identifier = registry.indentifier();
-        let refresh = self.catalog_refresh_lock.lock().await;
         self.registry.lock().await.add(Box::new(CachedRegistry::new(registry)))?;
-        if let Err(error) = self.refresh_catalog().await {
-            self.registry.lock().await.remove(&identifier);
-            return Err(error);
-        }
-        drop(refresh);
-        self.notify_callback().await;
+        self.handle_registry_refresh().await?;
         Ok(())
     }
 
@@ -264,16 +240,8 @@ impl Engine {
         &self,
         registry_identifier: String,
     ) -> Result<(), EngineError> {
-        let refresh = self.catalog_refresh_lock.lock().await;
-        let removed = self.registry.lock().await.remove(&registry_identifier);
-        if let Err(error) = self.refresh_catalog().await {
-            if let Some((index, registry)) = removed {
-                self.registry.lock().await.restore(index, registry);
-            }
-            return Err(error);
-        }
-        drop(refresh);
-        self.notify_callback().await;
+        self.registry.lock().await.remove(&registry_identifier)?;
+        self.handle_registry_refresh().await?;
         Ok(())
     }
 
@@ -290,12 +258,12 @@ impl Engine {
 impl Engine {
     #[bindings::export(Method(Getter))]
     pub async fn models(&self) -> Result<Vec<Model>, EngineError> {
-        Ok(self.catalog.models().await)
+        self.registry.lock().await.models().await.map_err(EngineError::from)
     }
 
     #[bindings::export(Method(Getter))]
-    pub async fn models_on_device(&self) -> Result<Vec<Model>, EngineError> {
-        Ok(self.models().await?.into_iter().filter(|model| model.is_on_device()).collect())
+    pub async fn models_local(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_local()).collect())
     }
 
     #[bindings::export(Method(Getter))]
@@ -422,7 +390,7 @@ impl Engine {
         &self,
         identifier: String,
     ) -> Result<Option<Model>, EngineError> {
-        Ok(self.models().await?.into_iter().find(|model| model.identifier == identifier))
+        self.registry.lock().await.model_by_identifier(&identifier).await.map_err(EngineError::from)
     }
 
     #[bindings::export(Method)]
@@ -430,7 +398,7 @@ impl Engine {
         &self,
         repo_id: String,
     ) -> Result<Option<Model>, EngineError> {
-        Ok(self.models().await?.into_iter().find(|model| model.repo_ids().contains(&repo_id)))
+        self.registry.lock().await.model_by_repo_id(&repo_id).await.map_err(EngineError::from)
     }
 
     #[bindings::export(Method)]
@@ -455,11 +423,11 @@ impl Engine {
         &self,
         model: &Model,
     ) -> Option<String> {
-        if !model.is_on_device() {
+        if !model.is_local() {
             return None;
         }
-        if let Some(filesystem_path) = model.filesystem_path() {
-            return Some(filesystem_path);
+        if let Some(local_external_path) = model.local_external_path() {
+            return Some(local_external_path);
         }
         let storage = self.storage.lock().await;
         let state = storage.state(&model.identifier).await?;
@@ -482,11 +450,7 @@ impl Engine {
         &self,
         model: &Model,
     ) -> Downloader {
-        Downloader::new(
-            model.identifier.clone(),
-            self.storage.clone(),
-            self.huggingface_api_key.as_ref().map(Arc::downgrade),
-        )
+        Downloader::new(model.identifier.clone(), self.storage.clone())
     }
 
     #[bindings::export(Method)]
@@ -603,45 +567,24 @@ impl Engine {
 }
 
 impl Engine {
-    pub async fn storage_subscribe(&self) -> TokioBroadcastStream<(String, DownloadState)> {
+    pub async fn storage_subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
         self.storage.lock().await.subscribe()
     }
 
-    async fn refresh_catalog(&self) -> Result<(), EngineError> {
+    async fn handle_registry_refresh(&self) -> Result<(), EngineError> {
         let models = self.registry.lock().await.models().await?;
-        let resolved = self.catalog.resolve(models).await?;
-        self.storage.lock().await.refresh(&resolved, self.huggingface_api_key.clone()).await?;
-        self.catalog.commit(resolved).await;
-        Ok(())
-    }
-
-    async fn handle_initial_catalog_refresh(&self) -> Result<(), EngineError> {
-        let _refresh = self.catalog_refresh_lock.lock().await;
-        match self.refresh_catalog().await {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let previous = self.catalog.snapshot().await;
-                if previous.is_empty() {
-                    return Err(error);
-                }
-                tracing::warn!(?error, "serving previous resolved models after initial refresh failure");
-                self.storage.lock().await.refresh(&previous, self.huggingface_api_key.clone()).await?;
-                Ok(())
-            },
-        }
-    }
-
-    async fn notify_callback(&self) {
+        self.storage.lock().await.refresh(models).await?;
         if let Some(callback) = self.callback.lock().await.as_ref().cloned() {
             callback.on_event();
-        }
+        };
+        Ok(())
     }
 
     async fn spawn_storage_listener(&self) {
         let mut stream = self.storage_subscribe().await;
         let callback = self.callback.clone();
         let telemetry = self.telemetry.lock().await.clone();
-        kiban_spawn(async move {
+        tokio::spawn(async move {
             let mut last_phase: HashMap<String, DownloadPhase> = HashMap::new();
             while let Some(update) = stream.next().await {
                 let Ok((id, state)) = update else {

@@ -19,7 +19,7 @@ impl MergedRegistry {
         &mut self,
         registry: Box<dyn Registry<Error = RegistryError>>,
     ) -> Result<(), RegistryError> {
-        if self.registries.iter().any(|current| current.indentifier() == registry.indentifier()) {
+        if self.registries.iter().any(|current_registry| current_registry.indentifier() == registry.indentifier()) {
             return Err(RegistryError::UnableToAddRegistry {
                 identifier: registry.indentifier(),
             });
@@ -31,17 +31,9 @@ impl MergedRegistry {
     pub fn remove(
         &mut self,
         identifier: &str,
-    ) -> Option<(usize, Box<dyn Registry<Error = RegistryError>>)> {
-        let index = self.registries.iter().position(|registry| registry.indentifier() == identifier)?;
-        Some((index, self.registries.remove(index)))
-    }
-
-    pub fn restore(
-        &mut self,
-        index: usize,
-        registry: Box<dyn Registry<Error = RegistryError>>,
-    ) {
-        self.registries.insert(index, registry);
+    ) -> Result<(), RegistryError> {
+        self.registries.retain(|registry| registry.indentifier() != identifier);
+        Ok(())
     }
 }
 
@@ -57,8 +49,13 @@ impl Registry for MergedRegistry {
             let results = futures::future::join_all(self.registries.iter().map(|registry| registry.models())).await;
 
             let mut models = Vec::new();
-            for result in results {
-                models.extend(result?);
+            for (registry, result) in self.registries.iter().zip(results) {
+                match result {
+                    Ok(registry_models) => models.extend(registry_models),
+                    Err(error) => {
+                        tracing::warn!(?error, registry = %registry.indentifier(), "skipping registry that failed to list models");
+                    },
+                }
             }
             Ok(models)
         })

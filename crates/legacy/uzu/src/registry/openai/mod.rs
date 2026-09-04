@@ -5,12 +5,23 @@ use std::{future::Future, pin::Pin};
 use async_openai::{Client, config::OpenAIConfig};
 pub use config::Config;
 use fancy_regex::Regex;
+use serde::Deserialize;
 use shoji::{
     traits::Registry as RegistryTrait,
     types::model::{Model as ShojiModel, ModelAccessibility, ModelSpecialization},
 };
 
-use crate::{api::OpenAIModelsResponse, registry::RegistryError};
+#[derive(Debug, Deserialize)]
+struct Model {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListModelsResponse {
+    data: Vec<Model>,
+}
+
+use crate::registry::RegistryError;
 
 pub struct Registry {
     config: Config,
@@ -63,7 +74,7 @@ impl RegistryTrait for Registry {
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ShojiModel>, RegistryError>> + Send + '_>> {
         Box::pin(async {
-            let response: OpenAIModelsResponse =
+            let response: ListModelsResponse =
                 self.client.models().list_byot().await.map_err(|error| RegistryError::UnableToGetModels {
                     message: error.to_string(),
                 })?;
