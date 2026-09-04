@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{Allocation, Backend, Encoder, Kernels, kernel::GroupedConvolutionKernel},
-    config::dflash::GroupedConvolutionConfig,
+    config::transformer_layer::GroupedConvolutionConfig,
     data_type::DataType,
     encodable_block::linear::{Linear, LinearBlockError},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -22,7 +22,7 @@ pub enum ConvolutionNewError<B: Backend> {
 
 #[repr(u32)]
 #[derive(Clone, Copy)]
-enum Stage {
+enum ConvolutionStage {
     Input = 0,
     Output = 1,
 }
@@ -37,17 +37,47 @@ pub struct GroupedConvolution<B: Backend> {
     data_type: DataType,
 }
 
+pub struct GroupedConvolutions<B: Backend> {
+    pub attention: GroupedConvolution<B>,
+    pub mlp: GroupedConvolution<B>,
+}
+
+impl<B: Backend> GroupedConvolutions<B> {
+    pub fn new(
+        context: &B::Context,
+        config: &GroupedConvolutionConfig,
+        model_dim: u32,
+        parameters: &ParameterTree<B>,
+        data_type: DataType,
+    ) -> Result<Self, ConvolutionNewError<B>> {
+        Ok(Self {
+            attention: GroupedConvolution::new(
+                context,
+                config,
+                model_dim,
+                &parameters.subtree("attention_convolution"),
+                data_type,
+            )?,
+            mlp: GroupedConvolution::new(
+                context,
+                config,
+                model_dim,
+                &parameters.subtree("mlp_convolution"),
+                data_type,
+            )?,
+        })
+    }
+}
+
 impl<B: Backend> GroupedConvolution<B> {
     pub fn new(
         context: &B::Context,
         config: &GroupedConvolutionConfig,
         model_dim: u32,
-        block_size: u32,
         parameters: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, ConvolutionNewError<B>> {
-        if [model_dim, block_size, config.kernel_size, config.group_size].contains(&0)
-            || config.kernel_size > block_size
+        if [model_dim, config.kernel_size, config.group_size].contains(&0)
             || !model_dim.is_multiple_of(config.group_size)
         {
             return Err(ConvolutionNewError::InvalidConfiguration("invalid grouped convolution dimensions"));
@@ -88,25 +118,21 @@ impl<B: Backend> GroupedConvolution<B> {
         })
     }
 
-    pub fn prepare(
+    pub fn encode_around<F>(
         &self,
         input: Allocation<B>,
         sequence_length: u32,
         encoder: &mut Encoder<B>,
-    ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
+        encode_sublayer: F,
+    ) -> Result<Allocation<B>, B::Error>
+    where
+        F: FnOnce(Allocation<B>, &mut Encoder<B>) -> Result<Allocation<B>, B::Error>,
+    {
         let coefficients = self.project(&input, sequence_length, encoder)?;
-        let input = self.encode_stage(&input, &coefficients, sequence_length, Stage::Input, encoder)?;
-        Ok((input, coefficients))
-    }
-
-    pub fn finish(
-        &self,
-        output: Allocation<B>,
-        coefficients: Allocation<B>,
-        sequence_length: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        self.encode_stage(&output, &coefficients, sequence_length, Stage::Output, encoder)
+        let input =
+            self.encode_convolution(&input, &coefficients, sequence_length, ConvolutionStage::Input, encoder)?;
+        let output = encode_sublayer(input, encoder)?;
+        self.encode_convolution(&output, &coefficients, sequence_length, ConvolutionStage::Output, encoder)
     }
 
     fn project(
@@ -120,12 +146,12 @@ impl<B: Backend> GroupedConvolution<B> {
         self.projection.encode(projection_input, sequence_length, encoder)
     }
 
-    fn encode_stage(
+    fn encode_convolution(
         &self,
         input: &Allocation<B>,
         coefficients: &Allocation<B>,
         sequence_length: u32,
-        stage: Stage,
+        stage: ConvolutionStage,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let mut output = encoder.allocate_scratch_for_shape(&[sequence_length, self.model_dim], self.data_type)?;

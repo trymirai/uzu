@@ -5,14 +5,6 @@ use crate::config::{
     transformer_layer::TransformerLayerConfig,
 };
 
-// for DFlashV2 only
-#[uzu_config]
-pub struct GroupedConvolutionConfig {
-    pub kernel_size: u32,
-    pub group_size: u32,
-    pub kernel_projection_config: LinearConfig,
-}
-
 #[uzu_config]
 pub struct DFlashDraftConfig {
     pub model_dim: u32,
@@ -27,6 +19,4 @@ pub struct DFlashDraftConfig {
     pub rope_config: AnyRoPEConfig,
     pub layer_configs: Box<[TransformerLayerConfig]>,
     pub output_norm_config: NormalizationConfig,
-    #[serde(default)]
-    pub grouped_convolution_config: Option<GroupedConvolutionConfig>,
 }

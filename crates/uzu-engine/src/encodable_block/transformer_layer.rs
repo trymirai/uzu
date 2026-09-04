@@ -1,3 +1,6 @@
+mod convolution;
+
+use convolution::{ConvolutionNewError, GroupedConvolutions};
 use thiserror::Error;
 
 use crate::{
@@ -25,6 +28,8 @@ pub enum TransformerLayerError<B: Backend> {
     MlpBlock(#[from] MlpBlockError<B>),
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
+    #[error("Grouped convolution error: {0}")]
+    GroupedConvolution(#[from] ConvolutionNewError<B>),
     #[error("Layer {layer_index} sets post_layer_scalar but has no post_mlp_norm")]
     PostLayerScalarWithoutPostMlpNorm {
         layer_index: u32,
@@ -45,6 +50,7 @@ pub struct TransformerLayer<B: Backend> {
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<Normalization<B>>,
     pub ple_projection: Option<PerLayerEmbeddingProjection<B>>,
+    grouped_convolutions: Option<GroupedConvolutions<B>>,
 }
 
 impl<B: Backend> TransformerLayer<B> {
@@ -91,6 +97,12 @@ impl<B: Backend> TransformerLayer<B> {
             &parameter_tree.subtree("mixer"),
             context,
         )?;
+
+        let grouped_convolutions = layer_config
+            .grouped_convolution_config
+            .as_ref()
+            .map(|config| GroupedConvolutions::new(context, config, model_dim, parameter_tree, data_type))
+            .transpose()?;
 
         let pre_mixer_norm = if let Some(pre_mixer_norm_config) = &layer_config.pre_mixer_norm_config {
             Some(Normalization::new(
@@ -188,6 +200,7 @@ impl<B: Backend> TransformerLayer<B> {
             mlp,
             post_mlp_norm,
             ple_projection,
+            grouped_convolutions,
         })
     }
 
@@ -203,29 +216,7 @@ impl<B: Backend> TransformerLayer<B> {
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
 
-        let hidden = self.encode_mixer_input(input, shortcut, batch_dim.size(), encoder)?;
-
-        // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
-        let hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
-
-        let hidden = self.encode_mlp_input(hidden, shortcut, batch_dim.size(), encoder)?;
-
-        let hidden = self.mlp.encode(hidden, batch_dim.size(), encoder)?;
-
-        let hidden = self.encode_layer_output(hidden, shortcut, per_layer_inputs, batch_dim.size(), encoder)?;
-
-        encoder.pop_debug_group();
-
-        Ok(hidden)
-    }
-
-    pub fn encode_mixer_input(
-        &self,
-        input: Allocation<B>,
-        shortcut: &mut Allocation<B>,
-        batch_size: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
+        let batch_size = batch_dim.size();
         let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
             pre_mixer_norm.encode(&input, 0, batch_size, Some(shortcut), encoder)?
         } else {
@@ -233,31 +224,35 @@ impl<B: Backend> TransformerLayer<B> {
             encoder.encode_copy(&input, .., shortcut, ..);
             input
         };
-        Ok(hidden)
-    }
 
-    pub fn encode_mlp_input(
-        &self,
-        mut hidden: Allocation<B>,
-        shortcut: &mut Allocation<B>,
-        batch_size: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        if let Some(post_mixer_norm) = &self.post_mixer_norm {
-            hidden = post_mixer_norm.encode(&hidden, 0, batch_size, None, encoder)?;
-        }
+        // TODO: In prefill outside of sampling suffix in last layer part of mixer
+        // (ie out projection) and everything after is dead code
+        let hidden = match &self.grouped_convolutions {
+            Some(grouped_convolutions) => {
+                grouped_convolutions.attention.encode_around(hidden, batch_size, encoder, |hidden, encoder| {
+                    self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)
+                })?
+            },
+            None => self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?,
+        };
 
-        self.pre_mlp_norm.encode(&hidden, 0, batch_size, Some(shortcut), encoder)
-    }
+        let hidden = if let Some(post_mixer_norm) = &self.post_mixer_norm {
+            post_mixer_norm.encode(&hidden, 0, batch_size, None, encoder)?
+        } else {
+            hidden
+        };
+        let hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_size, Some(shortcut), encoder)?;
 
-    pub fn encode_layer_output(
-        &self,
-        mut hidden: Allocation<B>,
-        shortcut: &mut Allocation<B>,
-        per_layer_inputs: Option<&Allocation<B>>,
-        batch_size: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
+        let hidden = match &self.grouped_convolutions {
+            Some(grouped_convolutions) => {
+                grouped_convolutions.mlp.encode_around(hidden, batch_size, encoder, |hidden, encoder| {
+                    self.mlp.encode(hidden, batch_size, encoder)
+                })?
+            },
+            None => self.mlp.encode(hidden, batch_size, encoder)?,
+        };
+
+        let mut hidden = hidden;
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
             hidden = post_mlp_norm.encode(&hidden, 0, batch_size, None, encoder)?;
         }
@@ -267,6 +262,9 @@ impl<B: Backend> TransformerLayer<B> {
             ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_size, encoder)?;
             encoder.encode_fill(&mut hidden, 0);
         }
+
+        encoder.pop_debug_group();
+
         Ok(hidden)
     }
 }

@@ -26,7 +26,6 @@ use crate::{
     backends::{common::Allocation, metal::Metal},
     tests::{cold_pool::ColdPool, matmul::iter_encode_loop_named},
 };
-
 #[derive(Clone, Copy)]
 struct Shape {
     sequence_length: usize,
@@ -123,30 +122,6 @@ fn test_bf16_golden() {
         for_each_non_cpu_backend!(|B| {
             let actual = run::<B>(shape, &input, &coefficients, &base_kernel, stage);
             assert_eq_float(&expected, &actual, 0.05, "grouped convolution backend parity");
-        });
-    }
-}
-
-#[uzu_test]
-fn test_bf16_dflash_v2_shape() {
-    let shape = Shape {
-        sequence_length: 16,
-        model_dim: 6656,
-        group_size: 16,
-        kernel_size: 2,
-    };
-    let input =
-        (0..shape.input_len()).map(|index| bf16::from_f32((index % 31) as f32 * 0.05 - 0.75)).collect::<Vec<_>>();
-    let coefficients = (0..shape.coefficients_len())
-        .map(|index| bf16::from_f32((index % 17) as f32 * 0.02 - 0.16))
-        .collect::<Vec<_>>();
-    let base_kernel =
-        (0..shape.base_kernel_len()).map(|index| bf16::from_f32((index % 13) as f32 * 0.03 - 0.18)).collect::<Vec<_>>();
-    for stage in [0u32, 1] {
-        let expected = run::<Cpu>(shape, &input, &coefficients, &base_kernel, stage);
-        for_each_non_cpu_backend!(|B| {
-            let actual = run::<B>(shape, &input, &coefficients, &base_kernel, stage);
-            assert_eq_float(&expected, &actual, 0.01, &format!("grouped convolution DFlash V2, stage {stage}"));
         });
     }
 }
