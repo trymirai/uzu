@@ -7,7 +7,7 @@ use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 #[cfg(target_vendor = "apple")]
 use crate::backends::apple::AppleDownloadManager;
 use crate::{
-    DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadTask,
+    DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadTask, HttpDownloadRequest,
     backends::universal::UniversalDownloadManager,
 };
 
@@ -48,7 +48,7 @@ pub trait FileDownloadManager: Send + Sync + 'static {
 
     async fn file_download_task(
         &self,
-        source_url: &str,
+        request: HttpDownloadRequest,
         destination_path: &Path,
         file_check: FileCheck,
         expected_bytes: Option<u64>,

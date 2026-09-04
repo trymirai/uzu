@@ -1,10 +1,10 @@
-use std::path::Path;
+use std::{io::ErrorKind, path::Path};
 
 use kiban::fs;
 
 use crate::{
     DownloadError,
-    crc_utils::save_crc_file,
+    integrity::save_integrity_cache,
     lock_manager::DestinationLockLease,
     reducer::{Action, ActionPlan},
 };
@@ -18,7 +18,7 @@ pub async fn apply_actions(
             Action::DeleteFile {
                 path,
             }
-            | Action::DeleteCrcCache {
+            | Action::DeleteIntegrityCache {
                 path,
             }
             | Action::DeleteResumeArtifact {
@@ -26,11 +26,11 @@ pub async fn apply_actions(
             } => {
                 remove_file_if_present(path).await?;
             },
-            Action::SaveCrcCache {
+            Action::SaveIntegrityCache {
                 destination,
-                crc,
+                file_check,
             } => {
-                save_crc_file(destination, crc).await?;
+                save_integrity_cache(destination, file_check).await?;
             },
         }
     }
@@ -41,7 +41,7 @@ pub async fn apply_actions(
 async fn remove_file_if_present(path: &Path) -> Result<(), DownloadError> {
     match fs::asyn::remove_file(path).await {
         Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(DownloadError::from(error)),
     }
 }

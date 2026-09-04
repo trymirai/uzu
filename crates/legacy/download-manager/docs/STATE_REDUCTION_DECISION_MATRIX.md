@@ -33,7 +33,7 @@ Determines if a file on disk is valid, invalid, or missing based on CRC validati
 
 **CRC Caching Optimization:**
 
-- Valid files get a `.crc` cache file to avoid recalculation on next launch
+- Valid files get an `.integrity` receipt to avoid recalculation on next launch
 - Makes subsequent launches ~100x faster for large files
 - Cache is invalidated when file changes
 
@@ -219,7 +219,7 @@ if task.state() == Completed && checked_file_state == Valid {
 ```rust
 if file_size < expected_bytes {
     // Partial download - preserve file
-    remove_crc_cache();
+    remove_integrity_receipt();
     return NotDownloaded;
 } else {
     // Corrupted full-size file - delete
@@ -337,7 +337,7 @@ Initial:     file=Exists(100MB), crc=Missing, resume=Missing, task=None
 ↓
 Checked:     Invalid (file incomplete, fails CRC)
 Reconcile:   Detect: 100MB < 1.1GB (partial)
-Action:      PRESERVE file, remove CRC cache
+Action:      PRESERVE file, remove integrity receipt
 Internal:    NotDownloaded
 Display:     NotDownloaded (0 / 1.1GB)
 ↓ Future download can resume from partial file if URLSession supports it

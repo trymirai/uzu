@@ -63,7 +63,6 @@ uzu-engine.workspace = true
 kiban.workspace = true
 shoji.workspace = true
 anyhow.workspace = true
-bitflags.workspace = true
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
@@ -134,11 +133,11 @@ rstest.workspace = true
 
 [[test]]
 name = "tool"
-path = "tests/tool/mod.rs"
+path = "tests/integration/tool/mod.rs"
 
 [[test]]
-name = "unit"
-path = "tests/unit/test_entry.rs"
+name = "integration"
+path = "tests/integration/test_entry.rs"
 
 [build-dependencies]
 napi-build = { workspace = true, optional = true }

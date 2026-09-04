@@ -15,6 +15,7 @@ pub(crate) enum DownloadActorState<B: DownloadBackend> {
         active_task: B::ActiveTask,
         generation: ActiveDownloadGeneration,
         destination_lease: DestinationLockLease,
+        resumed: bool,
     },
     Downloaded,
 }

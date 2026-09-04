@@ -2,12 +2,13 @@ use std::{fmt::Debug, future::Future, path::Path};
 
 use kiban::{fs, maybe::MaybeSend};
 
-use crate::traits::{ActiveTask, BackendContext};
+use crate::traits::{ActiveTask, BackendContext, Capabilities};
 
 pub trait DownloadBackend: Debug + Clone + Send + Sync + 'static {
     type Context: BackendContext<Backend = Self>;
     type ActiveTask: ActiveTask<Backend = Self>;
     type Error: std::error::Error + Send + Sync + 'static;
+    const CAPABILITIES: Capabilities = Capabilities::empty();
 
     // Default = file size (correct for `.part`-style artifacts). Apple must override:
     // `.resume_data` is a small metadata blob, not the downloaded bytes.

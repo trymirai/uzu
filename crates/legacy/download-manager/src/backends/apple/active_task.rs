@@ -5,7 +5,7 @@ use std::{
 
 use objc2::rc::Retained;
 use objc2_foundation::NSURLSessionDownloadTask;
-use tokio::sync::oneshot::channel as tokio_oneshot_channel;
+use tokio::{fs::write as tokio_write, sync::oneshot::channel as tokio_oneshot_channel};
 
 use crate::{
     DownloadId,
@@ -21,6 +21,7 @@ pub struct AppleActiveTask {
     task: Retained<NSURLSessionDownloadTask>,
     event_registry: AppleEventRegistry,
     sink_key: AppleSinkKey,
+    authenticated: bool,
 }
 
 impl AppleActiveTask {
@@ -28,12 +29,14 @@ impl AppleActiveTask {
         task: Retained<NSURLSessionDownloadTask>,
         event_registry: AppleEventRegistry,
         download_id: DownloadId,
+        authenticated: bool,
     ) -> Self {
         let sink_key = (download_id, task.task_identifier());
         Self {
             task,
             event_registry,
             sink_key,
+            authenticated,
         }
     }
 
@@ -59,7 +62,12 @@ impl ActiveTask for AppleActiveTask {
         self,
         destination: &Path,
     ) -> Result<PathBuf, <Self::Backend as DownloadBackend>::Error> {
-        let resume_artifact_path = destination.with_extension("resume_data");
+        let resume_artifact_path = destination.with_added_extension("resume_data");
+        if self.authenticated {
+            drop(self);
+            tokio_write(&resume_artifact_path, []).await.map_err(|error| AppleBackendError::Io(error.to_string()))?;
+            return Ok(resume_artifact_path);
+        }
         let (resume_data_sender, resume_data_receiver) = tokio_oneshot_channel::<Box<[u8]>>();
         let pending_resume_data_sender = Arc::new(Mutex::new(Some(resume_data_sender)));
         self.unregister_event_sink();
@@ -83,7 +91,7 @@ impl ActiveTask for AppleActiveTask {
         }
         let resume_data_bytes =
             resume_data_receiver.await.map_err(|error| AppleBackendError::ResumeData(error.to_string()))?;
-        tokio::fs::write(&resume_artifact_path, resume_data_bytes)
+        tokio_write(&resume_artifact_path, resume_data_bytes)
             .await
             .map_err(|error| AppleBackendError::Io(error.to_string()))?;
         Ok(resume_artifact_path)
@@ -93,8 +101,7 @@ impl ActiveTask for AppleActiveTask {
         self,
         _destination: &Path,
     ) -> CancelOutcome {
-        self.unregister_event_sink();
-        self.task.cancel();
+        drop(self);
         CancelOutcome::BestEffort
     }
 }

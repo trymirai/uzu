@@ -204,7 +204,7 @@ impl ThinkingSupport {
 mod tests {
     use shoji::types::{
         basic::Value,
-        model::{ModelAccessibility, ModelReference, ModelSpecialization},
+        model::{ModelAccessibility, ModelSource, ModelSpecialization},
     };
 
     use super::*;
@@ -236,8 +236,8 @@ mod tests {
             "uzu".to_string(),
             "0.0".to_string(),
             vec![ModelSpecialization::Chat {}],
-            ModelAccessibility::Local {
-                reference: ModelReference::Local {
+            ModelAccessibility::OnDevice {
+                source: ModelSource::Filesystem {
                     path: "/nonexistent".to_string(),
                 },
             },

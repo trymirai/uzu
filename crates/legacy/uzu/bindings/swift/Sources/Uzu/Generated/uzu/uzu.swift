@@ -902,7 +902,7 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     func modelsForTranslation() async throws  -> [Model]
     
-    func modelsLocal() async throws  -> [Model]
+    func modelsOnDevice() async throws  -> [Model]
     
     func modelsRemote() async throws  -> [Model]
     
@@ -1390,11 +1390,11 @@ open func modelsForTranslation()async throws  -> [Model]  {
         )
 }
     
-open func modelsLocal()async throws  -> [Model]  {
+open func modelsOnDevice()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_uzu_fn_method_engine_models_local(
+                uniffi_uzu_fn_method_engine_models_on_device(
                     self.uniffiCloneHandle()
                     
                 )
@@ -3114,19 +3114,13 @@ public enum StorageError: Swift.Error, Equatable, Hashable, Codable, Foundation.
     
     case UnableToCreateDirectory(path: String
     )
-    case UnableToCreateDownloadManager(message: String
-    )
     case DownloadManager(message: String
-    )
-    case HashNotFound(identifier: String, name: String
     )
     case InvalidStateTransition(from: DownloadPhase, to: DownloadPhase
     )
     case Io(message: String
     )
     case ItemNotFound(identifier: String
-    )
-    case Registry(RegistryError
     )
     case UnsupportedItem(identifier: String
     )
@@ -3162,30 +3156,20 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
         case 1: return .UnableToCreateDirectory(
             path: try FfiConverterString.read(from: &buf)
             )
-        case 2: return .UnableToCreateDownloadManager(
+        case 2: return .DownloadManager(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 3: return .DownloadManager(
-            message: try FfiConverterString.read(from: &buf)
-            )
-        case 4: return .HashNotFound(
-            identifier: try FfiConverterString.read(from: &buf), 
-            name: try FfiConverterString.read(from: &buf)
-            )
-        case 5: return .InvalidStateTransition(
+        case 3: return .InvalidStateTransition(
             from: try FfiConverterTypeDownloadPhase.read(from: &buf), 
             to: try FfiConverterTypeDownloadPhase.read(from: &buf)
             )
-        case 6: return .Io(
+        case 4: return .Io(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 7: return .ItemNotFound(
+        case 5: return .ItemNotFound(
             identifier: try FfiConverterString.read(from: &buf)
             )
-        case 8: return .Registry(
-            try FfiConverterTypeRegistryError.read(from: &buf)
-            )
-        case 9: return .UnsupportedItem(
+        case 6: return .UnsupportedItem(
             identifier: try FfiConverterString.read(from: &buf)
             )
 
@@ -3205,45 +3189,29 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
             FfiConverterString.write(path, into: &buf)
             
         
-        case let .UnableToCreateDownloadManager(message):
+        case let .DownloadManager(message):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(message, into: &buf)
             
         
-        case let .DownloadManager(message):
-            writeInt(&buf, Int32(3))
-            FfiConverterString.write(message, into: &buf)
-            
-        
-        case let .HashNotFound(identifier,name):
-            writeInt(&buf, Int32(4))
-            FfiConverterString.write(identifier, into: &buf)
-            FfiConverterString.write(name, into: &buf)
-            
-        
         case let .InvalidStateTransition(from,to):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(3))
             FfiConverterTypeDownloadPhase.write(from, into: &buf)
             FfiConverterTypeDownloadPhase.write(to, into: &buf)
             
         
         case let .Io(message):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(4))
             FfiConverterString.write(message, into: &buf)
             
         
         case let .ItemNotFound(identifier):
-            writeInt(&buf, Int32(7))
+            writeInt(&buf, Int32(5))
             FfiConverterString.write(identifier, into: &buf)
             
         
-        case let .Registry(v1):
-            writeInt(&buf, Int32(8))
-            FfiConverterTypeRegistryError.write(v1, into: &buf)
-            
-        
         case let .UnsupportedItem(identifier):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(6))
             FfiConverterString.write(identifier, into: &buf)
             
         }
@@ -3799,7 +3767,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_uzu_checksum_method_engine_models_for_translation() != 56970) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uzu_checksum_method_engine_models_local() != 2150) {
+    if (uniffi_uzu_checksum_method_engine_models_on_device() != 11803) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_models_remote() != 36115) {

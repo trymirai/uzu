@@ -3,7 +3,7 @@ use std::{fmt::Debug, path::Path, sync::Arc};
 use tokio::sync::broadcast::Sender as TokioBroadcastSender;
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
-use crate::{DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadState};
+use crate::{DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadState, HttpDownloadRequest};
 
 #[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
@@ -41,16 +41,19 @@ pub(crate) trait ManagedFileDownloadTask: FileDownloadTask {
 pub(crate) struct CachedFileDownloadTask {
     public: Arc<dyn FileDownloadTask>,
     managed: Arc<dyn ManagedFileDownloadTask>,
+    request: HttpDownloadRequest,
 }
 
 impl CachedFileDownloadTask {
     pub(crate) fn new(
         public: Arc<dyn FileDownloadTask>,
         managed: Arc<dyn ManagedFileDownloadTask>,
+        request: HttpDownloadRequest,
     ) -> Self {
         Self {
             public,
             managed,
+            request,
         }
     }
 
@@ -64,5 +67,12 @@ impl CachedFileDownloadTask {
 
     pub(crate) fn is_stopped(&self) -> bool {
         self.managed.is_stopped()
+    }
+
+    pub fn request_matches(
+        &self,
+        request: &HttpDownloadRequest,
+    ) -> bool {
+        self.request == *request
     }
 }

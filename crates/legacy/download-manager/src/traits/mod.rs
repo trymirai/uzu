@@ -4,6 +4,7 @@ mod active_task;
 mod backend_context;
 mod backend_event_sender;
 mod cancel_outcome;
+mod capabilities;
 mod download_backend;
 mod download_config;
 
@@ -13,5 +14,6 @@ pub use active_task::ActiveTask;
 pub use backend_context::BackendContext;
 pub use backend_event_sender::BackendEventSender;
 pub use cancel_outcome::CancelOutcome;
+pub use capabilities::Capabilities;
 pub use download_backend::DownloadBackend;
 pub use download_config::DownloadConfig;

@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "backend-remote"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "async-openai",
  "futures",
@@ -531,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "bindings"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -541,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "bindings-types"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "inventory",
  "napi",
@@ -936,7 +936,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "anyhow",
  "chrono",
@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "cli-tools"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "anyhow",
  "clap",
@@ -1746,14 +1746,17 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download-manager"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "bitflags 2.13.0",
  "block2",
  "chrono",
  "crc32c",
  "futures-util",
+ "hex",
+ "http 1.4.2",
  "kiban",
  "libc",
  "mock-registry",
@@ -1764,6 +1767,8 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "sha1",
+ "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -2391,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "hanashi"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3108,7 +3113,7 @@ dependencies = [
 
 [[package]]
 name = "json-transform"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3162,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "kanka"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "libc",
  "obfstr",
@@ -3182,7 +3187,7 @@ dependencies = [
 
 [[package]]
 name = "keisoku"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "bitflags 2.13.0",
  "kanka",
@@ -3207,7 +3212,7 @@ dependencies = [
 
 [[package]]
 name = "kiban"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3600,7 +3605,7 @@ dependencies = [
 
 [[package]]
 name = "mock-registry"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.0",
@@ -3685,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "nagare"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "async-trait",
  "bindings",
@@ -3724,7 +3729,7 @@ dependencies = [
 
 [[package]]
 name = "nagare-macros"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -6088,7 +6093,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shoji"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "bindings",
  "bindings-types",
@@ -6772,7 +6777,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "token-stream-parser"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "indexmap 2.14.0",
  "json-transform",
@@ -7524,7 +7529,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -7532,7 +7537,6 @@ dependencies = [
  "backend-remote",
  "bindings",
  "bindings-types",
- "bitflags 2.13.0",
  "chrono",
  "confy",
  "dirs",
@@ -7589,7 +7593,7 @@ dependencies = [
 
 [[package]]
 name = "uzu-engine"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7644,7 +7648,7 @@ dependencies = [
 
 [[package]]
 name = "uzu-engine-macros"
-version = "0.5.22"
+version = "0.5.23"
 dependencies = [
  "quote",
  "syn 2.0.118",
