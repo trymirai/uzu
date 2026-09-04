@@ -5,8 +5,9 @@ use crate::{
         Allocation, Backend,
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::matmul::MatmulB,
+        microfloat::{MicrofloatEncoding, MicrofloatError, MicrofloatMetadata},
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, Layout},
+    config::weight_matrix::{AnyWeightMatrixSpec, Layout, microfloat_spec::MicrofloatSpec},
     data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -15,15 +16,20 @@ use crate::{
 pub enum WeightMatrixError<B: Backend> {
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
+    #[error("Microfloat error: {0}")]
+    MicrofloatError(#[from] MicrofloatError),
     #[error("Unsupported weight matrix configuration: {0}")]
     UnsupportedConfiguration(String),
 }
 
-#[derive(Clone, Copy)]
-pub struct QuantizationInfo {
-    pub mode: QuantizationMode,
-    pub method: QuantizationMethod,
-    pub group_size: u32,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuantizationInfo {
+    Integer {
+        mode: QuantizationMode,
+        method: QuantizationMethod,
+        group_size: u32,
+    },
+    Microfloat(MicrofloatEncoding),
 }
 
 pub struct ParsedWeightSpec {
@@ -32,50 +38,65 @@ pub struct ParsedWeightSpec {
 }
 
 pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeightSpec, WeightMatrixError<B>> {
-    let (layout, quantized) = match spec {
+    let (layout, quantization) = match spec {
         AnyWeightMatrixSpec::FullPrecisionSpec(spec) => (spec.layout.clone(), None),
         AnyWeightMatrixSpec::MLXSpec(spec) => {
-            (spec.layout.clone(), Some((spec.bits, spec.group_size, QuantizationMethod::ScaleBias)))
+            let quantization = integer_quantization::<B>(spec.bits, spec.group_size, QuantizationMethod::ScaleBias)?;
+            (spec.layout.clone(), Some(quantization))
         },
-        AnyWeightMatrixSpec::IntSpec(spec) => (
-            spec.layout.clone(),
-            Some((
-                spec.bits,
-                spec.group_size,
-                if spec.is_symmetric {
-                    QuantizationMethod::ScaleSymmetric
-                } else {
-                    QuantizationMethod::ScaleZeroPoint
-                },
-            )),
-        ),
-        spec => return Err(WeightMatrixError::UnsupportedConfiguration(format!("{spec:?}"))),
-    };
-    let quantization = match quantized {
-        None => None,
-        Some((bits, group_size, method)) => {
-            let mode = match bits {
-                4 => QuantizationMode::U4,
-                8 => QuantizationMode::U8,
-                _ => {
-                    return Err(WeightMatrixError::UnsupportedConfiguration(format!(
-                        "{method} bits={bits}, group_size={group_size}"
-                    )));
-                },
+        AnyWeightMatrixSpec::IntSpec(spec) => {
+            let method = if spec.is_symmetric {
+                QuantizationMethod::ScaleSymmetric
+            } else {
+                QuantizationMethod::ScaleZeroPoint
             };
-            if group_size == 0 {
-                return Err(WeightMatrixError::UnsupportedConfiguration("group size must be non-zero".into()));
-            }
-            Some(QuantizationInfo {
-                mode,
-                method,
-                group_size,
-            })
+            let quantization = integer_quantization::<B>(spec.bits, spec.group_size, method)?;
+            (spec.layout.clone(), Some(quantization))
         },
+        AnyWeightMatrixSpec::MicrofloatSpec(MicrofloatSpec {
+            bits,
+            group_size,
+            scale_mode,
+            layout,
+            ..
+        }) => {
+            if layout != &Layout::OutputInput {
+                return Err(WeightMatrixError::UnsupportedConfiguration(format!(
+                    "microfloat matrices require output-input layout, got {layout:?}"
+                )));
+            }
+            let encoding = MicrofloatEncoding::new(*scale_mode, *bits, *group_size)?;
+            (layout.clone(), Some(QuantizationInfo::Microfloat(encoding)))
+        },
+        spec => return Err(WeightMatrixError::UnsupportedConfiguration(format!("{spec:?}"))),
     };
     Ok(ParsedWeightSpec {
         layout,
         quantization,
+    })
+}
+
+fn integer_quantization<B: Backend>(
+    bits: u32,
+    group_size: u32,
+    method: QuantizationMethod,
+) -> Result<QuantizationInfo, WeightMatrixError<B>> {
+    let mode = match bits {
+        4 => QuantizationMode::U4,
+        8 => QuantizationMode::U8,
+        _ => {
+            return Err(WeightMatrixError::UnsupportedConfiguration(format!(
+                "{method} bits={bits}, group_size={group_size}"
+            )));
+        },
+    };
+    if group_size == 0 {
+        return Err(WeightMatrixError::UnsupportedConfiguration("group size must be non-zero".into()));
+    }
+    Ok(QuantizationInfo::Integer {
+        mode,
+        method,
+        group_size,
     })
 }
 
@@ -85,11 +106,19 @@ enum QuantizedCorrection<B: Backend> {
     ZeroPoints(Allocation<B>),
 }
 
-struct Quantized<B: Backend> {
-    scales: Allocation<B>,
-    correction: QuantizedCorrection<B>,
-    info: QuantizationInfo,
-    signed_codes: bool,
+enum Quantized<B: Backend> {
+    Integer {
+        scales: Allocation<B>,
+        correction: QuantizedCorrection<B>,
+        mode: QuantizationMode,
+        group_size: u32,
+        signed_codes: bool,
+    },
+    Microfloat {
+        scales: Allocation<B>,
+        outer_scales: Allocation<B>,
+        metadata: MicrofloatMetadata,
+    },
 }
 
 pub struct WeightMatrix<B: Backend> {
@@ -117,7 +146,7 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
-        let Some(info) = quantization else {
+        let Some(quantization) = quantization else {
             let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_allocation()?;
             return Ok(Self {
                 values,
@@ -125,20 +154,43 @@ impl<B: Backend> WeightMatrix<B> {
             });
         };
 
-        let group_size = info.group_size;
-        let packing_divisor = info.mode.packing_divisor();
-        let storage_data_type = info.mode.storage_type();
+        let (mode, method, group_size) = match quantization {
+            QuantizationInfo::Microfloat(encoding) => {
+                let metadata = MicrofloatMetadata::new(encoding, rows, columns)?;
+                let values = tree.leaf("weights")?.validate(&[rows, columns / 2], DataType::U8)?.read_allocation()?;
+                let scales = tree
+                    .leaf("scales")?
+                    .validate(&[rows, columns / encoding.group_size], DataType::U8)?
+                    .read_allocation()?;
+                let outer_scales = tree.leaf("global_scale")?.validate(&[1], data_type)?.read_allocation()?;
+                return Ok(Self {
+                    values,
+                    quantized: Some(Quantized::Microfloat {
+                        scales,
+                        outer_scales,
+                        metadata,
+                    }),
+                });
+            },
+            QuantizationInfo::Integer {
+                mode,
+                method,
+                group_size,
+            } => (mode, method, group_size),
+        };
+
+        let packing_divisor = mode.packing_divisor();
+        let storage_data_type = mode.storage_type();
         if !columns.is_multiple_of(packing_divisor) {
             return Err(WeightMatrixError::UnsupportedConfiguration(format!(
                 "stored columns {columns} are not divisible by packing divisor {packing_divisor}"
             )));
         }
         let groups = columns.div_ceil(group_size);
-
         let values =
             tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_allocation()?;
         let scales = tree.leaf("scales")?.validate(&[rows, groups], data_type)?.read_allocation()?;
-        let correction = match info.method {
+        let correction = match method {
             QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(
                 tree.leaf("biases")?.validate(&[rows, groups], data_type)?.read_allocation()?,
             ),
@@ -149,13 +201,13 @@ impl<B: Backend> WeightMatrix<B> {
             ),
             QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
         };
-
         Ok(Self {
             values,
-            quantized: Some(Quantized {
+            quantized: Some(Quantized::Integer {
                 scales,
                 correction,
-                info,
+                mode,
+                group_size,
                 signed_codes: false,
             }),
         })
@@ -166,40 +218,99 @@ impl<B: Backend> WeightMatrix<B> {
     }
 
     pub fn quantization(&self) -> Option<QuantizationInfo> {
-        self.quantized.as_ref().map(|quantized| quantized.info)
+        match &self.quantized {
+            None => None,
+            Some(Quantized::Microfloat {
+                metadata,
+                ..
+            }) => Some(QuantizationInfo::Microfloat(metadata.encoding)),
+            Some(Quantized::Integer {
+                mode,
+                correction,
+                group_size,
+                ..
+            }) => {
+                let method = match correction {
+                    QuantizedCorrection::Symmetric => QuantizationMethod::ScaleSymmetric,
+                    QuantizedCorrection::Biases(_) => QuantizationMethod::ScaleBias,
+                    QuantizedCorrection::ZeroPoints(_) => QuantizationMethod::ScaleZeroPoint,
+                };
+                Some(QuantizationInfo::Integer {
+                    mode: *mode,
+                    method,
+                    group_size: *group_size,
+                })
+            },
+        }
     }
 
     pub fn scales(&self) -> Option<&Allocation<B>> {
-        self.quantized.as_ref().map(|quantized| &quantized.scales)
+        match &self.quantized {
+            None => None,
+            Some(
+                Quantized::Integer {
+                    scales,
+                    ..
+                }
+                | Quantized::Microfloat {
+                    scales,
+                    ..
+                },
+            ) => Some(scales),
+        }
     }
 
     pub fn zero_points(&self) -> Option<&Allocation<B>> {
-        match &self.quantized.as_ref()?.correction {
-            QuantizedCorrection::ZeroPoints(zero_points) => Some(zero_points),
-            QuantizedCorrection::Biases(_) | QuantizedCorrection::Symmetric => None,
+        match &self.quantized {
+            Some(Quantized::Integer {
+                correction: QuantizedCorrection::ZeroPoints(zero_points),
+                ..
+            }) => Some(zero_points),
+            _ => None,
         }
     }
 
     pub fn biases(&self) -> Option<&Allocation<B>> {
-        match &self.quantized.as_ref()?.correction {
-            QuantizedCorrection::Biases(biases) => Some(biases),
-            QuantizedCorrection::ZeroPoints(_) | QuantizedCorrection::Symmetric => None,
+        match &self.quantized {
+            Some(Quantized::Integer {
+                correction: QuantizedCorrection::Biases(biases),
+                ..
+            }) => Some(biases),
+            _ => None,
         }
     }
 
     pub fn matmul_b(&self) -> MatmulB<'_, B> {
-        let Some(quantized) = self.quantized.as_ref() else {
-            return MatmulB::FullPrecision {
-                b: &self.values,
-            };
+        let (scales, correction, mode, group_size, signed_codes) = match &self.quantized {
+            None => {
+                return MatmulB::FullPrecision {
+                    b: &self.values,
+                };
+            },
+            Some(Quantized::Microfloat {
+                scales,
+                outer_scales,
+                metadata,
+            }) => {
+                return MatmulB::Microfloat {
+                    codes: &self.values,
+                    scales,
+                    outer_scales,
+                    metadata: *metadata,
+                };
+            },
+            Some(Quantized::Integer {
+                scales,
+                correction,
+                mode,
+                group_size,
+                signed_codes,
+            }) => (scales, correction, *mode, *group_size, *signed_codes),
         };
-        let mode = quantized.info.mode;
-        let group_size = quantized.info.group_size;
-        let signed_codes = quantized.signed_codes;
-        match &quantized.correction {
+        match correction {
             QuantizedCorrection::Biases(biases) => MatmulB::ScaleBiasDequant {
                 b: &self.values,
-                scales: &quantized.scales,
+                scales,
                 biases,
                 mode,
                 group_size,
@@ -207,7 +318,7 @@ impl<B: Backend> WeightMatrix<B> {
             },
             QuantizedCorrection::ZeroPoints(zero_points) => MatmulB::ScaleZeroPointDequant {
                 b: &self.values,
-                scales: &quantized.scales,
+                scales,
                 zero_points,
                 mode,
                 group_size,
@@ -215,7 +326,7 @@ impl<B: Backend> WeightMatrix<B> {
             },
             QuantizedCorrection::Symmetric => MatmulB::ScaleSymmetricDequant {
                 b: &self.values,
-                scales: &quantized.scales,
+                scales,
                 mode,
                 group_size,
                 signed_codes,
@@ -224,20 +335,25 @@ impl<B: Backend> WeightMatrix<B> {
     }
 
     pub fn make_codes_signed(&mut self) {
-        let Some(quantized) = self.quantized.as_mut() else {
+        let Some(Quantized::Integer {
+            mode,
+            signed_codes,
+            ..
+        }) = &mut self.quantized
+        else {
             return;
         };
-        if quantized.signed_codes {
+        if *signed_codes {
             return;
         }
-        let Some(sign_flip_mask) = quantized.info.mode.weight_codes_sign_flip_mask() else {
+        let Some(sign_flip_mask) = mode.weight_codes_sign_flip_mask() else {
             return;
         };
         let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
         let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(self.values.as_slice_mut());
         words.iter_mut().for_each(|word| *word ^= broadcast_mask);
         prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
-        quantized.signed_codes = true;
+        *signed_codes = true;
     }
 }
 
@@ -251,3 +367,7 @@ fn physical_shape(
         Layout::InputOutput => (input_dim, output_dim),
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/encodable_block/weight_matrix/microfloat_test.rs"]
+mod microfloat_test;
