@@ -58,6 +58,23 @@ fn tool_call_round_trip_maps_to_chat_blocks() {
 }
 
 #[test]
+fn json_looking_tool_result_content_remains_text() {
+    for content in ["26", r#"{"number":1}"#, "[hello]", "[1,2,3]", r#"[{"number":228}]"#, r#"[{"text":"hi"}]"#] {
+        let block = tool_call_result_block("call_1", content.to_string());
+        let ChatContentBlock::ToolCallResult {
+            value,
+            ..
+        } = block
+        else {
+            panic!("expected tool call result");
+        };
+
+        let serialized = serde_json::to_value(value).expect("tool result should be serializable");
+        assert_eq!(serialized.as_str(), Some(content));
+    }
+}
+
+#[test]
 fn invalid_tool_call_arguments_stay_serializable() {
     let call = |arguments: &str| {
         to_tool_call(&OaiToolCall {
