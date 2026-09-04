@@ -244,7 +244,7 @@ pub fn tool_call_result_block(
     identifier: &str,
     content: String,
 ) -> ChatContentBlock {
-    let value = serde_json::from_str::<serde_json::Value>(&content).unwrap_or(serde_json::Value::String(content));
+    let value = serde_json::Value::String(content);
     ChatContentBlock::ToolCallResult {
         identifier: Some(identifier.to_string()),
         name: None,
