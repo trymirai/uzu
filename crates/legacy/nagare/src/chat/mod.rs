@@ -292,8 +292,8 @@ impl ChatSession {
 
         let mut instance = self.instance.lock().await;
         let mut stream = match &mut *instance {
-            Instance::Token(session) => session.stream(&all_messages, config, cancel_token).await,
-            Instance::Message(session) => session.stream(&all_messages, config, cancel_token),
+            Instance::Token(session) => session.stream(&all_messages, config, cancel_token.clone()).await,
+            Instance::Message(session) => session.stream(&all_messages, config, cancel_token.clone()),
         };
         while let Some(partial_output) = stream.next().await {
             match partial_output {
@@ -339,6 +339,16 @@ impl ChatSession {
             }
         }
         drop(stream);
+        // The token backend finalizes pending/speculative work in Drop. Only certify its history
+        // after teardown, while the same instance lock still serializes the next request.
+        if !interrupted
+            && !cancel_token.is_cancelled()
+            && !sender.is_closed()
+            && let Instance::Token(session) = &mut *instance
+            && let Some(reply) = outputs.get(&0)
+        {
+            session.finish_turn(all_messages, reply);
+        }
         drop(instance);
 
         // telemetry report result

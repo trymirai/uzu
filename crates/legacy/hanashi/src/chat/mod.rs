@@ -38,6 +38,33 @@ pub enum Encoding {
 }
 
 impl Encoding {
+    pub fn supports_continuation(&self) -> bool {
+        match self {
+            Self::Hanashi(inner) => inner.supports_continuation(),
+            Self::Harmony(_) => false,
+        }
+    }
+
+    pub fn record_completion(
+        &mut self,
+        messages: Vec<ChatMessage>,
+    ) -> Result<bool, Error> {
+        match self {
+            Self::Hanashi(inner) => inner.record_completion(messages).map_err(Into::into),
+            Self::Harmony(_) => Ok(false),
+        }
+    }
+
+    pub fn try_append(
+        &mut self,
+        messages: &[ChatMessage],
+    ) -> Result<Option<Vec<TokenId>>, Error> {
+        match self {
+            Self::Hanashi(inner) => inner.try_append(messages).map_err(Into::into),
+            Self::Harmony(_) => Ok(None),
+        }
+    }
+
     pub fn tokenize(
         &self,
         text: &str,

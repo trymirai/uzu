@@ -405,6 +405,155 @@ fn assistant_reasoning_content_round_trips_in_session_block_order() {
 }
 
 #[test]
+fn prefix_match_normalizes_empty_assistant_content() {
+    for reasoning in [None, Some("thoughts")] {
+        let mut stored = ChatMessage::assistant();
+        if let Some(reasoning) = reasoning {
+            stored = stored.with_reasoning(reasoning.to_string());
+        }
+        stored = stored.with_tool_call(uzu::types::basic::ToolCall {
+            identifier: Some("c1".to_string()),
+            name: "f".to_string(),
+            arguments: uzu::types::basic::Value {
+                json: "{}".to_string(),
+            },
+        });
+
+        for content in [
+            None,
+            Some(serde_json::Value::Null),
+            Some(serde_json::json!("")),
+            Some(serde_json::json!([])),
+            Some(serde_json::json!([{"type": "text", "text": ""}])),
+        ] {
+            let mut assistant = serde_json::json!({
+                "role": "assistant",
+                "reasoning_content": reasoning,
+                "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}],
+            });
+            if let Some(content) = content {
+                assistant["content"] = content;
+            }
+            let body = serde_json::json!({
+                "messages": [assistant, {"role": "tool", "tool_call_id": "c1", "content": "done"}],
+            });
+            let messages = to_chat_messages(&request(&body.to_string()).messages);
+
+            assert_eq!(messages[0].text(), None, "{body}");
+            assert_eq!(messages[0].reasoning().as_deref(), reasoning, "{body}");
+            assert!(messages_have_prefix(&messages, std::slice::from_ref(&stored)), "{body}");
+        }
+    }
+}
+
+#[test]
+fn prefix_match_preserves_nonempty_assistant_content() {
+    let current =
+        to_chat_messages(&request(r#"{"messages":[{"role":"assistant","reasoning_content":"thoughts"}]}"#).messages);
+    for content in [" ", "\n", "answer"] {
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "assistant", "reasoning_content": "thoughts", "content": content},
+                {"role": "user", "content": "again"},
+            ],
+        });
+        let messages = to_chat_messages(&request(&body.to_string()).messages);
+
+        assert_eq!(messages[0].text().as_deref(), Some(content));
+        assert!(!messages_have_prefix(&messages, &current));
+    }
+}
+
+#[test]
+fn prefix_match_preserves_assistant_reasoning_changes() {
+    let current =
+        to_chat_messages(&request(r#"{"messages":[{"role":"assistant","reasoning_content":"thoughts"}]}"#).messages);
+    for reasoning in [None, Some(""), Some(" "), Some("different thoughts")] {
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "assistant", "reasoning_content": reasoning, "content": ""},
+                {"role": "user", "content": "again"},
+            ],
+        });
+        let messages = to_chat_messages(&request(&body.to_string()).messages);
+
+        assert!(!messages_have_prefix(&messages, &current));
+    }
+}
+
+#[test]
+fn non_assistant_empty_content_preserves_text_blocks() {
+    for role in ["user", "system", "developer", "tool", "custom"] {
+        let body = serde_json::json!({"messages": [{"role": role, "content": ""}]});
+        let messages = to_chat_messages(&request(&body.to_string()).messages);
+
+        assert_eq!(messages[0].role.to_string(), role);
+        assert_eq!(
+            messages[0].content,
+            vec![ChatContentBlock::Text {
+                value: String::new()
+            }]
+        );
+    }
+}
+
+#[test]
+fn empty_tool_result_preserves_string_value() {
+    let messages =
+        to_chat_messages(&request(r#"{"messages":[{"role":"tool","tool_call_id":"c1","content":""}]}"#).messages);
+
+    assert_eq!(
+        messages[0].content,
+        vec![ChatContentBlock::ToolCallResult {
+            identifier: Some("c1".to_string()),
+            name: None,
+            value: uzu::types::basic::Value {
+                json: r#""""#.to_string(),
+            },
+        }]
+    );
+}
+
+#[test]
+fn prefix_cache_reset_reason_requires_nonempty_extension() {
+    let current = vec![ChatMessage::user().with_text("hi".to_string())];
+
+    assert_eq!(prefix_cache_reset_reason(&[], &[]), Some("empty_history"));
+    assert_eq!(prefix_cache_reset_reason(&current, &[]), Some("empty_history"));
+    assert_eq!(prefix_cache_reset_reason(&[], &current), Some("not_extension"));
+    assert_eq!(prefix_cache_reset_reason(&current, &current), Some("not_extension"));
+    assert_eq!(
+        prefix_cache_reset_reason(&[ChatMessage::user().with_text("changed".to_string())], &current),
+        Some("not_extension")
+    );
+}
+
+#[test]
+fn prefix_cache_reset_reason_reports_changed_history() {
+    let original = ChatMessage::user().with_text("hi".to_string());
+    let mut changed_metadata = original.clone();
+    changed_metadata.metadata.values.insert("test".to_string(), serde_json::json!(true).into());
+
+    for changed in [
+        ChatMessage::assistant().with_text("hi".to_string()),
+        ChatMessage::user().with_text("changed".to_string()),
+        changed_metadata,
+    ] {
+        let messages = vec![changed, ChatMessage::assistant().with_text("hello".to_string())];
+
+        assert_eq!(prefix_cache_reset_reason(&messages, std::slice::from_ref(&original)), Some("history_mismatch"));
+    }
+}
+
+#[test]
+fn prefix_cache_reset_reason_accepts_matching_extension() {
+    let current = vec![ChatMessage::user().with_text("hi".to_string())];
+    let messages = vec![current[0].clone(), ChatMessage::assistant().with_text("hello".to_string())];
+
+    assert_eq!(prefix_cache_reset_reason(&messages, &current), None);
+}
+
+#[test]
 fn prefix_match_ignores_tool_call_identifiers() {
     let assistant_call = |identifier: &str| {
         ChatMessage::assistant().with_tool_call(uzu::types::basic::ToolCall {
@@ -423,6 +572,7 @@ fn prefix_match_ignores_tool_call_identifiers() {
         ChatMessage::user().with_text("again".to_string()),
     ];
     assert!(messages_have_prefix(&extending, &current));
+    assert_eq!(prefix_cache_reset_reason(&extending, &current), None);
 
     let mut different = assistant_call("nagare-uuid");
     different.content.push(ChatContentBlock::Text {
@@ -450,6 +600,7 @@ fn prefix_match_treats_coerced_arguments_as_equal() {
     let extending =
         vec![assistant_call(r#"{"query":"cats","limit":5}"#), ChatMessage::user().with_text("more".to_string())];
     assert!(messages_have_prefix(&extending, &current));
+    assert_eq!(prefix_cache_reset_reason(&extending, &current), None);
 
     // a genuinely different value is still a mismatch
     let different =
