@@ -38,7 +38,7 @@ use crate::{
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
-        mirai::{Backend as MiraiBackend, Registry as MiraiRegistry},
+        mirai::{Backend as MiraiBackend, Registry as MiraiRegistry, TELEMETRY_URL},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
     settings::Settings,
@@ -88,7 +88,7 @@ impl Engine {
                     is_environment_sandboxed: crate::device::is_environment_sandboxed(),
                 },
             );
-            Telemetry::builder().base_url("https://sdk.trymirai.com/api/v2").context(context).build()
+            Telemetry::builder().base_url(TELEMETRY_URL).context(context).build()
         });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));

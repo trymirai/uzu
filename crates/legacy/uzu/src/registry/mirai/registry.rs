@@ -10,6 +10,7 @@ use nagare::api::{Client, Error as ApiError, IsTransient};
 use shoji::{traits::Registry as RegistryTrait, types::model::Model};
 
 use super::{
+    api::REGISTRY_URL,
     fetch_models::FetchModels,
     request::{Backend, FetchModelsRequest},
     types::Response,
@@ -34,12 +35,11 @@ impl Registry {
         #[builder(default)] include_traces: bool,
         #[builder(into)] cache_path: PathBuf,
     ) -> Result<Self, RegistryError> {
-        let client =
-            Client::builder().base_url("https://sdk.trymirai.com/api/v1").maybe_bearer_token(api_key).build().map_err(
-                |error| RegistryError::UnableToCreate {
-                    message: error.to_string(),
-                },
-            )?;
+        let client = Client::builder().base_url(REGISTRY_URL).maybe_bearer_token(api_key).build().map_err(|error| {
+            RegistryError::UnableToCreate {
+                message: error.to_string(),
+            }
+        })?;
 
         Ok(Self {
             device,
