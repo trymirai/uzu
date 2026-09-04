@@ -22,7 +22,7 @@ pub enum ConvolutionNewError<B: Backend> {
     InvalidConfiguration(&'static str),
 }
 
-enum ConvolutionStage {
+pub enum ConvolutionStage {
     Input = 0,
     Output = 1,
 }
@@ -108,34 +108,18 @@ impl<B: Backend> GroupedConvolution<B> {
         })
     }
 
-    pub fn encode_around<F>(
+    pub fn project_coefficients(
         &self,
-        input: Allocation<B>,
+        input: &Allocation<B>,
         sequence_length: u32,
         encoder: &mut Encoder<B>,
-        encode_sublayer: F,
-    ) -> Result<Allocation<B>, B::Error>
-    where
-        F: FnOnce(Allocation<B>, &mut Encoder<B>) -> Result<Allocation<B>, B::Error>,
-    {
+    ) -> Result<Allocation<B>, B::Error> {
         let mut coefficient_projection_input = encoder.allocate_scratch(input.size())?;
-        encoder.encode_copy(&input, .., &mut coefficient_projection_input, ..);
-        let coefficient_deltas =
-            self.coefficient_projection.encode(coefficient_projection_input, sequence_length, encoder)?;
-
-        let convolved_input =
-            self.encode_convolution(&input, &coefficient_deltas, sequence_length, ConvolutionStage::Input, encoder)?;
-        let sublayer_output = encode_sublayer(convolved_input, encoder)?;
-        self.encode_convolution(
-            &sublayer_output,
-            &coefficient_deltas,
-            sequence_length,
-            ConvolutionStage::Output,
-            encoder,
-        )
+        encoder.encode_copy(input, .., &mut coefficient_projection_input, ..);
+        self.coefficient_projection.encode(coefficient_projection_input, sequence_length, encoder)
     }
 
-    fn encode_convolution(
+    pub fn encode(
         &self,
         input: &Allocation<B>,
         coefficient_deltas: &Allocation<B>,

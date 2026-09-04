@@ -1,6 +1,6 @@
 mod convolution;
 
-use convolution::{ConvolutionNewError, LayerConvolutions};
+use convolution::{ConvolutionNewError, ConvolutionStage, LayerConvolutions};
 use thiserror::Error;
 
 use crate::{
@@ -228,9 +228,16 @@ impl<B: Backend> TransformerLayer<B> {
         // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
         hidden = match &self.layer_convolutions {
             Some(convolutions) => {
-                convolutions.attention.encode_around(hidden, batch_size, encoder, |hidden, encoder| {
-                    self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)
-                })?
+                let coefficients = convolutions.attention.project_coefficients(&hidden, batch_size, encoder)?;
+                let hidden = convolutions.attention.encode(
+                    &hidden,
+                    &coefficients,
+                    batch_size,
+                    ConvolutionStage::Input,
+                    encoder,
+                )?;
+                let hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
+                convolutions.attention.encode(&hidden, &coefficients, batch_size, ConvolutionStage::Output, encoder)?
             },
             None => self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?,
         };
@@ -241,9 +248,13 @@ impl<B: Backend> TransformerLayer<B> {
         hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_size, Some(shortcut), encoder)?;
 
         hidden = match &self.layer_convolutions {
-            Some(convolutions) => convolutions.mlp.encode_around(hidden, batch_size, encoder, |hidden, encoder| {
-                self.mlp.encode(hidden, batch_size, encoder)
-            })?,
+            Some(convolutions) => {
+                let coefficients = convolutions.mlp.project_coefficients(&hidden, batch_size, encoder)?;
+                let hidden =
+                    convolutions.mlp.encode(&hidden, &coefficients, batch_size, ConvolutionStage::Input, encoder)?;
+                let hidden = self.mlp.encode(hidden, batch_size, encoder)?;
+                convolutions.mlp.encode(&hidden, &coefficients, batch_size, ConvolutionStage::Output, encoder)?
+            },
             None => self.mlp.encode(hidden, batch_size, encoder)?,
         };
 
