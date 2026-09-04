@@ -1,6 +1,6 @@
 use std::{error::Error, path::PathBuf};
 
-use serde_json::{Value, from_value, json};
+use serde_json::{Value, from_value, json, to_value};
 use shoji::types::{
     basic::{File, Hash, HashMethod, Repository},
     model::{Model, ModelAccessibility, ModelSource},
@@ -17,6 +17,31 @@ fn repository() -> Repository {
         commit_hash: Some(REVISION.to_string()),
         paths: None,
     }
+}
+
+fn pinned_model(revision: &str) -> Model {
+    Model::external(
+        "model".to_string(),
+        "registry".to_string(),
+        "Registry".to_string(),
+        "backend".to_string(),
+        "Backend".to_string(),
+        "1".to_string(),
+        Vec::new(),
+        ModelAccessibility::OnDevice {
+            source: ModelSource::Registry {
+                toolchain_version: "1".to_string(),
+                repository: Some(Repository {
+                    identifier: "trymirai/model".to_string(),
+                    commit_hash: Some(revision.to_string()),
+                    paths: None,
+                }),
+                source_repository: None,
+                files: Vec::new(),
+            },
+        },
+        None,
+    )
 }
 
 fn git_file(
@@ -71,6 +96,27 @@ fn invalid_hugging_face_file_metadata_is_rejected() -> Result<(), Box<dyn Error>
 
     assert!(missing_digest.is_err());
     assert!(unsafe_path.is_err());
+    Ok(())
+}
+
+#[test]
+fn persisted_files_are_reused_only_for_the_exact_registry_source() -> Result<(), Box<dyn Error>> {
+    let model = pinned_model(REVISION);
+    let file = ResolvedFile {
+        file: File {
+            url: format!("https://huggingface.co/trymirai/model/resolve/{REVISION}/config.json"),
+            name: "config.json".to_string(),
+            size: 6,
+            hashes: Vec::new(),
+        },
+        check: FileCheck::GitBlobSha1("ce013625030ba8dba906f756967f9e9ca394464a".to_string()),
+        requires_authentication: false,
+    };
+    let saved = to_value(ResolvedModels::new(vec![ResolvedModel::downloadable(model.clone(), vec![file.clone()])]))?;
+    let cached = from_value::<ResolvedModels>(saved)?.validate_cache().expect("cache should be valid");
+
+    assert!(cached.reusable_hugging_face_files(&model) == Some(vec![file]));
+    assert!(cached.reusable_hugging_face_files(&pinned_model("6ed3b433df2e390ace215873283927856573d9e6")).is_none());
     Ok(())
 }
 

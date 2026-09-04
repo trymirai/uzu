@@ -60,7 +60,7 @@ impl ResolvedModels {
         if self.version != CACHE_VERSION {
             return None;
         }
-        self.reusable_hugging_face_files = false;
+        self.reusable_hugging_face_files = true;
         Some(self)
     }
 
