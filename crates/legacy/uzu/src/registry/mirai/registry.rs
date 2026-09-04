@@ -9,12 +9,7 @@ use bon::bon;
 use nagare::api::{Client, Error as ApiError, IsTransient};
 use shoji::{traits::Registry as RegistryTrait, types::model::Model};
 
-use super::{
-    api::REGISTRY_URL,
-    fetch_models::FetchModels,
-    request::{Backend, FetchModelsRequest},
-    types::Response,
-};
+use super::{api::REGISTRY_URL, backend::Backend, fetch_models::FetchModels};
 use crate::{device::Device, registry::RegistryError};
 
 pub struct Registry {
@@ -29,11 +24,11 @@ pub struct Registry {
 impl Registry {
     #[builder]
     pub fn new(
-        #[builder(into)] api_key: Option<String>,
+        api_key: Option<String>,
         device: Device,
         backends: Vec<Backend>,
         #[builder(default)] include_traces: bool,
-        #[builder(into)] cache_path: PathBuf,
+        cache_path: PathBuf,
     ) -> Result<Self, RegistryError> {
         let client = Client::builder().base_url(REGISTRY_URL).maybe_bearer_token(api_key).build().map_err(|error| {
             RegistryError::UnableToCreate {
@@ -85,13 +80,13 @@ impl RegistryTrait for Registry {
 
 impl Registry {
     async fn fetch_models(&self) -> Result<Vec<Model>, ApiError> {
-        let request = FetchModelsRequest::builder()
+        let request = FetchModels::builder()
             .device(self.device.clone())
             .backends(self.backends.clone())
             .include_traces(self.include_traces)
             .show_all(std::env::var("UZU_REGISTRY_SHOW_ALL").is_ok())
             .build();
-        let response: Response = self.client.call::<FetchModels>(&request).await?;
+        let response = self.client.call::<FetchModels>(&request).await?;
         response.models().ok_or_else(|| ApiError::Decode("response contained no models".to_string()))
     }
 

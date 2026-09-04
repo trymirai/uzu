@@ -19,7 +19,7 @@ impl Client {
     pub fn new(
         #[builder(into)] base_url: String,
         #[builder(default = Duration::from_secs(10))] timeout: Duration,
-        #[builder(into)] bearer_token: Option<String>,
+        bearer_token: Option<String>,
         #[builder(default)] retry: RetryConfig,
     ) -> Result<Self, Error> {
         let client = ReqwestClient::builder().timeout(timeout).build().map_err(Error::from)?;

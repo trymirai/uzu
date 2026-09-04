@@ -94,4 +94,3 @@ pyo3-build-config = { workspace = true, optional = true }
 
 [lints]
 workspace = true
-

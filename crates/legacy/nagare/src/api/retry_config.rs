@@ -34,8 +34,10 @@ impl RetryConfig {
         let attempts = self.max_attempts.max(1);
         let deadline = Instant::now() + self.budget;
         let mut delay = self.base_delay;
+        let mut attempt = 0;
 
-        for attempt in 1..=attempts {
+        loop {
+            attempt += 1;
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(Error::Timeout);
@@ -53,15 +55,9 @@ impl RetryConfig {
             }
 
             let requested = result.as_ref().ok().and_then(|response| retry_after(response.headers()));
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(Error::Timeout);
-            }
-            sleep(requested.unwrap_or(delay).min(remaining)).await;
+            sleep(requested.unwrap_or(delay).min(deadline.saturating_duration_since(Instant::now()))).await;
             delay = delay.saturating_mul(2);
         }
-
-        Err(Error::Timeout)
     }
 }
 
