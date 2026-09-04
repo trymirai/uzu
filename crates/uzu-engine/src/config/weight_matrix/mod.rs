@@ -4,7 +4,6 @@ pub mod full_precision_spec;
 pub mod hybrid_spec;
 pub mod int_spec;
 pub mod low_rank_spec;
-pub mod microfloat_spec;
 pub mod mlx_spec;
 
 #[uzu_config]
@@ -19,7 +18,6 @@ pub enum Layout {
     low_rank_spec::LowRankSpec,
     hybrid_spec::HybridSpec,
     int_spec::IntSpec,
-    microfloat_spec::MicrofloatSpec,
     mlx_spec::MLXSpec
 )]
 pub struct WeightMatrixSpec;

@@ -7,7 +7,7 @@ use crate::{
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
-    encodable_block::weight_matrix::{QuantizationInfo, WeightMatrix, WeightMatrixError},
+    encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -65,32 +65,21 @@ impl<B: Backend> EmbeddingTable<B> {
         }
 
         let lookup = match matrix.quantization() {
-            None => {
-                let kernel = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
-                    .map_err(EmbeddingTableError::BackendError)?;
-                LookupKernel::FullPrecision(kernel)
-            },
-            Some(QuantizationInfo::Microfloat(_)) => {
-                return Err(EmbeddingTableError::UnsupportedConfiguration(
-                    "microfloat embedding tables are not supported".into(),
-                ));
-            },
-            Some(QuantizationInfo::Integer {
-                mode,
-                method,
-                group_size,
-            }) => {
-                let kernel = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
+            None => LookupKernel::FullPrecision(
+                <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
+                    .map_err(EmbeddingTableError::BackendError)?,
+            ),
+            Some(info) => LookupKernel::Quantized(
+                <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                     context,
                     data_type,
-                    group_size,
-                    mode,
-                    method,
+                    info.group_size,
+                    info.mode,
+                    info.method,
                     output_hadamard_factors.is_some(),
                 )
-                .map_err(EmbeddingTableError::BackendError)?;
-                LookupKernel::Quantized(kernel)
-            },
+                .map_err(EmbeddingTableError::BackendError)?,
+            ),
         };
 
         Ok(Self {
