@@ -19,7 +19,7 @@ pub const KEY_BASETEN_API_KEY: &str = "BASETEN_API_KEY";
 pub const KEY_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
 
 #[bindings::export(Structure(Class))]
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct EngineConfig {
     pub application_identifier: Option<String>,

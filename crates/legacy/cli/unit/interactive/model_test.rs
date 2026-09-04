@@ -124,8 +124,8 @@ fn checkpoint(
             metadata: metadata(quantization_method),
         }),
         specializations: vec![],
-        accessibility: ModelAccessibility::OnDevice {
-            source: ModelSource::Registry {
+        accessibility: ModelAccessibility::Local {
+            reference: ModelReference::Mirai {
                 toolchain_version: "test".to_string(),
                 repository: None,
                 source_repository: None,

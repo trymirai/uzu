@@ -45,12 +45,12 @@ impl AppleDownloadTaskExt for NSURLSessionDownloadTask {
 
     fn count_of_bytes_expected_to_receive(&self) -> u64 {
         let bytes_expected: i64 = unsafe { msg_send![self, countOfBytesExpectedToReceive] };
-        u64::try_from(bytes_expected).unwrap_or_default()
+        bytes_expected.max(0) as u64
     }
 
     fn count_of_bytes_received(&self) -> u64 {
         let bytes_received: i64 = unsafe { msg_send![self, countOfBytesReceived] };
-        u64::try_from(bytes_received).unwrap_or_default()
+        bytes_received.max(0) as u64
     }
 
     fn task_identifier(&self) -> u64 {

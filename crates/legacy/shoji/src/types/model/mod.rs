@@ -4,8 +4,8 @@ mod family;
 mod model;
 mod properties;
 mod quantization;
+mod reference;
 mod registry;
-mod source;
 mod specialization;
 mod vendor;
 
@@ -15,7 +15,7 @@ pub use family::ModelFamily;
 pub use model::Model;
 pub use properties::ModelProperties;
 pub use quantization::ModelQuantization;
+pub use reference::ModelReference;
 pub use registry::ModelRegistry;
-pub use source::ModelSource;
 pub use specialization::ModelSpecialization;
 pub use vendor::ModelVendor;

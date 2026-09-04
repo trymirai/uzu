@@ -8,7 +8,7 @@ use shoji::{
     traits::Registry as RegistryTrait,
     types::{
         basic::Value,
-        model::{Model, ModelAccessibility, ModelSource, ModelSpecialization},
+        model::{Model, ModelAccessibility, ModelReference, ModelSpecialization},
     },
 };
 
@@ -98,8 +98,8 @@ impl Registry {
             self.config.backend_identifier.clone(),
             self.config.backend_version.clone(),
             vec![ModelSpecialization::Chat {}],
-            ModelAccessibility::OnDevice {
-                source: ModelSource::Filesystem {
+            ModelAccessibility::Local {
+                reference: ModelReference::Local {
                     path: path.to_string_lossy().to_string(),
                 },
             },

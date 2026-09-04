@@ -1,8 +1,5 @@
-use std::{sync::Weak, time::Duration};
-
-use kiban::time::sleep as kiban_sleep;
 use serde::{Deserialize, Serialize};
-use tokio_stream::{StreamExt as TokioStreamExt, wrappers::BroadcastStream as TokioBroadcastStream};
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
     engine::EngineError,
@@ -18,25 +15,22 @@ use crate::{
 pub struct Downloader {
     identifier: String,
     storage: SharedAccess<Storage>,
-    huggingface_api_key: Option<Weak<str>>,
 }
 
 impl Downloader {
     pub fn new(
         identifier: String,
         storage: SharedAccess<Storage>,
-        huggingface_api_key: Option<Weak<str>>,
     ) -> Self {
         Self {
             identifier,
             storage,
-            huggingface_api_key,
         }
     }
 
     async fn wait_for_resume_to_be_observable(
         &self,
-        mut stream: TokioBroadcastStream<(String, DownloadState)>,
+        mut stream: BroadcastStream<(String, DownloadState)>,
     ) -> Result<(), EngineError> {
         if self.state().await.is_some_and(|state| Self::is_resume_observable_phase(&state.phase)) {
             return Ok(());
@@ -84,22 +78,25 @@ impl Downloader {
         let state = self.state().await.ok_or(StorageError::ItemNotFound {
             identifier: self.identifier.clone(),
         })?;
-        let reset = match state.phase {
-            DownloadPhase::Downloading {} | DownloadPhase::Downloaded {} => return Ok(()),
+
+        match state.phase {
+            DownloadPhase::Downloading {} | DownloadPhase::Downloaded {} => Ok(()),
+            DownloadPhase::NotDownloaded {} | DownloadPhase::Paused {} | DownloadPhase::Locked {} => {
+                let stream = self.storage.lock().await.subscribe();
+                self.storage.lock().await.download(&self.identifier).await?;
+                self.wait_for_resume_to_be_observable(stream).await
+            },
             DownloadPhase::Error {
                 ..
-            } => true,
-            DownloadPhase::NotDownloaded {} | DownloadPhase::Paused {} | DownloadPhase::Locked {} => false,
-        };
-        let stream = self.storage.lock().await.subscribe();
-        let storage = self.storage.lock().await;
-        if reset {
-            storage.delete(&self.identifier).await?;
+            } => {
+                let stream = self.storage.lock().await.subscribe();
+                let storage = self.storage.lock().await;
+                storage.delete(&self.identifier).await?;
+                storage.download(&self.identifier).await?;
+                drop(storage);
+                self.wait_for_resume_to_be_observable(stream).await
+            },
         }
-        let huggingface_api_key = self.huggingface_api_key.as_ref().and_then(Weak::upgrade);
-        storage.download(&self.identifier, huggingface_api_key).await?;
-        drop(storage);
-        self.wait_for_resume_to_be_observable(stream).await
     }
 
     #[bindings::export(Method)]
@@ -129,14 +126,14 @@ impl Downloader {
 #[derive(Clone)]
 pub struct DownloaderStream {
     identifier: String,
-    stream: SharedAccess<Option<TokioBroadcastStream<(String, DownloadState)>>>,
+    stream: SharedAccess<Option<BroadcastStream<(String, DownloadState)>>>,
     storage: Option<SharedAccess<Storage>>,
 }
 
 impl DownloaderStream {
     pub(crate) fn new(
         identifier: String,
-        stream: TokioBroadcastStream<(String, DownloadState)>,
+        stream: BroadcastStream<(String, DownloadState)>,
         storage: SharedAccess<Storage>,
     ) -> Self {
         Self {
@@ -170,7 +167,7 @@ impl DownloaderStream {
                 Some(_) => {},
                 None => return true,
             }
-            kiban_sleep(Duration::from_millis(20)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         true
     }
