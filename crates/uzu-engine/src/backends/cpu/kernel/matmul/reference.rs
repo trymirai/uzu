@@ -2,10 +2,7 @@ use half::{bf16, f16};
 
 use crate::{
     backends::{
-        common::{
-            AsBufferRangeRef, BufferArg, gpu_types::QuantizationMode, kernel::matmul::MatmulB,
-            microfloat::MicrofloatMetadata,
-        },
+        common::{AsBufferRangeRef, BufferArg, gpu_types::QuantizationMode, kernel::matmul::MatmulB},
         cpu::Cpu,
     },
     data_type::DataType,
@@ -26,12 +23,6 @@ pub(super) enum WeightData {
         bits: usize,
         group_size: usize,
         signed_codes: bool,
-    },
-    Microfloat {
-        codes: SendPtr<u8>,
-        scales: SendPtr<u8>,
-        outer_scales: SendPtr<u8>,
-        metadata: MicrofloatMetadata,
     },
 }
 
@@ -66,17 +57,6 @@ impl WeightData {
                     leading_dimension,
                     transpose: b_transpose,
                 }
-            },
-            MatmulB::Microfloat {
-                codes,
-                scales,
-                outer_scales,
-                metadata,
-            } => WeightData::Microfloat {
-                codes: alloc_ptr(codes),
-                scales: alloc_ptr(scales),
-                outer_scales: alloc_ptr(outer_scales),
-                metadata,
             },
             MatmulB::ScaleBiasDequant {
                 b: weights,
