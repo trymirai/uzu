@@ -14,7 +14,7 @@ A high-performance inference engine for AI models. It allows you to deploy AI di
 - Unified model configurations, making it easy to add support for new models
 - Traceable computations to ensure correctness against the source-of-truth implementation
 - Utilizes unified memory on Apple devices
-- [Broad model support](https://trymirai.com/models)
+- [Broad model support](https://trymirai.com/local-models)
 
 ## Quick Start
 
