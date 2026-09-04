@@ -135,7 +135,7 @@ impl<B: Backend> DFlash<B> {
                     data_type,
                 )
             })
-            .collect::<Result<Box<[_]>, _>>()?;
+            .collect::<Result<Box<[_]>, TransformerLayerError<B>>>()?;
         let output_norm = Normalization::new(
             config.model_dim,
             None,

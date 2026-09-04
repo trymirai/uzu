@@ -26,8 +26,8 @@ enum ConvolutionStage {
 }
 
 pub struct GroupedConvolution<B: Backend> {
-    base_kernel: Allocation<B>,
-    projection: Box<dyn Linear<B>>,
+    base_weights: Allocation<B>,
+    coefficient_projection: Box<dyn Linear<B>>,
     kernel: <B::Kernels as Kernels>::GroupedConvolutionKernel,
     model_dim: u32,
     groups: u32,
@@ -75,11 +75,11 @@ impl<B: Backend> GroupedConvolution<B> {
             .checked_mul(config.kernel_size)
             .and_then(|value| value.checked_mul(groups))
             .ok_or(ConvolutionNewError::InvalidConfiguration("projection dimension overflow"))?;
-        let base_kernel = parameters
+        let base_weights = parameters
             .leaf("base_kernel")?
             .validate(&[2, config.kernel_size, model_dim], data_type)?
             .read_allocation()?;
-        let projection = <dyn Linear<B>>::new(
+        let coefficient_projection = <dyn Linear<B>>::new(
             model_dim,
             [projection_dim],
             false,
@@ -96,8 +96,8 @@ impl<B: Backend> GroupedConvolution<B> {
         )
         .map_err(ConvolutionNewError::Backend)?;
         Ok(Self {
-            base_kernel,
-            projection,
+            base_weights,
+            coefficient_projection,
             kernel,
             model_dim,
             groups,
@@ -116,28 +116,27 @@ impl<B: Backend> GroupedConvolution<B> {
     where
         F: FnOnce(Allocation<B>, &mut Encoder<B>) -> Result<Allocation<B>, B::Error>,
     {
-        let coefficients = self.project_coefficients(&input, sequence_length, encoder)?;
-        let input =
-            self.encode_convolution(&input, &coefficients, sequence_length, ConvolutionStage::Input, encoder)?;
-        let output = encode_sublayer(input, encoder)?;
-        self.encode_convolution(&output, &coefficients, sequence_length, ConvolutionStage::Output, encoder)
-    }
+        let mut coefficient_projection_input = encoder.allocate_scratch(input.size())?;
+        encoder.encode_copy(&input, .., &mut coefficient_projection_input, ..);
+        let coefficient_deltas =
+            self.coefficient_projection.encode(coefficient_projection_input, sequence_length, encoder)?;
 
-    fn project_coefficients(
-        &self,
-        input: &Allocation<B>,
-        sequence_length: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let mut projection_input = encoder.allocate_scratch(input.size())?;
-        encoder.encode_copy(input, .., &mut projection_input, ..);
-        self.projection.encode(projection_input, sequence_length, encoder)
+        let convolved_input =
+            self.encode_convolution(&input, &coefficient_deltas, sequence_length, ConvolutionStage::Input, encoder)?;
+        let sublayer_output = encode_sublayer(convolved_input, encoder)?;
+        self.encode_convolution(
+            &sublayer_output,
+            &coefficient_deltas,
+            sequence_length,
+            ConvolutionStage::Output,
+            encoder,
+        )
     }
 
     fn encode_convolution(
         &self,
         input: &Allocation<B>,
-        coefficients: &Allocation<B>,
+        coefficient_deltas: &Allocation<B>,
         sequence_length: u32,
         stage: ConvolutionStage,
         encoder: &mut Encoder<B>,
@@ -149,8 +148,8 @@ impl<B: Backend> GroupedConvolution<B> {
         let base_kernel_offset = stage * self.kernel_size as usize * self.model_dim as usize * element_size;
         self.kernel.encode(
             input,
-            (coefficients, coefficient_offset),
-            (&self.base_kernel, base_kernel_offset),
+            (coefficient_deltas, coefficient_offset),
+            (&self.base_weights, base_kernel_offset),
             &mut output,
             sequence_length,
             encoder,
