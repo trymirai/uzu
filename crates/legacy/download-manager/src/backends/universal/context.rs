@@ -5,18 +5,13 @@ use std::{
 };
 
 use futures_util::StreamExt;
-use http::StatusCode;
-#[cfg(not(target_family = "wasm"))]
-use http::uri::Scheme;
 use kiban::{fs, fs::PartFile, rt::RuntimeHandle, time::Instant};
 use reqwest::{
-    Client,
-    header::{CONTENT_RANGE, RANGE},
+    StatusCode,
+    header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE},
 };
-#[cfg(not(target_family = "wasm"))]
-use reqwest::{header::ACCEPT_ENCODING, redirect::Policy};
 use tokio::sync::{
-    oneshot::{Sender as TokioOneshotSender, channel as tokio_oneshot_channel},
+    oneshot::channel as tokio_oneshot_channel,
     watch::{Receiver as TokioWatchReceiver, channel as tokio_watch_channel},
 };
 
@@ -56,7 +51,7 @@ impl BackendContext for UniversalBackendContext {
         backend_event_sender: BackendEventSender,
         _destination_lease: &DestinationLockLease,
     ) -> Result<UniversalActiveTask, UniversalBackendError> {
-        let resume_artifact_path = config.destination.with_added_extension("part");
+        let resume_artifact_path = config.destination.with_extension("part");
         self.start(config, generation, resume_artifact_path, backend_event_sender).await
     }
 
@@ -117,7 +112,7 @@ async fn download_streaming(
     retry_count: u16,
     progress_interval: Duration,
     pause_receiver: TokioWatchReceiver<bool>,
-    completion_sender: TokioOneshotSender<()>,
+    completion_sender: tokio::sync::oneshot::Sender<()>,
 ) {
     let mut pause_receiver = pause_receiver;
     let result = download_streaming_with_retries(
@@ -152,26 +147,9 @@ async fn download_streaming_with_retries(
     progress_interval: Duration,
     pause_receiver: &mut TokioWatchReceiver<bool>,
 ) -> Result<DownloadStreamCompletion, String> {
-    let client = Client::builder();
-    #[cfg(not(target_family = "wasm"))]
-    let client = client.redirect(Policy::custom(|attempt| {
-        let current_scheme = attempt.previous().last().and_then(|url| Scheme::try_from(url.scheme()).ok());
-        let next_scheme = Scheme::try_from(attempt.url().scheme()).ok();
-        let downgrade = matches!(
-            (current_scheme, next_scheme),
-            (Some(current), Some(next)) if current == Scheme::HTTPS && next != Scheme::HTTPS
-        );
-        if downgrade || attempt.previous().len() >= 10 {
-            attempt.error("unsafe redirect")
-        } else {
-            attempt.follow()
-        }
-    }));
-    let client = client.build().map_err(|error| error.to_string())?;
     let mut attempt = 0_u16;
     loop {
         match download_once(
-            &client,
             Arc::clone(&config),
             generation,
             resume_artifact_path,
@@ -193,7 +171,6 @@ async fn download_streaming_with_retries(
 }
 
 async fn download_once(
-    client: &Client,
     config: Arc<DownloadConfig>,
     generation: ActiveDownloadGeneration,
     resume_artifact_path: &Path,
@@ -201,33 +178,33 @@ async fn download_once(
     progress_interval: Duration,
     pause_receiver: &mut TokioWatchReceiver<bool>,
 ) -> Result<DownloadStreamCompletion, String> {
+    let client = reqwest::Client::new();
     let resume_from_bytes = fs::asyn::file_length(resume_artifact_path).await.unwrap_or(0);
-    let request = config.request.apply(client.get(&config.request.url)).map_err(|error| error.to_string())?;
-    #[cfg(not(target_family = "wasm"))]
-    let request = request.header(ACCEPT_ENCODING, "identity");
-    let mut request = request;
+    let mut request = client.get(&config.source_url);
     if resume_from_bytes > 0 {
         request = request.header(RANGE, format!("bytes={resume_from_bytes}-"));
     }
 
     let response = tokio::select! {
         _ = wait_for_pause(pause_receiver) => return Ok(DownloadStreamCompletion::Paused),
-        response = request.send() => response.map_err(|error| error.without_url().to_string())?,
+        response = request.send() => response.map_err(|error| error.to_string())?,
     };
     let status = response.status();
     let content_range = response.headers().get(CONTENT_RANGE).cloned();
     let resume_from_bytes = if resume_from_bytes > 0 {
         match status {
             StatusCode::PARTIAL_CONTENT => {
-                let validation = content_range
+                let header = content_range
                     .as_ref()
-                    .ok_or_else(|| "server returned 206 without Content-Range header".to_string())
-                    .and_then(|header| {
-                        header.to_str().map_err(|error| format!("non-utf8 Content-Range header: {error}"))
-                    })
-                    .and_then(|header| validate_content_range(header, resume_from_bytes, config.expected_bytes));
-                if let Err(message) = validation {
-                    return Err(discard_invalid_resume(resume_artifact_path, message).await);
+                    .ok_or_else(|| "server returned 206 without Content-Range header".to_string())?;
+                let header_value =
+                    header.to_str().map_err(|error| format!("non-utf8 Content-Range header: {error}"))?;
+                let advertised_start = parse_content_range_start(header_value)
+                    .ok_or_else(|| format!("server returned malformed Content-Range header: {header_value}"))?;
+                if advertised_start != resume_from_bytes {
+                    return Err(format!(
+                        "server returned bytes starting at {advertised_start} but client requested {resume_from_bytes}"
+                    ));
                 }
                 resume_from_bytes
             },
@@ -250,8 +227,12 @@ async fn download_once(
     } else {
         resume_from_bytes
     };
-    let response = response.error_for_status().map_err(|error| error.without_url().to_string())?;
-    let remaining_bytes = response.content_length();
+    let response = response.error_for_status().map_err(|error| error.to_string())?;
+    let remaining_bytes = response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
     let total_bytes = remaining_bytes
         .map(|remaining_bytes| remaining_bytes.saturating_add(resume_from_bytes))
         .or(config.expected_bytes);
@@ -275,17 +256,9 @@ async fn download_once(
         let Some(chunk) = chunk else {
             break;
         };
-        let chunk = chunk.map_err(|error| error.without_url().to_string())?;
-        let chunk_len = u64::try_from(chunk.len()).map_err(|_| "response chunk length overflow".to_string())?;
-        let next_downloaded_bytes =
-            downloaded_bytes.checked_add(chunk_len).ok_or_else(|| "downloaded byte count overflow".to_string())?;
-        if let Some(expected_bytes) = config.expected_bytes
-            && next_downloaded_bytes > expected_bytes
-        {
-            return Err(format!("response exceeded the registry size of {expected_bytes} bytes"));
-        }
+        let chunk = chunk.map_err(|error| error.to_string())?;
         file.write_all(&chunk).await.map_err(|error| error.to_string())?;
-        downloaded_bytes = next_downloaded_bytes;
+        downloaded_bytes = downloaded_bytes.saturating_add(chunk.len() as u64);
 
         if last_progress_emit.elapsed() >= progress_interval {
             backend_event_sender.send_progress(generation, downloaded_bytes, total_bytes).await;
@@ -308,34 +281,11 @@ async fn wait_for_pause(pause_receiver: &mut TokioWatchReceiver<bool>) {
     let _ = pause_receiver.changed().await;
 }
 
-async fn discard_invalid_resume(
-    resume_artifact_path: &Path,
-    message: impl Into<String>,
-) -> String {
-    let _ = fs::asyn::remove_file(resume_artifact_path).await;
-    message.into()
-}
-
-fn validate_content_range(
-    header: &str,
-    requested_start: u64,
-    expected_total: Option<u64>,
-) -> Result<(), String> {
-    let value = header.strip_prefix("bytes ").ok_or_else(|| format!("malformed Content-Range: {header}"))?;
-    let (range, _) = value.split_once('/').ok_or_else(|| format!("malformed Content-Range: {header}"))?;
-    let (start, _) = range.split_once('-').ok_or_else(|| format!("malformed Content-Range: {header}"))?;
-    let start = start.parse::<u64>().map_err(|_| format!("malformed Content-Range: {header}"))?;
-    if start != requested_start {
-        return Err(format!("server returned bytes starting at {start} but client requested {requested_start}"));
-    }
-    if let Some(expected) = expected_total {
-        let total = parse_content_range_total(header)
-            .ok_or_else(|| format!("server returned Content-Range without a total: {header}"))?;
-        if total != expected {
-            return Err(format!("server advertised {total} bytes but registry declared {expected}"));
-        }
-    }
-    Ok(())
+fn parse_content_range_start(header_value: &str) -> Option<u64> {
+    let value = header_value.strip_prefix("bytes ")?.trim_start();
+    let (range, _) = value.split_once('/')?;
+    let (start, _) = range.split_once('-')?;
+    start.parse::<u64>().ok()
 }
 
 fn parse_content_range_total(header_value: &str) -> Option<u64> {

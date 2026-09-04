@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("Creating download task...");
-    let task = manager.file_download_task((&url).into(), &destination, FileCheck::None, None).await?;
+    let task = manager.file_download_task(&url, &destination, FileCheck::None, None).await?;
 
     println!("Starting download...");
     let mut progress_stream = task.progress().await?;

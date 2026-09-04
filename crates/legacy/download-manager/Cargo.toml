@@ -11,20 +11,15 @@ license.workspace = true
 [dependencies]
 kiban.workspace = true
 futures-util.workspace = true
-http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 crc32c.workspace = true
 base64.workspace = true
-bitflags.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 reqwest.workspace = true
-hex.workspace = true
-sha1.workspace = true
-sha2.workspace = true
 tokio = { workspace = true, features = ["macros", "sync"] }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]

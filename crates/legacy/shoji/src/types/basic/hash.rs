@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub enum HashMethod {
     #[serde(rename = "crc32c")]
     CRC32C,
+    #[serde(rename = "md5")]
+    MD5,
 }
 
 #[bindings::export(Structure(Class))]

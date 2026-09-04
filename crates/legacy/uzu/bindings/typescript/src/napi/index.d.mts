@@ -435,6 +435,7 @@ export declare class File {
   hashes: Array<Hash>
   constructor(url: string, name: string, size: number, hashes: Array<Hash>)
   get crc32C(): string | null
+  get md5(): string | null
 }
 
 export declare class GrammarJsonAny {
@@ -491,13 +492,13 @@ export declare class Model {
   encoding?: any
   constructor(identifier: string, registry: ModelRegistry, backends: Array<ModelBackend>, family?: ModelFamily, properties?: ModelProperties, quantization?: ModelQuantization, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encoding?: any)
   get name(): string
-  get isOnDevice(): boolean
+  get isLocal(): boolean
   get isRemote(): boolean
   get isDownloadable(): boolean
   get isQuantized(): boolean
   get cacheIdentifier(): string
   get repoIds(): Array<string>
-  get filesystemPath(): string | null
+  get localExternalPath(): string | null
   get referenceName(): string | null
   get checkpointVersion(): string | null
 
@@ -509,9 +510,9 @@ export declare class Model {
   get isSpeculationCapable(): boolean
 }
 
-export declare class ModelAccessibilityOnDevice {
-  source: ModelSource
-  constructor(source: ModelSource)
+export declare class ModelAccessibilityLocal {
+  reference: ModelReference
+  constructor(reference: ModelReference)
 }
 
 export declare class ModelAccessibilityRemote {
@@ -554,24 +555,29 @@ export declare class ModelQuantization {
   get name(): string
 }
 
-export declare class ModelRegistry {
-  identifier: string
-  metadata: Metadata
-  constructor(identifier: string, metadata: Metadata)
-  get name(): string
+export declare class ModelReferenceHuggingFace {
+  repository: Repository
+  constructor(repository: Repository)
 }
 
-export declare class ModelSourceFilesystem {
+export declare class ModelReferenceLocal {
   path: string
   constructor(path: string)
 }
 
-export declare class ModelSourceRegistry {
+export declare class ModelReferenceMirai {
   toolchainVersion: string
   repository?: Repository
   sourceRepository?: Repository
   files: Array<File>
   constructor(toolchainVersion: string, repository?: Repository, sourceRepository?: Repository, files: Array<File>)
+}
+
+export declare class ModelRegistry {
+  identifier: string
+  metadata: Metadata
+  constructor(identifier: string, metadata: Metadata)
+  get name(): string
 }
 
 export declare class ModelSpecializationChat {
@@ -794,7 +800,8 @@ export type Grammar =
   GrammarJsonAny | GrammarJsonSchema | GrammarRegex
 
 export declare const enum HashMethod {
-  CRC32C = 'CRC32C'
+  CRC32C = 'CRC32C',
+  MD5 = 'MD5'
 }
 
 export declare const enum ImageFormat {
@@ -809,10 +816,10 @@ export declare const enum ImageTheme {
 }
 
 export type ModelAccessibility =
-  ModelAccessibilityOnDevice | ModelAccessibilityRemote
+  ModelAccessibilityLocal | ModelAccessibilityRemote
 
-export type ModelSource =
-  ModelSourceRegistry | ModelSourceFilesystem
+export type ModelReference =
+  ModelReferenceMirai | ModelReferenceHuggingFace | ModelReferenceLocal
 
 export type ModelSpecialization =
   ModelSpecializationChat | ModelSpecializationClassification | ModelSpecializationTextToSpeech | ModelSpecializationTranslation | ModelSpecializationSpeculation
@@ -933,7 +940,7 @@ export declare class Engine {
   removeRegistry(registryIdentifier: string): Promise<void>
   removeBackend(identifier: string): Promise<void>
   get models(): Promise<Array<Model>>
-  get modelsOnDevice(): Promise<Array<Model>>
+  get modelsLocal(): Promise<Array<Model>>
   get modelsRemote(): Promise<Array<Model>>
   get modelsDownloadable(): Promise<Array<Model>>
   get modelsForChat(): Promise<Array<Model>>
@@ -1057,8 +1064,11 @@ export type SettingsError =
 
 export type StorageError =
   | { type: 'UnableToCreateDirectory', path: string }
+  | { type: 'UnableToCreateDownloadManager', message: string }
   | { type: 'DownloadManager', message: string }
+  | { type: 'HashNotFound', identifier: string, name: string }
   | { type: 'InvalidStateTransition', from: DownloadPhase, to: DownloadPhase }
   | { type: 'IO', message: string }
   | { type: 'ItemNotFound', identifier: string }
+  | { type: 'Registry', field0: RegistryError }
   | { type: 'UnsupportedItem', identifier: string }
