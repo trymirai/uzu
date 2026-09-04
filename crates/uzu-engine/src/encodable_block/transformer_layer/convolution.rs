@@ -37,30 +37,8 @@ pub struct GroupedConvolution<B: Backend> {
     data_type: DataType,
 }
 
-pub struct LayerConvolutions<B: Backend> {
-    pub attention: GroupedConvolution<B>,
-    pub mlp: GroupedConvolution<B>,
-}
-
-impl<B: Backend> LayerConvolutions<B> {
-    pub fn new(
-        context: &B::Context,
-        config: &GroupedConvolutionConfig,
-        model_dim: u32,
-        parameters: &ParameterTree<B>,
-        data_type: DataType,
-    ) -> Result<Self, ConvolutionNewError<B>> {
-        let new = |name| GroupedConvolution::new(context, config, model_dim, &parameters.subtree(name), data_type);
-
-        Ok(Self {
-            attention: new("attention_convolution")?,
-            mlp: new("mlp_convolution")?,
-        })
-    }
-}
-
 impl<B: Backend> GroupedConvolution<B> {
-    fn new(
+    pub fn new(
         context: &B::Context,
         config: &GroupedConvolutionConfig,
         model_dim: u32,

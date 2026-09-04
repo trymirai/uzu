@@ -1,6 +1,6 @@
 mod convolution;
 
-use convolution::{ConvolutionNewError, ConvolutionStage, LayerConvolutions};
+use convolution::{ConvolutionNewError, ConvolutionStage, GroupedConvolution};
 use thiserror::Error;
 
 use crate::{
@@ -50,7 +50,8 @@ pub struct TransformerLayer<B: Backend> {
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<Normalization<B>>,
     pub ple_projection: Option<PerLayerEmbeddingProjection<B>>,
-    layer_convolutions: Option<LayerConvolutions<B>>,
+    attention_convolution: Option<GroupedConvolution<B>>,
+    mlp_convolution: Option<GroupedConvolution<B>>,
 }
 
 impl<B: Backend> TransformerLayer<B> {
@@ -98,11 +99,26 @@ impl<B: Backend> TransformerLayer<B> {
             context,
         )?;
 
-        let layer_convolutions = layer_config
-            .grouped_convolution_config
-            .as_ref()
-            .map(|config| LayerConvolutions::new(context, config, model_dim, parameter_tree, data_type))
-            .transpose()?;
+        let (attention_convolution, mlp_convolution) = if let Some(config) = &layer_config.grouped_convolution_config {
+            (
+                Some(GroupedConvolution::new(
+                    context,
+                    config,
+                    model_dim,
+                    &parameter_tree.subtree("attention_convolution"),
+                    data_type,
+                )?),
+                Some(GroupedConvolution::new(
+                    context,
+                    config,
+                    model_dim,
+                    &parameter_tree.subtree("mlp_convolution"),
+                    data_type,
+                )?),
+            )
+        } else {
+            (None, None)
+        };
 
         let pre_mixer_norm = if let Some(pre_mixer_norm_config) = &layer_config.pre_mixer_norm_config {
             Some(Normalization::new(
@@ -200,7 +216,8 @@ impl<B: Backend> TransformerLayer<B> {
             mlp,
             post_mlp_norm,
             ple_projection,
-            layer_convolutions,
+            attention_convolution,
+            mlp_convolution,
         })
     }
 
@@ -226,18 +243,13 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
-        hidden = match &self.layer_convolutions {
-            Some(convolutions) => {
-                let coefficients = convolutions.attention.project_coefficients(&hidden, batch_size, encoder)?;
-                let hidden = convolutions.attention.encode(
-                    &hidden,
-                    &coefficients,
-                    batch_size,
-                    ConvolutionStage::Input,
-                    encoder,
-                )?;
+        hidden = match &self.attention_convolution {
+            Some(convolution) => {
+                let coefficients = convolution.project_coefficients(&hidden, batch_size, encoder)?;
+                let hidden =
+                    convolution.encode(&hidden, &coefficients, batch_size, ConvolutionStage::Input, encoder)?;
                 let hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
-                convolutions.attention.encode(&hidden, &coefficients, batch_size, ConvolutionStage::Output, encoder)?
+                convolution.encode(&hidden, &coefficients, batch_size, ConvolutionStage::Output, encoder)?
             },
             None => self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?,
         };
@@ -247,13 +259,13 @@ impl<B: Backend> TransformerLayer<B> {
         }
         hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_size, Some(shortcut), encoder)?;
 
-        hidden = match &self.layer_convolutions {
-            Some(convolutions) => {
-                let coefficients = convolutions.mlp.project_coefficients(&hidden, batch_size, encoder)?;
+        hidden = match &self.mlp_convolution {
+            Some(convolution) => {
+                let coefficients = convolution.project_coefficients(&hidden, batch_size, encoder)?;
                 let hidden =
-                    convolutions.mlp.encode(&hidden, &coefficients, batch_size, ConvolutionStage::Input, encoder)?;
+                    convolution.encode(&hidden, &coefficients, batch_size, ConvolutionStage::Input, encoder)?;
                 let hidden = self.mlp.encode(hidden, batch_size, encoder)?;
-                convolutions.mlp.encode(&hidden, &coefficients, batch_size, ConvolutionStage::Output, encoder)?
+                convolution.encode(&hidden, &coefficients, batch_size, ConvolutionStage::Output, encoder)?
             },
             None => self.mlp.encode(hidden, batch_size, encoder)?,
         };
