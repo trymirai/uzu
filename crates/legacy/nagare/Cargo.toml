@@ -88,9 +88,6 @@ uuid.workspace = true
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 keisoku.workspace = true
 
-[dev-dependencies]
-wiremock.workspace = true
-
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
 pyo3-build-config = { workspace = true, optional = true }

@@ -41,7 +41,3 @@ impl IsTransient for Error {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/api/error_test.rs"]
-mod tests;

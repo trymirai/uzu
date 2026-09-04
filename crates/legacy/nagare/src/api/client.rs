@@ -4,18 +4,13 @@ use bon::bon;
 use reqwest::{Client as ReqwestClient, RequestBuilder, Response};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::api::{
-    Error,
-    retry::{self, DEFAULT_BASE_DELAY, DEFAULT_MAX_ATTEMPTS, DEFAULT_RETRY_BUDGET},
-};
+use crate::api::{Error, RetryConfig};
 
 pub struct Client {
     client: ReqwestClient,
     base_url: String,
     bearer_token: Option<String>,
-    max_attempts: usize,
-    retry_base_delay: Duration,
-    retry_budget: Duration,
+    retry: RetryConfig,
 }
 
 #[bon]
@@ -25,9 +20,7 @@ impl Client {
         #[builder(into)] base_url: String,
         #[builder(default = Duration::from_secs(10))] timeout: Duration,
         #[builder(into)] bearer_token: Option<String>,
-        #[builder(default = DEFAULT_MAX_ATTEMPTS)] max_attempts: usize,
-        #[builder(default = DEFAULT_BASE_DELAY)] retry_base_delay: Duration,
-        #[builder(default = DEFAULT_RETRY_BUDGET)] retry_budget: Duration,
+        #[builder(default)] retry: RetryConfig,
     ) -> Result<Self, Error> {
         let client = ReqwestClient::builder().timeout(timeout).build().map_err(Error::from)?;
 
@@ -35,9 +28,7 @@ impl Client {
             client,
             base_url,
             bearer_token,
-            max_attempts,
-            retry_base_delay,
-            retry_budget,
+            retry,
         })
     }
 
@@ -68,10 +59,7 @@ impl Client {
         path: &str,
         body: &impl Serialize,
     ) -> Result<Response, Error> {
-        let response = retry::send(self.max_attempts, self.retry_base_delay, self.retry_budget, || {
-            self.request(path).json(body).send()
-        })
-        .await?;
+        let response = self.retry.send(|| self.request(path).json(body).send()).await?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();

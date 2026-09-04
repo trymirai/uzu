@@ -3778,7 +3778,6 @@ dependencies = [
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wiremock",
 ]
 
 [[package]]

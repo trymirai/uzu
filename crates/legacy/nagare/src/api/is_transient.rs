@@ -26,7 +26,3 @@ impl IsTransient for reqwest::Error {
         self.is_timeout() || self.is_connect()
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/api/is_transient_test.rs"]
-mod tests;

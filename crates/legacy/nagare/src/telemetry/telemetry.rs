@@ -11,7 +11,7 @@ use tokio::sync::mpsc::channel as TokioMpscChannel;
 use super::TelemetryContext;
 use super::{TelemetryEvent, record::TelemetryRecord};
 #[cfg(not(target_family = "wasm"))]
-use crate::api::Client;
+use crate::api::{Client, RetryConfig};
 
 #[cfg(not(target_family = "wasm"))]
 const CAPACITY: usize = 256;
@@ -47,13 +47,14 @@ impl Telemetry {
         #[builder(into)] path: String,
         context: TelemetryContext,
     ) -> Self {
-        let client = match Client::builder()
-            .base_url(base_url)
-            .max_attempts(5)
-            .retry_base_delay(Duration::from_secs(1))
-            .retry_budget(Duration::from_secs(60))
-            .build()
-        {
+        // Telemetry is a background best-effort sender, so it waits far longer
+        // than a startup-path caller would tolerate.
+        let retry = RetryConfig {
+            max_attempts: 5,
+            base_delay: Duration::from_secs(1),
+            budget: Duration::from_secs(60),
+        };
+        let client = match Client::builder().base_url(base_url).retry(retry).build() {
             Ok(client) => client,
             Err(error) => {
                 tracing::warn!(%error, "telemetry disabled: failed to build client");
