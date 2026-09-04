@@ -1,0 +1,1 @@
+pub const CONVOLUTION_STAGE_COUNT: u32 = 2;

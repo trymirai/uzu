@@ -1,3 +1,5 @@
+use crate::backends::common::gpu_types::CONVOLUTION_STAGE_COUNT;
+
 #[cfg(backend = "metal")]
 mod bench;
 mod test;
@@ -20,11 +22,11 @@ impl ConvolutionShape {
     }
 
     fn coefficients_len(self) -> usize {
-        self.sequence_length * 2 * self.kernel_size * self.groups()
+        self.sequence_length * CONVOLUTION_STAGE_COUNT as usize * self.kernel_size * self.groups()
     }
 
     fn base_kernel_len(self) -> usize {
-        2 * self.kernel_size * self.model_dim
+        CONVOLUTION_STAGE_COUNT as usize * self.kernel_size * self.model_dim
     }
 
     fn stage_offsets(

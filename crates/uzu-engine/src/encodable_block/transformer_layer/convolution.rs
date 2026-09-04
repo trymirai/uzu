@@ -1,7 +1,9 @@
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::GroupedConvolutionKernel},
+    backends::common::{
+        Allocation, Backend, Encoder, Kernels, gpu_types::CONVOLUTION_STAGE_COUNT, kernel::GroupedConvolutionKernel,
+    },
     config::transformer_layer::GroupedConvolutionConfig,
     data_type::DataType,
     encodable_block::linear::{Linear, LinearBlockError},
@@ -26,7 +28,7 @@ enum ConvolutionStage {
 }
 
 pub struct GroupedConvolution<B: Backend> {
-    base_weights: Allocation<B>,
+    base_kernel: Allocation<B>,
     coefficient_projection: Box<dyn Linear<B>>,
     kernel: <B::Kernels as Kernels>::GroupedConvolutionKernel,
     model_dim: u32,
@@ -71,13 +73,13 @@ impl<B: Backend> GroupedConvolution<B> {
             return Err(ConvolutionNewError::InvalidConfiguration("invalid grouped convolution dimensions"));
         }
         let groups = model_dim / config.group_size;
-        let projection_dim = 2u32
+        let projection_dim = CONVOLUTION_STAGE_COUNT
             .checked_mul(config.kernel_size)
             .and_then(|value| value.checked_mul(groups))
             .ok_or(ConvolutionNewError::InvalidConfiguration("projection dimension overflow"))?;
-        let base_weights = parameters
+        let base_kernel = parameters
             .leaf("base_kernel")?
-            .validate(&[2, config.kernel_size, model_dim], data_type)?
+            .validate(&[CONVOLUTION_STAGE_COUNT, config.kernel_size, model_dim], data_type)?
             .read_allocation()?;
         let coefficient_projection = <dyn Linear<B>>::new(
             model_dim,
@@ -96,7 +98,7 @@ impl<B: Backend> GroupedConvolution<B> {
         )
         .map_err(ConvolutionNewError::Backend)?;
         Ok(Self {
-            base_weights,
+            base_kernel,
             coefficient_projection,
             kernel,
             model_dim,
@@ -149,7 +151,7 @@ impl<B: Backend> GroupedConvolution<B> {
         self.kernel.encode(
             input,
             (coefficient_deltas, coefficient_offset),
-            (&self.base_weights, base_kernel_offset),
+            (&self.base_kernel, base_kernel_offset),
             &mut output,
             sequence_length,
             encoder,
