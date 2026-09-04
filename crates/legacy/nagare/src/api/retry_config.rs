@@ -1,7 +1,7 @@
 use std::{future::Future, time::Duration};
 
-use reqwest::Response;
-use tokio::time::{Instant, sleep};
+use reqwest::{Response, header::HeaderMap};
+use tokio::time::{Instant, sleep, timeout};
 
 use crate::api::{Error, IsTransient};
 
@@ -36,7 +36,14 @@ impl RetryConfig {
         let mut delay = self.base_delay;
 
         for attempt in 1..=attempts {
-            let result = send_request().await;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(Error::Timeout);
+            }
+            let Ok(result) = timeout(remaining, send_request()).await else {
+                return Err(Error::Timeout);
+            };
+
             let transient = match &result {
                 Ok(response) => response.status().is_transient(),
                 Err(error) => error.is_transient(),
@@ -45,14 +52,20 @@ impl RetryConfig {
                 return result.map_err(Error::from);
             }
 
+            let requested = result.as_ref().ok().and_then(|response| retry_after(response.headers()));
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(Error::Timeout);
             }
-            sleep(delay.min(remaining)).await;
+            sleep(requested.unwrap_or(delay).min(remaining)).await;
             delay = delay.saturating_mul(2);
         }
 
         Err(Error::Timeout)
     }
+}
+
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let seconds = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?.trim().parse().ok()?;
+    Some(Duration::from_secs(seconds))
 }
