@@ -25,6 +25,5 @@ pub struct TransformerLayerConfig {
     pub has_post_layer_scalar: bool,
     pub kv_source_layer_index: Option<u32>,
     pub rope_config: Option<AnyRoPEConfig>,
-    #[serde(default)]
     pub grouped_convolution_config: Option<GroupedConvolutionConfig>,
 }
