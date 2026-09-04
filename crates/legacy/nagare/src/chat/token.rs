@@ -175,13 +175,13 @@ impl Session {
         };
 
         let instance = self.instance.as_ref();
-        let time_prefill_start = Instant::now();
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         {
             if let Err(error) = self.energy_recorder.begin() {
                 return error_stream(error.into());
             }
         }
+        let time_prefill_start = Instant::now();
         let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
 
         let stream_state = StreamingState {
