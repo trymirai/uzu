@@ -32,7 +32,6 @@ impl Client {
         })
     }
 
-    /// POST `request` as JSON and decode `E::Response`.
     pub async fn call<E: Endpoint>(
         &self,
         request: &E::Request,
@@ -41,7 +40,6 @@ impl Client {
         response.json::<E::Response>().await.map_err(|error| Error::Decode(error.to_string()))
     }
 
-    /// POST `request` as JSON and discard the response, checking only the status.
     pub async fn send<E: Endpoint>(
         &self,
         request: &E::Request,

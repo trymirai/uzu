@@ -1,6 +1,5 @@
 use reqwest::StatusCode;
 
-/// Whether a failure is worth retrying.
 pub trait IsTransient {
     fn is_transient(&self) -> bool;
 }
@@ -20,8 +19,6 @@ impl IsTransient for StatusCode {
 }
 
 impl IsTransient for reqwest::Error {
-    /// Only timeouts and connect failures. A body, decode, redirect or builder
-    /// failure means the request reached a verdict, so replaying it is pointless.
     fn is_transient(&self) -> bool {
         self.is_timeout() || self.is_connect()
     }

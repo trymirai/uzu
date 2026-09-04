@@ -46,8 +46,6 @@ impl Telemetry {
         #[builder(into)] base_url: String,
         context: TelemetryContext,
     ) -> Self {
-        // Telemetry is a background best-effort sender, so it waits far longer
-        // than a startup-path caller would tolerate.
         let retry = RetryConfig {
             max_attempts: 5,
             base_delay: Duration::from_secs(1),

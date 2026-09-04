@@ -28,8 +28,6 @@ impl From<reqwest::Error> for Error {
 }
 
 impl IsTransient for Error {
-    /// The client has already retried by the time a caller sees this, so use it
-    /// to decide about falling back to cached data, not about retrying.
     fn is_transient(&self) -> bool {
         match self {
             Self::Timeout | Self::Network(_) => true,
