@@ -116,7 +116,7 @@ fn generate_next(
         let token = next.unwrap();
         output.push(token);
         first_token_millis.get_or_insert_with(|| started.elapsed().as_millis());
-        if model.generation_config().stop_token_ids.iter().any(|stop| u64::from(*stop) == token) {
+        if model.generation_config().stop_token_ids.contains(&token) {
             break;
         }
     }
