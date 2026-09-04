@@ -1,5 +1,7 @@
 [package]
 name = "uzu"
+description.workspace = true
+readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
