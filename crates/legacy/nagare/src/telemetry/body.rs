@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use super::{TelemetryContext, record::TelemetryRecord};
 
-pub(super) fn build_body(
+pub fn build_body(
     context: &TelemetryContext,
     record: &TelemetryRecord,
 ) -> Value {

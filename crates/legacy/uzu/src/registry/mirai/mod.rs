@@ -9,7 +9,7 @@ use std::{
 };
 
 use bon::bon;
-use nagare::api::{Client, Error as ApiError};
+use nagare::api::{Client, Error as ApiError, IsTransient};
 pub use request::Backend;
 use request::FetchModelsRequest;
 use shoji::{traits::Registry as RegistryTrait, types::model::Model};
@@ -69,9 +69,9 @@ impl RegistryTrait for Registry {
                     Ok(models)
                 },
                 Err(error) => {
-                    let transient = matches!(error, ApiError::Timeout | ApiError::Network(_))
-                        || matches!(error, ApiError::Http { code, .. } if code >= 500);
-                    if transient && let Ok(models) = self.load_registry() {
+                    if error.is_transient()
+                        && let Ok(models) = self.load_registry()
+                    {
                         tracing::warn!(?error, "serving cached Mirai registry after fetch failure");
                         return Ok(models);
                     }

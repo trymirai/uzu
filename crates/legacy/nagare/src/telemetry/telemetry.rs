@@ -1,4 +1,7 @@
 #[cfg(not(target_family = "wasm"))]
+use std::time::Duration;
+
+#[cfg(not(target_family = "wasm"))]
 use bon::bon;
 use tokio::sync::mpsc;
 #[cfg(not(target_family = "wasm"))]
@@ -44,7 +47,13 @@ impl Telemetry {
         #[builder(into)] path: String,
         context: TelemetryContext,
     ) -> Self {
-        let client = match Client::builder().base_url(base_url).build() {
+        let client = match Client::builder()
+            .base_url(base_url)
+            .max_attempts(5)
+            .retry_base_delay(Duration::from_secs(1))
+            .retry_budget(Duration::from_secs(60))
+            .build()
+        {
             Ok(client) => client,
             Err(error) => {
                 tracing::warn!(%error, "telemetry disabled: failed to build client");

@@ -11,7 +11,7 @@ pub struct Backend {
 }
 
 #[derive(Serialize, Builder)]
-pub(super) struct FetchModelsRequest {
+pub struct FetchModelsRequest {
     device: Device,
     backends: Vec<Backend>,
     #[builder(default)]
