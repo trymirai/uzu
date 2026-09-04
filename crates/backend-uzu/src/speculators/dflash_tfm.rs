@@ -123,6 +123,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         self.weaver.is_some()
     }
 
+    /// Deepest tree (root counted) the bundled weaver can build; 16 when there is no weaver
+    pub fn max_tree_depth(&self) -> u32 {
+        self.weaver.as_ref().map_or(16, |weaver| weaver.max_depth() + 1)
+    }
+
     pub fn hidden_feature_layer_indices(&self) -> &[u32] {
         &self.config.draft_config.target_layer_ids
     }
@@ -150,6 +155,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         target_output_norm: &Allocation<B>,
         target_output_token: u32,
         target_embedding: &Embedding<B>,
+        readout_override: Option<(&Embedding<B>, u32)>,
         shape: DFlashTfmTreeShape,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
         prng: &PRng,
@@ -270,6 +276,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     target_output_norm,
                     &dflash_output.draft_hidden,
                     target_embedding,
+                    readout_override,
                     &dflash_output.logits,
                     &depth_seeds,
                     target_output_token,

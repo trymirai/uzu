@@ -1,9 +1,11 @@
 mod matmul;
 mod qlora_wrapper;
+mod qtip_gaussian;
 mod rht_wrapper;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
+pub use qtip_gaussian::{QtipGaussianLinear, QtipGaussianLinearError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
@@ -77,6 +79,8 @@ pub enum LinearBlockError<B: Backend> {
     QLoRALinearWrapperError(#[from] QLoRALinearWrapperError<B>),
     #[error("RHTLinearWrapper error: {0}")]
     RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
+    #[error("QtipGaussianLinear error: {0}")]
+    QtipGaussianLinearError(#[from] QtipGaussianLinearError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported linear configuration: {0}")]
@@ -98,6 +102,19 @@ impl<B: Backend> dyn Linear<B> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
+            AnyWeightMatrixSpec::QtipGaussianSpec(spec) => {
+                assert!(!has_biases, "QTIP Gaussian linear with biases is not supported");
+                assert_eq!(weights_data_type, DataType::BF16);
+                assert_eq!(input_data_type, DataType::BF16);
+                assert_eq!(output_data_type, DataType::BF16);
+                Ok(Box::new(QtipGaussianLinear::load(
+                    context,
+                    spec,
+                    input_dimension,
+                    output_dimension_sum,
+                    &weights_tree,
+                )?))
+            },
             spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
             | AnyWeightMatrixSpec::MLXSpec(_)
             | AnyWeightMatrixSpec::IntSpec(_)) => {

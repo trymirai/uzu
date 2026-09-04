@@ -364,6 +364,7 @@ impl<B: Backend> Weaver<B> {
     fn encode_step(
         &self,
         target_embedding: &Embedding<B>,
+        readout_override: Option<(&Embedding<B>, u32)>,
         prefix_kv_layers: &[Allocation<B>],
         rope: &PrecalculatedRoPE<B>,
         node_kv_layers: &mut [Allocation<B>],
@@ -476,13 +477,28 @@ impl<B: Backend> Weaver<B> {
             .readout_query_projection
             .encode(normalized_output, batch_node_count, encoder)
             .map_err(WeaverEncodeError::Backend)?;
-        let logit_residuals = target_embedding.encode_readout_sparse(
-            &query,
-            batch_candidate_ids,
-            batch_node_count,
-            self.candidate_pool_size,
-            encoder,
-        )?;
+        let logit_residuals = match readout_override {
+            Some((head, hot_rows)) if hot_rows < target_embedding.vocab_size() => target_embedding
+                .encode_readout_sparse_hybrid(
+                    head,
+                    hot_rows,
+                    &query,
+                    batch_candidate_ids,
+                    batch_node_count,
+                    self.candidate_pool_size,
+                    encoder,
+                )?,
+            Some((head, _)) => {
+                head.encode_readout_sparse(&query, batch_candidate_ids, batch_node_count, self.candidate_pool_size, encoder)?
+            },
+            None => target_embedding.encode_readout_sparse(
+                &query,
+                batch_candidate_ids,
+                batch_node_count,
+                self.candidate_pool_size,
+                encoder,
+            )?,
+        };
         let mut child_token_ids = encoder
             .allocate_scratch(size_for_shape(&[batch_node_count, shape.expand_width], DataType::U32))
             .map_err(WeaverEncodeError::Backend)?;
@@ -526,6 +542,7 @@ impl<B: Backend> Weaver<B> {
         target_hidden: &Allocation<B>,
         draft_hidden: &Allocation<B>,
         target_embedding: &Embedding<B>,
+        readout_override: Option<(&Embedding<B>, u32)>,
         logits: &Allocation<B>,
         depth_seeds: &[u64],
         root_token_id: u32,
@@ -642,6 +659,7 @@ impl<B: Backend> Weaver<B> {
             encoder.push_debug_group("weaver step");
             self.encode_step(
                 target_embedding,
+                readout_override,
                 &prefix_kv_layers,
                 &rope,
                 &mut node_kv_layers,

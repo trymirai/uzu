@@ -176,6 +176,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
         file_read_exact_at(self.loader.file, destination, self.metadata.offset as u64)?;
         Ok(allocation)
     }
+
 }
 
 pub struct ParameterTree<'loader, B: Backend> {
@@ -184,6 +185,13 @@ pub struct ParameterTree<'loader, B: Backend> {
 }
 
 impl<'loader, B: Backend> ParameterTree<'loader, B> {
+    pub fn root(&self) -> Self {
+        Self {
+            loader: self.loader,
+            prefix: None,
+        }
+    }
+
     fn join_prefix(
         &self,
         name: &str,

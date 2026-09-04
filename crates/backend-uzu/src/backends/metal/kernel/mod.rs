@@ -12,6 +12,7 @@ use crate::backends::{
 pub mod attention;
 pub mod gdn;
 pub mod matmul;
+mod qtip_s_exact;
 mod radix_top_k_small;
 
 include!(concat!(env!("OUT_DIR"), "/metal.rs"));
@@ -26,5 +27,6 @@ impl Kernels for MetalKernels {
     type DeltaNetChunkedPrefill = gdn::chunked::MetalDeltaNetChunkedPrefill;
     type DeltaNetTreeVerify = gdn::tree_verify::MetalDeltaNetTreeVerify;
     type MatmulKernel = matmul::MatmulMetalKernel;
+    type QtipSExactKernel = qtip_s_exact::QtipSExactMetalKernel;
     type RadixTopKSmall = radix_top_k_small::MetalRadixTopKSmall;
 }

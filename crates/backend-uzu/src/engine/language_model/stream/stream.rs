@@ -547,7 +547,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             None
         };
 
-        let full_batch_size = 16;
+        // QTIP_SPEC_BATCH overrides the speculation tree budget (default 16) for the S-vs-M study
+        let full_batch_size: u32 = std::env::var("QTIP_SPEC_BATCH").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
         let speculation_batch = self
             .model_state
             .max_context_length
@@ -569,11 +570,15 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 output_norm,
                 root_token as u32,
                 self.model.decoder.embedding(),
+                self.model.weaver_head.as_ref().map(|head| {
+                    (head, std::env::var("QTIP_WEAVER_HEAD_HOT_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX))
+                }),
                 DFlashTfmTreeShape {
                     tree_budget: speculation_batch,
-                    max_tree_depth: 16,
+                    max_tree_depth: 16.min(speculator.max_tree_depth()),
                     dflash_depth_override: None,
-                    construction_method: if speculator.has_weaver() {
+                    // QTIP_SPEC_CHAIN=1 forces the plain DFlash argmax chain even when a weaver is bundled
+                    construction_method: if speculator.has_weaver() && std::env::var("QTIP_SPEC_CHAIN").is_err() {
                         DFlashTfmTreeConstructionMethod::Weaver {
                             rounds: 16,
                             expand_per_round: 4,

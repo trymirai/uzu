@@ -84,7 +84,13 @@ impl BenchRunner {
             let mut time_to_first_token = 0.0f64;
             let mut prompt_tokens_per_second = 0.0f64;
             let mut generate_tokens_per_second = Vec::new();
+            let mut tokens_per_forward_pass = Vec::new();
+            let mut num_decode_forward_passes = 0u32;
             for reply in replies.iter() {
+                if let Some(spec) = reply.stats.speculator_stats.as_ref() {
+                    tokens_per_forward_pass.push(spec.tokens_per_forward_pass);
+                    num_decode_forward_passes += spec.num_decode_forward_passes;
+                }
                 tokens_count_input += reply.stats.tokens_count_input.unwrap_or(0) as u64;
                 tokens_count_output += reply.stats.tokens_count_output.unwrap_or(0) as u64;
                 time_to_first_token += reply.stats.time_to_first_token.unwrap_or(0.0f64);
@@ -102,6 +108,7 @@ impl BenchRunner {
                 text = replies.last().unwrap().message.text();
             }
             let generate_tokens_per_second = mean(&generate_tokens_per_second);
+            let tokens_per_forward_pass = mean(&tokens_per_forward_pass);
 
             let power_stats_list =
                 replies.iter().filter_map(|reply| reply.stats.power_stats.as_ref()).collect::<Vec<_>>();
@@ -123,6 +130,8 @@ impl BenchRunner {
                 time_to_first_token,
                 prompt_tokens_per_second,
                 generate_tokens_per_second,
+                tokens_per_forward_pass,
+                num_decode_forward_passes: (num_decode_forward_passes > 0).then_some(num_decode_forward_passes),
                 power_stats,
                 joules_per_token,
                 text: text.unwrap_or("".to_string()),
