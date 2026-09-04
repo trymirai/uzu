@@ -5,7 +5,7 @@ mod download_manager;
 mod downloader;
 mod error;
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
@@ -13,10 +13,9 @@ pub use config::EngineConfig;
 pub use download_manager::DownloadManagerType;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexSet;
 use kiban::rt::RuntimeHandle;
 use nagare::{
-    api::Config as ClientConfig,
     chat::{ChatInstance, ChatSession},
     classification::ClassificationSession,
     telemetry::{Telemetry, TelemetryContext, TelemetryDevice, TelemetryEvent},
@@ -39,7 +38,7 @@ use crate::{
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
-        mirai::{Backend as MiraiBackend, Config as MiraiRegistryConfig, Registry as MiraiRegistry},
+        mirai::{Backend as MiraiBackend, Registry as MiraiRegistry},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
     settings::Settings,
@@ -79,11 +78,6 @@ impl Engine {
         let device = Device::new()?;
 
         let telemetry = SharedAccess::new({
-            let client_config = ClientConfig::new(
-                "https://sdk.trymirai.com/api/v2".to_string(),
-                Duration::from_secs(10),
-                IndexMap::new(),
-            );
             let context = TelemetryContext::new(
                 env!("CARGO_PKG_VERSION").to_string(),
                 uzu_engine::TOOLCHAIN_VERSION.to_string(),
@@ -94,7 +88,11 @@ impl Engine {
                     is_environment_sandboxed: crate::device::is_environment_sandboxed(),
                 },
             );
-            Telemetry::new(client_config, "telemetry/events".to_string(), context)
+            Telemetry::builder()
+                .base_url("https://sdk.trymirai.com/api/v2")
+                .path("telemetry/events")
+                .context(context)
+                .build()
         });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
@@ -120,17 +118,17 @@ impl Engine {
             let uzu_backend_identifier = uzu_backend.identifier();
             let uzu_backend_version = uzu_backend.version();
 
-            let mirai_registry_config = MiraiRegistryConfig {
-                api_key: config.mirai_api_key,
-                device: device.clone(),
-                backends: vec![MiraiBackend {
-                    identifier: uzu_backend_identifier.clone(),
-                    version: uzu_backend_version.clone(),
-                }],
-                include_traces: false,
-                cache_path: storage_cache_path,
-            };
-            let mirai_registry = Box::new(MiraiRegistry::new(mirai_registry_config)?);
+            let mirai_registry = Box::new(
+                MiraiRegistry::builder()
+                    .maybe_api_key(config.mirai_api_key)
+                    .device(device.clone())
+                    .backends(vec![MiraiBackend {
+                        identifier: uzu_backend_identifier.clone(),
+                        version: uzu_backend_version.clone(),
+                    }])
+                    .cache_path(storage_cache_path)
+                    .build()?,
+            );
 
             engine.add_backend(Arc::new(uzu_backend) as Arc<dyn Backend>).await;
             engine.add_registry(mirai_registry).await?;

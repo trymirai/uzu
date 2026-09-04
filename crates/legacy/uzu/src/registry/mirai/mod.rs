@@ -1,5 +1,4 @@
-mod api;
-mod config;
+mod request;
 mod types;
 
 use std::{
@@ -7,43 +6,52 @@ use std::{
     future::Future,
     path::PathBuf,
     pin::Pin,
-    time::Duration,
 };
 
-pub use api::Endpoint;
-pub use config::{Backend, Config};
-use indexmap::IndexMap;
-use nagare::api::{Client, Config as ClientConfig, Error as ApiError};
-use reqwest::header::AUTHORIZATION;
+use bon::bon;
+use nagare::api::{Client, Error as ApiError};
+pub use request::Backend;
+use request::FetchModelsRequest;
 use shoji::{traits::Registry as RegistryTrait, types::model::Model};
-pub use types::Response;
+use types::Response;
 
-use crate::registry::RegistryError;
+use crate::{device::Device, registry::RegistryError};
 
 pub struct Registry {
-    config: Config,
+    device: Device,
+    backends: Vec<Backend>,
+    include_traces: bool,
+    cache_path: PathBuf,
     client: Client,
 }
 
+#[bon]
 impl Registry {
-    pub fn new(config: Config) -> Result<Self, RegistryError> {
-        let mut headers: IndexMap<String, String> = IndexMap::new();
-        if let Some(api_key) = config.api_key.clone() {
-            headers.insert(AUTHORIZATION.to_string(), format!("Bearer {}", api_key));
-        }
-
-        let client_config =
-            ClientConfig::new("https://sdk.trymirai.com/api/v1".to_string(), Duration::from_secs(10), headers);
-        let client = Client::new(client_config).map_err(|error| RegistryError::UnableToCreate {
-            message: error.to_string(),
-        })?;
+    #[builder]
+    pub fn new(
+        #[builder(into)] api_key: Option<String>,
+        device: Device,
+        backends: Vec<Backend>,
+        #[builder(default)] include_traces: bool,
+        #[builder(into)] cache_path: PathBuf,
+    ) -> Result<Self, RegistryError> {
+        let client =
+            Client::builder().base_url("https://sdk.trymirai.com/api/v1").maybe_bearer_token(api_key).build().map_err(
+                |error| RegistryError::UnableToCreate {
+                    message: error.to_string(),
+                },
+            )?;
 
         Ok(Self {
-            config,
+            device,
+            backends,
+            include_traces,
+            cache_path,
             client,
         })
     }
 }
+
 impl RegistryTrait for Registry {
     type Error = RegistryError;
 
@@ -78,20 +86,18 @@ impl RegistryTrait for Registry {
 
 impl Registry {
     async fn fetch_models(&self) -> Result<Vec<Model>, ApiError> {
-        let response: Response = self
-            .client
-            .response(&Endpoint::FetchModels {
-                device: self.config.device.clone(),
-                backends: self.config.backends.clone(),
-                include_traces: self.config.include_traces,
-                show_all: std::env::var("UZU_REGISTRY_SHOW_ALL").is_ok(),
-            })
-            .await?;
+        let request = FetchModelsRequest::builder()
+            .device(self.device.clone())
+            .backends(self.backends.clone())
+            .include_traces(self.include_traces)
+            .show_all(std::env::var("UZU_REGISTRY_SHOW_ALL").is_ok())
+            .build();
+        let response: Response = self.client.post("fetch/models", &request).await?;
         response.models().ok_or_else(|| ApiError::Decode("response contained no models".to_string()))
     }
 
     fn registry_path(&self) -> PathBuf {
-        self.config.cache_path.join("registry.json")
+        self.cache_path.join("registry.json")
     }
 
     fn save_registry(

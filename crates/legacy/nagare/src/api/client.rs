@@ -1,52 +1,62 @@
-use reqwest::Client as ReqwestClient;
-use serde::de::DeserializeOwned;
+use std::time::Duration;
 
-use crate::api::{Config, Endpoint, Error};
+use bon::bon;
+use reqwest::{Client as ReqwestClient, RequestBuilder, Response};
+use serde::{Serialize, de::DeserializeOwned};
+
+use crate::api::Error;
 
 pub struct Client {
-    config: Config,
     client: ReqwestClient,
+    base_url: String,
+    bearer_token: Option<String>,
 }
 
+#[bon]
 impl Client {
-    pub fn new(config: Config) -> Result<Self, Error> {
-        #[allow(unused_mut)]
-        let mut client_builder = reqwest::Client::builder();
-        #[cfg(not(target_family = "wasm"))]
-        {
-            client_builder = client_builder.timeout(config.timeout);
-        }
-        let client = client_builder.build().map_err(Error::from)?;
+    #[builder]
+    pub fn new(
+        #[builder(into)] base_url: String,
+        #[builder(default = Duration::from_secs(10))] timeout: Duration,
+        #[builder(into)] bearer_token: Option<String>,
+    ) -> Result<Self, Error> {
+        let client = ReqwestClient::builder().timeout(timeout).build().map_err(Error::from)?;
 
         Ok(Self {
-            config,
             client,
+            base_url,
+            bearer_token,
         })
     }
 
-    pub async fn response<E: Endpoint, T: DeserializeOwned>(
+    /// POST `body` as JSON and decode the response.
+    pub async fn post<T: DeserializeOwned>(
         &self,
-        endpoint: &E,
+        path: &str,
+        body: &impl Serialize,
     ) -> Result<T, Error> {
-        let response = self.send_checked(endpoint).await?;
+        let response = self.checked(path, body).await?;
         response.json::<T>().await.map_err(|error| Error::Decode(error.to_string()))
     }
 
-    pub async fn send<E: Endpoint>(
+    /// POST `body` as JSON and discard the response, checking only the status.
+    pub async fn send(
         &self,
-        endpoint: &E,
+        path: &str,
+        body: &impl Serialize,
     ) -> Result<(), Error> {
-        self.send_checked(endpoint).await?;
+        self.checked(path, body).await?;
         Ok(())
     }
 }
 
 impl Client {
-    async fn send_checked<E: Endpoint>(
+    async fn checked(
         &self,
-        endpoint: &E,
-    ) -> Result<reqwest::Response, Error> {
-        let response = self.build_request(endpoint).send().await?;
+        path: &str,
+        body: &impl Serialize,
+    ) -> Result<Response, Error> {
+        let response = self.request(path).json(body).send().await?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -58,36 +68,14 @@ impl Client {
         Ok(response)
     }
 
-    fn build_request<E: Endpoint>(
+    fn request(
         &self,
-        endpoint: &E,
-    ) -> reqwest::RequestBuilder {
-        let url = self.url(endpoint);
-        let method = endpoint.method();
-        let payload = endpoint.payload(&self.config);
-
-        let mut request = self.client.request(method, url);
-        if let Some(query) = payload.query {
-            request = request.query(
-                &query.into_iter().map(|(key, value)| (key, value.to_string())).collect::<Vec<(String, String)>>(),
-            );
+        path: &str,
+    ) -> RequestBuilder {
+        let request = self.client.post(format!("{}/{}", self.base_url, path));
+        match &self.bearer_token {
+            Some(token) => request.bearer_auth(token),
+            None => request,
         }
-        if let Some(body) = payload.body {
-            request = request.json(&body);
-        }
-        for (key, value) in self.config.headers.iter() {
-            request = request.header(key, value);
-        }
-        for (key, value) in endpoint.headers().iter() {
-            request = request.header(key, value);
-        }
-        request
-    }
-
-    fn url<E: Endpoint>(
-        &self,
-        endpoint: &E,
-    ) -> String {
-        format!("{}/{}", self.config.base_url, endpoint.path())
     }
 }

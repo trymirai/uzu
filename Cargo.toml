@@ -151,6 +151,7 @@ objc-sys = "0.3.5"
 crc32c = "0.6.8"
 base64 = "0.22.1"
 bitflags = "2.11.1"
+bon = "3.10.0"
 chrono = { version = "0.4.42", features = ["serde"] }
 jsonschema = "0.46.0"
 # Please make sure to use compatible versions of the cargo-swift / uniffi pair.

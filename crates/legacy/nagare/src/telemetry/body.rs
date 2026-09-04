@@ -1,53 +1,8 @@
-use indexmap::IndexMap;
-use reqwest::{Method, header::CONTENT_TYPE};
 use serde_json::Value;
 
 use super::{TelemetryContext, record::TelemetryRecord};
-use crate::api::{Config, Endpoint, Payload};
 
-pub(super) struct TelemetryEndpoint {
-    path: String,
-    body: Value,
-}
-
-impl TelemetryEndpoint {
-    pub(super) fn new(
-        path: String,
-        context: &TelemetryContext,
-        record: &TelemetryRecord,
-    ) -> Self {
-        Self {
-            path,
-            body: build_body(context, record),
-        }
-    }
-}
-
-impl Endpoint for TelemetryEndpoint {
-    fn method(&self) -> Method {
-        Method::POST
-    }
-
-    fn path(&self) -> String {
-        self.path.clone()
-    }
-
-    fn headers(&self) -> IndexMap<String, String> {
-        IndexMap::from([(CONTENT_TYPE.to_string(), "application/json".to_string())])
-    }
-
-    fn payload(
-        &self,
-        _: &Config,
-    ) -> Payload {
-        Payload {
-            query: None,
-            body: Some(self.body.clone()),
-        }
-    }
-}
-
-fn build_body(
+pub(super) fn build_body(
     context: &TelemetryContext,
     record: &TelemetryRecord,
 ) -> Value {

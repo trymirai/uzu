@@ -1,6 +1,6 @@
 use tokio::sync::mpsc;
 
-use super::{TelemetryContext, endpoint::TelemetryEndpoint, record::TelemetryRecord};
+use super::{TelemetryContext, body::build_body, record::TelemetryRecord};
 use crate::api::{Client, Error};
 
 const MAX_RETRIES: u32 = 4;
@@ -30,10 +30,10 @@ async fn send_with_retry(
     context: &TelemetryContext,
     record: &TelemetryRecord,
 ) {
-    let endpoint = TelemetryEndpoint::new(path.to_string(), context, record);
+    let body = build_body(context, record);
     let mut attempt: u32 = 0;
     loop {
-        match client.send(&endpoint).await {
+        match client.send(path, &body).await {
             Ok(()) => return,
             Err(error) => match classify(&error) {
                 Disposition::Drop => {

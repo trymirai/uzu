@@ -1,6 +1,6 @@
-mod context;
 #[cfg(not(target_family = "wasm"))]
-mod endpoint;
+mod body;
+mod context;
 mod event;
 mod record;
 mod telemetry;
