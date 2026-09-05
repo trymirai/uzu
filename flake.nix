@@ -95,8 +95,8 @@
           };
         };
 
-        buildInputs = with pkgs; (lib.optionals pkgs.stdenv.hostPlatform.isLinux [pkg-config alsa-lib]) ++ (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [apple-sdk_26]);
-        nativeBuildInputs = with pkgs; [cmake] ++ (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [metal-toolchain]);
+        buildInputs = with pkgs; (lib.optionals pkgs.stdenv.hostPlatform.isLinux [alsa-lib]) ++ (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [apple-sdk_26]);
+        nativeBuildInputs = with pkgs; [cmake] ++ (lib.optionals pkgs.stdenv.hostPlatform.isLinux [pkg-config]) ++ (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [metal-toolchain]);
 
         mirai = craneLib.buildPackage {
           pname = "mirai";
@@ -108,8 +108,8 @@
             install -Dm755 target/release/cli $out/bin/mirai
           '';
 
-          nativeBuildInputs = nativeBuildInputs ++ (with pkgs; (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [writableTmpDirAsHomeHook]));
           inherit buildInputs;
+          nativeBuildInputs = nativeBuildInputs ++ (with pkgs; (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [writableTmpDirAsHomeHook]));
 
           doCheck = false;
         };
@@ -122,24 +122,23 @@
         };
 
         devShells.default = pkgs.mkShell {
-            nativeBuildInputs =
-              nativeBuildInputs
-              ++ (with pkgs; [
-                nil
-                uv
-                wasmtime
-                evcxr
-                rustToolchain
-                cargo-deny
-                cargo-nextest
-                cargo-hack
-                cargo-expand
-                cargo-flamegraph
-                cargo-show-asm
-                critcmp
-              ]);
-            inherit buildInputs;
-          };
+          inherit buildInputs nativeBuildInputs;
+
+          packages = with pkgs; [
+            nil
+            uv
+            wasmtime
+            evcxr
+            rustToolchain
+            cargo-deny
+            cargo-nextest
+            cargo-hack
+            cargo-expand
+            cargo-flamegraph
+            cargo-show-asm
+            critcmp
+          ];
+        };
       }
     );
 }
