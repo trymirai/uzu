@@ -355,6 +355,7 @@ pub struct ToolCallStreamer {
     name_announced: bool,
     key_order: Vec<String>,
     open_text: String,
+    final_candidate: Option<String>,
 }
 
 enum FramedParam {
@@ -519,6 +520,7 @@ impl ToolCallStreamer {
             name_announced: false,
             key_order: Vec::new(),
             open_text: String::new(),
+            final_candidate: None,
         }
     }
 
@@ -534,20 +536,22 @@ impl ToolCallStreamer {
             let call = parse_framed_call(raw);
             name = call.name.filter(|name| !name.is_empty());
             self.key_order = call.params.iter().map(|(key, _)| key.clone()).collect();
-            if let Some(open_text) = open_arguments_text(&call.params, name.as_deref(), types)
-                && open_text.len() > self.open_text.len()
-                && open_text.starts_with(&self.open_text)
-            {
-                deltas.push(OaiToolCall {
-                    index: Some(index),
-                    id: String::new(),
-                    kind: String::new(),
-                    function: OaiFunctionCall {
-                        name: String::new(),
-                        arguments: open_text[self.open_text.len()..].to_string(),
-                    },
-                });
-                self.open_text = open_text;
+            if let Some(open_text) = open_arguments_text(&call.params, name.as_deref(), types) {
+                if call.params.iter().all(|(_, param)| matches!(param, FramedParam::Complete(_))) {
+                    self.final_candidate = Some(format!("{open_text}}}"));
+                }
+                if open_text.len() > self.open_text.len() && open_text.starts_with(&self.open_text) {
+                    deltas.push(OaiToolCall {
+                        index: Some(index),
+                        id: String::new(),
+                        kind: String::new(),
+                        function: OaiFunctionCall {
+                            name: String::new(),
+                            arguments: open_text[self.open_text.len()..].to_string(),
+                        },
+                    });
+                    self.open_text = open_text;
+                }
             }
         } else {
             name = json_candidate_name(raw);
@@ -625,6 +629,15 @@ impl ToolCallStreamer {
         match final_text.strip_prefix(&self.open_text) {
             Some(suffix) => suffix.to_string(),
             None => {
+                if let Some(candidate) = self.final_candidate.as_deref()
+                    && serde_json::from_str::<serde_json::Value>(candidate).is_ok()
+                    && let Some(suffix) = candidate.strip_prefix(&self.open_text)
+                {
+                    eprintln!(
+                        "[server] tool call stream diverged from the final call; using the structurally parsed candidate"
+                    );
+                    return suffix.to_string();
+                }
                 eprintln!(
                     "[server] tool call stream diverged from the final call; the client may reject the assembled arguments"
                 );

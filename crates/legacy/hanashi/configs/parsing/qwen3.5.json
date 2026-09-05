@@ -70,35 +70,9 @@
                             ],
                             "arguments": [
                                 {
-                                    "type": "regex_find_all",
-                                    "pattern": "<parameter=\\w+>[\\s\\S]*?</parameter>"
-                                },
-                                {
-                                    "type": "each",
-                                    "apply": [
-                                        {
-                                            "type": "regex_replace",
-                                            "pattern": "<parameter=(\\w+)>\\n([{\\[][\\s\\S]*?[}\\]])\\n</parameter>",
-                                            "template": "\"$1\": $2"
-                                        },
-                                        {
-                                            "type": "regex_replace",
-                                            "pattern": "<parameter=(\\w+)>\\n([\\s\\S]*?)\\n</parameter>",
-                                            "template": "\"$1\": \"$2\""
-                                        }
-                                    ]
-                                },
-                                {
-                                    "type": "join",
-                                    "separator": ", "
-                                },
-                                {
-                                    "type": "format",
-                                    "template": "{ {} }"
-                                },
-                                {
-                                    "type": "parse_json",
-                                    "repair": true
+                                    "type": "regex_capture_object",
+                                    "pattern": "<parameter=(\\w+)>\\n([\\s\\S]*?)\\n</parameter>",
+                                    "parse_json_values": true
                                 }
                             ]
                         }
