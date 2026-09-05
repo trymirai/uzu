@@ -2,13 +2,27 @@ use crate::{
     backends::common::{
         Allocation, Backend, BufferArg,
         gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
+        microfloat::{MicrofloatFormat, MicrofloatMetadata},
     },
     data_type::DataType,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MatmulBKind {
+    Dense,
+    Integer,
+    Mxfp4,
+}
+
 pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
     FullPrecision {
         b: TB,
+    },
+    Microfloat {
+        codes: &'a Allocation<B>,
+        scales: &'a Allocation<B>,
+        outer_scales: &'a Allocation<B>,
+        metadata: MicrofloatMetadata,
     },
     ScaleBiasDequant {
         b: &'a Allocation<B>,
@@ -36,9 +50,35 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
 }
 
 impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
+    pub fn kind(&self) -> MatmulBKind {
+        match self {
+            Self::FullPrecision {
+                ..
+            } => MatmulBKind::Dense,
+            Self::Microfloat {
+                metadata,
+                ..
+            } => match metadata.encoding.format {
+                MicrofloatFormat::Mxfp4 => MatmulBKind::Mxfp4,
+            },
+            Self::ScaleBiasDequant {
+                ..
+            }
+            | Self::ScaleZeroPointDequant {
+                ..
+            }
+            | Self::ScaleSymmetricDequant {
+                ..
+            } => MatmulBKind::Integer,
+        }
+    }
+
     pub fn b_prologue(&self) -> GemmBPrologueKind {
         match self {
             Self::FullPrecision {
+                ..
+            }
+            | Self::Microfloat {
                 ..
             } => GemmBPrologueKind::FullPrecision,
             Self::ScaleBiasDequant {
@@ -58,6 +98,10 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
             Self::FullPrecision {
                 ..
             } => None,
+            Self::Microfloat {
+                metadata,
+                ..
+            } => Some(metadata.encoding.bits),
             Self::ScaleBiasDequant {
                 mode,
                 ..
@@ -78,6 +122,10 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
             Self::FullPrecision {
                 ..
             } => None,
+            Self::Microfloat {
+                metadata,
+                ..
+            } => Some(metadata.encoding.group_size),
             Self::ScaleBiasDequant {
                 group_size,
                 ..
@@ -96,6 +144,9 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
     pub fn signed_codes(&self) -> bool {
         match self {
             Self::FullPrecision {
+                ..
+            }
+            | Self::Microfloat {
                 ..
             } => false,
             Self::ScaleBiasDequant {

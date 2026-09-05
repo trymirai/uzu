@@ -5,7 +5,10 @@ use super::{GemmEngine, GemmPlan, policy};
 use crate::{
     backends::common::{
         gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
-        kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
+        kernel::{
+            activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
+            matmul::{MatmulBKind, MatmulShape},
+        },
     },
     data_type::DataType,
 };
@@ -23,8 +26,12 @@ pub struct GemmProblem {
 pub(super) enum GemmPlanError {
     #[error("MXU engine is not available for this GEMM")]
     MxuUnavailable,
-    #[error("quantized GEMM requires transposed contiguous B")]
-    UnsupportedQuantLayout,
+    #[error("packed GEMM requires transposed contiguous B")]
+    UnsupportedPackedLayout,
+    #[error("MXFP4 GEMM currently requires the simdgroup engine")]
+    UnsupportedMicrofloatEngine,
+    #[error("MXFP4 GEMM requires full-precision activations")]
+    UnsupportedMicrofloatActivation,
 }
 
 impl GemmProblem {
@@ -69,8 +76,16 @@ impl GemmProblem {
         if engine == GemmEngine::Mxu && !self.supports_mxu {
             return Err(GemmPlanError::MxuUnavailable);
         }
-        if self.shape.is_quant() && (!self.shape.b_transpose || self.shape.b_leading_dimension.is_some()) {
-            return Err(GemmPlanError::UnsupportedQuantLayout);
+        if self.shape.b_kind == MatmulBKind::Mxfp4 && !self.shape.a_full_precision {
+            return Err(GemmPlanError::UnsupportedMicrofloatActivation);
+        }
+        if self.shape.b_kind == MatmulBKind::Mxfp4 && engine != GemmEngine::Simdgroup {
+            return Err(GemmPlanError::UnsupportedMicrofloatEngine);
+        }
+        if self.shape.b_kind != MatmulBKind::Dense
+            && (!self.shape.b_transpose || self.shape.b_leading_dimension.is_some())
+        {
+            return Err(GemmPlanError::UnsupportedPackedLayout);
         }
         Ok(())
     }
@@ -93,6 +108,9 @@ impl GemmProblem {
         tiling: GemmTiling,
     ) -> u32 {
         let shape = self.shape;
+        if shape.b_kind == MatmulBKind::Mxfp4 {
+            return 1;
+        }
         let splittable = shape.is_quant() || (shape.b_transpose && shape.b_leading_dimension.is_none());
         if !splittable || !self.split_k_output_supported() {
             return 1;
@@ -153,6 +171,9 @@ pub(super) fn outer_block_k(
 }
 
 fn mxu_is_eligible(shape: MatmulShape) -> bool {
+    if shape.b_kind == MatmulBKind::Mxfp4 {
+        return false;
+    }
     if !shape.a_full_precision || shape.b_prologue == GemmBPrologueKind::FullPrecision {
         return true;
     }
@@ -167,11 +188,13 @@ fn select_tiling(
     apple_gpu_family: MTLGPUFamily,
 ) -> GemmTiling {
     match engine {
-        GemmEngine::Simdgroup if shape.is_quant() => {
+        GemmEngine::Simdgroup if shape.b_kind != MatmulBKind::Dense => {
             policy::simdgroup_quant_tile(shape.m, shape.n, shape.b_group_size.unwrap_or(0), apple_gpu_family)
         },
         GemmEngine::Simdgroup => policy::simdgroup_fp_tile(shape.m, shape.n, shape.k),
-        GemmEngine::Mxu if !shape.a_full_precision || shape.is_quant() => select_mxu_quant_tiling(shape),
+        GemmEngine::Mxu if !shape.a_full_precision || shape.b_kind != MatmulBKind::Dense => {
+            select_mxu_quant_tiling(shape)
+        },
         GemmEngine::Mxu if shape.b_transpose => policy::mxu_fp_tile(shape.m, shape.n, shape.k),
         GemmEngine::Mxu => policy::mxu_mn_tile(false, shape.m, shape.n),
     }

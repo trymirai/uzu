@@ -8,8 +8,7 @@ use crate::{
         kernel::{
             Kernels,
             matmul::{
-                A8ActivationPlan, ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
-                MatmulShape,
+                A8ActivationPlan, ActivationFormat, MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulShape,
             },
         },
     },
@@ -63,8 +62,6 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    /// Loads a linear over any parsed spec — full precision, MLX or Int. Hybrid
-    /// compositions live in the wrappers, not here.
     pub fn load(
         context: &B::Context,
         spec: AnyWeightMatrixSpec,
@@ -77,8 +74,9 @@ impl<B: Backend> LinearMatmul<B> {
         bias_tree: Option<&ParameterTree<B>>,
         output_hadamard_factors: Option<Allocation<B>>,
     ) -> Result<Self, LinearMatmulError<B>> {
+        let microfloat = matches!(spec, AnyWeightMatrixSpec::MicrofloatSpec(_));
         for data_type in [weights_data_type, input_data_type, output_data_type] {
-            if !matches!(data_type, DataType::BF16 | DataType::F32) {
+            if !matches!(data_type, DataType::BF16 | DataType::F32) && !(microfloat && data_type == DataType::F16) {
                 return Err(LinearMatmulError::UnsupportedDataType(data_type));
             }
         }
@@ -131,7 +129,7 @@ impl<B: Backend> LinearMatmul<B> {
         self.kernel.lock().encode(
             MatmulArguments {
                 a,
-                b: self.matmul_b(),
+                b: self.matrix.matmul_b(),
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut output,
@@ -152,13 +150,14 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: u32,
         a_full_precision: bool,
     ) -> MatmulShape {
-        let b = self.matmul_b();
+        let b = self.matrix.matmul_b();
         MatmulShape {
             m: batch_dim,
             n: self.output_dim,
             k: self.input_dim,
             b_transpose: true,
             b_leading_dimension: None,
+            b_kind: b.kind(),
             b_prologue: b.b_prologue(),
             b_bits: b.bits_per_b(),
             b_group_size: b.group_size(),
@@ -174,15 +173,11 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        if !self.matmul_b().signed_codes() {
+        if !self.matrix.matmul_b().signed_codes() {
             return ActivationFormat::Bf16;
         }
         let bf16_shape = self.matmul_shape(batch_dim, true);
         self.kernel.lock().select_activation_format(&bf16_shape, context)
-    }
-
-    fn matmul_b(&self) -> MatmulB<'_, B> {
-        self.matrix.matmul_b()
     }
 
     fn d_ops(&self) -> MatmulDOps<'_, B> {

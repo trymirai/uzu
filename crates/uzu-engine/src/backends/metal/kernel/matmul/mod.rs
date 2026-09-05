@@ -17,7 +17,10 @@ use crate::{
             gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
             kernel::{
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{A8ActivationPlan, ActivationFormat, MatmulArguments, MatmulError, MatmulKernel, MatmulShape},
+                matmul::{
+                    A8ActivationPlan, ActivationFormat, MatmulArguments, MatmulB, MatmulBKind, MatmulError,
+                    MatmulKernel, MatmulShape,
+                },
             },
         },
         metal::{Metal, context::MetalContext, error::MetalError},
@@ -139,7 +142,7 @@ impl MatmulKernel for MatmulMetalKernel {
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
-            if !matches!(data_type, DataType::BF16 | DataType::F32) {
+            if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
                 return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
             }
         }
@@ -218,6 +221,32 @@ impl MatmulKernel for MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
+        if shape.b_kind != MatmulBKind::Mxfp4 {
+            for data_type in [self.weights_data_type, self.input_data_type, self.output_data_type] {
+                if data_type == DataType::F16 {
+                    return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
+                }
+            }
+        }
+        if let MatmulB::Microfloat {
+            codes,
+            scales,
+            outer_scales,
+            metadata,
+        } = &arguments.b
+        {
+            let rows_match = arguments.gather_indices.is_some() || metadata.rows == arguments.n;
+            if !arguments.b_transpose
+                || arguments.b_leading_dimension.is_some()
+                || !rows_match
+                || metadata.columns != arguments.k
+                || codes.size() < metadata.required_code_bytes()
+                || scales.size() < metadata.required_scale_bytes()
+                || outer_scales.size() < self.weights_data_type.size_in_bytes()
+            {
+                return Err(MatmulError::InvalidMicrofloatStorage.into());
+            }
+        }
         let plan = match self.select_dispatch(&shape, encoder.context()) {
             MatmulDispatch::Gemv(gemv) => {
                 return self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from);

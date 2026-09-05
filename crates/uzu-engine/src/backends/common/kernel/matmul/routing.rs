@@ -1,4 +1,4 @@
-use super::{MatmulA, MatmulArguments};
+use super::{MatmulA, MatmulArguments, MatmulBKind};
 use crate::backends::common::{
     Backend, BufferArg,
     gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
@@ -23,6 +23,7 @@ pub struct MatmulShape {
     pub k: u32,
     pub b_transpose: bool,
     pub b_leading_dimension: Option<u32>,
+    pub b_kind: MatmulBKind,
     pub b_prologue: GemmBPrologueKind,
     pub b_bits: Option<u32>,
     pub b_group_size: Option<u32>,
@@ -42,6 +43,7 @@ impl MatmulShape {
             k: arguments.k,
             b_transpose: arguments.b_transpose,
             b_leading_dimension: arguments.b_leading_dimension,
+            b_kind: arguments.b.kind(),
             b_prologue: arguments.b.b_prologue(),
             b_bits: arguments.b.bits_per_b(),
             b_group_size: arguments.b.group_size(),

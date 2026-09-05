@@ -20,6 +20,8 @@ pub enum MatmulError<B: Backend> {
     UnsupportedLayout {
         path: &'static str,
     },
+    #[error("Microfloat storage does not match the requested matrix")]
+    InvalidMicrofloatStorage,
     #[error("Incompatible A operand for {path}: {reason}")]
     IncompatibleA {
         path: &'static str,
