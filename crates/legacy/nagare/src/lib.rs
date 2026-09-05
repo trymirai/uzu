@@ -1,6 +1,7 @@
 #[cfg(feature = "bindings-uniffi")]
 uniffi::setup_scaffolding!();
 
+#[cfg(not(target_family = "wasm"))]
 pub mod api;
 pub mod chat;
 pub mod classification;

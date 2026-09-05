@@ -1,5 +1,7 @@
 [package]
 name = "uzu"
+description.workspace = true
+readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -78,6 +80,7 @@ tsify = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 backend-remote.workspace = true
+bon.workspace = true
 nagare.workspace = true
 hanashi.workspace = true
 download-manager.workspace = true

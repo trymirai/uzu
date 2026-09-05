@@ -1,8 +1,12 @@
+use reqwest::StatusCode;
+
+use crate::api::IsTransient;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("HTTP {code}: {body}")]
     Http {
-        code: u16,
+        code: StatusCode,
         body: String,
     },
     #[error("Timeout")]
@@ -19,6 +23,19 @@ impl From<reqwest::Error> for Error {
             Error::Timeout
         } else {
             Error::Network(error.to_string())
+        }
+    }
+}
+
+impl IsTransient for Error {
+    fn is_transient(&self) -> bool {
+        match self {
+            Self::Timeout | Self::Network(_) => true,
+            Self::Http {
+                code,
+                ..
+            } => code.is_transient(),
+            Self::Decode(_) => false,
         }
     }
 }
