@@ -261,7 +261,9 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
             if let Some(identifier) = &message.tool_call_id {
                 let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
                 chat_message = chat_message.with_block(result);
-            } else if let Some(content) = &message.content {
+            } else if let Some(content) = &message.content
+                && (chat_message.role != (ChatRole::Assistant {}) || !content.is_empty())
+            {
                 chat_message = chat_message.with_text(content.clone());
             }
             for tool_call in message.tool_calls.iter().flatten() {
@@ -712,20 +714,38 @@ fn messages_have_prefix(
         })
 }
 
+fn prefix_cache_reset_reason(
+    messages: &[ChatMessage],
+    current: &[ChatMessage],
+) -> Option<&'static str> {
+    if current.is_empty() {
+        Some("empty_history")
+    } else if messages.len() <= current.len() {
+        Some("not_extension")
+    } else if !messages_have_prefix(messages, current) {
+        Some("history_mismatch")
+    } else {
+        None
+    }
+}
+
 /// Returns only the messages the session has not seen yet when the request
 /// extends the session's current history; otherwise resets the session and
 /// returns the full list. Token-level reuse itself is decided inside the
-/// session, which falls back to a full prefill if the rendered tokens diverge.
+/// session, which falls back to a full prefill when the encoded history cannot
+/// be safely continued.
 async fn prepare_input(
     session: &ChatSession,
     mut messages: Vec<ChatMessage>,
     prefix_cache: bool,
+    log: &RequestLog,
 ) -> Result<Vec<ChatMessage>, uzu::session::chat::ChatSessionError> {
     if prefix_cache {
         let current = session.messages().await;
-        if !current.is_empty() && messages.len() > current.len() && messages_have_prefix(&messages, &current) {
+        let Some(reason) = prefix_cache_reset_reason(&messages, &current) else {
             return Ok(messages.split_off(current.len()));
-        }
+        };
+        log.prefix_cache_reset(reason, current.len(), messages.len());
     }
     session.reset().await?;
     Ok(messages)
@@ -780,7 +800,7 @@ async fn run_blocking(
             },
         }
     };
-    let input = match prepare_input(&session, messages, prefix_cache).await {
+    let input = match prepare_input(&session, messages, prefix_cache, &log).await {
         Ok(input) => input,
         Err(error) => {
             log.fail(&error.to_string());
@@ -898,7 +918,7 @@ async fn run_stream(
         },
     };
     let has_tools = messages.iter().any(|message| !message.tool_namespaces().is_empty());
-    let input = match prepare_input(&session, messages, prefix_cache).await {
+    let input = match prepare_input(&session, messages, prefix_cache, &log).await {
         Ok(input) => input,
         Err(error) => {
             log.fail(&error.to_string());

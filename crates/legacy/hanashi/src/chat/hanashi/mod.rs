@@ -1,9 +1,13 @@
 pub mod config;
+mod continuation;
 mod error;
 pub mod messages;
 mod ordering;
 pub mod renderer;
 mod token;
+
+#[cfg(test)]
+mod continuation_test;
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -17,6 +21,7 @@ use tokenizers::{Tokenizer, step_decode_stream};
 
 use self::{
     config::HanashiResolvedConfig,
+    continuation::{CompletedGeneration, ContinuationPolicy},
     messages::streamed::{Content as StreamedContent, Message as StreamedMessage, Section as StreamedSection},
     ordering::Validator,
 };
@@ -36,6 +41,8 @@ pub struct HanashiEncodingImpl {
     framing_tokens: HashSet<String>,
     renderer: Renderer,
     validator: Validator,
+    continuation_policy: Option<ContinuationPolicy>,
+    completed_generation: Option<CompletedGeneration>,
 
     state: State,
     tokenizer_decode_ids: Vec<u32>,
@@ -53,6 +60,7 @@ impl HanashiEncodingImpl {
         let framing_tokens = resolved_config.parsing.framing_config().tokens.into_iter().collect();
         let renderer = Renderer::new(resolved_config.rendering.clone());
         let validator = Validator::new(resolved_config.ordering.clone());
+        let continuation_policy = ContinuationPolicy::new(&config, &tokenizer);
         Ok(Self {
             capabilities: config.capabilities()?,
             config: resolved_config,
@@ -61,6 +69,8 @@ impl HanashiEncodingImpl {
             framing_tokens,
             renderer,
             validator,
+            continuation_policy,
+            completed_generation: None,
             state: State::default(),
             tokenizer_decode_ids: vec![],
             tokenizer_decode_prefix: "".to_string(),
@@ -81,6 +91,7 @@ impl EncodingTrait for HanashiEncodingImpl {
     }
 
     fn reset(&mut self) -> Result<(), Self::Error> {
+        self.completed_generation = None;
         self.parser.reset();
         self.validator.reset();
         self.state = State::default();
@@ -94,6 +105,7 @@ impl EncodingTrait for HanashiEncodingImpl {
         &mut self,
         messages: Self::Input,
     ) -> Result<(), Self::Error> {
+        self.completed_generation = None;
         let messages = self.fill_default_content(&messages)?;
         for message in &messages {
             self.validator.validate_next(&message.role)?;
@@ -110,17 +122,9 @@ impl EncodingTrait for HanashiEncodingImpl {
             self.parser.set_variable("tools", serde_json::Value::Bool(true));
         }
 
-        let bos_token = self.config.tokens.bos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
-        let eos_token = self.config.tokens.eos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
-        let text = self.renderer.render(&messages, true, bos_token, eos_token, None)?;
+        let text = self.render_messages(&messages, true)?;
         let text_encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
-        for token_id in text_encoding.get_ids() {
-            let token = self.resolve_token(*token_id, true)?;
-            self.push_token_to_parser(&token, true)?;
-            self.state.tokens.push(token);
-        }
-        self.parser.flush_extraction();
-        self.update_messages_from_parser_state()?;
+        self.push_prompt_tokens(text_encoding.get_ids())?;
         Ok(())
     }
 
@@ -128,6 +132,7 @@ impl EncodingTrait for HanashiEncodingImpl {
         &mut self,
         token_ids: Self::Output,
     ) -> Result<(), Self::Error> {
+        self.completed_generation = None;
         for token_id in &token_ids {
             let token = self.resolve_token(*token_id, true)?;
             self.push_token_to_parser(&token, false)?;
@@ -154,6 +159,29 @@ impl HanashiEncodingImpl {
     ) -> Result<Vec<TokenId>, Error> {
         let encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
         Ok(encoding.get_ids().to_vec())
+    }
+
+    fn render_messages(
+        &mut self,
+        messages: &[ChatMessage],
+        should_add_preamble: bool,
+    ) -> Result<String, Error> {
+        let bos_token = self.config.tokens.bos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
+        let eos_token = self.config.tokens.eos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
+        Ok(self.renderer.render(messages, should_add_preamble, bos_token, eos_token, None)?)
+    }
+
+    fn push_prompt_tokens(
+        &mut self,
+        token_ids: &[TokenId],
+    ) -> Result<SynchronizationResult, Error> {
+        for token_id in token_ids {
+            let token = self.resolve_token(*token_id, true)?;
+            self.push_token_to_parser(&token, true)?;
+            self.state.tokens.push(token);
+        }
+        self.parser.flush_extraction();
+        self.update_messages_from_parser_state()
     }
 
     fn push_token_to_parser(
@@ -224,7 +252,7 @@ impl HanashiEncodingImpl {
         })
     }
 
-    fn update_messages_from_parser_state(&mut self) -> Result<(), Error> {
+    fn update_messages_from_parser_state(&mut self) -> Result<SynchronizationResult, Error> {
         let value = self.parser.state().value.clone();
         let messages =
             serde_json::from_value::<Vec<StreamedMessage>>(value).map_err(|_| Error::InvalidStreamedContent)?;
@@ -290,7 +318,7 @@ impl HanashiEncodingImpl {
             self.validator.validate_next(&last_message.role)?;
         }
 
-        Ok(())
+        Ok(result)
     }
 
     fn resolve_token(

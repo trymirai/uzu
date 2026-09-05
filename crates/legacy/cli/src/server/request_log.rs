@@ -4,9 +4,9 @@ use uuid::Uuid;
 use uzu::types::session::chat::ChatReplyStats;
 
 /// Per-request console logging: one line when the request arrives, one when it
-/// ends, correlated by a short tag derived from the request id. Each line is a
-/// single `println!`, which holds the stdout lock for the whole write, so lines
-/// from concurrent requests never interleave.
+/// ends, and optional cache-reset metadata, correlated by a short tag derived
+/// from the request id. Each line is a single `println!`, which holds the stdout
+/// lock for the whole write, so lines from concurrent requests never interleave.
 pub struct RequestLog {
     tag: String,
     started: Instant,
@@ -44,6 +44,18 @@ impl RequestLog {
     /// For requests rejected before an id could be assigned to them.
     pub fn rejected(error: &str) {
         println!("[req {}] rejected: {error}", short_tag(&Uuid::new_v4().simple().to_string()));
+    }
+
+    pub fn prefix_cache_reset(
+        &self,
+        reason: &'static str,
+        stored_messages: usize,
+        incoming_messages: usize,
+    ) {
+        println!(
+            "[req {}] prefix cache reset: reason={reason}, stored_messages={stored_messages}, incoming_messages={incoming_messages}",
+            self.tag,
+        );
     }
 
     pub fn finish(

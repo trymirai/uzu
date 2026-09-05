@@ -26,8 +26,8 @@ use shoji::{
         basic::{SamplingParameters, TokenId},
         model::Model,
         session::chat::{
-            ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyEnergy, ChatReplyFinishReason,
-            ChatReplySpeculatorStats, ChatReplyStats,
+            ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyEnergy,
+            ChatReplyFinishReason, ChatReplySpeculatorStats, ChatReplyStats,
         },
     },
 };
@@ -37,12 +37,16 @@ use tokio_util::sync::CancellationToken;
 use crate::util::power::{EnergyRecorder, Error as EnergyError};
 use crate::{chat::ChatSessionError, util::helpers::error_stream};
 
+#[cfg(test)]
+mod tests;
+
 pub struct Session {
     instance: Arc<dyn ChatTokenBackendInstance>,
     state: Box<dyn State>,
     encoding: Encoding,
     input_tokens: Vec<u64>,
     stop_token_ids: Box<[u64]>,
+    state_is_valid: bool,
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     energy_recorder: EnergyRecorder,
 }
@@ -110,16 +114,19 @@ impl Session {
             encoding,
             input_tokens: Vec::new(),
             stop_token_ids,
+            state_is_valid: true,
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             energy_recorder: EnergyRecorder::new(),
         })
     }
 
     pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
+        self.state_is_valid = false;
         self.encoding.reset().map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
         self.state_reset().await?;
+        self.state_is_valid = true;
         Ok(())
     }
 
@@ -131,47 +138,9 @@ impl Session {
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
         let time_start = Instant::now();
 
-        let curr_all_tokens = self.encoding.state().tokens.clone();
-        let new_all_tokens = match self.build_input(input) {
-            Ok(input) => input,
-            Err(err) => {
-                return error_stream(ChatSessionError::Backend {
-                    message: err.to_string(),
-                });
-            },
-        };
-
-        // The engine state can only be kept whole or reset, so reuse it whenever the session's
-        // text is a prefix of the newly rendered text — even if tokenizations differ, as sampled
-        // replies are not canonically tokenized — and prefill only the raw-tokenized text suffix.
-        let curr_text = curr_all_tokens.iter().fold(String::new(), |mut text, token| {
-            text.push_str(&token.value);
-            text
-        });
-        let new_text = self.encoding.state().tokens.iter().fold(String::new(), |mut text, token| {
-            text.push_str(&token.value);
-            text
-        });
-        let reset = !new_text.starts_with(&curr_text);
-        let cached_tokens_input = if reset {
-            0
-        } else {
-            curr_all_tokens.len()
-        };
-        self.input_tokens = if reset {
-            if let Err(err) = self.state_reset().await {
-                return error_stream(err);
-            }
-            new_all_tokens
-        } else {
-            match self.encoding.tokenize(&new_text[curr_text.len()..]) {
-                Ok(suffix_tokens) => suffix_tokens.into_iter().map(u64::from).collect(),
-                Err(err) => {
-                    return error_stream(ChatSessionError::Backend {
-                        message: err.to_string(),
-                    });
-                },
-            }
+        let cached_tokens_input = match self.prepare_input(input).await {
+            Ok(cached_tokens) => cached_tokens,
+            Err(error) => return error_stream(error),
         };
 
         let instance = self.instance.as_ref();
@@ -232,6 +201,110 @@ impl Session {
             },
         )
         .boxed()
+    }
+
+    pub(super) fn finish_turn(
+        &mut self,
+        mut messages: Vec<ChatMessage>,
+        reply: &ChatReply,
+    ) {
+        if !self.encoding.supports_continuation()
+            || !matches!(reply.finish_reason, Some(ChatReplyFinishReason::Stop | ChatReplyFinishReason::ToolCalls))
+            || !self
+                .encoding
+                .state()
+                .tokens
+                .last()
+                .is_some_and(|token| self.stop_token_ids.contains(&u64::from(token.id)))
+        {
+            return;
+        }
+
+        messages.push(reply.message.clone());
+        match self.encoding.record_completion(messages) {
+            Ok(complete) => self.state_is_valid = complete,
+            Err(_) => {
+                // The reply has already been delivered. Fall back to a coherent reset on the next input.
+                tracing::debug!(reason = "completion_failed", "Prefix cache unavailable");
+            },
+        }
+    }
+
+    async fn prepare_input(
+        &mut self,
+        input: &[ChatMessage],
+    ) -> Result<usize, ChatSessionError> {
+        if !self.encoding.supports_continuation() {
+            return self.prepare_legacy_input(input).await;
+        }
+
+        let state_is_valid = self.state_is_valid;
+        self.state_is_valid = false;
+        let cached_tokens = self.encoding.state().tokens.len();
+        if state_is_valid
+            && let Some(tokens) = self.encoding.try_append(input).map_err(|error| ChatSessionError::Backend {
+                message: error.to_string(),
+            })?
+        {
+            self.input_tokens = tokens.into_iter().map(u64::from).collect();
+            tracing::debug!(cached_tokens, prefill_tokens = self.input_tokens.len(), "Continuing prefix cache");
+            return Ok(cached_tokens);
+        }
+
+        // An incomplete stream or failed preparation can leave only one side advanced. Reset the pair,
+        // even when the encoding is empty; it does not imply that the backend is empty after an error.
+        let tokens = self.build_input(input)?;
+        if !state_is_valid || cached_tokens != 0 {
+            self.state_reset().await?;
+        }
+        self.input_tokens = tokens;
+        tracing::debug!(
+            discarded_tokens = cached_tokens,
+            prefill_tokens = self.input_tokens.len(),
+            "Prefilling full prompt"
+        );
+        Ok(0)
+    }
+
+    async fn prepare_legacy_input(
+        &mut self,
+        input: &[ChatMessage],
+    ) -> Result<usize, ChatSessionError> {
+        let curr_all_tokens = self.encoding.state().tokens.clone();
+        let new_all_tokens = self.build_input(input)?;
+
+        // The engine state can only be kept whole or reset, so reuse it whenever the session's
+        // text is a prefix of the newly rendered text — even if tokenizations differ, as sampled
+        // replies are not canonically tokenized — and prefill only the raw-tokenized text suffix.
+        let curr_text = curr_all_tokens.iter().fold(String::new(), |mut text, token| {
+            text.push_str(&token.value);
+            text
+        });
+        let new_text = self.encoding.state().tokens.iter().fold(String::new(), |mut text, token| {
+            text.push_str(&token.value);
+            text
+        });
+        let reset = !new_text.starts_with(&curr_text);
+        let cached_tokens_input = if reset {
+            0
+        } else {
+            curr_all_tokens.len()
+        };
+        self.input_tokens = if reset {
+            self.state_reset().await?;
+            new_all_tokens
+        } else {
+            match self.encoding.tokenize(&new_text[curr_text.len()..]) {
+                Ok(suffix_tokens) => suffix_tokens.into_iter().map(u64::from).collect(),
+                Err(err) => {
+                    return Err(ChatSessionError::Backend {
+                        message: err.to_string(),
+                    });
+                },
+            }
+        };
+
+        Ok(cached_tokens_input)
     }
 
     pub fn peak_memory_usage(&self) -> Option<usize> {
