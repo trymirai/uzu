@@ -172,6 +172,7 @@ impl<B: Backend> WeaverLayer<B> {
             self.head_dim,
             Some(rope.dim),
             Some(0),
+            3 * self.model_dim,
             token_count,
             encoder,
         );
