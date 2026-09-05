@@ -56,6 +56,37 @@ pub fn execute_regex_find_all(
     Ok(Value::Array(matches))
 }
 
+/// Extracts repeated key/value captures directly into a JSON object. Building
+/// the object structurally is important when values contain quotes, newlines,
+/// or backslashes: interpolating those captures into JSON text loses their
+/// boundaries before a repair pass can recover them.
+#[tracing::instrument(skip_all)]
+pub fn execute_regex_capture_object(
+    pattern: &str,
+    parse_json_values: bool,
+    regex_engine: &RegexEngine,
+    input: Value,
+) -> Result<Value, TransformError> {
+    let Value::String(text) = input else {
+        return Ok(Value::Null);
+    };
+    let regex = Regex::new(pattern, regex_engine)?;
+    let mut object = serde_json::Map::new();
+    for captures in regex.captures_iter(&text) {
+        let (Some(key), Some(value)) = (captures.get(1), captures.get(2)) else {
+            continue;
+        };
+        let trimmed = value.text.trim_start();
+        let value = if parse_json_values && (trimmed.starts_with('{') || trimmed.starts_with('[')) {
+            execute_parse_json(true, Value::String(value.text.clone()))?
+        } else {
+            Value::String(value.text.clone())
+        };
+        object.insert(key.text.clone(), value);
+    }
+    Ok(Value::Object(object))
+}
+
 #[tracing::instrument(skip(input))]
 pub fn execute_split_top_level(
     separator: char,

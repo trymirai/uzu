@@ -323,6 +323,28 @@ fn framed_tool_call_streams_multibyte_content_without_panicking() {
 }
 
 #[test]
+fn framed_tool_call_uses_valid_candidate_when_final_call_diverges() {
+    let markup = "<function=write_file>\n<parameter=path>\nrepro.rs\n</parameter>\n<parameter=content>\nlet x = \"hello\";\n</parameter>\n</function>";
+    let corrupted_call = ToolCall {
+        identifier: None,
+        name: "write_file".to_string(),
+        arguments: Value {
+            json: r#"{"path":"repro.rs","content":"let x = ","hello\";\"":""}"#.to_string(),
+        },
+    };
+
+    let mut streamer = ToolCallStreamer::new();
+    let mut fragments = String::new();
+    for delta in streamer.update(0, markup, &ToolParameterTypes::default()) {
+        fragments.push_str(&delta.function.arguments);
+    }
+    fragments.push_str(&streamer.finish(0, &corrupted_call).function.arguments);
+
+    let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
+    assert_eq!(parsed, serde_json::json!({"path": "repro.rs", "content": "let x = \"hello\";"}));
+}
+
+#[test]
 fn framed_tool_call_with_array_parameter_assembles_exactly() {
     // the edit-call shape: a parameter whose value is a JSON array must never be
     // string-streamed before its type is known, and the finish must not double it
