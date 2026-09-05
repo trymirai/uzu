@@ -6,8 +6,11 @@ use itertools::Itertools;
 use super::{
     ast::{MetalArgument, MetalArgumentType, MetalKernelInfo, shared_element_type},
     enum_path_rewrite::is_enum_c_type,
+    variant_combinations::constrained_combinations,
 };
-use crate::common::{enum_paths::EnumPaths, identifiers::KernelName, mangling::static_mangle};
+use crate::common::{
+    constraints::Constraints, enum_paths::EnumPaths, identifiers::KernelName, mangling::static_mangle,
+};
 
 pub type SpecializeBaseIndices = HashMap<KernelName, usize>;
 
@@ -144,38 +147,40 @@ fn kernel_wrappers(
     let bindings = specialize_bindings(kernel, enum_paths);
 
     let header = base_index.map(|&base| kernel_header(&bindings, base).into_boxed_str());
+    let parameters = kernel.variants.as_deref();
 
-    let evaluator = crate::common::constraints::Evaluator::new(
-        kernel.variants.as_deref().into_iter().flatten().flat_map(|tp| tp.variants.iter().map(|v| v.as_ref())),
-    );
-    for type_variant in if let Some(variants) = &kernel.variants {
-        variants
-            .iter()
-            .map(|type_parameter| type_parameter.variants.iter())
-            .multi_cartesian_product()
-            .map(|values| {
-                Some(
-                    variants
-                        .iter()
-                        .map(|tp| tp.name.to_string())
-                        .zip(values.iter().map(|v| v.to_string()))
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect()
+    let selections: Vec<Box<[usize]>> = if let Some(parameters) = parameters {
+        let constraints = Constraints::new(
+            parameters.iter().flat_map(|tp| tp.variants.iter().map(|v| v.as_ref())),
+            &kernel.constraints,
+        );
+        let domain_lengths = parameters.iter().map(|parameter| parameter.variants.len()).collect::<Vec<_>>();
+        constrained_combinations(&domain_lengths, |selection, complete| {
+            let bindings = parameters.iter().zip(selection).filter_map(|(parameter, value)| {
+                value.map(|value| (parameter.name.as_ref(), parameter.variants[value].as_ref()))
+            });
+            if complete {
+                constraints.satisfied(bindings)
+            } else {
+                constraints.could_satisfy(bindings)
+            }
+        })
     } else {
-        vec![None]
-    } {
-        if let Some(ref tv) = type_variant
-            && !evaluator.satisfied(tv, &kernel.constraints)
-        {
-            continue;
-        }
+        vec![Box::new([])]
+    };
 
-        let (wrapper_name, underlying_name) = if let Some(type_variant) = &type_variant {
+    for selection in selections {
+        let (wrapper_name, underlying_name) = if let Some(parameters) = parameters {
             (
-                static_mangle(kernel.name.as_ref(), type_variant.iter().map(|(_k, v)| v.as_str())),
-                format!("{}<{}>", kernel.name, type_variant.iter().map(|(_k, v)| v).join(", ")),
+                static_mangle(
+                    kernel.name.as_ref(),
+                    parameters.iter().zip(&selection).map(|(parameter, &value)| &parameter.variants[value]),
+                ),
+                format!(
+                    "{}<{}>",
+                    kernel.name,
+                    parameters.iter().zip(&selection).map(|(parameter, &value)| &parameter.variants[value]).join(", ")
+                ),
             )
         } else {
             (static_mangle(kernel.name.as_ref(), [] as [&str; 0]), kernel.name.to_string())
@@ -287,10 +292,14 @@ fn kernel_wrappers(
         let wrapper_body =
             shared_definitions.chain(once(underlying_call)).map(|l| format!("  {l};\n")).collect::<Vec<_>>().join("");
 
-        let (defs, undefs): (Vec<_>, Vec<_>) = type_variant
-            .unwrap_or_default()
-            .iter()
-            .map(|(k, v)| (format!("\n#define {k} {v}"), format!("#undef {k}\n")))
+        let (defs, undefs): (Vec<_>, Vec<_>) = parameters
+            .into_iter()
+            .flatten()
+            .zip(&selection)
+            .map(|(parameter, &value)| {
+                let value = &parameter.variants[value];
+                (format!("\n#define {} {value}", parameter.name), format!("#undef {}\n", parameter.name))
+            })
             .unzip();
 
         let defs = defs.join("");
