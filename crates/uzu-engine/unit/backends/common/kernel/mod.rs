@@ -4,6 +4,7 @@ mod attention;
 mod embedding;
 mod gated_act_mul_test;
 mod gdn;
+mod grouped_convolution;
 mod logit_transform_test;
 mod matmul;
 mod moe;

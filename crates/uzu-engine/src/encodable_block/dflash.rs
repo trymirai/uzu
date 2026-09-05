@@ -13,11 +13,8 @@ use crate::{
         linear::{Linear, LinearBlockError},
         mixer::{
             MixerState,
-            attention::{
-                ATTENTION_SUFFIX_CAPACITY, Attention, AttentionNewError, AttentionState, rope::PrecalculatedRoPE,
-            },
+            attention::{ATTENTION_SUFFIX_CAPACITY, Attention, AttentionState, rope::PrecalculatedRoPE},
         },
-        mlp::MlpBlockError,
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
@@ -64,10 +61,6 @@ pub enum DFlashNewError<B: Backend> {
     Linear(#[from] LinearBlockError<B>),
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
-    #[error("MLP error: {0}")]
-    Mlp(#[from] MlpBlockError<B>),
-    #[error("Attention error: {0}")]
-    Attention(#[from] AttentionNewError<B>),
     #[error("Transformer layer error: {0}")]
     TransformerLayer(#[from] TransformerLayerError<B>),
     #[error("Backend error: {0}")]

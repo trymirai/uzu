@@ -1,9 +1,16 @@
 use uzu_engine_macros::uzu_config;
 
 use crate::config::{
-    mlp::AnyMLPConfig, normalization::NormalizationConfig, per_layer_embedding::PLELayerConfig, rope::AnyRoPEConfig,
-    token_mixer::AnyTokenMixerConfig,
+    linear::LinearConfig, mlp::AnyMLPConfig, normalization::NormalizationConfig, per_layer_embedding::PLELayerConfig,
+    rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig,
 };
+
+#[uzu_config]
+pub struct GroupedConvolutionConfig {
+    pub kernel_size: u32,
+    pub group_size: u32,
+    pub kernel_projection_config: LinearConfig,
+}
 
 #[uzu_config]
 pub struct TransformerLayerConfig {
@@ -18,4 +25,5 @@ pub struct TransformerLayerConfig {
     pub has_post_layer_scalar: bool,
     pub kv_source_layer_index: Option<u32>,
     pub rope_config: Option<AnyRoPEConfig>,
+    pub grouped_convolution_config: Option<GroupedConvolutionConfig>,
 }
