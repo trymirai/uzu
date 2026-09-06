@@ -197,6 +197,32 @@ fn test_regex_find_all_then_each_parse() {
 }
 
 #[test]
+fn test_regex_capture_object_preserves_string_boundaries() {
+    let result = execute_root(
+        vec![Operation::RegexCaptureObject {
+            pattern: r"<parameter=(\w+)>\n([\s\S]*?)\n</parameter>".to_string(),
+            parse_json_values: true,
+            regex_engine: RegexEngine::Standard,
+        }],
+        json!(
+            "<parameter=path>\nrepro.rs\n</parameter>\n\
+             <parameter=content>\nlet x = \"hello\";\nC:\\tmp\n</parameter>\n\
+             <parameter=options>\n{\"enabled\":true}\n</parameter>"
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(
+        result,
+        json!({
+            "path": "repro.rs",
+            "content": "let x = \"hello\";\nC:\\tmp",
+            "options": {"enabled": true}
+        })
+    );
+}
+
+#[test]
 fn test_regex_find_all_with_each_parse_json() {
     let result = execute_root(
         vec![

@@ -81,7 +81,7 @@ jobs:
             tests: 'kernels'
           - host: 'linux'
             target: 'wasm32-unknown-unknown'
-            crates: ['kiban', 'download-manager']
+            crates: ['kiban']
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"

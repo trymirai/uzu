@@ -1,12 +1,10 @@
-use std::{io::ErrorKind, path::Path, sync::Arc};
+use std::sync::Arc;
 
 use kiban::rt::RuntimeHandle;
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
-use uuid::Uuid;
 
 use crate::{
-    DownloadError, DownloadEvent, DownloadId, FileCheck, FileDownloadManager, FileDownloadTask, HttpDownloadRequest,
-    LockFileState, SharedDownloadEventSender,
+    DownloadError, DownloadEvent, FileCheck, FileDownloadManager, FileDownloadTask, LockFileState,
     backends::common::{Backend, DownloadManagerState, Startup},
     check_lock_file, compute_download_id,
     download_log_event::{DownloadLogEvent, log},
@@ -47,7 +45,7 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
         self.state.subscribe_to_all_downloads()
     }
 
-    fn global_broadcast_sender(&self) -> SharedDownloadEventSender {
+    fn global_broadcast_sender(&self) -> crate::SharedDownloadEventSender {
         self.state.global_broadcast_sender()
     }
 
@@ -57,7 +55,7 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
 
     async fn remove_file_task(
         &self,
-        download_id: DownloadId,
+        download_id: crate::DownloadId,
     ) -> Result<(), DownloadError> {
         let construction_lock = self.state.construction_lock(download_id).await;
         let _construction_guard = construction_lock.lock().await;
@@ -74,8 +72,8 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
 
     async fn file_download_task(
         &self,
-        request: HttpDownloadRequest,
-        destination_path: &Path,
+        source_url: &str,
+        destination_path: &std::path::Path,
         file_check: FileCheck,
         expected_bytes: Option<u64>,
     ) -> Result<Arc<dyn FileDownloadTask>, DownloadError> {
@@ -84,7 +82,7 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
             && !cached_task.is_stopped()
         {
             let task = cached_task.public();
-            ensure_cached_task_matches(&cached_task, &task, &request, &file_check, expected_bytes)?;
+            ensure_cached_task_matches(&task, source_url, &file_check, expected_bytes)?;
             return Ok(task);
         }
 
@@ -94,7 +92,7 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
             let cached_task_result = match self.state.get_task(download_id).await {
                 Some(cached_task) if !cached_task.is_stopped() => {
                     let task = cached_task.public();
-                    ensure_cached_task_matches(&cached_task, &task, &request, &file_check, expected_bytes)?;
+                    ensure_cached_task_matches(&task, source_url, &file_check, expected_bytes)?;
                     Some(Ok(task))
                 },
                 Some(_) => {
@@ -108,7 +106,7 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
             } else {
                 let startup = observe_startup::<B>(
                     download_id,
-                    request.clone(),
+                    source_url,
                     destination_path,
                     file_check.clone(),
                     expected_bytes,
@@ -120,7 +118,7 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
                     startup,
                     self.context.as_ref(),
                     download_id,
-                    request.clone(),
+                    source_url,
                     destination_path,
                     file_check,
                     expected_bytes,
@@ -152,10 +150,7 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
                 let public_task: Arc<dyn FileDownloadTask> = task.clone();
                 let managed_task = task;
                 self.state
-                    .insert_task(
-                        download_id,
-                        CachedFileDownloadTask::new(Arc::clone(&public_task), managed_task, request),
-                    )
+                    .insert_task(download_id, CachedFileDownloadTask::new(Arc::clone(&public_task), managed_task))
                     .await;
                 Ok(public_task)
             }
@@ -169,7 +164,7 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
 
     async fn destination_foreign_lock(
         &self,
-        destination_path: &Path,
+        destination_path: &std::path::Path,
     ) -> Option<String> {
         let lock_path = lock_path_for_destination(destination_path);
         match check_lock_file(&lock_path, &self.state.manager_id, self.state.instance_id, kiban::process::id()).await {
@@ -180,17 +175,17 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
 }
 
 pub(crate) async fn observe_startup<B: Backend>(
-    download_id: DownloadId,
-    request: HttpDownloadRequest,
-    destination_path: &Path,
+    download_id: crate::DownloadId,
+    source_url: &str,
+    destination_path: &std::path::Path,
     file_check: FileCheck,
     expected_bytes: Option<u64>,
     manager_id: &str,
-    manager_instance_id: Uuid,
+    manager_instance_id: uuid::Uuid,
 ) -> Result<Startup, DownloadError> {
     Startup::observe::<B>(
         download_id,
-        request,
+        source_url,
         destination_path,
         file_check,
         expected_bytes,
@@ -203,13 +198,13 @@ pub(crate) async fn observe_startup<B: Backend>(
 pub(crate) async fn prepare_startup<B: Backend>(
     startup: Startup,
     context: &B::Context,
-    download_id: DownloadId,
-    request: HttpDownloadRequest,
-    destination_path: &Path,
+    download_id: crate::DownloadId,
+    source_url: &str,
+    destination_path: &std::path::Path,
     file_check: FileCheck,
     expected_bytes: Option<u64>,
     manager_id: &str,
-    manager_instance_id: Uuid,
+    manager_instance_id: uuid::Uuid,
 ) -> Result<(Startup, Option<DestinationLockLease>), DownloadError> {
     if !startup_requires_destination_lease::<B>(&startup, context).await? {
         return Ok((startup, None));
@@ -218,10 +213,10 @@ pub(crate) async fn prepare_startup<B: Backend>(
     let lease =
         match DestinationLockLease::acquire_for_destination(destination_path, manager_id, manager_instance_id).await {
             Ok(lease) => lease,
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let startup = observe_startup::<B>(
                     download_id,
-                    request,
+                    source_url,
                     destination_path,
                     file_check,
                     expected_bytes,
@@ -238,7 +233,7 @@ pub(crate) async fn prepare_startup<B: Backend>(
         };
     let startup = match observe_startup::<B>(
         download_id,
-        request,
+        source_url,
         destination_path,
         file_check,
         expected_bytes,
@@ -289,29 +284,30 @@ fn startup_can_attach_initial_task<B: Backend>(startup: &Startup) -> bool {
 }
 
 fn ensure_cached_task_matches(
-    cached: &CachedFileDownloadTask,
-    task: &Arc<dyn FileDownloadTask>,
-    request: &HttpDownloadRequest,
+    cached: &Arc<dyn FileDownloadTask>,
+    source_url: &str,
     file_check: &FileCheck,
     expected_bytes: Option<u64>,
 ) -> Result<(), DownloadError> {
-    if !cached.request_matches(request) {
+    if cached.source_url() != source_url {
         return Err(DownloadError::ConflictingConfig(format!(
-            "{} already requested with a different HTTP request",
-            task.destination().display(),
+            "{} already requested with source_url {:?}; cannot reuse for {:?}",
+            cached.destination().display(),
+            cached.source_url(),
+            source_url,
         )));
     }
-    if task.file_check() != file_check {
+    if cached.file_check() != file_check {
         return Err(DownloadError::ConflictingConfig(format!(
             "{} already requested with a different file_check",
-            task.destination().display(),
+            cached.destination().display(),
         )));
     }
-    if task.expected_bytes() != expected_bytes {
+    if cached.expected_bytes() != expected_bytes {
         return Err(DownloadError::ConflictingConfig(format!(
             "{} already requested with expected_bytes {:?}; got {:?}",
-            task.destination().display(),
-            task.expected_bytes(),
+            cached.destination().display(),
+            cached.expected_bytes(),
             expected_bytes,
         )));
     }

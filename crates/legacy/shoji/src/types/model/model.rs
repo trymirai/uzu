@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::types::{
     basic::{Metadata, Value},
     model::{
-        ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization, ModelRegistry, ModelSource,
-        ModelSpecialization,
+        ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization, ModelReference,
+        ModelRegistry, ModelSpecialization,
     },
 };
 
@@ -43,8 +43,8 @@ impl Model {
     }
 
     #[bindings::export(Method(Getter))]
-    pub fn is_on_device(&self) -> bool {
-        matches!(self.accessibility, ModelAccessibility::OnDevice { .. })
+    pub fn is_local(&self) -> bool {
+        matches!(self.accessibility, ModelAccessibility::Local { .. })
     }
 
     #[bindings::export(Method(Getter))]
@@ -56,8 +56,8 @@ impl Model {
     pub fn is_downloadable(&self) -> bool {
         matches!(
             self.accessibility,
-            ModelAccessibility::OnDevice {
-                source: ModelSource::Registry { .. }
+            ModelAccessibility::Local {
+                reference: ModelReference::Mirai { .. } | ModelReference::HuggingFace { .. }
             }
         )
     }
@@ -75,11 +75,11 @@ impl Model {
     #[bindings::export(Method(Getter))]
     pub fn repo_ids(&self) -> Vec<String> {
         match &self.accessibility {
-            ModelAccessibility::OnDevice {
-                source,
+            ModelAccessibility::Local {
+                reference,
                 ..
-            } => match source {
-                ModelSource::Registry {
+            } => match reference {
+                ModelReference::Mirai {
                     repository,
                     source_repository,
                     ..
@@ -93,7 +93,10 @@ impl Model {
                     }
                     result
                 },
-                ModelSource::Filesystem {
+                ModelReference::HuggingFace {
+                    repository,
+                } => vec![repository.identifier.clone()],
+                ModelReference::Local {
                     ..
                 } => vec![],
             },
@@ -111,16 +114,19 @@ impl Model {
     }
 
     #[bindings::export(Method(Getter))]
-    pub fn filesystem_path(&self) -> Option<String> {
+    pub fn local_external_path(&self) -> Option<String> {
         match &self.accessibility {
-            ModelAccessibility::OnDevice {
-                source,
+            ModelAccessibility::Local {
+                reference,
                 ..
-            } => match source {
-                ModelSource::Registry {
+            } => match reference {
+                ModelReference::Mirai {
                     ..
                 } => None,
-                ModelSource::Filesystem {
+                ModelReference::HuggingFace {
+                    ..
+                } => None,
+                ModelReference::Local {
                     path,
                 } => Some(path.clone()),
             },
@@ -133,10 +139,10 @@ impl Model {
     #[bindings::export(Method(Getter))]
     pub fn reference_name(&self) -> Option<String> {
         match &self.accessibility {
-            ModelAccessibility::OnDevice {
-                source,
+            ModelAccessibility::Local {
+                reference,
                 ..
-            } => Some(source.name()),
+            } => Some(reference.name()),
             ModelAccessibility::Remote {
                 ..
             } => None,
@@ -146,19 +152,18 @@ impl Model {
     #[bindings::export(Method(Getter))]
     pub fn checkpoint_version(&self) -> Option<String> {
         match &self.accessibility {
-            ModelAccessibility::OnDevice {
-                source,
+            ModelAccessibility::Local {
+                reference,
                 ..
-            } => match source {
-                ModelSource::Registry {
+            } => match reference {
+                ModelReference::Mirai {
                     toolchain_version,
-                    repository,
                     ..
-                } => repository
-                    .as_ref()
-                    .and_then(|repository| repository.commit_hash.clone())
-                    .or_else(|| Some(toolchain_version.clone())),
-                ModelSource::Filesystem {
+                } => Some(toolchain_version.clone()),
+                ModelReference::HuggingFace {
+                    repository,
+                } => repository.commit_hash.clone(),
+                ModelReference::Local {
                     ..
                 } => None,
             },

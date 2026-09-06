@@ -15,18 +15,18 @@ use tokio::sync::{
 };
 
 use crate::{
-    DownloadError, FileDownloadState, LockFileState, check_lock_file,
+    DownloadError, FileCheck, FileDownloadState, LockFileState, check_lock_file,
+    crc_utils::{calculate_and_verify_crc, crc_path_for_file, save_crc_file},
     download_log_event::{DownloadLogEvent, log},
     file_download_task_actor::{
         BackendEvent, DownloadActorState, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
         TerminalOutcome, project_runtime_public_state,
     },
-    integrity::{integrity_receipt_path, save_integrity_cache, verify_file_integrity},
     lock_manager::{DestinationLockLease, lock_path_for_destination},
     release_lock_if_owned,
     traits::{
         ActiveDownloadGeneration, ActiveDownloadGenerationCounter, ActiveTask, BackendContext, BackendEventSender,
-        Capabilities, DownloadBackend, DownloadConfig,
+        DownloadBackend, DownloadConfig,
     },
 };
 
@@ -347,7 +347,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         let from_state = current_state.name();
         if let DownloadActorState::Downloading {
             destination_lease,
-            resumed,
             ..
         } = current_state
         {
@@ -366,14 +365,11 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 Err(message) => {
                     remove_file(&self.config.destination).await;
                     remove_resume_artifact(&self.config.destination).await;
-                    remove_file(&integrity_receipt_path(&self.config.destination)).await;
+                    remove_file(&crc_path_for_file(&self.config.destination)).await;
                     self.progress_counters = ProgressCounters::default();
+                    self.projection = PublicProjection::StickyError(message.clone());
                     release_destination_lease(destination_lease).await;
                     self.finish_transition(from_state, DownloadActorState::NotDownloaded);
-                    if self.restart_after_stale_resume(resumed).await {
-                        return;
-                    }
-                    self.projection = PublicProjection::StickyError(message.clone());
                     self.pending_terminal_outcome = Some(TerminalOutcome::Error(message));
                 },
             }
@@ -401,19 +397,15 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         if let DownloadActorState::Downloading {
             active_task,
             destination_lease,
-            resumed,
             ..
         } = current_state
         {
             let _ = active_task.cancel(&self.config.destination).await;
             remove_resume_artifact(&self.config.destination).await;
+            self.projection = PublicProjection::StickyError(message.clone());
             self.progress_counters = ProgressCounters::default();
             release_destination_lease(destination_lease).await;
             self.finish_transition(from_state, DownloadActorState::NotDownloaded);
-            if self.restart_after_stale_resume(resumed).await {
-                return;
-            }
-            self.projection = PublicProjection::StickyError(message.clone());
             self.pending_terminal_outcome = Some(TerminalOutcome::Error(message));
         }
     }
@@ -435,25 +427,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 total_bytes: progress.total_bytes.or(self.config.expected_bytes).unwrap_or(progress.downloaded_bytes),
             };
         }
-    }
-
-    async fn restart_after_stale_resume(
-        &mut self,
-        resumed: bool,
-    ) -> bool {
-        if !resumed
-            || self.config.request.is_authenticated()
-            || !B::CAPABILITIES.contains(Capabilities::CACHES_REDIRECTED_URL_IN_RESUME_DATA)
-        {
-            return false;
-        }
-        self.projection = PublicProjection::None;
-        if let Err(error) = self.start_fresh_download().await {
-            let message = error.to_string();
-            self.projection = PublicProjection::StickyError(message.clone());
-            self.pending_terminal_outcome = Some(TerminalOutcome::Error(message));
-        }
-        true
     }
 
     async fn start_fresh_download(&mut self) -> Result<(), DownloadError> {
@@ -480,7 +453,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             active_task,
             generation,
             destination_lease: lease,
-            resumed: false,
         });
         Ok(())
     }
@@ -524,7 +496,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             active_task,
             generation,
             destination_lease: lease,
-            resumed: true,
         });
         Ok(())
     }
@@ -632,8 +603,8 @@ async fn remove_file(path: &Path) {
 }
 
 async fn remove_resume_artifact(destination: &Path) {
-    remove_file(&destination.with_added_extension("part")).await;
-    remove_file(&destination.with_added_extension("resume_data")).await;
+    remove_file(&destination.with_extension("part")).await;
+    remove_file(&destination.with_extension("resume_data")).await;
 }
 
 async fn validate_completed_file(config: &DownloadConfig) -> Result<u64, String> {
@@ -668,12 +639,20 @@ async fn validate_completed_file(config: &DownloadConfig) -> Result<u64, String>
 
     let total_bytes = config.expected_bytes.unwrap_or(actual_bytes);
 
-    match verify_file_integrity(&config.destination, &config.file_check).await {
-        Ok(true) => {
-            let _ = save_integrity_cache(&config.destination, &config.file_check).await;
-            Ok(total_bytes)
+    match &config.file_check {
+        FileCheck::None => Ok(total_bytes),
+        FileCheck::CRC(expected_crc) => {
+            let crc_result = calculate_and_verify_crc(&config.destination, expected_crc).await;
+            match crc_result {
+                Ok(true) => {
+                    let destination = config.destination.clone();
+                    let expected = expected_crc.clone();
+                    let _ = save_crc_file(&destination, &expected).await;
+                    Ok(total_bytes)
+                },
+                Ok(false) => Err("CRC verification failed".to_string()),
+                Err(error) => Err(format!("CRC verification error: {error}")),
+            }
         },
-        Ok(false) => Err(config.file_check.verification_failure_message().to_string()),
-        Err(error) => Err(format!("integrity verification error: {error}")),
     }
 }

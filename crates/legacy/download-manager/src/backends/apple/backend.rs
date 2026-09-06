@@ -12,7 +12,7 @@ use crate::{
         common::{self, InitialTaskAttachment},
     },
     lock_manager::DestinationLockLease,
-    traits::{ActiveDownloadGeneration, BackendEventSender, Capabilities, DownloadBackend, DownloadConfig},
+    traits::{ActiveDownloadGeneration, BackendEventSender, DownloadBackend, DownloadConfig},
 };
 
 #[derive(Clone, Debug, Default)]
@@ -22,7 +22,6 @@ impl DownloadBackend for AppleBackend {
     type Context = AppleBackendContext;
     type ActiveTask = AppleActiveTask;
     type Error = AppleBackendError;
-    const CAPABILITIES: Capabilities = Capabilities::CACHES_REDIRECTED_URL_IN_RESUME_DATA;
 
     async fn read_resume_progress(part_path: &Path) -> Option<u64> {
         resume_data_parser::read_resume_progress(part_path)
@@ -69,12 +68,7 @@ impl common::Backend for AppleBackend {
                     task.resume();
                 }
                 Ok(InitialTaskAttachment::Downloading {
-                    active_task: AppleActiveTask::new(
-                        task,
-                        context.event_registry(),
-                        config.download_id,
-                        config.request.is_authenticated(),
-                    ),
+                    active_task: AppleActiveTask::new(task, context.event_registry(), config.download_id),
                     initial_downloaded_bytes,
                     total_bytes,
                 })

@@ -32,8 +32,6 @@ pyo3_stub_gen::define_stub_info_gatherer!(pyo3_bindings_annotations);
 pyo3_stub_gen::reexport_module_members!("uzu" from "uzu._tool"; "UzuToolFunction", "uzu_tool_function");
 
 #[cfg(not(target_family = "wasm"))]
-mod api;
-#[cfg(not(target_family = "wasm"))]
 pub mod device;
 #[cfg(not(target_family = "wasm"))]
 pub mod engine;
@@ -41,8 +39,6 @@ pub mod engine;
 pub mod helpers;
 #[cfg(not(target_family = "wasm"))]
 pub mod logs;
-#[cfg(not(target_family = "wasm"))]
-mod models;
 #[cfg(not(target_family = "wasm"))]
 pub mod player;
 #[cfg(not(target_family = "wasm"))]

@@ -13,7 +13,7 @@ use tokio::sync::{
     Mutex as TokioMutex,
     broadcast::{Sender as TokioBroadcastSender, channel as tokio_broadcast_channel},
     mpsc::{Sender as TokioMpscSender, channel as tokio_mpsc_channel},
-    oneshot::{Sender as TokioOneshotSender, channel as tokio_oneshot_channel},
+    oneshot::channel as tokio_oneshot_channel,
     watch::{Receiver as TokioWatchReceiver, channel as tokio_watch_channel},
 };
 use tokio_stream::{StreamExt as TokioStreamExt, wrappers::BroadcastStream as TokioBroadcastStream};
@@ -117,7 +117,6 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
                         active_task,
                         generation: attachment_generation,
                         destination_lease,
-                        resumed: false,
                     },
                     ProgressCounters {
                         downloaded_bytes: initial_downloaded_bytes,
@@ -167,7 +166,7 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
 
     async fn send_command(
         &self,
-        command_builder: impl FnOnce(TokioOneshotSender<Result<(), DownloadError>>) -> TaskCommand,
+        command_builder: impl FnOnce(tokio::sync::oneshot::Sender<Result<(), DownloadError>>) -> TaskCommand,
     ) -> Result<(), DownloadError> {
         if self.is_stopped.load(Ordering::SeqCst) {
             return Err(DownloadError::TaskStopped);
@@ -199,7 +198,7 @@ impl<B: DownloadBackend> fmt::Debug for GenericFileDownloadTask<B> {
         formatter
             .debug_struct("GenericFileDownloadTask")
             .field("download_id", &self.config.download_id)
-            .field("source_url", &self.config.request.url)
+            .field("source_url", &self.config.source_url)
             .field("destination", &self.config.destination)
             .finish()
     }
@@ -207,13 +206,13 @@ impl<B: DownloadBackend> fmt::Debug for GenericFileDownloadTask<B> {
 
 #[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
-impl<B: DownloadBackend> FileDownloadTask for GenericFileDownloadTask<B> {
+impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> {
     fn download_id(&self) -> DownloadId {
         self.config.download_id
     }
 
     fn source_url(&self) -> &str {
-        &self.config.request.url
+        &self.config.source_url
     }
 
     fn destination(&self) -> &Path {

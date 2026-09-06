@@ -1,14 +1,9 @@
 use std::{
     collections::HashMap,
-    fs::{copy, create_dir_all, remove_file, rename},
-    io::Error as IoError,
     path::PathBuf,
-    ptr::{from_ref, null_mut},
     sync::{Arc, Mutex},
 };
 
-use block2::DynBlock;
-use http::{StatusCode, uri::Scheme};
 use kiban::rt::RuntimeHandle;
 use objc2::{
     ClassType, DefinedClass, define_class, msg_send,
@@ -16,11 +11,9 @@ use objc2::{
     runtime::ProtocolObject,
 };
 use objc2_foundation::{
-    NSError, NSHTTPURLResponse, NSMutableCopying, NSObject, NSObjectProtocol, NSString, NSURL, NSURLRequest,
-    NSURLSession, NSURLSessionDelegate, NSURLSessionDownloadDelegate, NSURLSessionDownloadTask, NSURLSessionTask,
-    NSURLSessionTaskDelegate,
+    NSError, NSObject, NSObjectProtocol, NSURL, NSURLSession, NSURLSessionDelegate, NSURLSessionDownloadDelegate,
+    NSURLSessionDownloadTask, NSURLSessionTask, NSURLSessionTaskDelegate,
 };
-use reqwest::Url;
 
 use crate::{
     DownloadId,
@@ -33,20 +26,8 @@ use crate::{
 pub struct AppleEventSink {
     pub generation: ActiveDownloadGeneration,
     pub destination: PathBuf,
-    pub expected_bytes: Option<u64>,
     pub backend_event_sender: BackendEventSender,
     pub runtime_handle: RuntimeHandle,
-}
-
-impl AppleEventSink {
-    fn send_terminal(
-        self,
-        event: BackendEvent,
-    ) {
-        self.runtime_handle.clone().spawn(async move {
-            let _ = self.backend_event_sender.send_terminal(event).await;
-        });
-    }
 }
 
 pub type AppleSinkKey = (DownloadId, u64);
@@ -65,48 +46,17 @@ define_class!(
 
     unsafe impl NSObjectProtocol for AppleSessionDelegate {}
 
-    unsafe impl NSURLSessionDelegate for AppleSessionDelegate {}
-
-    unsafe impl NSURLSessionTaskDelegate for AppleSessionDelegate {
-        #[unsafe(method(URLSession:task:willPerformHTTPRedirection:newRequest:completionHandler:))]
-        unsafe fn will_perform_http_redirection(
+    unsafe impl NSURLSessionDelegate for AppleSessionDelegate {
+        #[unsafe(method(URLSession:didBecomeInvalidWithError:))]
+        fn did_become_invalid_with_error(
             &self,
             _session: &NSURLSession,
-            _task: &NSURLSessionTask,
-            response: &NSHTTPURLResponse,
-            request: &NSURLRequest,
-            completion_handler: &DynBlock<dyn Fn(*mut NSURLRequest)>,
+            _error: Option<&NSError>,
         ) {
-            let current_url =
-                response.URL().and_then(|url| url.absoluteString()).and_then(|url| Url::parse(&url.to_string()).ok());
-            let next_url =
-                request.URL().and_then(|url| url.absoluteString()).and_then(|url| Url::parse(&url.to_string()).ok());
-            let redirected_request = match (current_url, next_url) {
-                (Some(current), Some(next)) => {
-                    match (Scheme::try_from(current.scheme()), Scheme::try_from(next.scheme())) {
-                        (Ok(current_scheme), Ok(next_scheme))
-                            if (current_scheme == Scheme::HTTP
-                                && (next_scheme == Scheme::HTTP || next_scheme == Scheme::HTTPS))
-                                || (current_scheme == Scheme::HTTPS && next_scheme == Scheme::HTTPS) =>
-                        {
-                            if current.origin() == next.origin() {
-                                from_ref(request).cast_mut()
-                            } else {
-                                let redirected = request.mutableCopy();
-                                redirected.setValue_forHTTPHeaderField(None, &NSString::from_str("Authorization"));
-                                let pointer: *const _ = &*redirected;
-                                completion_handler.call((pointer.cast::<NSURLRequest>().cast_mut(),));
-                                return;
-                            }
-                        },
-                        _ => null_mut(),
-                    }
-                },
-                _ => null_mut(),
-            };
-            completion_handler.call((redirected_request,));
         }
+    }
 
+    unsafe impl NSURLSessionTaskDelegate for AppleSessionDelegate {
         #[unsafe(method(URLSession:task:didCompleteWithError:))]
         fn did_complete_with_error(
             &self,
@@ -130,8 +80,9 @@ define_class!(
                 return;
             };
             let message = error.localizedDescription().to_string();
-            let event = BackendEvent::error(sink.generation, message);
-            sink.send_terminal(event);
+            sink.runtime_handle.clone().spawn(async move {
+                let _ = sink.backend_event_sender.send_terminal(BackendEvent::error(sink.generation, message)).await;
+            });
         }
     }
 
@@ -152,42 +103,27 @@ define_class!(
             else {
                 return;
             };
-            let status_code = download_task
-                .response()
-                .and_then(|response| response.downcast_ref::<NSHTTPURLResponse>().map(|response| response.statusCode()))
-                .and_then(|status_code| u16::try_from(status_code).ok())
-                .and_then(|status_code| StatusCode::from_u16(status_code).ok());
-            if !status_code.is_some_and(|status_code| status_code.is_success()) {
-                let message = status_code.map_or_else(
-                    || "download response was not HTTP".to_string(),
-                    |status_code| format!("download failed with HTTP status {}", status_code.as_u16()),
-                );
-                let event = BackendEvent::error(sink.generation, message);
-                sink.send_terminal(event);
-                return;
-            }
             let Some(temporary_path) = location.path().map(|path| PathBuf::from(path.to_string())) else {
-                let event =
-                    BackendEvent::error(sink.generation, "download temporary location was unavailable".to_string());
-                sink.send_terminal(event);
                 return;
             };
 
             // Move synchronously: NSURLSession deletes the temp file as soon as this method returns.
             if let Some(parent) = sink.destination.parent() {
-                let _ = create_dir_all(parent);
+                let _ = std::fs::create_dir_all(parent);
             }
-            let move_result = rename(&temporary_path, &sink.destination).or_else(|_| {
-                copy(&temporary_path, &sink.destination)?;
-                let _ = remove_file(&temporary_path);
-                Ok::<(), IoError>(())
+            let move_result = std::fs::rename(&temporary_path, &sink.destination).or_else(|_| {
+                std::fs::copy(&temporary_path, &sink.destination)?;
+                let _ = std::fs::remove_file(&temporary_path);
+                Ok::<(), std::io::Error>(())
             });
 
             let terminal_event = match move_result {
                 Ok(()) => BackendEvent::completed(sink.generation),
                 Err(error) => BackendEvent::error(sink.generation, format!("move into destination failed: {error}")),
             };
-            sink.send_terminal(terminal_event);
+            sink.runtime_handle.clone().spawn(async move {
+                let _ = sink.backend_event_sender.send_terminal(terminal_event).await;
+            });
         }
 
         #[unsafe(method(URLSession:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:))]
@@ -208,22 +144,8 @@ define_class!(
             else {
                 return;
             };
-            let downloaded_bytes = u64::try_from(cumulative_bytes_written).unwrap_or_default();
-            let total_bytes = u64::try_from(total_expected_bytes_to_write).ok().filter(|total_bytes| *total_bytes > 0);
-            if let Some(expected_bytes) = sink.expected_bytes
-                && downloaded_bytes > expected_bytes
-            {
-                download_task.cancel();
-                if let Ok(mut registry) = Self::ivars(self).event_registry.lock() {
-                    registry.remove(&key);
-                }
-                let event = BackendEvent::error(
-                    sink.generation,
-                    format!("response exceeded the registry size of {expected_bytes} bytes"),
-                );
-                sink.send_terminal(event);
-                return;
-            }
+            let downloaded_bytes = cumulative_bytes_written.max(0) as u64;
+            let total_bytes = (total_expected_bytes_to_write > 0).then_some(total_expected_bytes_to_write as u64);
 
             sink.runtime_handle.clone().spawn(async move {
                 sink.backend_event_sender.send_progress(sink.generation, downloaded_bytes, total_bytes).await;

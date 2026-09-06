@@ -47,7 +47,7 @@ mod inner {
     use super::{KeisokuError, PowerReading};
     use crate::{
         Device, Select,
-        marker::{Ane, Cpu, EnergyRail, Gpu, Ram},
+        marker::{Ane, Cpu, EnergyRail, Gpu, Ram, Sample},
     };
 
     type Rails = Select![EnergyRail<Cpu>, EnergyRail<Gpu>, EnergyRail<Ane>, EnergyRail<Ram>];
@@ -77,18 +77,28 @@ mod inner {
             let Some(sample) = handle.stop() else {
                 return Err(KeisokuError::PowerReadingUnavailable);
             };
-            Ok(PowerReading::Components {
-                cpu: *sample.get::<EnergyRail<Cpu>>(),
-                gpu: *sample.get::<EnergyRail<Gpu>>(),
-                ane: *sample.get::<EnergyRail<Ane>>(),
-                ram: *sample.get::<EnergyRail<Ram>>(),
-            })
+            Ok(reading(sample))
         }
 
         pub fn split(&mut self) -> Result<PowerReading, KeisokuError> {
-            let reading = self.stop();
-            self.start()?;
-            reading
+            let Some(handle) = self.handle.as_mut() else {
+                return Err(KeisokuError::PowerMeterNotStarted);
+            };
+            let sample = handle.stop();
+            handle.start();
+            let Some(sample) = sample else {
+                return Err(KeisokuError::PowerReadingUnavailable);
+            };
+            Ok(reading(sample))
+        }
+    }
+
+    fn reading(sample: Sample<Rails>) -> PowerReading {
+        PowerReading::Components {
+            cpu: *sample.get::<EnergyRail<Cpu>>(),
+            gpu: *sample.get::<EnergyRail<Gpu>>(),
+            ane: *sample.get::<EnergyRail<Ane>>(),
+            ram: *sample.get::<EnergyRail<Ram>>(),
         }
     }
 }

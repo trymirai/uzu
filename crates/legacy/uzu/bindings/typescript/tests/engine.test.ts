@@ -1,12 +1,4 @@
-import {
-    ChatConfig,
-    ChatMessage,
-    ChatReplyConfig,
-    Engine,
-    EngineConfig,
-    ReasoningEffort,
-    SamplingMethodGreedy,
-} from '@trymirai/uzu';
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig } from '@trymirai/uzu';
 
 jest.setTimeout(600_000);
 
@@ -23,18 +15,14 @@ test('chat reply produces text', async () => {
     const session = await engine.chat(model!, ChatConfig.create());
 
     const messages = [
-        ChatMessage.system()
-            .withText('You are a helpful assistant')
-            .withReasoningEffort('Disabled' as ReasoningEffort),
+        ChatMessage.system().withText('You are a helpful assistant'),
         ChatMessage.user().withText('Hi'),
     ];
 
-    const reply = await session.reply(
-        messages,
-        ChatReplyConfig.create().withTokenLimit(64).withSamplingMethod(new SamplingMethodGreedy()),
-    );
+    const reply = await session.reply(messages, ChatReplyConfig.create());
     const message = reply[reply.length - 1]?.message;
 
     expect(message).toBeDefined();
+    expect(message!.reasoning).not.toBeNull();
     expect(message!.text).not.toBeNull();
 });
