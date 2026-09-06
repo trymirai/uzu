@@ -74,7 +74,9 @@ struct MxuMmaCore {
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmDTransform output_transform,
-      const device RightElementType* output_bias,
+      // Not `RightElementType`: the trellis decode makes that int8, and the
+      // output bias is always in the weight dtype.
+      const device typename Right::DenseElement* output_bias,
       const device int32_t* rht_factors,
       threadgroup RightElementType* b_shared,
       const bool stage_weight_scales,
@@ -125,7 +127,8 @@ struct MxuMmaCore {
     const bool apply_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
 
-    const device RightElementType* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
+    const device typename Right::DenseElement* bias_simdgroup =
+        output_bias + size_t(block_col) + size_t(tile_col_offset);
 
     dispatch_bool(
         alignment.contains(GemmAlignment::M) || (simdgroup_limit_m == SIMDGROUP_BLOCK_M),

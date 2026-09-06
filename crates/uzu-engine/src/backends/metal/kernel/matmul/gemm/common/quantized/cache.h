@@ -59,6 +59,11 @@ struct Cache<Residency::Registers, Core, Storage, Operand, ALIGNED> {
   using WeightOperand = typename Core::RightOperand;
   UZU_CONST bool ROWS = metal::is_same<Storage, typename Core::LeftStorage>::value;
   UZU_CONST bool NEEDS_CORRECTION = WeightOperand::NEEDS_CORRECTION;
+  /// A trellis tape has one weight scale per ROW and no K groups at all, so the
+  /// whole cache is loop-invariant: it is filled once, in the constructor, and
+  /// `fill` is a no-op. The codebook's `1 / rms` folds in here rather than in the
+  /// epilogue -- it multiplies the same product.
+  UZU_CONST bool PER_ROW = !ROWS && WeightOperand::STAGED;
 
   UZU_CONST ushort TILES = ROWS ? Fragment::ROW_FRAGMENTS : Fragment::COL_FRAGMENTS;
   UZU_CONST ushort SLOTS = ROWS ? Ops::THREAD_ELEMENT_ROWS : Ops::THREAD_ELEMENT_COLS;
@@ -96,13 +101,19 @@ struct Cache<Residency::Registers, Core, Storage, Operand, ALIGNED> {
       origin = position.x;
       limit = tile.simdgroup_limit_n;
       absolute_base = tile.absolute_column_base();
-      scale_k_groups_per_row = (uint(params->K) + uint(Operand::GROUP_SIZE) - 1) / uint(Operand::GROUP_SIZE);
+      scale_k_groups_per_row =
+          PER_ROW ? 1u : (uint(params->K) + uint(Operand::GROUP_SIZE) - 1) / uint(Operand::GROUP_SIZE);
       first_k_offset = tile.k_offset;
+      if constexpr (PER_ROW) {
+        fill_at_k_offset(0);
+      }
     }
   }
 
   METAL_FUNC void fill(const int k_group_index) thread {
-    fill_at_k_offset(uint(k_group_index) * uint(WeightOperand::GROUP_SIZE));
+    if constexpr (!PER_ROW) {
+      fill_at_k_offset(uint(k_group_index) * uint(WeightOperand::GROUP_SIZE));
+    }
   }
 
   METAL_FUNC void fill_at_k_offset(const uint relative_k_offset) thread {
@@ -116,14 +127,20 @@ struct Cache<Residency::Registers, Core, Storage, Operand, ALIGNED> {
         if (ALIGNED || coordinate < limit) {
           const uint line = absolute_base + uint(coordinate);
           uint scale_index;
-          if constexpr (ROWS) {
+          if constexpr (PER_ROW) {
+            scale_index = line;
+          } else if constexpr (ROWS) {
             const uint scale_k_group = absolute_k_offset / uint(Operand::GROUP_SIZE);
             scale_index = line * scale_k_groups_per_row + scale_k_group;
           } else {
             scale_index = line * scale_k_groups_per_row + absolute_k_group;
           }
           const float group_scale = float(source.scales[scale_index]);
-          scales[tile_index * SLOTS + slot_index] = group_scale;
+          if constexpr (PER_ROW) {
+            scales[tile_index * SLOTS + slot_index] = group_scale * source.trellis->codebook_scale;
+          } else {
+            scales[tile_index * SLOTS + slot_index] = group_scale;
+          }
           if constexpr (NEEDS_CORRECTION) {
             if constexpr (ROWS) {
               corrections[tile_index * SLOTS + slot_index] =

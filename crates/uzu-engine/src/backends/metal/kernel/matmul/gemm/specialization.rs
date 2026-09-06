@@ -111,6 +111,11 @@ impl GemmPlan {
         self,
         shape: MatmulShape,
     ) -> bool {
+        if shape.b_prologue == GemmBPrologueKind::Trellis {
+            // Threadgroup memory holds the decoded weight tile; the scales are
+            // one per row and stay in registers.
+            return false;
+        }
         if shape.b_bits == Some(4) && shape.b_group_size == Some(32) && self.tiling.block_m() <= 32 {
             return false;
         }

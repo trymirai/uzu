@@ -17,6 +17,7 @@ pub struct GemmProblem {
     output_data_type: DataType,
     supports_mxu: bool,
     apple_gpu_family: MTLGPUFamily,
+    gpu_core_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
@@ -34,6 +35,7 @@ impl GemmProblem {
         output_data_type: DataType,
         supports_mxu: bool,
         apple_gpu_family: MTLGPUFamily,
+        gpu_core_count: u32,
     ) -> Self {
         Self {
             shape,
@@ -41,6 +43,7 @@ impl GemmProblem {
             output_data_type,
             supports_mxu,
             apple_gpu_family,
+            gpu_core_count,
         }
     }
 
@@ -114,8 +117,18 @@ impl GemmProblem {
             align = align.max(2_u32.saturating_mul(group_size));
         }
         let align = align.max(ACTIVATION_SCALE_GROUP_SIZE).max(group_size);
-        let target_tiles = policy::split_k_target_tiles(!shape.a_full_precision, tiling, shape.b_bits);
-        let mut split_k = (target_tiles / base_tiles).max(1).min((shape.k / align).max(1));
+        // A trellis tape is the one prologue whose `GROUP_SIZE` is a staging
+        // block rather than a quantization group, and the tile target reads it
+        // wrong; it is decided by threadgroup supply instead. See
+        // `policy::trellis_split_k`. Every other prologue keeps the shipped tile
+        // target, byte for byte.
+        let wanted = if shape.b_prologue == GemmBPrologueKind::Trellis {
+            policy::trellis_split_k(shape.m, base_tiles, tiling, self.gpu_core_count)
+        } else {
+            let target_tiles = policy::split_k_target_tiles(!shape.a_full_precision, tiling, shape.b_bits);
+            (target_tiles / base_tiles).max(1)
+        };
+        let mut split_k = wanted.min((shape.k / align).max(1));
         if !shape.a_full_precision && engine == GemmEngine::Mxu && tiling.block_k() != 0 {
             split_k = split_k.min((shape.k / tiling.block_k()).max(1));
         }

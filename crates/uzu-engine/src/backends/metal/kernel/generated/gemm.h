@@ -15,6 +15,7 @@ enum class GemmBPrologueKind : uint32_t {
   ScaleBiasDequant = 1,
   ScaleZeroPointDequant = 2,
   ScaleSymmetricDequant = 3,
+  Trellis = 4,
 };
 
 struct GemmDTransform {
