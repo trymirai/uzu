@@ -108,8 +108,7 @@
             install -Dm755 target/release/cli $out/bin/mirai
           '';
 
-          inherit buildInputs;
-          nativeBuildInputs = nativeBuildInputs ++ (with pkgs; (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [writableTmpDirAsHomeHook]));
+          inherit buildInputs nativeBuildInputs;
 
           doCheck = false;
         };

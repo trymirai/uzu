@@ -96,16 +96,20 @@ impl MetalCompiler {
 
         let gpu_types_directory = source_directory.join("generated");
 
-        let output_directory = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?).join("metal");
+        let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
+
+        let output_directory = out_dir.join("metal");
         fs::create_dir_all(&output_directory)
             .with_context(|| format!("cannot create {}", output_directory.display()))?;
+
+        let modules_cache_path = out_dir.join("metal_modules_cache");
 
         let metallib_compressed = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
             "0" | "1" | "2" => false, // treat opt-level 0/1/2 as debug/test build where size doesn't matter
             _ => true,                // treat everything else (3,s,z) as release build where size matters
         };
 
-        let toolchain = MetalToolchain::from_env_with_include_dir(Some(gpu_types_directory.clone()))
+        let toolchain = MetalToolchain::new(modules_cache_path, gpu_types_directory.clone())
             .await
             .context("cannot create toolchain")?;
 
