@@ -94,12 +94,16 @@ pub struct MetalToolchain {
     std: MetalStd,
     opt_flags: Box<[OsString]>,
     extra_options: Box<[OsString]>,
-    include_dirs: Box<[PathBuf]>,
+    modules_cache_path: PathBuf,
+    include_dir: PathBuf,
     cache_key: [u8; blake3::OUT_LEN],
 }
 
 impl MetalToolchain {
-    pub async fn from_env_with_include_dir(include_dir: Option<PathBuf>) -> anyhow::Result<Self> {
+    pub async fn new(
+        modules_cache_path: PathBuf,
+        include_dir: PathBuf,
+    ) -> anyhow::Result<Self> {
         let sdk = MetalSdk::from_env().context("cannot get sdk")?;
         let std = MetalStd::Metal4_0;
 
@@ -121,8 +125,6 @@ impl MetalToolchain {
 
         let extra_options: Box<[OsString]> =
             Box::new([OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os()))]);
-
-        let include_dirs = include_dir.into_iter().collect();
 
         let cache_key = {
             let mut hasher = blake3::Hasher::new();
@@ -160,7 +162,8 @@ impl MetalToolchain {
             std,
             opt_flags,
             extra_options,
-            include_dirs,
+            modules_cache_path,
+            include_dir,
             cache_key,
         })
     }
@@ -175,13 +178,14 @@ impl MetalToolchain {
         &self.cache_key
     }
 
-    fn add_include_dirs(
+    fn add_common_args(
         &self,
         cmd: &mut Command,
     ) {
-        for dir in self.include_dirs.iter() {
-            cmd.arg("-I").arg(dir);
-        }
+        let mut modules_cache_path_arg = OsString::from("-fmodules-cache-path=");
+        modules_cache_path_arg.push(&self.modules_cache_path);
+        cmd.arg(modules_cache_path_arg);
+        cmd.arg("-I").arg(&self.include_dir);
     }
 
     pub async fn analyze(
@@ -198,7 +202,7 @@ impl MetalToolchain {
             .arg(format!("-std={}", self.std.to_str()))
             .args(self.extra_options.as_ref());
 
-        self.add_include_dirs(&mut cmd);
+        self.add_common_args(&mut cmd);
 
         cmd.arg("-DDSL_ANALYZE")
             .arg(path)
@@ -264,7 +268,7 @@ impl MetalToolchain {
             .args(self.extra_options.as_ref())
             .args(self.opt_flags.as_ref());
 
-        self.add_include_dirs(&mut cmd);
+        self.add_common_args(&mut cmd);
 
         cmd.arg("-include")
             .arg(source.as_ref())
