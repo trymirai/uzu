@@ -4,8 +4,8 @@ use kiban::rt::TaskJoinHandle;
 use tokio::sync::{oneshot::Receiver as TokioOneshotReceiver, watch::Sender as TokioWatchSender};
 
 use crate::{
-    backends::universal::UniversalBackend,
-    traits::{ActiveTask, CancelOutcome, DownloadBackend},
+    backends::{common::CancelOutcome, universal::UniversalBackend},
+    traits::{ActiveTask, DownloadBackend},
 };
 
 pub struct UniversalActiveTask {

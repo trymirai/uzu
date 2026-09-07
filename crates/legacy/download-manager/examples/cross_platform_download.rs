@@ -1,44 +1,27 @@
 use std::path::PathBuf;
 
-/// Cross-platform download example
-/// This example shows how to use FileDownloadManager trait
-/// which works on both Apple and non-Apple platforms
-use download_manager::{FileCheck, FileDownloadManager};
+use download_manager::{DownloadManager, DownloadPhase, DownloadTaskRequest};
 use kiban::rt::RuntimeHandle;
+use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let runtime_handle = RuntimeHandle::current();
+    let manager = <dyn DownloadManager>::system_default(RuntimeHandle::current()).await?;
+    let request = DownloadTaskRequest::file()
+        .destination(PathBuf::from("/tmp/test_tokenizer.json"))
+        .source_url("https://huggingface.co/Qwen/Qwen3.5-0.8B/resolve/main/tokenizer.json")
+        .build();
+    let task = manager.download_task(request).await?;
+    task.delete().await?;
 
-    let manager = <dyn FileDownloadManager>::system_default(runtime_handle).await?;
-
-    let url = "https://huggingface.co/Qwen/Qwen3.5-0.8B/resolve/main/tokenizer.json".to_string();
-
-    let destination = PathBuf::from("/tmp/test_tokenizer.json");
-    if destination.exists() {
-        std::fs::remove_file(&destination)?;
-    }
-
-    println!("Creating download task...");
-    let task = manager.file_download_task(&url, &destination, FileCheck::None, None).await?;
-
-    println!("Starting download...");
-    let mut progress_stream = task.progress().await?;
+    let mut progress = task.progress();
     task.download().await?;
-
-    use tokio_stream::StreamExt;
-    while let Some(Ok(state)) = progress_stream.next().await {
+    while let Some(Ok(state)) = progress.next().await {
         println!("Progress: {} / {} bytes ({:?})", state.downloaded_bytes, state.total_bytes, state.phase);
-
-        if matches!(
-            state.phase,
-            download_manager::FileDownloadPhase::Downloaded | download_manager::FileDownloadPhase::Error(_)
-        ) {
+        if matches!(state.phase, DownloadPhase::Downloaded {} | DownloadPhase::Error { .. }) {
             break;
         }
     }
-
-    task.wait().await;
     println!("Download finished!");
     Ok(())
 }

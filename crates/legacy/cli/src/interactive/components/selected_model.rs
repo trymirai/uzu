@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use iocraft::prelude::*;
 use tokio_stream::StreamExt;
-use uzu::storage::types::DownloadPhase;
+use uzu::storage::DownloadPhase;
 
 use crate::{
     common::thinking::ThinkingSupport,
@@ -121,7 +121,9 @@ pub fn SelectedModel(
                             },
                             DownloadPhase::Paused {}
                             | DownloadPhase::NotDownloaded {}
-                            | DownloadPhase::Locked {}
+                            | DownloadPhase::LockedByOther {
+                                ..
+                            }
                             | DownloadPhase::Error {
                                 ..
                             } => {
@@ -196,8 +198,8 @@ pub fn SelectedModel(
             let progress_value = download_state.progress();
             let progress_size = format!(
                 "{:.2}/{:.2} GB",
-                download_state.downloaded_bytes.max(0) as f64 / 1_000_000_000.0,
-                download_state.total_bytes.max(0) as f64 / 1_000_000_000.0,
+                download_state.downloaded_bytes as f64 / 1_000_000_000.0,
+                download_state.total_bytes as f64 / 1_000_000_000.0,
             );
             let padding = theme.padding();
             let padding_wide = theme.padding_wide();

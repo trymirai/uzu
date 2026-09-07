@@ -5,7 +5,7 @@ use futures_util::StreamExt;
 use ratatui::widgets::ListState;
 use shoji::types::model::Model;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
-use uzu::{engine::Engine, storage::types::DownloadState};
+use uzu::{engine::Engine, storage::DownloadState};
 
 use super::{events::AppEvent, models::ModelOrganizer, sections::Section};
 
@@ -190,7 +190,7 @@ impl App {
         if let Some(id) = model_id {
             let models_guard = self.models.lock().await;
             if let Some(model_with_state) = models_guard.get(&id) {
-                use uzu::storage::types::DownloadPhase::*;
+                use uzu::storage::DownloadPhase::*;
                 match model_with_state.state.phase {
                     Downloaded {} => {
                         // Already installed; ignore download command

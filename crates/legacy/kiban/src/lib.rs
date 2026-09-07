@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod fs;
+pub mod future;
 pub mod maybe;
 pub mod process;
 pub mod rt;

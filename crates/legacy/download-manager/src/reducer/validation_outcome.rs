@@ -1,6 +1,7 @@
 use crate::{
-    CheckedFileState, FileState,
+    checked_file_state::CheckedFileState,
     crc_utils::{calculate_and_verify_crc, crc_cache_matches},
+    file_state::FileState,
     reducer::{Action, ActionPlan, DiskObservation},
 };
 

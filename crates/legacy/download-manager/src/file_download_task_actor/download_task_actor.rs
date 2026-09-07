@@ -10,30 +10,23 @@ use tokio::sync::{
     Mutex as TokioMutex,
     broadcast::Sender as TokioBroadcastSender,
     mpsc::Receiver as TokioMpscReceiver,
-    oneshot::Sender as TokioOneshotSender,
     watch::{Receiver as TokioWatchReceiver, Sender as TokioWatchSender},
 };
 
 use crate::{
-    DownloadError, FileCheck, FileDownloadState, LockFileState, check_lock_file,
+    DownloadError, DownloadState, FileCheck, LockFileState,
+    backends::common::{ActiveDownloadGeneration, ActiveDownloadGenerationCounter, BackendEventSender, DownloadConfig},
+    check_lock_file,
     crc_utils::{calculate_and_verify_crc, crc_path_for_file, save_crc_file},
     download_log_event::{DownloadLogEvent, log},
     file_download_task_actor::{
         BackendEvent, DownloadActorState, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
-        TerminalOutcome, project_runtime_public_state,
+        project_runtime_public_state,
     },
     lock_manager::{DestinationLockLease, lock_path_for_destination},
     release_lock_if_owned,
-    traits::{
-        ActiveDownloadGeneration, ActiveDownloadGenerationCounter, ActiveTask, BackendContext, BackendEventSender,
-        DownloadBackend, DownloadConfig,
-    },
+    traits::{ActiveTask, BackendContext, DownloadBackend},
 };
-
-enum ActorLoopExit {
-    AlreadyStopped,
-    PreserveArtifacts,
-}
 
 pub struct DownloadTaskActor<B: DownloadBackend> {
     config: Arc<DownloadConfig>,
@@ -47,10 +40,8 @@ pub struct DownloadTaskActor<B: DownloadBackend> {
     backend_event_receiver: TokioMpscReceiver<BackendEvent>,
     pending_progress: Arc<TokioMutex<PendingProgressSlot>>,
     progress_waker_receiver: TokioWatchReceiver<()>,
-    public_state_sender: TokioWatchSender<FileDownloadState>,
-    progress_sender: TokioBroadcastSender<FileDownloadState>,
-    terminal_sender: TokioWatchSender<TerminalOutcome>,
-    pending_terminal_outcome: Option<TerminalOutcome>,
+    public_state_sender: TokioWatchSender<DownloadState>,
+    progress_sender: TokioBroadcastSender<DownloadState>,
 }
 
 impl<B: DownloadBackend> DownloadTaskActor<B> {
@@ -66,9 +57,8 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         backend_event_receiver: TokioMpscReceiver<BackendEvent>,
         pending_progress: Arc<TokioMutex<PendingProgressSlot>>,
         progress_waker_receiver: TokioWatchReceiver<()>,
-        public_state_sender: TokioWatchSender<FileDownloadState>,
-        progress_sender: TokioBroadcastSender<FileDownloadState>,
-        terminal_sender: TokioWatchSender<TerminalOutcome>,
+        public_state_sender: TokioWatchSender<DownloadState>,
+        progress_sender: TokioBroadcastSender<DownloadState>,
     ) -> Self {
         Self {
             config,
@@ -84,25 +74,19 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             progress_waker_receiver,
             public_state_sender,
             progress_sender,
-            terminal_sender,
-            pending_terminal_outcome: None,
         }
     }
 
     pub async fn run(mut self) {
         self.publish_current_state();
 
-        let mut loop_exit = ActorLoopExit::PreserveArtifacts;
         loop {
             tokio::select! {
                 command = self.command_receiver.recv() => {
                     let Some(command) = command else {
                         break;
                     };
-                    if !self.handle_command(command).await {
-                        loop_exit = ActorLoopExit::AlreadyStopped;
-                        break;
-                    }
+                    self.handle_command(command).await;
                 }
                 backend_event = self.backend_event_receiver.recv() => {
                     let Some(backend_event) = backend_event else {
@@ -110,7 +94,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                     };
                     self.handle_backend_event(backend_event).await;
                     self.publish_current_state();
-                    self.flush_terminal_outcome();
                 }
                 progress_wake_result = self.progress_waker_receiver.changed() => {
                     if progress_wake_result.is_err() {
@@ -118,17 +101,12 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                     }
                     self.handle_pending_progress().await;
                     self.publish_current_state();
-                    self.flush_terminal_outcome();
                 }
             }
         }
 
-        if matches!(loop_exit, ActorLoopExit::PreserveArtifacts) {
-            self.stop_preserving_artifacts().await;
-            self.publish_current_state();
-            self.flush_terminal_outcome();
-        }
-        let _ = self.terminal_sender.send(TerminalOutcome::ActorStopped);
+        self.stop_preserving_artifacts().await;
+        self.publish_current_state();
     }
 
     async fn stop_preserving_artifacts(&mut self) {
@@ -173,45 +151,20 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
     async fn handle_command(
         &mut self,
         command: TaskCommand,
-    ) -> bool {
-        match command {
+    ) {
+        let (result, reply_sender) = match command {
             TaskCommand::Download {
                 reply_sender,
-            } => {
-                let result = self.handle_download().await;
-                self.publish_current_state();
-                self.flush_terminal_outcome();
-                send_reply(reply_sender, result);
-                true
-            },
+            } => (self.handle_download().await, reply_sender),
             TaskCommand::Pause {
                 reply_sender,
-            } => {
-                let result = self.handle_pause().await;
-                self.publish_current_state();
-                self.flush_terminal_outcome();
-                send_reply(reply_sender, result);
-                true
-            },
-            TaskCommand::Cancel {
+            } => (self.handle_pause().await, reply_sender),
+            TaskCommand::Delete {
                 reply_sender,
-            } => {
-                let result = self.handle_cancel_or_remove().await;
-                self.publish_current_state();
-                self.flush_terminal_outcome();
-                send_reply(reply_sender, result);
-                true
-            },
-            TaskCommand::Remove {
-                reply_sender,
-            } => {
-                let result = self.handle_cancel_or_remove().await;
-                self.publish_current_state();
-                self.flush_terminal_outcome();
-                send_reply(reply_sender, result);
-                false
-            },
-        }
+            } => (self.handle_delete().await, reply_sender),
+        };
+        self.publish_current_state();
+        let _ = reply_sender.send(result);
     }
 
     async fn handle_download(&mut self) -> Result<(), DownloadError> {
@@ -257,7 +210,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                         let message = error.to_string();
                         self.projection = PublicProjection::StickyError(message.clone());
                         self.progress_counters = ProgressCounters::default();
-                        self.pending_terminal_outcome = Some(TerminalOutcome::Error(message.clone()));
                         self.finish_transition(from_state, DownloadActorState::NotDownloaded);
                         Err(DownloadError::Backend(message))
                     },
@@ -276,7 +228,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         }
     }
 
-    async fn handle_cancel_or_remove(&mut self) -> Result<(), DownloadError> {
+    async fn handle_delete(&mut self) -> Result<(), DownloadError> {
         let current_state = std::mem::replace(&mut self.state, DownloadActorState::NotDownloaded);
         let from_state = current_state.name();
         match current_state {
@@ -297,6 +249,14 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 part_path,
             } => {
                 remove_file(&part_path).await;
+                self.progress_counters = ProgressCounters::default();
+                self.projection = PublicProjection::None;
+                self.finish_transition(from_state, DownloadActorState::NotDownloaded);
+                Ok(())
+            },
+            DownloadActorState::Downloaded => {
+                remove_file(&self.config.destination).await;
+                remove_file(&crc_path_for_file(&self.config.destination)).await;
                 self.progress_counters = ProgressCounters::default();
                 self.projection = PublicProjection::None;
                 self.finish_transition(from_state, DownloadActorState::NotDownloaded);
@@ -360,7 +320,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                     self.projection = PublicProjection::None;
                     release_destination_lease(destination_lease).await;
                     self.finish_transition(from_state, DownloadActorState::Downloaded);
-                    self.pending_terminal_outcome = Some(TerminalOutcome::Downloaded);
                 },
                 Err(message) => {
                     remove_file(&self.config.destination).await;
@@ -370,7 +329,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                     self.projection = PublicProjection::StickyError(message.clone());
                     release_destination_lease(destination_lease).await;
                     self.finish_transition(from_state, DownloadActorState::NotDownloaded);
-                    self.pending_terminal_outcome = Some(TerminalOutcome::Error(message));
                 },
             }
         }
@@ -406,7 +364,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             self.progress_counters = ProgressCounters::default();
             release_destination_lease(destination_lease).await;
             self.finish_transition(from_state, DownloadActorState::NotDownloaded);
-            self.pending_terminal_outcome = Some(TerminalOutcome::Error(message));
         }
     }
 
@@ -440,7 +397,11 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             Ok(active_task) => active_task,
             Err(error) => {
                 release_destination_lease(lease).await;
-                return Err(DownloadError::Backend(error.to_string()));
+                let message = error.to_string();
+                self.projection = PublicProjection::StickyError(message.clone());
+                self.progress_counters = ProgressCounters::default();
+                self.transition_to(DownloadActorState::NotDownloaded);
+                return Err(DownloadError::Backend(message));
             },
         };
 
@@ -482,7 +443,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 self.projection = PublicProjection::StickyError(message.clone());
                 self.progress_counters = ProgressCounters::default();
                 self.transition_to(DownloadActorState::NotDownloaded);
-                self.pending_terminal_outcome = Some(TerminalOutcome::Error(message.clone()));
                 return Err(DownloadError::Backend(message));
             },
         };
@@ -556,12 +516,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         let _ = self.progress_sender.send(public_state);
     }
 
-    fn flush_terminal_outcome(&mut self) {
-        if let Some(terminal_outcome) = self.pending_terminal_outcome.take() {
-            let _ = self.terminal_sender.send(terminal_outcome);
-        }
-    }
-
     fn transition_to(
         &mut self,
         next_state: DownloadActorState<B>,
@@ -587,13 +541,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
     }
 }
 
-fn send_reply(
-    reply_sender: TokioOneshotSender<Result<(), DownloadError>>,
-    result: Result<(), DownloadError>,
-) {
-    let _ = reply_sender.send(result);
-}
-
 async fn release_destination_lease(destination_lease: DestinationLockLease) {
     let _ = destination_lease.release().await;
 }
@@ -608,12 +555,6 @@ async fn remove_resume_artifact(destination: &Path) {
 }
 
 async fn validate_completed_file(config: &DownloadConfig) -> Result<u64, String> {
-    // After the backend reports completion the destination may not yet be fully
-    // visible on disk: metadata can lag, and on the copy/move fallback path the
-    // file briefly exists with fewer bytes than expected. Retry until it is
-    // present with the expected size (or the budget runs out) so a transient
-    // mismatch is not mistaken for a corrupt download. A genuinely truncated file
-    // has a stable size and still fails once the retries are exhausted.
     for _ in 0..10 {
         let is_ready = match fs::asyn::file_length(config.destination.as_path()).await {
             Ok(dst_len) => match config.expected_bytes {

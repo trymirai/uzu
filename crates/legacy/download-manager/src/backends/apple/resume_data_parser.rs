@@ -8,7 +8,7 @@ use objc2_foundation::{
 
 const RESUME_BYTES_RECEIVED_KEY: &str = "NSURLSessionResumeBytesReceived";
 
-pub(crate) fn read_resume_progress(part_path: &Path) -> Option<u64> {
+pub fn read_resume_progress(part_path: &Path) -> Option<u64> {
     let bytes = std::fs::read(part_path).ok()?;
     let nsdata = NSData::with_bytes(&bytes);
     let dict = parse_resume_dict(&nsdata)?;
@@ -16,7 +16,6 @@ pub(crate) fn read_resume_progress(part_path: &Path) -> Option<u64> {
 }
 
 fn parse_resume_dict(data: &NSData) -> Option<Retained<NSDictionary<NSString, NSObject>>> {
-    // Newer OS releases use NSKeyedArchive; older ones use a plain plist.
     if let Some(dict) = parse_via_keyed_unarchiver(data) {
         return Some(dict);
     }
@@ -38,7 +37,6 @@ fn parse_via_keyed_unarchiver(data: &NSData) -> Option<Retained<NSDictionary<NSS
         let raw: *mut AnyObject = Retained::into_raw(object).cast();
         let is_dict: bool = msg_send![raw, isKindOfClass: dict_class];
         if !is_dict {
-            // Balance the `into_raw` by reclaiming ownership so the object drops.
             let _ = Retained::<AnyObject>::from_raw(raw);
             return None;
         }
@@ -59,7 +57,6 @@ fn parse_via_property_list(data: &NSData) -> Option<Retained<NSDictionary<NSStri
         let raw: *mut AnyObject = Retained::into_raw(object).cast();
         let is_dict: bool = msg_send![raw, isKindOfClass: dict_class];
         if !is_dict {
-            // Balance the `into_raw` by reclaiming ownership so the object drops.
             let _ = Retained::<AnyObject>::from_raw(raw);
             return None;
         }

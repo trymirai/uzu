@@ -1,4 +1,4 @@
-use crate::traits::ActiveDownloadGeneration;
+use crate::backends::common::ActiveDownloadGeneration;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BackendProgress {

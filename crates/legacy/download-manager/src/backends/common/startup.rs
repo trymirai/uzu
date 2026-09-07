@@ -3,41 +3,26 @@ use std::{path::Path, sync::Arc};
 use kiban::fs;
 
 use crate::{
-    DownloadError, DownloadId, FileCheck, FileState, LockFileState,
-    backends::common::{Backend, action_executor::apply_actions},
+    DownloadError, LockFileState,
+    backends::common::{Backend, DownloadConfig, action_executor::apply_actions},
     check_lock_file,
     crc_utils::crc_path_for_file,
-    file_download_task_actor::{ProgressCounters, PublicProjection},
+    file_state::FileState,
     lock_manager::{DestinationLockLease, lock_path_for_destination},
-    reducer::{ActionPlan, DiskObservation, InitialLifecycleState, LockObservation, decide, validate},
-    traits::DownloadConfig,
+    reducer::{Decision, DiskObservation, LockObservation, decide, validate},
 };
 
 #[derive(Clone, Debug)]
 pub struct Startup {
     pub config: Arc<DownloadConfig>,
-    pub initial_lifecycle_state: InitialLifecycleState,
-    pub initial_projection: PublicProjection,
-    pub initial_progress: ProgressCounters,
-    pub action_plan: ActionPlan,
+    pub decision: Decision,
     pub lock_state: LockFileState,
 }
 
 impl Startup {
-    pub async fn observe<B: Backend>(
-        download_id: DownloadId,
-        source_url: &str,
-        destination_path: &Path,
-        file_check: FileCheck,
-        expected_bytes: Option<u64>,
-        manager_id: &str,
-        manager_instance_id: uuid::Uuid,
-    ) -> Result<Self, DownloadError> {
+    pub async fn observe<B: Backend>(config: Arc<DownloadConfig>) -> Result<Self, DownloadError> {
+        let destination_path = config.destination.as_path();
         let resume_artifact_path = destination_path.with_extension(B::RESUME_ARTIFACT_EXTENSION);
-        let expected_crc = match &file_check {
-            FileCheck::CRC(crc) => Some(crc.clone()),
-            FileCheck::None => None,
-        };
         let crc_path = crc_path_for_file(destination_path);
         let resume_state = file_state(&resume_artifact_path).await;
         let resume_size = match resume_state {
@@ -50,16 +35,16 @@ impl Startup {
             resume_state,
             destination_size: fs::asyn::file_length(destination_path).await.ok(),
             resume_size,
-            expected_crc,
-            expected_bytes,
+            expected_crc: config.file_check.expected_crc(),
+            expected_bytes: config.expected_bytes,
             destination_path: destination_path.to_path_buf(),
             crc_path: Some(crc_path),
             resume_artifact_path: Some(resume_artifact_path),
         };
         let lock_state = check_lock_file(
             &lock_path_for_destination(destination_path),
-            manager_id,
-            manager_instance_id,
+            &config.manager_id,
+            config.manager_instance_id,
             kiban::process::id(),
         )
         .await;
@@ -68,31 +53,19 @@ impl Startup {
         };
         let validation = validate(&observation).await;
         let decision = decide(&observation, &lock_observation, &validation);
-        let config = Arc::new(DownloadConfig {
-            download_id,
-            source_url: source_url.to_string(),
-            destination: destination_path.to_path_buf(),
-            file_check,
-            expected_bytes,
-            manager_id: manager_id.to_string(),
-            manager_instance_id,
-        });
 
         Ok(Self {
             config,
-            initial_lifecycle_state: decision.initial_lifecycle_state,
-            initial_projection: decision.initial_projection,
-            initial_progress: decision.initial_progress,
-            action_plan: decision.action_plan,
+            decision,
             lock_state,
         })
     }
 
-    pub(crate) async fn apply_actions(
+    pub async fn apply_actions(
         &self,
         destination_lease: &DestinationLockLease,
     ) -> Result<(), DownloadError> {
-        apply_actions(&self.action_plan, destination_lease).await
+        apply_actions(&self.decision.action_plan, destination_lease).await
     }
 }
 

@@ -1,10 +1,23 @@
 mod action_executor;
+mod active_download_generation;
+mod active_download_generation_counter;
 mod backend;
-pub(crate) mod manager;
-mod manager_state;
+mod backend_download_manager;
+mod backend_event_sender;
+mod cached_download_task;
+mod cancel_outcome;
+mod download_config;
+mod initial_task_attachment;
+mod shared_progress_coalescer;
 mod startup;
 
-pub use backend::{Backend, InitialTaskAttachment};
-pub use manager::DownloadManager;
-pub use manager_state::DownloadManagerState;
+pub use active_download_generation::ActiveDownloadGeneration;
+pub use active_download_generation_counter::ActiveDownloadGenerationCounter;
+pub use backend::Backend;
+pub use backend_download_manager::BackendDownloadManager;
+pub use backend_event_sender::BackendEventSender;
+pub use cached_download_task::CachedDownloadTask;
+pub use cancel_outcome::CancelOutcome;
+pub use download_config::DownloadConfig;
+pub use initial_task_attachment::InitialTaskAttachment;
 pub use startup::Startup;

@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::types::{
     basic::{Metadata, Value},
     model::{
-        ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization, ModelReference,
-        ModelRegistry, ModelSpecialization,
+        ModelAccessibility, ModelBackend, ModelFamily, ModelIdentifier, ModelProperties, ModelQuantization,
+        ModelReference, ModelRegistry, ModelSpecialization,
     },
 };
 
@@ -13,7 +13,7 @@ use crate::types::{
 #[serde(rename_all = "snake_case")]
 pub struct Model {
     #[serde(rename = "id")]
-    pub identifier: String,
+    pub identifier: ModelIdentifier,
     pub registry: ModelRegistry,
     pub backends: Vec<ModelBackend>,
     pub family: Option<ModelFamily>,
@@ -178,7 +178,7 @@ impl Model {
 impl Model {
     #[bindings::export(Method(Factory))]
     pub fn external(
-        identifier: String,
+        identifier: ModelIdentifier,
         registry_identifier: String,
         registry_name: String,
         backend_identifier: String,

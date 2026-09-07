@@ -1,11 +1,9 @@
 use std::env;
 
+use download_manager::DownloadManagerType;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    engine::DownloadManagerType,
-    settings::{SettingKind, Settings, SettingsError},
-};
+use crate::settings::{SettingKind, Settings, SettingsError};
 
 pub const KEY_MIRAI_API_KEY: &str = "MIRAI_API_KEY";
 pub const KEY_LALAMO_PATH: &str = "LALAMO_PATH";

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::traits::{CancelOutcome, DownloadBackend};
+use crate::{backends::common::CancelOutcome, traits::DownloadBackend};
 
 #[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]

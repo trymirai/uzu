@@ -441,22 +441,6 @@ fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterFloat: FfiConverterPrimitive {
-    typealias FfiType = Float
-    typealias SwiftType = Float
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Float {
-        return try lift(readFloat(&buf))
-    }
-
-    public static func write(_ value: Float, into buf: inout [UInt8]) {
-        writeFloat(&buf, lower(value))
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -726,7 +710,7 @@ public func FfiConverterTypeDownloader_lower(_ value: Downloader) -> UInt64 {
 
 public protocol DownloaderStreamProtocol: AnyObject, Sendable {
     
-    func next() async  -> DownloaderStreamUpdate?
+    func next() async  -> DownloadState?
     
 }
 open class DownloaderStream: DownloaderStreamProtocol, @unchecked Sendable {
@@ -782,7 +766,7 @@ open class DownloaderStream: DownloaderStreamProtocol, @unchecked Sendable {
     
 
     
-open func next()async  -> DownloaderStreamUpdate?  {
+open func next()async  -> DownloadState?  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -794,7 +778,7 @@ open func next()async  -> DownloaderStreamUpdate?  {
             pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
             completeFunc: ffi_uzu_rust_future_complete_rust_buffer,
             freeFunc: ffi_uzu_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterOptionTypeDownloaderStreamUpdate.lift,
+            liftFunc: FfiConverterOptionTypeDownloadState.lift,
             errorHandler: nil
             
         )
@@ -1998,166 +1982,6 @@ public func FfiConverterTypeDevice_lower(_ value: Device) -> RustBuffer {
 }
 
 
-public struct DownloadState: Equatable, Hashable, Codable {
-    public var totalBytes: Int64
-    public var downloadedBytes: Int64
-    public var phase: DownloadPhase
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(totalBytes: Int64, downloadedBytes: Int64, phase: DownloadPhase) {
-        self.totalBytes = totalBytes
-        self.downloadedBytes = downloadedBytes
-        self.phase = phase
-    }
-
-    
-public func canDelete() -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
-    uniffi_uzu_fn_method_downloadstate_can_delete(
-            FfiConverterTypeDownloadState_lower(self),$0
-    )
-})
-}
-    
-public func canPause() -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
-    uniffi_uzu_fn_method_downloadstate_can_pause(
-            FfiConverterTypeDownloadState_lower(self),$0
-    )
-})
-}
-    
-public func isInProgress() -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
-    uniffi_uzu_fn_method_downloadstate_is_in_progress(
-            FfiConverterTypeDownloadState_lower(self),$0
-    )
-})
-}
-    
-public func name() -> String  {
-    return try!  FfiConverterString.lift(try! rustCall() {
-    uniffi_uzu_fn_method_downloadstate_name(
-            FfiConverterTypeDownloadState_lower(self),$0
-    )
-})
-}
-    
-public func progress() -> Float  {
-    return try!  FfiConverterFloat.lift(try! rustCall() {
-    uniffi_uzu_fn_method_downloadstate_progress(
-            FfiConverterTypeDownloadState_lower(self),$0
-    )
-})
-}
-    
-
-    
-}
-
-#if compiler(>=6)
-extension DownloadState: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeDownloadState: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DownloadState {
-        return
-            try DownloadState(
-                totalBytes: FfiConverterInt64.read(from: &buf), 
-                downloadedBytes: FfiConverterInt64.read(from: &buf), 
-                phase: FfiConverterTypeDownloadPhase.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: DownloadState, into buf: inout [UInt8]) {
-        FfiConverterInt64.write(value.totalBytes, into: &buf)
-        FfiConverterInt64.write(value.downloadedBytes, into: &buf)
-        FfiConverterTypeDownloadPhase.write(value.phase, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeDownloadState_lift(_ buf: RustBuffer) throws -> DownloadState {
-    return try FfiConverterTypeDownloadState.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeDownloadState_lower(_ value: DownloadState) -> RustBuffer {
-    return FfiConverterTypeDownloadState.lower(value)
-}
-
-
-public struct DownloaderStreamUpdate: Equatable, Hashable, Codable {
-    public var bytesTotal: Int64
-    public var bytesDownloaded: Int64
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(bytesTotal: Int64, bytesDownloaded: Int64) {
-        self.bytesTotal = bytesTotal
-        self.bytesDownloaded = bytesDownloaded
-    }
-
-    
-public func progress() -> Float  {
-    return try!  FfiConverterFloat.lift(try! rustCall() {
-    uniffi_uzu_fn_method_downloaderstreamupdate_progress(
-            FfiConverterTypeDownloaderStreamUpdate_lower(self),$0
-    )
-})
-}
-    
-
-    
-}
-
-#if compiler(>=6)
-extension DownloaderStreamUpdate: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeDownloaderStreamUpdate: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DownloaderStreamUpdate {
-        return
-            try DownloaderStreamUpdate(
-                bytesTotal: FfiConverterInt64.read(from: &buf), 
-                bytesDownloaded: FfiConverterInt64.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: DownloaderStreamUpdate, into buf: inout [UInt8]) {
-        FfiConverterInt64.write(value.bytesTotal, into: &buf)
-        FfiConverterInt64.write(value.bytesDownloaded, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeDownloaderStreamUpdate_lift(_ buf: RustBuffer) throws -> DownloaderStreamUpdate {
-    return try FfiConverterTypeDownloaderStreamUpdate.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeDownloaderStreamUpdate_lower(_ value: DownloaderStreamUpdate) -> RustBuffer {
-    return FfiConverterTypeDownloaderStreamUpdate.lower(value)
-}
-
-
 public struct EngineConfig: Equatable, Hashable, Codable {
     public var applicationIdentifier: String?
     public var miraiApiKey: String?
@@ -2454,171 +2278,6 @@ public func FfiConverterTypeDeviceError_lift(_ buf: RustBuffer) throws -> Device
 public func FfiConverterTypeDeviceError_lower(_ value: DeviceError) -> RustBuffer {
     return FfiConverterTypeDeviceError.lower(value)
 }
-
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
-
-public enum DownloadManagerType: Equatable, Hashable, Codable {
-    
-    case native
-    case universal
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension DownloadManagerType: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeDownloadManagerType: FfiConverterRustBuffer {
-    typealias SwiftType = DownloadManagerType
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DownloadManagerType {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .native
-        
-        case 2: return .universal
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: DownloadManagerType, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .native:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .universal:
-            writeInt(&buf, Int32(2))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeDownloadManagerType_lift(_ buf: RustBuffer) throws -> DownloadManagerType {
-    return try FfiConverterTypeDownloadManagerType.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeDownloadManagerType_lower(_ value: DownloadManagerType) -> RustBuffer {
-    return FfiConverterTypeDownloadManagerType.lower(value)
-}
-
-
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
-
-public enum DownloadPhase: Equatable, Hashable, Codable {
-    
-    case notDownloaded
-    case downloading
-    case paused
-    case downloaded
-    case locked
-    case error(message: String
-    )
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension DownloadPhase: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeDownloadPhase: FfiConverterRustBuffer {
-    typealias SwiftType = DownloadPhase
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DownloadPhase {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .notDownloaded
-        
-        case 2: return .downloading
-        
-        case 3: return .paused
-        
-        case 4: return .downloaded
-        
-        case 5: return .locked
-        
-        case 6: return .error(message: try FfiConverterString.read(from: &buf)
-        )
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: DownloadPhase, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .notDownloaded:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .downloading:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .paused:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .downloaded:
-            writeInt(&buf, Int32(4))
-        
-        
-        case .locked:
-            writeInt(&buf, Int32(5))
-        
-        
-        case let .error(message):
-            writeInt(&buf, Int32(6))
-            FfiConverterString.write(message, into: &buf)
-            
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeDownloadPhase_lift(_ buf: RustBuffer) throws -> DownloadPhase {
-    return try FfiConverterTypeDownloadPhase.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeDownloadPhase_lower(_ value: DownloadPhase) -> RustBuffer {
-    return FfiConverterTypeDownloadPhase.lower(value)
-}
-
 
 
 public enum EngineError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
@@ -3114,19 +2773,11 @@ public enum StorageError: Swift.Error, Equatable, Hashable, Codable, Foundation.
     
     case UnableToCreateDirectory(path: String
     )
-    case UnableToCreateDownloadManager(message: String
-    )
     case DownloadManager(message: String
     )
     case HashNotFound(identifier: String, name: String
     )
-    case InvalidStateTransition(from: DownloadPhase, to: DownloadPhase
-    )
-    case Io(message: String
-    )
     case ItemNotFound(identifier: String
-    )
-    case Registry(RegistryError
     )
     case UnsupportedItem(identifier: String
     )
@@ -3162,30 +2813,17 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
         case 1: return .UnableToCreateDirectory(
             path: try FfiConverterString.read(from: &buf)
             )
-        case 2: return .UnableToCreateDownloadManager(
+        case 2: return .DownloadManager(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 3: return .DownloadManager(
-            message: try FfiConverterString.read(from: &buf)
-            )
-        case 4: return .HashNotFound(
+        case 3: return .HashNotFound(
             identifier: try FfiConverterString.read(from: &buf), 
             name: try FfiConverterString.read(from: &buf)
             )
-        case 5: return .InvalidStateTransition(
-            from: try FfiConverterTypeDownloadPhase.read(from: &buf), 
-            to: try FfiConverterTypeDownloadPhase.read(from: &buf)
-            )
-        case 6: return .Io(
-            message: try FfiConverterString.read(from: &buf)
-            )
-        case 7: return .ItemNotFound(
+        case 4: return .ItemNotFound(
             identifier: try FfiConverterString.read(from: &buf)
             )
-        case 8: return .Registry(
-            try FfiConverterTypeRegistryError.read(from: &buf)
-            )
-        case 9: return .UnsupportedItem(
+        case 5: return .UnsupportedItem(
             identifier: try FfiConverterString.read(from: &buf)
             )
 
@@ -3205,45 +2843,24 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
             FfiConverterString.write(path, into: &buf)
             
         
-        case let .UnableToCreateDownloadManager(message):
+        case let .DownloadManager(message):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(message, into: &buf)
             
         
-        case let .DownloadManager(message):
-            writeInt(&buf, Int32(3))
-            FfiConverterString.write(message, into: &buf)
-            
-        
         case let .HashNotFound(identifier,name):
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(3))
             FfiConverterString.write(identifier, into: &buf)
             FfiConverterString.write(name, into: &buf)
             
         
-        case let .InvalidStateTransition(from,to):
-            writeInt(&buf, Int32(5))
-            FfiConverterTypeDownloadPhase.write(from, into: &buf)
-            FfiConverterTypeDownloadPhase.write(to, into: &buf)
-            
-        
-        case let .Io(message):
-            writeInt(&buf, Int32(6))
-            FfiConverterString.write(message, into: &buf)
-            
-        
         case let .ItemNotFound(identifier):
-            writeInt(&buf, Int32(7))
+            writeInt(&buf, Int32(4))
             FfiConverterString.write(identifier, into: &buf)
             
         
-        case let .Registry(v1):
-            writeInt(&buf, Int32(8))
-            FfiConverterTypeRegistryError.write(v1, into: &buf)
-            
-        
         case let .UnsupportedItem(identifier):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(5))
             FfiConverterString.write(identifier, into: &buf)
             
         }
@@ -3414,30 +3031,6 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeModel: FfiConverterRustBuffer {
-    typealias SwiftType = Model?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeModel.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeModel.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeDownloadState: FfiConverterRustBuffer {
     typealias SwiftType = DownloadState?
 
@@ -3462,8 +3055,8 @@ fileprivate struct FfiConverterOptionTypeDownloadState: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeDownloaderStreamUpdate: FfiConverterRustBuffer {
-    typealias SwiftType = DownloaderStreamUpdate?
+fileprivate struct FfiConverterOptionTypeModel: FfiConverterRustBuffer {
+    typealias SwiftType = Model?
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
         guard let value = value else {
@@ -3471,13 +3064,13 @@ fileprivate struct FfiConverterOptionTypeDownloaderStreamUpdate: FfiConverterRus
             return
         }
         writeInt(&buf, Int8(1))
-        FfiConverterTypeDownloaderStreamUpdate.write(value, into: &buf)
+        FfiConverterTypeModel.write(value, into: &buf)
     }
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
-        case 1: return try FfiConverterTypeDownloaderStreamUpdate.read(from: &buf)
+        case 1: return try FfiConverterTypeModel.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -3739,10 +3332,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_uzu_checksum_method_engine_download() != 25329) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uzu_checksum_method_engine_download_state() != 15736) {
+    if (uniffi_uzu_checksum_method_engine_download_state() != 36334) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uzu_checksum_method_engine_download_states() != 7129) {
+    if (uniffi_uzu_checksum_method_engine_download_states() != 6598) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_downloader() != 59345) {
@@ -3832,10 +3425,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_uzu_checksum_method_downloader_resume() != 13815) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uzu_checksum_method_downloader_state() != 23876) {
+    if (uniffi_uzu_checksum_method_downloader_state() != 51713) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uzu_checksum_method_downloaderstream_next() != 54036) {
+    if (uniffi_uzu_checksum_method_downloaderstream_next() != 5059) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_player_append_pcm_batch() != 29421) {
@@ -3861,6 +3454,7 @@ private let initializationResult: InitializationResult = {
     }
 
     uniffiCallbackInitEngineCallbackHandler()
+    uniffiEnsureDownloadManagerInitialized()
     uniffiEnsureNagareInitialized()
     uniffiEnsureShojiInitialized()
     return InitializationResult.ok

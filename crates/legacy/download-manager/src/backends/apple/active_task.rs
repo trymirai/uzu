@@ -9,11 +9,14 @@ use tokio::sync::oneshot::channel as tokio_oneshot_channel;
 
 use crate::{
     DownloadId,
-    backends::apple::{
-        AppleBackend, AppleBackendError, AppleEventRegistry, AppleSinkKey, resume_data_handler::ResumeDataHandler,
-        task_ext::AppleDownloadTaskExt,
+    backends::{
+        apple::{
+            AppleBackend, AppleBackendError, AppleEventRegistry, AppleSinkKey, resume_data_handler::ResumeDataHandler,
+            task_ext::AppleDownloadTaskExt,
+        },
+        common::CancelOutcome,
     },
-    traits::{ActiveTask, CancelOutcome, DownloadBackend},
+    traits::{ActiveTask, DownloadBackend},
 };
 
 #[derive(Debug)]

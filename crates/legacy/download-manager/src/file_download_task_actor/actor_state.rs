@@ -1,12 +1,11 @@
 use std::{fmt, path::PathBuf};
 
 use crate::{
-    lock_manager::DestinationLockLease,
-    reducer::InitialLifecycleState,
-    traits::{ActiveDownloadGeneration, DownloadBackend},
+    backends::common::ActiveDownloadGeneration, lock_manager::DestinationLockLease, reducer::InitialLifecycleState,
+    traits::DownloadBackend,
 };
 
-pub(crate) enum DownloadActorState<B: DownloadBackend> {
+pub enum DownloadActorState<B: DownloadBackend> {
     NotDownloaded,
     Paused {
         part_path: PathBuf,
@@ -20,7 +19,7 @@ pub(crate) enum DownloadActorState<B: DownloadBackend> {
 }
 
 impl<B: DownloadBackend> DownloadActorState<B> {
-    pub(crate) fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             Self::NotDownloaded => "NotDownloaded",
             Self::Paused {

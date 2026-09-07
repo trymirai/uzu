@@ -1,4 +1,4 @@
-use crate::traits::ActiveDownloadGeneration;
+use crate::backends::common::ActiveDownloadGeneration;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BackendEvent {

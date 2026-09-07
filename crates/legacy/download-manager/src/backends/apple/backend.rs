@@ -9,10 +9,10 @@ use crate::{
         apple::{
             AppleActiveTask, AppleBackendContext, AppleBackendError, resume_data_parser, task_ext::AppleDownloadTaskExt,
         },
-        common::{self, InitialTaskAttachment},
+        common::{self, ActiveDownloadGeneration, BackendEventSender, DownloadConfig, InitialTaskAttachment},
     },
     lock_manager::DestinationLockLease,
-    traits::{ActiveDownloadGeneration, BackendEventSender, DownloadBackend, DownloadConfig},
+    traits::DownloadBackend,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -76,12 +76,5 @@ impl common::Backend for AppleBackend {
             NSURLSessionTaskState::Completed | NSURLSessionTaskState::Canceling => Ok(InitialTaskAttachment::None),
             _ => Ok(InitialTaskAttachment::None),
         }
-    }
-
-    async fn has_initial_task_to_claim(
-        context: &Self::Context,
-        config: &DownloadConfig,
-    ) -> Result<bool, DownloadError> {
-        context.has_download_task_to_claim(config).await.map_err(|error| DownloadError::Backend(error.to_string()))
     }
 }

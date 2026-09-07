@@ -91,7 +91,7 @@ extension Metadata {
 }
 
 extension Model {
-    public static func external(identifier: String, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encoding: Value?) -> Model {
+    public static func external(identifier: ModelIdentifier, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility, encoding: Value?) -> Model {
         modelExternal(identifier: identifier, registryIdentifier: registryIdentifier, registryName: registryName, backendIdentifier: backendIdentifier, backendName: backendName, backendVersion: backendVersion, specializations: specializations, accessibility: accessibility, encoding: encoding)
     }
 }
@@ -144,8 +144,8 @@ extension ChatSessionStream {
 }
 
 extension DownloaderStream {
-    public func iterator() -> AsyncThrowingStream<DownloaderStreamUpdate, Swift.Error> {
-        AsyncThrowingStream<DownloaderStreamUpdate, Swift.Error> { continuation in
+    public func iterator() -> AsyncThrowingStream<DownloadState, Swift.Error> {
+        AsyncThrowingStream<DownloadState, Swift.Error> { continuation in
             let task = Task {
                 while !Task.isCancelled {
                     let item = await self.next()

@@ -10,10 +10,7 @@ pub enum TaskCommand {
     Pause {
         reply_sender: TokioOneshotSender<Result<(), DownloadError>>,
     },
-    Cancel {
-        reply_sender: TokioOneshotSender<Result<(), DownloadError>>,
-    },
-    Remove {
+    Delete {
         reply_sender: TokioOneshotSender<Result<(), DownloadError>>,
     },
 }

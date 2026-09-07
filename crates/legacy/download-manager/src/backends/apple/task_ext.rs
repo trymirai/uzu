@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use objc2::msg_send;
 use objc2_foundation::{NSString, NSURLSessionDownloadTask, NSURLSessionTaskState};
 
-use crate::{DownloadId, DownloadInfo, compute_download_id};
+use crate::{DownloadId, compute_download_id, download_info::DownloadInfo};
 
 pub trait AppleDownloadTaskExt {
     fn set_download_info(

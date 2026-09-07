@@ -1,8 +1,9 @@
 use std::{path::Path, sync::Arc};
 
 use crate::{
+    backends::common::{ActiveDownloadGeneration, BackendEventSender, DownloadConfig},
     lock_manager::DestinationLockLease,
-    traits::{ActiveDownloadGeneration, BackendEventSender, DownloadBackend, DownloadConfig},
+    traits::DownloadBackend,
 };
 
 #[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]

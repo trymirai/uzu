@@ -13,13 +13,17 @@ use objc2_foundation::{
 use tokio::sync::oneshot::channel as tokio_oneshot_channel;
 
 use crate::{
-    DownloadInfo, FileCheck,
-    backends::apple::{
-        AppleActiveTask, AppleBackend, AppleBackendError, AppleEventRegistry, AppleEventSink, AppleGetTasksHandler,
-        AppleSessionDelegate, task_ext::AppleDownloadTaskExt,
+    FileCheck,
+    backends::{
+        apple::{
+            AppleActiveTask, AppleBackend, AppleBackendError, AppleEventRegistry, AppleEventSink, AppleGetTasksHandler,
+            AppleSessionDelegate, task_ext::AppleDownloadTaskExt,
+        },
+        common::{ActiveDownloadGeneration, BackendEventSender, DownloadConfig},
     },
+    download_info::DownloadInfo,
     lock_manager::DestinationLockLease,
-    traits::{ActiveDownloadGeneration, BackendContext, BackendEventSender, DownloadConfig},
+    traits::BackendContext,
 };
 
 pub struct AppleBackendContext {
@@ -61,50 +65,11 @@ impl AppleBackendContext {
         }
     }
 
-    pub(crate) async fn claim_matching_download_task(
+    pub async fn claim_matching_download_task(
         &self,
         config: &DownloadConfig,
     ) -> Result<Option<Retained<NSURLSessionDownloadTask>>, AppleBackendError> {
         self.find_download_task(config).await
-    }
-
-    pub(crate) async fn has_download_task_to_claim(
-        &self,
-        config: &DownloadConfig,
-    ) -> Result<bool, AppleBackendError> {
-        let download_tasks = self.download_tasks().await?;
-        Ok(download_tasks
-            .iter()
-            .any(|task| task.download_id() == Some(config.download_id) && is_live_task_state(task.state())))
-    }
-
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn event_sink_count_for_download(
-        &self,
-        download_id: crate::DownloadId,
-    ) -> usize {
-        self.event_registry
-            .lock()
-            .map(|registry| registry.keys().filter(|(id, _)| *id == download_id).count())
-            .unwrap_or(0)
-    }
-
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn event_sink_task_identifiers_for_download(
-        &self,
-        download_id: crate::DownloadId,
-    ) -> Vec<u64> {
-        self.event_registry
-            .lock()
-            .map(|registry| {
-                registry
-                    .keys()
-                    .filter_map(|(id, task_identifier)| (*id == download_id).then_some(*task_identifier))
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     async fn find_download_task(
@@ -151,7 +116,7 @@ impl AppleBackendContext {
         self.prepare_task(task, config, generation, backend_event_sender);
     }
 
-    pub(crate) fn event_registry(&self) -> AppleEventRegistry {
+    pub fn event_registry(&self) -> AppleEventRegistry {
         Arc::clone(&self.event_registry)
     }
 }

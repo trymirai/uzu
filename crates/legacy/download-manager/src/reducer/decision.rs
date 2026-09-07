@@ -1,6 +1,8 @@
 use crate::{
-    CheckedFileState, FileState, LockFileState,
+    LockFileState,
+    checked_file_state::CheckedFileState,
     file_download_task_actor::{ProgressCounters, PublicProjection},
+    file_state::FileState,
     reducer::{Action, ActionPlan, DiskObservation, InitialLifecycleState, LockObservation, ValidationOutcome},
 };
 
@@ -37,8 +39,6 @@ pub fn decide(
         CheckedFileState::Invalid | CheckedFileState::Missing => InitialLifecycleState::NotDownloaded,
     };
 
-    // Don't surface `LockedByOther` when the file is already on disk; ownership-sensitive
-    // callers use `FileDownloadManager::destination_foreign_lock` directly.
     let initial_projection = match (&lock_observation.state, &initial_lifecycle_state) {
         (LockFileState::OwnedByOtherApp(lock_file_info), state)
             if !matches!(state, InitialLifecycleState::Downloaded) =>

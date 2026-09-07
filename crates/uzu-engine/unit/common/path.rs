@@ -15,7 +15,7 @@ pub fn get_test_weights_path() -> PathBuf {
 fn resolve_test_model_path() -> PathBuf {
     use uzu::{
         engine::{Engine, EngineConfig},
-        storage::types::DownloadPhase,
+        storage::DownloadPhase,
     };
 
     const TEST_MODEL_REPO_ID: &str = "meta-llama/Llama-3.2-1B-Instruct";

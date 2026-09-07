@@ -31,6 +31,16 @@ pyo3_stub_gen::define_stub_info_gatherer!(pyo3_bindings_annotations);
 #[cfg(feature = "bindings-pyo3")]
 pyo3_stub_gen::reexport_module_members!("uzu" from "uzu._tool"; "UzuToolFunction", "uzu_tool_function");
 
+#[cfg(feature = "bindings-pyo3")]
+inventory::submit! {
+    pyo3_stub_gen::type_info::TypeAliasInfo {
+        name: "ModelIdentifier",
+        module: "uzu",
+        r#type: <String as pyo3_stub_gen::PyStubType>::type_output,
+        doc: "",
+    }
+}
+
 #[cfg(not(target_family = "wasm"))]
 pub mod device;
 #[cfg(not(target_family = "wasm"))]

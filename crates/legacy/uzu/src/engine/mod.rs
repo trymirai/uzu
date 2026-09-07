@@ -1,7 +1,6 @@
 pub mod bridge;
 mod callback;
 pub mod config;
-mod download_manager;
 mod downloader;
 mod error;
 
@@ -11,7 +10,7 @@ use backend_remote::openai::Backend as OpenAIBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
 pub use download_manager::DownloadManagerType;
-pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
+pub use downloader::{Downloader, DownloaderStream};
 pub use error::EngineError;
 use indexmap::IndexSet;
 use kiban::rt::RuntimeHandle;
@@ -24,7 +23,7 @@ use nagare::{
 use shoji::{
     traits::{Backend, Registry},
     types::{
-        model::{Model, ModelFamily, ModelRegistry, ModelVendor},
+        model::{Model, ModelFamily, ModelIdentifier, ModelRegistry, ModelVendor},
         session::chat::ChatConfig,
     },
 };
@@ -42,10 +41,7 @@ use crate::{
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
     settings::Settings,
-    storage::{
-        Config as StorageConfig, Storage,
-        types::{DownloadPhase, DownloadState},
-    },
+    storage::{Config as StorageConfig, DownloadPhase, DownloadState, Storage},
 };
 
 #[bindings::export(Class)]
@@ -92,12 +88,12 @@ impl Engine {
         });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
-        let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
-            .with_download_manager_type(config.download_manager_type.into());
-        let storage_cache_path = storage_config.cache_path();
-        logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
-
-        let storage = SharedAccess::new(Storage::new(runtime_handle, storage_config).await?);
+        let storage_config =
+            StorageConfig::new(device.clone(), None, "mirai".to_string(), config.download_manager_type);
+        let storage = Storage::new(runtime_handle, storage_config).await?;
+        let storage_cache_path = storage.cache_path();
+        logs::start(storage_cache_path.clone(), &storage.log_name(), false);
+        let storage = SharedAccess::new(storage);
 
         let engine = Self {
             settings: SharedAccess::new(settings),
@@ -427,12 +423,14 @@ impl Engine {
         let state = storage.state(&model.identifier).await?;
         match state.phase {
             DownloadPhase::Downloaded {} => {
-                storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
+                storage.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
             },
             DownloadPhase::NotDownloaded {}
             | DownloadPhase::Downloading {}
             | DownloadPhase::Paused {}
-            | DownloadPhase::Locked {}
+            | DownloadPhase::LockedByOther {
+                ..
+            }
             | DownloadPhase::Error {
                 ..
             } => None,
@@ -476,7 +474,7 @@ impl Engine {
     }
 
     #[bindings::export(Method(Getter))]
-    pub async fn download_states(&self) -> HashMap<String, DownloadState> {
+    pub async fn download_states(&self) -> HashMap<ModelIdentifier, DownloadState> {
         self.storage.lock().await.states().await
     }
 }
@@ -561,7 +559,7 @@ impl Engine {
 }
 
 impl Engine {
-    pub async fn storage_subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
+    pub async fn storage_subscribe(&self) -> BroadcastStream<(ModelIdentifier, DownloadState)> {
         self.storage.lock().await.subscribe()
     }
 
@@ -579,7 +577,7 @@ impl Engine {
         let callback = self.callback.clone();
         let telemetry = self.telemetry.lock().await.clone();
         tokio::spawn(async move {
-            let mut last_phase: HashMap<String, DownloadPhase> = HashMap::new();
+            let mut last_phase: HashMap<ModelIdentifier, DownloadPhase> = HashMap::new();
             while let Some(update) = stream.next().await {
                 let Ok((id, state)) = update else {
                     continue;

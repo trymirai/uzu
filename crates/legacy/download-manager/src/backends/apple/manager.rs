@@ -1,3 +1,3 @@
-use crate::backends::{apple::AppleBackend, common::DownloadManager};
+use crate::backends::{apple::AppleBackend, common::BackendDownloadManager};
 
-pub type AppleDownloadManager = DownloadManager<AppleBackend>;
+pub type AppleDownloadManager = BackendDownloadManager<AppleBackend>;

@@ -1,3 +1,3 @@
-use crate::backends::{common::DownloadManager, universal::UniversalBackend};
+use crate::backends::{common::BackendDownloadManager, universal::UniversalBackend};
 
-pub type UniversalDownloadManager = DownloadManager<UniversalBackend>;
+pub type UniversalDownloadManager = BackendDownloadManager<UniversalBackend>;

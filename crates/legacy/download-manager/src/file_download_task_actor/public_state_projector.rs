@@ -1,7 +1,8 @@
 use crate::{
-    FileDownloadState,
+    DownloadPhase, DownloadState,
+    backends::common::DownloadConfig,
     file_download_task_actor::{DownloadActorState, ProgressCounters, PublicProjection},
-    traits::{DownloadBackend, DownloadConfig},
+    traits::DownloadBackend,
 };
 
 pub fn project_runtime_public_state<B: DownloadBackend>(
@@ -9,39 +10,35 @@ pub fn project_runtime_public_state<B: DownloadBackend>(
     projection: &PublicProjection,
     progress_counters: ProgressCounters,
     config: &DownloadConfig,
-) -> FileDownloadState {
-    match projection {
-        PublicProjection::StickyError(message) => FileDownloadState::error(message.clone()),
-        PublicProjection::LockedByOther(manager_id) => FileDownloadState::locked_by_other(manager_id.clone()),
+) -> DownloadState {
+    let total_bytes = config.expected_bytes.unwrap_or(progress_counters.total_bytes) as i64;
+    let (downloaded_bytes, phase) = match projection {
+        PublicProjection::StickyError(message) => (
+            0,
+            DownloadPhase::Error {
+                message: message.clone(),
+            },
+        ),
+        PublicProjection::LockedByOther(manager_id) => (
+            0,
+            DownloadPhase::LockedByOther {
+                manager_id: manager_id.clone(),
+            },
+        ),
         PublicProjection::None => match lifecycle_state {
-            DownloadActorState::NotDownloaded => FileDownloadState::not_downloaded(config.expected_bytes.unwrap_or(0)),
+            DownloadActorState::NotDownloaded => (0, DownloadPhase::NotDownloaded {}),
             DownloadActorState::Paused {
                 ..
-            } => FileDownloadState::paused(
-                progress_counters.downloaded_bytes,
-                fallback_total_bytes(progress_counters, config.expected_bytes),
-            ),
-            DownloadActorState::Downloaded => {
-                let total_bytes = config.expected_bytes.unwrap_or(progress_counters.total_bytes);
-                FileDownloadState::downloaded(total_bytes)
-            },
+            } => (progress_counters.downloaded_bytes as i64, DownloadPhase::Paused {}),
             DownloadActorState::Downloading {
                 ..
-            } => FileDownloadState::downloading(
-                progress_counters.downloaded_bytes,
-                fallback_total_bytes(progress_counters, config.expected_bytes),
-            ),
+            } => (progress_counters.downloaded_bytes as i64, DownloadPhase::Downloading {}),
+            DownloadActorState::Downloaded => (total_bytes, DownloadPhase::Downloaded {}),
         },
-    }
-}
-
-fn fallback_total_bytes(
-    progress_counters: ProgressCounters,
-    expected_bytes: Option<u64>,
-) -> u64 {
-    if progress_counters.total_bytes == 0 {
-        expected_bytes.unwrap_or(0)
-    } else {
-        progress_counters.total_bytes
+    };
+    DownloadState {
+        total_bytes,
+        downloaded_bytes,
+        phase,
     }
 }

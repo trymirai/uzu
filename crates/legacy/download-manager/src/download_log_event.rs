@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{DownloadId, FileDownloadEvent, file_download_task_actor::BackendEvent, traits::ActiveDownloadGeneration};
+use crate::{DownloadId, backends::common::ActiveDownloadGeneration, file_download_task_actor::BackendEvent};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum DownloadLogEvent {
+pub enum DownloadLogEvent {
     ManagerCreated {
         manager_id: String,
     },
@@ -30,13 +30,9 @@ pub(crate) enum DownloadLogEvent {
         download_id: DownloadId,
         event: BackendEvent,
     },
-    PublicEventEmitted {
-        download_id: DownloadId,
-        event: FileDownloadEvent,
-    },
 }
 
-pub(crate) fn log(event: DownloadLogEvent) {
+pub fn log(event: DownloadLogEvent) {
     match &event {
         DownloadLogEvent::BackendProgress {
             ..

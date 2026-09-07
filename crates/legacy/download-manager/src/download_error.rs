@@ -4,28 +4,6 @@ pub enum DownloadError {
     Io(String),
     #[error("json error: {0}")]
     SerdeJson(String),
-    #[error("http error: status {0}")]
-    HttpStatus(u16),
-    #[error("canceled")]
-    Canceled,
-    #[error("resume unsupported")]
-    ResumeUnsupported,
-    #[error("bad url")]
-    BadUrl,
-    #[error("missing download info for task")]
-    MissingDownloadInfo,
-    #[error("resume data read failed")]
-    ResumeDataReadFailed,
-    #[error("resume data parsing or handling error")]
-    ResumeDataError,
-    #[error("download task not found")]
-    DownloadTaskNotFound,
-    #[error("task not found after creation")]
-    TaskNotFoundAfterCreation,
-    #[error("no matching download task to pause")]
-    NoMatchingTaskToPause,
-    #[error("unknown download handle")]
-    UnknownDownloadHandle,
     #[error("mutex poisoned")]
     MutexPoisoned,
     #[error("invalid state transition")]
@@ -34,8 +12,6 @@ pub enum DownloadError {
     LockedByOther(String),
     #[error("conflicting download config for destination: {0}")]
     ConflictingConfig(String),
-    #[error("task stopped")]
-    TaskStopped,
     #[error("channel closed")]
     ChannelClosed,
     #[error("backend error: {0}")]
