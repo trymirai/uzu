@@ -131,7 +131,7 @@ impl Display for ChatReplyJoulesPerToken {
                 gpu,
                 dram,
                 ..
-            } => write!(formatter, "CPU+GPU+DRAM {:.2} J/tok", cpu + gpu + dram),
+            } => write!(formatter, "{:.2} J/tok", cpu + gpu + dram),
         }
     }
 }
