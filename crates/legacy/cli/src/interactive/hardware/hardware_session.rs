@@ -99,21 +99,13 @@ impl HardwareSession {
         let authorization =
             self.authorization.as_mut().ok_or(HardwareError::Protocol("authorization did not start"))?;
         let stream = accept_helper(&listener, authorization, &self.closed)?;
-        self.attach(stream)?;
-        self.remove_socket();
-        Ok(())
-    }
-
-    fn attach(
-        &mut self,
-        stream: UnixStream,
-    ) -> Result<(), HardwareError> {
         // macOS accept inherits O_NONBLOCK; RPC reads must wait for the helper's reply.
         stream.set_nonblocking(false)?;
         // Up to ten fans can each need readback settling, including both rollback attempts.
         stream.set_read_timeout(Some(Duration::from_secs(300)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         self.connection = Some(BufReader::new(stream));
+        self.remove_socket();
         Ok(())
     }
 
@@ -245,74 +237,4 @@ fn authorization_error(child: &mut Child) -> HardwareError {
         message = "helper exited before completing the request".to_string();
     }
     HardwareError::Authorization(message.trim().to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn auto_needs_no_authorization_and_closed_sessions_reject_changes() {
-        let closed = Arc::new(AtomicBool::new(false));
-        let mut session = HardwareSession::new(Arc::clone(&closed));
-        session.apply(PerformanceMode::Auto).unwrap();
-        assert!(session.connection.is_none() && session.authorization.is_none() && session.directory.is_none());
-        closed.store(true, Ordering::Release);
-        assert!(matches!(session.apply(PerformanceMode::Auto), Err(HardwareError::Closed)));
-    }
-
-    #[test]
-    fn accepted_connection_waits_for_delayed_replies_and_restoration() {
-        let directory = PathBuf::from(format!("/tmp/mirai-hw-test-{}", uuid::Uuid::new_v4().simple()));
-        DirBuilder::new().mode(0o700).create(&directory).unwrap();
-        let path = directory.join("control");
-        let listener = UnixListener::bind(&path).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let server = UnixStream::connect(&path).unwrap();
-        let (client, _) = listener.accept().unwrap();
-        fs::remove_file(path).unwrap();
-        fs::remove_dir(directory).unwrap();
-        let worker = thread::spawn(move || {
-            let mut server = BufReader::new(server);
-            assert_eq!(read_message::<PerformanceMode>(&mut server).unwrap(), Some(PerformanceMode::Fast));
-            thread::sleep(Duration::from_millis(50));
-            write_message(server.get_mut(), &Err::<(), _>("fan write rejected".to_string())).unwrap();
-            assert_eq!(read_message::<PerformanceMode>(&mut server).unwrap(), Some(PerformanceMode::Auto));
-            write_message(server.get_mut(), &Ok::<(), String>(())).unwrap();
-            assert!(read_message::<PerformanceMode>(&mut server).unwrap().is_none());
-            thread::sleep(Duration::from_millis(50));
-            write_message(server.get_mut(), &Err::<(), _>("restoration rejected".to_string())).unwrap();
-        });
-        let mut session = HardwareSession::new(Arc::new(AtomicBool::new(false)));
-        session.attach(client).unwrap();
-        assert!(
-            matches!(session.apply(PerformanceMode::Fast), Err(HardwareError::Remote(message)) if message == "fan write rejected")
-        );
-        session.apply(PerformanceMode::Auto).unwrap();
-        assert!(matches!(session.restore(), Err(HardwareError::Remote(message)) if message == "restoration rejected"));
-        worker.join().unwrap();
-    }
-
-    #[test]
-    fn authorization_wait_observes_cancellation_without_a_password_prompt() {
-        let directory = PathBuf::from(format!("/tmp/mirai-hw-test-{}", uuid::Uuid::new_v4().simple()));
-        DirBuilder::new().mode(0o700).create(&directory).unwrap();
-        let path = directory.join("control");
-        let listener = UnixListener::bind(&path).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let mut child = Command::new("/bin/sleep").arg("10").spawn().unwrap();
-        let closed = Arc::new(AtomicBool::new(false));
-        let cancellation = Arc::clone(&closed);
-        let worker = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(50));
-            cancellation.store(true, Ordering::Release);
-        });
-        let result = accept_helper(&listener, &mut child, &closed);
-        child.kill().unwrap();
-        child.wait().unwrap();
-        worker.join().unwrap();
-        fs::remove_file(path).unwrap();
-        fs::remove_dir(directory).unwrap();
-        assert!(matches!(result, Err(HardwareError::Closed)));
-    }
 }

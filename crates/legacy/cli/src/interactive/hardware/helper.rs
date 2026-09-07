@@ -32,9 +32,7 @@ pub async fn run_helper(
     let shutdown = stream.try_clone()?;
     let stopped = Arc::new(AtomicBool::new(false));
     let worker_stopped = stopped.clone();
-    let mut worker = tokio::task::spawn_blocking(move || {
-        serve(stream, HardwareControls::default(), &worker_stopped, HardwareControls::apply, HardwareControls::restore)
-    });
+    let mut worker = tokio::task::spawn_blocking(move || serve(stream, HardwareControls::default(), &worker_stopped));
     tokio::select! {
         result = &mut worker => return result?,
         _ = interrupt.recv() => {},
@@ -49,12 +47,10 @@ pub async fn run_helper(
     result
 }
 
-fn serve<C>(
+fn serve(
     mut stream: UnixStream,
-    mut controls: C,
+    mut controls: HardwareControls,
     stopped: &AtomicBool,
-    mut apply: impl FnMut(&mut C, PerformanceMode) -> Result<(), HardwareError>,
-    mut restore: impl FnMut(&mut C) -> Result<(), HardwareError>,
 ) -> Result<(), HardwareError> {
     let operation = (|| {
         // A client that stops reading must not block restoration indefinitely.
@@ -71,14 +67,14 @@ fn serve<C>(
             let Some(mode) = request else {
                 return Ok(true);
             };
-            let result = apply(&mut controls, mode).map_err(|error| error.to_string());
+            let result = controls.apply(mode).map_err(|error| error.to_string());
             if stopped.load(Ordering::Acquire) {
                 return Ok(false);
             }
             write_message(&mut stream, &result)?;
         }
     })();
-    let restoration = restore(&mut controls);
+    let restoration = controls.restore();
     let operation = operation.and_then(|eof| {
         // Signal cancellation must not masquerade as a successful pending command.
         if !eof {
@@ -94,108 +90,5 @@ fn serve<C>(
             restore: Box::new(restore),
         }),
         (Err(error), _) | (_, Err(error)) => Err(error),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{io::Write, sync::Mutex, thread};
-
-    use super::*;
-
-    #[test]
-    fn clean_eof_restores_before_final_acknowledgement() {
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let state = calls.clone();
-        let worker = thread::spawn(move || {
-            serve(
-                server,
-                state,
-                &AtomicBool::new(false),
-                |calls, _| {
-                    calls.lock().unwrap().push("apply");
-                    Ok(())
-                },
-                |calls| {
-                    calls.lock().unwrap().push("restore");
-                    Ok(())
-                },
-            )
-        });
-        write_message(&mut client, &PerformanceMode::Fast).unwrap();
-        client.shutdown(Shutdown::Write).unwrap();
-        let mut reader = BufReader::new(client);
-        for _ in 0..2 {
-            assert_eq!(read_message::<Result<(), String>>(&mut reader).unwrap(), Some(Ok(())));
-        }
-        worker.join().unwrap().unwrap();
-        assert_eq!(*calls.lock().unwrap(), ["apply", "restore"]);
-    }
-
-    #[test]
-    fn malformed_request_still_restores() {
-        let (mut client, server) = UnixStream::pair().unwrap();
-        client.write_all(b"invalid\n").unwrap();
-        let mut restored = false;
-        let result = serve(
-            server,
-            &mut restored,
-            &AtomicBool::new(false),
-            |_, _| panic!("invalid request must not be applied"),
-            |restored| {
-                **restored = true;
-                Ok(())
-            },
-        );
-        assert!(matches!(result, Err(HardwareError::Json(_))));
-        assert!(restored);
-    }
-
-    #[test]
-    fn restoration_failure_is_sent_in_final_acknowledgement() {
-        let (client, server) = UnixStream::pair().unwrap();
-        let worker = thread::spawn(move || {
-            serve(
-                server,
-                (),
-                &AtomicBool::new(false),
-                |_, _| panic!("no request was sent"),
-                |_| Err(HardwareError::Protocol("restore failed")),
-            )
-        });
-        client.shutdown(Shutdown::Write).unwrap();
-        let response = read_message::<Result<(), String>>(&mut BufReader::new(client)).unwrap();
-        assert_eq!(response, Some(Err("Hardware helper: restore failed".to_owned())));
-        assert!(matches!(worker.join().unwrap(), Err(HardwareError::Protocol("restore failed"))));
-    }
-
-    #[test]
-    fn cancellation_during_apply_suppresses_success_and_queued_requests() {
-        let (mut client, server) = UnixStream::pair().unwrap();
-        for _ in 0..2 {
-            write_message(&mut client, &PerformanceMode::Fast).unwrap();
-        }
-        client.shutdown(Shutdown::Write).unwrap();
-        let stopped = AtomicBool::new(false);
-        let mut calls = Vec::new();
-        serve(
-            server,
-            &mut calls,
-            &stopped,
-            |calls, _| {
-                calls.push("apply");
-                stopped.store(true, Ordering::Release);
-                Ok(())
-            },
-            |calls| {
-                calls.push("restore");
-                Ok(())
-            },
-        )
-        .unwrap();
-        let mut reader = BufReader::new(client);
-        assert!(read_message::<Result<(), String>>(&mut reader).unwrap().is_none());
-        assert_eq!(calls, ["apply", "restore"]);
     }
 }

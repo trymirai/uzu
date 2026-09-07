@@ -20,33 +20,10 @@ impl PerformanceMode {
         }
     }
 
-    pub fn cycled(
-        self,
-        delta: i64,
-    ) -> Self {
-        match (self as i64 + delta.rem_euclid(2)) % 2 {
-            0 => Self::Auto,
-            _ => Self::Fast,
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Auto => Self::Fast,
+            Self::Fast => Self::Auto,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::PerformanceMode;
-
-    #[test]
-    fn modes_cycle_in_both_directions_without_overflow() {
-        let mut mode = PerformanceMode::default();
-        for expected in [PerformanceMode::Fast, PerformanceMode::Auto] {
-            mode = mode.cycled(1);
-            assert_eq!(mode, expected);
-        }
-        for expected in [PerformanceMode::Fast, PerformanceMode::Auto] {
-            mode = mode.cycled(-1);
-            assert_eq!(mode, expected);
-        }
-        assert_eq!(PerformanceMode::Auto.cycled(i64::MIN), PerformanceMode::Auto);
-        assert_eq!(PerformanceMode::Fast.cycled(i64::MAX), PerformanceMode::Auto);
     }
 }

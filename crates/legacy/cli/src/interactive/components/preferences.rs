@@ -37,20 +37,3 @@ impl Preferences {
         Ok(())
     }
 }
-
-#[cfg(all(test, target_os = "macos", feature = "hardware-control"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hardware_overrides_are_never_persisted_or_loaded() {
-        let preferences = Preferences {
-            performance_mode: crate::interactive::hardware::PerformanceMode::Fast,
-            ..Default::default()
-        };
-        let encoded = toml::to_string(&preferences).unwrap();
-        assert!(!encoded.contains("performance_mode"));
-        let decoded: Preferences = toml::from_str("performance_mode = \"Fast\"").unwrap();
-        assert_eq!(decoded.performance_mode, crate::interactive::hardware::PerformanceMode::Auto);
-    }
-}

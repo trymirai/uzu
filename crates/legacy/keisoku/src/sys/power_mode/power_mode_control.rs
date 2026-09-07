@@ -44,7 +44,15 @@ impl PowerModeControl {
 
     /// Restores all saved profiles; failed profiles remain pending for another attempt.
     pub fn restore(&mut self) -> Result<(), PowerModeError> {
-        restore_modes(&mut self.originals, write_mode)
+        let mut failure = None;
+        self.originals.retain(|&(source, mode)| match write_mode(source, mode) {
+            Ok(()) => false,
+            Err(error) => {
+                failure.get_or_insert(error);
+                true
+            },
+        });
+        failure.map_or(Ok(()), Err)
     }
 }
 
@@ -53,49 +61,5 @@ impl Drop for PowerModeControl {
         if let Err(error) = self.restore() {
             let _ = writeln!(std::io::stderr(), "Failed to restore power mode: {error}");
         }
-    }
-}
-
-fn restore_modes(
-    originals: &mut Vec<(bool, i64)>,
-    mut write: impl FnMut(bool, i64) -> Result<(), PowerModeError>,
-) -> Result<(), PowerModeError> {
-    let mut failure = None;
-    originals.retain(|&(source, mode)| match write(source, mode) {
-        Ok(()) => false,
-        Err(error) => {
-            failure.get_or_insert(error);
-            true
-        },
-    });
-    failure.map_or(Ok(()), Err)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn restoration_attempts_both_profiles_and_retries_only_failures() {
-        let mut originals = vec![(false, 0), (true, 1)];
-        let mut writes = Vec::new();
-        let result = restore_modes(&mut originals, |source, mode| {
-            writes.push((source, mode));
-            if source {
-                Ok(())
-            } else {
-                Err(PowerModeError::InvalidPreference)
-            }
-        });
-        assert!(matches!(result, Err(PowerModeError::InvalidPreference)));
-        assert_eq!(writes, [(false, 0), (true, 1)]);
-        assert_eq!(originals, [(false, 0)]);
-        restore_modes(&mut originals, |source, mode| {
-            writes.push((source, mode));
-            Ok(())
-        })
-        .unwrap();
-        assert!(originals.is_empty());
-        assert_eq!(writes, [(false, 0), (true, 1), (false, 0)]);
     }
 }

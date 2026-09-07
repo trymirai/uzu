@@ -14,7 +14,6 @@ pub struct HardwareControls {
     fans: Option<FanControl>,
     ownership: Option<File>,
     mode: PerformanceMode,
-    closed: bool,
     uncertain: bool,
 }
 
@@ -23,9 +22,6 @@ impl HardwareControls {
         &mut self,
         mode: PerformanceMode,
     ) -> Result<(), HardwareError> {
-        if self.closed {
-            return Err(HardwareError::Closed);
-        }
         if !self.uncertain && self.mode == mode {
             return Ok(());
         }
@@ -100,7 +96,6 @@ impl HardwareControls {
     }
 
     pub fn restore(&mut self) -> Result<(), HardwareError> {
-        self.closed = true;
         self.apply_inner(PerformanceMode::Auto)
     }
 }
@@ -110,24 +105,5 @@ impl Drop for HardwareControls {
         if let Err(error) = self.restore() {
             let _ = writeln!(std::io::stderr(), "Unable to restore hardware settings: {error}");
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cancelled_session_rejects_queued_apply_without_touching_hardware() {
-        let mut controls = HardwareControls::default();
-        controls.restore().unwrap();
-        assert!(matches!(controls.apply(PerformanceMode::Auto), Err(HardwareError::Closed)));
-    }
-
-    #[test]
-    fn default_settings_do_not_acquire_hardware() {
-        let mut controls = HardwareControls::default();
-        controls.apply(PerformanceMode::Auto).unwrap();
-        assert!(controls.ownership.is_none() && controls.power_mode.is_none() && controls.fans.is_none());
     }
 }

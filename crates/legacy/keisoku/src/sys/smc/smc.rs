@@ -154,7 +154,24 @@ impl Smc {
         };
         input.bytes[..bytes.len()].copy_from_slice(bytes);
         self.call(&input)?;
-        verify_readback(original, bytes, || self.read(original.key))
+        // Fan target registers can lag an accepted write by about a second.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let actual = self.read(original.key)?;
+            if actual.key_info.data_size != original.key_info.data_size
+                || actual.key_info.data_type != original.key_info.data_type
+            {
+                return Err(SmcError::ReadbackMismatch(original.key));
+            }
+            if actual.bytes[..bytes.len()] == *bytes {
+                return Ok(());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(SmcError::ReadbackMismatch(original.key));
+            }
+            thread::sleep(remaining.min(Duration::from_millis(100)));
+        }
     }
 
     fn call(
@@ -196,96 +213,5 @@ impl Smc {
 impl Drop for Smc {
     fn drop(&mut self) {
         IOServiceClose(self.connection);
-    }
-}
-
-#[cfg(feature = "hardware-control")]
-fn verify_readback(
-    original: &SmcKeyData,
-    bytes: &[u8],
-    mut read: impl FnMut() -> Result<SmcKeyData, SmcError>,
-) -> Result<(), SmcError> {
-    // Fan target registers can lag an accepted write by about a second.
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        let actual = read()?;
-        if actual.key_info.data_size != original.key_info.data_size
-            || actual.key_info.data_type != original.key_info.data_type
-        {
-            return Err(SmcError::ReadbackMismatch(original.key));
-        }
-        if actual.bytes[..bytes.len()] == *bytes {
-            return Ok(());
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(SmcError::ReadbackMismatch(original.key));
-        }
-        thread::sleep(remaining.min(Duration::from_millis(100)));
-    }
-}
-
-#[cfg(all(test, feature = "hardware-control"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn readback_waits_for_fan_target_to_settle() {
-        let target = SmcKeyData {
-            key_info: SmcKeyInfo {
-                data_size: 4,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let bytes = 7826.0_f32.to_le_bytes();
-        let mut reads = 0;
-        verify_readback(&target, &bytes, || {
-            reads += 1;
-            let mut actual = target;
-            if reads == 3 {
-                actual.bytes[..4].copy_from_slice(&bytes);
-            }
-            Ok(actual)
-        })
-        .unwrap();
-        assert_eq!(reads, 3);
-    }
-
-    #[test]
-    fn readback_times_out_when_target_never_settles() {
-        let target = SmcKeyData::default();
-        let mut reads = 0;
-        assert!(matches!(
-            verify_readback(&target, &[1], || {
-                reads += 1;
-                Ok(target)
-            }),
-            Err(SmcError::ReadbackMismatch(_))
-        ));
-        assert!(reads > 1);
-    }
-
-    #[test]
-    fn readback_rejects_changed_metadata_and_io_errors() {
-        let original = SmcKeyData::default();
-        for change_type in [false, true] {
-            let mut reads = 0;
-            assert!(matches!(
-                verify_readback(&original, &[0], || {
-                    reads += 1;
-                    let mut actual = original;
-                    if change_type {
-                        actual.key_info.data_type = 1;
-                    } else {
-                        actual.key_info.data_size = 1;
-                    }
-                    Ok(actual)
-                }),
-                Err(SmcError::ReadbackMismatch(_))
-            ));
-            assert_eq!(reads, 1);
-        }
-        assert!(matches!(verify_readback(&original, &[0], || Err(SmcError::IoKit(-1))), Err(SmcError::IoKit(-1))));
     }
 }

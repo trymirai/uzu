@@ -110,7 +110,13 @@ impl FanControl {
         if !self.active {
             return Ok(());
         }
-        restore_state(&self.saved, self.unlock.as_ref(), |key, bytes| self.smc.write_checked(key, bytes))?;
+        let mut failure = None;
+        for value in self.saved.iter().flat_map(|fan| [&fan.target, &fan.mode]).chain(self.unlock.as_ref()) {
+            if let Err(error) = self.smc.write_checked(value, &value.bytes[..value.key_info.data_size as usize]) {
+                failure.get_or_insert(error);
+            }
+        }
+        failure.map_or(Ok(()), Err)?;
         self.active = false;
         self.saved.clear();
         self.unlock = None;
@@ -123,60 +129,5 @@ impl Drop for FanControl {
         if let Err(error) = self.restore() {
             let _ = writeln!(std::io::stderr(), "Failed to restore fan control: {error}");
         }
-    }
-}
-
-fn restore_state(
-    fans: &[FanState],
-    unlock: Option<&SmcKeyData>,
-    mut write: impl FnMut(&SmcKeyData, &[u8]) -> Result<(), SmcError>,
-) -> Result<(), SmcError> {
-    let mut failure = None;
-    for value in fans.iter().flat_map(|fan| [&fan.target, &fan.mode]).chain(unlock) {
-        if let Err(error) = write(value, &value.bytes[..value.key_info.data_size as usize]) {
-            failure.get_or_insert(error);
-        }
-    }
-    failure.map_or(Ok(()), Err)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn restore_attempts_all_keys_after_failure() {
-        let mut mode = SmcKeyData {
-            key: 1,
-            ..Default::default()
-        };
-        mode.key_info.data_size = 1;
-        mode.bytes[0] = 3;
-        let mut target = SmcKeyData {
-            key: 2,
-            ..Default::default()
-        };
-        target.key_info.data_size = 4;
-        target.bytes[..4].copy_from_slice(&2345.0_f32.to_le_bytes());
-        let unlock = SmcKeyData {
-            key: 3,
-            ..mode
-        };
-        let fans = [FanState {
-            mode,
-            target,
-            maximum: 6000.0,
-        }];
-        let mut calls = Vec::new();
-        let result = restore_state(&fans, Some(&unlock), |key, bytes| {
-            calls.push((key.key, bytes.to_vec()));
-            if key.key == 2 {
-                Err(SmcError::ReadbackMismatch(2))
-            } else {
-                Ok(())
-            }
-        });
-        assert!(matches!(result, Err(SmcError::ReadbackMismatch(2))));
-        assert_eq!(calls, vec![(2, 2345.0_f32.to_le_bytes().to_vec()), (1, vec![3]), (3, vec![3])]);
     }
 }

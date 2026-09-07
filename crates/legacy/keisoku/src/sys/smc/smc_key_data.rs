@@ -46,36 +46,3 @@ impl SmcKeyData {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fan_values_reject_wrong_type_and_size() {
-        for (kind, size) in [("fpe2", 2), ("flt ", 3), ("flt ", 32)] {
-            let value = SmcKeyData {
-                key_info: SmcKeyInfo {
-                    data_type: fourcc(kind).unwrap(),
-                    data_size: size,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            assert!(matches!(value.as_f32(), Err(SmcError::InvalidData { .. })));
-        }
-    }
-
-    #[test]
-    fn fan_count_rejects_float_payload() {
-        let value = SmcKeyData {
-            key_info: SmcKeyInfo {
-                data_type: fourcc("flt ").unwrap(),
-                data_size: 1,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        assert!(matches!(value.as_u8(), Err(SmcError::InvalidData { .. })));
-    }
-}

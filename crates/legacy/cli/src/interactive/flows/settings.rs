@@ -78,7 +78,7 @@ fn adjust(
 ) {
     match field {
         #[cfg(all(target_os = "macos", feature = "hardware-control"))]
-        Field::PerformanceMode => preferences.performance_mode = preferences.performance_mode.cycled(delta),
+        Field::PerformanceMode => preferences.performance_mode = preferences.performance_mode.toggled(),
         Field::Thinking => {
             support.with_preference(&preferences.thinking).cycled(delta).write_back(&mut preferences.thinking);
         },
@@ -130,7 +130,7 @@ fn toggle(
     let sampling = &mut preferences.sampling;
     match field {
         #[cfg(all(target_os = "macos", feature = "hardware-control"))]
-        Field::PerformanceMode => preferences.performance_mode = preferences.performance_mode.cycled(1),
+        Field::PerformanceMode => preferences.performance_mode = preferences.performance_mode.toggled(),
         Field::Thinking => adjust(preferences, Field::Thinking, 1, support),
         Field::SamplingMode => sampling.mode = sampling.mode.next(),
         Field::Temperature => {
