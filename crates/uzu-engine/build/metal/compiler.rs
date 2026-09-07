@@ -1,15 +1,22 @@
 use std::{
     collections::HashMap,
-    env, fs,
+    env, fs, io,
     path::{Path, PathBuf},
+    sync::{Arc, mpsc},
 };
 
 use anyhow::Context;
 use async_trait::async_trait;
-use futures::{StreamExt, TryStreamExt, future::try_join_all, stream};
+use futures::{
+    StreamExt, TryStreamExt,
+    future::{Either, try_join_all},
+    stream,
+};
 use itertools::{Itertools, izip};
+use jobserver::Client as JobserverClient;
 use quote::{format_ident, quote};
 use serde::{Deserialize, Serialize};
+use tokio::sync::{OwnedSemaphorePermit as TokioOwnedSemaphorePermit, Semaphore as TokioSemaphore, oneshot};
 use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -85,11 +92,27 @@ pub struct MetalCompiler {
     output_directory: PathBuf,
     metallib_compressed: bool,
     toolchain: MetalToolchain,
+    jobserver: jobserver::HelperThread,
+    token_request_sender: mpsc::Sender<oneshot::Sender<io::Result<jobserver::Acquired>>>,
+    /// Cargo's inherited job slot, usable even when no shared tokens are available.
+    implicit_permit: Arc<TokioSemaphore>,
     cache_key: [u8; blake3::OUT_LEN],
 }
 
 impl MetalCompiler {
     pub async fn new() -> anyhow::Result<Self> {
+        // SAFETY: Cargo supplies open jobserver descriptors to this build script.
+        let jobserver = unsafe { JobserverClient::from_env() }.context("missing Cargo jobserver")?;
+        let (token_request_sender, token_request_receiver) =
+            mpsc::channel::<oneshot::Sender<io::Result<jobserver::Acquired>>>();
+        let jobserver = jobserver.into_helper_thread(move |token| {
+            let token_sender = token_request_receiver.recv();
+            let Ok(token_sender) = token_sender else {
+                return;
+            };
+            let _ = token_sender.send(token);
+        })?;
+
         let source_directory = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("missing CARGO_MANIFEST_DIR")?)
             .join("src/backends/metal/kernel");
         println!("cargo::rerun-if-changed={}", source_directory.display());
@@ -130,8 +153,27 @@ impl MetalCompiler {
             output_directory,
             metallib_compressed,
             toolchain,
+            jobserver,
+            token_request_sender,
+            implicit_permit: Arc::new(TokioSemaphore::new(1)),
             cache_key,
         })
+    }
+
+    /// Acquire Cargo's inherited slot or an additional shared jobserver token.
+    async fn acquire_build_permit(&self) -> anyhow::Result<Either<TokioOwnedSemaphorePermit, jobserver::Acquired>> {
+        let implicit = self.implicit_permit.clone();
+        tokio::select! {
+            biased;
+            permit = implicit.acquire_owned() => Ok(Either::Left(permit?)),
+            token = async {
+                let (token_sender, token_receiver) = oneshot::channel();
+                self.token_request_sender.send(token_sender)?;
+                self.jobserver.request_token();
+                let token = token_receiver.await.context("jobserver helper thread stopped")??;
+                anyhow::Ok(token)
+            } => token.map(Either::Right),
+        }
     }
 
     fn emit_rerun_if_changed_for_dependency(
@@ -185,11 +227,13 @@ impl MetalCompiler {
             return Ok((kernel_path, cached.public_kernels, cached.has_kernels));
         }
 
+        let permit = self.acquire_build_permit().await?;
         let (metal_kernel_infos, dependencies) = self
             .toolchain
             .analyze(&source_path)
             .await
             .with_context(|| format!("cannot analyze {source_path_relative_str}"))?;
+        drop(permit);
 
         let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
 
@@ -236,12 +280,15 @@ impl MetalCompiler {
                 |(footer, metallib_file, compressed_file)| {
                     let source_path = &source_path;
                     async move {
+                        let _permit = self.acquire_build_permit().await?;
                         let warnings = self.toolchain.compile(source_path, footer, metallib_file).await?;
 
                         if self.metallib_compressed {
                             let metallib_file = metallib_file.clone();
                             let compressed_file = compressed_file.clone();
                             tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                                // Holding the slot until compression finishes, even if its caller is cancelled.
+                                let _permit = _permit;
                                 let metallib_source = fs::read(metallib_file)?;
                                 fs::write(compressed_file, zstd::encode_all(metallib_source.as_slice(), 22)?)?;
                                 Ok(())

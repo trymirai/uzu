@@ -7674,6 +7674,7 @@ dependencies = [
  "half",
  "is_close",
  "itertools 0.14.0",
+ "jobserver",
  "keisoku",
  "libm",
  "monostate",
