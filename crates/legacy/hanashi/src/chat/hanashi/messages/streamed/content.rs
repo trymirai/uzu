@@ -94,15 +94,17 @@ impl Content {
                     }
                 }
 
-                let reasoning = reasoning_parts.concat().trim().to_string();
-                let text = text_parts.concat().trim().to_string();
+                // Keep the parser's text byte-for-byte. Re-rendering this message must reproduce
+                // the sampled prefix so the token backend can retain its KV cache between turns.
+                let reasoning = reasoning_parts.concat();
+                let text = text_parts.concat();
                 let mut blocks = Vec::new();
-                if !reasoning.is_empty() {
+                if !reasoning.trim().is_empty() {
                     blocks.push(ChatContentBlock::Reasoning {
                         value: reasoning,
                     });
                 }
-                if !text.is_empty() {
+                if !text.trim().is_empty() {
                     blocks.push(ChatContentBlock::Text {
                         value: text,
                     });
@@ -142,3 +144,7 @@ fn tool_call_result_parts(value: Value) -> (Option<String>, Value) {
         other => (None, other),
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../../unit/chat/hanashi/messages/streamed/content.rs"]
+mod tests;
