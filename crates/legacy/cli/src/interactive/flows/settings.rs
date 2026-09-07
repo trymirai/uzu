@@ -37,6 +37,8 @@ impl Flow for SettingsFlow {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
+    #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+    PerformanceMode,
     Thinking,
     SamplingMode,
     Temperature,
@@ -63,6 +65,8 @@ fn visible_fields(
             fields.push(Field::SuffixRepetitionLength);
         }
     }
+    #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+    fields.push(Field::PerformanceMode);
     fields
 }
 
@@ -73,6 +77,8 @@ fn adjust(
     support: ThinkingSupport,
 ) {
     match field {
+        #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+        Field::PerformanceMode => preferences.performance_mode = preferences.performance_mode.cycled(delta),
         Field::Thinking => {
             support.with_preference(&preferences.thinking).cycled(delta).write_back(&mut preferences.thinking);
         },
@@ -123,6 +129,8 @@ fn toggle(
 ) {
     let sampling = &mut preferences.sampling;
     match field {
+        #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+        Field::PerformanceMode => preferences.performance_mode = preferences.performance_mode.cycled(1),
         Field::Thinking => adjust(preferences, Field::Thinking, 1, support),
         Field::SamplingMode => sampling.mode = sampling.mode.next(),
         Field::Temperature => {
@@ -206,7 +214,7 @@ fn SettingsFlowView(
     props: &mut SettingsFlowViewProps,
     mut hooks: Hooks,
 ) -> impl Into<AnyElement<'static>> {
-    let on_event = std::mem::take(&mut props.on_event);
+    let on_event = std::sync::Arc::new(std::mem::take(&mut props.on_event));
     let state = *hooks.use_context::<State<ApplicationState>>();
 
     let support = state.read().model_state.as_ref().map(|model_state| model_state.thinking).unwrap_or_default();
@@ -217,6 +225,44 @@ fn SettingsFlowView(
 
     let mut draft = hooks.use_state(|| state.read().preferences().clone());
     let mut selected_index = hooks.use_state(|| 0usize);
+    let mut feedback = hooks.use_state(String::new);
+
+    let on_save = hooks.use_async_handler(move |preferences: Preferences| {
+        let on_event = on_event.clone();
+        async move {
+            let mut state = state;
+            #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+            {
+                let hardware = state.read().hardware.clone();
+                let mode = preferences.performance_mode;
+                let result = tokio::task::spawn_blocking(move || {
+                    let hardware = hardware.ok_or_else(|| "Hardware control is unavailable".to_string())?;
+                    let mut controls = hardware.lock().map_err(|error| error.to_string())?;
+                    controls.apply(mode).map_err(|error| error.to_string())
+                })
+                .await;
+                let result = result.map_err(|error| error.to_string()).and_then(|result| result);
+                if let Err(error) = result {
+                    feedback.set(format!("Settings not applied: {error}"));
+                    state.write().settings_applying = false;
+                    return;
+                }
+            }
+            let summary = format!(
+                "thinking {} · sampling {}",
+                thinking_summary(support, &preferences),
+                preferences.sampling.summary()
+            );
+            #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+            let summary = format!("mode {} · {summary}", preferences.performance_mode.label());
+            let result = match state.write().set_preferences(&preferences) {
+                Ok(()) => format!("Settings saved ({summary})"),
+                Err(error) => format!("Settings applied ({summary}), unable to save: {error}"),
+            };
+            state.write().settings_applying = false;
+            (*on_event)(FlowEvent::finish(result));
+        }
+    });
 
     let preferences = draft.read().clone();
     let fields = visible_fields(&preferences, support, thinking_locked);
@@ -234,6 +280,9 @@ fn SettingsFlowView(
             return;
         };
         if kind == KeyEventKind::Release {
+            return;
+        }
+        if state.read().settings_applying {
             return;
         }
 
@@ -279,17 +328,9 @@ fn SettingsFlowView(
             },
             KeyCode::Enter => {
                 let mut state = state;
-                let preferences = draft.read().clone();
-                let summary = format!(
-                    "thinking {} · sampling {}",
-                    thinking_summary(support, &preferences),
-                    preferences.sampling.summary()
-                );
-                let result = match state.write().set_preferences(&preferences) {
-                    Ok(()) => format!("Settings saved ({})", summary),
-                    Err(error) => format!("Settings applied ({}), unable to save: {}", summary, error),
-                };
-                on_event(FlowEvent::finish(result));
+                state.write().settings_applying = true;
+                feedback.set("Applying settings…".to_string());
+                on_save(draft.read().clone());
             },
             _ => {},
         }
@@ -325,10 +366,19 @@ fn SettingsFlowView(
         },
     }
 
+    #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+    {
+        rows.push(section_header("Performance · this session", &theme));
+        rows.push(field_row(Field::PerformanceMode, &preferences, selected, &theme, support, defaults));
+        rows.push(info_row("", preferences.performance_mode.description(), &theme));
+        rows.push(info_row("", "Fast asks macOS permission once per session; restores on exit", &theme));
+    }
+
     element! {
         View(flex_direction: FlexDirection::Column, padding_left: padding, padding_right: padding) {
             #(rows.into_iter())
             View(height: padding)
+            Text(content: feedback.read().clone(), color: theme.subtitle_color)
             Text(
                 content: "↑↓ move · ←→ adjust · space toggle · enter save · esc cancel",
                 color: theme.subtitle_color,
@@ -394,6 +444,8 @@ fn field_row(
     };
 
     let (label, control): (&str, AnyElement<'static>) = match field {
+        #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+        Field::PerformanceMode => ("Mode", cycle_control(preferences.performance_mode.label(), value_color, theme)),
         Field::Thinking => (
             "Thinking",
             cycle_control(support.with_preference(&preferences.thinking).value_label(), value_color, theme),

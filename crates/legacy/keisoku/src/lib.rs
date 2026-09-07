@@ -26,4 +26,10 @@ pub use metrics::{BatteryMetrics, Fan, FanMetrics, MemoryMetrics, ThermalPressur
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use power_meter::{PowerMeter, PowerReading};
 pub use sensor::{Sensor, SensorKind, thermal_sensors};
+#[cfg(all(target_os = "macos", feature = "hardware-control"))]
+pub use sys::{
+    gpu::{GpuControlError, GpuPowerControl},
+    power_mode::{PowerModeControl, PowerModeError},
+    smc::{FanControl, SmcError},
+};
 pub use units::{Bytes, GigabytesPerSecond, Joules, Percent, Rpm};

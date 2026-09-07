@@ -27,6 +27,8 @@ const HISTORY_LIMIT: usize = 20;
 
 #[derive(Default, Props)]
 pub struct ApplicationProps {
+    #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+    pub hardware: Option<std::sync::Arc<std::sync::Mutex<crate::interactive::hardware::HardwareSession>>>,
     pub engine: Option<Engine>,
     pub settings: Option<Settings>,
     pub model: Option<String>,
@@ -45,6 +47,9 @@ pub struct ModelState {
 }
 
 pub struct ApplicationState {
+    pub settings_applying: bool,
+    #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+    pub hardware: Option<std::sync::Arc<std::sync::Mutex<crate::interactive::hardware::HardwareSession>>>,
     preferences: Preferences,
     /// Session-scoped thinking override from the command line; never persisted.
     thinking_override: Option<ThinkingPreference>,
@@ -114,6 +119,9 @@ pub fn Application(
     let engine = props.engine.clone().expect("Application requires an engine");
 
     let state = hooks.use_state(|| ApplicationState {
+        settings_applying: false,
+        #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+        hardware: props.hardware.clone(),
         engine,
         settings: props.settings.clone(),
         preferences: ApplicationState::load_preferences().unwrap_or_else(|error| {
@@ -129,7 +137,7 @@ pub fn Application(
         registry: FlowRegistry::default()
             .register("auth", "Add models from a specific provider", false, || Box::new(AuthFlow))
             .register("model", "Choose the model", false, || Box::new(ModelRegistriesFlow))
-            .register("settings", "Configure thinking and sampling", true, || Box::new(SettingsFlow))
+            .register("settings", "Configure generation and performance", false, || Box::new(SettingsFlow))
             .register("theme", "Choose the theme", false, || Box::new(ThemeFlow))
             .register("exit", "Exit the CLI", false, || Box::new(ExitFlow)),
         model_state: None,
@@ -148,7 +156,7 @@ pub fn Application(
                         state.write().history.push(HistoryCellType::CommandResult {
                             result: format!("Failed to resolve model: {error}"),
                         });
-                        state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                        state.write().flow.get_or_insert_with(|| Box::new(ModelRegistriesFlow));
                         return;
                     },
                 },
@@ -156,7 +164,7 @@ pub fn Application(
             };
 
             let Some(identifier) = initial_model else {
-                state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                state.write().flow.get_or_insert_with(|| Box::new(ModelRegistriesFlow));
                 return;
             };
             match engine.model(identifier.clone()).await {
@@ -168,7 +176,7 @@ pub fn Application(
                             Some(path) if std::path::Path::new(&path).exists()
                         );
                     if !model_exists {
-                        state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                        state.write().flow.get_or_insert_with(|| Box::new(ModelRegistriesFlow));
                         return;
                     }
                     state.write().model_state = Some(ModelState {
@@ -184,13 +192,13 @@ pub fn Application(
                     state.write().history.push(HistoryCellType::CommandResult {
                         result: format!("Unknown model: {}", identifier),
                     });
-                    state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                    state.write().flow.get_or_insert_with(|| Box::new(ModelRegistriesFlow));
                 },
                 Err(error) => {
                     state.write().history.push(HistoryCellType::CommandResult {
                         result: format!("Failed to load model {}: {}", identifier, error),
                     });
-                    state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                    state.write().flow.get_or_insert_with(|| Box::new(ModelRegistriesFlow));
                 },
             }
         }
@@ -319,6 +327,9 @@ pub fn Application(
         }
 
         if state.flow.is_some() {
+            if state.settings_applying {
+                return;
+            }
             if is_escape {
                 if matches!(state.history.last(), Some(HistoryCellType::Command { .. })) {
                     state.history.push(HistoryCellType::CommandResult {

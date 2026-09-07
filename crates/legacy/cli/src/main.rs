@@ -24,6 +24,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+    #[command(hide = true)]
+    HardwareHelper {
+        socket: std::path::PathBuf,
+        client_uid: u32,
+        client_pid: i32,
+    },
     Bench {
         model_path: String,
         task_path: String,
@@ -60,6 +67,14 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+        Some(Commands::HardwareHelper {
+            socket,
+            client_uid,
+            client_pid,
+        }) => {
+            interactive::run_hardware_helper(&socket, client_uid, client_pid).await?;
+        },
         Some(Commands::Bench {
             model_path,
             task_path,

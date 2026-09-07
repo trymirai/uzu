@@ -13,7 +13,8 @@ name = "cli"
 path = "src/main.rs"
 
 [features]
-default = ["backend-cpu", "backend-metal", "capability-grammar"]
+default = ["backend-cpu", "backend-metal", "capability-grammar", "hardware-control"]
+hardware-control = ["dep:keisoku", "keisoku/hardware-control", "dep:libc"]
 backend-cpu = ["uzu/backend-cpu"]
 backend-metal = ["uzu/backend-metal"]
 capability-grammar = ["uzu/capability-grammar"]
@@ -54,3 +55,7 @@ uzu = { workspace = true, default-features = false }
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keisoku = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }

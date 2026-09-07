@@ -976,6 +976,8 @@ dependencies = [
  "indoc",
  "iocraft",
  "jsonschema",
+ "keisoku",
+ "libc",
  "nagare",
  "ratatui",
  "rocket",

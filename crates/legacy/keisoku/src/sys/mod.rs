@@ -7,6 +7,11 @@ mod memory;
 mod sysctl;
 mod thermal;
 
+#[cfg(all(target_os = "macos", feature = "hardware-control"))]
+pub mod gpu;
+#[cfg(all(target_os = "macos", feature = "hardware-control"))]
+pub mod power_mode;
+
 #[cfg(target_os = "macos")]
 pub mod ioreport;
 #[cfg(target_os = "macos")]

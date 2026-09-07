@@ -54,20 +54,53 @@ impl CliApplication {
 
         let settings = self.engine.settings().await.ok();
 
-        element! {
+        let mut application = element! {
             Application(
                 engine: Some(self.engine.clone()),
                 settings,
                 model,
                 reasoning_effort,
             )
-        }
-        .render_loop()
-        .await
-        .map_err(|error| CliError::RenderingError {
-            message: error.to_string(),
-        })?;
+        };
 
-        Ok(())
+        #[cfg(all(target_os = "macos", feature = "hardware-control"))]
+        let result = {
+            use tokio::signal::unix::{SignalKind, signal};
+
+            use super::hardware::HardwareSessionGuard;
+
+            let shutdown_signal = |kind| {
+                signal(kind).map_err(|error| CliError::RenderingError {
+                    message: format!("Unable to register shutdown signal: {error}"),
+                })
+            };
+            let mut interrupt = shutdown_signal(SignalKind::interrupt())?;
+            let mut terminate = shutdown_signal(SignalKind::terminate())?;
+            let mut hangup = shutdown_signal(SignalKind::hangup())?;
+            let mut controls = HardwareSessionGuard::new();
+            application.props.hardware = Some(controls.session());
+
+            let result = tokio::select! {
+                result = application.render_loop() => result,
+                _ = interrupt.recv() => Ok(()),
+                _ = terminate.recv() => Ok(()),
+                _ = hangup.recv() => Ok(()),
+            };
+            if let Err(error) = controls.restore() {
+                return Err(CliError::RenderingError {
+                    message: match result {
+                        Ok(()) => format!("Hardware restoration failed: {error}"),
+                        Err(render_error) => format!("{render_error}; hardware restoration failed: {error}"),
+                    },
+                });
+            }
+            result
+        };
+        #[cfg(not(all(target_os = "macos", feature = "hardware-control")))]
+        let result = application.render_loop().await;
+
+        result.map_err(|error| CliError::RenderingError {
+            message: error.to_string(),
+        })
     }
 }

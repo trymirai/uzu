@@ -16,6 +16,9 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
+[features]
+hardware-control = []
+
 [dependencies]
 bitflags.workspace = true
 serde = { workspace = true, features = ["derive"] }

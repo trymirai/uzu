@@ -14,6 +14,10 @@ use crate::interactive::{
 mod app;
 mod components;
 mod flows;
+#[cfg(all(target_os = "macos", feature = "hardware-control"))]
+mod hardware;
+#[cfg(all(target_os = "macos", feature = "hardware-control"))]
+pub use hardware::run_helper as run_hardware_helper;
 mod helpers;
 mod list;
 mod model;
