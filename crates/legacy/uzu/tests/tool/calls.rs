@@ -193,49 +193,16 @@ async fn run_tool_calls_test(
 }
 
 #[tokio::test]
-#[ignore]
-async fn functiongemma_270m_it() {
-    // FunctionGemma 270M only handles single-step tool calls out of the box:
-    // for the prompts that require chaining (get_current_location -> get_current_temperature) it invents coordinates or
-    // asks the user for them instead of calling get_current_location first.
-    // Per the model card, multi-step use cases require task-specific fine-tuning.
-    run_tool_calls_test("google/functiongemma-270m-it", false, true, &TEST_CASES[..1]).await;
-}
-
-#[tokio::test]
-#[ignore]
-async fn gpt_oss_20b() {
-    run_tool_calls_test("openai/gpt-oss-20b", true, false, TEST_CASES).await;
-}
-
-#[tokio::test]
-#[ignore]
-async fn lfm2_350m() {
-    run_tool_calls_test("LiquidAI/LFM2-350M", true, false, &TEST_CASES[..1]).await;
-}
-
-#[tokio::test]
-#[ignore]
 async fn lfm2_5_350m() {
-    run_tool_calls_test("LiquidAI/LFM2.5-350M", true, false, &TEST_CASES[..1]).await;
+    run_tool_calls_test("trymirai/LFM2.5-350M-L", true, false, &TEST_CASES[..1]).await;
 }
 
 #[tokio::test]
-#[ignore]
-async fn llama_3_2_1b_instruct() {
-    // Like FunctionGemma, Llama 3.2 1B only handles single-step tool calls: for the prompts that
-    // require chaining (get_current_location -> get_current_temperature) it invents coordinates
-    // (e.g. latitude "37") instead of calling get_current_location first.
-    run_tool_calls_test("meta-llama/Llama-3.2-1B-Instruct", true, false, &TEST_CASES[..1]).await;
-}
-
-#[tokio::test]
-#[ignore]
-async fn qwen3_1_7b() {
-    run_tool_calls_test("Qwen/Qwen3-1.7B", true, false, TEST_CASES).await;
+async fn muse_glimmer_30b_m() {
+    run_tool_calls_test("trymirai/Muse-Glimmer-30B-M", true, false, TEST_CASES).await;
 }
 
 #[tokio::test]
 async fn qwen3_5_0_8b() {
-    run_tool_calls_test("alibaba:qwen3.5:0.8b:mirai:mirai-m:4", true, false, TEST_CASES).await;
+    run_tool_calls_test("trymirai/Qwen3.5-0.8B-M", true, false, TEST_CASES).await;
 }
