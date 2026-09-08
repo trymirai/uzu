@@ -51,13 +51,6 @@ pub trait Backend: Send + Sync {
         PathBuf::from(format!("{}.{}", destination.display(), self.resume_artifact_extension()))
     }
 
-    async fn lock(
-        &self,
-        config: &DownloadConfig,
-    ) -> Result<DestinationLock, LockError> {
-        DestinationLock::acquire(&config.destination, &config.manager_id, config.manager_instance_id).await
-    }
-
     async fn reconcile(
         &self,
         config: &DownloadConfig,
@@ -65,14 +58,12 @@ pub trait Backend: Send + Sync {
         let untouched = !fs::asyn::is_file(&config.destination).await
             && !fs::asyn::is_file(&config.resume_artifact_path).await
             && !CrcReceipt::exists(&config.destination).await
-            && DestinationLock::foreign_owner(&config.destination, &config.manager_id, config.manager_instance_id)
-                .await
-                .is_none();
+            && DestinationLock::foreign_owner(&config.destination, &config.owner).await.is_none();
         let pending_task = self.has_pending_task(config).await?;
         if untouched && !pending_task {
             return Ok((DownloadState::new(config, DownloadPhase::NotDownloaded {}, 0, None), None));
         }
-        let lock = match self.lock(config).await {
+        let lock = match DestinationLock::acquire(&config.destination, &config.owner).await {
             Ok(lock) => lock,
             Err(LockError::LockedByOther {
                 manager_id,

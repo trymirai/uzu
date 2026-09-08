@@ -172,7 +172,7 @@ impl FileDownloadActor {
     }
 
     async fn lock(&mut self) -> Result<DestinationLock, FileDownloadError> {
-        match self.backend.lock(&self.config).await {
+        match DestinationLock::acquire(&self.config.destination, &self.config.owner).await {
             Ok(lock) => Ok(lock),
             Err(LockError::LockedByOther {
                 manager_id,

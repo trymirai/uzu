@@ -4,7 +4,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use download_manager::{
     DestinationLock, DownloadError, DownloadManager, DownloadManagerType, DownloadPhase, DownloadState, DownloadTask,
-    DownloadTaskRequest, LockError,
+    DownloadTaskRequest, LockError, LockOwner,
 };
 use kiban::rt::RuntimeHandle;
 use rstest::rstest;
@@ -319,7 +319,11 @@ async fn shutdown_and_locks(
     drop(task_a);
     drop(manager_a);
     timeout(Duration::from_secs(2), async {
-        while DestinationLock::foreign_owner(&destination, "probe", Uuid::new_v4()).await.is_some() {
+        let probe = LockOwner {
+            manager_id: "probe".to_string(),
+            instance_id: Uuid::new_v4(),
+        };
+        while DestinationLock::foreign_owner(&destination, &probe).await.is_some() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })

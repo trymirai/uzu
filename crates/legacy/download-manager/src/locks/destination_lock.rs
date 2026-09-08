@@ -13,8 +13,7 @@ pub struct DestinationLock {
 impl DestinationLock {
     pub async fn acquire(
         destination: &Path,
-        manager_id: &str,
-        instance_id: Uuid,
+        owner: &LockOwner,
     ) -> Result<Self, LockError> {
         let path = Self::path_for(destination);
         let Some(lock) = FileLock::try_acquire(&path).await? else {
@@ -22,11 +21,7 @@ impl DestinationLock {
                 manager_id: Self::owner(destination).await.manager_id,
             });
         };
-        let owner = LockOwner {
-            manager_id: manager_id.to_string(),
-            instance_id,
-        };
-        lock.write(&serde_json::to_vec(&owner).map_err(std::io::Error::other)?).await?;
+        lock.write(&serde_json::to_vec(owner).map_err(std::io::Error::other)?).await?;
         Ok(Self {
             path,
             _lock: lock,
@@ -35,8 +30,7 @@ impl DestinationLock {
 
     pub async fn foreign_owner(
         destination: &Path,
-        manager_id: &str,
-        instance_id: Uuid,
+        owner: &LockOwner,
     ) -> Option<String> {
         let path = Self::path_for(destination);
         if !fs::asyn::try_exists(&path).await.unwrap_or(false) {
@@ -44,8 +38,8 @@ impl DestinationLock {
         }
         match FileLock::try_acquire(&path).await {
             Ok(None) => {
-                let owner = Self::owner(destination).await;
-                (owner.manager_id != manager_id || owner.instance_id != instance_id).then_some(owner.manager_id)
+                let holder = Self::owner(destination).await;
+                (holder != *owner).then_some(holder.manager_id)
             },
             Ok(Some(_)) | Err(_) => None,
         }

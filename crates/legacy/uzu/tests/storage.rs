@@ -4,7 +4,7 @@ mod common;
 
 use std::{sync::Arc, time::Duration};
 
-use download_manager::DestinationLock;
+use download_manager::{DestinationLock, LockOwner};
 use kiban::rt::RuntimeHandle;
 use mock_registry::{Behavior, MockRegistry, artifact_path};
 use rstest::rstest;
@@ -69,7 +69,14 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     let destination = cache_path.join(&served.file.name);
     tokio::fs::create_dir_all(&cache_path).await?;
     tokio::fs::write(&destination, served.bytes.as_ref()).await?;
-    let _lock = DestinationLock::acquire(&destination, "foreign-manager", Uuid::new_v4()).await?;
+    let _lock = DestinationLock::acquire(
+        &destination,
+        &LockOwner {
+            manager_id: "foreign-manager".to_string(),
+            instance_id: Uuid::new_v4(),
+        },
+    )
+    .await?;
     let refused = storage.delete(&identifier).await.expect_err("delete must be refused while locked");
     assert!(refused.to_string().contains("foreign-manager"), "unexpected error: {refused}");
     assert!(destination.exists());

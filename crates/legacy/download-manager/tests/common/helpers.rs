@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use download_manager::{DestinationLock, DownloadState, DownloadTask, DownloadTaskRequest};
+use download_manager::{DestinationLock, DownloadState, DownloadTask, DownloadTaskRequest, LockOwner};
 use kiban::stream::BoxStream;
 use mock_registry::MockRegistry;
 use tokio::time::timeout;
@@ -61,5 +61,9 @@ pub async fn wait_for_state(
 }
 
 pub async fn foreign_lock(destination: &Path) -> DestinationLock {
-    DestinationLock::acquire(destination, "foreign-manager", Uuid::new_v4()).await.expect("foreign lock")
+    let owner = LockOwner {
+        manager_id: "foreign-manager".to_string(),
+        instance_id: Uuid::new_v4(),
+    };
+    DestinationLock::acquire(destination, &owner).await.expect("foreign lock")
 }

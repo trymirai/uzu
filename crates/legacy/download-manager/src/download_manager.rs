@@ -14,11 +14,11 @@ use crate::{
     backends::{Backend, UniversalBackend},
     cached_download_task::CachedDownloadTask,
     file_download::{DownloadConfig, FileDownloadActor},
+    locks::LockOwner,
 };
 
 pub struct DownloadManager {
-    manager_id: String,
-    instance_id: Uuid,
+    owner: LockOwner,
     backend: Arc<dyn Backend>,
     tasks: Mutex<HashMap<DownloadId, CachedDownloadTask>>,
     construction_locks: Mutex<HashMap<DownloadId, Arc<TokioMutex<()>>>>,
@@ -45,8 +45,10 @@ impl DownloadManager {
         };
         tracing::debug!(%manager_id, "download manager created");
         Self {
-            manager_id,
-            instance_id: Uuid::new_v4(),
+            owner: LockOwner {
+                manager_id,
+                instance_id: Uuid::new_v4(),
+            },
             backend,
             tasks: Mutex::default(),
             construction_locks: Mutex::default(),
@@ -141,8 +143,7 @@ impl DownloadManager {
                     resume_artifact_path: self.backend.resume_artifact_path(&request.destination),
                     expected_crc32c: expected_crc32c.clone(),
                     expected_bytes: *expected_bytes,
-                    manager_id: self.manager_id.clone(),
-                    manager_instance_id: self.instance_id,
+                    owner: self.owner.clone(),
                 });
                 let (state, attach_lock) = self.backend.reconcile(&config).await?;
                 tracing::debug!(

@@ -61,12 +61,7 @@ impl FileDownloadTask {
     }
 
     pub async fn foreign_owner(&self) -> Option<String> {
-        DestinationLock::foreign_owner(
-            &self.config.destination,
-            &self.config.manager_id,
-            self.config.manager_instance_id,
-        )
-        .await
+        DestinationLock::foreign_owner(&self.config.destination, &self.config.owner).await
     }
 
     async fn send(
