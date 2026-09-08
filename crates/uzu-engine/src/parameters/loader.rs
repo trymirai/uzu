@@ -1,7 +1,3 @@
-#[cfg(unix)]
-use std::os::unix::fs::FileExt;
-#[cfg(target_family = "wasm")]
-use std::os::wasi::fs::FileExt;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -10,7 +6,10 @@ use std::{
 
 use thiserror::Error;
 
-use super::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata};
+use super::{
+    parameter_bytes::ParameterBytes,
+    safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata},
+};
 use crate::{
     array::{ArrayElement, size_for_shape},
     backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
@@ -61,7 +60,7 @@ pub struct ParameterLoader<'a, B: Backend> {
     index: HashMap<String, ParameterMetadata>,
     metadata: HashMap<String, String>,
     validated_tensors: RefCell<HashSet<String>>,
-    file: &'a File,
+    bytes: ParameterBytes<'a>,
 }
 
 impl<'a, B: Backend> ParameterLoader<'a, B> {
@@ -69,7 +68,23 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
         file: &'a File,
         context: &'a B::Context,
     ) -> Result<Self, HeaderLoadingError> {
-        let (global_offset, st_metadata) = read_st_metadata(file)?;
+        Self::from_header(file, context, ParameterBytes::File(file))
+    }
+
+    pub fn new_random(
+        header_file: &File,
+        context: &'a B::Context,
+        seed: u64,
+    ) -> Result<Self, HeaderLoadingError> {
+        Self::from_header(header_file, context, ParameterBytes::Random(seed))
+    }
+
+    fn from_header(
+        header_file: &File,
+        context: &'a B::Context,
+        bytes: ParameterBytes<'a>,
+    ) -> Result<Self, HeaderLoadingError> {
+        let (global_offset, st_metadata) = read_st_metadata(header_file)?;
         let index = st_metadata
             .tensors
             .into_iter()
@@ -102,7 +117,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
             index,
             metadata,
             validated_tensors: RefCell::new(HashSet::new()),
-            file,
+            bytes,
         })
     }
 
@@ -159,7 +174,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
         let element_count = self.metadata.size / std::mem::size_of::<T>();
         let mut data = vec![T::zeroed(); element_count];
         let destination = bytemuck::cast_slice_mut(&mut data);
-        self.loader.file.read_exact_at(destination, self.metadata.offset as u64)?;
+        self.loader.bytes.read_into(destination, self.metadata.offset as u64, self.metadata.data_type)?;
         Ok(data.into_boxed_slice())
     }
 
@@ -177,7 +192,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
                 range.len(),
             )
         };
-        self.loader.file.read_exact_at(destination, self.metadata.offset as u64)?;
+        self.loader.bytes.read_into(destination, self.metadata.offset as u64, self.metadata.data_type)?;
         Ok(allocation)
     }
 }

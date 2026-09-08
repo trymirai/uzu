@@ -65,9 +65,6 @@ impl<B: Backend> Engine<B> {
         self: &Arc<Self>,
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
-        let config: LanguageModelConfig =
-            serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
-
         let weights_file = File::open(model_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
 
@@ -75,6 +72,30 @@ impl<B: Backend> Engine<B> {
         let speculator_path = model_path.join("speculator");
         let speculator_path = speculator_path.exists().then_some(speculator_path);
 
+        self.build_language_model(model_path, &weight_loader, speculator_path.as_deref())
+    }
+
+    /// Loads `config.json` and `tokenizer.json` from `model_path`, but synthesizes deterministic
+    /// weights from the safetensors header at `header_path` instead of reading tensor payloads.
+    pub fn load_language_model_random(
+        self: &Arc<Self>,
+        model_path: &Path,
+        header_path: &Path,
+        seed: u64,
+    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
+        let header_file = File::open(header_path)?;
+        let weight_loader = ParameterLoader::new_random(&header_file, &*self.context, seed)?;
+        self.build_language_model(model_path, &weight_loader, None)
+    }
+
+    fn build_language_model(
+        self: &Arc<Self>,
+        model_path: &Path,
+        weight_loader: &ParameterLoader<B>,
+        speculator_path: Option<&Path>,
+    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
+        let config: LanguageModelConfig =
+            serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
         let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
 
         let data_type = DataType::BF16;
@@ -92,7 +113,6 @@ impl<B: Backend> Engine<B> {
         );
 
         let speculator = speculator_path
-            .as_deref()
             .map(|speculator_path| DFlashTfmSpeculator::new(speculator_path, self.context.clone()))
             .transpose()?
             .flatten();

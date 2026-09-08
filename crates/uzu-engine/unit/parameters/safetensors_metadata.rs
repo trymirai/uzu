@@ -2,7 +2,10 @@ use std::fs::File;
 
 use uzu_engine_macros::uzu_test;
 
-use crate::{parameters::safetensors_metadata::read_metadata, tests::path::get_test_weights_path};
+use crate::{
+    parameters::{HeaderSummary, safetensors_metadata::read_metadata},
+    tests::path::get_test_weights_path,
+};
 
 #[uzu_test]
 #[ignore] // downloads the test model from the registry
@@ -11,4 +14,12 @@ fn test_metadata_loading() {
     let file = File::open(&path).expect("weights not found");
     let (_offset, metadata) = read_metadata(&file).expect("read metadata");
     assert!(!metadata.tensors.is_empty());
+}
+
+#[uzu_test]
+#[ignore] // downloads the test model from the registry
+fn test_header_summary() {
+    let summary = HeaderSummary::read(&get_test_weights_path()).expect("summarize header");
+    assert!(summary.tensor_count > 0);
+    assert!(summary.logical_payload_bytes > 0);
 }

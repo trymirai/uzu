@@ -15,6 +15,7 @@ pub mod data_type;
 
 pub mod engine;
 
+pub use parameters::HeaderSummary;
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 
 #[cfg(test)]
