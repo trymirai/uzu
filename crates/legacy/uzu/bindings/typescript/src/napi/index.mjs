@@ -8,7 +8,7 @@ export default cjs;
 export const DownloadPhaseDownloaded = cjs.DownloadPhaseDownloaded;
 export const DownloadPhaseDownloading = cjs.DownloadPhaseDownloading;
 export const DownloadPhaseError = cjs.DownloadPhaseError;
-export const DownloadPhaseLockedByOther = cjs.DownloadPhaseLockedByOther;
+export const DownloadPhaseLocked = cjs.DownloadPhaseLocked;
 export const DownloadPhaseNotDownloaded = cjs.DownloadPhaseNotDownloaded;
 export const DownloadPhasePaused = cjs.DownloadPhasePaused;
 export const DownloadState = cjs.DownloadState;

@@ -15,7 +15,7 @@ export declare class DownloadPhaseError {
   constructor(message: string)
 }
 
-export declare class DownloadPhaseLockedByOther {
+export declare class DownloadPhaseLocked {
   managerId: string
   constructor(managerId: string)
 }
@@ -48,7 +48,7 @@ export declare const enum DownloadManagerType {
 }
 
 export type DownloadPhase =
-  DownloadPhaseNotDownloaded | DownloadPhaseDownloading | DownloadPhasePaused | DownloadPhaseDownloaded | DownloadPhaseLockedByOther | DownloadPhaseError
+  DownloadPhaseNotDownloaded | DownloadPhaseDownloading | DownloadPhasePaused | DownloadPhaseDownloaded | DownloadPhaseLocked | DownloadPhaseError
 /**
  * A loaded chat backend instance (model weights, tokenizer, configuration).
  * Cloning is cheap and shares the underlying instance, so multiple [`ChatSession`]s

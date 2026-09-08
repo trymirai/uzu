@@ -687,7 +687,7 @@ public enum DownloadPhase: Equatable, Hashable, Codable {
     case downloading
     case paused
     case downloaded
-    case lockedByOther(managerId: String
+    case locked(managerId: String
     )
     case error(message: String
     )
@@ -720,7 +720,7 @@ public struct FfiConverterTypeDownloadPhase: FfiConverterRustBuffer {
         
         case 4: return .downloaded
         
-        case 5: return .lockedByOther(managerId: try FfiConverterString.read(from: &buf)
+        case 5: return .locked(managerId: try FfiConverterString.read(from: &buf)
         )
         
         case 6: return .error(message: try FfiConverterString.read(from: &buf)
@@ -750,7 +750,7 @@ public struct FfiConverterTypeDownloadPhase: FfiConverterRustBuffer {
             writeInt(&buf, Int32(4))
         
         
-        case let .lockedByOther(managerId):
+        case let .locked(managerId):
             writeInt(&buf, Int32(5))
             FfiConverterString.write(managerId, into: &buf)
             

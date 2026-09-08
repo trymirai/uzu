@@ -632,11 +632,11 @@ class DownloadPhase:
         def __new__(cls) -> DownloadPhase.Downloaded: ...
     
     @typing.final
-    class LockedByOther(DownloadPhase):
+    class Locked(DownloadPhase):
         __match_args__ = ("manager_id",)
         @property
         def manager_id(self) -> builtins.str: ...
-        def __new__(cls, manager_id: builtins.str) -> DownloadPhase.LockedByOther: ...
+        def __new__(cls, manager_id: builtins.str) -> DownloadPhase.Locked: ...
     
     @typing.final
     class Error(DownloadPhase):
