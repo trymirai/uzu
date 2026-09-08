@@ -5,7 +5,10 @@ use futures_util::StreamExt;
 use ratatui::widgets::ListState;
 use shoji::types::model::{Model, ModelIdentifier};
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
-use uzu::{engine::Engine, storage::DownloadState};
+use uzu::{
+    engine::Engine,
+    storage::{DownloadPhase, DownloadState},
+};
 
 use super::{events::AppEvent, models::ModelOrganizer, sections::Section};
 
@@ -190,15 +193,7 @@ impl App {
         if let Some(id) = model_id {
             let models_guard = self.models.lock().await;
             if let Some(model_with_state) = models_guard.get(&id) {
-                use uzu::storage::DownloadPhase::*;
-                match model_with_state.state.phase {
-                    Downloaded {} => {
-                        // Already installed; ignore download command
-                    },
-                    _ => {
-                        let _ = self.engine.downloader(&model_with_state.model).resume().await;
-                    },
-                }
+                let _ = self.engine.downloader(&model_with_state.model).resume().await;
             }
         }
     }
@@ -211,7 +206,9 @@ impl App {
 
         if let Some(id) = model_id {
             let models_guard = self.models.lock().await;
-            if let Some(model_with_state) = models_guard.get(&id) {
+            if let Some(model_with_state) = models_guard.get(&id)
+                && model_with_state.state.can_pause()
+            {
                 let _ = self.engine.downloader(&model_with_state.model).pause().await;
             }
         }
@@ -225,73 +222,41 @@ impl App {
 
         if let Some(id) = model_id {
             let models_guard = self.models.lock().await;
-            if let Some(model_with_state) = models_guard.get(&id) {
-                // Can delete from any section: Downloading, Paused, Downloaded, Installed
+            if let Some(model_with_state) = models_guard.get(&id)
+                && model_with_state.state.can_delete()
+            {
                 let _ = self.engine.downloader(&model_with_state.model).delete().await;
             }
         }
     }
 
-    /// Get helper text based on current section and selection
     pub fn get_helpers(
         &self,
         models: &HashMap<ModelIdentifier, ModelWithState>,
     ) -> Vec<String> {
-        let selected_model_id = self.get_selected_model_id(models);
-
-        match self.active_section {
-            Section::Available => {
-                if selected_model_id.is_some() {
-                    vec![
-                        "↑↓: Navigate".to_string(),
-                        "←→: Switch section".to_string(),
-                        "d/Enter: Download".to_string(),
-                        "q: Quit".to_string(),
-                    ]
-                } else {
-                    vec!["←→: Switch section".to_string(), "q: Quit".to_string()]
-                }
-            },
-            Section::Downloading => {
-                if let Some(_id) = &selected_model_id {
-                    // Check if model is paused
-                    // Note: This is a synchronous context, so we'll use a blocking approach
-                    // In a real scenario, this should be refactored to async
-                    let is_paused = false; // Simplified for now - models are dynamic
-
-                    if is_paused {
-                        vec![
-                            "↑↓: Navigate".to_string(),
-                            "←→: Switch section".to_string(),
-                            "d/Enter: Resume".to_string(),
-                            "x: Delete".to_string(),
-                            "q: Quit".to_string(),
-                        ]
-                    } else {
-                        vec![
-                            "↑↓: Navigate".to_string(),
-                            "←→: Switch section".to_string(),
-                            "p: Pause".to_string(),
-                            "x: Delete".to_string(),
-                            "q: Quit".to_string(),
-                        ]
-                    }
-                } else {
-                    vec!["←→: Switch section".to_string(), "q: Quit".to_string()]
-                }
-            },
-            Section::Installed => {
-                if selected_model_id.is_some() {
-                    vec![
-                        "↑↓: Navigate".to_string(),
-                        "←→: Switch section".to_string(),
-                        "x: Delete".to_string(),
-                        "q: Quit".to_string(),
-                    ]
-                } else {
-                    vec!["←→: Switch section".to_string(), "q: Quit".to_string()]
-                }
-            },
+        let mut helpers = vec!["←→: Switch section".to_string()];
+        if let Some(model_with_state) = self.get_selected_model_id(models).and_then(|id| models.get(&id)) {
+            helpers.insert(0, "↑↓: Navigate".to_string());
+            match &model_with_state.state.phase {
+                DownloadPhase::NotDownloaded {} => helpers.push("d/Enter: Download".to_string()),
+                DownloadPhase::Paused {}
+                | DownloadPhase::Error {
+                    ..
+                } => {
+                    helpers.push("d/Enter: Resume".to_string());
+                    helpers.push("x: Delete".to_string());
+                },
+                DownloadPhase::Downloading {} => {
+                    helpers.push("p: Pause".to_string());
+                    helpers.push("x: Delete".to_string());
+                },
+                DownloadPhase::Downloaded {} => helpers.push("x: Delete".to_string()),
+                DownloadPhase::Locked {
+                    manager_id,
+                } => helpers.push(format!("Locked by {manager_id}, waiting")),
+            }
         }
+        helpers.push("q: Quit".to_string());
+        helpers
     }
 }
