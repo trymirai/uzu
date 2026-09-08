@@ -7,8 +7,6 @@ use base64::Engine;
 use kiban::fs;
 use serde::{Deserialize, Serialize};
 
-use crate::crc_receipt::CrcReceipt;
-
 const READ_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,26 +40,6 @@ impl Crc32c {
             offset = end;
         }
         Ok(checksum == expected)
-    }
-
-    pub async fn cached_matches(
-        &self,
-        path: &Path,
-    ) -> bool {
-        matches!(
-            (CrcReceipt::load(path).await, CrcReceipt::for_file(path, self).await),
-            (Some(saved), Some(current)) if saved == current
-        )
-    }
-
-    pub async fn save_receipt(
-        &self,
-        path: &Path,
-    ) -> Result<(), IoError> {
-        let Some(receipt) = CrcReceipt::for_file(path, self).await else {
-            return Ok(());
-        };
-        fs::asyn::write(CrcReceipt::path_for(path), serde_json::to_vec(&receipt).map_err(IoError::other)?).await
     }
 
     fn decode(&self) -> Option<u32> {

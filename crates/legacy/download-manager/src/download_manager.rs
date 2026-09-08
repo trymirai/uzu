@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, Mutex, PoisonError},
 };
 
@@ -138,11 +138,7 @@ impl DownloadManager {
                     download_id: request.download_id(),
                     source_url: source_url.clone(),
                     destination: request.destination.clone(),
-                    resume_artifact_path: PathBuf::from(format!(
-                        "{}.{}",
-                        request.destination.display(),
-                        self.backend.resume_artifact_extension()
-                    )),
+                    resume_artifact_path: self.backend.resume_artifact_path(&request.destination),
                     expected_crc32c: expected_crc32c.clone(),
                     expected_bytes: *expected_bytes,
                     manager_id: self.manager_id.clone(),

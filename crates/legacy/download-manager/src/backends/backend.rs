@@ -1,5 +1,4 @@
 use std::{
-    io::ErrorKind,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -45,6 +44,13 @@ pub trait Backend: Send + Sync {
         events: BackendEventSender,
     ) -> Result<Option<Box<dyn ActiveTask>>, DownloadError>;
 
+    fn resume_artifact_path(
+        &self,
+        destination: &Path,
+    ) -> PathBuf {
+        PathBuf::from(format!("{}.{}", destination.display(), self.resume_artifact_extension()))
+    }
+
     async fn lock(
         &self,
         config: &DownloadConfig,
@@ -58,7 +64,7 @@ pub trait Backend: Send + Sync {
     ) -> Result<(Lifecycle, Option<DestinationLock>), DownloadError> {
         let untouched = !fs::asyn::is_file(&config.destination).await
             && !fs::asyn::is_file(&config.resume_artifact_path).await
-            && !fs::asyn::is_file(CrcReceipt::path_for(&config.destination)).await
+            && !CrcReceipt::exists(&config.destination).await
             && DestinationLock::foreign_owner(&config.destination, &config.manager_id, config.manager_instance_id)
                 .await
                 .is_none();
@@ -70,17 +76,10 @@ pub trait Backend: Send + Sync {
             Ok(lock) => lock,
             Err(LockError::LockedByOther {
                 manager_id,
-            }) => return Ok((self.observe(config, Some(manager_id)).await.0, None)),
+            }) => return Ok((self.observe(config, Some(manager_id)).await, None)),
             Err(error) => return Err(error.into()),
         };
-        let (lifecycle, cleanup) = self.observe(config, None).await;
-        for path in cleanup {
-            if let Err(error) = fs::asyn::remove_file(&path).await
-                && error.kind() != ErrorKind::NotFound
-            {
-                return Err(error.into());
-            }
-        }
+        let lifecycle = self.observe(config, None).await;
         let attach = pending_task && !matches!(lifecycle, Lifecycle::Downloaded { .. });
         Ok((lifecycle, attach.then_some(lock)))
     }
@@ -89,9 +88,7 @@ pub trait Backend: Send + Sync {
         &self,
         config: &DownloadConfig,
         foreign_owner: Option<String>,
-    ) -> (Lifecycle, Vec<PathBuf>) {
-        let receipt_path = CrcReceipt::path_for(&config.destination);
-        let receipt_exists = fs::asyn::is_file(&receipt_path).await;
+    ) -> Lifecycle {
         let resume_bytes = if fs::asyn::is_file(&config.resume_artifact_path).await {
             Some(self.read_resume_progress(&config.resume_artifact_path).await)
         } else {
@@ -102,23 +99,19 @@ pub trait Backend: Send + Sync {
         } else {
             None
         };
-        let mut cleanup = Vec::new();
         let downloaded = match destination_size {
-            Some(size) if self.verify(config, size).await.is_ok() => {
-                cleanup.extend(resume_bytes.map(|_| config.resume_artifact_path.clone()));
-                Some(size)
-            },
-            Some(_) => {
-                cleanup.push(config.destination.clone());
-                cleanup.extend(receipt_exists.then_some(receipt_path));
-                None
-            },
-            None => {
-                cleanup.extend(receipt_exists.then_some(receipt_path));
-                None
-            },
+            Some(size) if self.verify(config, size).await.is_ok() => Some(size),
+            _ => None,
         };
-        let lifecycle = match (downloaded, resume_bytes, foreign_owner) {
+        if foreign_owner.is_none() {
+            if downloaded.is_some() {
+                self.remove_resume_artifact(config).await;
+            } else {
+                let _ = fs::asyn::remove_file(&config.destination).await;
+                CrcReceipt::remove(&config.destination).await;
+            }
+        }
+        match (downloaded, resume_bytes, foreign_owner) {
             (Some(total_bytes), _, _) => Lifecycle::Downloaded {
                 total_bytes,
             },
@@ -130,8 +123,7 @@ pub trait Backend: Send + Sync {
                 downloaded_bytes,
             },
             (None, None, None) => Lifecycle::NotDownloaded,
-        };
-        (lifecycle, cleanup)
+        }
     }
 
     async fn verify_download(
@@ -156,12 +148,12 @@ pub trait Backend: Send + Sync {
         let Some(crc) = &config.expected_crc32c else {
             return Ok(());
         };
-        if crc.cached_matches(&config.destination).await {
+        if CrcReceipt::matches(&config.destination, crc).await {
             return Ok(());
         }
         match crc.verify(&config.destination).await {
             Ok(true) => {
-                let _ = crc.save_receipt(&config.destination).await;
+                let _ = CrcReceipt::save(&config.destination, crc).await;
                 Ok(())
             },
             Ok(false) => Err("CRC verification failed".to_string()),
@@ -180,8 +172,8 @@ pub trait Backend: Send + Sync {
         &self,
         config: &DownloadConfig,
     ) {
-        for path in [&config.resume_artifact_path, &config.destination, &CrcReceipt::path_for(&config.destination)] {
-            let _ = fs::asyn::remove_file(path).await;
-        }
+        self.remove_resume_artifact(config).await;
+        let _ = fs::asyn::remove_file(&config.destination).await;
+        CrcReceipt::remove(&config.destination).await;
     }
 }
