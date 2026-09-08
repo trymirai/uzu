@@ -2,7 +2,7 @@ use crate::{
     DownloadPhase, DownloadState, backends::ActiveTask, file_download::DownloadConfig, locks::DestinationLock,
 };
 
-pub enum Lifecycle {
+pub enum State {
     NotDownloaded,
     Paused {
         downloaded_bytes: u64,
@@ -25,7 +25,7 @@ pub enum Lifecycle {
     },
 }
 
-impl Lifecycle {
+impl State {
     pub fn download_state(
         &self,
         config: &DownloadConfig,

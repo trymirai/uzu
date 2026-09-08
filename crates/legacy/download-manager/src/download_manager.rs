@@ -144,20 +144,15 @@ impl DownloadManager {
                     manager_id: self.manager_id.clone(),
                     manager_instance_id: self.instance_id,
                 });
-                let (lifecycle, attach_lock) = self.backend.reconcile(&config).await?;
+                let (state, attach_lock) = self.backend.reconcile(&config).await?;
                 tracing::debug!(
                     download_id = %config.download_id,
-                    phase = ?lifecycle.download_state(&config).phase,
+                    phase = ?state.download_state(&config).phase,
                     "startup reconciled"
                 );
-                let task = FileDownloadActor::spawn(
-                    Arc::clone(&self.backend),
-                    request.clone(),
-                    config,
-                    lifecycle,
-                    attach_lock,
-                )
-                .await?;
+                let task =
+                    FileDownloadActor::spawn(Arc::clone(&self.backend), request.clone(), config, state, attach_lock)
+                        .await?;
                 Ok(DownloadTask::File(task))
             },
             DownloadTaskKind::Group(subrequests) => {

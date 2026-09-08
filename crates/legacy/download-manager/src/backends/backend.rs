@@ -8,7 +8,7 @@ use kiban::fs;
 use crate::{
     backends::{ActiveTask, BackendError, BackendEventSender, DownloadGeneration, VerifyError},
     crc_receipt::CrcReceipt,
-    file_download::{DownloadConfig, Lifecycle},
+    file_download::{DownloadConfig, State},
     locks::{DestinationLock, LockError},
 };
 
@@ -60,7 +60,7 @@ pub trait Backend: Send + Sync {
     async fn reconcile(
         &self,
         config: &DownloadConfig,
-    ) -> Result<(Lifecycle, Option<DestinationLock>), BackendError> {
+    ) -> Result<(State, Option<DestinationLock>), BackendError> {
         let untouched = !fs::asyn::is_file(&config.destination).await
             && !fs::asyn::is_file(&config.resume_artifact_path).await
             && !CrcReceipt::exists(&config.destination).await
@@ -69,7 +69,7 @@ pub trait Backend: Send + Sync {
                 .is_none();
         let pending_task = self.has_pending_task(config).await?;
         if untouched && !pending_task {
-            return Ok((Lifecycle::NotDownloaded, None));
+            return Ok((State::NotDownloaded, None));
         }
         let lock = match self.lock(config).await {
             Ok(lock) => lock,
@@ -78,16 +78,16 @@ pub trait Backend: Send + Sync {
             }) => return Ok((self.observe(config, Some(manager_id)).await, None)),
             Err(error) => return Err(error.into()),
         };
-        let lifecycle = self.observe(config, None).await;
-        let attach = pending_task && !matches!(lifecycle, Lifecycle::Downloaded { .. });
-        Ok((lifecycle, attach.then_some(lock)))
+        let state = self.observe(config, None).await;
+        let attach = pending_task && !matches!(state, State::Downloaded { .. });
+        Ok((state, attach.then_some(lock)))
     }
 
     async fn observe(
         &self,
         config: &DownloadConfig,
         foreign_owner: Option<String>,
-    ) -> Lifecycle {
+    ) -> State {
         let resume_bytes = if fs::asyn::is_file(&config.resume_artifact_path).await {
             Some(self.read_resume_progress(&config.resume_artifact_path).await)
         } else {
@@ -107,17 +107,17 @@ pub trait Backend: Send + Sync {
             }
         }
         match (downloaded, resume_bytes, foreign_owner) {
-            (Some(total_bytes), _, _) => Lifecycle::Downloaded {
+            (Some(total_bytes), _, _) => State::Downloaded {
                 total_bytes,
             },
-            (None, downloaded_bytes, Some(manager_id)) => Lifecycle::Locked {
+            (None, downloaded_bytes, Some(manager_id)) => State::Locked {
                 manager_id,
                 downloaded_bytes: downloaded_bytes.unwrap_or(0),
             },
-            (None, Some(downloaded_bytes), None) => Lifecycle::Paused {
+            (None, Some(downloaded_bytes), None) => State::Paused {
                 downloaded_bytes,
             },
-            (None, None, None) => Lifecycle::NotDownloaded,
+            (None, None, None) => State::NotDownloaded,
         }
     }
 

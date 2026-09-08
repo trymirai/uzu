@@ -10,7 +10,7 @@ use tokio::sync::{
 use crate::{
     DownloadState, DownloadTaskRequest,
     backends::{Backend, BackendEvent, BackendEventSender, BackendProgress, DownloadGeneration},
-    file_download::{Command, DownloadConfig, FileDownloadError, FileDownloadTask, Lifecycle},
+    file_download::{Command, DownloadConfig, FileDownloadError, FileDownloadTask, State},
     locks::{DestinationLock, LockError},
 };
 
@@ -19,14 +19,14 @@ const OBSERVE_INTERVAL: Duration = Duration::from_secs(1);
 pub struct FileDownloadActor {
     backend: Arc<dyn Backend>,
     config: Arc<DownloadConfig>,
-    lifecycle: Lifecycle,
+    state: State,
     generation: DownloadGeneration,
     wants_download: bool,
     events: BackendEventSender,
     commands: TokioMpscReceiver<(Command, TokioOneshotSender<Result<(), FileDownloadError>>)>,
     backend_events: TokioMpscReceiver<BackendEvent>,
     backend_progress: TokioWatchReceiver<Option<BackendProgress>>,
-    state: TokioWatchSender<DownloadState>,
+    published: TokioWatchSender<DownloadState>,
 }
 
 impl FileDownloadActor {
@@ -34,24 +34,24 @@ impl FileDownloadActor {
         backend: Arc<dyn Backend>,
         request: DownloadTaskRequest,
         config: Arc<DownloadConfig>,
-        lifecycle: Lifecycle,
+        state: State,
         attach_lock: Option<DestinationLock>,
     ) -> Result<FileDownloadTask, FileDownloadError> {
         let (command_sender, commands) = tokio_mpsc_channel(64);
         let (terminal_sender, backend_events) = tokio_mpsc_channel(64);
         let (progress_sender, backend_progress) = tokio_watch_channel(None);
-        let (state, state_receiver) = tokio_watch_channel(lifecycle.download_state(&config));
+        let (published, state_receiver) = tokio_watch_channel(state.download_state(&config));
         let mut actor = Self {
             backend,
             config: Arc::clone(&config),
-            lifecycle,
+            state,
             generation: DownloadGeneration::default(),
             wants_download: false,
             events: BackendEventSender::new(config.download_id, terminal_sender, progress_sender),
             commands,
             backend_events,
             backend_progress,
-            state,
+            published,
         };
         if let Some(lock) = attach_lock {
             actor.attach(lock).await?;
@@ -86,13 +86,13 @@ impl FileDownloadActor {
                     self.on_backend_progress();
                     self.publish();
                 },
-                _ = kiban::time::sleep(OBSERVE_INTERVAL), if matches!(self.lifecycle, Lifecycle::Locked { .. }) => {
+                _ = kiban::time::sleep(OBSERVE_INTERVAL), if matches!(self.state, State::Locked { .. }) => {
                     self.observe().await;
                     self.publish();
                 },
             }
         }
-        if self.lifecycle.is_downloading() {
+        if self.state.is_downloading() {
             let _ = self.pause().await;
             self.publish();
         }
@@ -100,21 +100,21 @@ impl FileDownloadActor {
 
     async fn download(&mut self) -> Result<(), FileDownloadError> {
         self.wants_download = true;
-        match self.lifecycle {
-            Lifecycle::NotDownloaded
-            | Lifecycle::Paused {
+        match self.state {
+            State::NotDownloaded
+            | State::Paused {
                 ..
             }
-            | Lifecycle::Failed {
+            | State::Failed {
                 ..
             } => self.start().await,
-            Lifecycle::Downloading {
+            State::Downloading {
                 ..
             }
-            | Lifecycle::Downloaded {
+            | State::Downloaded {
                 ..
             }
-            | Lifecycle::Locked {
+            | State::Locked {
                 ..
             } => Ok(()),
         }
@@ -132,7 +132,7 @@ impl FileDownloadActor {
         let downloaded_bytes = self.backend.read_resume_progress(&self.config.resume_artifact_path).await;
         match self.backend.start(Arc::clone(&self.config), generation, self.events.clone()).await {
             Ok(active_task) => {
-                self.lifecycle = Lifecycle::Downloading {
+                self.state = State::Downloading {
                     active_task,
                     lock,
                     downloaded_bytes,
@@ -149,8 +149,8 @@ impl FileDownloadActor {
 
     async fn pause(&mut self) -> Result<(), FileDownloadError> {
         self.wants_download = false;
-        match std::mem::replace(&mut self.lifecycle, Lifecycle::NotDownloaded) {
-            Lifecycle::Downloading {
+        match std::mem::replace(&mut self.state, State::NotDownloaded) {
+            State::Downloading {
                 active_task,
                 lock: _lock,
                 ..
@@ -161,14 +161,14 @@ impl FileDownloadActor {
                 if fs::asyn::is_file(&self.config.destination).await {
                     self.complete().await;
                 } else {
-                    self.lifecycle = Lifecycle::Paused {
+                    self.state = State::Paused {
                         downloaded_bytes: self.backend.read_resume_progress(&self.config.resume_artifact_path).await,
                     };
                 }
                 Ok(())
             },
             other => {
-                self.lifecycle = other;
+                self.state = other;
                 Ok(())
             },
         }
@@ -176,8 +176,8 @@ impl FileDownloadActor {
 
     async fn delete(&mut self) -> Result<(), FileDownloadError> {
         self.wants_download = false;
-        let lock = match std::mem::replace(&mut self.lifecycle, Lifecycle::NotDownloaded) {
-            Lifecycle::Downloading {
+        let lock = match std::mem::replace(&mut self.state, State::NotDownloaded) {
+            State::Downloading {
                 active_task,
                 lock,
                 ..
@@ -186,13 +186,13 @@ impl FileDownloadActor {
                 lock
             },
             other => {
-                self.lifecycle = other;
+                self.state = other;
                 self.lock().await?
             },
         };
         self.backend.remove_files(&self.config).await;
         lock.remove().await;
-        self.lifecycle = Lifecycle::NotDownloaded;
+        self.state = State::NotDownloaded;
         Ok(())
     }
 
@@ -203,7 +203,7 @@ impl FileDownloadActor {
                 manager_id,
             }) => {
                 let downloaded_bytes = self.backend.read_resume_progress(&self.config.resume_artifact_path).await;
-                self.lifecycle = Lifecycle::Locked {
+                self.state = State::Locked {
                     manager_id: manager_id.clone(),
                     downloaded_bytes,
                 };
@@ -224,7 +224,7 @@ impl FileDownloadActor {
         if let Some(active_task) =
             self.backend.attach_pending_task(Arc::clone(&self.config), generation, self.events.clone()).await?
         {
-            self.lifecycle = Lifecycle::Downloading {
+            self.state = State::Downloading {
                 active_task,
                 lock,
                 downloaded_bytes: 0,
@@ -235,16 +235,16 @@ impl FileDownloadActor {
     }
 
     async fn complete(&mut self) {
-        self.lifecycle = match self.backend.verify(&self.config).await {
+        self.state = match self.backend.verify(&self.config).await {
             Ok(total_bytes) => {
                 let _ = fs::asyn::remove_file(&self.config.resume_artifact_path).await;
-                Lifecycle::Downloaded {
+                State::Downloaded {
                     total_bytes,
                 }
             },
             Err(error) => {
                 self.backend.remove_files(&self.config).await;
-                Lifecycle::Failed {
+                State::Failed {
                     message: error.to_string(),
                 }
             },
@@ -255,14 +255,14 @@ impl FileDownloadActor {
         &mut self,
         event: BackendEvent,
     ) {
-        if event.generation() != self.generation || !self.lifecycle.is_downloading() {
+        if event.generation() != self.generation || !self.state.is_downloading() {
             return;
         }
-        let Lifecycle::Downloading {
+        let State::Downloading {
             active_task,
             lock: _lock,
             ..
-        } = std::mem::replace(&mut self.lifecycle, Lifecycle::NotDownloaded)
+        } = std::mem::replace(&mut self.state, State::NotDownloaded)
         else {
             return;
         };
@@ -276,7 +276,7 @@ impl FileDownloadActor {
             } => {
                 active_task.cancel().await;
                 let _ = fs::asyn::remove_file(&self.config.resume_artifact_path).await;
-                self.lifecycle = Lifecycle::Failed {
+                self.state = State::Failed {
                     message,
                 };
             },
@@ -288,11 +288,11 @@ impl FileDownloadActor {
             return;
         };
         if progress.generation == self.generation
-            && let Lifecycle::Downloading {
+            && let State::Downloading {
                 downloaded_bytes,
                 total_bytes,
                 ..
-            } = &mut self.lifecycle
+            } = &mut self.state
         {
             *downloaded_bytes = progress.downloaded_bytes;
             *total_bytes = progress.total_bytes;
@@ -301,15 +301,14 @@ impl FileDownloadActor {
 
     async fn observe(&mut self) {
         match self.backend.reconcile(&self.config).await {
-            Ok((lifecycle, lock)) => {
-                self.lifecycle = lifecycle;
+            Ok((state, lock)) => {
+                self.state = state;
                 if let Some(lock) = lock
                     && let Err(error) = self.attach(lock).await
                 {
                     self.fail(error);
                 }
-                if self.wants_download && matches!(self.lifecycle, Lifecycle::NotDownloaded | Lifecycle::Paused { .. })
-                {
+                if self.wants_download && matches!(self.state, State::NotDownloaded | State::Paused { .. }) {
                     let _ = self.start().await;
                 }
             },
@@ -323,15 +322,15 @@ impl FileDownloadActor {
         &mut self,
         error: FileDownloadError,
     ) -> FileDownloadError {
-        self.lifecycle = Lifecycle::Failed {
+        self.state = State::Failed {
             message: error.to_string(),
         };
         error
     }
 
     fn publish(&self) {
-        let next = self.lifecycle.download_state(&self.config);
-        self.state.send_if_modified(|current| {
+        let next = self.state.download_state(&self.config);
+        self.published.send_if_modified(|current| {
             if *current == next {
                 return false;
             }
