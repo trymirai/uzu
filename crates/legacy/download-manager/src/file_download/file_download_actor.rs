@@ -158,7 +158,7 @@ impl FileDownloadActor {
 
     async fn delete(&mut self) -> Result<(), FileDownloadError> {
         self.wants_download = false;
-        let lock = match self.active.take() {
+        let _lock = match self.active.take() {
             Some((task, lock)) => {
                 task.cancel().await;
                 lock
@@ -166,7 +166,6 @@ impl FileDownloadActor {
             None => self.lock().await?,
         };
         self.backend.remove_files(&self.config).await;
-        lock.remove().await;
         self.set(DownloadPhase::NotDownloaded {}, 0, None);
         Ok(())
     }

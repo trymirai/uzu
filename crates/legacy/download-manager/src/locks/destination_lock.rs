@@ -56,11 +56,13 @@ impl DestinationLock {
             })
     }
 
-    pub async fn remove(self) {
-        let _ = fs::asyn::remove_file(&self.path).await;
-    }
-
     fn path_for(destination: &Path) -> PathBuf {
         PathBuf::from(format!("{}.lock", destination.display()))
+    }
+}
+
+impl Drop for DestinationLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }
