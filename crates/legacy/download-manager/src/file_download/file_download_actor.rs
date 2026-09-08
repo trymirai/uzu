@@ -237,10 +237,10 @@ impl FileDownloadActor {
                     total_bytes,
                 }
             },
-            Err(message) => {
+            Err(error) => {
                 self.backend.remove_files(&self.config).await;
                 Lifecycle::Failed {
-                    message,
+                    message: error.to_string(),
                 }
             },
         };

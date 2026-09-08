@@ -7,7 +7,7 @@ use kiban::fs;
 
 use crate::{
     DownloadError,
-    backends::{ActiveTask, BackendEventSender, DownloadGeneration},
+    backends::{ActiveTask, BackendEventSender, DownloadGeneration, VerifyError},
     crc_receipt::CrcReceipt,
     file_download::{DownloadConfig, Lifecycle},
     locks::{DestinationLock, LockError},
@@ -125,27 +125,27 @@ pub trait Backend: Send + Sync {
     async fn verify(
         &self,
         config: &DownloadConfig,
-    ) -> Result<u64, String> {
-        let size = fs::asyn::file_length(&config.destination).await.map_err(|error| error.to_string())?;
-        if let Some(expected_bytes) = config.expected_bytes
-            && expected_bytes != size
+    ) -> Result<u64, VerifyError> {
+        let actual = fs::asyn::file_length(&config.destination).await?;
+        if let Some(expected) = config.expected_bytes
+            && expected != actual
         {
-            return Err(format!("downloaded file is {size} bytes but registry declared {expected_bytes}"));
+            return Err(VerifyError::Size {
+                expected,
+                actual,
+            });
         }
         let Some(crc) = &config.expected_crc32c else {
-            return Ok(size);
+            return Ok(actual);
         };
         if CrcReceipt::matches(&config.destination, crc).await {
-            return Ok(size);
+            return Ok(actual);
         }
-        match crc.verify(&config.destination).await {
-            Ok(true) => {
-                let _ = CrcReceipt::save(&config.destination, crc).await;
-                Ok(size)
-            },
-            Ok(false) => Err("CRC verification failed".to_string()),
-            Err(error) => Err(format!("CRC verification error: {error}")),
+        if !crc.verify(&config.destination).await? {
+            return Err(VerifyError::Crc);
         }
+        let _ = CrcReceipt::save(&config.destination, crc).await;
+        Ok(actual)
     }
 
     async fn remove_files(
