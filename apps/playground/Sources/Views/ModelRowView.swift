@@ -104,7 +104,7 @@ struct ModelRowView: View, Equatable {
             Text("error")
                 .font(statusFont)
                 .foregroundColor(.red)
-        case .locked:
+        case .lockedByOther:
             Text("locked")
                 .font(statusFont)
                 .foregroundColor(.red)
