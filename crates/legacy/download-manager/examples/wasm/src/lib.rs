@@ -83,7 +83,7 @@ async fn download_internal(
             DownloadPhase::Downloading {} => ("downloading", None),
             DownloadPhase::Paused {} => ("paused", None),
             DownloadPhase::Downloaded {} => ("downloaded", None),
-            DownloadPhase::LockedByOther {
+            DownloadPhase::Locked {
                 manager_id,
             } => ("locked", Some(manager_id.clone())),
             DownloadPhase::Error {

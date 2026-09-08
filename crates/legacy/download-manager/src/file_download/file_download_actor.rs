@@ -86,7 +86,7 @@ impl FileDownloadActor {
                     self.on_backend_progress();
                     self.publish();
                 },
-                _ = kiban::time::sleep(OBSERVE_INTERVAL), if matches!(self.lifecycle, Lifecycle::LockedByOther { .. }) => {
+                _ = kiban::time::sleep(OBSERVE_INTERVAL), if matches!(self.lifecycle, Lifecycle::Locked { .. }) => {
                     self.observe().await;
                     self.publish();
                 },
@@ -114,7 +114,7 @@ impl FileDownloadActor {
             | Lifecycle::Downloaded {
                 ..
             }
-            | Lifecycle::LockedByOther {
+            | Lifecycle::Locked {
                 ..
             } => Ok(()),
         }
@@ -201,7 +201,7 @@ impl FileDownloadActor {
                 manager_id,
             }) => {
                 let downloaded_bytes = self.backend.read_resume_progress(&self.config.resume_artifact_path).await;
-                self.lifecycle = Lifecycle::LockedByOther {
+                self.lifecycle = Lifecycle::Locked {
                     manager_id: manager_id.clone(),
                     downloaded_bytes,
                 };

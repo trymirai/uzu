@@ -119,7 +119,7 @@ impl DownloadConfig {
             (Some(total_bytes), _, _) => Lifecycle::Downloaded {
                 total_bytes,
             },
-            (None, downloaded_bytes, Some(manager_id)) => Lifecycle::LockedByOther {
+            (None, downloaded_bytes, Some(manager_id)) => Lifecycle::Locked {
                 manager_id,
                 downloaded_bytes: downloaded_bytes.unwrap_or(0),
             },

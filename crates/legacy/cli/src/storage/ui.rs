@@ -185,7 +185,7 @@ fn render_downloading_model(
     let (info, gauge_color, selected_border) = match &state.phase {
         DownloadPhase::Downloading {} => (format!(" {bytes_info}"), Color::Cyan, Color::Blue),
         DownloadPhase::Paused {} => (format!(" [PAUSED] {bytes_info}"), Color::Yellow, Color::Yellow),
-        DownloadPhase::LockedByOther {
+        DownloadPhase::Locked {
             manager_id,
         } => (format!(" [LOCKED BY {manager_id}] {bytes_info}"), Color::Yellow, Color::Yellow),
         DownloadPhase::Error {

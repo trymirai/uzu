@@ -191,7 +191,7 @@ async fn startup_reconciliation(
                 .build(),
         )
         .await?;
-    assert!(matches!(group.state().phase, DownloadPhase::LockedByOther { .. }));
+    assert!(matches!(group.state().phase, DownloadPhase::Locked { .. }));
     assert!(matches!(group.delete().await, Err(DownloadError::LockedByOther(_))));
     assert!(destination.exists());
     assert!(artifact_path(&destination, "crc").exists());
@@ -310,7 +310,7 @@ async fn shutdown_and_locks(
 
     let manager_b = manager(kind);
     let task_b = manager_b.download_task(request()).await?;
-    assert!(matches!(task_b.state().phase, DownloadPhase::LockedByOther { .. }));
+    assert!(matches!(task_b.state().phase, DownloadPhase::Locked { .. }));
     drop(task_b);
     drop(manager_b);
     assert_eq!(task_a.state().phase, DownloadPhase::Downloading {});

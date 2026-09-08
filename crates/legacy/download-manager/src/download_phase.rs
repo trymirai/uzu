@@ -7,7 +7,7 @@ pub enum DownloadPhase {
     Downloading {},
     Paused {},
     Downloaded {},
-    LockedByOther {
+    Locked {
         manager_id: String,
     },
     Error {
@@ -17,6 +17,6 @@ pub enum DownloadPhase {
 
 impl DownloadPhase {
     pub fn is_in_progress(&self) -> bool {
-        matches!(self, Self::Downloading {} | Self::LockedByOther { .. })
+        matches!(self, Self::Downloading {} | Self::Locked { .. })
     }
 }

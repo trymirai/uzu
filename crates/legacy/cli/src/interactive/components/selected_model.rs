@@ -121,7 +121,7 @@ pub fn SelectedModel(
                             },
                             DownloadPhase::Paused {}
                             | DownloadPhase::NotDownloaded {}
-                            | DownloadPhase::LockedByOther {
+                            | DownloadPhase::Locked {
                                 ..
                             }
                             | DownloadPhase::Error {

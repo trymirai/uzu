@@ -40,7 +40,7 @@ impl Section {
             DownloadPhase::Downloaded {} => Section::Installed,
             DownloadPhase::Downloading {}
             | DownloadPhase::Paused {}
-            | DownloadPhase::LockedByOther {
+            | DownloadPhase::Locked {
                 ..
             }
             | DownloadPhase::Error {

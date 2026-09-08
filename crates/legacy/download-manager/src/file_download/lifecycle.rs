@@ -16,7 +16,7 @@ pub enum Lifecycle {
     Downloaded {
         total_bytes: u64,
     },
-    LockedByOther {
+    Locked {
         manager_id: String,
         downloaded_bytes: u64,
     },
@@ -43,13 +43,13 @@ impl Lifecycle {
             Self::Downloaded {
                 total_bytes,
             } => (*total_bytes, Some(*total_bytes), DownloadPhase::Downloaded {}),
-            Self::LockedByOther {
+            Self::Locked {
                 manager_id,
                 downloaded_bytes,
             } => (
                 *downloaded_bytes,
                 None,
-                DownloadPhase::LockedByOther {
+                DownloadPhase::Locked {
                     manager_id: manager_id.clone(),
                 },
             ),
