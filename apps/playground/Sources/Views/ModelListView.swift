@@ -160,9 +160,9 @@ struct ModelListView: View {
     private var chooseBottomBar: some View {
         if let state = selectedModelState {
             switch state.phase {
-            case .notDownloaded, .paused, .locked:
+            case .notDownloaded, .paused:
                 downloadButton
-            case .downloading:
+            case .downloading, .locked:
                 waitingText
             case .error:
                 retryButton
@@ -197,10 +197,12 @@ struct ModelListView: View {
     private var manageBottomBar: some View {
         if let state = selectedModelState {
             switch state.phase {
-            case .notDownloaded, .error, .locked:
+            case .notDownloaded, .error:
                 downloadButton
             case .downloading:
                 pauseButton
+            case .locked:
+                waitingText
             case .paused:
                 resumeButton
             case .downloaded:
@@ -508,7 +510,7 @@ struct ModelListView: View {
         case .paused: return .paused
         case .notDownloaded: return .notInstalled
         case .error: return .notInstalled
-        case .locked: return .notInstalled
+        case .locked: return .installing
         }
     }
 
