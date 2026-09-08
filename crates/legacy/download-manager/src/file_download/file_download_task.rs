@@ -10,14 +10,14 @@ use tokio_stream::wrappers::WatchStream;
 
 use crate::{
     DownloadError, DownloadState, DownloadTaskRequest,
-    file_download::{Command, DownloadConfig},
+    file_download::{Command, DownloadConfig, FileDownloadError},
     locks::DestinationLock,
 };
 
 pub struct FileDownloadTask {
     pub request: DownloadTaskRequest,
     config: Arc<DownloadConfig>,
-    commands: TokioMpscSender<(Command, TokioOneshotSender<Result<(), DownloadError>>)>,
+    commands: TokioMpscSender<(Command, TokioOneshotSender<Result<(), FileDownloadError>>)>,
     state: TokioWatchReceiver<DownloadState>,
 }
 
@@ -25,7 +25,7 @@ impl FileDownloadTask {
     pub fn new(
         request: DownloadTaskRequest,
         config: Arc<DownloadConfig>,
-        commands: TokioMpscSender<(Command, TokioOneshotSender<Result<(), DownloadError>>)>,
+        commands: TokioMpscSender<(Command, TokioOneshotSender<Result<(), FileDownloadError>>)>,
         state: TokioWatchReceiver<DownloadState>,
     ) -> Self {
         Self {
@@ -49,15 +49,15 @@ impl FileDownloadTask {
     }
 
     pub async fn download(&self) -> Result<(), DownloadError> {
-        self.send(Command::Download).await
+        Ok(self.send(Command::Download).await?)
     }
 
     pub async fn pause(&self) -> Result<(), DownloadError> {
-        self.send(Command::Pause).await
+        Ok(self.send(Command::Pause).await?)
     }
 
     pub async fn delete(&self) -> Result<(), DownloadError> {
-        self.send(Command::Delete).await
+        Ok(self.send(Command::Delete).await?)
     }
 
     pub async fn foreign_owner(&self) -> Option<String> {
@@ -72,9 +72,9 @@ impl FileDownloadTask {
     async fn send(
         &self,
         command: Command,
-    ) -> Result<(), DownloadError> {
+    ) -> Result<(), FileDownloadError> {
         let (reply, response) = tokio_oneshot_channel();
-        self.commands.send((command, reply)).await.map_err(|_| DownloadError::ChannelClosed)?;
-        response.await.unwrap_or(Err(DownloadError::ChannelClosed))
+        self.commands.send((command, reply)).await.map_err(|_| FileDownloadError::ChannelClosed)?;
+        response.await.unwrap_or(Err(FileDownloadError::ChannelClosed))
     }
 }

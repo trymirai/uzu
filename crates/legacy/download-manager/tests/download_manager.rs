@@ -4,7 +4,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use download_manager::{
     DestinationLock, DownloadError, DownloadManager, DownloadManagerType, DownloadPhase, DownloadState, DownloadTask,
-    DownloadTaskRequest,
+    DownloadTaskRequest, LockError,
 };
 use kiban::rt::RuntimeHandle;
 use rstest::rstest;
@@ -192,7 +192,7 @@ async fn startup_reconciliation(
         )
         .await?;
     assert!(matches!(group.state().phase, DownloadPhase::Locked { .. }));
-    assert!(matches!(group.delete().await, Err(DownloadError::LockedByOther(_))));
+    assert!(matches!(group.delete().await, Err(DownloadError::Lock(LockError::LockedByOther { .. }))));
     assert!(destination.exists());
     assert!(artifact_path(&destination, "crc").exists());
     assert!(artifact.exists());

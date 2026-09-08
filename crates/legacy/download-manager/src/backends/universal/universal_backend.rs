@@ -4,9 +4,8 @@ use kiban::{fs, rt::RuntimeHandle};
 use tokio::sync::{oneshot::channel as tokio_oneshot_channel, watch::channel as tokio_watch_channel};
 
 use crate::{
-    DownloadError,
     backends::{
-        ActiveTask, Backend, BackendEventSender, DownloadGeneration,
+        ActiveTask, Backend, BackendError, BackendEventSender, DownloadGeneration,
         universal::{UniversalActiveTask, UniversalStream},
     },
     file_download::DownloadConfig,
@@ -40,7 +39,7 @@ impl Backend for UniversalBackend {
         config: Arc<DownloadConfig>,
         generation: DownloadGeneration,
         events: BackendEventSender,
-    ) -> Result<Box<dyn ActiveTask>, DownloadError> {
+    ) -> Result<Box<dyn ActiveTask>, BackendError> {
         if let Some(parent) = config.destination.parent() {
             fs::asyn::create_dir_all(parent).await?;
         }
@@ -61,7 +60,7 @@ impl Backend for UniversalBackend {
     async fn has_pending_task(
         &self,
         _config: &DownloadConfig,
-    ) -> Result<bool, DownloadError> {
+    ) -> Result<bool, BackendError> {
         Ok(false)
     }
 
@@ -70,7 +69,7 @@ impl Backend for UniversalBackend {
         _config: Arc<DownloadConfig>,
         _generation: DownloadGeneration,
         _events: BackendEventSender,
-    ) -> Result<Option<Box<dyn ActiveTask>>, DownloadError> {
+    ) -> Result<Option<Box<dyn ActiveTask>>, BackendError> {
         Ok(None)
     }
 }

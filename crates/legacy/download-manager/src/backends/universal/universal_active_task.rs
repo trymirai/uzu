@@ -3,7 +3,7 @@ use std::path::Path;
 use kiban::rt::TaskJoinHandle;
 use tokio::sync::{oneshot::Receiver as TokioOneshotReceiver, watch::Sender as TokioWatchSender};
 
-use crate::{DownloadError, backends::ActiveTask};
+use crate::backends::{ActiveTask, BackendError};
 
 pub struct UniversalActiveTask {
     task_handle: Box<dyn TaskJoinHandle<()>>,
@@ -31,7 +31,7 @@ impl ActiveTask for UniversalActiveTask {
     async fn pause(
         self: Box<Self>,
         _resume_artifact_path: &Path,
-    ) -> Result<(), DownloadError> {
+    ) -> Result<(), BackendError> {
         let _ = self.pause.send(true);
         let _ = self.completion.await;
         self.task_handle.abort_and_join().await;

@@ -6,7 +6,7 @@ use std::{
 };
 
 use download_manager::{
-    DownloadError, DownloadManager, DownloadManagerType, DownloadPhase, DownloadTask, DownloadTaskRequest,
+    DownloadManager, DownloadManagerType, DownloadPhase, DownloadTask, DownloadTaskRequest,
 };
 use kiban::{eprintf, printf, rt::RuntimeHandle};
 use tokio::sync::OnceCell;
@@ -109,7 +109,7 @@ async fn download_internal(
                 message,
             } => {
                 eprintf!("Error: {message}");
-                return Err(DownloadError::Backend(message).into());
+                return Err(message.into());
             },
             _ => {},
         }

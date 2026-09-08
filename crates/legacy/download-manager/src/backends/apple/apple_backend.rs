@@ -14,11 +14,11 @@ use objc2_foundation::{
 use tokio::sync::{OnceCell as TokioOnceCell, oneshot::channel as tokio_oneshot_channel};
 
 use crate::{
-    DownloadError,
     backends::{
-        ActiveTask, Backend, BackendEventSender, DownloadGeneration,
+        ActiveTask, Backend, BackendError, BackendEventSender, DownloadGeneration,
         apple::{
-            AppleActiveTask, AppleEventRegistry, AppleEventSink, AppleSessionDelegate, AppleTaskDescription, ResumeData,
+            AppleActiveTask, AppleBackendError, AppleEventRegistry, AppleEventSink, AppleSessionDelegate,
+            AppleTaskDescription, ResumeData,
         },
     },
     file_download::DownloadConfig,
@@ -74,7 +74,7 @@ impl AppleBackend {
         configuration
     }
 
-    async fn pending_tasks(&self) -> Result<&Mutex<Vec<Retained<NSURLSessionDownloadTask>>>, DownloadError> {
+    async fn pending_tasks(&self) -> Result<&Mutex<Vec<Retained<NSURLSessionDownloadTask>>>, BackendError> {
         self.pending_tasks
             .get_or_try_init(|| async {
                 let (tasks_sender, tasks_receiver) = tokio_oneshot_channel();
@@ -93,9 +93,7 @@ impl AppleBackend {
                         self.session.getTasksWithCompletionHandler(&handler);
                     }
                 }
-                let tasks = tasks_receiver.await.map_err(|error| {
-                    DownloadError::Backend(format!("URLSession task enumeration callback dropped: {error}"))
-                })?;
+                let tasks = tasks_receiver.await.map_err(AppleBackendError::CallbackDropped)?;
                 Ok(Mutex::new(tasks))
             })
             .await
@@ -142,11 +140,11 @@ impl Backend for AppleBackend {
         config: Arc<DownloadConfig>,
         generation: DownloadGeneration,
         events: BackendEventSender,
-    ) -> Result<Box<dyn ActiveTask>, DownloadError> {
+    ) -> Result<Box<dyn ActiveTask>, BackendError> {
         let resume_data = fs::asyn::read(&config.resume_artifact_path).await.unwrap_or_default();
         let task = if resume_data.is_empty() {
             let url = NSURL::URLWithString(&NSString::from_str(&config.source_url))
-                .ok_or_else(|| DownloadError::Backend(format!("invalid url: {}", config.source_url)))?;
+                .ok_or_else(|| AppleBackendError::InvalidUrl(config.source_url.clone()))?;
             self.session.downloadTaskWithURL(&url)
         } else {
             self.session.downloadTaskWithResumeData(&NSData::with_bytes(&resume_data))
@@ -164,7 +162,7 @@ impl Backend for AppleBackend {
     async fn has_pending_task(
         &self,
         config: &DownloadConfig,
-    ) -> Result<bool, DownloadError> {
+    ) -> Result<bool, BackendError> {
         let pending_tasks = self.pending_tasks().await?.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(pending_tasks.iter().any(|task| {
             Self::is_live(task)
@@ -178,7 +176,7 @@ impl Backend for AppleBackend {
         config: Arc<DownloadConfig>,
         generation: DownloadGeneration,
         events: BackendEventSender,
-    ) -> Result<Option<Box<dyn ActiveTask>>, DownloadError> {
+    ) -> Result<Option<Box<dyn ActiveTask>>, BackendError> {
         let candidates = {
             let mut pending_tasks = self.pending_tasks().await?.lock().unwrap_or_else(PoisonError::into_inner);
             let (candidates, rest): (Vec<_>, Vec<_>) =

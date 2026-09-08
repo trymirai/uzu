@@ -9,9 +9,9 @@ use objc2::rc::Retained;
 use objc2_foundation::{NSData, NSURLSessionDownloadTask};
 use tokio::sync::oneshot::channel as tokio_oneshot_channel;
 
-use crate::{
-    DownloadError,
-    backends::{ActiveTask, apple::AppleEventRegistry},
+use crate::backends::{
+    ActiveTask, BackendError,
+    apple::{AppleBackendError, AppleEventRegistry},
 };
 
 pub struct AppleActiveTask {
@@ -40,7 +40,7 @@ impl ActiveTask for AppleActiveTask {
     async fn pause(
         self: Box<Self>,
         resume_artifact_path: &Path,
-    ) -> Result<(), DownloadError> {
+    ) -> Result<(), BackendError> {
         self.unregister();
         let (sender, receiver) = tokio_oneshot_channel::<Vec<u8>>();
         {
@@ -54,8 +54,7 @@ impl ActiveTask for AppleActiveTask {
                 self.task.cancelByProducingResumeData(&handler);
             }
         }
-        let resume_data =
-            receiver.await.map_err(|error| DownloadError::Backend(format!("resume data callback dropped: {error}")))?;
+        let resume_data = receiver.await.map_err(AppleBackendError::CallbackDropped)?;
         fs::asyn::write(resume_artifact_path, resume_data).await?;
         Ok(())
     }

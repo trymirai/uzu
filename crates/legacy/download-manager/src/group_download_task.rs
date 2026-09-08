@@ -5,7 +5,10 @@ use std::sync::{
 
 use kiban::{rt, rt::TaskJoinHandle, stream::BoxStream};
 
-use crate::{DownloadError, DownloadPhase, DownloadState, DownloadTask, DownloadTaskRequest, children::Children};
+use crate::{
+    DownloadError, DownloadPhase, DownloadState, DownloadTask, DownloadTaskRequest, children::Children,
+    locks::LockError,
+};
 
 pub struct GroupDownloadTask {
     pub request: DownloadTaskRequest,
@@ -63,7 +66,10 @@ impl GroupDownloadTask {
     pub async fn delete(&self) -> Result<(), DownloadError> {
         self.abort_driver().await;
         if let Some(manager_id) = self.children.foreign_owner().await {
-            return Err(DownloadError::LockedByOther(manager_id));
+            return Err(LockError::LockedByOther {
+                manager_id,
+            }
+            .into());
         }
         self.children.delete_all().await
     }

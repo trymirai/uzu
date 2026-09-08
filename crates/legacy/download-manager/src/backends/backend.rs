@@ -6,8 +6,7 @@ use std::{
 use kiban::fs;
 
 use crate::{
-    DownloadError,
-    backends::{ActiveTask, BackendEventSender, DownloadGeneration, VerifyError},
+    backends::{ActiveTask, BackendError, BackendEventSender, DownloadGeneration, VerifyError},
     crc_receipt::CrcReceipt,
     file_download::{DownloadConfig, Lifecycle},
     locks::{DestinationLock, LockError},
@@ -25,7 +24,7 @@ pub trait Backend: Send + Sync {
         config: Arc<DownloadConfig>,
         generation: DownloadGeneration,
         events: BackendEventSender,
-    ) -> Result<Box<dyn ActiveTask>, DownloadError>;
+    ) -> Result<Box<dyn ActiveTask>, BackendError>;
 
     async fn read_resume_progress(
         &self,
@@ -35,14 +34,14 @@ pub trait Backend: Send + Sync {
     async fn has_pending_task(
         &self,
         config: &DownloadConfig,
-    ) -> Result<bool, DownloadError>;
+    ) -> Result<bool, BackendError>;
 
     async fn attach_pending_task(
         &self,
         config: Arc<DownloadConfig>,
         generation: DownloadGeneration,
         events: BackendEventSender,
-    ) -> Result<Option<Box<dyn ActiveTask>>, DownloadError>;
+    ) -> Result<Option<Box<dyn ActiveTask>>, BackendError>;
 
     fn resume_artifact_path(
         &self,
@@ -61,7 +60,7 @@ pub trait Backend: Send + Sync {
     async fn reconcile(
         &self,
         config: &DownloadConfig,
-    ) -> Result<(Lifecycle, Option<DestinationLock>), DownloadError> {
+    ) -> Result<(Lifecycle, Option<DestinationLock>), BackendError> {
         let untouched = !fs::asyn::is_file(&config.destination).await
             && !fs::asyn::is_file(&config.resume_artifact_path).await
             && !CrcReceipt::exists(&config.destination).await

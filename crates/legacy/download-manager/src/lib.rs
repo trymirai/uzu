@@ -19,6 +19,9 @@ mod file_download;
 mod group_download_task;
 mod locks;
 
+#[cfg(target_vendor = "apple")]
+pub use backends::AppleBackendError;
+pub use backends::BackendError;
 pub use crc32c::Crc32c;
 pub use download_error::DownloadError;
 pub use download_id::DownloadId;
@@ -29,6 +32,6 @@ pub use download_state::DownloadState;
 pub use download_task::DownloadTask;
 pub use download_task_kind::DownloadTaskKind;
 pub use download_task_request::DownloadTaskRequest;
-pub use file_download::FileDownloadTask;
+pub use file_download::{FileDownloadError, FileDownloadTask};
 pub use group_download_task::GroupDownloadTask;
 pub use locks::{DestinationLock, LockError, LockOwner};
