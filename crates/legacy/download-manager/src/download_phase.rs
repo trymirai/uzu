@@ -17,14 +17,6 @@ pub enum DownloadPhase {
 
 impl DownloadPhase {
     pub fn is_in_progress(&self) -> bool {
-        matches!(self, Self::Downloading {})
-    }
-
-    pub fn can_pause(&self) -> bool {
-        matches!(self, Self::Downloading {})
-    }
-
-    pub fn can_delete(&self) -> bool {
-        !matches!(self, Self::NotDownloaded {})
+        matches!(self, Self::Downloading {} | Self::LockedByOther { .. })
     }
 }

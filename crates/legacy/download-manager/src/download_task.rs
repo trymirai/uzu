@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio_stream::wrappers::BroadcastStream;
+use kiban::stream::BoxStream;
 
 use crate::{DownloadError, DownloadState, DownloadTaskRequest, FileDownloadTask, GroupDownloadTask};
 
@@ -31,7 +31,7 @@ impl DownloadTask {
         }
     }
 
-    pub fn progress(&self) -> BroadcastStream<DownloadState> {
+    pub fn progress(&self) -> BoxStream<'static, DownloadState> {
         match self {
             Self::File(file) => file.progress(),
             Self::Group(group) => group.progress(),
@@ -59,10 +59,10 @@ impl DownloadTask {
         }
     }
 
-    pub async fn foreign_lock(&self) -> Option<String> {
+    pub async fn foreign_owner(&self) -> Option<String> {
         match self {
-            Self::File(file) => file.foreign_lock().await,
-            Self::Group(group) => group.foreign_lock().await,
+            Self::File(file) => file.foreign_owner().await,
+            Self::Group(group) => group.foreign_owner().await,
         }
     }
 }

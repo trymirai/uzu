@@ -1,13 +1,9 @@
-#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
+use crate::locks::LockError;
+
+#[derive(Debug, thiserror::Error)]
 pub enum DownloadError {
-    #[error("io error: {0}")]
-    Io(String),
-    #[error("json error: {0}")]
-    SerdeJson(String),
-    #[error("mutex poisoned")]
-    MutexPoisoned,
-    #[error("invalid state transition")]
-    InvalidStateTransition,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
     #[error("file locked by another manager: {0}")]
     LockedByOther(String),
     #[error("conflicting download config for destination: {0}")]
@@ -18,14 +14,13 @@ pub enum DownloadError {
     Backend(String),
 }
 
-impl From<std::io::Error> for DownloadError {
-    fn from(error: std::io::Error) -> Self {
-        Self::Io(error.to_string())
-    }
-}
-
-impl From<serde_json::Error> for DownloadError {
-    fn from(error: serde_json::Error) -> Self {
-        Self::SerdeJson(error.to_string())
+impl From<LockError> for DownloadError {
+    fn from(error: LockError) -> Self {
+        match error {
+            LockError::LockedByOther {
+                manager_id,
+            } => Self::LockedByOther(manager_id),
+            LockError::Io(error) => Self::Io(error),
+        }
     }
 }

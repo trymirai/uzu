@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use kiban::rt::RuntimeHandle;
 
-use crate::backends::common::{ActiveDownloadGeneration, BackendEventSender};
+use crate::backends::{BackendEventSender, DownloadGeneration};
 
 #[derive(Clone, Debug)]
 pub struct AppleEventSink {
-    pub generation: ActiveDownloadGeneration,
+    pub generation: DownloadGeneration,
     pub destination: PathBuf,
-    pub backend_event_sender: BackendEventSender,
+    pub events: BackendEventSender,
     pub runtime_handle: RuntimeHandle,
 }

@@ -38,12 +38,12 @@ impl DownloadState {
 
     #[bindings::export(Method(Getter))]
     pub fn can_pause(&self) -> bool {
-        self.phase.can_pause()
+        matches!(self.phase, DownloadPhase::Downloading {})
     }
 
     #[bindings::export(Method(Getter))]
     pub fn can_delete(&self) -> bool {
-        self.phase.can_delete()
+        !matches!(self.phase, DownloadPhase::NotDownloaded {} | DownloadPhase::LockedByOther { .. })
     }
 
     #[bindings::export(Method(Getter))]

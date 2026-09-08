@@ -3,6 +3,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::backends::apple::{AppleEventSink, AppleSinkKey};
+use objc2_foundation::NSUInteger;
 
-pub type AppleEventRegistry = Arc<Mutex<HashMap<AppleSinkKey, AppleEventSink>>>;
+use crate::backends::apple::AppleEventSink;
+
+pub type AppleEventRegistry = Arc<Mutex<HashMap<NSUInteger, AppleEventSink>>>;

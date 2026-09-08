@@ -1,24 +1,22 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::Path, time::Duration};
 
-use chrono::Utc;
-use download_manager::{DownloadState, DownloadTask, DownloadTaskRequest, FileCheck};
-use mock_registry::MockRegistry;
+use download_manager::{DestinationLock, DownloadState, DownloadTask, DownloadTaskRequest};
+use kiban::stream::BoxStream;
+use mock_registry::{MockRegistry, artifact_path};
 use tokio::time::timeout;
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use tokio_stream::StreamExt;
+use uuid::Uuid;
 
 pub fn file_request(
     source_url: &str,
     destination: &Path,
-    file_check: FileCheck,
+    expected_crc32c: Option<String>,
     expected_bytes: Option<u64>,
 ) -> DownloadTaskRequest {
     DownloadTaskRequest::file()
         .destination(destination)
         .source_url(source_url)
-        .file_check(file_check)
+        .maybe_expected_crc32c(expected_crc32c)
         .maybe_expected_bytes(expected_bytes)
         .build()
 }
@@ -33,7 +31,7 @@ pub fn model_request(
             DownloadTaskRequest::file()
                 .destination(&served.file.name)
                 .source_url(&served.file.url)
-                .file_check(FileCheck::CRC(served.crc32c()?))
+                .expected_crc32c(served.crc32c()?)
                 .expected_bytes(served.file.size as u64)
                 .build(),
         );
@@ -43,7 +41,7 @@ pub fn model_request(
 
 pub async fn wait_for_state(
     task: &DownloadTask,
-    progress: &mut BroadcastStream<DownloadState>,
+    progress: &mut BoxStream<'static, DownloadState>,
     mut is_expected: impl FnMut(&DownloadState) -> bool,
 ) -> DownloadState {
     timeout(Duration::from_secs(30), async {
@@ -51,8 +49,7 @@ pub async fn wait_for_state(
         if is_expected(&state) {
             return state;
         }
-        while let Some(result) = progress.next().await {
-            let state = result.unwrap_or_else(|_| task.state());
+        while let Some(state) = progress.next().await {
             if is_expected(&state) {
                 return state;
             }
@@ -63,19 +60,8 @@ pub async fn wait_for_state(
     .expect("timed out waiting for download state")
 }
 
-pub fn crc_path(destination: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.crc", destination.display()))
-}
-
-pub fn lock_path(destination: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.lock", destination.display()))
-}
-
-pub fn foreign_lock() -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({
-        "manager_id": "foreign-manager",
-        "acquired_at": Utc::now(),
-        "process_id": std::process::id(),
-    }))
-    .expect("lock json")
+pub async fn foreign_lock(destination: &Path) -> DestinationLock {
+    DestinationLock::acquire(&artifact_path(destination, "lock"), "foreign-manager", Uuid::new_v4())
+        .await
+        .expect("foreign lock")
 }

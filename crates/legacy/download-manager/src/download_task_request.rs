@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bon::bon;
+use uuid::Uuid;
 
-use crate::{DownloadId, DownloadTaskKind, FileCheck, compute_download_id};
+use crate::{Crc32c, DownloadId, DownloadTaskKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DownloadTaskRequest {
@@ -16,14 +17,14 @@ impl DownloadTaskRequest {
     pub fn file(
         #[builder(into)] destination: PathBuf,
         #[builder(into)] source_url: String,
-        #[builder(default)] file_check: FileCheck,
+        #[builder(into)] expected_crc32c: Option<Crc32c>,
         expected_bytes: Option<u64>,
     ) -> Self {
         Self {
             destination,
             kind: DownloadTaskKind::File {
                 source_url,
-                file_check,
+                expected_crc32c,
                 expected_bytes,
             },
         }
@@ -39,10 +40,25 @@ impl DownloadTaskRequest {
             kind: DownloadTaskKind::Group(subrequests),
         }
     }
-}
 
-impl DownloadTaskRequest {
     pub fn download_id(&self) -> DownloadId {
-        compute_download_id(&self.destination)
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, self.destination.to_string_lossy().as_bytes())
+    }
+
+    pub fn resolved(
+        self,
+        parent: &Path,
+    ) -> Self {
+        let destination = parent.join(&self.destination);
+        let kind = match self.kind {
+            DownloadTaskKind::Group(subrequests) => DownloadTaskKind::Group(
+                subrequests.into_iter().map(|subrequest| subrequest.resolved(&destination)).collect(),
+            ),
+            kind => kind,
+        };
+        Self {
+            destination,
+            kind,
+        }
     }
 }

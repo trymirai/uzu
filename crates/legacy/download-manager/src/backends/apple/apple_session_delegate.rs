@@ -1,18 +1,17 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::PoisonError};
 
 use objc2::{
     ClassType, DefinedClass, define_class, msg_send,
     rc::{Allocated, Retained},
-    runtime::ProtocolObject,
 };
 use objc2_foundation::{
     NSError, NSObject, NSObjectProtocol, NSURL, NSURLSession, NSURLSessionDelegate, NSURLSessionDownloadDelegate,
     NSURLSessionDownloadTask, NSURLSessionTask, NSURLSessionTaskDelegate,
 };
 
-use crate::{
-    backends::apple::{AppleEventRegistry, AppleSessionDelegateIvars, AppleSinkKey, task_ext::AppleDownloadTaskExt},
-    file_download_task_actor::BackendEvent,
+use crate::backends::{
+    BackendEvent,
+    apple::{AppleEventRegistry, AppleSessionDelegateIvars},
 };
 
 define_class!(
@@ -23,15 +22,7 @@ define_class!(
 
     unsafe impl NSObjectProtocol for AppleSessionDelegate {}
 
-    unsafe impl NSURLSessionDelegate for AppleSessionDelegate {
-        #[unsafe(method(URLSession:didBecomeInvalidWithError:))]
-        fn did_become_invalid_with_error(
-            &self,
-            _session: &NSURLSession,
-            _error: Option<&NSError>,
-        ) {
-        }
-    }
+    unsafe impl NSURLSessionDelegate for AppleSessionDelegate {}
 
     unsafe impl NSURLSessionTaskDelegate for AppleSessionDelegate {
         #[unsafe(method(URLSession:task:didCompleteWithError:))]
@@ -41,24 +32,25 @@ define_class!(
             task: &NSURLSessionTask,
             error: Option<&NSError>,
         ) {
-            let Some(download_task) = task.downcast_ref::<NSURLSessionDownloadTask>() else {
-                return;
-            };
             let Some(error) = error else {
                 return;
             };
-            let Some(download_id) = download_task.download_id() else {
-                return;
-            };
-            let key: AppleSinkKey = (download_id, download_task.task_identifier());
-            let Some(sink) =
-                Self::ivars(self).event_registry.lock().ok().and_then(|mut registry| registry.remove(&key))
+            let Some(sink) = Self::ivars(self)
+                .event_registry
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&task.taskIdentifier())
             else {
                 return;
             };
             let message = error.localizedDescription().to_string();
             sink.runtime_handle.clone().spawn(async move {
-                let _ = sink.backend_event_sender.send_terminal(BackendEvent::error(sink.generation, message)).await;
+                sink.events
+                    .send_terminal(BackendEvent::Error {
+                        generation: sink.generation,
+                        message,
+                    })
+                    .await;
             });
         }
     }
@@ -71,34 +63,36 @@ define_class!(
             download_task: &NSURLSessionDownloadTask,
             location: &NSURL,
         ) {
-            let Some(download_id) = download_task.download_id() else {
-                return;
-            };
-            let key: AppleSinkKey = (download_id, download_task.task_identifier());
-            let Some(sink) =
-                Self::ivars(self).event_registry.lock().ok().and_then(|mut registry| registry.remove(&key))
+            let Some(sink) = Self::ivars(self)
+                .event_registry
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&download_task.taskIdentifier())
             else {
                 return;
             };
             let Some(temporary_path) = location.path().map(|path| PathBuf::from(path.to_string())) else {
                 return;
             };
-
             if let Some(parent) = sink.destination.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let move_result = std::fs::rename(&temporary_path, &sink.destination).or_else(|_| {
+            let moved = std::fs::rename(&temporary_path, &sink.destination).or_else(|_| {
                 std::fs::copy(&temporary_path, &sink.destination)?;
                 let _ = std::fs::remove_file(&temporary_path);
                 Ok::<(), std::io::Error>(())
             });
-
-            let terminal_event = match move_result {
-                Ok(()) => BackendEvent::completed(sink.generation),
-                Err(error) => BackendEvent::error(sink.generation, format!("move into destination failed: {error}")),
+            let event = match moved {
+                Ok(()) => BackendEvent::Completed {
+                    generation: sink.generation,
+                },
+                Err(error) => BackendEvent::Error {
+                    generation: sink.generation,
+                    message: format!("move into destination failed: {error}"),
+                },
             };
             sink.runtime_handle.clone().spawn(async move {
-                let _ = sink.backend_event_sender.send_terminal(terminal_event).await;
+                sink.events.send_terminal(event).await;
             });
         }
 
@@ -111,21 +105,18 @@ define_class!(
             cumulative_bytes_written: i64,
             total_expected_bytes_to_write: i64,
         ) {
-            let Some(download_id) = download_task.download_id() else {
-                return;
-            };
-            let key: AppleSinkKey = (download_id, download_task.task_identifier());
-            let Some(sink) =
-                Self::ivars(self).event_registry.lock().ok().and_then(|registry| registry.get(&key).cloned())
+            let Some(sink) = Self::ivars(self)
+                .event_registry
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&download_task.taskIdentifier())
+                .cloned()
             else {
                 return;
             };
             let downloaded_bytes = cumulative_bytes_written.max(0) as u64;
             let total_bytes = (total_expected_bytes_to_write > 0).then_some(total_expected_bytes_to_write as u64);
-
-            sink.runtime_handle.clone().spawn(async move {
-                sink.backend_event_sender.send_progress(sink.generation, downloaded_bytes, total_bytes).await;
-            });
+            sink.events.send_progress(sink.generation, downloaded_bytes, total_bytes);
         }
     }
 );
@@ -139,9 +130,5 @@ impl AppleSessionDelegate {
             });
             msg_send![super(allocated_with_ivars), init]
         }
-    }
-
-    pub fn protocol_object(delegate: Retained<Self>) -> Retained<ProtocolObject<dyn NSURLSessionDelegate>> {
-        ProtocolObject::<dyn NSURLSessionDelegate>::from_retained(delegate)
     }
 }
