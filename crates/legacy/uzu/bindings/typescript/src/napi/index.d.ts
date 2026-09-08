@@ -957,7 +957,7 @@ export declare class Engine {
   get modelFamilies(): Promise<Array<ModelFamily>>
   modelsByFamily(familyIdentifier: string): Promise<Array<Model>>
   model(identifier: string): Promise<Model | null>
-  modelByIdentifier(identifier: string): Promise<Model | null>
+  modelByIdentifier(identifier: ModelIdentifier): Promise<Model | null>
   modelByRepoId(repoId: string): Promise<Model | null>
   modelByPath(path: string): Promise<Model | null>
   modelPath(model: Model): Promise<string | null>
@@ -1034,7 +1034,6 @@ export type EngineError =
   | { type: 'Registry', field0: RegistryError }
   | { type: 'UnableToCreateBackend' }
   | { type: 'BackendNotFound' }
-  | { type: 'UnableToGetDownloaderProgressStream' }
   | { type: 'ChatSession', field0: ChatSessionError }
   | { type: 'ClassificationSession', field0: ClassificationSessionError }
   | { type: 'TextToSpeechSession', field0: TextToSpeechSessionError }
@@ -1060,6 +1059,6 @@ export type SettingsError =
 export type StorageError =
   | { type: 'UnableToCreateDirectory', path: string }
   | { type: 'DownloadManager', message: string }
-  | { type: 'HashNotFound', identifier: string, name: string }
-  | { type: 'ItemNotFound', identifier: string }
-  | { type: 'UnsupportedItem', identifier: string }
+  | { type: 'HashNotFound', identifier: ModelIdentifier, name: string }
+  | { type: 'ModelNotFound', identifier: ModelIdentifier }
+  | { type: 'UnsupportedModel', identifier: ModelIdentifier }

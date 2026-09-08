@@ -514,7 +514,7 @@ fileprivate struct FfiConverterString: FfiConverter {
 }
 
 
-public struct DownloadState: Equatable, Hashable {
+public struct DownloadState: Equatable, Hashable, Codable {
     public var totalBytes: Int64
     public var downloadedBytes: Int64
     public var phase: DownloadPhase
@@ -614,7 +614,7 @@ public func FfiConverterTypeDownloadState_lower(_ value: DownloadState) -> RustB
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
-public enum DownloadManagerType: Equatable, Hashable {
+public enum DownloadManagerType: Equatable, Hashable, Codable {
     
     case native
     case universal
@@ -681,7 +681,7 @@ public func FfiConverterTypeDownloadManagerType_lower(_ value: DownloadManagerTy
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
-public enum DownloadPhase: Equatable, Hashable {
+public enum DownloadPhase: Equatable, Hashable, Codable {
     
     case notDownloaded
     case downloading

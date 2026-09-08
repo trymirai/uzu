@@ -2296,7 +2296,6 @@ public enum EngineError: Swift.Error, Equatable, Hashable, Codable, Foundation.L
     )
     case UnableToCreateBackend
     case BackendNotFound
-    case UnableToGetDownloaderProgressStream
     case ChatSession(ChatSessionError
     )
     case ClassificationSession(ClassificationSessionError
@@ -2350,17 +2349,16 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
             )
         case 6: return .UnableToCreateBackend
         case 7: return .BackendNotFound
-        case 8: return .UnableToGetDownloaderProgressStream
-        case 9: return .ChatSession(
+        case 8: return .ChatSession(
             try FfiConverterTypeChatSessionError.read(from: &buf)
             )
-        case 10: return .ClassificationSession(
+        case 9: return .ClassificationSession(
             try FfiConverterTypeClassificationSessionError.read(from: &buf)
             )
-        case 11: return .TextToSpeechSession(
+        case 10: return .TextToSpeechSession(
             try FfiConverterTypeTextToSpeechSessionError.read(from: &buf)
             )
-        case 12: return .SettingsNotAvailable
+        case 11: return .SettingsNotAvailable
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -2406,27 +2404,23 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(7))
         
         
-        case .UnableToGetDownloaderProgressStream:
-            writeInt(&buf, Int32(8))
-        
-        
         case let .ChatSession(v1):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(8))
             FfiConverterTypeChatSessionError.write(v1, into: &buf)
             
         
         case let .ClassificationSession(v1):
-            writeInt(&buf, Int32(10))
+            writeInt(&buf, Int32(9))
             FfiConverterTypeClassificationSessionError.write(v1, into: &buf)
             
         
         case let .TextToSpeechSession(v1):
-            writeInt(&buf, Int32(11))
+            writeInt(&buf, Int32(10))
             FfiConverterTypeTextToSpeechSessionError.write(v1, into: &buf)
             
         
         case .SettingsNotAvailable:
-            writeInt(&buf, Int32(12))
+            writeInt(&buf, Int32(11))
         
         }
     }
@@ -2777,9 +2771,9 @@ public enum StorageError: Swift.Error, Equatable, Hashable, Codable, Foundation.
     )
     case HashNotFound(identifier: String, name: String
     )
-    case ItemNotFound(identifier: String
+    case ModelNotFound(identifier: String
     )
-    case UnsupportedItem(identifier: String
+    case UnsupportedModel(identifier: String
     )
 
     
@@ -2820,10 +2814,10 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
             identifier: try FfiConverterString.read(from: &buf), 
             name: try FfiConverterString.read(from: &buf)
             )
-        case 4: return .ItemNotFound(
+        case 4: return .ModelNotFound(
             identifier: try FfiConverterString.read(from: &buf)
             )
-        case 5: return .UnsupportedItem(
+        case 5: return .UnsupportedModel(
             identifier: try FfiConverterString.read(from: &buf)
             )
 
@@ -2854,12 +2848,12 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
             FfiConverterString.write(name, into: &buf)
             
         
-        case let .ItemNotFound(identifier):
+        case let .ModelNotFound(identifier):
             writeInt(&buf, Int32(4))
             FfiConverterString.write(identifier, into: &buf)
             
         
-        case let .UnsupportedItem(identifier):
+        case let .UnsupportedModel(identifier):
             writeInt(&buf, Int32(5))
             FfiConverterString.write(identifier, into: &buf)
             
@@ -3329,7 +3323,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_uzu_checksum_method_engine_classification() != 6465) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uzu_checksum_method_engine_download() != 25329) {
+    if (uniffi_uzu_checksum_method_engine_download() != 31558) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_download_state() != 36334) {
@@ -3419,7 +3413,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_uzu_checksum_method_downloader_pause() != 36380) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uzu_checksum_method_downloader_progress() != 21048) {
+    if (uniffi_uzu_checksum_method_downloader_progress() != 28865) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_downloader_resume() != 13815) {
@@ -3428,7 +3422,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_uzu_checksum_method_downloader_state() != 51713) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uzu_checksum_method_downloaderstream_next() != 5059) {
+    if (uniffi_uzu_checksum_method_downloaderstream_next() != 51573) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_player_append_pcm_batch() != 29421) {

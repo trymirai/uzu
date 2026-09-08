@@ -5,6 +5,7 @@ import builtins
 import collections.abc
 import enum
 import typing
+from typing import TypeAlias
 from uzu._tool import UzuToolFunction, uzu_tool_function
 __all__ = [
     "CancelToken",
@@ -58,6 +59,7 @@ __all__ = [
     "ModelAccessibility",
     "ModelBackend",
     "ModelFamily",
+    "ModelIdentifier",
     "ModelProperties",
     "ModelQuantization",
     "ModelReference",
@@ -91,6 +93,7 @@ __all__ = [
     "uzu_tool_function",
 ]
 
+ModelIdentifier: TypeAlias = builtins.str
 @typing.final
 class CancelToken:
     @property
