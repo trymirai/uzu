@@ -94,10 +94,16 @@ impl Content {
                     }
                 }
 
-                let reasoning = reasoning_parts.concat().trim().to_string();
+                // Keep reasoning byte-for-byte: Muse-Glimmer emits significant trailing whitespace
+                // that its template does not restore when the message is rendered again.
+                let reasoning = reasoning_parts.concat();
+
+                // Text sections may include separators owned by the template rather than the reply
+                // (for example Qwen's newlines around <think>), so keep them out of visible content.
                 let text = text_parts.concat().trim().to_string();
+
                 let mut blocks = Vec::new();
-                if !reasoning.is_empty() {
+                if !reasoning.trim().is_empty() {
                     blocks.push(ChatContentBlock::Reasoning {
                         value: reasoning,
                     });
@@ -142,3 +148,7 @@ fn tool_call_result_parts(value: Value) -> (Option<String>, Value) {
         other => (None, other),
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../../unit/chat/hanashi/messages/streamed/content.rs"]
+mod tests;
