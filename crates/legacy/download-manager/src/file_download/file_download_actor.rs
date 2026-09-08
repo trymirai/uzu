@@ -230,7 +230,7 @@ impl FileDownloadActor {
     }
 
     async fn complete(&mut self) {
-        self.lifecycle = match self.backend.verify_download(&self.config).await {
+        self.lifecycle = match self.backend.verify(&self.config).await {
             Ok(total_bytes) => {
                 self.backend.remove_resume_artifact(&self.config).await;
                 Lifecycle::Downloaded {

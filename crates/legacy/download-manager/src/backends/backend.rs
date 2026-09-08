@@ -94,14 +94,10 @@ pub trait Backend: Send + Sync {
         } else {
             None
         };
-        let destination_size = if fs::asyn::is_file(&config.destination).await {
-            fs::asyn::file_length(&config.destination).await.ok()
+        let downloaded = if fs::asyn::is_file(&config.destination).await {
+            self.verify(config).await.ok()
         } else {
             None
-        };
-        let downloaded = match destination_size {
-            Some(size) if self.verify(config, size).await.is_ok() => Some(size),
-            _ => None,
         };
         if foreign_owner.is_none() {
             if downloaded.is_some() {
@@ -126,35 +122,26 @@ pub trait Backend: Send + Sync {
         }
     }
 
-    async fn verify_download(
+    async fn verify(
         &self,
         config: &DownloadConfig,
     ) -> Result<u64, String> {
         let size = fs::asyn::file_length(&config.destination).await.map_err(|error| error.to_string())?;
-        self.verify(config, size).await?;
-        Ok(size)
-    }
-
-    async fn verify(
-        &self,
-        config: &DownloadConfig,
-        size: u64,
-    ) -> Result<(), String> {
         if let Some(expected_bytes) = config.expected_bytes
             && expected_bytes != size
         {
             return Err(format!("downloaded file is {size} bytes but registry declared {expected_bytes}"));
         }
         let Some(crc) = &config.expected_crc32c else {
-            return Ok(());
+            return Ok(size);
         };
         if CrcReceipt::matches(&config.destination, crc).await {
-            return Ok(());
+            return Ok(size);
         }
         match crc.verify(&config.destination).await {
             Ok(true) => {
                 let _ = CrcReceipt::save(&config.destination, crc).await;
-                Ok(())
+                Ok(size)
             },
             Ok(false) => Err("CRC verification failed".to_string()),
             Err(error) => Err(format!("CRC verification error: {error}")),
