@@ -1811,17 +1811,14 @@ dependencies = [
  "bindings-types",
  "block2",
  "bon",
- "chrono",
  "crc32c",
  "futures-util",
  "inventory",
  "kiban",
- "libc",
  "mock-registry",
  "napi",
  "napi-build",
  "napi-derive",
- "objc-sys",
  "objc2",
  "objc2-foundation",
  "pyo3",
@@ -1843,7 +1840,6 @@ dependencies = [
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "web-sys",
  "wiremock",
 ]
 
@@ -3284,7 +3280,6 @@ version = "0.5.26"
 dependencies = [
  "async-trait",
  "futures-util",
- "libc",
  "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -4147,12 +4142,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fac6bb46461d099d52dbd345e021b92d21d1be9be967ef2bb4430b23af439a4f"
 
 [[package]]
-name = "objc-sys"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdb91bdd390c7ce1a8607f35f3ca7151b65afc0ff5ff3b34fa350f7d7c7e4310"
-
-[[package]]
 name = "objc2"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4262,19 +4251,6 @@ dependencies = [
  "objc2",
  "objc2-core-foundation",
  "objc2-foundation",
-]
-
-[[package]]
-name = "objc2-security"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "709fe137109bd1e8b5a99390f77a7d8b2961dafc1a1c5db8f2e60329ad6d895a"
-dependencies = [
- "bitflags 2.13.0",
- "block2",
- "libc",
- "objc2",
- "objc2-core-foundation",
 ]
 
 [[package]]
@@ -7638,7 +7614,6 @@ dependencies = [
  "napi-derive",
  "objc2",
  "objc2-foundation",
- "objc2-security",
  "parking_lot",
  "pyo3",
  "pyo3-async-runtimes",
