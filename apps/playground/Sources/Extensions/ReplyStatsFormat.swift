@@ -13,7 +13,7 @@ enum ReplyStatsFormat {
         case let .total(total):
             "total \(formattedNumber(total)) J/tok"
         case let .components(cpu, gpu, _, dram):
-            "CPU+GPU+DRAM \(formattedNumber(cpu + gpu + dram)) J/tok"
+            "\(formattedNumber(cpu + gpu + dram)) J/tok"
         }
     }
 
