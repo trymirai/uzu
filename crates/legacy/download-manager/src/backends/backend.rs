@@ -101,7 +101,7 @@ pub trait Backend: Send + Sync {
         };
         if foreign_owner.is_none() {
             if downloaded.is_some() {
-                self.remove_resume_artifact(config).await;
+                let _ = fs::asyn::remove_file(&config.resume_artifact_path).await;
             } else {
                 let _ = fs::asyn::remove_file(&config.destination).await;
                 CrcReceipt::remove(&config.destination).await;
@@ -148,18 +148,11 @@ pub trait Backend: Send + Sync {
         }
     }
 
-    async fn remove_resume_artifact(
-        &self,
-        config: &DownloadConfig,
-    ) {
-        let _ = fs::asyn::remove_file(&config.resume_artifact_path).await;
-    }
-
     async fn remove_files(
         &self,
         config: &DownloadConfig,
     ) {
-        self.remove_resume_artifact(config).await;
+        let _ = fs::asyn::remove_file(&config.resume_artifact_path).await;
         let _ = fs::asyn::remove_file(&config.destination).await;
         CrcReceipt::remove(&config.destination).await;
     }

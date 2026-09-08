@@ -139,7 +139,7 @@ impl FileDownloadActor {
                 Ok(())
             },
             Err(error) => {
-                self.backend.remove_resume_artifact(&self.config).await;
+                let _ = fs::asyn::remove_file(&self.config.resume_artifact_path).await;
                 Err(self.fail(error))
             },
         }
@@ -232,7 +232,7 @@ impl FileDownloadActor {
     async fn complete(&mut self) {
         self.lifecycle = match self.backend.verify(&self.config).await {
             Ok(total_bytes) => {
-                self.backend.remove_resume_artifact(&self.config).await;
+                let _ = fs::asyn::remove_file(&self.config.resume_artifact_path).await;
                 Lifecycle::Downloaded {
                     total_bytes,
                 }
@@ -270,7 +270,7 @@ impl FileDownloadActor {
                 ..
             } => {
                 active_task.cancel().await;
-                self.backend.remove_resume_artifact(&self.config).await;
+                let _ = fs::asyn::remove_file(&self.config.resume_artifact_path).await;
                 self.lifecycle = Lifecycle::Failed {
                     message,
                 };
