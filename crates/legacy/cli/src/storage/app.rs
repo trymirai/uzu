@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use crossterm::event::KeyCode;
 use futures_util::StreamExt;
 use ratatui::widgets::ListState;
-use shoji::types::model::Model;
+use shoji::types::model::{Model, ModelIdentifier};
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use uzu::{engine::Engine, storage::DownloadState};
 
@@ -18,7 +18,7 @@ pub struct ModelWithState {
 
 pub struct App {
     pub engine: Arc<Engine>,
-    pub models: Arc<TokioMutex<HashMap<String, ModelWithState>>>,
+    pub models: Arc<TokioMutex<HashMap<ModelIdentifier, ModelWithState>>>,
     pub active_section: Section,
     pub list_states: HashMap<Section, ListState>,
     pub should_quit: bool,
@@ -67,7 +67,7 @@ impl App {
     pub async fn spawn_state_listener(&mut self) {
         let models = Arc::clone(&self.models);
         let engine = Arc::clone(&self.engine);
-        let mut updates = self.engine.storage_subscribe().await;
+        let mut updates = self.engine.storage_subscribe();
 
         let handle = self.tokio_handle.spawn(async move {
             while let Some(Ok((model_id, state))) = updates.next().await {
@@ -173,8 +173,8 @@ impl App {
 
     pub fn get_selected_model_id(
         &self,
-        models: &HashMap<String, ModelWithState>,
-    ) -> Option<String> {
+        models: &HashMap<ModelIdentifier, ModelWithState>,
+    ) -> Option<ModelIdentifier> {
         let state = self.list_states.get(&self.active_section)?;
         let selected_idx = state.selected()?;
         let section_models = ModelOrganizer::filter_for_section(models, self.active_section);
@@ -235,7 +235,7 @@ impl App {
     /// Get helper text based on current section and selection
     pub fn get_helpers(
         &self,
-        models: &HashMap<String, ModelWithState>,
+        models: &HashMap<ModelIdentifier, ModelWithState>,
     ) -> Vec<String> {
         let selected_model_id = self.get_selected_model_id(models);
 

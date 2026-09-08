@@ -45,7 +45,7 @@ pub fn SelectedModel(
             let identifier = model.identifier.clone();
             let downloader = engine.downloader(&model);
 
-            let mut stream = engine.storage_subscribe().await;
+            let mut stream = engine.storage_subscribe();
 
             let mut was_downloaded = false;
             if let Some(initial) = downloader.state().await {

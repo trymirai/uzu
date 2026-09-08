@@ -1,7 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use iocraft::prelude::*;
-use shoji::types::{basic::SamplingParameters, model::Model};
+use shoji::types::{
+    basic::SamplingParameters,
+    model::{Model, ModelIdentifier},
+};
 use uzu::storage::DownloadState;
 
 use crate::{
@@ -50,7 +53,7 @@ fn Models(
     let family_id = props.family_id.clone();
     let state = *hooks.use_context::<State<ApplicationState>>();
     let mut models_state = hooks.use_state(|| None::<Vec<Model>>);
-    let mut model_download_statuses_state = hooks.use_state(|| None::<HashMap<String, DownloadState>>);
+    let mut model_download_statuses_state = hooks.use_state(|| None::<HashMap<ModelIdentifier, DownloadState>>);
 
     hooks.use_future({
         let engine = state.read().engine.clone();
