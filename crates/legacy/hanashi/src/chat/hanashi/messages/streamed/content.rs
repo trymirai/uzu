@@ -94,17 +94,21 @@ impl Content {
                     }
                 }
 
-                // Keep the parser's text byte-for-byte. Re-rendering this message must reproduce
-                // the sampled prefix so the token backend can retain its KV cache between turns.
+                // Keep reasoning byte-for-byte: Muse-Glimmer emits significant trailing whitespace
+                // that its template does not restore when the message is rendered again.
                 let reasoning = reasoning_parts.concat();
-                let text = text_parts.concat();
+
+                // Text sections may include separators owned by the template rather than the reply
+                // (for example Qwen's newlines around <think>), so keep them out of visible content.
+                let text = text_parts.concat().trim().to_string();
+
                 let mut blocks = Vec::new();
                 if !reasoning.trim().is_empty() {
                     blocks.push(ChatContentBlock::Reasoning {
                         value: reasoning,
                     });
                 }
-                if !text.trim().is_empty() {
+                if !text.is_empty() {
                     blocks.push(ChatContentBlock::Text {
                         value: text,
                     });

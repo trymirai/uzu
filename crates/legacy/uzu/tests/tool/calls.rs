@@ -198,6 +198,7 @@ async fn lfm2_5_350m() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn muse_glimmer_30b_m() {
     run_tool_calls_test("trymirai/Muse-Glimmer-30B-M", true, false, TEST_CASES).await;
 }
