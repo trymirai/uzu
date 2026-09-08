@@ -69,8 +69,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     let destination = cache_path.join(&served.file.name);
     tokio::fs::create_dir_all(&cache_path).await?;
     tokio::fs::write(&destination, served.bytes.as_ref()).await?;
-    let _lock =
-        DestinationLock::acquire(&artifact_path(&destination, "lock"), "foreign-manager", Uuid::new_v4()).await?;
+    let _lock = DestinationLock::acquire(&destination, "foreign-manager", Uuid::new_v4()).await?;
     let refused = storage.delete(&identifier).await.expect_err("delete must be refused while locked");
     assert!(refused.to_string().contains("foreign-manager"), "unexpected error: {refused}");
     assert!(destination.exists());

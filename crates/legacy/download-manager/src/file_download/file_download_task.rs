@@ -11,6 +11,7 @@ use tokio_stream::wrappers::WatchStream;
 use crate::{
     DownloadError, DownloadState, DownloadTaskRequest,
     file_download::{Command, DownloadConfig},
+    locks::DestinationLock,
 };
 
 pub struct FileDownloadTask {
@@ -60,7 +61,12 @@ impl FileDownloadTask {
     }
 
     pub async fn foreign_owner(&self) -> Option<String> {
-        self.config.foreign_owner().await
+        DestinationLock::foreign_owner(
+            &self.config.destination,
+            &self.config.manager_id,
+            self.config.manager_instance_id,
+        )
+        .await
     }
 
     async fn send(

@@ -148,7 +148,7 @@ impl DownloadManager {
                     manager_id: self.manager_id.clone(),
                     manager_instance_id: self.instance_id,
                 });
-                let (lifecycle, attach_lock) = config.reconcile(&*self.backend).await?;
+                let (lifecycle, attach_lock) = self.backend.reconcile(&config).await?;
                 tracing::debug!(
                     download_id = %config.download_id,
                     phase = ?lifecycle.download_state(&config).phase,

@@ -139,7 +139,7 @@ impl FileDownloadActor {
                 Ok(())
             },
             Err(error) => {
-                self.config.remove_resume_artifact().await;
+                self.backend.remove_resume_artifact(&self.config).await;
                 Err(self.fail(error))
             },
         }
@@ -174,7 +174,7 @@ impl FileDownloadActor {
 
     async fn delete(&mut self) -> Result<(), DownloadError> {
         self.wants_download = false;
-        let _lock = match std::mem::replace(&mut self.lifecycle, Lifecycle::NotDownloaded) {
+        let lock = match std::mem::replace(&mut self.lifecycle, Lifecycle::NotDownloaded) {
             Lifecycle::Downloading {
                 active_task,
                 lock,
@@ -188,14 +188,14 @@ impl FileDownloadActor {
                 self.lock().await?
             },
         };
-        self.config.remove_files().await;
-        let _ = fs::asyn::remove_file(self.config.lock_path()).await;
+        self.backend.remove_files(&self.config).await;
+        lock.remove().await;
         self.lifecycle = Lifecycle::NotDownloaded;
         Ok(())
     }
 
     async fn lock(&mut self) -> Result<DestinationLock, DownloadError> {
-        match self.config.lock().await {
+        match self.backend.lock(&self.config).await {
             Ok(lock) => Ok(lock),
             Err(LockError::LockedByOther {
                 manager_id,
@@ -230,15 +230,15 @@ impl FileDownloadActor {
     }
 
     async fn complete(&mut self) {
-        self.lifecycle = match self.config.verify_download().await {
+        self.lifecycle = match self.backend.verify_download(&self.config).await {
             Ok(total_bytes) => {
-                self.config.remove_resume_artifact().await;
+                self.backend.remove_resume_artifact(&self.config).await;
                 Lifecycle::Downloaded {
                     total_bytes,
                 }
             },
             Err(message) => {
-                self.config.remove_files().await;
+                self.backend.remove_files(&self.config).await;
                 Lifecycle::Failed {
                     message,
                 }
@@ -270,7 +270,7 @@ impl FileDownloadActor {
                 ..
             } => {
                 active_task.cancel().await;
-                self.config.remove_resume_artifact().await;
+                self.backend.remove_resume_artifact(&self.config).await;
                 self.lifecycle = Lifecycle::Failed {
                     message,
                 };
@@ -295,7 +295,7 @@ impl FileDownloadActor {
     }
 
     async fn observe(&mut self) {
-        match self.config.reconcile(&*self.backend).await {
+        match self.backend.reconcile(&self.config).await {
             Ok((lifecycle, lock)) => {
                 self.lifecycle = lifecycle;
                 if let Some(lock) = lock

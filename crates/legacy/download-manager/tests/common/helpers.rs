@@ -2,7 +2,7 @@ use std::{path::Path, time::Duration};
 
 use download_manager::{DestinationLock, DownloadState, DownloadTask, DownloadTaskRequest};
 use kiban::stream::BoxStream;
-use mock_registry::{MockRegistry, artifact_path};
+use mock_registry::MockRegistry;
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
@@ -61,7 +61,5 @@ pub async fn wait_for_state(
 }
 
 pub async fn foreign_lock(destination: &Path) -> DestinationLock {
-    DestinationLock::acquire(&artifact_path(destination, "lock"), "foreign-manager", Uuid::new_v4())
-        .await
-        .expect("foreign lock")
+    DestinationLock::acquire(destination, "foreign-manager", Uuid::new_v4()).await.expect("foreign lock")
 }

@@ -319,7 +319,7 @@ async fn shutdown_and_locks(
     drop(task_a);
     drop(manager_a);
     timeout(Duration::from_secs(2), async {
-        while DestinationLock::foreign_owner(&lock, "probe", Uuid::new_v4()).await.is_some() {
+        while DestinationLock::foreign_owner(&destination, "probe", Uuid::new_v4()).await.is_some() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
