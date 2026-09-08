@@ -1,19 +1,19 @@
 use std::{error::Error, future::Future, pin::Pin};
 
-use crate::types::model::Model;
+use crate::types::model::{Model, ModelIdentifier};
 
 pub trait Registry: Send + Sync {
     type Error: Error;
 
-    fn indentifier(&self) -> String;
+    fn identifier(&self) -> String;
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, Self::Error>> + Send + '_>>;
 
     fn model_by_identifier(
         &self,
-        identifier: &str,
+        identifier: &ModelIdentifier,
     ) -> Pin<Box<dyn Future<Output = Result<Option<Model>, Self::Error>> + Send + '_>> {
-        let identifier = identifier.to_string();
+        let identifier = identifier.clone();
         Box::pin(async move {
             let models = self.models().await?;
             let model = models.iter().find(|model| model.identifier == identifier).cloned();
