@@ -2,26 +2,22 @@
 
 mod common;
 
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
-use chrono::Utc;
-use download_manager::DownloadManagerType;
+use download_manager::DestinationLock;
 use kiban::rt::RuntimeHandle;
-use mock_registry::{Behavior, MockRegistry};
+use mock_registry::{Behavior, MockRegistry, artifact_path};
 use rstest::rstest;
 use tokio::time::timeout;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use uuid::Uuid;
 use uzu::{
     engine::Downloader,
-    helpers::SharedAccess,
-    storage::{DownloadPhase, DownloadState, Storage},
-    types::model::ModelIdentifier,
+    storage::{DownloadManagerType, DownloadPhase, DownloadState, Storage},
+    types::model::{ModelAccessibility, ModelIdentifier, ModelReference},
 };
 
-use crate::common::test_storage::TestStorage;
+use crate::common::TestStorage;
 
 #[rstest]
 #[case::universal(DownloadManagerType::Universal)]
@@ -30,13 +26,12 @@ use crate::common::test_storage::TestStorage;
 async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let model = registry.models.first().ok_or("mock registry must include a model")?;
-    let test_storage =
-        TestStorage::with_models_and_manager(RuntimeHandle::current(), vec![model.clone()], kind).await?;
+    let test_storage = TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind).await?;
     let storage = &test_storage.storage;
     let identifier = model.identifier.clone();
     let cache_path = storage.cache_model_path(model).ok_or("model must have a cache path")?;
     let mut events = storage.subscribe();
-    let total_bytes = storage.state(&identifier).await.ok_or("model must have a state")?.total_bytes;
+    let total_bytes = storage.state(&identifier).await?.total_bytes;
 
     storage.download(&identifier).await?;
     let downloading = wait_for(storage, &identifier, &mut events, |state| {
@@ -57,34 +52,41 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     for served in registry.files.iter() {
         let destination = cache_path.join(&served.file.name);
         assert_eq!(tokio::fs::read(&destination).await?, served.bytes.to_vec());
-        assert!(crc_path(&destination).is_file());
+        assert!(artifact_path(&destination, "crc").is_file());
     }
 
     storage.delete(&identifier).await?;
-    let deleted = storage.state(&identifier).await.ok_or("model must have a state")?;
+    let deleted = storage.state(&identifier).await?;
     assert!(matches!(deleted.phase, DownloadPhase::NotDownloaded {}));
     assert_eq!(deleted.downloaded_bytes, 0);
     for served in registry.files.iter() {
         let destination = cache_path.join(&served.file.name);
         assert!(!destination.exists());
-        assert!(!crc_path(&destination).exists());
+        assert!(!artifact_path(&destination, "crc").exists());
     }
 
     let served = registry.files.first().ok_or("mock registry must include files")?;
     let destination = cache_path.join(&served.file.name);
     tokio::fs::create_dir_all(&cache_path).await?;
     tokio::fs::write(&destination, served.bytes.as_ref()).await?;
-    tokio::fs::write(
-        PathBuf::from(format!("{}.lock", destination.display())),
-        serde_json::to_vec(&serde_json::json!({
-            "manager_id": "foreign-manager",
-            "acquired_at": Utc::now(),
-            "process_id": std::process::id(),
-        }))?,
-    )
-    .await?;
-    assert!(storage.delete(&identifier).await.is_err());
+    let _lock =
+        DestinationLock::acquire(&artifact_path(&destination, "lock"), "foreign-manager", Uuid::new_v4()).await?;
+    let refused = storage.delete(&identifier).await.expect_err("delete must be refused while locked");
+    assert!(refused.to_string().contains("foreign-manager"), "unexpected error: {refused}");
     assert!(destination.exists());
+
+    let mut changed = model.clone();
+    if let ModelAccessibility::Local {
+        reference: ModelReference::Mirai {
+            files,
+            ..
+        },
+    } = &mut changed.accessibility
+    {
+        files.truncate(1);
+    }
+    storage.refresh(&[changed]).await?;
+    assert_eq!(storage.state(&identifier).await?.total_bytes, served.file.size);
     Ok(())
 }
 
@@ -95,32 +97,33 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
 async fn downloader_streams(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let model = registry.models.first().ok_or("mock registry must include a model")?;
-    let test_storage =
-        TestStorage::with_models_and_manager(RuntimeHandle::current(), vec![model.clone()], kind).await?;
-    let downloader = Downloader::new(model.identifier.clone(), SharedAccess::new(test_storage.storage));
+    let test_storage = TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind).await?;
+    let storage = Arc::clone(&test_storage.storage);
+    let identifier = model.identifier.clone();
+    let downloader = Downloader::new(identifier.clone(), Arc::clone(&storage));
+    let mut events = storage.subscribe();
 
     downloader.resume().await?;
     let progress = downloader.progress().await?;
-    wait_for_downloader(&downloader, |state| matches!(state.phase, DownloadPhase::Downloading {})).await;
+    wait_for(&storage, &identifier, &mut events, |state| matches!(state.phase, DownloadPhase::Downloading {})).await;
     downloader.pause().await?;
     timeout(Duration::from_secs(10), async { while progress.next().await.is_some() {} }).await?;
-    let paused = wait_for_downloader(&downloader, |state| matches!(state.phase, DownloadPhase::Paused {})).await;
+    let paused =
+        wait_for(&storage, &identifier, &mut events, |state| matches!(state.phase, DownloadPhase::Paused {})).await;
     assert!(!paused.is_in_progress());
     assert!(!paused.can_pause());
 
     downloader.resume().await?;
     let progress = downloader.progress().await?;
-    timeout(Duration::from_secs(30), async {
-        loop {
-            let state = downloader.state().await.expect("model state must exist");
-            if matches!(state.phase, DownloadPhase::Downloaded {}) {
-                return;
-            }
-            assert!(progress.next().await.is_some(), "progress stream ended before the resumed model downloaded");
+    let last = timeout(Duration::from_secs(30), async {
+        let mut last = None;
+        while let Some(state) = progress.next().await {
+            last = Some(state);
         }
+        last
     })
     .await?;
-
+    assert!(matches!(last.map(|state| state.phase), Some(DownloadPhase::Downloaded {})));
     assert!(downloader.progress().await?.next().await.is_none());
     Ok(())
 }
@@ -146,25 +149,4 @@ async fn wait_for(
     })
     .await
     .expect("timed out waiting for storage state")
-}
-
-async fn wait_for_downloader(
-    downloader: &Downloader,
-    mut is_expected: impl FnMut(&DownloadState) -> bool,
-) -> DownloadState {
-    timeout(Duration::from_secs(30), async {
-        loop {
-            let state = downloader.state().await.expect("model state must exist");
-            if is_expected(&state) {
-                return state;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for downloader state")
-}
-
-fn crc_path(destination: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.crc", destination.display()))
 }

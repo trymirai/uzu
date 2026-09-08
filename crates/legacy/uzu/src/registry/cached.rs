@@ -27,8 +27,8 @@ impl CachedRegistry {
 impl Registry for CachedRegistry {
     type Error = RegistryError;
 
-    fn indentifier(&self) -> String {
-        self.registry.indentifier()
+    fn identifier(&self) -> String {
+        self.registry.identifier()
     }
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {

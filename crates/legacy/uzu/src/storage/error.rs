@@ -1,4 +1,5 @@
 use download_manager::DownloadError;
+use shoji::types::model::ModelIdentifier;
 
 #[bindings::export(Error)]
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -14,16 +15,16 @@ pub enum StorageError {
     },
     #[error("Hash not found for file: {identifier}/{name}")]
     HashNotFound {
-        identifier: String,
+        identifier: ModelIdentifier,
         name: String,
     },
-    #[error("Item not found: {identifier}")]
-    ItemNotFound {
-        identifier: String,
+    #[error("Model not found: {identifier}")]
+    ModelNotFound {
+        identifier: ModelIdentifier,
     },
-    #[error("Unsupported item: {identifier}")]
-    UnsupportedItem {
-        identifier: String,
+    #[error("Unsupported model: {identifier}")]
+    UnsupportedModel {
+        identifier: ModelIdentifier,
     },
 }
 

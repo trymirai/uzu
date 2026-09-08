@@ -49,7 +49,7 @@ impl Registry {
 impl RegistryTrait for Registry {
     type Error = RegistryError;
 
-    fn indentifier(&self) -> String {
+    fn identifier(&self) -> String {
         "mirai".to_string()
     }
 

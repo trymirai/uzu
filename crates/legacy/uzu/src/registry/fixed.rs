@@ -25,7 +25,7 @@ impl FixedRegistry {
 impl Registry for FixedRegistry {
     type Error = RegistryError;
 
-    fn indentifier(&self) -> String {
+    fn identifier(&self) -> String {
         self.identifier.clone()
     }
 

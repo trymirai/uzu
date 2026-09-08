@@ -1,30 +1,31 @@
 use std::{
-    collections::{HashMap, HashSet},
-    fs::create_dir_all,
-    path::PathBuf,
+    collections::HashMap,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
-use download_manager::{DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest, FileCheck};
+use download_manager::{DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
 use futures_util::future::join_all;
-use kiban::rt::{RuntimeHandle, TaskJoinHandle};
+use kiban::{
+    fs,
+    rt::{RuntimeHandle, TaskJoinHandle},
+};
 use shoji::types::{
     basic::File,
     model::{Model, ModelAccessibility, ModelIdentifier, ModelReference},
 };
-use tokio::sync::broadcast::{Sender as TokioBroadcastSender, channel as tokio_broadcast_channel};
+use tokio::sync::{
+    Mutex as TokioMutex,
+    broadcast::{Sender as TokioBroadcastSender, channel as tokio_broadcast_channel},
+};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
-use crate::{
-    helpers::SharedAccess,
-    storage::{Config, StorageError, model_tasks::ModelTasks},
-};
+use crate::storage::{Config, StorageError, model_tasks::ModelTasks};
 
 pub struct Storage {
-    pub config: Config,
-
-    download_manager: Box<dyn DownloadManager>,
-    tasks: SharedAccess<ModelTasks>,
+    config: Config,
+    download_manager: DownloadManager,
+    tasks: TokioMutex<ModelTasks>,
     events: TokioBroadcastSender<(ModelIdentifier, DownloadState)>,
 }
 
@@ -33,24 +34,22 @@ impl Storage {
         runtime_handle: RuntimeHandle,
         config: Config,
     ) -> Result<Self, StorageError> {
-        let download_manager = <dyn DownloadManager>::new(config.download_manager_type, runtime_handle).await?;
-        let (events, _) = tokio_broadcast_channel(256);
-        let storage = Self {
-            config,
-            download_manager,
-            tasks: SharedAccess::new(ModelTasks::new()),
-            events,
-        };
-        let cache_path = storage.cache_path();
-        create_dir_all(&cache_path).map_err(|_| StorageError::UnableToCreateDirectory {
+        let cache_path = Self::cache_path(&config);
+        fs::asyn::create_dir_all(&cache_path).await.map_err(|_| StorageError::UnableToCreateDirectory {
             path: cache_path.to_string_lossy().to_string(),
         })?;
-        Ok(storage)
+        let (events, _) = tokio_broadcast_channel(256);
+        Ok(Self {
+            download_manager: DownloadManager::new(config.download_manager_type, runtime_handle),
+            config,
+            tasks: TokioMutex::new(ModelTasks::new()),
+            events,
+        })
     }
 
-    pub fn cache_path(&self) -> PathBuf {
-        let home_path = PathBuf::from(self.config.device.home_path.clone());
-        self.config.base_path.clone().unwrap_or(home_path).join(".cache").join(&self.config.name)
+    pub fn cache_path(config: &Config) -> PathBuf {
+        let home_path = PathBuf::from(config.device.home_path.clone());
+        config.base_path.clone().unwrap_or(home_path).join(".cache").join(&config.name)
     }
 
     pub fn cache_model_path(
@@ -60,7 +59,7 @@ impl Storage {
         let reference_name = model.reference_name()?;
         let checkpoint_version = model.checkpoint_version()?;
         Some(
-            self.cache_path()
+            Self::cache_path(&self.config)
                 .join("models")
                 .join(reference_name)
                 .join(model.cache_identifier())
@@ -68,33 +67,37 @@ impl Storage {
         )
     }
 
-    pub fn log_name(&self) -> String {
-        format!("{}.log", self.config.name)
-    }
-
     pub async fn refresh(
         &self,
-        models: Vec<Model>,
+        models: &[Model],
     ) -> Result<(), StorageError> {
-        let models: Vec<Model> = models.into_iter().filter(Model::is_downloadable).collect();
-        let identifiers: HashSet<&ModelIdentifier> = models.iter().map(|model| &model.identifier).collect();
-        let missing: Vec<&Model> = {
+        let requests = models
+            .iter()
+            .filter_map(|model| model_files(model).map(|files| (model, files)))
+            .map(|(model, files)| Ok((model.identifier.clone(), self.request(model, files)?)))
+            .collect::<Result<HashMap<ModelIdentifier, DownloadTaskRequest>, StorageError>>()?;
+        let missing: Vec<(ModelIdentifier, DownloadTaskRequest)> = {
             let mut tasks = self.tasks.lock().await;
-            tasks.retain(|identifier, (_, forwarder)| {
-                let keep = identifiers.contains(identifier);
+            tasks.retain(|identifier, (task, forwarder)| {
+                let keep = requests.get(identifier).is_some_and(|request| task.request() == request);
                 if !keep {
                     forwarder.abort();
                 }
                 keep
             });
-            models.iter().filter(|model| !tasks.contains_key(&model.identifier)).collect()
+            requests.into_iter().filter(|(identifier, _)| !tasks.contains_key(identifier)).collect()
         };
-        let created = join_all(missing.iter().map(|model| self.task(model))).await;
+        let created = join_all(missing.into_iter().map(|(identifier, request)| async move {
+            (identifier, self.download_manager.download_task(request).await)
+        }))
+        .await;
         let mut tasks = self.tasks.lock().await;
-        for (model, task) in missing.into_iter().zip(created) {
+        for (identifier, task) in created {
             let task = task?;
-            let forwarder = self.forward(model.identifier.clone(), &task);
-            tasks.insert(model.identifier.clone(), (task, forwarder));
+            let forwarder = self.forward(identifier.clone(), &task);
+            if let Some((_, replaced)) = tasks.insert(identifier, (task, forwarder)) {
+                replaced.abort();
+            }
         }
         Ok(())
     }
@@ -106,8 +109,8 @@ impl Storage {
     pub async fn state(
         &self,
         identifier: &ModelIdentifier,
-    ) -> Option<DownloadState> {
-        Some(self.model(identifier).await.ok()?.state())
+    ) -> Result<DownloadState, StorageError> {
+        Ok(self.model(identifier).await?.state())
     }
 
     pub async fn states(&self) -> HashMap<ModelIdentifier, DownloadState> {
@@ -140,29 +143,23 @@ impl Storage {
         identifier: &ModelIdentifier,
     ) -> Result<Arc<DownloadTask>, StorageError> {
         self.tasks.lock().await.get(identifier).map(|(task, _)| Arc::clone(task)).ok_or_else(|| {
-            StorageError::ItemNotFound {
+            StorageError::ModelNotFound {
                 identifier: identifier.clone(),
             }
         })
     }
 
-    async fn task(
-        &self,
-        model: &Model,
-    ) -> Result<Arc<DownloadTask>, StorageError> {
-        Ok(self.download_manager.download_task(self.request(model)?).await?)
-    }
-
     fn request(
         &self,
         model: &Model,
+        files: &[File],
     ) -> Result<DownloadTaskRequest, StorageError> {
-        let cache_path = self.cache_model_path(model).ok_or_else(|| StorageError::UnsupportedItem {
+        let cache_path = self.cache_model_path(model).ok_or_else(|| StorageError::UnsupportedModel {
             identifier: model.identifier.clone(),
         })?;
-        let subrequests = model_files(model)?
+        let subrequests = files
             .iter()
-            .map(|file| file_request(&model.identifier, file))
+            .map(|file| file_request(&model.identifier, &cache_path, file))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(DownloadTaskRequest::group().destination(cache_path).subrequests(subrequests).build())
     }
@@ -175,32 +172,28 @@ impl Storage {
         let events = self.events.clone();
         let mut progress = task.progress();
         kiban::rt::spawn(async move {
-            while let Some(result) = progress.next().await {
-                if let Ok(state) = result {
-                    let _ = events.send((identifier.clone(), state));
-                }
+            while let Some(state) = progress.next().await {
+                let _ = events.send((identifier.clone(), state));
             }
         })
     }
 }
 
-fn model_files(model: &Model) -> Result<&[File], StorageError> {
+fn model_files(model: &Model) -> Option<&[File]> {
     match &model.accessibility {
         ModelAccessibility::Local {
             reference: ModelReference::Mirai {
                 files,
                 ..
             },
-            ..
-        } => Ok(files),
-        _ => Err(StorageError::UnsupportedItem {
-            identifier: model.identifier.clone(),
-        }),
+        } => Some(files),
+        _ => None,
     }
 }
 
 fn file_request(
     identifier: &ModelIdentifier,
+    directory: &Path,
     file: &File,
 ) -> Result<DownloadTaskRequest, StorageError> {
     let crc32c = file.crc32c().ok_or_else(|| StorageError::HashNotFound {
@@ -208,9 +201,9 @@ fn file_request(
         name: file.name.clone(),
     })?;
     Ok(DownloadTaskRequest::file()
-        .destination(&file.name)
+        .destination(directory.join(&file.name))
         .source_url(&file.url)
-        .file_check(FileCheck::CRC(crc32c))
+        .expected_crc32c(crc32c)
         .maybe_expected_bytes(u64::try_from(file.size).ok())
         .build())
 }

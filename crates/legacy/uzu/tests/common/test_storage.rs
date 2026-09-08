@@ -1,49 +1,34 @@
-#![allow(dead_code)]
+use std::sync::Arc;
 
-use std::path::PathBuf;
-
-use download_manager::DownloadManagerType;
 use kiban::rt::RuntimeHandle;
 use shoji::types::model::Model;
 use uzu::{
     device::Device,
-    registry::FixedRegistry,
-    storage::{Config, Storage},
+    storage::{Config, DownloadManagerType, Storage},
 };
 
 pub struct TestStorage {
-    pub config: Config,
-    pub registry: FixedRegistry,
-    pub storage: Storage,
-    pub base_path: PathBuf,
+    pub storage: Arc<Storage>,
     _temp_dir_guard: tempfile::TempDir,
 }
 
 impl TestStorage {
-    pub async fn with_models(
-        tokio_handle: RuntimeHandle,
-        models: Vec<Model>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::with_models_and_manager(tokio_handle, models, DownloadManagerType::default()).await
-    }
-
-    pub async fn with_models_and_manager(
+    pub async fn new(
         tokio_handle: RuntimeHandle,
         models: Vec<Model>,
         download_manager_type: DownloadManagerType,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let temp_dir_guard = tempfile::tempdir()?;
-        let base_path = temp_dir_guard.path().to_path_buf();
-        let registry = FixedRegistry::new("test_registry".to_string(), models.clone());
-        let device = Device::new()?;
-        let config = Config::new(device, Some(base_path.clone()), "test_storage".to_string(), download_manager_type);
-        let storage = Storage::new(tokio_handle, config.clone()).await?;
-        storage.refresh(models).await?;
+        let config = Config::new(
+            Device::new()?,
+            Some(temp_dir_guard.path().to_path_buf()),
+            "test_storage".to_string(),
+            download_manager_type,
+        );
+        let storage = Storage::new(tokio_handle, config).await?;
+        storage.refresh(&models).await?;
         Ok(Self {
-            config,
-            registry,
-            storage,
-            base_path,
+            storage: Arc::new(storage),
             _temp_dir_guard: temp_dir_guard,
         })
     }
