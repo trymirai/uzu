@@ -6,9 +6,10 @@ use std::{
 use kiban::fs;
 
 use crate::{
+    DownloadPhase, DownloadState,
     backends::{ActiveTask, BackendError, BackendEventSender, DownloadGeneration, VerifyError},
     crc_receipt::CrcReceipt,
-    file_download::{DownloadConfig, State},
+    file_download::DownloadConfig,
     locks::{DestinationLock, LockError},
 };
 
@@ -60,7 +61,7 @@ pub trait Backend: Send + Sync {
     async fn reconcile(
         &self,
         config: &DownloadConfig,
-    ) -> Result<(State, Option<DestinationLock>), BackendError> {
+    ) -> Result<(DownloadState, Option<DestinationLock>), BackendError> {
         let untouched = !fs::asyn::is_file(&config.destination).await
             && !fs::asyn::is_file(&config.resume_artifact_path).await
             && !CrcReceipt::exists(&config.destination).await
@@ -69,7 +70,7 @@ pub trait Backend: Send + Sync {
                 .is_none();
         let pending_task = self.has_pending_task(config).await?;
         if untouched && !pending_task {
-            return Ok((State::NotDownloaded, None));
+            return Ok((DownloadState::new(config, DownloadPhase::NotDownloaded {}, 0, None), None));
         }
         let lock = match self.lock(config).await {
             Ok(lock) => lock,
@@ -79,7 +80,7 @@ pub trait Backend: Send + Sync {
             Err(error) => return Err(error.into()),
         };
         let state = self.observe(config, None).await;
-        let attach = pending_task && !matches!(state, State::Downloaded { .. });
+        let attach = pending_task && state.phase != (DownloadPhase::Downloaded {});
         Ok((state, attach.then_some(lock)))
     }
 
@@ -87,7 +88,7 @@ pub trait Backend: Send + Sync {
         &self,
         config: &DownloadConfig,
         foreign_owner: Option<String>,
-    ) -> State {
+    ) -> DownloadState {
         let resume_bytes = if fs::asyn::is_file(&config.resume_artifact_path).await {
             Some(self.read_resume_progress(&config.resume_artifact_path).await)
         } else {
@@ -106,19 +107,19 @@ pub trait Backend: Send + Sync {
                 CrcReceipt::remove(&config.destination).await;
             }
         }
-        match (downloaded, resume_bytes, foreign_owner) {
-            (Some(total_bytes), _, _) => State::Downloaded {
-                total_bytes,
-            },
-            (None, downloaded_bytes, Some(manager_id)) => State::Locked {
-                manager_id,
-                downloaded_bytes: downloaded_bytes.unwrap_or(0),
-            },
-            (None, Some(downloaded_bytes), None) => State::Paused {
-                downloaded_bytes,
-            },
-            (None, None, None) => State::NotDownloaded,
-        }
+        let (phase, downloaded_bytes, total_bytes) = match (downloaded, resume_bytes, foreign_owner) {
+            (Some(size), _, _) => (DownloadPhase::Downloaded {}, size, Some(size)),
+            (None, downloaded_bytes, Some(manager_id)) => (
+                DownloadPhase::Locked {
+                    manager_id,
+                },
+                downloaded_bytes.unwrap_or(0),
+                None,
+            ),
+            (None, Some(downloaded_bytes), None) => (DownloadPhase::Paused {}, downloaded_bytes, None),
+            (None, None, None) => (DownloadPhase::NotDownloaded {}, 0, None),
+        };
+        DownloadState::new(config, phase, downloaded_bytes, total_bytes)
     }
 
     async fn verify(

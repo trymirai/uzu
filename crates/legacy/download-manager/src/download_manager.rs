@@ -147,7 +147,7 @@ impl DownloadManager {
                 let (state, attach_lock) = self.backend.reconcile(&config).await?;
                 tracing::debug!(
                     download_id = %config.download_id,
-                    phase = ?state.download_state(&config).phase,
+                    phase = ?state.phase,
                     "startup reconciled"
                 );
                 let task =

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::DownloadPhase;
+use crate::{DownloadPhase, file_download::DownloadConfig};
 
 #[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -59,6 +59,21 @@ impl DownloadState {
             DownloadPhase::Error {
                 ..
             } => "Error".to_string(),
+        }
+    }
+}
+
+impl DownloadState {
+    pub fn new(
+        config: &DownloadConfig,
+        phase: DownloadPhase,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    ) -> Self {
+        Self {
+            total_bytes: config.expected_bytes.or(total_bytes).unwrap_or(downloaded_bytes) as i64,
+            downloaded_bytes: downloaded_bytes as i64,
+            phase,
         }
     }
 }
