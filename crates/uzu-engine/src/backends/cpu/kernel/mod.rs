@@ -6,6 +6,7 @@ use crate::backends::{
 mod activation;
 pub(crate) mod activation_transform;
 mod attention;
+mod convolution;
 mod embedding;
 mod gated_act_mul;
 mod gdn;
