@@ -1,10 +1,8 @@
 use std::path::PathBuf;
 
-use download_manager::FileDownloadManagerType;
+use download_manager::DownloadManagerType;
 use serde::{Deserialize, Serialize};
-use shoji::types::model::Model;
 
-use super::download_contents::DownloadContents;
 use crate::device::Device;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -14,9 +12,7 @@ pub struct Config {
     pub base_path: Option<PathBuf>,
     pub name: String,
     #[serde(default)]
-    pub download_manager_type: FileDownloadManagerType,
-    #[serde(skip)]
-    pub download_contents: DownloadContents,
+    pub download_manager_type: DownloadManagerType,
 }
 
 impl Config {
@@ -24,54 +20,13 @@ impl Config {
         device: Device,
         base_path: Option<PathBuf>,
         name: String,
+        download_manager_type: DownloadManagerType,
     ) -> Self {
         Self {
             device,
             base_path,
             name,
-            download_manager_type: FileDownloadManagerType::default(),
-            download_contents: DownloadContents::default(),
-        }
-    }
-
-    pub fn cache_path(&self) -> PathBuf {
-        self.base_path.clone().unwrap_or(PathBuf::from(self.device.home_path.clone())).join(".cache").join(&self.name)
-    }
-
-    pub fn cache_models_path(&self) -> PathBuf {
-        self.cache_path().join("models")
-    }
-
-    pub fn cache_model_path(
-        &self,
-        model: &Model,
-    ) -> Option<PathBuf> {
-        let reference_name = model.reference_name()?;
-        let checkpoint_version = model.checkpoint_version()?;
-        Some(self.cache_models_path().join(reference_name).join(model.cache_identifier()).join(checkpoint_version))
-    }
-
-    pub fn log_name(&self) -> String {
-        format!("{}.log", self.name)
-    }
-
-    pub fn with_download_manager_type(
-        &self,
-        download_manager_type: FileDownloadManagerType,
-    ) -> Self {
-        Self {
             download_manager_type,
-            ..self.clone()
-        }
-    }
-
-    pub fn with_download_contents(
-        &self,
-        download_contents: DownloadContents,
-    ) -> Self {
-        Self {
-            download_contents,
-            ..self.clone()
         }
     }
 }

@@ -19,9 +19,9 @@ impl MergedRegistry {
         &mut self,
         registry: Box<dyn Registry<Error = RegistryError>>,
     ) -> Result<(), RegistryError> {
-        if self.registries.iter().any(|current_registry| current_registry.indentifier() == registry.indentifier()) {
+        if self.registries.iter().any(|current_registry| current_registry.identifier() == registry.identifier()) {
             return Err(RegistryError::UnableToAddRegistry {
-                identifier: registry.indentifier(),
+                identifier: registry.identifier(),
             });
         }
         self.registries.push(registry);
@@ -32,7 +32,7 @@ impl MergedRegistry {
         &mut self,
         identifier: &str,
     ) -> Result<(), RegistryError> {
-        self.registries.retain(|registry| registry.indentifier() != identifier);
+        self.registries.retain(|registry| registry.identifier() != identifier);
         Ok(())
     }
 }
@@ -40,8 +40,8 @@ impl MergedRegistry {
 impl Registry for MergedRegistry {
     type Error = RegistryError;
 
-    fn indentifier(&self) -> String {
-        self.registries.iter().map(|registry| registry.indentifier()).collect::<Vec<String>>().join(":")
+    fn identifier(&self) -> String {
+        self.registries.iter().map(|registry| registry.identifier()).collect::<Vec<String>>().join(":")
     }
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
@@ -53,7 +53,7 @@ impl Registry for MergedRegistry {
                 match result {
                     Ok(registry_models) => models.extend(registry_models),
                     Err(error) => {
-                        tracing::warn!(?error, registry = %registry.indentifier(), "skipping registry that failed to list models");
+                        tracing::warn!(?error, registry = %registry.identifier(), "skipping registry that failed to list models");
                     },
                 }
             }

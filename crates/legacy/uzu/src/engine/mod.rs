@@ -1,8 +1,8 @@
 pub mod bridge;
 mod callback;
 pub mod config;
-mod download_manager;
 mod downloader;
+mod downloader_stream;
 mod error;
 
 use std::{collections::HashMap, sync::Arc};
@@ -10,8 +10,8 @@ use std::{collections::HashMap, sync::Arc};
 use backend_remote::openai::Backend as OpenAIBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
-pub use download_manager::DownloadManagerType;
-pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
+pub use downloader::Downloader;
+pub use downloader_stream::DownloaderStream;
 pub use error::EngineError;
 use indexmap::IndexSet;
 use kiban::rt::RuntimeHandle;
@@ -24,7 +24,7 @@ use nagare::{
 use shoji::{
     traits::{Backend, Registry},
     types::{
-        model::{Model, ModelFamily, ModelRegistry, ModelVendor},
+        model::{Model, ModelFamily, ModelIdentifier, ModelRegistry, ModelVendor},
         session::chat::ChatConfig,
     },
 };
@@ -42,10 +42,7 @@ use crate::{
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
     settings::Settings,
-    storage::{
-        Config as StorageConfig, Storage,
-        types::{DownloadPhase, DownloadState},
-    },
+    storage::{Config as StorageConfig, DownloadPhase, DownloadState, Storage},
 };
 
 #[bindings::export(Class)]
@@ -53,7 +50,7 @@ use crate::{
 pub struct Engine {
     settings: SharedAccess<Option<Settings>>,
     registry: SharedAccess<MergedRegistry>,
-    storage: SharedAccess<Storage>,
+    storage: Arc<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
     callback: SharedAccess<Option<Arc<EngineCallback>>>,
     telemetry: SharedAccess<Telemetry>,
@@ -92,12 +89,11 @@ impl Engine {
         });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
-        let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
-            .with_download_manager_type(config.download_manager_type.into());
-        let storage_cache_path = storage_config.cache_path();
-        logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
-
-        let storage = SharedAccess::new(Storage::new(runtime_handle, storage_config).await?);
+        let storage_config =
+            StorageConfig::new(device.clone(), None, "mirai".to_string(), config.download_manager_type);
+        let storage_cache_path = Storage::cache_path(&storage_config);
+        logs::start(storage_cache_path.clone(), &format!("{}.log", storage_config.name), false);
+        let storage = Arc::new(Storage::new(runtime_handle, storage_config).await?);
 
         let engine = Self {
             settings: SharedAccess::new(settings),
@@ -382,7 +378,7 @@ impl Engine {
     #[bindings::export(Method)]
     pub async fn model_by_identifier(
         &self,
-        identifier: String,
+        identifier: ModelIdentifier,
     ) -> Result<Option<Model>, EngineError> {
         self.registry.lock().await.model_by_identifier(&identifier).await.map_err(EngineError::from)
     }
@@ -423,20 +419,11 @@ impl Engine {
         if let Some(local_external_path) = model.local_external_path() {
             return Some(local_external_path);
         }
-        let storage = self.storage.lock().await;
-        let state = storage.state(&model.identifier).await?;
-        match state.phase {
-            DownloadPhase::Downloaded {} => {
-                storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
-            },
-            DownloadPhase::NotDownloaded {}
-            | DownloadPhase::Downloading {}
-            | DownloadPhase::Paused {}
-            | DownloadPhase::Locked {}
-            | DownloadPhase::Error {
-                ..
-            } => None,
+        let state = self.storage.state(&model.identifier).await.ok()?;
+        if !matches!(state.phase, DownloadPhase::Downloaded {}) {
+            return None;
         }
+        self.storage.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
     }
 
     #[bindings::export(Method)]
@@ -444,7 +431,7 @@ impl Engine {
         &self,
         model: &Model,
     ) -> Downloader {
-        Downloader::new(model.identifier.clone(), self.storage.clone())
+        Downloader::new(model.identifier.clone(), Arc::clone(&self.storage))
     }
 
     #[bindings::export(Method)]
@@ -457,12 +444,6 @@ impl Engine {
         }
 
         let downloader = self.downloader(model);
-        let Some(state) = downloader.state().await else {
-            return Err(EngineError::UnableToGetDownloaderProgressStream {});
-        };
-        if matches!(state.phase, DownloadPhase::Downloaded {}) {
-            return Ok(DownloaderStream::empty(model.identifier.clone()));
-        }
         downloader.resume().await?;
         downloader.progress().await
     }
@@ -476,8 +457,8 @@ impl Engine {
     }
 
     #[bindings::export(Method(Getter))]
-    pub async fn download_states(&self) -> HashMap<String, DownloadState> {
-        self.storage.lock().await.states().await
+    pub async fn download_states(&self) -> HashMap<ModelIdentifier, DownloadState> {
+        self.storage.states().await
     }
 }
 
@@ -561,13 +542,13 @@ impl Engine {
 }
 
 impl Engine {
-    pub async fn storage_subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
-        self.storage.lock().await.subscribe()
+    pub fn storage_subscribe(&self) -> BroadcastStream<(ModelIdentifier, DownloadState)> {
+        self.storage.subscribe()
     }
 
     async fn handle_registry_refresh(&self) -> Result<(), EngineError> {
         let models = self.registry.lock().await.models().await?;
-        self.storage.lock().await.refresh(models).await?;
+        self.storage.refresh(&models).await?;
         if let Some(callback) = self.callback.lock().await.as_ref().cloned() {
             callback.on_event();
         };
@@ -575,11 +556,11 @@ impl Engine {
     }
 
     async fn spawn_storage_listener(&self) {
-        let mut stream = self.storage_subscribe().await;
+        let mut stream = self.storage_subscribe();
         let callback = self.callback.clone();
         let telemetry = self.telemetry.lock().await.clone();
-        tokio::spawn(async move {
-            let mut last_phase: HashMap<String, DownloadPhase> = HashMap::new();
+        kiban::rt::spawn(async move {
+            let mut last_phase: HashMap<ModelIdentifier, DownloadPhase> = HashMap::new();
             while let Some(update) = stream.next().await {
                 let Ok((id, state)) = update else {
                     continue;

@@ -1,2 +1,3 @@
-pub mod test_storage;
-pub mod tracing_setup;
+mod test_storage;
+
+pub use test_storage::TestStorage;

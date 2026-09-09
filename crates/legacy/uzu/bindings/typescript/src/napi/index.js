@@ -508,6 +508,14 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
+module.exports.DownloadPhaseDownloaded = nativeBinding.DownloadPhaseDownloaded
+module.exports.DownloadPhaseDownloading = nativeBinding.DownloadPhaseDownloading
+module.exports.DownloadPhaseError = nativeBinding.DownloadPhaseError
+module.exports.DownloadPhaseLocked = nativeBinding.DownloadPhaseLocked
+module.exports.DownloadPhaseNotDownloaded = nativeBinding.DownloadPhaseNotDownloaded
+module.exports.DownloadPhasePaused = nativeBinding.DownloadPhasePaused
+module.exports.DownloadState = nativeBinding.DownloadState
+module.exports.DownloadManagerType = nativeBinding.DownloadManagerType
 module.exports.ChatInstance = nativeBinding.ChatInstance
 module.exports.ChatSession = nativeBinding.ChatSession
 module.exports.ChatSessionStream = nativeBinding.ChatSessionStream
@@ -618,18 +626,9 @@ module.exports.ReasoningEffort = nativeBinding.ReasoningEffort
 module.exports.Device = nativeBinding.Device
 module.exports.Downloader = nativeBinding.Downloader
 module.exports.DownloaderStream = nativeBinding.DownloaderStream
-module.exports.DownloaderStreamUpdate = nativeBinding.DownloaderStreamUpdate
-module.exports.DownloadPhaseDownloaded = nativeBinding.DownloadPhaseDownloaded
-module.exports.DownloadPhaseDownloading = nativeBinding.DownloadPhaseDownloading
-module.exports.DownloadPhaseError = nativeBinding.DownloadPhaseError
-module.exports.DownloadPhaseLocked = nativeBinding.DownloadPhaseLocked
-module.exports.DownloadPhaseNotDownloaded = nativeBinding.DownloadPhaseNotDownloaded
-module.exports.DownloadPhasePaused = nativeBinding.DownloadPhasePaused
-module.exports.DownloadState = nativeBinding.DownloadState
 module.exports.Engine = nativeBinding.Engine
 module.exports.EngineCallback = nativeBinding.EngineCallback
 module.exports.EngineConfig = nativeBinding.EngineConfig
 module.exports.Player = nativeBinding.Player
 module.exports.Settings = nativeBinding.Settings
-module.exports.DownloadManagerType = nativeBinding.DownloadManagerType
 module.exports.SettingKind = nativeBinding.SettingKind

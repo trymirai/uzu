@@ -1,4 +1,4 @@
-use uzu::storage::types::DownloadPhase;
+use uzu::storage::DownloadPhase;
 
 use super::app::ModelWithState;
 
@@ -40,7 +40,9 @@ impl Section {
             DownloadPhase::Downloaded {} => Section::Installed,
             DownloadPhase::Downloading {}
             | DownloadPhase::Paused {}
-            | DownloadPhase::Locked {}
+            | DownloadPhase::Locked {
+                ..
+            }
             | DownloadPhase::Error {
                 ..
             } => Section::Downloading,

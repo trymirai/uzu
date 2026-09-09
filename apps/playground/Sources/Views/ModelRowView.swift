@@ -51,7 +51,7 @@ struct ModelRowView: View, Equatable {
                 }
             }
 
-            if state.phase == .downloading || state.phase == .paused {
+            if state.isInProgress() || state.phase == .paused {
                 let progress = min(max(state.progress(), 0.0), 1.0)
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: progress)
@@ -105,9 +105,9 @@ struct ModelRowView: View, Equatable {
                 .font(statusFont)
                 .foregroundColor(.red)
         case .locked:
-            Text("locked")
+            Text("installing elsewhere…")
                 .font(statusFont)
-                .foregroundColor(.red)
+                .foregroundColor(MiraiAsset.secondary.swiftUIColor)
         }
     }
 
@@ -129,7 +129,7 @@ struct ModelRowView: View, Equatable {
 
     private var bytesInfo: String? {
         switch state.phase {
-        case .downloading, .paused:
+        case .downloading, .paused, .locked:
             return "\(formatBytes(state.downloadedBytes)) / \(formatBytes(state.totalBytes))"
         case .notDownloaded:
             return formatBytes(state.totalBytes)

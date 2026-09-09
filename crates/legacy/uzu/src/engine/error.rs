@@ -18,8 +18,6 @@ pub enum EngineError {
     UnableToCreateBackend {},
     #[error("Backend not found")]
     BackendNotFound {},
-    #[error("Unable to get downloader progress stream")]
-    UnableToGetDownloaderProgressStream {},
     #[error(transparent)]
     ChatSession(#[from] nagare::chat::ChatSessionError),
     #[error(transparent)]
