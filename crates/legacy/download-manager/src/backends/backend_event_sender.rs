@@ -31,7 +31,7 @@ impl BackendEventSender {
     ) {
         tracing::debug!(download_id = %self.download_id, ?event, "backend terminal event");
         if let Err(dropped) = self.terminal.send(event).await {
-            tracing::debug!(download_id = %self.download_id, event = ?dropped.0, "actor gone, terminal event dropped");
+            tracing::debug!(download_id = %self.download_id, event = ?dropped.0, "worker gone, terminal event dropped");
         }
     }
 

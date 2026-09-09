@@ -1,4 +1,4 @@
-use objc2_foundation::{NSString, NSURLSessionDownloadTask};
+use objc2_foundation::NSURLSessionDownloadTask;
 use serde::{Deserialize, Serialize};
 
 use crate::{Crc32c, DownloadId, file_download::DownloadConfig};
@@ -25,23 +25,5 @@ impl From<&DownloadConfig> for AppleTaskDescription {
 impl AppleTaskDescription {
     pub fn of(task: &NSURLSessionDownloadTask) -> Option<Self> {
         serde_json::from_str(&task.taskDescription()?.to_string()).ok()
-    }
-
-    pub fn attach_to(
-        &self,
-        task: &NSURLSessionDownloadTask,
-    ) {
-        if let Ok(json) = serde_json::to_string(self) {
-            task.setTaskDescription(Some(&NSString::from_str(&json)));
-        }
-    }
-
-    pub fn matches(
-        &self,
-        config: &DownloadConfig,
-    ) -> bool {
-        self.download_id == config.download_id
-            && self.source_url == config.source_url
-            && self.crc32c == config.expected_crc32c
     }
 }

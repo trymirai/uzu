@@ -17,11 +17,6 @@ impl CachedRegistry {
             models: Mutex::new(None),
         }
     }
-
-    pub async fn clear(&self) {
-        let mut cached_models = self.models.lock().await;
-        *cached_models = None;
-    }
 }
 
 impl Registry for CachedRegistry {

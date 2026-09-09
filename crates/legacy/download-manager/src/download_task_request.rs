@@ -36,8 +36,10 @@ impl DownloadTaskRequest {
         subrequests: Vec<Self>,
     ) -> Self {
         Self {
+            kind: DownloadTaskKind::Group(
+                subrequests.into_iter().map(|subrequest| subrequest.resolved(&destination)).collect(),
+            ),
             destination,
-            kind: DownloadTaskKind::Group(subrequests),
         }
     }
 
@@ -45,20 +47,18 @@ impl DownloadTaskRequest {
         Uuid::new_v5(&Uuid::NAMESPACE_URL, self.destination.to_string_lossy().as_bytes())
     }
 
-    pub fn resolved(
+    fn resolved(
         self,
         parent: &Path,
     ) -> Self {
-        let destination = parent.join(&self.destination);
-        let kind = match self.kind {
-            DownloadTaskKind::Group(subrequests) => DownloadTaskKind::Group(
-                subrequests.into_iter().map(|subrequest| subrequest.resolved(&destination)).collect(),
-            ),
-            kind => kind,
-        };
         Self {
-            destination,
-            kind,
+            destination: parent.join(&self.destination),
+            kind: match self.kind {
+                DownloadTaskKind::Group(subrequests) => DownloadTaskKind::Group(
+                    subrequests.into_iter().map(|subrequest| subrequest.resolved(parent)).collect(),
+                ),
+                kind => kind,
+            },
         }
     }
 }

@@ -399,3 +399,40 @@ async fn universal_resume() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!destination.exists());
     Ok(())
 }
+
+#[rstest]
+#[case::universal(DownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::native(DownloadManagerType::Native))]
+#[tokio::test(flavor = "multi_thread")]
+async fn locked_takeover(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
+    let registry = MockRegistry::start().await?;
+    let directory = tempfile::tempdir()?;
+    let manager = manager(kind);
+    let first = registry.files.first().ok_or("mock registry must include files")?;
+    let lock = foreign_lock(&directory.path().join(&first.file.name)).await;
+    let group = manager.download_task(model_request(&registry, directory.path())?).await?;
+    let mut progress = group.progress();
+    group.download().await?;
+    assert!(matches!(group.state().phase, DownloadPhase::Locked { .. }));
+    drop(lock);
+    wait_for_state(&group, &mut progress, |state| matches!(state.phase, DownloadPhase::Downloaded {})).await;
+    for served in registry.files.iter() {
+        assert_eq!(tokio::fs::read(directory.path().join(&served.file.name)).await?, served.bytes.to_vec());
+    }
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(DownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::native(DownloadManagerType::Native))]
+#[tokio::test(flavor = "multi_thread")]
+async fn ancestor_destination_rejected(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let request = DownloadTaskRequest::group()
+        .destination(directory.path())
+        .subrequests(vec![file_request("http://127.0.0.1/unused", directory.path(), None, None)])
+        .build();
+    let result = timeout(Duration::from_secs(5), manager(kind).download_task(request)).await?;
+    assert!(matches!(result, Err(DownloadError::ConflictingConfig(_))));
+    Ok(())
+}

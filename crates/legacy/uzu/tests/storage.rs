@@ -91,7 +91,11 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     {
         files.truncate(1);
     }
-    storage.refresh(&[changed]).await?;
+    storage.refresh(&[changed.clone()]).await?;
+    assert_eq!(storage.state(&identifier).await?.total_bytes, served.file.size);
+    storage.refresh(&[model.clone(), changed.clone()]).await?;
+    assert_eq!(storage.state(&identifier).await?.total_bytes, total_bytes);
+    storage.refresh(&[changed, model.clone()]).await?;
     assert_eq!(storage.state(&identifier).await?.total_bytes, served.file.size);
     Ok(())
 }

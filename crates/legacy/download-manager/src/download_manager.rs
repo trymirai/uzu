@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    path::Path,
     sync::{Arc, Mutex, PoisonError},
 };
 
@@ -13,7 +12,7 @@ use crate::{
     GroupDownloadTask,
     backends::{Backend, UniversalBackend},
     cached_download_task::CachedDownloadTask,
-    file_download::{DownloadConfig, FileDownloadActor},
+    file_download::{DownloadConfig, FileDownloadWorker},
     locks::LockOwner,
 };
 
@@ -59,14 +58,18 @@ impl DownloadManager {
         &self,
         request: DownloadTaskRequest,
     ) -> Result<Arc<DownloadTask>, DownloadError> {
-        self.task(request.resolved(Path::new(""))).await
+        self.task(request, &[]).await
     }
 
     async fn task(
         &self,
         request: DownloadTaskRequest,
+        ancestors: &[DownloadId],
     ) -> Result<Arc<DownloadTask>, DownloadError> {
         let download_id = request.download_id();
+        if ancestors.contains(&download_id) {
+            return Err(DownloadError::ConflictingConfig(request.destination.display().to_string()));
+        }
         if let Some(cached) = self.cached(download_id, &request) {
             return cached;
         }
@@ -90,14 +93,17 @@ impl DownloadManager {
         if let Some(mut live_state) = stopping {
             while live_state.changed().await.is_ok() {}
         }
-        let task = Arc::new(self.build(&request).await?);
+        let task = Arc::new(self.build(&request, ancestors).await?);
         let live_state = match &*task {
             DownloadTask::File(file) => Some(file.live_state()),
             DownloadTask::Group(_) => None,
         };
         {
             let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
-            tasks.retain(|_, cached| !cached.is_stopped());
+            tasks.retain(|_, cached| {
+                cached.task.strong_count() > 0
+                    || cached.live_state.as_ref().is_some_and(|live_state| live_state.has_changed().is_ok())
+            });
             tasks.insert(
                 download_id,
                 CachedDownloadTask {
@@ -129,6 +135,7 @@ impl DownloadManager {
     async fn build(
         &self,
         request: &DownloadTaskRequest,
+        ancestors: &[DownloadId],
     ) -> Result<DownloadTask, DownloadError> {
         match &request.kind {
             DownloadTaskKind::File {
@@ -152,14 +159,15 @@ impl DownloadManager {
                     "startup reconciled"
                 );
                 let task =
-                    FileDownloadActor::spawn(Arc::clone(&self.backend), request.clone(), config, state, attach_lock)
+                    FileDownloadWorker::spawn(Arc::clone(&self.backend), request.clone(), config, state, attach_lock)
                         .await?;
                 Ok(DownloadTask::File(task))
             },
             DownloadTaskKind::Group(subrequests) => {
+                let ancestors = [ancestors, &[request.download_id()][..]].concat();
                 let mut children = Vec::with_capacity(subrequests.len());
                 for subrequest in subrequests {
-                    children.push(Box::pin(self.task(subrequest.clone())).await?);
+                    children.push(Box::pin(self.task(subrequest.clone(), &ancestors)).await?);
                 }
                 Ok(DownloadTask::Group(GroupDownloadTask::new(request.clone(), children)))
             },

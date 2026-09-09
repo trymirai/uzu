@@ -1,15 +1,8 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use download_manager::{DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
 use futures_util::future::join_all;
-use kiban::{
-    fs,
-    rt::{RuntimeHandle, TaskJoinHandle},
-};
+use kiban::{fs, rt::RuntimeHandle};
 use shoji::types::{
     basic::File,
     model::{Model, ModelAccessibility, ModelIdentifier, ModelReference},
@@ -71,11 +64,19 @@ impl Storage {
         &self,
         models: &[Model],
     ) -> Result<(), StorageError> {
-        let requests = models
-            .iter()
-            .filter_map(|model| model_files(model).map(|files| (model, files)))
-            .map(|(model, files)| Ok((model.identifier.clone(), self.request(model, files)?)))
-            .collect::<Result<HashMap<ModelIdentifier, DownloadTaskRequest>, StorageError>>()?;
+        let mut requests = HashMap::new();
+        for model in models {
+            let ModelAccessibility::Local {
+                reference: ModelReference::Mirai {
+                    files,
+                    ..
+                },
+            } = &model.accessibility
+            else {
+                continue;
+            };
+            requests.entry(model.identifier.clone()).or_insert(self.request(model, files)?);
+        }
         let missing: Vec<(ModelIdentifier, DownloadTaskRequest)> = {
             let mut tasks = self.tasks.lock().await;
             tasks.retain(|identifier, (task, forwarder)| {
@@ -94,7 +95,16 @@ impl Storage {
         let mut tasks = self.tasks.lock().await;
         for (identifier, task) in created {
             let task = task?;
-            let forwarder = self.forward(identifier.clone(), &task);
+            let events = self.events.clone();
+            let mut progress = task.progress();
+            let forwarder = kiban::rt::spawn({
+                let identifier = identifier.clone();
+                async move {
+                    while let Some(state) = progress.next().await {
+                        let _ = events.send((identifier.clone(), state));
+                    }
+                }
+            });
             if let Some((_, replaced)) = tasks.insert(identifier, (task, forwarder)) {
                 replaced.abort();
             }
@@ -159,51 +169,19 @@ impl Storage {
         })?;
         let subrequests = files
             .iter()
-            .map(|file| file_request(&model.identifier, &cache_path, file))
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|file| {
+                let crc32c = file.crc32c().ok_or_else(|| StorageError::HashNotFound {
+                    identifier: model.identifier.clone(),
+                    name: file.name.clone(),
+                })?;
+                Ok(DownloadTaskRequest::file()
+                    .destination(&file.name)
+                    .source_url(&file.url)
+                    .expected_crc32c(crc32c)
+                    .maybe_expected_bytes(u64::try_from(file.size).ok())
+                    .build())
+            })
+            .collect::<Result<Vec<_>, StorageError>>()?;
         Ok(DownloadTaskRequest::group().destination(cache_path).subrequests(subrequests).build())
     }
-
-    fn forward(
-        &self,
-        identifier: ModelIdentifier,
-        task: &DownloadTask,
-    ) -> Box<dyn TaskJoinHandle<()>> {
-        let events = self.events.clone();
-        let mut progress = task.progress();
-        kiban::rt::spawn(async move {
-            while let Some(state) = progress.next().await {
-                let _ = events.send((identifier.clone(), state));
-            }
-        })
-    }
-}
-
-fn model_files(model: &Model) -> Option<&[File]> {
-    match &model.accessibility {
-        ModelAccessibility::Local {
-            reference: ModelReference::Mirai {
-                files,
-                ..
-            },
-        } => Some(files),
-        _ => None,
-    }
-}
-
-fn file_request(
-    identifier: &ModelIdentifier,
-    directory: &Path,
-    file: &File,
-) -> Result<DownloadTaskRequest, StorageError> {
-    let crc32c = file.crc32c().ok_or_else(|| StorageError::HashNotFound {
-        identifier: identifier.clone(),
-        name: file.name.clone(),
-    })?;
-    Ok(DownloadTaskRequest::file()
-        .destination(directory.join(&file.name))
-        .source_url(&file.url)
-        .expected_crc32c(crc32c)
-        .maybe_expected_bytes(u64::try_from(file.size).ok())
-        .build())
 }

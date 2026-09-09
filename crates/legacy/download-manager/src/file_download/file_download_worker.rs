@@ -16,7 +16,7 @@ use crate::{
 
 const OBSERVE_INTERVAL: Duration = Duration::from_secs(1);
 
-pub struct FileDownloadActor {
+pub struct FileDownloadWorker {
     backend: Arc<dyn Backend>,
     config: Arc<DownloadConfig>,
     state: DownloadState,
@@ -30,7 +30,7 @@ pub struct FileDownloadActor {
     published: TokioWatchSender<DownloadState>,
 }
 
-impl FileDownloadActor {
+impl FileDownloadWorker {
     pub async fn spawn(
         backend: Arc<dyn Backend>,
         request: DownloadTaskRequest,
@@ -42,7 +42,7 @@ impl FileDownloadActor {
         let (terminal_sender, backend_events) = tokio_mpsc_channel(64);
         let (progress_sender, backend_progress) = tokio_watch_channel(None);
         let (published, state_receiver) = tokio_watch_channel(state.clone());
-        let mut actor = Self {
+        let mut worker = Self {
             backend,
             config: Arc::clone(&config),
             state,
@@ -56,10 +56,10 @@ impl FileDownloadActor {
             published,
         };
         if let Some(lock) = attach_lock {
-            actor.attach(lock).await?;
+            worker.attach(lock).await?;
         }
-        actor.publish();
-        rt::spawn(actor.run());
+        worker.publish();
+        rt::spawn(worker.run());
         Ok(FileDownloadTask::new(request, config, command_sender, state_receiver))
     }
 

@@ -41,9 +41,20 @@ impl AppleBackend {
         let delegate_protocol_object = ProtocolObject::<dyn NSURLSessionDelegate>::from_retained(
             AppleSessionDelegate::new(Arc::clone(&event_registry)),
         );
+        let bundle_id = Self::bundle_identifier();
+        let configuration = if bundle_id.is_empty() {
+            NSURLSessionConfiguration::ephemeralSessionConfiguration()
+        } else {
+            let session_id = NSString::from_str(&format!("{bundle_id}.trymirai.download-manager"));
+            let configuration = NSURLSessionConfiguration::backgroundSessionConfigurationWithIdentifier(&session_id);
+            configuration.setSessionSendsLaunchEvents(true);
+            configuration.setDiscretionary(false);
+            configuration.setWaitsForConnectivity(true);
+            configuration
+        };
         let session = unsafe {
             NSURLSession::sessionWithConfiguration_delegate_delegateQueue(
-                &Self::session_configuration(),
+                &configuration,
                 Some(&delegate_protocol_object),
                 None,
             )
@@ -59,19 +70,6 @@ impl AppleBackend {
 
     pub fn bundle_identifier() -> String {
         NSBundle::mainBundle().bundleIdentifier().unwrap_or_default().to_string()
-    }
-
-    fn session_configuration() -> Retained<NSURLSessionConfiguration> {
-        let bundle_id = Self::bundle_identifier();
-        if bundle_id.is_empty() {
-            return NSURLSessionConfiguration::ephemeralSessionConfiguration();
-        }
-        let session_id = NSString::from_str(&format!("{bundle_id}.trymirai.download-manager"));
-        let configuration = NSURLSessionConfiguration::backgroundSessionConfigurationWithIdentifier(&session_id);
-        configuration.setSessionSendsLaunchEvents(true);
-        configuration.setDiscretionary(false);
-        configuration.setWaitsForConnectivity(true);
-        configuration
     }
 
     async fn pending_tasks(&self) -> Result<&Mutex<Vec<Retained<NSURLSessionDownloadTask>>>, BackendError> {
@@ -106,7 +104,9 @@ impl AppleBackend {
         generation: DownloadGeneration,
         events: BackendEventSender,
     ) -> Box<dyn ActiveTask> {
-        AppleTaskDescription::from(config).attach_to(&task);
+        if let Ok(json) = serde_json::to_string(&AppleTaskDescription::from(config)) {
+            task.setTaskDescription(Some(&NSString::from_str(&json)));
+        }
         self.event_registry.lock().unwrap_or_else(PoisonError::into_inner).insert(
             task.taskIdentifier(),
             AppleEventSink {
@@ -191,7 +191,11 @@ impl Backend for AppleBackend {
         for task in candidates {
             if attached.is_none()
                 && Self::is_live(&task)
-                && AppleTaskDescription::of(&task).is_some_and(|description| description.matches(&config))
+                && AppleTaskDescription::of(&task).is_some_and(|description| {
+                    description.download_id == config.download_id
+                        && description.source_url == config.source_url
+                        && description.crc32c == config.expected_crc32c
+                })
             {
                 attached = Some(self.activate(task, &config, generation, events.clone()));
             } else {
