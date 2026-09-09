@@ -42,6 +42,7 @@ serde.workspace = true
 serde_json.workspace = true
 shoji.workspace = true
 sysinfo.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true
@@ -51,6 +52,7 @@ unicode-segmentation.workspace = true
 unicode-width.workspace = true
 uuid.workspace = true
 uzu = { workspace = true, default-features = false }
+zip.workspace = true
 
 [lints]
 workspace = true

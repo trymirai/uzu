@@ -2,7 +2,14 @@ use std::{net::IpAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use indicatif::{ProgressBar, ProgressStyle};
-use rocket::{Config, config::LogLevel, fairing::AdHoc, routes};
+use rocket::{
+    Config, Responder, State,
+    config::LogLevel,
+    fairing::AdHoc,
+    get,
+    http::{Header, Status},
+    routes,
+};
 use tokio::sync::Mutex;
 use uzu::{
     engine::{Engine, EngineConfig},
@@ -16,6 +23,28 @@ use crate::{
         response_logger::ResponseBodyLogger,
     },
 };
+
+#[derive(Responder)]
+#[response(content_type = "application/zip")]
+struct LogArchive {
+    file: std::fs::File,
+    content_disposition: Header<'static>,
+}
+
+#[get("/logs")]
+async fn handle_logs(logger: &State<Logger>) -> std::result::Result<LogArchive, Status> {
+    match logger.get_file_archive().await {
+        Ok(Some(file)) => Ok(LogArchive {
+            file,
+            content_disposition: Header::new("Content-Disposition", "attachment; filename=\"mirai-server-logs.zip\""),
+        }),
+        Ok(None) => Err(Status::NotFound),
+        Err(error) => {
+            logger.err(format!("Failed to create log archive: {error}"));
+            Err(Status::InternalServerError)
+        },
+    }
+}
 
 pub async fn run_server(
     model: String,
@@ -67,6 +96,7 @@ pub async fn run_server(
         .context("Failed to resolve cache directory")?;
     let logs_dir_path = cache_dir.join("mirai").join("server").join("logs");
     let logger = Logger::new(true, Some(logs_dir_path))?;
+    // TODO agolokoz: add version
     logger.msg(format!("🚀 OpenAI-compatible server for model: {model_name}"));
     logger.msg(format!("🌐 Available at: http://{host}:{port}"));
     logger.msg(format!(
@@ -80,6 +110,7 @@ pub async fn run_server(
     logger.msg("📝 Endpoints:");
     logger.msg("   POST /v1/chat/completions (or /chat/completions)");
     logger.msg("   GET  /v1/models           (or /models)");
+    logger.msg("   GET  /logs\n");
 
     let rocket = rocket::custom(config)
         .manage(state)
@@ -91,6 +122,10 @@ pub async fn run_server(
         }))
         .attach(AdHoc::on_response("Response logger", |req, response| {
             Box::pin(async move {
+                if matches!(req.uri().path().as_str(), "/logs") {
+                    return;
+                }
+
                 let req_info = req.local_cache(|| RequestInfo::new(req.method(), req.uri().to_string()));
                 let logger = req.rocket().state::<Logger>().expect("managed Logger");
                 let prefix = format!("[{}] <-- {} {}", req_info.id_short(), response.status(), req.uri());
@@ -103,7 +138,7 @@ pub async fn run_server(
                 }
             })
         }))
-        .mount("/", routes![handle_chat_completions, handle_models])
+        .mount("/", routes![handle_chat_completions, handle_models, handle_logs])
         .mount("/v1", routes![handle_chat_completions, handle_models]);
 
     if let Err(error) = rocket.launch().await {

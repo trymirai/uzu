@@ -1,13 +1,20 @@
-use std::{fmt::format, path::PathBuf};
+use std::{
+    fs::{self, File},
+    io::{self, Seek, SeekFrom},
+    path::PathBuf,
+};
 
 use chrono::Local;
 use uuid::Uuid;
+use zip::{ZipWriter, write::SimpleFileOptions};
 
 use crate::server::log::log_file::LogFile;
 
+const ARCHIVE_COMPRESSION_LEVEL: i64 = 9;
+const LOG_FILE_EXTENSION: &str = "log";
+
 #[derive(Clone)]
 pub struct Logger {
-    session_id: String,
     console: bool,
     logs_dir_path: Option<PathBuf>,
     file: Option<LogFile>,
@@ -17,19 +24,19 @@ impl Logger {
     pub fn new(
         console: bool,
         logs_dir_path: Option<PathBuf>,
-    ) -> std::io::Result<Self> {
+    ) -> io::Result<Self> {
+        // TODO agolokoz: remove old files
         let session_id = Uuid::new_v4().simple().to_string();
         let file = logs_dir_path
             .as_ref()
             .map(|logs_dir_path| {
                 let date = Local::now().format("%Y-%m-%d-%H-%M-%S");
-                let file_name = format!("{}-{}.log", date, session_id);
+                let file_name = format!("{}-{}.{}", date, session_id, LOG_FILE_EXTENSION);
                 LogFile::new(logs_dir_path.join(file_name))
             })
             .transpose()?;
 
         Ok(Self {
-            session_id,
             console,
             logs_dir_path,
             file,
@@ -44,7 +51,7 @@ impl Logger {
         if self.console {
             println!("{msg_str}")
         }
-        self.add_to_file(&msg_str);
+        self.add_str_to_file(&msg_str);
     }
 
     pub fn err(
@@ -55,17 +62,58 @@ impl Logger {
         if self.console {
             eprintln!("{msg_str}",)
         }
-        self.add_to_file(&msg_str);
+        self.add_str_to_file(&msg_str);
     }
 
-    fn add_to_file(
+    pub async fn get_file_archive(&self) -> io::Result<Option<File>> {
+        let logger = self.clone();
+        tokio::task::spawn_blocking(move || logger.create_file_archive()).await.map_err(io::Error::other)?
+    }
+
+    fn create_file_archive(&self) -> io::Result<Option<File>> {
+        let Some(logs_dir_path) = &self.logs_dir_path else {
+            return Ok(None);
+        };
+
+        let mut log_file_paths = Vec::new();
+        for entry in fs::read_dir(logs_dir_path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if entry.file_type()?.is_file() && path.extension().is_some_and(|ext| ext == LOG_FILE_EXTENSION) {
+                log_file_paths.push(path);
+            }
+        }
+        log_file_paths.sort();
+
+        let archive_file = tempfile::tempfile()?;
+        let mut archive = ZipWriter::new(archive_file);
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .compression_level(Some(ARCHIVE_COMPRESSION_LEVEL));
+
+        for path in log_file_paths {
+            let file_name = path
+                .file_name()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "log path has no file name"))?;
+            archive.start_file_from_path(file_name, options).map_err(io::Error::other)?;
+
+            let mut log_file = File::open(path)?;
+            io::copy(&mut log_file, &mut archive)?;
+        }
+
+        let mut archive_file = archive.finish().map_err(io::Error::other)?;
+        archive_file.seek(SeekFrom::Start(0))?;
+        Ok(Some(archive_file))
+    }
+
+    fn add_str_to_file(
         &self,
         log: &str,
     ) {
-        if let Some(file) = &self.file {
-            if let Err(error) = file.add(log) {
-                eprintln!("Failed to write to log file in {}: {}", file.path().display(), error);
-            }
+        if let Some(file) = &self.file
+            && let Err(error) = file.add(log)
+        {
+            eprintln!("Failed to write to log file in {}: {}", file.path().display(), error);
         }
     }
 }

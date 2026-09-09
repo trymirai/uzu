@@ -19,9 +19,8 @@ impl LogFile {
         {
             std::fs::create_dir_all(parent)?;
         }
-        println!("FILE PATH: {path:?}");
 
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
         Ok(Self {
             file: Arc::new(Mutex::new(file)),
             path: path.into(),
