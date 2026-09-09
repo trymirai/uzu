@@ -290,7 +290,7 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
-        let mut hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
+        hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
 
         if let Some(coefficients) = mixer_coefficients {
             let post_conv = self.post_mixer_conv.as_ref().expect("post_mixer_conv required");

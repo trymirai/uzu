@@ -4,9 +4,9 @@
 
 using namespace metal;
 
-#define VECTOR_WIDTH 4u
+#define CHANNELS_PER_BLOCK 4u
 #define TOKENS_PER_THREADGROUP 1u
-#define CHANNEL_VECTORS_PER_THREADGROUP 128u
+#define CHANNEL_BLOCKS_PER_THREADGROUP 128u
 
 template<typename T>
 VARIANTS(T, bfloat)
@@ -23,18 +23,18 @@ PUBLIC KERNEL(SeparableCausalConv)(
     const uint group_size SPECIALIZE,
     const bool has_bias SPECIALIZE,
     uint token AXIS(sequence_length, TOKENS_PER_THREADGROUP),
-    uint channel_block_index AXIS((model_dim + VECTOR_WIDTH - 1u) / VECTOR_WIDTH, CHANNEL_VECTORS_PER_THREADGROUP)
+    uint channel_block_index AXIS((model_dim + CHANNELS_PER_BLOCK - 1u) / CHANNELS_PER_BLOCK, CHANNEL_BLOCKS_PER_THREADGROUP)
 ){
-  using ValueVector = vec<T, VECTOR_WIDTH>;
-  using AccumulatorVector = vec<float, VECTOR_WIDTH>;
+  using ValueBlock = vec<T, CHANNELS_PER_BLOCK>;
+  using AccumulatorBlock = vec<float, CHANNELS_PER_BLOCK>;
 
-  const uint channel = channel_block_index * VECTOR_WIDTH;
+  const uint channel = channel_block_index * CHANNELS_PER_BLOCK;
   const uint num_groups = model_dim / group_size;
   const uint available_tokens = min(kernel_size, token + 1u);
   const uint group = channel / group_size;
-  AccumulatorVector output_value = 0.0f;
+  AccumulatorBlock output_value = 0.0f;
   if (has_bias) {
-    output_value = AccumulatorVector(*reinterpret_cast<const device ValueVector*>(bias + channel));
+    output_value = AccumulatorBlock(*reinterpret_cast<const device ValueBlock*>(bias + channel));
   }
 
   METAL_PRAGMA_UNROLL
@@ -43,7 +43,7 @@ PUBLIC KERNEL(SeparableCausalConv)(
     const uint input_index = input_token * model_dim + channel;
     const uint stored_weight = kernel_size - 1u - tokens_back;
     const uint coefficient_index = token * coefficient_row_stride + tokens_back * num_groups + group;
-    const AccumulatorVector weight = AccumulatorVector(
+    const AccumulatorBlock weight = AccumulatorBlock(
         float(weights[(channel + 0u) * kernel_size + stored_weight]),
         float(weights[(channel + 1u) * kernel_size + stored_weight]),
         float(weights[(channel + 2u) * kernel_size + stored_weight]),
@@ -51,8 +51,8 @@ PUBLIC KERNEL(SeparableCausalConv)(
     );
 
     output_value += (weight + float(coefficient_deltas[coefficient_index])) *
-                    AccumulatorVector(*reinterpret_cast<const device ValueVector*>(input + input_index));
+                    AccumulatorBlock(*reinterpret_cast<const device ValueBlock*>(input + input_index));
   }
 
-  *reinterpret_cast<device ValueVector*>(output + token * model_dim + channel) = ValueVector(output_value);
+  *reinterpret_cast<device ValueBlock*>(output + token * model_dim + channel) = ValueBlock(output_value);
 }

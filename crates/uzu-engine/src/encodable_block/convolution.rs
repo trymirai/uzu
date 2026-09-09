@@ -85,7 +85,6 @@ impl<B: Backend> SeparableCausalConv<B> {
         encoder.push_debug_group("SeparableCausalConv");
 
         let mut output = encoder.allocate_scratch_for_shape(&[sequence_length, self.model_dim], self.data_type)?;
-
         let coefficients_offset_bytes = size_for_shape(&[coefficient_column_offset], self.data_type);
         self.kernel.encode(
             input,
