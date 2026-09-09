@@ -1,6 +1,6 @@
 use uzu_engine_macros::uzu_config;
 
-use crate::config::{linear::LinearConfig, token_mixer::convolutions::SeparableCausalConvConfig};
+use crate::config::{convolutions::SeparableCausalConvConfig, linear::LinearConfig};
 
 #[uzu_config(super::TokenMixerConfig)]
 pub struct ShortConvConfig {

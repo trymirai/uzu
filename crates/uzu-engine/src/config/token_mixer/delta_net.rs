@@ -1,7 +1,7 @@
 use uzu_engine_macros::uzu_config;
 
 use crate::config::{
-    linear::LinearConfig, normalization::NormalizationConfig, token_mixer::convolutions::SeparableCausalConvConfig,
+    convolutions::SeparableCausalConvConfig, linear::LinearConfig, normalization::NormalizationConfig,
 };
 
 #[uzu_config(super::TokenMixerConfig)]
