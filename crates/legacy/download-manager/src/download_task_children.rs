@@ -9,9 +9,9 @@ use kiban::stream::BoxStream;
 use crate::{DownloadError, DownloadPhase, DownloadState, DownloadTask};
 
 #[derive(Clone)]
-pub struct Children(Arc<[Arc<DownloadTask>]>);
+pub struct DownloadTaskChildren(Arc<[Arc<DownloadTask>]>);
 
-impl Children {
+impl DownloadTaskChildren {
     pub fn new(children: Vec<Arc<DownloadTask>>) -> Self {
         Self(children.into())
     }

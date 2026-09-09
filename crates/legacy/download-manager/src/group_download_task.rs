@@ -6,13 +6,13 @@ use std::sync::{
 use kiban::{rt, rt::TaskJoinHandle, stream::BoxStream};
 
 use crate::{
-    DownloadError, DownloadPhase, DownloadState, DownloadTask, DownloadTaskRequest, children::Children,
-    locks::LockError,
+    DownloadError, DownloadPhase, DownloadState, DownloadTask, DownloadTaskRequest,
+    download_task_children::DownloadTaskChildren, locks::LockError,
 };
 
 pub struct GroupDownloadTask {
     pub request: DownloadTaskRequest,
-    children: Children,
+    children: DownloadTaskChildren,
     sequencing: Arc<AtomicBool>,
     driver: Mutex<Option<Box<dyn TaskJoinHandle<()>>>>,
 }
@@ -24,7 +24,7 @@ impl GroupDownloadTask {
     ) -> Self {
         let group = Self {
             request,
-            children: Children::new(children),
+            children: DownloadTaskChildren::new(children),
             sequencing: Arc::default(),
             driver: Mutex::default(),
         };

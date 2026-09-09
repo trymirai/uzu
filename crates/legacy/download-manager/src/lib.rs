@@ -3,7 +3,6 @@ uniffi::setup_scaffolding!();
 
 mod backends;
 mod cached_download_task;
-mod children;
 mod crc32c;
 mod crc_receipt;
 mod download_error;
@@ -13,6 +12,7 @@ mod download_manager_type;
 mod download_phase;
 mod download_state;
 mod download_task;
+mod download_task_children;
 mod download_task_kind;
 mod download_task_request;
 mod file_download;

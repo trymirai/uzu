@@ -132,8 +132,7 @@ impl UniversalStream {
             .get(CONTENT_LENGTH)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<u64>().ok())
-            .map(|remaining| remaining.saturating_add(resume_from))
-            .or(config.expected_bytes);
+            .map(|remaining| remaining.saturating_add(resume_from));
 
         let mut file = <dyn PartFile>::new(artifact, resume_from).await?;
         let mut downloaded_bytes = resume_from;
@@ -160,7 +159,7 @@ impl UniversalStream {
             }
         }
         file.flush().await?;
-        self.events.send_progress(self.generation, downloaded_bytes, total_bytes.or(Some(downloaded_bytes)));
+        self.events.send_progress(self.generation, downloaded_bytes, total_bytes);
         fs::asyn::rename(artifact, &config.destination).await?;
         Ok(false)
     }
