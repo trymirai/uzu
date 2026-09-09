@@ -34,7 +34,7 @@ use crate::{
             coerce_tool_call, insert_tools_message, oai_tool_call, parse_scalar_text, reply_tool_calls, to_tool_call,
             tool_call_result_block, withhold_stream_text,
         },
-        logger::Logger,
+        log::Logger,
         request_info::RequestInfo,
         request_log::RequestLog,
     },

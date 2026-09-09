@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use uzu::types::session::chat::ChatReplyStats;
 
-use crate::server::logger::Logger;
+use crate::server::log::Logger;
 
 /// Per-request console logging: one line when the request arrives, one when it
 /// ends, correlated by a short tag derived from the request id. Each line is a

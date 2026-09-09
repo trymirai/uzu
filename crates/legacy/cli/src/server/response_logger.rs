@@ -7,7 +7,7 @@ use std::{
 use rocket::response::Body;
 use tokio::io::{AsyncRead, ReadBuf};
 
-use crate::server::logger::Logger;
+use crate::server::log::Logger;
 
 pub struct ResponseBodyLogger<'r> {
     body: Body<'r>,
@@ -51,7 +51,7 @@ impl<'r> ResponseBodyLogger<'r> {
         } else {
             format!("{:?}", String::from_utf8_lossy(&self.bytes))
         };
-        self.logger.msg(format!("{} body={}{}", self.prefix, body, suffix));
+        self.logger.msg(format!("{} body={}{}\n", self.prefix, body, suffix));
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{net::IpAddr, sync::Arc, time::Duration};
+use std::{net::IpAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -12,7 +12,7 @@ use uzu::{
 use crate::{
     common::thinking::ThinkingSupport,
     server::{
-        ServerState, handle_chat_completions, handle_models, logger::Logger, request_info::RequestInfo,
+        ServerState, handle_chat_completions, handle_models, log::Logger, request_info::RequestInfo,
         response_logger::ResponseBodyLogger,
     },
 };
@@ -60,7 +60,13 @@ pub async fn run_server(
         ..Config::default()
     };
 
-    let logger = Logger::default();
+    let cache_dir = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| dirs::home_dir().map(|path| path.join(".cache")))
+        .context("Failed to resolve cache directory")?;
+    let logs_dir_path = cache_dir.join("mirai").join("server").join("logs");
+    let logger = Logger::new(true, Some(logs_dir_path))?;
     logger.msg(format!("🚀 OpenAI-compatible server for model: {model_name}"));
     logger.msg(format!("🌐 Available at: http://{host}:{port}"));
     logger.msg(format!(
@@ -89,7 +95,7 @@ pub async fn run_server(
                 let logger = req.rocket().state::<Logger>().expect("managed Logger");
                 let prefix = format!("[{}] <-- {} {}", req_info.id_short(), response.status(), req.uri());
                 if response.body().is_none() {
-                    logger.msg(format!("{prefix} body=<empty>"));
+                    logger.msg(format!("{prefix} body=<empty>\n"));
                 } else {
                     let is_json = response.content_type().is_some_and(|content_type| content_type.is_json());
                     let body = response.body_mut().take();
