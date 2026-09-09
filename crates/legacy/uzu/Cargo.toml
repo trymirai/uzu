@@ -9,6 +9,7 @@ authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
+keywords.workspace = true
 
 [lib]
 crate-type = ["lib", "cdylib", "staticlib"]
@@ -63,7 +64,7 @@ bindings-wasm = [
 ]
 
 [dependencies]
-bindings-types.workspace = true
+bindings-types = { workspace = true, optional = true }
 bindings.workspace = true
 uzu-engine.workspace = true
 kiban.workspace = true
