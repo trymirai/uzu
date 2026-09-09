@@ -21,7 +21,7 @@ pub enum ConvolutionNewError<B: Backend> {
 
 pub struct SeparableCausalConv<B: Backend> {
     model_dim: u32,
-    coefficient_row_stride: u32,
+    pub coefficient_count: u32,
     data_type: DataType,
     weights: Allocation<B>,
     biases: Option<Allocation<B>>,
@@ -61,11 +61,11 @@ impl<B: Backend> SeparableCausalConv<B> {
         )
         .map_err(ConvolutionNewError::Backend)?;
 
-        let coefficient_row_stride = 2 * kernel_size * (model_dim / group_size);
+        let coefficient_count = kernel_size * (model_dim / group_size);
 
         Ok(Self {
             model_dim,
-            coefficient_row_stride,
+            coefficient_count,
             data_type,
             weights,
             biases,
@@ -77,6 +77,7 @@ impl<B: Backend> SeparableCausalConv<B> {
         &self,
         input: &Allocation<B>,
         coefficient_deltas: &Allocation<B>,
+        coefficient_row_stride: u32,
         coefficient_column_offset: u32,
         sequence_length: u32,
         encoder: &mut Encoder<B>,
@@ -93,7 +94,7 @@ impl<B: Backend> SeparableCausalConv<B> {
             self.biases.as_ref(),
             &mut output,
             sequence_length,
-            self.coefficient_row_stride,
+            coefficient_row_stride,
             encoder,
         );
 
