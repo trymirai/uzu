@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    pin::Pin,
-    str::FromStr,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, pin::Pin, str::FromStr, sync::Arc};
 
 use rocket::{
     Request, State,
@@ -21,7 +15,6 @@ use rocket::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStream, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
     types::{
@@ -41,6 +34,8 @@ use crate::{
             coerce_tool_call, insert_tools_message, oai_tool_call, parse_scalar_text, reply_tool_calls, to_tool_call,
             tool_call_result_block, withhold_stream_text,
         },
+        logger::Logger,
+        request_info::RequestInfo,
         request_log::RequestLog,
     },
 };
@@ -240,10 +235,6 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
             ChatCompletionResult::Error(error) => error.respond_to(request),
         }
     }
-}
-
-fn now_unix() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
@@ -1153,6 +1144,9 @@ async fn run_stream(
 pub async fn handle_chat_completions(
     body: Data<'_>,
     state: &State<ServerState>,
+    logger: &State<Logger>,
+    request_info: &RequestInfo,
+    content_type: &ContentType,
 ) -> ChatCompletionResult {
     let body = match body.open(ByteUnit::Mebibyte(64)).into_string().await {
         Ok(body) if body.is_complete() => body.into_inner(),
@@ -1163,10 +1157,23 @@ pub async fn handle_chat_completions(
             return invalid_request_response("body", "invalid_body", format!("failed to read request body: {error}"));
         },
     };
+    let log_body = if content_type.is_json() {
+        serde_json::from_str::<serde_json::Value>(&body).map(|value| value.to_string()).unwrap_or_else(|_| body.clone())
+    } else {
+        body.clone()
+    };
+    logger.msg(format!(
+        "[{}] --> {} {} body={}",
+        request_info.id_short(),
+        request_info.method,
+        request_info.uri,
+        log_body
+    ));
+
     let request = match serde_json::from_str::<ChatCompletionRequest>(&body) {
         Ok(request) => request,
         Err(error) => {
-            RequestLog::rejected(&format!("failed to parse chat completion request: {error}"));
+            logger.msg(format!("[] rejected: {error}"));
             return invalid_request_response(
                 "body",
                 "invalid_request",
@@ -1174,12 +1181,13 @@ pub async fn handle_chat_completions(
             );
         },
     };
-    let id = format!("chatcmpl-{}", Uuid::new_v4().simple());
-    let created = now_unix();
+
     let model = state.model_name.clone();
+    let created = request_info.created_at;
     let is_stream = request.stream.unwrap_or(false);
     let log = RequestLog::start(
-        &id,
+        logger.inner(),
+        request_info.id.as_str(),
         is_stream,
         request.messages.len(),
         request.tools.as_ref().map_or(0, Vec::len),
@@ -1212,10 +1220,11 @@ pub async fn handle_chat_completions(
     // the types when replies cross back into the OpenAI wire format.
     let parameter_types = ToolParameterTypes::from_tools(request.tools.as_deref());
 
+    let id = request_info.id.as_str().to_owned();
     if is_stream {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Event>();
-        rocket::tokio::spawn(run_stream(
+        tokio::spawn(run_stream(
             session,
             messages,
             config,
@@ -1232,7 +1241,7 @@ pub async fn handle_chat_completions(
     } else {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Vec<u8>>();
-        rocket::tokio::spawn(run_blocking(
+        tokio::spawn(run_blocking(
             session,
             messages,
             config,

@@ -2,7 +2,7 @@ use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use indicatif::{ProgressBar, ProgressStyle};
-use rocket::{Config, config::LogLevel, routes};
+use rocket::{Config, config::LogLevel, fairing::AdHoc, routes};
 use tokio::sync::Mutex;
 use uzu::{
     engine::{Engine, EngineConfig},
@@ -11,7 +11,10 @@ use uzu::{
 
 use crate::{
     common::thinking::ThinkingSupport,
-    server::{ServerState, handle_chat_completions, handle_models},
+    server::{
+        ServerState, handle_chat_completions, handle_models, logger::Logger, request_info::RequestInfo,
+        response_logger::ResponseBodyLogger,
+    },
 };
 
 pub async fn run_server(
@@ -57,22 +60,43 @@ pub async fn run_server(
         ..Config::default()
     };
 
-    println!("🚀 OpenAI-compatible server for model: {model_name}");
-    println!("🌐 Available at: http://{host}:{port}");
-    println!(
+    let logger = Logger::default();
+    logger.msg(format!("🚀 OpenAI-compatible server for model: {model_name}"));
+    logger.msg(format!("🌐 Available at: http://{host}:{port}"));
+    logger.msg(format!(
         "🗄️  Prefix cache: {}",
         if prefix_cache {
             "enabled"
         } else {
             "disabled"
         }
-    );
-    println!("📝 Endpoints:");
-    println!("   POST /v1/chat/completions (or /chat/completions)");
-    println!("   GET  /v1/models           (or /models)");
+    ));
+    logger.msg("📝 Endpoints:");
+    logger.msg("   POST /v1/chat/completions (or /chat/completions)");
+    logger.msg("   GET  /v1/models           (or /models)");
 
     let rocket = rocket::custom(config)
         .manage(state)
+        .manage(logger)
+        .attach(AdHoc::on_request("Request logger", |req, _data| {
+            Box::pin(async move {
+                let _ = req.local_cache(|| RequestInfo::new(req.method(), req.uri().to_string()));
+            })
+        }))
+        .attach(AdHoc::on_response("Response logger", |req, response| {
+            Box::pin(async move {
+                let req_info = req.local_cache(|| RequestInfo::new(req.method(), req.uri().to_string()));
+                let logger = req.rocket().state::<Logger>().expect("managed Logger");
+                let prefix = format!("[{}] <-- {} {}", req_info.id_short(), response.status(), req.uri());
+                if response.body().is_none() {
+                    logger.msg(format!("{prefix} body=<empty>"));
+                } else {
+                    let is_json = response.content_type().is_some_and(|content_type| content_type.is_json());
+                    let body = response.body_mut().take();
+                    response.set_streamed_body(ResponseBodyLogger::new(body, logger, prefix, is_json));
+                }
+            })
+        }))
         .mount("/", routes![handle_chat_completions, handle_models])
         .mount("/v1", routes![handle_chat_completions, handle_models]);
 

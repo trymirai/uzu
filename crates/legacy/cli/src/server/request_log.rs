@@ -1,24 +1,22 @@
 use std::time::Instant;
 
-use uuid::Uuid;
 use uzu::types::session::chat::ChatReplyStats;
+
+use crate::server::logger::Logger;
 
 /// Per-request console logging: one line when the request arrives, one when it
 /// ends, correlated by a short tag derived from the request id. Each line is a
 /// single `println!`, which holds the stdout lock for the whole write, so lines
 /// from concurrent requests never interleave.
 pub struct RequestLog {
+    logger: Logger,
     tag: String,
     started: Instant,
 }
 
-fn short_tag(id: &str) -> String {
-    let id = id.strip_prefix("chatcmpl-").unwrap_or(id);
-    id.chars().take(8).collect()
-}
-
 impl RequestLog {
     pub fn start(
+        logger: &Logger,
         id: &str,
         stream: bool,
         messages: usize,
@@ -26,24 +24,20 @@ impl RequestLog {
         reasoning_effort: Option<&str>,
     ) -> Self {
         let tag = short_tag(id);
-        println!(
-            "[req {tag}] received: {messages} messages, {}, {tools} tools, reasoning_effort={}",
+        logger.msg(format!(
+            "[{tag}] received: {messages} messages, {}, {tools} tools, reasoning_effort={}",
             if stream {
                 "stream"
             } else {
                 "blocking"
             },
             reasoning_effort.unwrap_or("default"),
-        );
+        ));
         Self {
+            logger: logger.clone(),
             tag,
             started: Instant::now(),
         }
-    }
-
-    /// For requests rejected before an id could be assigned to them.
-    pub fn rejected(error: &str) {
-        println!("[req {}] rejected: {error}", short_tag(&Uuid::new_v4().simple().to_string()));
     }
 
     pub fn finish(
@@ -81,13 +75,17 @@ impl RequestLog {
             }
         }
         parts.extend(notes);
-        println!("[req {}] {}", self.tag, parts.join(", "));
+        self.logger.msg(format!("[{}] {}", self.tag, parts.join(", ")));
     }
 
     pub fn fail(
         &self,
         error: &str,
     ) {
-        println!("[req {}] failed in {:.2}s: {error}", self.tag, self.started.elapsed().as_secs_f64());
+        self.logger.msg(format!("[{}] failed in {:.2}s: {error}", self.tag, self.started.elapsed().as_secs_f64()));
     }
+}
+
+fn short_tag(id: &str) -> String {
+    id.chars().take(8).collect()
 }
