@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../../common/integral_constant.h"
+#include "../../../common/soft_cap.h"
 #include "../../../common/thread_context.h"
 #include "../../common/defines.h"
 #include "../../common/loader.h"
@@ -34,6 +35,7 @@ struct SimdgroupMmaCore {
   using Right = RightOperand;
   using LeftElementType = typename Left::ElementType;
   using RightElementType = typename Right::ElementType;
+  using ScaleElementType = typename Right::ScaleElement;
   using LeftStorage = operands::LeftStorage<Left>;
   using RightStorage = operands::RightStorage<Right>;
   static_assert(!Left::QUANTIZED, "simdgroup MMA stages full-precision left operands only");
@@ -140,8 +142,9 @@ struct SimdgroupMmaCore {
       const thread ushort& tile_block_cols,
       const bool needs_epilogue,
       const thread uzu::matmul::TransformScaleAccumulate<float, float>& epilogue,
-      const device RightElementType* bias_block,
+      const device ScaleElementType* bias_block,
       const bool needs_bias,
+      const bool needs_soft_cap,
       const device int32_t* rht_factors_block,
       const bool needs_rht,
       const thread ThreadContext& thread_context
@@ -154,6 +157,9 @@ struct SimdgroupMmaCore {
       if (needs_bias) {
         accumulator.apply_bias(bias_block);
       }
+      if (needs_soft_cap) {
+        accumulator.c_fragment.map([&](float value) { return uzu::apply_soft_cap(value, params->soft_cap); });
+      }
       accumulator.store_result(d, params->leading_dimension_d);
     } else {
       if (needs_epilogue) {
@@ -162,6 +168,9 @@ struct SimdgroupMmaCore {
       }
       if (needs_bias) {
         accumulator.apply_bias_safe(bias_block, short2(tile_block_cols, tile_block_rows));
+      }
+      if (needs_soft_cap) {
+        accumulator.c_fragment.map([&](float value) { return uzu::apply_soft_cap(value, params->soft_cap); });
       }
       accumulator.store_result_safe(d, params->leading_dimension_d, short2(tile_block_cols, tile_block_rows));
     }
@@ -187,7 +196,7 @@ struct SimdgroupMmaCore {
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmDTransform output_transform,
-      const device RightElementType* output_bias,
+      const device ScaleElementType* output_bias,
       const device int32_t* rht_factors,
       threadgroup LeftElementType* a_shared,
       threadgroup RightElementType* b_shared,
@@ -228,12 +237,13 @@ struct SimdgroupMmaCore {
     const bool needs_scale = output_transform.contains(GemmDTransform::SCALE);
     const bool needs_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool needs_bias = output_transform.contains(GemmDTransform::BIAS);
+    const bool needs_soft_cap = Right::MICROFLOAT && output_transform.contains(GemmDTransform::SOFT_CAP);
     const bool needs_rht = output_transform.contains(GemmDTransform::RHT);
     const bool needs_epilogue = needs_scale || needs_accumulate;
     const float alpha = needs_scale ? params->ab_scale : 1.0f;
     const float beta = needs_accumulate ? 1.0f : 0.0f;
     uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
-    const device RightElementType* bias_block = output_bias + block_col;
+    const device ScaleElementType* bias_block = output_bias + block_col;
     const device int32_t* rht_factors_block = rht_factors + block_col;
 
     const bool all_aligned = ((alignment.contains(GemmAlignment::M)) || (tile_block_rows == THREADGROUP_BLOCK_M)) &&
@@ -245,63 +255,47 @@ struct SimdgroupMmaCore {
         alignment.raw_value | ((tile_block_rows == THREADGROUP_BLOCK_M) ? static_cast<uint>(GemmAlignment::M) : 0u) |
         ((tile_block_cols == THREADGROUP_BLOCK_N) ? static_cast<uint>(GemmAlignment::N) : 0u);
 
-    auto run_with_loader = [&](auto loader_b) {
-      auto kernel_invoke = [&](auto gemm_alignment_mask) {
-        constexpr uint gemm_alignment = gemm_alignment_mask.value;
-        k_loop<gemm_alignment>(
-            a_shared,
-            b_shared,
-            params->aligned_inner_iterations,
-            loader_a,
-            loader_b,
-            accumulator,
-            tile_block_rows,
-            tile_block_cols,
-            leftover_block_depth
-        );
-        finalize<gemm_alignment>(
-            accumulator,
-            d,
-            params,
-            tile_block_rows,
-            tile_block_cols,
-            needs_epilogue,
-            epilogue,
-            bias_block,
-            needs_bias,
-            rht_factors_block,
-            needs_rht,
-            thread_context
-        );
-      };
-
-      if (all_aligned) {
-        kernel_invoke(integral_constant<uint, MASK_ALL>{});
-      } else {
-        dispatch_gemm_alignment(dynamic_alignment_mask, kernel_invoke);
+    auto loader_b =
+        schedules::make_staged_loader<SimdgroupMmaCore>(right, params, block_col, k_offset, b_shared, thread_context);
+    auto kernel_invoke = [&](auto gemm_alignment_mask) {
+      constexpr uint gemm_alignment = gemm_alignment_mask.value;
+      k_loop<gemm_alignment>(
+          a_shared,
+          b_shared,
+          params->aligned_inner_iterations,
+          loader_a,
+          loader_b,
+          accumulator,
+          tile_block_rows,
+          tile_block_cols,
+          leftover_block_depth
+      );
+      if constexpr (Right::MICROFLOAT) {
+        // Keeping the outer scale in f32; folding it into staging would narrow the final weights.
+        const float outer_scale = float(right.microfloat_outer_scale[0]);
+        accumulator.c_fragment.map([&](float value) { return value * outer_scale; });
       }
+      finalize<gemm_alignment>(
+          accumulator,
+          d,
+          params,
+          tile_block_rows,
+          tile_block_cols,
+          needs_epilogue,
+          epilogue,
+          bias_block,
+          needs_bias,
+          needs_soft_cap,
+          rht_factors_block,
+          needs_rht,
+          thread_context
+      );
     };
 
-    if constexpr (!Right::QUANTIZED) {
-      auto loader_b = schedules::make_full_precision_loader<SimdgroupMmaCore>(
-          right,
-          params,
-          block_col,
-          k_offset,
-          b_shared,
-          thread_context
-      );
-      run_with_loader(loader_b);
+    if (all_aligned) {
+      kernel_invoke(integral_constant<uint, MASK_ALL>{});
     } else {
-      auto loader_b = schedules::make_staged_loader<SimdgroupMmaCore, RightOperand>(
-          right,
-          params,
-          block_col,
-          k_offset,
-          b_shared,
-          thread_context
-      );
-      run_with_loader(loader_b);
+      dispatch_gemm_alignment(dynamic_alignment_mask, kernel_invoke);
     }
   }
 };

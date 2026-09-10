@@ -4,6 +4,7 @@
 #include "common/arguments.h"
 #include "common/epilogue.h"
 #include "common/full_precision_b_source.h"
+#include "common/microfloat_b_source.h"
 #include "common/tile.h"
 #include "common/quant_b_source.h"
 #include "common/reduce.h"
@@ -25,10 +26,11 @@ template <
     uint OUTPUT_ROW_TILE,
     uint REDUCTION_LANES,
     uint GROUP_LANES,
-    uint NUM_SIMDGROUPS>
-VARIANTS(AT, bfloat, float)
-VARIANTS(BT, bfloat, float)
-VARIANTS(DT, bfloat, float)
+    uint NUM_SIMDGROUPS,
+    bool MICROFLOAT>
+VARIANTS(AT, half, bfloat, float)
+VARIANTS(BT, half, bfloat, float)
+VARIANTS(DT, half, bfloat, float)
 CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
 VARIANTS(
     B_PROLOGUE,
@@ -45,9 +47,17 @@ VARIANTS(OUTPUT_ROW_TILE, 1, 2, 4, 8, 16, 32, 64)
 VARIANTS(REDUCTION_LANES, 8, 16, 32)
 VARIANTS(GROUP_LANES, 1, 2, 4, 8, 16)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
+VARIANTS(MICROFLOAT, false, true)
 
-CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
-CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
+CONSTRAINT(MICROFLOAT || (AT != "half" && BT != "half" && DT != "half"))
+CONSTRAINT(MICROFLOAT || (B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
+CONSTRAINT(MICROFLOAT || (BITS == 0) == (GROUP_SIZE == 0))
+CONSTRAINT(!MICROFLOAT || (B_PROLOGUE == GemmBPrologueKind::FullPrecision && BITS == 4))
+CONSTRAINT(!MICROFLOAT || GROUP_SIZE == 16 || GROUP_SIZE == 32)
+CONSTRAINT(
+    !MICROFLOAT ||
+    (K_SPLIT == 1 && INPUT_ALIGNED && INPUT_ROW_TILE == 1 && OUTPUT_ROW_TILE == 32 && REDUCTION_LANES == 32 &&
+     GROUP_LANES == 1 && NUM_SIMDGROUPS == 8))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(BITS == 0 || K_SPLIT == 1)
 CONSTRAINT(BITS != 0 || (INPUT_ROW_TILE == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && GROUP_LANES == 1))
@@ -103,7 +113,7 @@ CONSTRAINT(BITS != 4 || (GROUP_SIZE / GROUP_LANES) % 16 == 0)
 CONSTRAINT(BITS != 8 || (GROUP_SIZE / GROUP_LANES) % 8 == 0)
 CONSTRAINT(BITS != 0 || REDUCTION_LANES == 32)
 CONSTRAINT(
-    BITS == 0 || INPUT_ROW_TILE > 1 || (BITS == 4 &&
+    MICROFLOAT || BITS == 0 || INPUT_ROW_TILE > 1 || (BITS == 4 &&
      ((GROUP_SIZE == 16 && GROUP_LANES == 1) || (GROUP_SIZE == 32 && GROUP_LANES == 2) ||
       (GROUP_SIZE == 64 && GROUP_LANES == 4) || (GROUP_SIZE == 128 && GROUP_LANES == 8))) ||
     (BITS == 8 &&
@@ -112,11 +122,12 @@ CONSTRAINT(
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales
-        OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision),
+        OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision || MICROFLOAT),
     const device uint8_t* zero_points
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
     const device BT* biases
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
+    const device BT* outer_scales OPTIONAL(MICROFLOAT),
     const device AT* a,
     device DT* d,
     const device BT* output_bias
@@ -142,17 +153,19 @@ KERNEL(Gemv)(
     const uint simd_group THREADS(NUM_SIMDGROUPS)
 ) {
   using Ops = GemvOperands<AT, BT, DT>;
-  const Ops ops = {b, scales, zero_points, biases, a, d, output_bias, hadamard_factors, gather_indices};
+  const Ops ops = {b, scales, zero_points, biases, outer_scales, a, d, output_bias, hadamard_factors, gather_indices};
   const GemvParams params =
       {in_vec_size, out_vec_size, batch_size, ab_scale, soft_cap, output_transform, gathered, signed_codes};
   dispatch_bool(full_tile, [&](auto full_tile_constant) {
     constexpr bool FullTile = decltype(full_tile_constant)::value;
     using Tile = GemvTile<INPUT_ROW_TILE, OUTPUT_ROW_TILE, REDUCTION_LANES, GROUP_LANES, NUM_SIMDGROUPS, K_SPLIT>;
     const OutputTile<Tile, FullTile> tile =
-        OutputTile<Tile, FullTile>::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, out_vec_size);
+        OutputTile<Tile, FullTile>::make(output_tile_idx, input_tile_idx, simd_group, simd_lane);
     thread float result[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
 
-    if constexpr (BITS == 0) {
+    if constexpr (MICROFLOAT) {
+      MicrofloatBSource<Tile, AT, BT, DT, GROUP_SIZE, FullTile>::accumulate(result, ops, params, tile);
+    } else if constexpr (BITS == 0) {
       FullPrecisionBSource<Tile, AT, BT, DT, INPUT_ALIGNED, FullTile>::accumulate(result, ops, params, tile);
     } else {
       QuantBSource<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FullTile>::accumulate(

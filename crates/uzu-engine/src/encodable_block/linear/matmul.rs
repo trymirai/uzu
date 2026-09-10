@@ -157,6 +157,7 @@ impl<B: Backend> LinearMatmul<B> {
             k: self.input_dim,
             b_transpose: true,
             b_leading_dimension: None,
+            b_kind: b.kind(),
             b_prologue: b.b_prologue(),
             b_bits: b.bits_per_b(),
             b_group_size: b.group_size(),

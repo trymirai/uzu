@@ -13,4 +13,5 @@ pub struct GemmParams {
     pub aligned_inner_iterations: u32,
     pub use_morton: bool,
     pub ab_scale: f32,
+    pub soft_cap: f32,
 }

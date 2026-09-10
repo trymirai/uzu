@@ -7,14 +7,17 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,
-    backends::{common::Encoder, cpu::Cpu},
+    backends::{
+        common::{Backend, Encoder},
+        cpu::Cpu,
+    },
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearBlockError, LinearMatmulError},
         weight_matrix::WeightMatrixError,
     },
     parameters::{ParameterLoader, ParameterLoaderError},
-    tests::helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
+    tests::helpers::{alloc_allocation_with_data, allocation_to_vec, create_context, for_each_non_cpu_backend},
 };
 
 fn add_tensor(
@@ -81,12 +84,12 @@ fn dense_microfloat_parameter_file<T: ArrayElement>(edit_header: impl FnOnce(&mu
     file
 }
 
-fn execute_loaded_projection<T: ArrayElement + PartialEq + Debug>(batch_dim: u32) {
-    let context = create_context::<Cpu>();
+fn execute_loaded_projection<B: Backend, T: ArrayElement + PartialEq + Debug>(batch_dim: u32) {
+    let context = create_context::<B>();
     let file = dense_microfloat_parameter_file::<T>(|_| {});
-    let loader = ParameterLoader::<Cpu>::new(&file, context.as_ref()).expect("load dense MXFP4 fixture");
+    let loader = ParameterLoader::<B>::new(&file, context.as_ref()).expect("load dense MXFP4 fixture");
     let tree = loader.tree();
-    let projection = <dyn Linear<Cpu>>::new(32, [2], true, context.as_ref(), T::data_type(), &tree)
+    let projection = <dyn Linear<B>>::new(32, [2], true, context.as_ref(), T::data_type(), &tree)
         .expect("load dense MXFP4 projection");
     tree.assert_all_tensors_validated().expect("validate dense MXFP4 tensors");
 
@@ -102,13 +105,13 @@ fn execute_loaded_projection<T: ArrayElement + PartialEq + Debug>(batch_dim: u32
             })
         })
         .collect();
-    let input = alloc_allocation_with_data::<Cpu, T>(context.as_ref(), &input);
-    let mut encoder = Encoder::<Cpu>::new(context.as_ref()).expect("create encoder");
+    let input = alloc_allocation_with_data::<B, T>(context.as_ref(), &input);
+    let mut encoder = Encoder::<B>::new(context.as_ref()).expect("create encoder");
     let output = projection.encode(input, batch_dim, &mut encoder).expect("encode MXFP4 projection");
     let command_buffer = encoder.end_encoding();
     let command_buffer = command_buffer.submit();
     let completed = command_buffer.wait_until_completed().expect("execute MXFP4 projection");
-    let values = allocation_to_vec::<Cpu, T>(&output);
+    let values = allocation_to_vec::<B, T>(&output);
     // Releasing scratch before the completion handle returns its allocation pool.
     drop(output);
     drop(completed);
@@ -122,15 +125,19 @@ fn execute_loaded_projection<T: ArrayElement + PartialEq + Debug>(batch_dim: u32
         })
         .map(|value| T::from(value).expect("representable expected output"))
         .collect();
-    assert_eq!(values, expected, "CPU {:?} batch={batch_dim}", T::data_type());
+    assert_eq!(values, expected, "{} {:?} batch={batch_dim}", std::any::type_name::<B>(), T::data_type());
 }
 
 #[uzu_test]
 fn loads_and_executes_dense_mxfp4_projection() {
     for batch_dim in [1, 9] {
-        execute_loaded_projection::<bf16>(batch_dim);
-        execute_loaded_projection::<f16>(batch_dim);
-        execute_loaded_projection::<f32>(batch_dim);
+        execute_loaded_projection::<Cpu, bf16>(batch_dim);
+        execute_loaded_projection::<Cpu, f16>(batch_dim);
+        execute_loaded_projection::<Cpu, f32>(batch_dim);
+        for_each_non_cpu_backend!(|B| {
+            execute_loaded_projection::<B, bf16>(batch_dim);
+            execute_loaded_projection::<B, f16>(batch_dim);
+        });
     }
 }
 

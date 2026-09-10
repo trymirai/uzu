@@ -2,10 +2,17 @@ use crate::{
     backends::common::{
         Allocation, Backend, BufferArg,
         gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
-        microfloat::MicrofloatMetadata,
+        microfloat::{MicrofloatFormat, MicrofloatMetadata},
     },
     data_type::DataType,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MatmulBKind {
+    Dense,
+    Integer,
+    Mxfp4,
+}
 
 pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
     FullPrecision {
@@ -43,6 +50,29 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
 }
 
 impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
+    pub fn kind(&self) -> MatmulBKind {
+        match self {
+            Self::FullPrecision {
+                ..
+            } => MatmulBKind::Dense,
+            Self::Microfloat {
+                metadata,
+                ..
+            } => match metadata.encoding.format {
+                MicrofloatFormat::Mxfp4 => MatmulBKind::Mxfp4,
+            },
+            Self::ScaleBiasDequant {
+                ..
+            }
+            | Self::ScaleZeroPointDequant {
+                ..
+            }
+            | Self::ScaleSymmetricDequant {
+                ..
+            } => MatmulBKind::Integer,
+        }
+    }
+
     pub fn b_prologue(&self) -> GemmBPrologueKind {
         match self {
             Self::FullPrecision {

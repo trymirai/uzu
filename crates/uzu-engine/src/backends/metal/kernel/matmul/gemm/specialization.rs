@@ -1,17 +1,13 @@
 use super::{GemmEngine, GemmPlan, error::GemmSpecializationError};
-use crate::{
-    backends::common::{
-        gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
-        kernel::matmul::MatmulShape,
-    },
-    data_type::DataType,
+use crate::backends::common::{
+    gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
+    kernel::matmul::MatmulShape,
 };
 
 const STAGE_WEIGHT_SCALE_MIN_GROUPS: u32 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct GemmSpecialization {
-    pub(super) weights_data_type: DataType,
     pub(super) tiling: GemmTiling,
     pub(super) use_mxu: bool,
     pub(super) output_transform: GemmDTransform,
@@ -31,7 +27,6 @@ impl GemmSpecialization {
     pub(super) fn from_plan(
         plan: GemmPlan,
         shape: MatmulShape,
-        weights_data_type: DataType,
         output_transform: GemmDTransform,
         alignment: GemmAlignment,
         a_prologue: GemmAPrologueKind,
@@ -39,7 +34,6 @@ impl GemmSpecialization {
     ) -> Result<Self, GemmSpecializationError> {
         let use_tuned_addressing = shape.is_quant() || plan.split_k > 1;
         let specialization = Self {
-            weights_data_type,
             tiling: plan.tiling,
             use_mxu: plan.engine == GemmEngine::Mxu,
             output_transform,
@@ -99,8 +93,8 @@ impl GemmSpecialization {
                 });
             }
         }
-        if self.b_prologue != GemmBPrologueKind::FullPrecision && !self.transpose_b {
-            return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
+        if self.bits_per_b.is_some() && !self.transpose_b {
+            return Err(GemmSpecializationError::PackedRequiresTransposedB);
         }
         Ok(())
     }

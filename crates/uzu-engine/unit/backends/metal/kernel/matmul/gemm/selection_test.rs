@@ -3,7 +3,10 @@ use uzu_engine_macros::uzu_test;
 
 use super::{super::specialization::GemmSpecialization, *};
 use crate::backends::{
-    common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
+    common::{
+        gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
+        kernel::matmul::MatmulBKind,
+    },
     metal::kernel::matmul::MatmulMetalKernel,
 };
 
@@ -18,6 +21,7 @@ fn shape(
         k,
         b_transpose: true,
         b_leading_dimension: None,
+        b_kind: MatmulBKind::Dense,
         b_prologue: GemmBPrologueKind::FullPrecision,
         b_bits: None,
         b_group_size: None,
@@ -29,6 +33,7 @@ fn shape(
 }
 
 fn quant(mut shape: MatmulShape) -> MatmulShape {
+    shape.b_kind = MatmulBKind::Integer;
     shape.b_prologue = GemmBPrologueKind::ScaleSymmetricDequant;
     shape.b_bits = Some(4);
     shape.b_group_size = Some(64);
@@ -163,7 +168,7 @@ fn forced_engine_errors_are_preserved() {
     invalid_layout.b_transpose = false;
     assert_eq!(
         problem(invalid_layout, DataType::BF16).select_plan_for_engine(GemmEngine::Mxu),
-        Err(GemmPlanError::UnsupportedQuantLayout)
+        Err(GemmPlanError::UnsupportedPackedLayout)
     );
 }
 
@@ -173,7 +178,6 @@ fn specialization_flags_are_preserved() {
         GemmSpecialization::from_plan(
             plan(split_k),
             shape,
-            DataType::BF16,
             GemmDTransform::empty(),
             GemmAlignment::new(true, true, true),
             GemmAPrologueKind::FullPrecision,
