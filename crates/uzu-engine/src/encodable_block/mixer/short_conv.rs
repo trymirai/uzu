@@ -109,7 +109,7 @@ impl<B: Backend> ShortConv<B> {
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
     ) -> Result<(Self, Option<Allocation<B>>), ShortConvNewError<B>> {
-        let kernel_size = config.kernel_size;
+        let kernel_size = config.conv_config.kernel_size;
         if kernel_size < 2 {
             return Err(ShortConvNewError::UnsupportedConfiguration(format!(
                 "kernel_size must be >= 2, got {}",

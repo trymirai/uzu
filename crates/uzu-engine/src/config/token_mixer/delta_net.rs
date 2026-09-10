@@ -15,5 +15,4 @@ pub struct DeltaNetConfig {
     pub num_groups: u32,
     pub head_dim: u32,
     pub value_head_dim: u32,
-    pub kernel_size: u32,
 }

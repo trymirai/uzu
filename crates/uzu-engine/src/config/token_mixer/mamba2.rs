@@ -9,7 +9,6 @@ pub struct Mamba2Config {
     pub conv_config: SeparableCausalConvConfig,
     pub activation: AnyActivation,
 
-    pub kernel_size: u32,
     pub num_heads: u32,
     pub num_groups: u32,
     pub head_dim: u32,

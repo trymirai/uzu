@@ -7,6 +7,4 @@ pub struct ShortConvConfig {
     pub in_projection_config: LinearConfig,
     pub conv_config: SeparableCausalConvConfig,
     pub out_projection_config: LinearConfig,
-
-    pub kernel_size: u32,
 }

@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{Allocation, Backend, Encoder},
-    config::transformer_layer::TransformerLayerConfig,
+    config::transformer_layer::{TransformerLayerConfig, TransformerLayerConvConfig},
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -39,24 +39,101 @@ pub enum TransformerLayerError<B: Backend> {
     MissingPreMixerNormConfig,
 }
 
+struct TransformerLayerConv<B: Backend> {
+    pre_conv: SeparableCausalConv<B>,
+    kernel_projection: Box<dyn Linear<B>>,
+    post_conv: SeparableCausalConv<B>,
+    coefficient_count: u32,
+}
+
 // TODO: saner shortcut
 
 pub struct TransformerLayer<B: Backend> {
     pub layer_index: u32,
-    pub pre_mixer_norm: Option<Normalization<B>>,
     pub kv_source_layer_index: Option<u32>,
+    pub pre_mixer_norm: Option<Normalization<B>>,
+    mixer_conv: Option<TransformerLayerConv<B>>,
     pub mixer: Box<dyn Mixer<B>>,
     pub post_mixer_norm: Option<Normalization<B>>,
     pub pre_mlp_norm: Normalization<B>,
+    mlp_conv: Option<TransformerLayerConv<B>>,
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<Normalization<B>>,
     pub ple_projection: Option<PerLayerEmbeddingProjection<B>>,
-    pre_mixer_conv: Option<SeparableCausalConv<B>>,
-    post_mixer_conv: Option<SeparableCausalConv<B>>,
-    mixer_kernel_projection: Option<Box<dyn Linear<B>>>,
-    pre_mlp_conv: Option<SeparableCausalConv<B>>,
-    post_mlp_conv: Option<SeparableCausalConv<B>>,
-    mlp_kernel_projection: Option<Box<dyn Linear<B>>>,
+}
+
+impl<B: Backend> TransformerLayerConv<B> {
+    fn new(
+        context: &B::Context,
+        model_dim: u32,
+        config: &TransformerLayerConvConfig,
+        parameter_tree: &ParameterTree<B>,
+        data_type: DataType,
+    ) -> Result<Self, TransformerLayerError<B>> {
+        let pre_conv = SeparableCausalConv::new(
+            model_dim,
+            data_type,
+            &config.conv_config,
+            &parameter_tree.subtree("pre_conv"),
+            context,
+        )?;
+        let post_conv = SeparableCausalConv::new(
+            model_dim,
+            data_type,
+            &config.conv_config,
+            &parameter_tree.subtree("post_conv"),
+            context,
+        )?;
+
+        let group_size = config.conv_config.coefficient_group_size.expect("coefficient_group_size is required");
+        let projection_dim = 2 * config.conv_config.kernel_size * (model_dim / group_size);
+        let kernel_projection = <dyn Linear<B>>::new(
+            model_dim,
+            [projection_dim],
+            false,
+            context,
+            data_type,
+            &parameter_tree.subtree("kernel_projection"),
+        )?;
+
+        Ok(Self {
+            pre_conv,
+            kernel_projection,
+            post_conv,
+            coefficient_count: config.conv_config.kernel_size * (model_dim / group_size),
+        })
+    }
+
+    fn encode_pre_convolution(
+        &self,
+        input: &Allocation<B>,
+        sequence_length: u32,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
+        let mut projection_input = encoder.allocate_scratch(input.size())?;
+        encoder.encode_copy(input, .., &mut projection_input, ..);
+        let coefficients = self.kernel_projection.encode(projection_input, sequence_length, encoder)?;
+        let output =
+            self.pre_conv.encode(input, &coefficients, 2 * self.coefficient_count, 0, sequence_length, encoder)?;
+        Ok((output, coefficients))
+    }
+
+    fn encode_post_convolution(
+        &self,
+        input: &Allocation<B>,
+        coefficients: &Allocation<B>,
+        sequence_length: u32,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        self.post_conv.encode(
+            input,
+            coefficients,
+            2 * self.coefficient_count,
+            self.coefficient_count,
+            sequence_length,
+            encoder,
+        )
+    }
 }
 
 impl<B: Backend> TransformerLayer<B> {
@@ -190,72 +267,33 @@ impl<B: Backend> TransformerLayer<B> {
             .expect("Failed to create per-layer embedding projection")
         });
 
-        let (
-            pre_mixer_conv,
-            post_mixer_conv,
-            mixer_kernel_projection,
-            pre_mlp_conv,
-            post_mlp_conv,
-            mlp_kernel_projection,
-        ) = if let Some(conv_config) = &layer_config.conv_config {
-            let kernel_size =
-                layer_config.conv_kernel_size.expect("conv_kernel_size required when conv_config is present");
-            let group_size =
-                layer_config.conv_group_size.expect("conv_group_size required when conv_config is present");
-
-            let new_conv = |name: &str| {
-                SeparableCausalConv::new(
-                    model_dim,
-                    kernel_size,
-                    group_size,
-                    data_type,
-                    conv_config,
-                    &parameter_tree.subtree(name),
-                    context,
-                )
-            };
-            let groups = model_dim / group_size;
-            let projection_dim = 2 * kernel_size * groups;
-
-            let new_projection = |name: &str| {
-                <dyn Linear<B>>::new(
-                    model_dim,
-                    [projection_dim],
-                    false,
-                    context,
-                    data_type,
-                    &parameter_tree.subtree(name),
-                )
-            };
-
-            (
-                Some(new_conv("pre_mixer_conv")?),
-                Some(new_conv("post_mixer_conv")?),
-                Some(new_projection("mixer_kernel_projection")?),
-                Some(new_conv("pre_mlp_conv")?),
-                Some(new_conv("post_mlp_conv")?),
-                Some(new_projection("mlp_kernel_projection")?),
-            )
-        } else {
-            (None, None, None, None, None, None)
-        };
+        let mixer_conv = layer_config
+            .mixer_conv_config
+            .as_ref()
+            .map(|config| {
+                TransformerLayerConv::new(context, model_dim, config, &parameter_tree.subtree("mixer_conv"), data_type)
+            })
+            .transpose()?;
+        let mlp_conv = layer_config
+            .mlp_conv_config
+            .as_ref()
+            .map(|config| {
+                TransformerLayerConv::new(context, model_dim, config, &parameter_tree.subtree("mlp_conv"), data_type)
+            })
+            .transpose()?;
 
         Ok(Self {
             layer_index,
-            pre_mixer_norm,
             kv_source_layer_index: layer_config.kv_source_layer_index,
+            pre_mixer_norm,
+            mixer_conv,
             mixer,
             post_mixer_norm,
             pre_mlp_norm,
+            mlp_conv,
             mlp,
             post_mlp_norm,
             ple_projection,
-            pre_mixer_conv,
-            post_mixer_conv,
-            mixer_kernel_projection,
-            pre_mlp_conv,
-            post_mlp_conv,
-            mlp_kernel_projection,
         })
     }
 
@@ -279,10 +317,8 @@ impl<B: Backend> TransformerLayer<B> {
             input
         };
 
-        let mixer_coefficients = if let Some(pre_conv) = &self.pre_mixer_conv {
-            let projection = self.mixer_kernel_projection.as_deref().expect("mixer_kernel_projection required");
-            let (output, coefficients) =
-                Self::encode_pre_convolution(&hidden, pre_conv, projection, batch_dim.size(), encoder)?;
+        let mixer_coefficients = if let Some(convolution) = &self.mixer_conv {
+            let (output, coefficients) = convolution.encode_pre_convolution(&hidden, batch_dim.size(), encoder)?;
             hidden = output;
             Some(coefficients)
         } else {
@@ -293,8 +329,8 @@ impl<B: Backend> TransformerLayer<B> {
         hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
 
         if let Some(coefficients) = mixer_coefficients {
-            let post_conv = self.post_mixer_conv.as_ref().expect("post_mixer_conv required");
-            hidden = Self::encode_post_convolution(&hidden, &coefficients, post_conv, batch_dim.size(), encoder)?;
+            let convolution = self.mixer_conv.as_ref().expect("mixer convolution required");
+            hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), encoder)?;
         }
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
@@ -303,10 +339,8 @@ impl<B: Backend> TransformerLayer<B> {
 
         hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), encoder)?;
 
-        let mlp_coefficients = if let Some(pre_conv) = &self.pre_mlp_conv {
-            let projection = self.mlp_kernel_projection.as_deref().expect("mlp_kernel_projection required");
-            let (output, coefficients) =
-                Self::encode_pre_convolution(&hidden, pre_conv, projection, batch_dim.size(), encoder)?;
+        let mlp_coefficients = if let Some(convolution) = &self.mlp_conv {
+            let (output, coefficients) = convolution.encode_pre_convolution(&hidden, batch_dim.size(), encoder)?;
             hidden = output;
             Some(coefficients)
         } else {
@@ -316,8 +350,8 @@ impl<B: Backend> TransformerLayer<B> {
         hidden = self.mlp.encode(hidden, batch_dim.size(), encoder)?;
 
         if let Some(coefficients) = mlp_coefficients {
-            let post_conv = self.post_mlp_conv.as_ref().expect("post_mlp_conv required");
-            hidden = Self::encode_post_convolution(&hidden, &coefficients, post_conv, batch_dim.size(), encoder)?;
+            let convolution = self.mlp_conv.as_ref().expect("mlp convolution required");
+            hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), encoder)?;
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
@@ -333,31 +367,5 @@ impl<B: Backend> TransformerLayer<B> {
         encoder.pop_debug_group();
 
         Ok(hidden)
-    }
-
-    fn encode_pre_convolution(
-        input: &Allocation<B>,
-        convolution: &SeparableCausalConv<B>,
-        projection: &dyn Linear<B>,
-        sequence_length: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
-        let mut projection_input = encoder.allocate_scratch(input.size())?;
-        encoder.encode_copy(input, .., &mut projection_input, ..);
-        let coefficients = projection.encode(projection_input, sequence_length, encoder)?;
-        let output =
-            convolution.encode(input, &coefficients, 2 * convolution.coefficient_count, 0, sequence_length, encoder)?;
-        Ok((output, coefficients))
-    }
-
-    fn encode_post_convolution(
-        input: &Allocation<B>,
-        coefficients: &Allocation<B>,
-        convolution: &SeparableCausalConv<B>,
-        sequence_length: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let coefficient_count = convolution.coefficient_count;
-        convolution.encode(input, coefficients, 2 * coefficient_count, coefficient_count, sequence_length, encoder)
     }
 }
