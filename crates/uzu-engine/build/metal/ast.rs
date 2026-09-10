@@ -200,6 +200,7 @@ impl MetalArgument {
         match tokens.as_slice() {
             ["bool"] => Ok("bool".into()),
             ["uint"] | ["uint32_t"] | ["unsigned", "int"] => Ok("u32".into()),
+            ["ushort"] | ["uint16_t"] | ["unsigned", "short"] => Ok("u16".into()),
             ["int"] | ["int32_t"] => Ok("i32".into()),
             ["float"] => Ok("f32".into()),
             [vpath] if vpath.starts_with("uzu::") => {

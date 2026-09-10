@@ -9,10 +9,12 @@ pub mod delta_net_tree_verify;
 pub mod gated_act_mul;
 pub mod matmul;
 pub mod radix_top_k_small;
+mod transpose;
 
 pub use activation_transform::ActivationTransform;
 pub use attention::{AttentionArguments, AttentionKernel, AttentionKernelConfig};
 pub use gated_act_mul::{GatedActMul, GatedActMulSettings};
+pub use transpose::Transpose;
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
