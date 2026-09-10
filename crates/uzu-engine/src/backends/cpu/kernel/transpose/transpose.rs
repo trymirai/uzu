@@ -15,7 +15,7 @@ fn get_element<const BITS: u16>(
     match BITS {
         4 => {
             let packed = data[byte + column / 2];
-            u16::from(if column % 2 == 0 {
+            u16::from(if column.is_multiple_of(2) {
                 packed & 0xf
             } else {
                 packed >> 4
@@ -78,7 +78,7 @@ fn transpose_in_place<const BITS: u16>(
             set_element::<BITS>(data, stride, column, row, upper);
         }
     }
-    if BITS == 4 && size % 2 != 0 {
+    if BITS == 4 && !size.is_multiple_of(2) {
         for row in 0..size {
             data[row * stride + size / 2] &= 0xf;
         }

@@ -19,7 +19,7 @@ fn source(
 ) -> Vec<u8> {
     let stride = size_for_shape(&[1, columns as u32], data_type);
     let mut data = (0..rows * stride).map(|index| (index as u8).wrapping_mul(37).wrapping_add(11)).collect::<Vec<_>>();
-    if data_type == DataType::U4 && columns % 2 != 0 {
+    if data_type == DataType::U4 && !columns.is_multiple_of(2) {
         for row in data.chunks_mut(stride) {
             *row.last_mut().unwrap() |= 0xf0;
         }
@@ -69,7 +69,7 @@ fn check(
 ) {
     let input = source(rows, columns, data_type);
     let cpu = run::<Cpu>(&input, data_type, rows, columns, in_place);
-    if data_type == DataType::U4 && rows % 2 != 0 {
+    if data_type == DataType::U4 && !rows.is_multiple_of(2) {
         let stride = size_for_shape(&[1, rows as u32], data_type);
         assert!(cpu.chunks(stride).all(|row| row[stride - 1] & 0xf0 == 0));
     }
