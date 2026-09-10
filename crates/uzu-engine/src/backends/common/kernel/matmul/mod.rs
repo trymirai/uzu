@@ -5,6 +5,7 @@ mod kernel;
 mod matmul_a;
 mod matmul_b;
 pub mod routing;
+pub mod trellis_format;
 
 pub use arguments::MatmulArguments;
 pub use d_ops::MatmulDOps;
