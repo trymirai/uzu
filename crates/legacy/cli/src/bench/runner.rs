@@ -102,6 +102,10 @@ impl BenchRunner {
                 text = replies.last().unwrap().message.text();
             }
             let generate_tokens_per_second = mean(&generate_tokens_per_second);
+            let num_prefill_forward_passes =
+                sum_forward_passes(replies.iter().map(|reply| reply.stats.num_prefill_forward_passes));
+            let num_decode_forward_passes =
+                sum_forward_passes(replies.iter().map(|reply| reply.stats.num_decode_forward_passes));
 
             let input_energy = aggregate_energy(replies.iter().filter_map(|reply| reply.stats.input_energy.as_ref()));
             let output_energy = aggregate_energy(replies.iter().filter_map(|reply| reply.stats.output_energy.as_ref()));
@@ -120,6 +124,8 @@ impl BenchRunner {
                 memory_used: session.peak_memory_usage().await,
                 tokens_count_input,
                 tokens_count_output,
+                num_prefill_forward_passes,
+                num_decode_forward_passes,
                 time_to_first_token,
                 prompt_tokens_per_second,
                 generate_tokens_per_second,
@@ -196,3 +202,13 @@ impl BenchRunner {
 fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ChatReplyEnergy>) -> Option<ChatReplyEnergy> {
     energy.into_iter().cloned().reduce(|total, energy| total + energy)
 }
+
+fn sum_forward_passes(counts: impl IntoIterator<Item = Option<u32>>) -> Option<u64> {
+    let mut counts = counts.into_iter();
+    let first = u64::from(counts.next()??);
+    counts.try_fold(first, |total, count| total.checked_add(u64::from(count?)))
+}
+
+#[cfg(test)]
+#[path = "../../unit/bench/runner_test.rs"]
+mod tests;
