@@ -19,11 +19,16 @@ use crate::{
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
 };
 
+mod speculator_load;
 pub mod state;
 pub mod stream;
 
 #[cfg(grammar)]
 pub mod grammar;
+
+pub use speculator_load::SpeculatorLoad;
+
+pub use crate::speculators::dflash_tfm::{DFlashTfmTreeConstructionMethod, DFlashTfmTreeShape};
 
 pub struct LanguageModel<B: Backend> {
     engine: Arc<Engine<B>>,
@@ -64,6 +69,7 @@ impl<B: Backend> Engine<B> {
     pub fn load_language_model(
         self: &Arc<Self>,
         model_path: &Path,
+        speculator: SpeculatorLoad,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let config: LanguageModelConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
@@ -71,9 +77,12 @@ impl<B: Backend> Engine<B> {
         let weights_file = File::open(model_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
 
-        // TODO
         let speculator_path = model_path.join("speculator");
-        let speculator_path = speculator_path.exists().then_some(speculator_path);
+        let speculator_shape = match speculator {
+            SpeculatorLoad::Disabled => None,
+            SpeculatorLoad::FromShapes => speculator_path.exists().then_some(None),
+            SpeculatorLoad::Shape(shape) => Some(Some(shape)),
+        };
 
         let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
 
@@ -87,13 +96,12 @@ impl<B: Backend> Engine<B> {
         )?;
 
         assert!(
-            speculator_path.is_none() || decoder.speculation_supported(),
+            speculator_shape.is_none() || decoder.speculation_supported(),
             "attempted to load speculator for a model that doesn't support one"
         );
 
-        let speculator = speculator_path
-            .as_deref()
-            .map(|speculator_path| DFlashTfmSpeculator::new(speculator_path, self.context.clone()))
+        let speculator = speculator_shape
+            .map(|shape| DFlashTfmSpeculator::new(&speculator_path, self.context.clone(), shape))
             .transpose()?
             .flatten();
 

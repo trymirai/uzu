@@ -40,7 +40,7 @@ use crate::engine::bridge::helpers::{
 };
 use crate::engine::bridge::{
     chat_token_state::UzuChatTokenBackendInstanceState,
-    helpers::{error_stream, get_max_context_length, get_sampling_method},
+    helpers::{error_stream, get_max_context_length, get_sampling_method, get_speculator_load},
 };
 
 pub struct UzuChatTokenBackendInstance<B: Backend> {
@@ -61,7 +61,9 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
     ) -> Result<Self, BackendError> {
         let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
-        let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
+        let model = engine
+            .load_language_model(&model_path, get_speculator_load(&config.speculation))
+            .map_err(|err| err.to_string())?;
 
         let generation_config = model.generation_config();
         let stop_token_ids = generation_config.stop_token_ids.iter().map(|id| *id as i32).collect();

@@ -719,7 +719,8 @@ fn aggregate_stats(
     current: &ChatReplyStats,
 ) -> ChatReplyStats {
     let stats = completed.iter().chain(std::iter::once(current)).collect::<Vec<_>>();
-    let speculator_stats = aggregate_speculator_stats(&stats);
+    let speculator_stats =
+        ChatReplySpeculatorStats::aggregate(stats.iter().filter_map(|stats| stats.speculator_stats.as_ref()));
 
     ChatReplyStats {
         duration: stats.iter().map(|stats| stats.duration).sum(),
@@ -734,23 +735,6 @@ fn aggregate_stats(
         input_energy: aggregate_input_energy(&stats),
         output_energy: aggregate_output_energy(&stats),
     }
-}
-
-fn aggregate_speculator_stats(stats: &[&ChatReplyStats]) -> Option<ChatReplySpeculatorStats> {
-    let (num_decode_tokens, num_decode_forward_passes) = stats
-        .iter()
-        .filter_map(|stats| stats.speculator_stats.as_ref())
-        .fold((0.0, 0_u32), |(tokens, passes), stats| {
-            (
-                tokens + stats.tokens_per_forward_pass * f64::from(stats.num_decode_forward_passes),
-                passes + stats.num_decode_forward_passes,
-            )
-        });
-
-    (num_decode_forward_passes > 0).then(|| ChatReplySpeculatorStats {
-        tokens_per_forward_pass: num_decode_tokens / f64::from(num_decode_forward_passes),
-        num_decode_forward_passes,
-    })
 }
 
 fn aggregate_generate_rate(stats: &[&ChatReplyStats]) -> Option<f64> {

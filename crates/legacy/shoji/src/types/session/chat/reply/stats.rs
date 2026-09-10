@@ -157,7 +157,27 @@ impl ChatReplyJoulesPerToken {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ChatReplySpeculatorStats {
     pub tokens_per_forward_pass: f64,
+    pub proposed_tokens_per_forward_pass: f64,
     pub num_decode_forward_passes: u32,
+}
+
+impl ChatReplySpeculatorStats {
+    pub fn aggregate<'a>(stats: impl IntoIterator<Item = &'a Self>) -> Option<Self> {
+        let (accepted, proposed, passes) =
+            stats.into_iter().fold((0.0, 0.0, 0_u32), |(accepted, proposed, passes), stats| {
+                let stats_passes = f64::from(stats.num_decode_forward_passes);
+                (
+                    accepted + stats.tokens_per_forward_pass * stats_passes,
+                    proposed + stats.proposed_tokens_per_forward_pass * stats_passes,
+                    passes + stats.num_decode_forward_passes,
+                )
+            });
+        (passes > 0).then(|| Self {
+            tokens_per_forward_pass: accepted / f64::from(passes),
+            proposed_tokens_per_forward_pass: proposed / f64::from(passes),
+            num_decode_forward_passes: passes,
+        })
+    }
 }
 
 #[bindings::export(Structure(Class))]

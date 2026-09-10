@@ -1,5 +1,5 @@
 use rocket::serde::{Deserialize, Serialize};
-use uzu::types::session::chat::{ChatMessage, ChatReplyEnergy, ChatRole};
+use uzu::types::session::chat::{ChatMessage, ChatReplyEnergy, ChatReplySpeculatorStats, ChatRole, SpeculationMode};
 use uzu_engine::data_type::DataType;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,6 +10,8 @@ pub struct BenchTask {
     pub tokens_limit: u64,
     pub messages: Vec<BenchMessage>,
     pub greedy: bool,
+    #[serde(default)]
+    pub speculation: SpeculationMode,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -67,5 +69,6 @@ pub struct BenchResult {
     pub input_energy: Option<ChatReplyEnergy>,
     pub output_energy: Option<ChatReplyEnergy>,
     pub joules_per_token: Option<f64>,
+    pub speculator_stats: Option<ChatReplySpeculatorStats>,
     pub text: String,
 }

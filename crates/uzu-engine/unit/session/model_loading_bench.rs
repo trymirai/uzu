@@ -4,7 +4,7 @@ use criterion::{BenchmarkId, Criterion};
 use uzu_engine_macros::uzu_bench;
 
 use crate::{
-    engine::Engine,
+    engine::{Engine, language_model::SpeculatorLoad},
     tests::{helpers::for_each_non_cpu_backend, path::get_test_model_path},
 };
 
@@ -20,7 +20,7 @@ fn bench_model_loading(c: &mut Criterion) {
                 let model_path = get_test_model_path();
                 let engine = Engine::<B>::new().unwrap();
                 // TODO: This should flush caches (maybe both cold/hot benchmarks?)
-                engine.load_language_model(&model_path).unwrap();
+                engine.load_language_model(&model_path, SpeculatorLoad::default()).unwrap();
             });
         });
     });

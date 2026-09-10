@@ -89,17 +89,14 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
     pub fn new(
         model_path: &Path,
         context: Arc<B::Context>,
+        shape: Option<DFlashTfmTreeShape>,
     ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
-        let mut shapes = serde_json::from_reader::<_, HashMap<String, DFlashTfmTreeShape>>(BufReader::new(
-            File::open(model_path.join("shapes.json"))?,
-        ))?;
-
-        let Some(shape) = context
-            .device_name()
-            .and_then(|device_name| shapes.remove(device_name))
-            .or_else(|| shapes.remove("default"))
-        else {
-            return Ok(None);
+        let shape = match shape {
+            Some(shape) => shape,
+            None => match Self::read_shape(model_path, &context)? {
+                Some(shape) => shape,
+                None => return Ok(None),
+            },
         };
 
         let data_type = DataType::BF16;
@@ -138,6 +135,19 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             config,
             shape,
         }))
+    }
+
+    fn read_shape(
+        model_path: &Path,
+        context: &B::Context,
+    ) -> Result<Option<DFlashTfmTreeShape>, DFlashSpeculatorLoadError<B>> {
+        let mut shapes = serde_json::from_reader::<_, HashMap<String, DFlashTfmTreeShape>>(BufReader::new(
+            File::open(model_path.join("shapes.json"))?,
+        ))?;
+        Ok(context
+            .device_name()
+            .and_then(|device_name| shapes.remove(device_name))
+            .or_else(|| shapes.remove("default")))
     }
 
     pub fn hidden_feature_layer_indices(&self) -> &[u32] {

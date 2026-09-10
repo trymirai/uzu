@@ -410,6 +410,7 @@ impl StreamingState<'_> {
             let num_forward_passes = metrics.num_prefill_forward_passes + metrics.num_decode_forward_passes;
             (num_forward_passes > 0).then(|| ChatReplySpeculatorStats {
                 tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / num_forward_passes as f64,
+                proposed_tokens_per_forward_pass: metrics.num_tokens_proposed as f64 / num_forward_passes as f64,
                 num_decode_forward_passes: num_forward_passes as u32,
             })
         } else {

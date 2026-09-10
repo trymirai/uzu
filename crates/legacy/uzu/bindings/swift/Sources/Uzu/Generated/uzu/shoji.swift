@@ -658,12 +658,14 @@ public func FfiConverterTypeCancelToken_lower(_ value: CancelToken) -> UInt64 {
 public struct ChatConfig: Equatable, Hashable, Codable {
     public var contextLength: ContextLength
     public var samplingSeed: SamplingSeed
+    public var speculation: SpeculationMode
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(contextLength: ContextLength, samplingSeed: SamplingSeed) {
+    public init(contextLength: ContextLength, samplingSeed: SamplingSeed, speculation: SpeculationMode) {
         self.contextLength = contextLength
         self.samplingSeed = samplingSeed
+        self.speculation = speculation
     }
 
     
@@ -685,6 +687,15 @@ public func withSamplingSeed(samplingSeed: SamplingSeed) -> ChatConfig  {
 })
 }
     
+public func withSpeculation(speculation: SpeculationMode) -> ChatConfig  {
+    return try!  FfiConverterTypeChatConfig_lift(try! rustCall() {
+    uniffi_shoji_fn_method_chatconfig_with_speculation(
+            FfiConverterTypeChatConfig_lower(self),
+        FfiConverterTypeSpeculationMode_lower(speculation),$0
+    )
+})
+}
+    
 
     
 }
@@ -701,13 +712,15 @@ public struct FfiConverterTypeChatConfig: FfiConverterRustBuffer {
         return
             try ChatConfig(
                 contextLength: FfiConverterTypeContextLength.read(from: &buf), 
-                samplingSeed: FfiConverterTypeSamplingSeed.read(from: &buf)
+                samplingSeed: FfiConverterTypeSamplingSeed.read(from: &buf), 
+                speculation: FfiConverterTypeSpeculationMode.read(from: &buf)
         )
     }
 
     public static func write(_ value: ChatConfig, into buf: inout [UInt8]) {
         FfiConverterTypeContextLength.write(value.contextLength, into: &buf)
         FfiConverterTypeSamplingSeed.write(value.samplingSeed, into: &buf)
+        FfiConverterTypeSpeculationMode.write(value.speculation, into: &buf)
     }
 }
 
@@ -1183,12 +1196,14 @@ public func FfiConverterTypeChatReplyConfig_lower(_ value: ChatReplyConfig) -> R
 
 public struct ChatReplySpeculatorStats: Equatable, Hashable, Codable {
     public var tokensPerForwardPass: Double
+    public var proposedTokensPerForwardPass: Double
     public var numDecodeForwardPasses: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(tokensPerForwardPass: Double, numDecodeForwardPasses: UInt32) {
+    public init(tokensPerForwardPass: Double, proposedTokensPerForwardPass: Double, numDecodeForwardPasses: UInt32) {
         self.tokensPerForwardPass = tokensPerForwardPass
+        self.proposedTokensPerForwardPass = proposedTokensPerForwardPass
         self.numDecodeForwardPasses = numDecodeForwardPasses
     }
 
@@ -1209,12 +1224,14 @@ public struct FfiConverterTypeChatReplySpeculatorStats: FfiConverterRustBuffer {
         return
             try ChatReplySpeculatorStats(
                 tokensPerForwardPass: FfiConverterDouble.read(from: &buf), 
+                proposedTokensPerForwardPass: FfiConverterDouble.read(from: &buf), 
                 numDecodeForwardPasses: FfiConverterUInt32.read(from: &buf)
         )
     }
 
     public static func write(_ value: ChatReplySpeculatorStats, into buf: inout [UInt8]) {
         FfiConverterDouble.write(value.tokensPerForwardPass, into: &buf)
+        FfiConverterDouble.write(value.proposedTokensPerForwardPass, into: &buf)
         FfiConverterUInt32.write(value.numDecodeForwardPasses, into: &buf)
     }
 }
@@ -2806,6 +2823,68 @@ public func FfiConverterTypeSamplingParameters_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeSamplingParameters_lower(_ value: SamplingParameters) -> RustBuffer {
     return FfiConverterTypeSamplingParameters.lower(value)
+}
+
+
+public struct SpeculationShape: Equatable, Hashable, Codable {
+    public var treeBudget: UInt32
+    public var maxTreeDepth: UInt32
+    public var dflashDepthOverride: UInt32?
+    public var tree: SpeculationTree
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(treeBudget: UInt32, maxTreeDepth: UInt32, dflashDepthOverride: UInt32?, tree: SpeculationTree) {
+        self.treeBudget = treeBudget
+        self.maxTreeDepth = maxTreeDepth
+        self.dflashDepthOverride = dflashDepthOverride
+        self.tree = tree
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SpeculationShape: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpeculationShape: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpeculationShape {
+        return
+            try SpeculationShape(
+                treeBudget: FfiConverterUInt32.read(from: &buf), 
+                maxTreeDepth: FfiConverterUInt32.read(from: &buf), 
+                dflashDepthOverride: FfiConverterOptionUInt32.read(from: &buf), 
+                tree: FfiConverterTypeSpeculationTree.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpeculationShape, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.treeBudget, into: &buf)
+        FfiConverterUInt32.write(value.maxTreeDepth, into: &buf)
+        FfiConverterOptionUInt32.write(value.dflashDepthOverride, into: &buf)
+        FfiConverterTypeSpeculationTree.write(value.tree, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpeculationShape_lift(_ buf: RustBuffer) throws -> SpeculationShape {
+    return try FfiConverterTypeSpeculationShape.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpeculationShape_lower(_ value: SpeculationShape) -> RustBuffer {
+    return FfiConverterTypeSpeculationShape.lower(value)
 }
 
 
@@ -5030,6 +5109,155 @@ public func FfiConverterTypeSamplingSeed_lift(_ buf: RustBuffer) throws -> Sampl
 #endif
 public func FfiConverterTypeSamplingSeed_lower(_ value: SamplingSeed) -> RustBuffer {
     return FfiConverterTypeSamplingSeed.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum SpeculationMode: Equatable, Hashable, Codable {
+    
+    case auto
+    case off
+    case shape(shape: SpeculationShape
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpeculationMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpeculationMode: FfiConverterRustBuffer {
+    typealias SwiftType = SpeculationMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpeculationMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .auto
+        
+        case 2: return .off
+        
+        case 3: return .shape(shape: try FfiConverterTypeSpeculationShape.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SpeculationMode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .auto:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .off:
+            writeInt(&buf, Int32(2))
+        
+        
+        case let .shape(shape):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeSpeculationShape.write(shape, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpeculationMode_lift(_ buf: RustBuffer) throws -> SpeculationMode {
+    return try FfiConverterTypeSpeculationMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpeculationMode_lower(_ value: SpeculationMode) -> RustBuffer {
+    return FfiConverterTypeSpeculationMode.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum SpeculationTree: Equatable, Hashable, Codable {
+    
+    case argmax
+    case weaver(rounds: UInt32, expandPerRound: UInt32, expandWidth: UInt32
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpeculationTree: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpeculationTree: FfiConverterRustBuffer {
+    typealias SwiftType = SpeculationTree
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpeculationTree {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .argmax
+        
+        case 2: return .weaver(rounds: try FfiConverterUInt32.read(from: &buf), expandPerRound: try FfiConverterUInt32.read(from: &buf), expandWidth: try FfiConverterUInt32.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SpeculationTree, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .argmax:
+            writeInt(&buf, Int32(1))
+        
+        
+        case let .weaver(rounds,expandPerRound,expandWidth):
+            writeInt(&buf, Int32(2))
+            FfiConverterUInt32.write(rounds, into: &buf)
+            FfiConverterUInt32.write(expandPerRound, into: &buf)
+            FfiConverterUInt32.write(expandWidth, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpeculationTree_lift(_ buf: RustBuffer) throws -> SpeculationTree {
+    return try FfiConverterTypeSpeculationTree.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpeculationTree_lower(_ value: SpeculationTree) -> RustBuffer {
+    return FfiConverterTypeSpeculationTree.lower(value)
 }
 
 

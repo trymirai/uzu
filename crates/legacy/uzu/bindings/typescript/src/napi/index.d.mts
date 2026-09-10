@@ -180,11 +180,13 @@ export declare class CancelToken {
 export declare class ChatConfig {
   contextLength: ContextLength
   samplingSeed: SamplingSeed
-  constructor(contextLength: ContextLength, samplingSeed: SamplingSeed)
+  speculation: SpeculationMode
+  constructor(contextLength: ContextLength, samplingSeed: SamplingSeed, speculation: SpeculationMode)
 
   static create(): ChatConfig
   withContextLength(contextLength: ContextLength): ChatConfig
   withSamplingSeed(samplingSeed: SamplingSeed): ChatConfig
+  withSpeculation(speculation: SpeculationMode): ChatConfig
 }
 
 export declare class ChatContentBlockAudio {
@@ -366,8 +368,9 @@ export declare class ChatReplyJoulesPerTokenTotal {
 
 export declare class ChatReplySpeculatorStats {
   tokensPerForwardPass: number
+  proposedTokensPerForwardPass: number
   numDecodeForwardPasses: number
-  constructor(tokensPerForwardPass: number, numDecodeForwardPasses: number)
+  constructor(tokensPerForwardPass: number, proposedTokensPerForwardPass: number, numDecodeForwardPasses: number)
 }
 
 export declare class ChatReplyStats {
@@ -725,6 +728,41 @@ export declare class SamplingSeedDefault {
   constructor()
 }
 
+export declare class SpeculationModeAuto {
+
+  constructor()
+}
+
+export declare class SpeculationModeOff {
+
+  constructor()
+}
+
+export declare class SpeculationModeShape {
+  shape: SpeculationShape
+  constructor(shape: SpeculationShape)
+}
+
+export declare class SpeculationShape {
+  treeBudget: number
+  maxTreeDepth: number
+  dflashDepthOverride?: number
+  tree: SpeculationTree
+  constructor(treeBudget: number, maxTreeDepth: number, dflashDepthOverride?: number, tree: SpeculationTree)
+}
+
+export declare class SpeculationTreeArgmax {
+
+  constructor()
+}
+
+export declare class SpeculationTreeWeaver {
+  rounds: number
+  expandPerRound: number
+  expandWidth: number
+  constructor(rounds: number, expandPerRound: number, expandWidth: number)
+}
+
 export declare class TextToSpeechOutput {
   pcmBatch: PcmBatch
   stats: TextToSpeechStats
@@ -896,6 +934,12 @@ export type SamplingPolicy =
 
 export type SamplingSeed =
   SamplingSeedDefault | SamplingSeedCustom
+
+export type SpeculationMode =
+  SpeculationModeAuto | SpeculationModeOff | SpeculationModeShape
+
+export type SpeculationTree =
+  SpeculationTreeArgmax | SpeculationTreeWeaver
 
 export type TokenId =
   number

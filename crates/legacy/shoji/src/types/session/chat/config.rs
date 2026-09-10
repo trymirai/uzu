@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::SpeculationMode;
 use crate::types::basic::{ContextLength, SamplingSeed};
 
 #[bindings::export(Structure(Class))]
@@ -7,6 +8,8 @@ use crate::types::basic::{ContextLength, SamplingSeed};
 pub struct ChatConfig {
     pub context_length: ContextLength,
     pub sampling_seed: SamplingSeed,
+    #[serde(default)]
+    pub speculation: SpeculationMode,
 }
 
 #[bindings::export(Implementation)]
@@ -37,6 +40,17 @@ impl ChatConfig {
     ) -> Self {
         Self {
             sampling_seed,
+            ..self.clone()
+        }
+    }
+
+    #[bindings::export(Method)]
+    pub fn with_speculation(
+        &self,
+        speculation: SpeculationMode,
+    ) -> Self {
+        Self {
+            speculation,
             ..self.clone()
         }
     }

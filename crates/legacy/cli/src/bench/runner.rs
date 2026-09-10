@@ -11,7 +11,7 @@ use uzu::{
     types::{
         basic::SamplingMethod,
         model::ModelAccessibility,
-        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyEnergy},
+        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyEnergy, ChatReplySpeculatorStats},
     },
 };
 use uzu_engine::{VERSION, data_type::DataType};
@@ -61,7 +61,7 @@ impl BenchRunner {
 
         let messages: Vec<ChatMessage> = self.task.messages.iter().map(|msg| msg.to_chat_message()).collect();
 
-        let session_config = ChatConfig::default();
+        let session_config = ChatConfig::default().with_speculation(self.task.speculation.clone());
         let session = engine.chat(model, session_config).await?;
 
         let warmup_config = ChatReplyConfig::default().with_token_limit(Some(1));
@@ -110,6 +110,9 @@ impl BenchRunner {
             let tokens_count = tokens_count_input + tokens_count_output;
             let joules_per_token =
                 total_joules.and_then(|joules| (tokens_count > 0).then(|| joules / tokens_count as f64));
+            let speculator_stats = ChatReplySpeculatorStats::aggregate(
+                replies.iter().filter_map(|reply| reply.stats.speculator_stats.as_ref()),
+            );
 
             let result = BenchResult {
                 task: self.task.clone(),
@@ -126,6 +129,7 @@ impl BenchRunner {
                 input_energy,
                 output_energy,
                 joules_per_token,
+                speculator_stats,
                 text: text.unwrap_or("".to_string()),
             };
             results.push(result);

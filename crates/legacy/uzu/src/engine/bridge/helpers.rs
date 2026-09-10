@@ -5,7 +5,10 @@ use futures::{Stream, stream};
 use shoji::types::basic::Grammar as ShojiGrammar;
 use shoji::{
     traits::backend::{Error as BackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
-    types::basic::{ContextLength, SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy},
+    types::{
+        basic::{ContextLength, SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy},
+        session::chat::{SpeculationMode, SpeculationShape, SpeculationTree},
+    },
 };
 #[cfg(feature = "capability-grammar")]
 use tokenizers::Tokenizer;
@@ -13,7 +16,10 @@ use tokenizers::Tokenizer;
 use uzu_engine::engine::language_model::grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError};
 use uzu_engine::{
     backends::common::Backend,
-    engine::language_model::{LanguageModel, stream::SamplingMethod as UzuSamplingMethod},
+    engine::language_model::{
+        DFlashTfmTreeConstructionMethod, DFlashTfmTreeShape, LanguageModel, SpeculatorLoad,
+        stream::SamplingMethod as UzuSamplingMethod,
+    },
 };
 
 pub fn error_stream<'a>(
@@ -169,5 +175,35 @@ mod tests {
         let tokenizer = tokenizer();
 
         assert_eq!(grammar_trigger_token_sequence_for_prompt(Some(&[1]), &[1, 2, 3], &tokenizer), Some(vec![1]));
+    }
+}
+
+pub fn get_speculator_load(speculation: &SpeculationMode) -> SpeculatorLoad {
+    match speculation {
+        SpeculationMode::Auto {} => SpeculatorLoad::FromShapes,
+        SpeculationMode::Off {} => SpeculatorLoad::Disabled,
+        SpeculationMode::Shape {
+            shape,
+        } => SpeculatorLoad::Shape(get_tree_shape(shape)),
+    }
+}
+
+fn get_tree_shape(shape: &SpeculationShape) -> DFlashTfmTreeShape {
+    DFlashTfmTreeShape {
+        tree_budget: shape.tree_budget,
+        max_tree_depth: shape.max_tree_depth,
+        dflash_depth_override: shape.dflash_depth_override,
+        construction_method: match shape.tree {
+            SpeculationTree::Argmax {} => DFlashTfmTreeConstructionMethod::Argmax,
+            SpeculationTree::Weaver {
+                rounds,
+                expand_per_round,
+                expand_width,
+            } => DFlashTfmTreeConstructionMethod::Weaver {
+                rounds,
+                expand_per_round,
+                expand_width,
+            },
+        },
     }
 }
