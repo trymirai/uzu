@@ -3,29 +3,26 @@ use std::{
     path::Path,
     sync::{
         Arc, Weak,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
-#[cfg(test)]
-use metal::MTLSharedEvent;
 use metal::{
-    MTL4CommandQueue, MTL4CommandQueueExt, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager,
-    MTLCaptureTarget, MTLCommandBufferExt, MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice,
-    MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
+    MTL4CommandBufferExt, MTL4CommandQueue, MTL4CommandQueueExt, MTLBuffer, MTLCaptureDescriptor,
+    MTLCaptureDestination, MTLCaptureManager, MTLCaptureTarget, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
+    MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor,
+    MTLResourceOptions, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::{Mutex, MutexGuard};
 
-use super::{
-    Metal,
-    error::MetalError,
-    metal_extensions::{DeviceExt, LibraryPipelineExtensions},
-};
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
     metal::{
+        Metal,
         command_buffer::MetalCommandBufferInitial,
+        error::MetalError,
+        metal_extensions::{DeviceExt, LibraryPipelineExtensions},
         sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
     },
 };
@@ -38,18 +35,14 @@ pub struct MetalContext {
     pub apple_gpu_family: MTLGPUFamily,
     pub supports_mxu: bool,
     pub device_name: String,
-    pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
-    pub command_queue4: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
-    timeline_event: Retained<ProtocolObject<dyn MTLEvent>>,
-    timeline_value: AtomicU64,
+    pub residency_set: Retained<ProtocolObject<dyn MTLResidencySet>>,
+    pub command_queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     allocator: Arc<Allocator<Metal>>,
     peak_memory_usage: AtomicUsize,
     library_cache: Mutex<HashMap<usize, Retained<ProtocolObject<dyn MTLLibrary>>>>,
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: Mutex<MetalSparseHeapPool>,
     weak_self: Weak<MetalContext>,
-    #[cfg(test)]
-    timeline_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
 }
 
 impl MetalContext {
@@ -86,7 +79,7 @@ impl MetalContext {
         Ok(library)
     }
 
-    pub fn compute_pipeline_state(
+    pub(super) fn compute_pipeline_state(
         &self,
         library_data: &'static [u8],
         library_compressed: bool,
@@ -113,28 +106,9 @@ impl MetalContext {
         &self,
         mappings: &[MetalSparseMappingOpsBatch],
     ) {
-        if mappings.is_empty() {
-            return;
-        }
-
-        let wait_value = self.timeline_get_and_increment();
-        self.command_queue4.wait_for_event_value(&self.timeline_event, wait_value);
         for op in mappings {
-            self.command_queue4.update_buffer_mappings(&op.buffer, Some(op.heap.lock().heap()), &op.mtl_operations);
+            self.command_queue.update_buffer_mappings(&op.buffer, Some(op.heap.lock().heap()), &op.mtl_operations);
         }
-        self.command_queue4.signal_event_value(&self.timeline_event, wait_value + 1);
-
-        // This line prevent tests from freezing, showing pink screen and shutting down computer
-        #[cfg(test)]
-        self.timeline_shared_event.wait_until_signaled_value_timeout_ms(wait_value, 10);
-    }
-
-    pub(super) fn timeline_get_and_increment(&self) -> u64 {
-        self.timeline_value.fetch_add(1, Ordering::Release)
-    }
-
-    pub(super) fn timeline_event(&self) -> &ProtocolObject<dyn MTLEvent> {
-        &self.timeline_event
     }
 }
 
@@ -142,24 +116,24 @@ impl Context for MetalContext {
     type Backend = Metal;
 
     fn new() -> Result<Arc<Self>, MetalError> {
-        let device: Retained<ProtocolObject<dyn MTLDevice>> =
-            <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
+        let device = <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
         let device_name = device.name();
         let gpu_core_count = device.gpu_core_count();
         let apple_gpu_family = device.newest_supported_apple_gpu_family();
         let supports_mxu = device.supports_mxu();
 
-        let command_queue =
-            device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
+        let residency_set_descriptor = MTLResidencySetDescriptor::new();
+        residency_set_descriptor.set_initial_capacity(1024);
+        let residency_set = device
+            .new_residency_set_with_descriptor(&residency_set_descriptor)
+            .map_err(|nserror| MetalError::CannotCreateResidencySet(nserror.to_string()))?;
 
-        let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
+        let command_queue = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueue)?;
+        command_queue.add_residency_set(&residency_set);
 
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = Metal::ALLOCATION_GRANULARITY;
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
-        let timeline_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
-        #[cfg(test)]
-        let timeline_shared_event = device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
 
         Ok(Arc::new_cyclic(|weak_self| Self {
             device,
@@ -167,18 +141,14 @@ impl Context for MetalContext {
             apple_gpu_family,
             supports_mxu,
             device_name,
+            residency_set,
             command_queue,
-            command_queue4,
-            timeline_event,
-            timeline_value: AtomicU64::new(0),
             allocator: Allocator::new(weak_self.clone()),
             peak_memory_usage: AtomicUsize::new(0),
             library_cache: Mutex::new(HashMap::new()),
             pipeline_cache: Mutex::new(HashMap::new()),
             sparse_heap_pool: Mutex::new(sparse_pool),
             weak_self: weak_self.clone(),
-            #[cfg(test)]
-            timeline_shared_event,
         }))
     }
 
@@ -194,6 +164,10 @@ impl Context for MetalContext {
             .device
             .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
             .ok_or(MetalError::CannotCreateBuffer)?;
+
+        self.residency_set.add_allocation(buffer.as_ref());
+        self.residency_set.commit();
+        self.residency_set.request_residency();
 
         self.update_peak_memory_usage();
 
@@ -219,10 +193,12 @@ impl Context for MetalContext {
         &self,
         name: Option<&str>,
     ) -> Result<MetalCommandBufferInitial, MetalError> {
-        let command_buffer = self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?;
+        // TODO: reuse
+        let command_allocator = self.device.new_command_allocator().ok_or(MetalError::CannotCreateCommandBuffer)?;
+        let command_buffer = self.device.new_mtl4_command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?;
         command_buffer.set_label(name);
         let context = self.weak_self.upgrade().unwrap(); // never fails
-        Ok(MetalCommandBufferInitial::new(command_buffer, context))
+        Ok(MetalCommandBufferInitial::new(command_allocator, command_buffer, context))
     }
 
     fn create_sparse_buffer(
@@ -248,16 +224,12 @@ impl Context for MetalContext {
         &self,
         trace_path: &Path,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        let capture_manager = MTLCaptureManager::shared_capture_manager();
         let capture_descriptor = MTLCaptureDescriptor::new();
         capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
         capture_descriptor.set_output_path(Some(&trace_path.with_added_extension("gputrace")));
+        capture_descriptor.set_capture_object(Some(&MTLCaptureTarget::Device(self.device.clone())));
 
-        self.command_queue.set_label(Some("uzu_command_queue"));
-        let capture_target = MTLCaptureTarget::CommandQueue(self.command_queue.clone());
-        capture_descriptor.set_capture_object(Some(&capture_target));
-
-        capture_manager
+        MTLCaptureManager::shared_capture_manager()
             .start_capture_with_descriptor(&capture_descriptor)
             .map_err(|error| MetalError::CannotStartGpuCapture(error.to_string()))?;
 

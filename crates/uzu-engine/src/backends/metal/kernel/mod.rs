@@ -2,11 +2,18 @@ use crate::backends::{
     common::{
         Kernels,
         gpu_types::{
+            HADAMARD_TRANSFORM_BLOCK_SIZE,
             gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_row},
             weaver::{FRONTIER_SELECT_THREADS, TOP_CHILDREN_THREADS},
         },
     },
     metal::Metal,
+};
+
+const METAL_SIMD_SIZE: u32 = 32;
+
+const _: () = {
+    assert!(HADAMARD_TRANSFORM_BLOCK_SIZE == METAL_SIMD_SIZE);
 };
 
 mod attention;
