@@ -1,17 +1,19 @@
 use std::{
     fs::{self, File},
     io::{self, Seek, SeekFrom},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
-use chrono::Local;
+use chrono::{Local, NaiveDateTime, TimeDelta};
 use uuid::Uuid;
 use zip::{ZipWriter, write::SimpleFileOptions};
 
 use crate::server::log::log_file::LogFile;
 
 const ARCHIVE_COMPRESSION_LEVEL: i64 = 9;
+const LOG_FILE_DATE_FORMAT: &str = "%Y-%m-%d-%H-%M-%S";
 const LOG_FILE_EXTENSION: &str = "log";
+const LOG_FILE_RETENTION: TimeDelta = TimeDelta::weeks(1);
 
 #[derive(Clone)]
 pub struct Logger {
@@ -25,12 +27,13 @@ impl Logger {
         console: bool,
         logs_dir_path: Option<PathBuf>,
     ) -> io::Result<Self> {
-        // TODO agolokoz: remove old files
         let session_id = Uuid::new_v4().simple().to_string();
         let file = logs_dir_path
             .as_ref()
             .map(|logs_dir_path| {
-                let date = Local::now().format("%Y-%m-%d-%H-%M-%S");
+                fs::create_dir_all(logs_dir_path)?;
+                remove_expired_log_files(logs_dir_path)?;
+                let date = Local::now().format(LOG_FILE_DATE_FORMAT);
                 let file_name = format!("{}-{}.{}", date, session_id, LOG_FILE_EXTENSION);
                 LogFile::new(logs_dir_path.join(file_name))
             })
@@ -116,4 +119,36 @@ impl Logger {
             eprintln!("Failed to write to log file in {}: {}", file.path().display(), error);
         }
     }
+}
+
+fn remove_expired_log_files(logs_dir_path: &Path) -> io::Result<()> {
+    let cutoff = Local::now().naive_local() - LOG_FILE_RETENTION;
+
+    for entry in fs::read_dir(logs_dir_path)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != LOG_FILE_EXTENSION) {
+            continue;
+        }
+
+        let Some(file_stem) = path.file_stem().and_then(|file_stem| file_stem.to_str()) else {
+            continue;
+        };
+        let Some((date, _session_id)) = file_stem.rsplit_once('-') else {
+            continue;
+        };
+        let Ok(created_at) = NaiveDateTime::parse_from_str(date, LOG_FILE_DATE_FORMAT) else {
+            continue;
+        };
+
+        if created_at < cutoff {
+            fs::remove_file(path)?;
+        }
+    }
+
+    Ok(())
 }
