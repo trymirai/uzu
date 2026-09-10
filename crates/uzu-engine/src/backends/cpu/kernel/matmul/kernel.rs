@@ -1,4 +1,4 @@
-use super::reference::{WeightData, read_f32, write_f32};
+use super::reference::{WeightData, decode_e2m1, decode_e8m0, read_f32, write_f32};
 use crate::{
     backends::{
         common::{
@@ -58,6 +58,27 @@ impl MatmulKernel for MatmulCpuKernel {
         arguments: MatmulArguments<'a, 'b, 'd, Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), CpuError> {
+        if let MatmulB::Microfloat {
+            codes,
+            scales,
+            outer_scales,
+            metadata,
+        } = &arguments.b
+        {
+            let (code_bytes, scale_bytes) = metadata.storage_sizes().map_err(MatmulError::InvalidMicrofloat)?;
+            let rows_match = arguments.gather_indices.is_some() || metadata.rows == arguments.n;
+            if !arguments.b_transpose
+                || arguments.b_leading_dimension.is_some()
+                || !rows_match
+                || metadata.columns != arguments.k
+                || codes.size() < code_bytes
+                || scales.size() < scale_bytes
+                || outer_scales.size() < self.weights_data_type.size_in_bytes()
+            {
+                return Err(MatmulError::InvalidMicrofloatStorage.into());
+            }
+        }
+
         let output_scale = arguments.d_transform.ab_scale;
         let accumulate = arguments.d_transform.accumulate;
         let bias_alloc = arguments.d_transform.bias;
@@ -183,6 +204,9 @@ impl MatmulKernel for MatmulCpuKernel {
                 },
                 WeightData::FullPrecision {
                     ..
+                }
+                | WeightData::Microfloat {
+                    ..
                 } => None,
             };
 
@@ -272,6 +296,24 @@ impl MatmulKernel for MatmulCpuKernel {
                                         -scale * midpoint
                                     };
                                     scale * quantized_value + bias_term
+                                },
+                                WeightData::Microfloat {
+                                    codes,
+                                    scales,
+                                    outer_scales,
+                                    metadata,
+                                } => {
+                                    let code_index = b_col * metadata.code_row_stride() + inner / 2;
+                                    let packed = *codes.as_ptr().add(code_index);
+                                    let code = packed >> (4 * (inner % 2));
+                                    let scale_index = b_col * metadata.scale_row_stride()
+                                        + inner / metadata.encoding.group_size as usize;
+                                    let exponent = *scales.as_ptr().add(scale_index);
+                                    let outer_scale = read_f32(outer_scales.as_ptr(), weights_data_type, 0);
+                                    // Avoiding intermediate overflow and underflow before the final f32 rounding.
+                                    (f64::from(decode_e2m1(code))
+                                        * f64::from(decode_e8m0(exponent))
+                                        * f64::from(outer_scale)) as f32
                                 },
                             };
                             accumulator += a_value * b_value;
