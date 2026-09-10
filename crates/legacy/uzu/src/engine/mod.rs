@@ -79,8 +79,8 @@ impl Engine {
 
         let telemetry = SharedAccess::new({
             let context = TelemetryContext::new(
-                env!("CARGO_PKG_VERSION").to_string(),
-                uzu_engine::TOOLCHAIN_VERSION.to_string(),
+                Self::version(),
+                Self::toolchain_version(),
                 TelemetryDevice {
                     os_name: device.os_name.clone(),
                     cpu_name: device.cpu_name.clone(),
@@ -186,6 +186,14 @@ impl Engine {
         }
 
         Ok(engine)
+    }
+
+    pub fn toolchain_version() -> String {
+        uzu_engine::TOOLCHAIN_VERSION.to_string()
+    }
+
+    pub fn version() -> String {
+        uzu_engine::VERSION.to_string()
     }
 }
 

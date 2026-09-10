@@ -96,8 +96,7 @@ pub async fn run_server(
         .context("Failed to resolve cache directory")?;
     let logs_dir_path = cache_dir.join("mirai").join("server").join("logs");
     let logger = Logger::new(true, Some(logs_dir_path))?;
-    // TODO agolokoz: add version
-    logger.msg(format!("🚀 OpenAI-compatible server for model: {model_name}"));
+    logger.msg(format!("🚀 OpenAI-compatible server v{} for model: {}", Engine::version(), model_name));
     logger.msg(format!("🌐 Available at: http://{host}:{port}"));
     logger.msg(format!(
         "🗄️  Prefix cache: {}",

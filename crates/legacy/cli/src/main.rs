@@ -9,7 +9,7 @@ mod server;
 mod storage;
 
 #[derive(Parser)]
-#[command(name = "cli", bin_name = "cli")]
+#[command(name = "cli", bin_name = "cli", version)]
 struct Cli {
     /// Identifier of the model to start with (e.g. "alibaba:qwen3.5:0.8b:mirai:mirai-m:4").
     #[arg(long, value_name = "MODEL")]
