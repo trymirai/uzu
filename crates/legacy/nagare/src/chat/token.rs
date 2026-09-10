@@ -456,10 +456,6 @@ impl StreamingState<'_> {
             tokens_count_input: Some(self.total_tokens_input as u32),
             tokens_count_input_cached: Some(self.cached_tokens_input as u32),
             tokens_count_output: Some(self.total_tokens_output as u32),
-            num_prefill_forward_passes: self
-                .metrics
-                .as_ref()
-                .and_then(|metrics| metrics.num_prefill_forward_passes.try_into().ok()),
             num_decode_forward_passes: self
                 .metrics
                 .as_ref()

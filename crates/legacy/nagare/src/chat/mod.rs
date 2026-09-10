@@ -729,8 +729,10 @@ fn aggregate_stats(
         tokens_count_input: sum_optional_u32(&stats, |stats| stats.tokens_count_input),
         tokens_count_input_cached: sum_optional_u32(&stats, |stats| stats.tokens_count_input_cached),
         tokens_count_output: sum_optional_u32(&stats, |stats| stats.tokens_count_output),
-        num_prefill_forward_passes: sum_forward_passes(&stats, |stats| stats.num_prefill_forward_passes),
-        num_decode_forward_passes: sum_forward_passes(&stats, |stats| stats.num_decode_forward_passes),
+        // A partially known count would inflate tokens/step. Require every segment.
+        num_decode_forward_passes: stats
+            .iter()
+            .try_fold(0_u32, |total, stats| total.checked_add(stats.num_decode_forward_passes?)),
         memory_used_bytes: stats.iter().filter_map(|stats| stats.memory_used_bytes).max(),
         speculator_stats,
         input_energy: aggregate_input_energy(&stats),
@@ -753,14 +755,6 @@ fn aggregate_speculator_stats(stats: &[&ChatReplyStats]) -> Option<ChatReplySpec
         tokens_per_forward_pass: num_decode_tokens / f64::from(num_decode_forward_passes),
         num_decode_forward_passes,
     })
-}
-
-// A partially known count would inflate tokens/step. Require every segment.
-fn sum_forward_passes(
-    stats: &[&ChatReplyStats],
-    field: impl Fn(&ChatReplyStats) -> Option<u32>,
-) -> Option<u32> {
-    stats.iter().try_fold(0_u32, |total, stats| total.checked_add(field(stats)?))
 }
 
 fn aggregate_generate_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
@@ -942,20 +936,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn aggregate_forward_counts_keeps_prefill_and_decode_separate() {
+    fn aggregate_decode_counts_preserves_zero_and_missing_data() {
         let completed = ChatReplyStats {
-            num_prefill_forward_passes: Some(2),
             num_decode_forward_passes: Some(5),
             ..Default::default()
         };
         let current = ChatReplyStats {
-            num_prefill_forward_passes: Some(1),
             num_decode_forward_passes: Some(0),
             ..Default::default()
         };
         let result = aggregate_stats(&[completed], &current);
-        assert_eq!(result.num_prefill_forward_passes, Some(3));
         assert_eq!(result.num_decode_forward_passes, Some(5));
+        assert_eq!(aggregate_stats(&[], &current).num_decode_forward_passes, Some(0));
         let result = aggregate_stats(&[current], &ChatReplyStats::default());
         assert_eq!(result.num_decode_forward_passes, None);
     }

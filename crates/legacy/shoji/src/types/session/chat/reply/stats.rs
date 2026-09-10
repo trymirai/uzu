@@ -170,9 +170,6 @@ pub struct ChatReplyStats {
     pub tokens_count_input: Option<u32>,
     pub tokens_count_input_cached: Option<u32>,
     pub tokens_count_output: Option<u32>,
-    /// Raw target prefill forwards reported by the token stream.
-    #[serde(default)]
-    pub num_prefill_forward_passes: Option<u32>,
     /// Raw target decode forwards; excludes prefill and drafter forwards.
     #[serde(default)]
     pub num_decode_forward_passes: Option<u32>,

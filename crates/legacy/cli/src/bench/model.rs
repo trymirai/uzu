@@ -61,9 +61,6 @@ pub struct BenchResult {
     pub memory_used: Option<usize>,
     pub tokens_count_input: u64,
     pub tokens_count_output: u64,
-    /// None when the backend does not report forward counters (including old result files).
-    #[serde(default)]
-    pub num_prefill_forward_passes: Option<u64>,
     /// Target decode forwards, including speculative verification and ordinary AR steps.
     #[serde(default)]
     pub num_decode_forward_passes: Option<u64>,

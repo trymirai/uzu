@@ -102,8 +102,6 @@ impl BenchRunner {
                 text = replies.last().unwrap().message.text();
             }
             let generate_tokens_per_second = mean(&generate_tokens_per_second);
-            let num_prefill_forward_passes =
-                sum_forward_passes(replies.iter().map(|reply| reply.stats.num_prefill_forward_passes));
             let num_decode_forward_passes =
                 sum_forward_passes(replies.iter().map(|reply| reply.stats.num_decode_forward_passes));
 
@@ -124,7 +122,6 @@ impl BenchRunner {
                 memory_used: session.peak_memory_usage().await,
                 tokens_count_input,
                 tokens_count_output,
-                num_prefill_forward_passes,
                 num_decode_forward_passes,
                 time_to_first_token,
                 prompt_tokens_per_second,
