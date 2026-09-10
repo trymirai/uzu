@@ -10,6 +10,7 @@ mod moe;
 mod normalization_test;
 mod pooling;
 mod radix_top_k_small_test;
+mod separable_causal_conv_test;
 mod short_conv;
 mod ssm;
 mod tensor_add_bias_test;

@@ -97,7 +97,7 @@ impl<B: Backend> Mamba2<B> {
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
     ) -> Result<(Self, Option<Allocation<B>>), Mamba2NewError<B>> {
-        let kernel_size = config.kernel_size;
+        let kernel_size = config.conv_config.kernel_size;
         let num_heads = config.num_heads;
         let num_groups = config.num_groups;
         let head_dim = config.head_dim;

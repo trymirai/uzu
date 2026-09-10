@@ -166,10 +166,10 @@ impl<B: Backend> DeltaNet<B> {
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
     ) -> Result<(Self, Option<Allocation<B>>), DeltaNetNewError<B>> {
-        if config.kernel_size < 2 {
+        if config.conv_config.kernel_size < 2 {
             return Err(DeltaNetNewError::UnsupportedConfiguration(format!(
                 "kernel_size must be >= 2, got {}",
-                config.kernel_size
+                config.conv_config.kernel_size
             )));
         }
         if config.head_dim != 128 {
@@ -205,8 +205,10 @@ impl<B: Backend> DeltaNet<B> {
         let conv_config = &config.conv_config;
         let conv_tree = parameter_tree.subtree("conv");
 
-        let conv_weight =
-            conv_tree.leaf("weights")?.validate(&[conv_dim, config.kernel_size], INNER_DATA_TYPE)?.read_allocation()?;
+        let conv_weight = conv_tree
+            .leaf("weights")?
+            .validate(&[conv_dim, config.conv_config.kernel_size], INNER_DATA_TYPE)?
+            .read_allocation()?;
         let conv_bias = if conv_config.has_biases {
             Some(conv_tree.leaf("biases")?.validate(&[conv_dim], INNER_DATA_TYPE)?.read_allocation()?)
         } else {
@@ -223,7 +225,7 @@ impl<B: Backend> DeltaNet<B> {
         let conv_tree_scan = <B::Kernels as Kernels>::ConvTreeScanKernel::new(
             context,
             outer_data_type,
-            config.kernel_size,
+            config.conv_config.kernel_size,
             conv_config.has_biases,
         )
         .map_err(DeltaNetNewError::Backend)?;
@@ -305,7 +307,7 @@ impl<B: Backend> DeltaNet<B> {
                 value_dim,
                 conv_dim,
                 total_proj_dim,
-                kernel_size: config.kernel_size,
+                kernel_size: config.conv_config.kernel_size,
                 outer_data_type,
                 in_projection,
                 conv_weight,

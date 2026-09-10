@@ -1,7 +1,6 @@
 use uzu_engine_macros::uzu_config_abstract;
 
 pub mod attention;
-pub mod convolutions;
 pub mod delta_net;
 pub mod mamba2;
 pub mod short_conv;
