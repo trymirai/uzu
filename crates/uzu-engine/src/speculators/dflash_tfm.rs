@@ -94,13 +94,17 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             File::open(model_path.join("shapes.json"))?,
         ))?;
 
-        let Some(shape) = context
+        let Some(mut shape) = context
             .device_name()
             .and_then(|device_name| shapes.remove(device_name))
             .or_else(|| shapes.remove("default"))
         else {
             return Ok(None);
         };
+
+        if std::env::var("UZU_FORCE_DISABLE_WEAVER").is_ok_and(|value| value == "1") {
+            shape.construction_method = DFlashTfmTreeConstructionMethod::Argmax;
+        }
 
         let data_type = DataType::BF16;
 
