@@ -1,16 +1,14 @@
 use std::{
-    fs::{self, File},
-    io::{self, Seek, SeekFrom},
+    fs::{self},
+    io::{self},
     path::{Path, PathBuf},
 };
 
 use chrono::{Local, NaiveDateTime, TimeDelta};
 use uuid::Uuid;
-use zip::{ZipWriter, write::SimpleFileOptions};
 
 use crate::server::log::log_file::LogFile;
 
-const ARCHIVE_COMPRESSION_LEVEL: i64 = 9;
 const LOG_FILE_DATE_FORMAT: &str = "%Y-%m-%d-%H-%M-%S";
 const LOG_FILE_EXTENSION: &str = "log";
 const LOG_FILE_RETENTION: TimeDelta = TimeDelta::weeks(1);
@@ -18,7 +16,6 @@ const LOG_FILE_RETENTION: TimeDelta = TimeDelta::weeks(1);
 #[derive(Clone)]
 pub struct Logger {
     console: bool,
-    logs_dir_path: Option<PathBuf>,
     file: Option<LogFile>,
 }
 
@@ -41,7 +38,6 @@ impl Logger {
 
         Ok(Self {
             console,
-            logs_dir_path,
             file,
         })
     }
@@ -66,47 +62,6 @@ impl Logger {
             eprintln!("{msg_str}",)
         }
         self.add_str_to_file(&msg_str);
-    }
-
-    pub async fn get_file_archive(&self) -> io::Result<Option<File>> {
-        let logger = self.clone();
-        tokio::task::spawn_blocking(move || logger.create_file_archive()).await.map_err(io::Error::other)?
-    }
-
-    fn create_file_archive(&self) -> io::Result<Option<File>> {
-        let Some(logs_dir_path) = &self.logs_dir_path else {
-            return Ok(None);
-        };
-
-        let mut log_file_paths = Vec::new();
-        for entry in fs::read_dir(logs_dir_path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if entry.file_type()?.is_file() && path.extension().is_some_and(|ext| ext == LOG_FILE_EXTENSION) {
-                log_file_paths.push(path);
-            }
-        }
-        log_file_paths.sort();
-
-        let archive_file = tempfile::tempfile()?;
-        let mut archive = ZipWriter::new(archive_file);
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .compression_level(Some(ARCHIVE_COMPRESSION_LEVEL));
-
-        for path in log_file_paths {
-            let file_name = path
-                .file_name()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "log path has no file name"))?;
-            archive.start_file_from_path(file_name, options).map_err(io::Error::other)?;
-
-            let mut log_file = File::open(path)?;
-            io::copy(&mut log_file, &mut archive)?;
-        }
-
-        let mut archive_file = archive.finish().map_err(io::Error::other)?;
-        archive_file.seek(SeekFrom::Start(0))?;
-        Ok(Some(archive_file))
     }
 
     fn add_str_to_file(

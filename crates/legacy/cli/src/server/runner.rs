@@ -2,14 +2,7 @@ use std::{net::IpAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use indicatif::{ProgressBar, ProgressStyle};
-use rocket::{
-    Config, Responder, State,
-    config::LogLevel,
-    fairing::AdHoc,
-    get,
-    http::{Header, Status},
-    routes,
-};
+use rocket::{Config, config::LogLevel, fairing::AdHoc, routes};
 use tokio::sync::Mutex;
 use uzu::{
     engine::{Engine, EngineConfig},
@@ -23,28 +16,6 @@ use crate::{
         response_logger::ResponseBodyLogger,
     },
 };
-
-#[derive(Responder)]
-#[response(content_type = "application/zip")]
-struct LogArchive {
-    file: std::fs::File,
-    content_disposition: Header<'static>,
-}
-
-#[get("/logs")]
-async fn handle_logs(logger: &State<Logger>) -> std::result::Result<LogArchive, Status> {
-    match logger.get_file_archive().await {
-        Ok(Some(file)) => Ok(LogArchive {
-            file,
-            content_disposition: Header::new("Content-Disposition", "attachment; filename=\"mirai-server-logs.zip\""),
-        }),
-        Ok(None) => Err(Status::NotFound),
-        Err(error) => {
-            logger.err(format!("Failed to create log archive: {error}"));
-            Err(Status::InternalServerError)
-        },
-    }
-}
 
 pub async fn run_server(
     model: String,
@@ -110,7 +81,6 @@ pub async fn run_server(
             "📝 Endpoints:\n",
             "   POST /v1/chat/completions (or /chat/completions)\n",
             "   GET  /v1/models           (or /models)\n",
-            "   GET  /logs\n",
         ),
         version = Engine::version(),
         model_name = model_name,
@@ -145,7 +115,7 @@ pub async fn run_server(
                 }
             })
         }))
-        .mount("/", routes![handle_chat_completions, handle_models, handle_logs])
+        .mount("/", routes![handle_chat_completions, handle_models])
         .mount("/v1", routes![handle_chat_completions, handle_models]);
 
     if let Err(error) = rocket.launch().await {
