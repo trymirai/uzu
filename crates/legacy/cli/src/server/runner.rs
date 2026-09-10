@@ -96,20 +96,28 @@ pub async fn run_server(
         .context("Failed to resolve cache directory")?;
     let logs_dir_path = cache_dir.join("mirai").join("server").join("logs");
     let logger = Logger::new(true, Some(logs_dir_path))?;
-    logger.msg(format!("🚀 OpenAI-compatible server v{} for model: {}", Engine::version(), model_name));
-    logger.msg(format!("🌐 Available at: http://{host}:{port}"));
+
+    let prefix_cache_enabled = if prefix_cache {
+        "enabled"
+    } else {
+        "disabled"
+    };
     logger.msg(format!(
-        "🗄️  Prefix cache: {}",
-        if prefix_cache {
-            "enabled"
-        } else {
-            "disabled"
-        }
+        concat!(
+            "🚀 OpenAI-compatible server v{version} for model: {model_name}\n",
+            "🌐 Available at: http://{host}:{port}\n",
+            "🗄️  Prefix cache: {prefix_cache_enabled}\n",
+            "📝 Endpoints:\n",
+            "   POST /v1/chat/completions (or /chat/completions)\n",
+            "   GET  /v1/models           (or /models)\n",
+            "   GET  /logs\n",
+        ),
+        version = Engine::version(),
+        model_name = model_name,
+        host = host,
+        port = port,
+        prefix_cache_enabled = prefix_cache_enabled,
     ));
-    logger.msg("📝 Endpoints:");
-    logger.msg("   POST /v1/chat/completions (or /chat/completions)");
-    logger.msg("   GET  /v1/models           (or /models)");
-    logger.msg("   GET  /logs\n");
 
     let rocket = rocket::custom(config)
         .manage(state)
