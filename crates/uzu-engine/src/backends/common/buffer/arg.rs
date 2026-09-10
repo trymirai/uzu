@@ -19,6 +19,12 @@ impl<'a, B: Backend> BufferArg<'a, B> for &'a dyn Buffer<Backend = B> {
     }
 }
 
+impl<'a, B: Backend> BufferArg<'a, B> for (&'a dyn Buffer<Backend = B>, usize, usize) {
+    fn into_parts(self) -> (&'a dyn Buffer<Backend = B>, usize, usize) {
+        self
+    }
+}
+
 impl<'a, B: Backend, T: BufferArg<'a, B>> BufferArg<'a, B> for (T, usize) {
     fn into_parts(self) -> (&'a dyn Buffer<Backend = B>, usize, usize) {
         let (buffer, offset, length) = self.0.into_parts();

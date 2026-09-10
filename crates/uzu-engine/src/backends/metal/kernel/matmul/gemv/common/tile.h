@@ -69,16 +69,12 @@ struct OutputTile {
   uint local_row;
   uint row0;
   bool writer;
-  bool clamped;
 
-  static METAL_FUNC OutputTile
-  make(uint output_tile_idx, uint input_tile_idx, uint simd_group, uint simd_lane, uint out_vec_size) {
+  static METAL_FUNC OutputTile make(uint output_tile_idx, uint input_tile_idx, uint simd_group, uint simd_lane) {
     const uint row_group = simd_group / Tile::K_SPLIT;
     const uint k_slice = simd_group % Tile::K_SPLIT;
     const uint row_block = simd_lane / Tile::REDUCTION_LANES;
     const uint local_row = row_group * Tile::SIMDGROUP_OUTPUT_ROWS + row_block * Tile::ROWS_PER_LANE;
-    const uint unclamped = output_tile_idx * Tile::OUTPUT_ROWS + local_row;
-    const uint last = out_vec_size > Tile::ROWS_PER_LANE ? out_vec_size - Tile::ROWS_PER_LANE : 0;
     OutputTile tile;
     tile.simd_group = simd_group;
     tile.simd_lane = simd_lane;
@@ -88,9 +84,8 @@ struct OutputTile {
     tile.input_row = input_tile_idx * Tile::INPUT_ROWS;
     tile.tile_row = output_tile_idx * Tile::OUTPUT_ROWS;
     tile.local_row = local_row;
-    tile.row0 = FULL_TILE ? unclamped : min(unclamped, last);
+    tile.row0 = tile.tile_row + local_row;
     tile.writer = Tile::K_SPLIT == 1 || k_slice == 0;
-    tile.clamped = !FULL_TILE && unclamped > last;
     return tile;
   }
 

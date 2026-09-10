@@ -8,7 +8,7 @@ use crate::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::MatmulShape,
+            kernel::matmul::{MatmulBKind, MatmulShape},
         },
         metal::{context::MetalContext, error::MetalError, kernel::GemvMetalKernel},
     },
@@ -30,6 +30,7 @@ pub struct GemvSpecialization {
     input_row_tile: u32,
     reduction_lanes: u32,
     group_lanes: u32,
+    microfloat: bool,
     gathered: bool,
     signed_codes: bool,
     full_tile: bool,
@@ -47,7 +48,12 @@ impl GemvSpecialization {
         let is_quant = shape.is_quant();
         let bits = shape.b_bits.unwrap_or(0);
         let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
-        let tile = if is_quant && shape.gathered {
+        let tile = if shape.b_kind == MatmulBKind::Mxfp4 {
+            if shape.m > GEMV_MAX_BATCH && !shape.gathered {
+                return None;
+            }
+            Some(policy::DEFAULT_TILE)
+        } else if is_quant && shape.gathered {
             policy::gathered_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
         } else if is_quant {
             policy::quantized_tile(
@@ -87,8 +93,9 @@ impl GemvSpecialization {
         if !shape.b_transpose || !shape.a_full_precision {
             return None;
         }
+        let microfloat = shape.b_kind == MatmulBKind::Mxfp4;
         let is_quant = shape.is_quant();
-        let bad_leading_dimension = if is_quant {
+        let bad_leading_dimension = if is_quant || microfloat {
             shape.b_leading_dimension.is_some()
         } else {
             shape.b_leading_dimension.is_some_and(|ld| ld != shape.k)
@@ -103,14 +110,16 @@ impl GemvSpecialization {
             return None;
         }
         let bits = shape.b_bits.unwrap_or(0);
-        if !is_quant {
+        if !is_quant && !microfloat {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
             if mixed_precision || shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > GEMV_MAX_BATCH {
                 return None;
             }
         }
-        let block_size = if !is_quant {
+        let block_size = if microfloat {
+            shape.b_group_size.unwrap_or(FP_K_BLOCK)
+        } else if !is_quant {
             FP_K_BLOCK
         } else if bits == 4 {
             512
@@ -118,8 +127,7 @@ impl GemvSpecialization {
             256
         };
         let input_aligned = shape.k.is_multiple_of(block_size);
-        // Gathered quantized rows cannot share one input tile.
-        if is_quant && shape.gathered && tile.input_row_tile > 1 {
+        if (is_quant && shape.gathered || microfloat) && tile.input_row_tile > 1 {
             return None;
         }
         let specialization = Self {
@@ -134,9 +142,10 @@ impl GemvSpecialization {
             input_row_tile: tile.input_row_tile,
             reduction_lanes: tile.reduction_lanes,
             group_lanes: tile.group_lanes,
+            microfloat,
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
-            full_tile: full_tile(shape, tile),
+            full_tile: shape.m.is_multiple_of(tile.input_row_tile) && shape.n.is_multiple_of(tile.output_row_tile()),
         };
         Some(specialization)
     }
@@ -167,19 +176,13 @@ impl GemvSpecialization {
             self.reduction_lanes,
             self.group_lanes,
             self.num_simdgroups,
+            self.microfloat,
             self.output_transform,
             self.gathered,
             self.signed_codes,
             self.full_tile,
         )
     }
-}
-
-fn full_tile(
-    shape: &MatmulShape,
-    tile: policy::GemvTile,
-) -> bool {
-    shape.m.is_multiple_of(tile.input_row_tile) && shape.n.is_multiple_of(tile.output_row_tile())
 }
 
 use std::collections::{HashMap, hash_map::Entry};
@@ -262,81 +265,57 @@ impl GemvKernel {
             });
         };
 
-        // Preserve each weight buffer's residency range.
-        let (scales, zero_points, biases) = match &b {
+        let (weights, scales, zero_points, biases, outer_scales) = match b {
             MatmulB::FullPrecision {
+                b,
+            } => (b.into_parts(), None, None, None, None),
+            MatmulB::Microfloat {
+                codes,
+                scales,
+                outer_scales,
                 ..
-            } => (None, None, None),
+            } => (codes.into_parts(), Some(scales), None, None, Some(outer_scales)),
             MatmulB::ScaleBiasDequant {
+                b,
                 scales,
                 biases,
                 ..
-            } => (Some(*scales), None, Some(*biases)),
+            } => (b.into_parts(), Some(scales), None, Some(biases), None),
             MatmulB::ScaleZeroPointDequant {
+                b,
                 scales,
                 zero_points,
                 ..
-            } => (Some(*scales), Some(*zero_points), None),
+            } => (b.into_parts(), Some(scales), Some(zero_points), None, None),
             MatmulB::ScaleSymmetricDequant {
+                b,
                 scales,
                 ..
-            } => (Some(*scales), None, None),
+            } => (b.into_parts(), Some(scales), None, None, None),
         };
 
         let output_group_count = n.div_ceil(specialization.output_row_tile());
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;
-        match b {
-            MatmulB::FullPrecision {
-                b: weights,
-            } => pipeline.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                &mut *d,
-                output_bias,
-                rht_factors,
-                gather_indices,
-                k,
-                n,
-                m,
-                ab_scale,
-                output_group_count,
-                soft_cap,
-                encoder,
-            ),
-            MatmulB::ScaleBiasDequant {
-                b: weights,
-                ..
-            }
-            | MatmulB::ScaleZeroPointDequant {
-                b: weights,
-                ..
-            }
-            | MatmulB::ScaleSymmetricDequant {
-                b: weights,
-                ..
-            } => pipeline.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                &mut *d,
-                output_bias,
-                rht_factors,
-                gather_indices,
-                k,
-                n,
-                m,
-                ab_scale,
-                output_group_count,
-                soft_cap,
-                encoder,
-            ),
-        }
+        pipeline.encode(
+            weights,
+            scales,
+            zero_points,
+            biases,
+            outer_scales,
+            (a, a_offset),
+            &mut *d,
+            output_bias,
+            rht_factors,
+            gather_indices,
+            k,
+            n,
+            m,
+            ab_scale,
+            output_group_count,
+            soft_cap,
+            encoder,
+        );
 
         Ok(())
     }

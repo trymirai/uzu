@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, gpu_types::gemm::GemmDTransform},
+    backends::common::{Backend, gpu_types::gemm::GemmDTransform, microfloat::MicrofloatError},
     data_type::DataType,
 };
 
@@ -20,6 +20,10 @@ pub enum MatmulError<B: Backend> {
     UnsupportedLayout {
         path: &'static str,
     },
+    #[error("Microfloat storage does not match the requested matrix")]
+    InvalidMicrofloatStorage,
+    #[error(transparent)]
+    InvalidMicrofloat(#[from] MicrofloatError),
     #[error("Incompatible A operand for {path}: {reason}")]
     IncompatibleA {
         path: &'static str,

@@ -54,7 +54,7 @@ struct Epilogue {
           if (params.output_transform.contains(GemmDTransform::BIAS)) {
             value += static_cast<DT>(ops.output_bias[global_row]);
           }
-          ops.d[input_row * params.out_vec_size + global_row] = value;
+          ops.d[size_t(input_row) * params.out_vec_size + global_row] = value;
         }
       }
     }
@@ -75,21 +75,18 @@ private:
       if (!(FULL_TILE || input_row < params.batch_size)) {
         return;
       }
-      device DT* output = ops.d + input_row * params.out_vec_size + tile.row0;
       Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
         constexpr uint R = decltype(output_index)::value;
         const uint global_row = tile.row0 + R;
         if (!OutputTile<Tile, FULL_TILE>::row_in_range(global_row, params.out_vec_size)) {
           return;
         }
-        if (tile.clamped && params.output_transform.contains(GemmDTransform::ACCUMULATE)) {
-          return;
-        }
+        device DT* output = ops.d + size_t(input_row) * params.out_vec_size + global_row;
         if constexpr (STAGE_HADAMARD) {
           shared_results[I * Tile::OUTPUT_ROWS + tile.local_row + R] =
-              transform<false>(result[I][R], output + R, global_row, ops, params);
+              transform<false>(result[I][R], output, global_row, ops, params);
         } else {
-          output[R] = static_cast<DT>(transform<true>(result[I][R], output + R, global_row, ops, params));
+          *output = static_cast<DT>(transform<true>(result[I][R], output, global_row, ops, params));
         }
       });
     });
