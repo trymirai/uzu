@@ -6,7 +6,7 @@
 using namespace metal;
 
 #define TILE_SIZE 32
-UZU_CONST uint TILE_ROW_STRIDE = TILE_SIZE + 1;
+#define TILE_ROW_STRIDE (TILE_SIZE + 1)
 #define THREADS_PER_THREADGROUP 128
 
 struct TileBounds {
