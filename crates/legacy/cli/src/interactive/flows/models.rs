@@ -1,8 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
 use iocraft::prelude::*;
-use shoji::types::{basic::SamplingParameters, model::Model};
-use uzu::storage::types::DownloadState;
+use shoji::types::{
+    basic::SamplingParameters,
+    model::{Model, ModelIdentifier},
+};
+use uzu::storage::DownloadState;
 
 use crate::{
     common::thinking::ThinkingSupport,
@@ -50,7 +53,7 @@ fn Models(
     let family_id = props.family_id.clone();
     let state = *hooks.use_context::<State<ApplicationState>>();
     let mut models_state = hooks.use_state(|| None::<Vec<Model>>);
-    let mut model_download_statuses_state = hooks.use_state(|| None::<HashMap<String, DownloadState>>);
+    let mut model_download_statuses_state = hooks.use_state(|| None::<HashMap<ModelIdentifier, DownloadState>>);
 
     hooks.use_future({
         let engine = state.read().engine.clone();
@@ -103,8 +106,7 @@ fn Models(
             let on_event = on_event.clone();
             let mut state = state;
             async move {
-                let download_state =
-                    engine.download_state(&model).await.unwrap_or_else(|| DownloadState::not_downloaded(0));
+                let download_state = engine.download_state(&model).await.unwrap_or_default();
                 let preferences_result = {
                     let mut app_state = state.write();
                     app_state.model_state = Some(ModelState {

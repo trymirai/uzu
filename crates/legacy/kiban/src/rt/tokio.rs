@@ -40,6 +40,10 @@ impl<T: Send + 'static> TaskJoinHandle<T> for JoinHandle<T> {
         self.abort();
         let _ = (*self).await;
     }
+
+    fn is_finished(&self) -> bool {
+        JoinHandle::is_finished(self)
+    }
 }
 
 pub fn spawn<F: Future<Output: Send + 'static> + Send + 'static>(future: F) -> Box<dyn TaskJoinHandle<F::Output>> {

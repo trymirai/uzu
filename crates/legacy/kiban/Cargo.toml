@@ -13,9 +13,6 @@ license.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 
-[target.'cfg(unix)'.dependencies]
-libc.workspace = true
-
 [target.'cfg(target_family = "wasm")'.dependencies]
 tokio = { workspace = true, features = ["sync", "time"] }
 wasm-bindgen.workspace = true

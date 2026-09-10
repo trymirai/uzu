@@ -1,11 +1,11 @@
-mod active_task;
-mod backend;
-mod context;
-mod error;
-mod manager;
+mod content_range;
+mod universal_active_task;
+mod universal_backend;
+mod universal_backend_error;
+mod universal_stream;
 
-pub use active_task::UniversalActiveTask;
-pub use backend::UniversalBackend;
-pub use context::UniversalBackendContext;
-pub use error::UniversalBackendError;
-pub use manager::UniversalDownloadManager;
+pub use content_range::ContentRange;
+pub use universal_active_task::UniversalActiveTask;
+pub use universal_backend::UniversalBackend;
+pub use universal_backend_error::UniversalBackendError;
+pub use universal_stream::UniversalStream;

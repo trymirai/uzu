@@ -1,3 +1,4 @@
+mod artifact_path;
 mod behavior;
 mod bytes;
 mod error;
@@ -8,6 +9,7 @@ mod mock_registry;
 mod model;
 mod served_file;
 
+pub use artifact_path::artifact_path;
 pub use behavior::Behavior;
 pub use error::{Error, Result};
 pub use mock_registry::MockRegistry;

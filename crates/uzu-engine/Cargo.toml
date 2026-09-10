@@ -33,7 +33,6 @@ grammar = ["dep:xgrammar", "dep:schemars"]
 [build-dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-bindgen.workspace = true
 walkdir.workspace = true
 depfile.workspace = true
 derive_more.workspace = true

@@ -43,7 +43,7 @@ bindings-wasm = [
 ]
 
 [dependencies]
-bindings-types.workspace = true
+bindings-types = { workspace = true, optional = true }
 bindings.workspace = true
 serde.workspace = true
 serde_json.workspace = true

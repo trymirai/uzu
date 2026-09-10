@@ -5,6 +5,7 @@ import builtins
 import collections.abc
 import enum
 import typing
+from typing import TypeAlias
 from uzu._tool import UzuToolFunction, uzu_tool_function
 __all__ = [
     "CancelToken",
@@ -42,7 +43,6 @@ __all__ = [
     "DownloadState",
     "Downloader",
     "DownloaderStream",
-    "DownloaderStreamUpdate",
     "Engine",
     "EngineCallback",
     "EngineConfig",
@@ -59,6 +59,7 @@ __all__ = [
     "ModelAccessibility",
     "ModelBackend",
     "ModelFamily",
+    "ModelIdentifier",
     "ModelProperties",
     "ModelQuantization",
     "ModelReference",
@@ -92,6 +93,7 @@ __all__ = [
     "uzu_tool_function",
 ]
 
+ModelIdentifier: TypeAlias = builtins.str
 @typing.final
 class CancelToken:
     @property
@@ -631,8 +633,10 @@ class DownloadPhase:
     
     @typing.final
     class Locked(DownloadPhase):
-        __match_args__ = ()
-        def __new__(cls) -> DownloadPhase.Locked: ...
+        __match_args__ = ("manager_id",)
+        @property
+        def manager_id(self) -> builtins.str: ...
+        def __new__(cls, manager_id: builtins.str) -> DownloadPhase.Locked: ...
     
     @typing.final
     class Error(DownloadPhase):
@@ -673,20 +677,10 @@ class Downloader:
 
 @typing.final
 class DownloaderStream:
-    def next(self) -> collections.abc.Awaitable[DownloaderStreamUpdate | None]: ...
+    def next(self) -> collections.abc.Awaitable[DownloadState | None]: ...
     def __aiter__(self) -> DownloaderStream: ...
-    def __anext__(self) -> collections.abc.Awaitable[DownloaderStreamUpdate]: ...
+    def __anext__(self) -> collections.abc.Awaitable[DownloadState]: ...
     def iterator(self) -> DownloaderStream: ...
-
-@typing.final
-class DownloaderStreamUpdate:
-    @property
-    def bytes_total(self) -> builtins.int: ...
-    @property
-    def bytes_downloaded(self) -> builtins.int: ...
-    @property
-    def progress(self) -> builtins.float: ...
-    def __new__(cls, bytes_total: builtins.int, bytes_downloaded: builtins.int) -> DownloaderStreamUpdate: ...
 
 @typing.final
 class Engine:
@@ -717,7 +711,7 @@ class Engine:
     def downloader(self, model: Model) -> Downloader: ...
     def download(self, model: Model) -> collections.abc.Awaitable[DownloaderStream]: ...
     def download_state(self, model: Model) -> collections.abc.Awaitable[DownloadState | None]: ...
-    def download_states(self) -> collections.abc.Awaitable[builtins.dict[builtins.str, DownloadState]]: ...
+    def download_states(self) -> collections.abc.Awaitable[builtins.dict[ModelIdentifier, DownloadState]]: ...
     def chat(self, model: Model, config: ChatConfig) -> collections.abc.Awaitable[ChatSession]: ...
     def chat_instance(self, model: Model, config: ChatConfig) -> collections.abc.Awaitable[ChatInstance]: ...
     def chat_with_instance(self, instance: ChatInstance) -> collections.abc.Awaitable[ChatSession]: ...

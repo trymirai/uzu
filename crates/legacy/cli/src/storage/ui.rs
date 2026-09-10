@@ -1,9 +1,13 @@
+use std::collections::HashMap;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::Frame,
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
 };
+use shoji::types::model::ModelIdentifier;
+use uzu::storage::DownloadPhase;
 
 use super::{
     app::{App, ModelWithState},
@@ -46,7 +50,7 @@ fn render_section(
     frame: &mut Frame,
     area: Rect,
     app: &mut App,
-    models: &std::collections::HashMap<String, ModelWithState>,
+    models: &HashMap<ModelIdentifier, ModelWithState>,
     section: Section,
 ) {
     let is_active = app.active_section == section;
@@ -62,8 +66,8 @@ fn render_section(
     let items: Vec<ListItem> = section_models
         .iter()
         .map(|(id, model_with_state)| match &model_with_state.state.phase {
-            uzu::storage::types::DownloadPhase::Downloaded {} => ListItem::new(format!("✓ {}", id)),
-            uzu::storage::types::DownloadPhase::NotDownloaded {} => {
+            DownloadPhase::Downloaded {} => ListItem::new(format!("✓ {}", id)),
+            DownloadPhase::NotDownloaded {} => {
                 let size_mb = model_with_state.state.total_bytes as f64 / 1_000_000.0;
                 ListItem::new(format!("{} ({:.1} MB)", id, size_mb))
             },
@@ -109,7 +113,7 @@ fn render_downloading_section(
     frame: &mut Frame,
     area: Rect,
     app: &mut App,
-    section_models: &[(String, ModelWithState)],
+    section_models: &[(ModelIdentifier, ModelWithState)],
     is_active: bool,
 ) {
     let border_style = if is_active {
@@ -166,75 +170,40 @@ fn render_downloading_section(
 fn render_downloading_model(
     frame: &mut Frame,
     area: Rect,
-    id: &str,
+    id: &ModelIdentifier,
     model_with_state: &ModelWithState,
     is_selected: bool,
 ) {
-    let progress = model_with_state.state.progress() as f64;
-    let downloaded_mb = model_with_state.state.downloaded_bytes as f64 / 1_000_000.0;
-    let total_mb = model_with_state.state.total_bytes as f64 / 1_000_000.0;
-
-    // Calculate available width (subtract borders: 2 chars)
-    let available_width = area.width.saturating_sub(2) as usize;
-
-    let (base_label, gauge_color, border_color) = match &model_with_state.state.phase {
-        uzu::storage::types::DownloadPhase::Downloading {} => {
-            let progress_info = format!(" ({:.1}/{:.1} MB - {:.1}%)", downloaded_mb, total_mb, progress * 100.0);
-            let name = truncate_name_for_label(id, &progress_info, available_width, is_selected);
-            (
-                format!("{}{}", name, progress_info),
-                Color::Cyan,
-                if is_selected {
-                    Color::Blue
-                } else {
-                    Color::Gray
-                },
-            )
-        },
-        uzu::storage::types::DownloadPhase::Paused {} => {
-            let progress_info =
-                format!(" [PAUSED] ({:.1}/{:.1} MB - {:.1}%)", downloaded_mb, total_mb, progress * 100.0);
-            let name = truncate_name_for_label(id, &progress_info, available_width, is_selected);
-            (
-                format!("{}{}", name, progress_info),
-                Color::Yellow,
-                if is_selected {
-                    Color::Yellow
-                } else {
-                    Color::Gray
-                },
-            )
-        },
-        uzu::storage::types::DownloadPhase::Error {
-            message: err,
-        } => {
-            let error_info = format!(" [ERROR: {}]", err);
-            let name = truncate_name_for_label(id, &error_info, available_width, is_selected);
-            (
-                format!("{}{}", name, error_info),
-                Color::Red,
-                if is_selected {
-                    Color::Red
-                } else {
-                    Color::Gray
-                },
-            )
-        },
-        _ => (
-            truncate_text(id, available_width),
-            Color::Gray,
-            if is_selected {
-                Color::White
-            } else {
-                Color::Gray
-            },
-        ),
+    let state = &model_with_state.state;
+    let progress = state.progress() as f64;
+    let bytes_info = format!(
+        "({:.1}/{:.1} MB - {:.1}%)",
+        state.downloaded_bytes as f64 / 1_000_000.0,
+        state.total_bytes as f64 / 1_000_000.0,
+        progress * 100.0
+    );
+    let (info, gauge_color, selected_border) = match &state.phase {
+        DownloadPhase::Downloading {} => (format!(" {bytes_info}"), Color::Cyan, Color::Blue),
+        DownloadPhase::Paused {} => (format!(" [PAUSED] {bytes_info}"), Color::Yellow, Color::Yellow),
+        DownloadPhase::Locked {
+            manager_id,
+        } => (format!(" [LOCKED BY {manager_id}] {bytes_info}"), Color::Yellow, Color::Yellow),
+        DownloadPhase::Error {
+            message,
+        } => (format!(" [ERROR: {message}]"), Color::Red, Color::Red),
+        DownloadPhase::NotDownloaded {} | DownloadPhase::Downloaded {} => (String::new(), Color::Gray, Color::White),
     };
-
+    let available_width = area.width.saturating_sub(2) as usize;
+    let name = truncate_name_for_label(id, &info, available_width, is_selected);
     let label = if is_selected {
-        format!("▶ {}", base_label)
+        format!("▶ {name}{info}")
     } else {
-        base_label
+        format!("{name}{info}")
+    };
+    let border_color = if is_selected {
+        selected_border
+    } else {
+        Color::Gray
     };
 
     let gauge_style = if is_selected {
@@ -262,7 +231,7 @@ fn render_help(
     frame: &mut Frame,
     area: Rect,
     app: &App,
-    models: &std::collections::HashMap<String, ModelWithState>,
+    models: &HashMap<ModelIdentifier, ModelWithState>,
 ) {
     let helpers = app.get_helpers(models);
     let help_text = helpers.join("  |  ");

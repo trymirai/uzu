@@ -75,7 +75,6 @@ objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-io-kit = { version = "0.3.2", default-features = false, features = ["libc", "ps"] }
-objc2-security = "0.3.2"
 obfstr = "0.4.4"
 zstd = "0.13.3"
 metal = { package = "mtl-rs", version = "0.2.0" }
@@ -100,7 +99,6 @@ is_close = "0.1"
 anyhow = "1.0.102"
 async-trait = "0.1.92"
 derive_more = { version = "2", features = ["from", "deref", "as_ref", "display"] }
-bindgen = "0.72"
 walkdir = "2.5"
 depfile = "0.1"
 tempfile = "3.24"
@@ -143,7 +141,6 @@ reqwest = { version = "0.13.2", features = [
     "blocking",
     "query",
 ] }
-objc-sys = "0.3.5"
 crc32c = "0.6.8"
 base64 = "0.22.1"
 bitflags = "2.11.1"

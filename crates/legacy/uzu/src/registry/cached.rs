@@ -17,18 +17,13 @@ impl CachedRegistry {
             models: Mutex::new(None),
         }
     }
-
-    pub async fn clear(&self) {
-        let mut cached_models = self.models.lock().await;
-        *cached_models = None;
-    }
 }
 
 impl Registry for CachedRegistry {
     type Error = RegistryError;
 
-    fn indentifier(&self) -> String {
-        self.registry.indentifier()
+    fn identifier(&self) -> String {
+        self.registry.identifier()
     }
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
