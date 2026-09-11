@@ -1,9 +1,11 @@
 use std::{
     fs::{File, OpenOptions},
-    io::{self, Write},
+    io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
+
+use tracing_subscriber::fmt::writer::{MakeWriter, MutexGuardWriter};
 
 #[derive(Clone)]
 pub struct LogFile {
@@ -27,15 +29,15 @@ impl LogFile {
         })
     }
 
-    pub fn add(
-        &self,
-        log: impl AsRef<str>,
-    ) -> io::Result<()> {
-        let mut file = self.file.lock().map_err(|_| io::Error::other("log file lock poisoned"))?;
-        writeln!(file, "{}", log.as_ref())
-    }
-
     pub fn path(&self) -> &PathBuf {
         &self.path
+    }
+}
+
+impl<'a> MakeWriter<'a> for LogFile {
+    type Writer = MutexGuardWriter<'a, File>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.file.make_writer()
     }
 }

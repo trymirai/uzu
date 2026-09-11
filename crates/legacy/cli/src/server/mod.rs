@@ -1,6 +1,5 @@
 mod log;
 mod request_info;
-mod response_logger;
 
 pub mod chat_completions;
 pub mod chat_tool_calls;

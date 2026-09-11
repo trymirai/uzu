@@ -34,7 +34,6 @@ use crate::{
             coerce_tool_call, insert_tools_message, oai_tool_call, parse_scalar_text, reply_tool_calls, to_tool_call,
             tool_call_result_block, withhold_stream_text,
         },
-        log::Logger,
         request_info::RequestInfo,
         request_log::RequestLog,
     },
@@ -1144,7 +1143,6 @@ async fn run_stream(
 pub async fn handle_chat_completions(
     body: Data<'_>,
     state: &State<ServerState>,
-    logger: &State<Logger>,
     request_info: &RequestInfo,
     content_type: &ContentType,
 ) -> ChatCompletionResult {
@@ -1162,18 +1160,12 @@ pub async fn handle_chat_completions(
     } else {
         body.clone()
     };
-    logger.msg(format!(
-        "[{}] --> {} {} body={}",
-        request_info.id_short(),
-        request_info.method,
-        request_info.uri,
-        log_body
-    ));
+    tracing::debug!("[{}] --> {} {} body={}", request_info.id_short(), request_info.method, request_info.uri, log_body);
 
     let request = match serde_json::from_str::<ChatCompletionRequest>(&body) {
         Ok(request) => request,
         Err(error) => {
-            logger.msg(format!("[] rejected: {error}"));
+            tracing::info!("[] rejected: {error}");
             return invalid_request_response(
                 "body",
                 "invalid_request",
@@ -1186,7 +1178,6 @@ pub async fn handle_chat_completions(
     let created = request_info.created_at;
     let is_stream = request.stream.unwrap_or(false);
     let log = RequestLog::start(
-        logger.inner(),
         request_info.id.as_str(),
         is_stream,
         request.messages.len(),

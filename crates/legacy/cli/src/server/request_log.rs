@@ -2,21 +2,15 @@ use std::time::Instant;
 
 use uzu::types::session::chat::ChatReplyStats;
 
-use crate::server::log::Logger;
-
-/// Per-request console logging: one line when the request arrives, one when it
-/// ends, correlated by a short tag derived from the request id. Each line is a
-/// single `println!`, which holds the stdout lock for the whole write, so lines
-/// from concurrent requests never interleave.
+/// Per-request tracing: one event when the request arrives, one when it ends,
+/// correlated by a short tag derived from the request id.
 pub struct RequestLog {
-    logger: Logger,
     tag: String,
     started: Instant,
 }
 
 impl RequestLog {
     pub fn start(
-        logger: &Logger,
         id: &str,
         stream: bool,
         messages: usize,
@@ -24,17 +18,17 @@ impl RequestLog {
         reasoning_effort: Option<&str>,
     ) -> Self {
         let tag = short_tag(id);
-        logger.msg(format!(
+        let stream = if stream {
+            "stream"
+        } else {
+            "blocking"
+        };
+        tracing::info!(
             "[{tag}] received: {messages} messages, {}, {tools} tools, reasoning_effort={}",
-            if stream {
-                "stream"
-            } else {
-                "blocking"
-            },
+            stream,
             reasoning_effort.unwrap_or("default"),
-        ));
+        );
         Self {
-            logger: logger.clone(),
             tag,
             started: Instant::now(),
         }
@@ -75,14 +69,14 @@ impl RequestLog {
             }
         }
         parts.extend(notes);
-        self.logger.msg(format!("[{}] {}", self.tag, parts.join(", ")));
+        tracing::info!("[{}] {}", self.tag, parts.join(", "));
     }
 
     pub fn fail(
         &self,
         error: &str,
     ) {
-        self.logger.msg(format!("[{}] failed in {:.2}s: {error}", self.tag, self.started.elapsed().as_secs_f64()));
+        tracing::info!("[{}] failed in {:.2}s: {error}", self.tag, self.started.elapsed().as_secs_f64());
     }
 }
 
