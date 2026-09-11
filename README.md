@@ -4,7 +4,7 @@
   </picture>
 </p>
 
-<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.5.16)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.5.16)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.16)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.16)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
+<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](crates/legacy/uzu/bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.5.26)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.5.26)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](crates/legacy/uzu/bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.26)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.26)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](crates/legacy/uzu/bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
 
 # uzu
 
@@ -14,7 +14,7 @@ A high-performance inference engine for AI models. It allows you to deploy AI di
 - Unified model configurations, making it easy to add support for new models
 - Traceable computations to ensure correctness against the source-of-truth implementation
 - Utilizes unified memory on Apple devices
-- [Broad model support](https://trymirai.com/models)
+- [Broad model support](https://trymirai.com/local-models)
 
 ## Quick Start
 
@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Add the dependency:
 
 ```bash
-uv add uzu==0.5.16
+uv add uzu==0.5.26
 ```
 
 Run the code below:
@@ -137,7 +137,7 @@ Add the dependency:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/trymirai/uzu.git", from: "0.5.16")
+    .package(url: "https://github.com/trymirai/uzu.git", from: "0.5.26")
 ]
 ```
 
@@ -189,7 +189,7 @@ public func runQuickStart() async throws {
 Add the dependency:
 
 ```bash
-pnpm add @trymirai/uzu@0.5.16
+pnpm add @trymirai/uzu@0.5.26
 ```
 
 Run the code below:
@@ -241,7 +241,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-structured-output** | **classification** | **quick-start** | **tool-calls**\>:
+You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-shared-instance** | **chat-structured-output** | **quick-start** | **tool-calls**\>:
 
 ### Chat
 
@@ -606,6 +606,222 @@ main().catch((error) => {
 </details>
 
 
+### Chat with shared instance
+
+This example shows how to reuse chat instance without reloading model into memory:
+
+<details>
+<summary>Rust</summary>
+
+```rust
+use std::io::{self, Write};
+
+use uzu::{
+    engine::{Engine, EngineConfig},
+    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine_config = EngineConfig::default();
+    let engine = Engine::new(engine_config).await?;
+
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
+    }
+    println!();
+
+    // The chat_instance owns the loaded model and can be shared between sessions
+    let chat_instance = engine.chat_instance(model, ChatConfig::default()).await?;
+
+    let first_session = engine.chat_with_instance(&chat_instance).await?;
+    let replies = first_session
+        .reply(
+            vec![ChatMessage::user().with_text("Tell me a short, funny story about a robot".to_string())],
+            ChatReplyConfig::default(),
+        )
+        .await?;
+    if let Some(reply) = replies.last() {
+        println!("First session reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("First session text: {}", reply.message.text().unwrap_or_default());
+    }
+
+    // The second session reuses the already-loaded weights instead of loading the model again
+    let second_session = engine.chat_with_instance(&chat_instance).await?;
+    let replies = second_session
+        .reply(
+            vec![ChatMessage::user().with_text("What is the capital of France?".to_string())],
+            ChatReplyConfig::default(),
+        )
+        .await?;
+    if let Some(reply) = replies.last() {
+        println!("\nSecond session reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("Second session text: {}", reply.message.text().unwrap_or_default());
+    }
+
+    Ok(())
+}
+```
+
+</details>
+
+<details>
+<summary>Python</summary>
+
+```python
+import asyncio
+
+from uzu import ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig
+
+
+async def main() -> None:
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
+
+    model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
+    if model is None:
+        raise RuntimeError("Model not found")
+
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
+
+    # The chat_instance owns the loaded model and can be shared between sessions.
+    chat_instance = await engine.chat_instance(model, ChatConfig.create())
+
+    first_session = await engine.chat_with_instance(chat_instance)
+    replies = await first_session.reply(
+        [ChatMessage.user().with_text("Tell me a short, funny story about a robot")],
+        ChatReplyConfig.create(),
+    )
+    if replies:
+        message = replies[-1].message
+        print(f"First session reasoning: {message.reasoning}")
+        print(f"First session text: {message.text}")
+
+    # The second session reuses the already-loaded weights instead of loading the model again.
+    second_session = await engine.chat_with_instance(chat_instance)
+    replies = await second_session.reply(
+        [ChatMessage.user().with_text("What is the capital of France?")],
+        ChatReplyConfig.create(),
+    )
+    if replies:
+        message = replies[-1].message
+        print(f"\nSecond session reasoning: {message.reasoning}")
+        print(f"Second session text: {message.text}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+</details>
+
+<details>
+<summary>Swift</summary>
+
+```swift
+import Foundation
+import Uzu
+
+public func runChatSharedInstance() async throws {
+    let engineConfig = EngineConfig.create()
+    let engine = try await Engine.create(config: engineConfig)
+
+    guard let model = try await engine.model(identifier: "alibaba:qwen3.5:0.8b:mirai:mirai-m:4") else {
+        return
+    }
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
+
+    // The chatInstance owns the loaded model and can be shared between sessions.
+    let chatInstance = try await engine.chatInstance(model: model, config: .create())
+
+    let firstSession = try await engine.chatWithInstance(instance: chatInstance)
+    let replies = try await firstSession.reply(
+        input: [ChatMessage.user().withText(text: "Tell me a short, funny story about a robot")],
+        config: .create()
+    )
+    if let message = replies.last?.message {
+        print("First session reasoning: \(message.reasoning() ?? "")")
+        print("First session text: \(message.text() ?? "")")
+    }
+
+    // The second session reuses the already-loaded weights instead of loading the model again.
+    let secondSession = try await engine.chatWithInstance(instance: chatInstance)
+    let secondReplies = try await secondSession.reply(
+        input: [ChatMessage.user().withText(text: "What is the capital of France?")],
+        config: .create()
+    )
+    if let message = secondReplies.last?.message {
+        print("\nSecond session reasoning: \(message.reasoning() ?? "")")
+        print("Second session text: \(message.text() ?? "")")
+    }
+}
+```
+
+</details>
+
+<details>
+<summary>TypeScript</summary>
+
+```ts
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig } from '@trymirai/uzu';
+
+async function main() {
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
+
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
+
+    // The chat instance owns the loaded model and can be shared between sessions.
+    let chatInstance = await engine.chatInstance(model, ChatConfig.create());
+
+    let firstSession = await engine.chatWithInstance(chatInstance);
+    let replies = await firstSession.reply(
+        [ChatMessage.user().withText('Tell me a short, funny story about a robot')],
+        ChatReplyConfig.create(),
+    );
+    let reply = replies[replies.length - 1];
+    if (reply) {
+        console.log('First session reasoning: ', reply.message.reasoning);
+        console.log('First session text: ', reply.message.text);
+    }
+
+    // The second session reuses the already-loaded weights instead of loading the model again.
+    let secondSession = await engine.chatWithInstance(chatInstance);
+    replies = await secondSession.reply(
+        [ChatMessage.user().withText('What is the capital of France?')],
+        ChatReplyConfig.create(),
+    );
+    reply = replies[replies.length - 1];
+    if (reply) {
+        console.log('\nSecond session reasoning: ', reply.message.reasoning);
+        console.log('Second session text: ', reply.message.text);
+    }
+}
+
+main().catch((error) => {
+    console.error(error);
+});
+```
+
+</details>
+
+
 ### Chat with structured output
 
 Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema for the response you want to receive:
@@ -840,146 +1056,6 @@ async function main() {
     let message = reply[0]?.message;
     let countries = structuredResponse(message?.text, CountryListType);
     console.log(countries);
-}
-
-main().catch((error) => {
-    console.error(error);
-});
-```
-
-</details>
-
-
-### Classification
-
-In this example, we will use a classification model to determine whether the user's input is safe from a moderation perspective:
-
-<details>
-<summary>Rust</summary>
-
-```rust
-use std::io::{self, Write};
-
-use uzu::{
-    engine::{Engine, EngineConfig},
-    types::session::classification::ClassificationMessage,
-};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let engine_config = EngineConfig::default();
-    let engine = Engine::new(engine_config).await?;
-
-    let model = engine.model("trymirai/chat-moderation-router".to_string()).await?.ok_or("Model not found")?;
-    let downloader = engine.download(&model).await?;
-    while let Some(update) = downloader.next().await {
-        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
-        io::stdout().flush()?;
-    }
-    println!();
-
-    let messages = vec![ClassificationMessage::user("Hi".to_string())];
-
-    let session = engine.classification(model).await?;
-    let output = session.classify(messages).await?;
-    println!("Output: {:?}", output.probabilities.values);
-
-    Ok(())
-}
-```
-
-</details>
-
-<details>
-<summary>Python</summary>
-
-```python
-import asyncio
-
-from uzu import ClassificationMessage, Engine, EngineConfig
-
-
-async def main() -> None:
-    engine_config = EngineConfig.create()
-    engine = await Engine.create(engine_config)
-
-    model = await engine.model("trymirai/chat-moderation-router")
-    if model is None:
-        raise RuntimeError("Model not found")
-    async for update in (await engine.download(model)).iterator():
-        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
-    print()
-
-    messages = [ClassificationMessage.user("Hi")]
-
-    session = await engine.classification(model)
-    output = await session.classify(messages)
-    print(f"Output: {output.probabilities.values}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-</details>
-
-<details>
-<summary>Swift</summary>
-
-```swift
-import Foundation
-import Uzu
-
-public func runClassification() async throws {
-    let engine = try await Engine.create(config: .create())
-    
-    guard let model = try await engine.model(identifier: "trymirai/chat-moderation-router") else {
-        return
-    }
-    for try await update in try await engine.download(model: model).iterator() {
-        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
-        fflush(stdout)
-    }
-    print()
-    
-    let messages = [
-        ClassificationMessage.user(content: "Hi")
-    ]
-    
-    let session = try await engine.classification(model: model)
-    let output = try await session.classify(input: messages)
-    print("Output: \(output.probabilities.values)")
-}
-```
-
-</details>
-
-<details>
-<summary>TypeScript</summary>
-
-```ts
-import { ClassificationMessage, Engine, EngineConfig } from '@trymirai/uzu';
-
-async function main() {
-    let engineConfig = EngineConfig.create();
-    let engine = await Engine.create(engineConfig);
-
-    let model = await engine.model('trymirai/chat-moderation-router');
-    if (!model) {
-        throw new Error('Model not found');
-    }
-    for await (const update of await engine.download(model)) {
-        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
-    }
-    console.log();
-
-    let messages = [
-        ClassificationMessage.user('Hi')
-    ];
-
-    let session = await engine.classification(model);
-    let output = await session.classify(messages);
-    console.log('Output: ', output.probabilities.values);
 }
 
 main().catch((error) => {
@@ -1364,23 +1440,7 @@ To unify cross-language development we introduce <code>cargo tools</code>:
 
 ## Model Format
 
-`uzu` uses its own model format. You can download a test model:
-
-```bash
-./scripts/download_test_model.sh
-```
-
-Or download any supported model that has already been converted:
-
-```bash
-cd ./tools/
-uv run downloader list             # show the list of supported models
-uv run downloader download {REPO}  # download a specific model
-```
-
-Models downloaded for development are stored at `./workspace/models/0.5.16/`.
-
-You can also export a model yourself with [lalamo](https://github.com/trymirai/lalamo):
+`uzu` uses its own model format. You can export a model yourself with [lalamo](https://github.com/trymirai/lalamo):
 
 ```bash
 git clone https://github.com/trymirai/lalamo.git
@@ -1409,13 +1469,11 @@ If the model is not downloaded yet, the CLI starts downloading it automatically.
 
 ## Benchmarks
 
-To run benchmarks:
+To run benchmarks, pass a downloaded model path, a benchmark task file, and an output path:
 
 ```bash
-cargo run --release -p cli -- bench ./workspace/models/0.5.16/{MODEL_NAME} ./workspace/models/0.5.16/{MODEL_NAME}/benchmark_task.json ./workspace/models/0.5.16/{MODEL_NAME}/benchmark_result.json
+cargo run --release -p cli -- bench {MODEL_PATH} {TASK_PATH} {OUTPUT_PATH}
 ```
-
-`benchmark_task.json` is automatically generated after the model is downloaded via `./tools/`.
 
 ## Server
 

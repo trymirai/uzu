@@ -1,0 +1,329 @@
+use std::{collections::HashMap, iter::once};
+
+use anyhow::bail;
+use itertools::Itertools;
+
+use super::{
+    ast::{MetalArgument, MetalArgumentType, MetalKernelInfo, shared_element_type},
+    enum_path_rewrite::is_enum_c_type,
+    variant_combinations::constrained_combinations,
+};
+use crate::common::{
+    constraints::Constraints, enum_paths::EnumPaths, identifiers::KernelName, mangling::static_mangle,
+};
+
+pub type SpecializeBaseIndices = HashMap<KernelName, usize>;
+
+pub struct VariantWrapper {
+    pub name: Box<str>,
+    pub source: Box<str>,
+}
+
+pub struct KernelWrappers {
+    pub header: Option<Box<str>>,
+    pub variants: Box<[VariantWrapper]>,
+    pub footer: Option<Box<str>>,
+}
+
+pub fn wrappers(
+    kernels: &[MetalKernelInfo],
+    enum_paths: &EnumPaths,
+) -> anyhow::Result<(Box<[KernelWrappers]>, SpecializeBaseIndices)> {
+    let mut all_wrappers = Vec::new();
+    let mut base_indices = SpecializeBaseIndices::new();
+    let mut next_index = 0usize;
+
+    for kernel in kernels {
+        let specialize_count =
+            kernel.arguments.iter().filter(|a| matches!(&a.argument_type, MetalArgumentType::Specialize(_))).count();
+
+        if specialize_count > 0 {
+            base_indices.insert(kernel.name.clone(), next_index);
+            next_index += specialize_count;
+        }
+
+        all_wrappers.push(kernel_wrappers(kernel, base_indices.get(&kernel.name), enum_paths)?);
+    }
+
+    Ok((all_wrappers.into_boxed_slice(), base_indices))
+}
+
+struct SpecializeBinding<'a> {
+    argument: &'a MetalArgument,
+    name_suffix: String,
+    enum_type: Option<String>,
+}
+
+impl SpecializeBinding<'_> {
+    fn slot_name(&self) -> String {
+        format!("__dsl_specialize_{}", self.name_suffix)
+    }
+
+    fn typed_name(&self) -> String {
+        format!("__dsl_typed_{}", self.name_suffix)
+    }
+
+    fn slot_type(&self) -> &str {
+        match self.enum_type {
+            Some(_) => "uint32_t",
+            None => self.argument.c_type.trim_start_matches("const ").trim(),
+        }
+    }
+
+    fn alias_target(&self) -> String {
+        if self.enum_type.is_some() {
+            self.typed_name()
+        } else {
+            self.slot_name()
+        }
+    }
+}
+
+fn specialize_bindings<'a>(
+    kernel: &'a MetalKernelInfo,
+    enum_paths: &EnumPaths,
+) -> Vec<SpecializeBinding<'a>> {
+    kernel
+        .arguments
+        .iter()
+        .filter(|a| matches!(&a.argument_type, MetalArgumentType::Specialize(_)))
+        .map(|argument| {
+            let name_suffix = format!("{}_{}", kernel.name, argument.name);
+            let enum_type = is_enum_c_type(enum_paths, &argument.c_type)
+                .then(|| argument.c_type.trim_start_matches("const ").trim().to_string());
+            SpecializeBinding {
+                argument,
+                name_suffix,
+                enum_type,
+            }
+        })
+        .collect()
+}
+
+fn kernel_header(
+    bindings: &[SpecializeBinding<'_>],
+    base_index: usize,
+) -> String {
+    let mut lines = Vec::new();
+
+    for (offset, binding) in bindings.iter().enumerate() {
+        lines.push(format!(
+            "constant {} {} [[function_constant({})]];",
+            binding.slot_type(),
+            binding.slot_name(),
+            base_index + offset,
+        ));
+    }
+
+    for binding in bindings.iter() {
+        if let Some(enum_type) = &binding.enum_type {
+            lines.push(format!(
+                "constant {ty} {name} = {ty}({slot});",
+                ty = enum_type,
+                name = binding.typed_name(),
+                slot = binding.slot_name(),
+            ));
+        }
+    }
+
+    for binding in bindings.iter() {
+        lines.push(format!("#define {} {}", binding.argument.name, binding.alias_target()));
+    }
+
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn kernel_footer(bindings: &[SpecializeBinding<'_>]) -> String {
+    bindings.iter().map(|b| format!("#undef {}\n", b.argument.name)).collect()
+}
+
+fn kernel_wrappers(
+    kernel: &MetalKernelInfo,
+    base_index: Option<&usize>,
+    enum_paths: &EnumPaths,
+) -> anyhow::Result<KernelWrappers> {
+    let mut variants = Vec::new();
+    let bindings = specialize_bindings(kernel, enum_paths);
+
+    let header = base_index.map(|&base| kernel_header(&bindings, base).into_boxed_str());
+    let parameters = kernel.variants.as_deref();
+
+    let selections: Vec<Box<[usize]>> = if let Some(parameters) = parameters {
+        let constraints = Constraints::new(
+            parameters.iter().flat_map(|tp| tp.variants.iter().map(|v| v.as_ref())),
+            &kernel.constraints,
+        );
+        let domain_lengths = parameters.iter().map(|parameter| parameter.variants.len()).collect::<Vec<_>>();
+        constrained_combinations(&domain_lengths, |selection, complete| {
+            let bindings = parameters.iter().zip(selection).filter_map(|(parameter, value)| {
+                value.map(|value| (parameter.name.as_ref(), parameter.variants[value].as_ref()))
+            });
+            if complete {
+                constraints.satisfied(bindings)
+            } else {
+                constraints.could_satisfy(bindings)
+            }
+        })
+    } else {
+        vec![Box::new([])]
+    };
+
+    for selection in selections {
+        let (wrapper_name, underlying_name) = if let Some(parameters) = parameters {
+            (
+                static_mangle(
+                    kernel.name.as_ref(),
+                    parameters.iter().zip(&selection).map(|(parameter, &value)| &parameter.variants[value]),
+                ),
+                format!(
+                    "{}<{}>",
+                    kernel.name,
+                    parameters.iter().zip(&selection).map(|(parameter, &value)| &parameter.variants[value]).join(", ")
+                ),
+            )
+        } else {
+            (static_mangle(kernel.name.as_ref(), [] as [&str; 0]), kernel.name.to_string())
+        };
+
+        let max_total_threads_per_threadgroup = kernel
+            .arguments
+            .iter()
+            .filter_map(|a| match &a.argument_type {
+                MetalArgumentType::Axis(_, l) | MetalArgumentType::Threads(l) => Some(format!("({l})")),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        let max_total_threads_per_threadgroup = if !max_total_threads_per_threadgroup.is_empty() {
+            max_total_threads_per_threadgroup.join(" * ")
+        } else {
+            "1".to_string()
+        };
+
+        let (mut wrapper_arguments, condition_definitions): (Vec<_>, Vec<_>) = kernel
+            .arguments
+            .iter()
+            .filter(|a| matches!(&a.argument_type, MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)))
+            .enumerate()
+            .map(|(i, a)| {
+                let condition_field = format!("__dsl_buffer_condition_{}_{}", wrapper_name, a.name);
+                match a.condition.as_deref() {
+                    Some(condition) => (
+                        format!("{} {} [[buffer({}), function_constant({})]]", a.c_type, a.name, i, condition_field,),
+                        Some(format!("constant bool {} = ({});", condition_field, condition)),
+                    ),
+                    None => (format!("{} {} [[buffer({})]]", a.c_type, a.name, i), None),
+                }
+            })
+            .unzip();
+
+        for (threadgroup_index, argument) in optional_shared_arguments(kernel).enumerate() {
+            let element_type = shared_element_type(&argument.c_type);
+            wrapper_arguments.push(format!("{element_type}* {} [[threadgroup({threadgroup_index})]]", argument.name));
+        }
+
+        if kernel.has_axis() {
+            if kernel.has_groups() || kernel.has_threads() {
+                bail!("mixing groups/threads and axis is not supported");
+            }
+
+            wrapper_arguments.push("uint3 __dsl_axis_idx [[thread_position_in_grid]]".into());
+        }
+
+        if kernel.has_groups() || kernel.has_thread_context() {
+            wrapper_arguments.push("uint3 __dsl_group_idx [[threadgroup_position_in_grid]]".into());
+        }
+
+        if kernel.has_threads() {
+            wrapper_arguments.push("uint3 __dsl_thread_idx [[thread_position_in_threadgroup]]".into());
+        }
+
+        if kernel.has_thread_context() {
+            wrapper_arguments.push("uint __dsl_simd_lane_idx [[thread_index_in_simdgroup]]".into());
+            wrapper_arguments.push("uint __dsl_simd_group_idx [[simdgroup_index_in_threadgroup]]".into());
+            wrapper_arguments.push("uint __dsl_simd_group_size [[threads_per_simdgroup]]".into());
+            wrapper_arguments.push("uint __dsl_simd_group_per_threadgroup [[simdgroups_per_threadgroup]]".into());
+        }
+
+        let wrapper_arguments = wrapper_arguments.join(", ");
+
+        let shared_definitions = kernel.arguments.iter().filter_map(|a| match &a.argument_type {
+            MetalArgumentType::Shared(dimensions) if a.condition.is_none() => {
+                let element_type = shared_element_type(&a.c_type);
+                let dimensions = dimensions.as_deref().map(|d| format!("[{d}]")).unwrap_or_default();
+                Some(format!("{element_type} {}{dimensions}", a.name))
+            },
+            _ => None,
+        });
+
+        let underlying_arguments = {
+            let mut group_axis_letters = ["x", "y", "z"].iter();
+            let mut thread_axis_letters = ["x", "y", "z"].iter();
+
+            kernel
+                .arguments
+                .iter()
+                .map(|a| match &a.argument_type {
+                    MetalArgumentType::Shared(_) if a.condition.is_some() => {
+                        format!("({}){}", a.c_type, a.name)
+                    },
+                    MetalArgumentType::Buffer(_)
+                    | MetalArgumentType::Constant(_)
+                    | MetalArgumentType::Shared(_)
+                    | MetalArgumentType::Specialize(_) => a.name.to_string(),
+                    MetalArgumentType::Axis(..) => {
+                        format!("__dsl_axis_idx.{}", group_axis_letters.next().unwrap())
+                    },
+                    MetalArgumentType::Groups(_) => {
+                        format!("__dsl_group_idx.{}", group_axis_letters.next().unwrap())
+                    },
+                    MetalArgumentType::Threads(_) => {
+                        format!("__dsl_thread_idx.{}", thread_axis_letters.next().unwrap())
+                    },
+                    MetalArgumentType::ThreadContext => "ThreadContext { .simd_lane_id = __dsl_simd_lane_idx, .simdgroup_index = __dsl_simd_group_idx, .simdgroup_size = __dsl_simd_group_size, .simdgroups_per_threadgroup = __dsl_simd_group_per_threadgroup, .threadgroup_position = __dsl_group_idx }".into(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        let underlying_call = format!("{underlying_name}({underlying_arguments})");
+
+        let wrapper_body =
+            shared_definitions.chain(once(underlying_call)).map(|l| format!("  {l};\n")).collect::<Vec<_>>().join("");
+
+        let (defs, undefs): (Vec<_>, Vec<_>) = parameters
+            .into_iter()
+            .flatten()
+            .zip(&selection)
+            .map(|(parameter, &value)| {
+                let value = &parameter.variants[value];
+                (format!("\n#define {} {value}", parameter.name), format!("#undef {}\n", parameter.name))
+            })
+            .unzip();
+
+        let defs = defs.join("");
+        let condition_definitions = condition_definitions.into_iter().flatten().join("\n");
+        let undefs = undefs.join("");
+
+        variants.push(VariantWrapper {
+            source: format!(
+                "{defs}\n{condition_definitions}\n[[kernel, max_total_threads_per_threadgroup({max_total_threads_per_threadgroup})]] void {wrapper_name}({wrapper_arguments}) {{\n{wrapper_body}}}\n{undefs}"
+            )
+            .into(),
+            name: wrapper_name.into_boxed_str(),
+        });
+    }
+
+    let footer = base_index.map(|_| kernel_footer(&bindings).into_boxed_str());
+
+    Ok(KernelWrappers {
+        header,
+        variants: variants.into(),
+        footer,
+    })
+}
+
+fn optional_shared_arguments(kernel: &MetalKernelInfo) -> impl Iterator<Item = &MetalArgument> {
+    kernel.arguments.iter().filter(|argument| argument.is_optional_shared())
+}

@@ -1,6 +1,5 @@
 import SwiftUI
 
-// Shared stats footer shown under a chat reply, classification result, or summary.
 struct ReplyStatsView: View {
     let stats: ReplyStats
 
@@ -16,14 +15,14 @@ struct ReplyStatsView: View {
                 metricRow(label: "Tokens per second:", value: String(format: "%.3f t/s", stats.tokensPerSecond))
             }
             metricRow(label: "Memory used:", value: ReplyStatsFormat.memory(stats.memoryUsedBytes))
-            if let power = stats.totalPower {
-                metricRow(label: ReplyStatsFormat.powerLabel, value: ReplyStatsFormat.power(average: power))
-            }
             if let energy = stats.totalEnergy {
-                metricRow(label: "Energy:", value: ReplyStatsFormat.energy(energy))
+                metricRow(label: "Total energy:", value: ReplyStatsFormat.energy(energy))
             }
-            if let joulesPerToken = stats.joulesPerToken {
-                metricRow(label: "Energy / token:", value: ReplyStatsFormat.energyPerToken(joulesPerToken))
+            if let inputJoulesPerToken = stats.inputJoulesPerToken {
+                metricRow(label: "Input energy / token:", value: ReplyStatsFormat.energyPerToken(inputJoulesPerToken))
+            }
+            if let outputJoulesPerToken = stats.outputJoulesPerToken {
+                metricRow(label: "Output energy / token:", value: ReplyStatsFormat.energyPerToken(outputJoulesPerToken))
             }
             metricRow(label: "Total time:", value: String(format: "%.3f s", stats.totalTime))
         }

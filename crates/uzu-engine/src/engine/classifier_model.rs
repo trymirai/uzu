@@ -1,0 +1,249 @@
+use std::{
+    cmp::min,
+    collections::HashMap,
+    fs::File,
+    io::{self, BufReader},
+    path::Path,
+    sync::Arc,
+};
+
+use half::bf16;
+use shoji::{
+    traits::backend::classification::ClassifierOutput,
+    types::session::classification::{ChatTokenCodecConfig, TokenCodecConfig},
+};
+use thiserror::Error;
+use tokenizers::Tokenizer;
+
+use crate::{
+    backends::common::{AllocationType, Backend, Context, Encoder},
+    config::{model::classifier_model::ClassifierModelConfig, token_codec::AnyTokenCodecConfig},
+    data_type::DataType,
+    encodable_block::classifier::{Classifier as ClassifierEncodable, ClassifierError as ClassifierEncodableError},
+    engine::Engine,
+    parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
+};
+
+pub struct ClassifierModel<B: Backend> {
+    context: Arc<B::Context>,
+    classifier: ClassifierEncodable<B>,
+    output_labels: Box<[String]>,
+    data_type: DataType,
+    tokenizer: Arc<Tokenizer>,
+    token_codec_config: AnyTokenCodecConfig,
+    tap: crate::trace::ClassifierTap<B>,
+}
+
+#[derive(Debug, Error)]
+pub enum EngineLoadClassifierError<B: Backend> {
+    #[error("I/O error: {0}")]
+    IO(#[from] io::Error),
+    #[error("Serde error: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error("HeaderLoading error: {0}")]
+    HeaderLoading(#[from] HeaderLoadingError),
+    #[error("ParameterLoader error: {0}")]
+    ParameterLoader(#[from] ParameterLoaderError<B>),
+    #[error("Classifier error: {0}")]
+    Classifier(#[from] ClassifierEncodableError<B>),
+    #[error("Tokenizer error: {0}")]
+    Tokenizer(#[from] tokenizers::Error),
+}
+
+impl<B: Backend> Engine<B> {
+    pub fn load_classifier_model(
+        &self,
+        model_path: &Path,
+    ) -> Result<ClassifierModel<B>, EngineLoadClassifierError<B>> {
+        let context = self.context.clone();
+
+        let config: ClassifierModelConfig =
+            serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
+
+        let data_type = DataType::BF16;
+
+        let weights_file = File::open(model_path.join("model.safetensors"))?;
+        let weight_loader = ParameterLoader::new(&weights_file, context.as_ref())?;
+
+        let classifier = ClassifierEncodable::new(
+            context.as_ref(),
+            &config.classifier_config,
+            &weight_loader.tree().subtree("classifier"),
+            data_type,
+        )?;
+
+        let output_labels = if let Some(output_labels) = config.classifier_config.output_labels {
+            assert!(output_labels.len() as u32 == config.classifier_config.num_labels);
+            output_labels
+        } else {
+            (0..config.classifier_config.num_labels).map(|index| format!("class_{index}")).collect()
+        };
+
+        weight_loader.tree().assert_all_tensors_validated()?;
+
+        let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
+        let token_codec_config = config.token_codec_config;
+
+        Ok(ClassifierModel {
+            context,
+            classifier,
+            output_labels,
+            data_type,
+            tokenizer,
+            token_codec_config,
+            tap: crate::trace::ClassifierTap::default(),
+        })
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ClassifierModelClassifyError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Classifier error: {0}")]
+    Classifier(#[from] ClassifierEncodableError<B>),
+    #[error("Input is empty")]
+    EmptyInput,
+    #[error("Input larger than model context size")]
+    ContextOverflow,
+}
+
+impl<B: Backend> ClassifierModel<B> {
+    pub fn tokenizer(&self) -> &Arc<Tokenizer> {
+        &self.tokenizer
+    }
+
+    pub fn token_codec_config(&self) -> TokenCodecConfig {
+        match &self.token_codec_config {
+            AnyTokenCodecConfig::ChatCodecConfig(config) => TokenCodecConfig::Chat(ChatTokenCodecConfig {
+                prompt_template: config.prompt_template.clone(),
+                output_parser_regex: config.output_parser_regex.clone(),
+                system_role_name: config.system_role_name.clone(),
+                user_role_name: config.user_role_name.clone(),
+                assistant_role_name: config.assistant_role_name.clone(),
+                eos_token: config.eos_token.clone(),
+                bos_token: config.bos_token.clone(),
+                end_of_thinking_tag: config.end_of_thinking_tag.clone(),
+                default_system_prompt: config.default_system_prompt.clone(),
+            }),
+            AnyTokenCodecConfig::RawTextCodecConfig(_) => TokenCodecConfig::RawText,
+        }
+    }
+
+    pub fn classify(
+        &self,
+        input: &[u64],
+    ) -> Result<ClassifierOutput, ClassifierModelClassifyError<B>> {
+        if input.is_empty() {
+            return Err(ClassifierModelClassifyError::EmptyInput);
+        }
+
+        if self
+            .classifier
+            .max_context_length()
+            .is_some_and(|max_context_length| input.len() > max_context_length as usize)
+        {
+            return Err(ClassifierModelClassifyError::ContextOverflow);
+        }
+
+        let mut encoder = Encoder::<B>::new(&self.context).map_err(ClassifierModelClassifyError::Backend)?;
+
+        let mut token_ids = encoder
+            .allocate_constant(input.len() * DataType::U32.size_in_bytes())
+            .map_err(ClassifierModelClassifyError::Backend)?;
+        token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
+
+        let logits = self.classifier.encode(&token_ids, input.len() as u32, None, &mut encoder)?.logits;
+
+        let mut output_buffer = self
+            .context
+            .create_allocation(self.output_labels.len() * self.data_type.size_in_bytes(), AllocationType::Global)
+            .map_err(ClassifierModelClassifyError::Backend)?;
+
+        encoder.encode_copy(&logits, .., &mut output_buffer, ..);
+
+        drop(logits);
+        drop(token_ids);
+
+        encoder.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
+
+        assert!(self.data_type == DataType::BF16);
+
+        let logits_bf16: Vec<bf16> = output_buffer.copyout::<bf16>();
+        let count = min(self.output_labels.len(), logits_bf16.len());
+
+        let mut logits: Vec<f32> = vec![0.0f32; count];
+        let mut probabilities = HashMap::new();
+        for i in 0..count {
+            logits[i] = logits_bf16[i].to_f32();
+            let prob = 1.0 / (1.0 + (-logits[i]).exp());
+            probabilities.insert(self.output_labels[i].clone(), prob);
+        }
+
+        Ok(ClassifierOutput {
+            logits,
+            probabilities,
+        })
+    }
+
+    pub fn write_trace(
+        &self,
+        output_path: &Path,
+        metadata: Option<HashMap<String, String>>,
+    ) -> Result<(), crate::trace::Error> {
+        if let Some(parent) = output_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
+        self.tap.write(output_path, metadata)
+    }
+
+    pub fn record_trace(
+        &mut self,
+        input: &[u64],
+        request: &crate::trace::ClassifierTapRequest,
+    ) -> Result<&crate::trace::ClassifierTap<B>, ClassifierModelClassifyError<B>> {
+        use crate::{data_type::DataType, trace::Array};
+
+        if input.is_empty() {
+            return Err(ClassifierModelClassifyError::EmptyInput);
+        }
+
+        let token_count = input.len() as u32;
+        if self.classifier.max_context_length().is_some_and(|max_context_length| token_count > max_context_length) {
+            return Err(ClassifierModelClassifyError::ContextOverflow);
+        }
+
+        let mut encoder = Encoder::<B>::new(&self.context).map_err(ClassifierModelClassifyError::Backend)?;
+
+        let mut token_ids = encoder
+            .allocate_constant(input.len() * DataType::U32.size_in_bytes())
+            .map_err(ClassifierModelClassifyError::Backend)?;
+        token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
+
+        let output = self.classifier.encode(&token_ids, token_count, Some(request), &mut encoder)?;
+        let mut tap = output.tap;
+
+        if let Some(transformer_tap) = tap.activations.as_mut().and_then(|a| a.transformer.as_mut()) {
+            let shape = [1, token_count];
+            let host_token_ids = input.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
+            let host_token_positions = (0..input.len() as i32).collect::<Box<[i32]>>();
+            transformer_tap.token_ids = Some(
+                Array::capture_slice(&host_token_ids, &shape, DataType::I32, &encoder)
+                    .map_err(ClassifierModelClassifyError::Backend)?,
+            );
+            transformer_tap.token_positions = Some(
+                Array::capture_slice(&host_token_positions, &shape, DataType::I32, &encoder)
+                    .map_err(ClassifierModelClassifyError::Backend)?,
+            );
+        }
+
+        drop(output.logits);
+        drop(token_ids);
+
+        encoder.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
+
+        self.tap = tap;
+
+        Ok(&self.tap)
+    }
+}

@@ -1,30 +1,10 @@
 {
   "version": "2.0.0",
-  "inputs": [
-    {
-      "id": "modelRepo",
-      "type": "command",
-      "command": "shellCommand.execute",
-      "args": {
-        "command": "uv run downloader list --repos",
-        "cwd": "${workspaceFolder}/tools"
-      }
-    }
-  ],
   "tasks": [
     {
       "label": "Format Code",
       "type": "shell",
       "command": "cargo +nightly fmt && ./scripts/clang-format.sh",
-      "problemMatcher": []
-    },
-    {
-      "label": "Download Model",
-      "type": "shell",
-      "command": "uv run downloader download \"${input:modelRepo}\"",
-      "options": {
-        "cwd": "${workspaceFolder}/tools"
-      },
       "problemMatcher": []
     }
   ]

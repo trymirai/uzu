@@ -1,0 +1,26 @@
+<Step title="Create a new SwiftUI project">
+    ![](/images/quick-start/xcode-new-project.png)
+</Step>
+<Step title="Add the SDK">
+    Add this package through SPM:
+    ```sh
+    https://github.com/trymirai/uzu.git
+    ```
+</Step>
+<Step title="Paste the snippet">
+    <CodeSwift/>
+</Step>
+<Step title="Add the snippet call">
+    ```swift
+    var body: some View {
+        VStack {
+            Text("On-device AI")
+        }
+        .onAppear() {
+            Task {
+                try await runExampleName()
+            }
+        }
+    }
+    ```
+</Step>

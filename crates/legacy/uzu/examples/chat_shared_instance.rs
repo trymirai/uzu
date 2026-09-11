@@ -1,0 +1,50 @@
+use std::io::{self, Write};
+
+use uzu::{
+    engine::{Engine, EngineConfig},
+    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine_config = EngineConfig::default();
+    let engine = Engine::new(engine_config).await?;
+
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
+    }
+    println!();
+
+    // The chat_instance owns the loaded model and can be shared between sessions
+    let chat_instance = engine.chat_instance(model, ChatConfig::default()).await?;
+
+    let first_session = engine.chat_with_instance(&chat_instance).await?;
+    let replies = first_session
+        .reply(
+            vec![ChatMessage::user().with_text("Tell me a short, funny story about a robot".to_string())],
+            ChatReplyConfig::default(),
+        )
+        .await?;
+    if let Some(reply) = replies.last() {
+        println!("First session reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("First session text: {}", reply.message.text().unwrap_or_default());
+    }
+
+    // The second session reuses the already-loaded weights instead of loading the model again
+    let second_session = engine.chat_with_instance(&chat_instance).await?;
+    let replies = second_session
+        .reply(
+            vec![ChatMessage::user().with_text("What is the capital of France?".to_string())],
+            ChatReplyConfig::default(),
+        )
+        .await?;
+    if let Some(reply) = replies.last() {
+        println!("\nSecond session reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("Second session text: {}", reply.message.text().unwrap_or_default());
+    }
+
+    Ok(())
+}

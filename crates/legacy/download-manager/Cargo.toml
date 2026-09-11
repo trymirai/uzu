@@ -1,0 +1,96 @@
+[package]
+name = "download-manager"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[features]
+default = []
+bindings = [
+    "bindings-uniffi",
+    "bindings-napi",
+    "bindings-pyo3",
+    "bindings-wasm",
+]
+bindings-uniffi = ["bindings-types/bindings-uniffi", "dep:uniffi"]
+bindings-napi = [
+    "bindings-types/bindings-napi",
+    "dep:napi",
+    "dep:napi-derive",
+    "dep:napi-build",
+]
+bindings-pyo3 = [
+    "bindings-types/bindings-pyo3",
+    "dep:pyo3",
+    "dep:pyo3-build-config",
+    "dep:pyo3-async-runtimes",
+    "dep:pyo3-stub-gen",
+    "dep:inventory",
+]
+bindings-wasm = [
+    "bindings-types/bindings-wasm",
+    "dep:wasm-bindgen",
+    "dep:serde-wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:tsify",
+]
+
+[dependencies]
+bindings-types = { workspace = true, optional = true }
+bindings.workspace = true
+kiban.workspace = true
+bon.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+crc32c.workspace = true
+base64.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+tokio = { workspace = true, features = ["macros", "sync"] }
+tokio-stream.workspace = true
+uniffi = { workspace = true, optional = true }
+napi = { workspace = true, optional = true }
+napi-derive = { workspace = true, optional = true }
+pyo3 = { workspace = true, optional = true }
+pyo3-async-runtimes = { workspace = true, optional = true }
+pyo3-stub-gen = { workspace = true, optional = true }
+inventory = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+serde-wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+tsify = { workspace = true, optional = true }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+block2.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+tempfile.workspace = true
+rstest.workspace = true
+mock-registry.workspace = true
+wiremock.workspace = true
+
+[build-dependencies]
+napi-build = { workspace = true, optional = true }
+pyo3-build-config = { workspace = true, optional = true }
+
+[lints]
+workspace = true

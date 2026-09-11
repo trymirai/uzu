@@ -1,0 +1,76 @@
+use std::{pin::Pin, sync::Arc};
+
+use futures::{Stream, StreamExt};
+use shoji::{
+    traits::{
+        State,
+        backend::chat_message::{Backend, Instance, Output},
+    },
+    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+};
+use tokio_util::sync::CancellationToken;
+
+use crate::chat::ChatSessionError;
+
+pub struct Session {
+    instance: Arc<dyn Instance>,
+    state: Box<dyn State>,
+}
+
+impl Session {
+    pub async fn create_instance(
+        backend: &dyn Backend,
+        config: ChatConfig,
+        reference: String,
+    ) -> Result<Arc<dyn Instance>, ChatSessionError> {
+        let instance = backend.instance(reference, config).await.map_err(|error| ChatSessionError::Backend {
+            message: error.to_string(),
+        })?;
+        Ok(Arc::from(instance))
+    }
+
+    pub async fn with_instance(instance: Arc<dyn Instance>) -> Result<Self, ChatSessionError> {
+        let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
+            message: error.to_string(),
+        })?;
+        Ok(Self {
+            instance,
+            state,
+        })
+    }
+
+    pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
+        self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
+            message: error.to_string(),
+        })?;
+        Ok(())
+    }
+
+    pub fn stream<'a>(
+        &'a mut self,
+        input: &'a Vec<ChatMessage>,
+        config: ChatReplyConfig,
+        cancel_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
+        self.instance
+            .stream(input, self.state.as_mut(), config, cancel_token)
+            .map(|event| {
+                event.map_err(|error| ChatSessionError::Backend {
+                    message: error.to_string(),
+                })
+            })
+            .boxed()
+    }
+
+    pub fn peak_memory_usage(&self) -> Option<usize> {
+        self.instance.peak_memory_usage()
+    }
+
+    pub fn supports_tool_calls(&self) -> bool {
+        true
+    }
+
+    pub fn supports_multiple_tool_calls(&self) -> bool {
+        true
+    }
+}

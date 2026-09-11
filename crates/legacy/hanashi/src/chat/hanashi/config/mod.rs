@@ -1,0 +1,170 @@
+mod bundled;
+mod tokens;
+
+use serde::{Deserialize, Serialize};
+use shoji::types::{
+    basic::ReasoningEffort,
+    session::chat::{ChatContentBlockType, ChatModelCapabilities},
+};
+use token_stream_parser::token_stream::TokenStreamParserConfig;
+pub use tokens::TokensConfig;
+
+use crate::chat::hanashi::{
+    error::Error, messages::rendered::FieldConfig, ordering::Config as OrderingConfig, renderer::RendererConfig,
+};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct HanashiResolvedConfig {
+    pub parsing: TokenStreamParserConfig,
+    pub rendering: RendererConfig,
+    pub tokens: TokensConfig,
+    pub ordering: OrderingConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "name", rename_all = "snake_case")]
+pub enum HanashiConfig {
+    #[serde(rename = "custom")]
+    Custom {
+        #[serde(flatten)]
+        config: HanashiResolvedConfig,
+    },
+    #[serde(rename = "functiongemma")]
+    FunctionGemma,
+    #[serde(rename = "gemma-3")]
+    Gemma3,
+    #[serde(rename = "gemma-4")]
+    Gemma4,
+    #[serde(rename = "gpt-oss")]
+    GptOss,
+    #[serde(rename = "lfm2")]
+    Lfm2,
+    #[serde(rename = "lfm2.5-instruct")]
+    Lfm25Instruct,
+    #[serde(rename = "lfm2.5-thinking")]
+    Lfm25Thinking,
+    #[serde(rename = "llama-3.2")]
+    Llama32,
+    #[serde(rename = "qwen3")]
+    Qwen3,
+    #[serde(rename = "qwen3-instruct")]
+    Qwen3Instruct,
+    #[serde(rename = "qwen3-thinking")]
+    Qwen3Thinking,
+    #[serde(rename = "qwen3.5")]
+    Qwen35,
+    #[serde(rename = "qwen3.6")]
+    Qwen36,
+    #[serde(rename = "qwen3.8")]
+    Qwen38,
+    #[serde(rename = "muse-glimmer")]
+    MuseGlimmer,
+}
+
+impl HanashiConfig {
+    pub fn capabilities(&self) -> Result<ChatModelCapabilities, Error> {
+        let resolved = self.resolve()?;
+        let rendering = &resolved.rendering;
+
+        let supports_multiple_tool_calls = rendering
+            .get_rendering_field_for_block_type(&ChatContentBlockType::ToolCall)
+            .and_then(|field| match &field.config {
+                FieldConfig::Collected {
+                    limit,
+                    ..
+                } => *limit,
+                _ => None,
+            })
+            .is_none_or(|limit| limit > 1);
+
+        let reasoning_effort_mapping = rendering
+            .get_rendering_field_for_block_type(&ChatContentBlockType::ReasoningEffort)
+            .and_then(|field| match &field.config {
+                FieldConfig::Unique {
+                    mapping,
+                    ..
+                } => mapping.as_ref(),
+                _ => None,
+            });
+
+        let supports_disable_reasoning = reasoning_effort_mapping
+            .is_some_and(|mapping| mapping.contains_key(ReasoningEffort::Disabled.to_string().as_str()));
+
+        let reasoning_efforts = reasoning_effort_mapping
+            .map(|mapping| mapping.keys().filter_map(|key| key.parse::<ReasoningEffort>().ok()).collect::<Vec<_>>())
+            .unwrap_or_default();
+
+        let tools_role_and_field = rendering.get_rendering_role_and_field_for_block_type(&ChatContentBlockType::Tools);
+        let supports_tools = tools_role_and_field.is_some();
+        let requires_tools = tools_role_and_field
+            .map(|(role, field)| field.required && !resolved.ordering.is_role_avoidable(role))
+            .unwrap_or(false);
+
+        Ok(ChatModelCapabilities {
+            supports_reasoning: rendering
+                .get_rendering_field_for_block_type(&ChatContentBlockType::Reasoning)
+                .is_some(),
+            supports_disable_reasoning,
+            reasoning_efforts,
+            supports_tools,
+            supports_multiple_tool_calls,
+            requires_tools,
+        })
+    }
+
+    pub fn resolve(&self) -> Result<HanashiResolvedConfig, Error> {
+        match &self {
+            HanashiConfig::FunctionGemma => resolve_bundled_config("functiongemma"),
+            HanashiConfig::Gemma3 => resolve_bundled_config("gemma-3"),
+            HanashiConfig::Gemma4 => resolve_bundled_config("gemma-4"),
+            HanashiConfig::GptOss => resolve_bundled_config("gpt-oss"),
+            HanashiConfig::Lfm2 => resolve_bundled_config("lfm2"),
+            HanashiConfig::Lfm25Instruct => resolve_bundled_config("lfm2.5-instruct"),
+            HanashiConfig::Lfm25Thinking => resolve_bundled_config("lfm2.5-thinking"),
+            HanashiConfig::Llama32 => resolve_bundled_config("llama-3.2"),
+            HanashiConfig::Qwen3 => resolve_bundled_config("qwen3"),
+            HanashiConfig::Qwen3Instruct => resolve_bundled_config("qwen3-instruct"),
+            HanashiConfig::Qwen3Thinking => resolve_bundled_config("qwen3-thinking"),
+            HanashiConfig::Qwen35 => resolve_bundled_config("qwen3.5"),
+            HanashiConfig::Qwen36 => resolve_bundled_config("qwen3.6"),
+            HanashiConfig::Qwen38 => resolve_bundled_config("qwen3.8"),
+            HanashiConfig::MuseGlimmer => resolve_bundled_config("muse-glimmer"),
+            HanashiConfig::Custom {
+                config,
+            } => Ok(config.clone()),
+        }
+    }
+}
+
+fn resolve_bundled_config(name: &str) -> Result<HanashiResolvedConfig, Error> {
+    let (parsing_name, rendering_name, tokens_name, ordering_name) =
+        bundled::get_config_mapping(name).ok_or_else(|| Error::ConfigNotFound(name.to_string()))?;
+
+    let parsing_json =
+        bundled::get_parsing_config(parsing_name).ok_or_else(|| Error::ConfigNotFound(parsing_name.to_string()))?;
+    let parsing_config =
+        serde_json::from_str(parsing_json).map_err(|_| Error::InvalidConfig(parsing_name.to_string()))?;
+
+    let rendering_json = bundled::get_rendering_config(rendering_name)
+        .ok_or_else(|| Error::ConfigNotFound(rendering_name.to_string()))?;
+    let rendering_config =
+        serde_json::from_str(rendering_json).map_err(|_| Error::InvalidConfig(rendering_name.to_string()))?;
+
+    let tokens_json =
+        bundled::get_tokens_config(tokens_name).ok_or_else(|| Error::ConfigNotFound(tokens_name.to_string()))?;
+    let tokens_config = serde_json::from_str(tokens_json).map_err(|_| Error::InvalidConfig(tokens_name.to_string()))?;
+
+    let ordering_json =
+        bundled::get_ordering_config(ordering_name).ok_or_else(|| Error::ConfigNotFound(ordering_name.to_string()))?;
+    let ordering_config =
+        serde_json::from_str(ordering_json).map_err(|_| Error::InvalidConfig(ordering_name.to_string()))?;
+
+    let config = HanashiResolvedConfig {
+        parsing: parsing_config,
+        rendering: rendering_config,
+        tokens: tokens_config,
+        ordering: ordering_config,
+    };
+    Ok(config)
+}

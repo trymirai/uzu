@@ -1,0 +1,84 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Mirai Docs",
+  "colors": {
+    "primary": "#0A0A0A",
+    "light": "#FCFCFC",
+    "dark": "#0A0A0A"
+  },
+  "favicon": "/favicon.png",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Overview",
+        "pages": [
+          "index"
+        ]
+      },
+      {
+        "group": "Quick start",
+        "pages": [
+          "quick-start/chat",
+          "quick-start/chat-cloud",
+          "quick-start/chat-structured-output"
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/trymirai",
+          "icon": "github"
+        },
+        {
+          "anchor": "Community",
+          "href": "https://discord.com/invite/trymirai",
+          "icon": "discord"
+        },
+        {
+          "anchor": "Blog",
+          "href": "https://trymirai.com/blog",
+          "icon": "newspaper"
+        }
+      ]
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Write Us",
+        "href": "mailto:contact@getmirai.co"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Platform",
+      "href": "https://platform.trymirai.com"
+    }
+  },
+  "logo": {
+    "light": "/logo/light.png",
+    "dark": "/logo/dark.png"
+  },
+  "contextual": {
+    "options": [
+     "copy",
+     "view",
+     "chatgpt",
+     "claude",
+     "perplexity",
+     "mcp",
+     "cursor",
+     "vscode"
+   ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/trymirai",
+      "x": "https://x.com/trymirai",
+      "linkedin": "https://linkedin.com/company/trymirai"
+    }
+  }
+}

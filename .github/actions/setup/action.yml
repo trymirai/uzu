@@ -82,14 +82,6 @@ runs:
 
     - if: inputs.test_data == 'true'
       run: |
-        mkdir -p ~/.cache/ci-uzu/models
-        ln -sf ~/.cache/ci-uzu/models workspace/models
-        ./scripts/download_test_model.sh
-
-        mkdir -p ~/.cache/ci-uzu/data/configs
-        mkdir -p ~/.cache/ci-uzu/data/tokenizers
-        ln -sf ~/.cache/ci-uzu/data/configs workspace/data/configs
-        ln -sf ~/.cache/ci-uzu/data/tokenizers workspace/data/tokenizers
         cd ./tools/
         uv run export configs
         uv run export tokenizers
