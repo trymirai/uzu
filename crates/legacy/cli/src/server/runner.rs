@@ -34,6 +34,7 @@ pub struct ResponseBodyLogger<'r> {
     bytes: Vec<u8>,
     is_json: bool,
     logged: bool,
+    span: tracing::Span,
 }
 
 impl<'r> ResponseBodyLogger<'r> {
@@ -41,6 +42,7 @@ impl<'r> ResponseBodyLogger<'r> {
         body: Body<'r>,
         prefix: String,
         is_json: bool,
+        span: tracing::Span,
     ) -> Self {
         Self {
             body,
@@ -48,6 +50,7 @@ impl<'r> ResponseBodyLogger<'r> {
             bytes: Vec::new(),
             is_json,
             logged: false,
+            span,
         }
     }
 
@@ -67,7 +70,7 @@ impl<'r> ResponseBodyLogger<'r> {
         } else {
             format!("{:?}", String::from_utf8_lossy(&self.bytes))
         };
-        tracing::debug!("{} body={}{}\n", self.prefix, body, suffix);
+        self.span.in_scope(|| tracing::debug!("{} body={}{}\n", self.prefix, body, suffix));
     }
 }
 
@@ -78,6 +81,8 @@ impl AsyncRead for ResponseBodyLogger<'_> {
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
+        let span = this.span.clone();
+        let _entered = span.enter();
         let filled_before = buffer.filled().len();
 
         match Pin::new(&mut this.body).poll_read(cx, buffer) {
@@ -134,13 +139,14 @@ impl Fairing for RequestLoggingFairing {
         }
 
         let request_info = request.local_cache(|| RequestInfo::new(request.method(), request.uri().to_string()));
-        let prefix = format!("[{}] <-- {} {}", request_info.id_short(), response.status(), request.uri());
+        let _entered = request_info.span.enter();
+        let prefix = format!("<-- {} {}", response.status(), request.uri());
         if response.body().is_none() {
             tracing::debug!("{prefix} body=<empty>\n");
         } else {
             let is_json = response.content_type().is_some_and(|content_type| content_type.is_json());
             let body = response.body_mut().take();
-            response.set_streamed_body(ResponseBodyLogger::new(body, prefix, is_json));
+            response.set_streamed_body(ResponseBodyLogger::new(body, prefix, is_json, request_info.span.clone()));
         }
     }
 }
@@ -163,7 +169,7 @@ pub async fn run_server(
     } else {
         None
     };
-    log::init(tracing::Level::INFO, file_logger.clone(), tracing::Level::DEBUG)?;
+    log::init(tracing::Level::DEBUG, file_logger.clone(), tracing::Level::DEBUG)?;
 
     let engine_config = EngineConfig::default().with_application_identifier("com.trymirai.cli".to_string());
     let engine = Engine::new(engine_config).await.context("Failed to create engine")?;

@@ -15,6 +15,7 @@ use rocket::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tracing::Instrument;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStream, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
     types::{
@@ -1140,6 +1141,7 @@ async fn run_stream(
 
 #[allow(private_interfaces)]
 #[post("/chat/completions", format = "json", data = "<body>")]
+#[tracing::instrument(skip_all, parent = &request_info.span)]
 pub async fn handle_chat_completions(
     body: Data<'_>,
     state: &State<ServerState>,
@@ -1160,12 +1162,12 @@ pub async fn handle_chat_completions(
     } else {
         body.clone()
     };
-    tracing::debug!("[{}] --> {} {} body={}", request_info.id_short(), request_info.method, request_info.uri, log_body);
+    tracing::debug!("--> {} {} body={}", request_info.method, request_info.uri, log_body);
 
     let request = match serde_json::from_str::<ChatCompletionRequest>(&body) {
         Ok(request) => request,
         Err(error) => {
-            tracing::info!("[] rejected: {error}");
+            tracing::info!("rejected: {error}");
             return invalid_request_response(
                 "body",
                 "invalid_request",
@@ -1178,7 +1180,6 @@ pub async fn handle_chat_completions(
     let created = request_info.created_at;
     let is_stream = request.stream.unwrap_or(false);
     let log = RequestLog::start(
-        request_info.id.as_str(),
         is_stream,
         request.messages.len(),
         request.tools.as_ref().map_or(0, Vec::len),
@@ -1215,35 +1216,30 @@ pub async fn handle_chat_completions(
     if is_stream {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Event>();
-        tokio::spawn(run_stream(
-            session,
-            messages,
-            config,
-            id,
-            model,
-            created,
-            state.prefix_cache,
-            parameter_types,
-            sender,
-            log,
-        ));
+        tokio::spawn(
+            run_stream(session, messages, config, id, model, created, state.prefix_cache, parameter_types, sender, log)
+                .in_current_span(),
+        );
         let body: Pin<Box<dyn Stream<Item = Event> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
         ChatCompletionResult::Stream(EventStream::from(body))
     } else {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Vec<u8>>();
-        tokio::spawn(run_blocking(
-            session,
-            messages,
-            config,
-            id,
-            model,
-            created,
-            state.prefix_cache,
-            parameter_types,
-            sender,
-            log,
-        ));
+        tokio::spawn(
+            run_blocking(
+                session,
+                messages,
+                config,
+                id,
+                model,
+                created,
+                state.prefix_cache,
+                parameter_types,
+                sender,
+                log,
+            )
+            .in_current_span(),
+        );
         let body: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
         // Hand the body to Rocket immediately so it can write keepalives and
         // drop the receiver when the client disconnects. Any backend error

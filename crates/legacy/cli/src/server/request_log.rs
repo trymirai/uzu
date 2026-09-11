@@ -5,31 +5,27 @@ use uzu::types::session::chat::ChatReplyStats;
 /// Per-request tracing: one event when the request arrives, one when it ends,
 /// correlated by a short tag derived from the request id.
 pub struct RequestLog {
-    tag: String,
     started: Instant,
 }
 
 impl RequestLog {
     pub fn start(
-        id: &str,
         stream: bool,
         messages: usize,
         tools: usize,
         reasoning_effort: Option<&str>,
     ) -> Self {
-        let tag = short_tag(id);
         let stream = if stream {
             "stream"
         } else {
             "blocking"
         };
         tracing::info!(
-            "[{tag}] received: {messages} messages, {}, {tools} tools, reasoning_effort={}",
+            "received: {messages} messages, {}, {tools} tools, reasoning_effort={}",
             stream,
             reasoning_effort.unwrap_or("default"),
         );
         Self {
-            tag,
             started: Instant::now(),
         }
     }
@@ -69,17 +65,13 @@ impl RequestLog {
             }
         }
         parts.extend(notes);
-        tracing::info!("[{}] {}", self.tag, parts.join(", "));
+        tracing::info!("{}", parts.join(", "));
     }
 
     pub fn fail(
         &self,
         error: &str,
     ) {
-        tracing::info!("[{}] failed in {:.2}s: {error}", self.tag, self.started.elapsed().as_secs_f64());
+        tracing::info!("failed in {:.2}s: {error}", self.started.elapsed().as_secs_f64());
     }
-}
-
-fn short_tag(id: &str) -> String {
-    id.chars().take(8).collect()
 }

@@ -15,6 +15,7 @@ pub struct RequestInfo {
     pub uri: String,
     pub id: String,
     pub created_at: i64,
+    pub span: tracing::Span,
 }
 
 impl RequestInfo {
@@ -22,19 +23,18 @@ impl RequestInfo {
         method: Method,
         uri: String,
     ) -> Self {
+        let id = Uuid::new_v4().simple().to_string();
+        let span = tracing::info_span!(parent: None, "request", request_id = &id[..8]);
         Self {
             method,
             uri,
-            id: Uuid::new_v4().simple().to_string(),
+            id,
+            span,
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| duration.as_secs() as i64)
                 .unwrap_or(0),
         }
-    }
-
-    pub fn id_short(&self) -> String {
-        self.id.chars().take(8).collect()
     }
 }
 

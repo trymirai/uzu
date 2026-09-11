@@ -2451,10 +2451,8 @@ dependencies = [
 name = "hanashi"
 version = "0.5.26"
 dependencies = [
- "fancy-regex 0.17.0",
  "indexmap 2.14.0",
  "libc",
- "llm_json",
  "minijinja",
  "minijinja-contrib",
  "openai-harmony",
@@ -2465,6 +2463,7 @@ dependencies = [
  "thiserror 2.0.18",
  "token-stream-parser",
  "tokenizers",
+ "tracing",
 ]
 
 [[package]]
