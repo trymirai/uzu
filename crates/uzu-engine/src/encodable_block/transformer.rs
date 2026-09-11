@@ -13,6 +13,7 @@ use crate::{
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
     parameters::ParameterTree,
+    trace::{Array, RopeTap, TransformerLayerTap, TransformerTap, TransformerTapRequest},
     utils::maybe_mut::MaybeMut,
 };
 
@@ -23,19 +24,16 @@ enum TransformerLayerStateType<B: Backend> {
 
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
-    context_length: u32,
+    pub context_length: u32,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
     pub output: Option<Allocation<B>>,
     pub hidden_features: Option<Box<[Allocation<B>]>>,
+    pub tap: TransformerTap<B>,
 }
 
 impl<B: Backend> TransformerState<B> {
-    pub fn context_length(&self) -> u32 {
-        self.context_length
-    }
-
     pub fn prepare(
         &mut self,
         context_length: u32,
@@ -91,6 +89,7 @@ pub struct Transformer<B: Backend> {
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
     model_dim: u32,
+    data_type: DataType,
     residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
 }
 
@@ -153,6 +152,7 @@ impl<B: Backend> Transformer<B> {
             layers,
             output_norm,
             model_dim: transformer_config.model_dim,
+            data_type,
             residual_add,
         })
     }
@@ -231,8 +231,13 @@ impl<B: Backend> Transformer<B> {
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
+        tap_request: Option<&TransformerTapRequest>,
         encoder: &mut Encoder<B>,
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
+        let request = tap_request.unwrap_or(&TransformerTapRequest::NONE);
+        let layer_request = request.layers.as_ref();
+        let mut tap = TransformerTap::default();
+
         let mut hidden = input;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
@@ -253,6 +258,22 @@ impl<B: Backend> Transformer<B> {
             .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, encoder))
             .collect::<Result<Box<[_]>, B::Error>>()?;
 
+        if let Some(rope_request) = &request.rope_embeddings {
+            for rope in precalculated_ropes.iter() {
+                let shape = [1, token_positions.len() as u32, rope.dim];
+                tap.rope_embeddings.push(RopeTap {
+                    cosines: rope_request
+                        .cosines
+                        .then(|| Array::capture(&rope.cosines, &shape, DataType::F32, encoder))
+                        .transpose()?,
+                    sines: rope_request
+                        .sines
+                        .then(|| Array::capture(&rope.sines, &shape, DataType::F32, encoder))
+                        .transpose()?,
+                });
+            }
+        }
+
         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
 
@@ -272,15 +293,31 @@ impl<B: Backend> Transformer<B> {
                 None
             };
 
-            hidden = layer.encode(
+            let layer_output = layer.encode(
                 hidden,
                 &mut shortcut,
                 per_layer_inputs,
                 precalculated_rope,
                 batch_dim,
                 layer_state,
+                layer_request.and_then(|layer_request| layer_request.activations.as_ref()),
                 encoder,
             )?;
+            hidden = layer_output.hidden;
+
+            if let Some(layer_request) = layer_request {
+                let outputs = layer_request
+                    .outputs
+                    .then(|| {
+                        let residual = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
+                        Array::capture(&residual, &[1, batch_dim.size(), self.model_dim], self.data_type, encoder)
+                    })
+                    .transpose()?;
+                tap.layers.push(TransformerLayerTap {
+                    outputs,
+                    activations: Some(layer_output.tap),
+                });
+            }
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
@@ -311,20 +348,22 @@ impl<B: Backend> Transformer<B> {
             return Ok(TransformerEncodeOutput {
                 output: None,
                 hidden_features,
+                tap,
             });
         };
 
-        let output_normalized = self.output_norm.encode(
-            &hidden,
-            output_range.start,
-            output_range.end - output_range.start,
-            Some(&mut shortcut),
-            encoder,
-        )?;
+        let row_count = output_range.end - output_range.start;
+        let output_normalized =
+            self.output_norm.encode(&hidden, output_range.start, row_count, Some(&mut shortcut), encoder)?;
+        if request.output_norm {
+            let shape = [1, row_count, self.model_dim];
+            tap.output_norm = Some(Array::capture(&output_normalized, &shape, self.data_type, encoder)?);
+        }
 
         Ok(TransformerEncodeOutput {
             output: Some(output_normalized),
             hidden_features,
+            tap,
         })
     }
 }

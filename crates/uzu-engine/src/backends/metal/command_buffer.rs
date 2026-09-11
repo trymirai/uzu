@@ -168,9 +168,9 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         assert_eq!(src_range.len(), dst_range.len());
 
         self.ensure_blit().copy_buffer_to_buffer(
-            (src.buffer() as &dyn Buffer<Backend = Metal>).downcast(),
+            (src.buffer as &dyn Buffer<Backend = Metal>).downcast(),
             src_range.start,
-            (dst.buffer() as &dyn Buffer<Backend = Metal>).downcast(),
+            (dst.buffer as &dyn Buffer<Backend = Metal>).downcast(),
             dst_range.start,
             src_range.len(),
         );
@@ -186,7 +186,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         assert!(range.start.is_multiple_of(4) && range.end.is_multiple_of(4));
 
         self.ensure_blit().fill_buffer_range_value(
-            (dst.buffer() as &dyn Buffer<Backend = Metal>).downcast(),
+            (dst.buffer as &dyn Buffer<Backend = Metal>).downcast(),
             range,
             value,
         );

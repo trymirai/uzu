@@ -1,21 +1,14 @@
 use std::{collections::HashMap, string::ToString, sync::Arc};
 
-use minijinja::{Environment, context};
-use minijinja_contrib::pycompat::unknown_method_callback;
+use minijinja::context;
 use shoji::types::session::classification::{
     ChatTokenCodecConfig, ClassificationMessage, ClassificationRole, TokenCodecConfig,
 };
 use tokenizers::Tokenizer;
 
-use crate::chat::{
-    hanashi::{
-        Error,
-        renderer::{
-            RAISE_EXCEPTION_FUNCTION_NAME, STRFTIME_NOW_FUNCTION_NAME, TEMPLATE_NAME, TOJSON_FILTER_NAME,
-            raise_exception, to_json,
-        },
-    },
-    strftime_now,
+use crate::chat::hanashi::{
+    Error,
+    renderer::{TEMPLATE_NAME, chat_template_environment},
 };
 
 pub struct ClassificationEncoding {
@@ -49,14 +42,8 @@ impl ClassificationEncoding {
         config: &ChatTokenCodecConfig,
         input: &[ClassificationMessage],
     ) -> Result<Vec<u32>, Error> {
-        let mut environment = Environment::new();
-        environment.set_unknown_method_callback(unknown_method_callback);
-        environment.add_function(STRFTIME_NOW_FUNCTION_NAME, strftime_now);
-        environment.add_function(RAISE_EXCEPTION_FUNCTION_NAME, raise_exception);
-        environment.add_filter(TOJSON_FILTER_NAME, to_json);
-        environment
-            .add_template(TEMPLATE_NAME, config.prompt_template.as_str())
-            .map_err(|_| Error::UnableToEncodeText)?;
+        let environment =
+            chat_template_environment(config.prompt_template.as_str()).map_err(|_| Error::UnableToEncodeText)?;
 
         let messages: Vec<HashMap<String, String>> = input
             .iter()

@@ -936,6 +936,7 @@ dependencies = [
  "indoc",
  "iocraft",
  "jsonschema",
+ "minijinja",
  "nagare",
  "ratatui",
  "rocket",
@@ -944,6 +945,7 @@ dependencies = [
  "shoji",
  "sysinfo",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio",
  "tokio-stream",
  "toml 1.1.2+spec-1.1.0",
@@ -2453,6 +2455,8 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -5784,6 +5788,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "safetensors"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79b079b829cb27a1c3c374341345ed2e8b2c0c839034522cee576c140bd7f846"
+dependencies = [
+ "hashbrown 0.16.1",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7599,6 +7616,7 @@ dependencies = [
  "blake3",
  "bytemuck",
  "clang-ast",
+ "clap",
  "criterion",
  "depfile",
  "derive_more",
@@ -7625,6 +7643,7 @@ dependencies = [
  "rangemap",
  "rhai",
  "rstest",
+ "safetensors",
  "schemars 1.2.1",
  "serde",
  "serde_json",

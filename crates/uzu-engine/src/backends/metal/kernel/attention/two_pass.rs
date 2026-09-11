@@ -86,7 +86,7 @@ impl AttentionTwoPass {
             &[arguments.suffix_length, config.num_q_heads, PARTIAL_BLOCKS],
             PARTIAL_DATA_TYPE,
         )?;
-        let first = self.get_or_create(encoder.context(), arguments.trie.is_some())?;
+        let first = self.get_or_create(encoder.context, arguments.trie.is_some())?;
         first.encode(
             arguments.queries,
             arguments.keys,
@@ -113,7 +113,7 @@ impl AttentionTwoPass {
             &[arguments.suffix_length, config.num_q_heads, config.head_dim],
             config.data_type,
         )?;
-        let second = self.get_or_create_second(encoder.context())?;
+        let second = self.get_or_create_second(encoder.context)?;
         second.encode(&partials, &sums, &maxs, &mut output, config.num_q_heads, arguments.suffix_length, encoder);
         Ok(output)
     }

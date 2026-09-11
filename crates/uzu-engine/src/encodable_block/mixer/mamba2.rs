@@ -253,7 +253,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         assert!(precalculated_rope.is_none(), "unexpected rope for mamba2 mixer");
 
-        if !batch_dim.full_accept() {
+        if !batch_dim.full_accept {
             panic!("mamba2 doesn't support speculation");
         }
 

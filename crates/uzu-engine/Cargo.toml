@@ -66,6 +66,7 @@ monostate.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
 rangemap.workspace = true
+safetensors.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 num-traits.workspace = true
 libm.workspace = true
@@ -92,6 +93,7 @@ rand_distr.workspace = true
 is_close.workspace = true
 ndarray.workspace = true
 rstest.workspace = true
+clap.workspace = true
 
 [target.'cfg(target_os = "ios")'.dev-dependencies]
 objc2.workspace = true

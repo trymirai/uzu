@@ -48,11 +48,11 @@ fn verify_stick(
 
     for i in 1..10 {
         cur_node = cur_node.get(i).unwrap();
-        assert_eq!(cur_node.token(), i);
+        assert_eq!(cur_node.token, i);
         assert_eq!(cur_node.seed, rng.derive(i));
 
         let position = flat_trie.index(cur_node).unwrap();
-        assert_eq!(token_ids[position], cur_node.token());
+        assert_eq!(token_ids[position], cur_node.token);
         assert_eq!(token_positions[position], i as usize);
         assert_eq!(token_seeds[position], rng.derive(i));
     }
@@ -95,11 +95,11 @@ fn verify_bush(
 
     for leaf_token in [1, 2, 3] {
         let leaf = trie_root.get(leaf_token).unwrap();
-        assert_eq!(leaf.token(), leaf_token);
+        assert_eq!(leaf.token, leaf_token);
         assert_eq!(leaf.seed, rng.derive(1));
 
         let position = flat_trie.index(leaf).unwrap();
-        assert_eq!(token_ids[position], leaf.token());
+        assert_eq!(token_ids[position], leaf.token);
         assert_eq!(token_positions[position], 1);
         assert_eq!(token_seeds[position], rng.derive(1));
     }

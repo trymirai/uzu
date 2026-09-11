@@ -243,16 +243,16 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             a8: quantized,
             ..
         } = &self.input_rht
-            && self.inner_linear.select_activation_format(batch_dim, encoder.context()) == ActivationFormat::Int8
+            && self.inner_linear.select_activation_format(batch_dim, encoder.context) == ActivationFormat::Int8
         {
-            let activation_group_size = quantized.activation_group_size();
+            let activation_group_size = quantized.activation_group_size;
             let scale_groups_per_row = self.input_dimension.div_ceil(activation_group_size);
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, scale_groups_per_row], DataType::F32))?;
             let mut group_sums = quantized
-                .sum_group_size()
+                .sum_group_size
                 .map(|group_size| self.input_dimension.div_ceil(group_size))
                 .map(|groups| encoder.allocate_scratch(size_for_shape(&[batch_dim, groups], DataType::I32)))
                 .transpose()?;

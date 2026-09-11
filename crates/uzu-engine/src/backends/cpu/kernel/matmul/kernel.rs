@@ -100,7 +100,7 @@ impl MatmulKernel for MatmulCpuKernel {
             } => {
                 let range = values.as_buffer_range_ref();
                 let byte_offset = range.range().start + offset * input_data_type.size_in_bytes();
-                AData::FullPrecision(SendPtr(unsafe { &*range.buffer().get() }.as_ptr().wrapping_byte_add(byte_offset)))
+                AData::FullPrecision(SendPtr(unsafe { &*range.buffer.get() }.as_ptr().wrapping_byte_add(byte_offset)))
             },
             MatmulA::Int8Symmetric {
                 values,
@@ -135,10 +135,10 @@ impl MatmulKernel for MatmulCpuKernel {
                 let scales_range = scales.as_buffer_range_ref();
                 AData::Int8 {
                     values: SendPtr(
-                        unsafe { &*values_range.buffer().get() }.as_ptr().wrapping_byte_add(values_range.range().start),
+                        unsafe { &*values_range.buffer.get() }.as_ptr().wrapping_byte_add(values_range.range().start),
                     ),
                     scales: SendPtr(
-                        unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
+                        unsafe { &*scales_range.buffer.get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
                     ),
                     group_size: a_group_size as usize,
                 }
@@ -146,15 +146,15 @@ impl MatmulKernel for MatmulCpuKernel {
         };
         let bias_ptr = bias_alloc.map(|bias| {
             let r = bias.as_buffer_range_ref();
-            SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
+            SendPtr(unsafe { &*r.buffer.get() }.as_ptr().wrapping_byte_add(r.range().start))
         });
         let gather_ptr = gather_indices.map(|indices| {
             let r = indices.as_buffer_range_ref();
-            SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start) as *const u32)
+            SendPtr(unsafe { &*r.buffer.get() }.as_ptr().wrapping_byte_add(r.range().start) as *const u32)
         });
         let d_buffer_range = d.as_buffer_range_mut();
         let d_ptr = SendPtrMut(unsafe {
-            (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_buffer_range.range().start) as *mut u8
+            (&*d_buffer_range.buffer.get()).as_ptr().wrapping_byte_add(d_buffer_range.range().start) as *mut u8
         });
 
         let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u);

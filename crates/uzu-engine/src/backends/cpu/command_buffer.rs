@@ -77,10 +77,10 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         let dst_range = dst.range();
         assert_eq!(src_range.len(), dst_range.len());
 
-        let src_buffer = (src.buffer() as &dyn Buffer<Backend = Cpu>).downcast();
+        let src_buffer = (src.buffer as &dyn Buffer<Backend = Cpu>).downcast();
         let src_ptr = SendPtr(unsafe { (&*src_buffer.get()).as_ptr().add(src_range.start) });
 
-        let dst_buffer = (dst.buffer() as &dyn Buffer<Backend = Cpu>).downcast();
+        let dst_buffer = (dst.buffer as &dyn Buffer<Backend = Cpu>).downcast();
         let dst_ptr = SendPtrMut(unsafe { (&mut *dst_buffer.get()).as_mut_ptr().add(dst_range.start) });
 
         self.push_command(move || unsafe {
@@ -96,7 +96,7 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         let range = dst.range();
         let size = range.end - range.start;
         let dst = SendPtrMut(unsafe {
-            (&mut *(dst.buffer() as &dyn Buffer<Backend = Cpu>).downcast().get()).as_mut_ptr().add(range.start)
+            (&mut *(dst.buffer as &dyn Buffer<Backend = Cpu>).downcast().get()).as_mut_ptr().add(range.start)
         });
         self.push_command(move || unsafe {
             dst.as_ptr().write_bytes(value, size);

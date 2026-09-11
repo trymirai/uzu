@@ -284,7 +284,7 @@ impl GemvKernel {
         };
 
         let output_group_count = n.div_ceil(specialization.output_row_tile());
-        let context = encoder.context();
+        let context = encoder.context;
         let pipeline = self.get_or_create(context, specialization)?;
         match b {
             MatmulB::FullPrecision {

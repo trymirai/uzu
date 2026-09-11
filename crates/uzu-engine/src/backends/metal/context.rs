@@ -229,7 +229,7 @@ impl Context for MetalContext {
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        let sparse_page_size = self.sparse_heap_pool.lock().page_size();
+        let sparse_page_size = self.sparse_heap_pool.lock().page_size;
         let context = self.weak_self.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
         MetalSparseBuffer::new(context, capacity, sparse_page_size)
     }

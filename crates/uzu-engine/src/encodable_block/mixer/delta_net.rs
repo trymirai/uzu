@@ -341,7 +341,7 @@ impl<B: Backend> DeltaNet<B> {
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
         let parents = encoder.allocate_constant_from_slice(batch_dim.parents())?;
-        let trie = encoder.allocate_constant_from_slice(batch_dim.nodes())?;
+        let trie = encoder.allocate_constant_from_slice(batch_dim.nodes)?;
 
         let mut conv_states =
             encoder.allocate_scratch_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)?;
@@ -492,7 +492,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
 
         let mut in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
 
-        if !batch_dim.full_accept() {
+        if !batch_dim.full_accept {
             let output = self.encode_tree_verify(in_projected, batch_dim, state, encoder)?;
 
             encoder.pop_debug_group();
