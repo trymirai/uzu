@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 use crate::common::{
     codegen::write_tokens,
     compiler::Compiler,
+    constraints::Constraints,
     enum_paths::EnumPaths,
     gpu_types::GpuTypes,
     identifiers::{ArgumentName, KernelName, KernelPath},
@@ -501,10 +502,12 @@ impl CpuCompiler {
                 .iter()
                 .flat_map(|(_, variants)| variants.iter().map(|v| v.to_token_stream().to_string()))
                 .collect();
-            let evaluator = (!function_constraints.is_empty())
-                .then(|| crate::common::constraints::Evaluator::new(variant_value_strs.iter().map(|s| s.as_str())));
-            let constraint_strs: Vec<String> =
-                function_constraints.iter().map(|c| c.to_token_stream().to_string()).collect();
+            let constraints = (!function_constraints.is_empty()).then(|| {
+                Constraints::new(
+                    variant_value_strs.iter().map(|s| s.as_str()),
+                    function_constraints.iter().map(|c| c.to_token_stream().to_string()),
+                )
+            });
 
             let match_arms = function_parameters
                 .iter()
@@ -526,15 +529,15 @@ impl CpuCompiler {
                 })
                 .multi_cartesian_product()
                 .filter(|variants| {
-                    let Some(evaluator) = &evaluator else {
+                    let Some(constraints) = &constraints else {
                         return true;
                     };
-                    let bindings: Vec<(String, String)> = function_parameters
-                        .iter()
-                        .enumerate()
-                        .map(|(i, p)| (p.name.to_string(), variants[i].1.to_string()))
-                        .collect();
-                    evaluator.satisfied(&bindings, &constraint_strs)
+                    constraints.satisfied(
+                        function_parameters
+                            .iter()
+                            .enumerate()
+                            .map(|(i, p)| (p.name.to_string(), variants[i].1.to_string())),
+                    )
                 })
                 .map(|variants| {
                     let (match_variants, generic_variants): (Vec<TokenStream>, Vec<TokenStream>) =

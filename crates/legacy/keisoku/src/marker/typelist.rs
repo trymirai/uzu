@@ -5,12 +5,12 @@ pub struct Nil;
 pub struct Cons<H, T>(PhantomData<(H, T)>);
 
 pub struct Values<M: ChannelMetric, T> {
-    pub(crate) head: M::Value,
-    pub(crate) tail: T,
+    pub head: M::Value,
+    pub tail: T,
 }
 
 impl<M: ChannelMetric, T> Values<M, T> {
-    pub(crate) fn new(
+    pub fn new(
         head: M::Value,
         tail: T,
     ) -> Self {

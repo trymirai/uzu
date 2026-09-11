@@ -93,7 +93,6 @@ macro_rules! unit {
     };
 }
 
-unit!(float Watts(f32) = "W");
 unit!(float Joules(f32) = "J");
 unit!(float Percent(f32) = "%");
 unit!(float GigabytesPerSecond(f32) = "GB/s");

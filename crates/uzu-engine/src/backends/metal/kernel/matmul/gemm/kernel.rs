@@ -21,7 +21,6 @@ use crate::{
         metal::{
             Metal,
             context::MetalContext,
-            device_profile::DeviceProfile,
             error::MetalError,
             kernel::{GemmMetalKernel, GemmSplitKReduceMetalKernel, TensorAddBiasMetalKernel},
         },
@@ -109,10 +108,15 @@ impl GemmKernel {
     fn problem(
         &self,
         shape: MatmulShape,
-        supports_mxu: bool,
-        profile: DeviceProfile,
+        context: &MetalContext,
     ) -> GemmProblem {
-        GemmProblem::new(shape, self.weights_data_type, self.output_data_type, supports_mxu, profile)
+        GemmProblem::new(
+            shape,
+            self.weights_data_type,
+            self.output_data_type,
+            context.supports_mxu,
+            context.apple_gpu_family,
+        )
     }
 
     #[cfg(test)]
@@ -122,7 +126,7 @@ impl GemmKernel {
         engine: GemmEngine,
         context: &MetalContext,
     ) -> Result<GemmPlan, MetalError> {
-        self.problem(*shape, context.supports_mxu(), context.device_profile())
+        self.problem(*shape, context)
             .select_plan_for_engine(engine)
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))
     }
@@ -146,7 +150,7 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        self.problem(shape, encoder.context().supports_mxu(), encoder.context().device_profile())
+        self.problem(shape, encoder.context())
             .validate_engine(plan.engine)
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))?;
 

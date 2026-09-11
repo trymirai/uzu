@@ -1,8 +1,6 @@
 const STATE_NOT_DOWNLOADED = "not_downloaded";
 const STATE_DOWNLOADING = "downloading";
 const STATE_PAUSED = "paused";
-const STATE_DOWNLOADED = "downloaded";
-const STATE_LOCKED = "locked";
 const STATE_ERROR = "error";
 
 const downloadButton = document.getElementById("btn-download");

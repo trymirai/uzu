@@ -27,7 +27,7 @@ use crate::{
 
 fn gemm_engines_for_hw(context: &MetalContext) -> Vec<GemmEngine> {
     let mut engines = vec![GemmEngine::Simdgroup];
-    if context.supports_mxu() {
+    if context.supports_mxu {
         engines.push(GemmEngine::Mxu);
     }
     engines

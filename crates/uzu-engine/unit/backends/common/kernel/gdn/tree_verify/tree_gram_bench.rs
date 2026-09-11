@@ -148,7 +148,7 @@ fn buffers_bytes(
 #[uzu_bench]
 fn bench_build_tree_gram(c: &mut Criterion) {
     let context = <Metal as Backend>::Context::new().expect("metal context");
-    let kernel_paths = if context.supports_mxu() {
+    let kernel_paths = if context.supports_mxu {
         &[("Simdgroup", false), ("MXU", true)][..]
     } else {
         &[("Simdgroup", false)][..]

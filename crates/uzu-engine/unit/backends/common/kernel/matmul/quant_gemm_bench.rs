@@ -29,7 +29,7 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
     bits: u32,
     quant_method: QuantizationMethod,
 ) {
-    let supports_mxu = context.supports_mxu();
+    let supports_mxu = context.supports_mxu;
     let engines: &[(&str, GemmEngine)] = if supports_mxu {
         &[("Simdgroup", GemmEngine::Simdgroup), ("Mxu", GemmEngine::Mxu)]
     } else {

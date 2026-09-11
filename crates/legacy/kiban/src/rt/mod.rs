@@ -18,6 +18,9 @@ pub trait TaskJoinHandle<T>: Send + Sync {
 
     /// Abort the task and wait for it to finish winding down.
     async fn abort_and_join(self: Box<Self>);
+
+    /// Whether the task has stopped running, by completion or abort.
+    fn is_finished(&self) -> bool;
 }
 
 pub fn spawn<F: Future<Output: MaybeSend + 'static> + MaybeSend + 'static>(

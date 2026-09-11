@@ -1,5 +1,4 @@
 use core::marker::PhantomData;
-use std::time::Instant;
 
 use crate::{
     marker::{IntervalSet, Sample},
@@ -11,23 +10,21 @@ use crate::{
 pub struct IntervalHandle<M: IntervalSet> {
     engine: IntervalEngine,
     session: Option<IntervalSession>,
-    started: Option<Instant>,
     marker: PhantomData<M>,
 }
 
 // SAFETY: `IntervalHandle` wraps CoreFoundation IOReport objects that are not `Sync`.
 // Callers must use a handle only from the thread that created it (same contract as the
-// previous `Interval`/`Session` types). `Send` is asserted so `PowerMeter` can live in
-// `RefCell` behind `Send` trait objects such as nagare's `PowerRecorder`.
+// previous `Interval`/`Session` types). `Send` is asserted so the owning `PowerMeter`
+// can move with nagare's `Send` reply stream.
 unsafe impl<M: IntervalSet> Send for IntervalHandle<M> {}
 
 impl<M: IntervalSet> IntervalHandle<M> {
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         let _ = M::TYPE_MASK;
         Self {
             engine: IntervalEngine::new(M::GROUPS),
             session: None,
-            started: None,
             marker: PhantomData,
         }
     }
@@ -36,7 +33,6 @@ impl<M: IntervalSet> IntervalHandle<M> {
     pub fn start(&mut self) {
         debug_assert!(self.session.is_none(), "start without stop");
         drop(self.session.take());
-        self.started = Some(Instant::now());
         self.session = Some(self.engine.begin());
     }
 
@@ -46,9 +42,5 @@ impl<M: IntervalSet> IntervalHandle<M> {
         let mut values = M::default_values();
         self.engine.fold_end::<M>(session, &mut values);
         Some(Sample::new(values))
-    }
-
-    pub(crate) fn elapsed(&self) -> std::time::Duration {
-        self.started.map(|started| started.elapsed()).unwrap_or_default()
     }
 }

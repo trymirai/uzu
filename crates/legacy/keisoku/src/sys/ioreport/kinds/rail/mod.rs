@@ -1,6 +1,6 @@
 use obfstr::obfstr;
 
-pub(crate) trait RailKind: 'static {
+pub trait RailKind: 'static {
     const RAIL: Rail;
     const TYPE_BIT: u128;
 }
@@ -14,7 +14,7 @@ pub enum Rail {
 }
 
 impl Rail {
-    pub(crate) fn classify(name: &str) -> Option<Rail> {
+    pub fn classify(name: &str) -> Option<Rail> {
         if name == obfstr!("GPU Energy") {
             Some(Rail::Gpu)
         } else if name.ends_with(obfstr!("CPU Energy")) {

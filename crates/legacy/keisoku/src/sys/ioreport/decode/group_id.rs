@@ -1,7 +1,7 @@
 use obfstr::obfstr;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum GroupId {
+pub enum GroupId {
     EnergyModel,
     AmcStats,
     Pmp,
@@ -10,7 +10,7 @@ pub(crate) enum GroupId {
 }
 
 impl GroupId {
-    pub(crate) fn classify(group: &str) -> GroupId {
+    pub fn classify(group: &str) -> GroupId {
         if group == obfstr!("Energy Model") {
             GroupId::EnergyModel
         } else if group == obfstr!("AMC Stats") {

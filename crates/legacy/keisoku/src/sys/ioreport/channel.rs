@@ -9,7 +9,7 @@ use crate::sys::{
     registry::{cf_string_to_string, dictionary_get},
 };
 
-pub(super) fn for_each_channel(
+pub fn for_each_channel(
     functions: &IoReportFunctions,
     delta: &CFDictionary,
     visit: &mut impl FnMut(Channel, &RawChannel),

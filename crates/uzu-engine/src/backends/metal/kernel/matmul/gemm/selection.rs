@@ -1,13 +1,11 @@
+use metal::MTLGPUFamily;
 use thiserror::Error;
 
 use super::{GemmEngine, GemmPlan, policy};
 use crate::{
-    backends::{
-        common::{
-            gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
-            kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
-        },
-        metal::device_profile::DeviceProfile,
+    backends::common::{
+        gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
+        kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
     },
     data_type::DataType,
 };
@@ -18,7 +16,7 @@ pub struct GemmProblem {
     weights_data_type: DataType,
     output_data_type: DataType,
     supports_mxu: bool,
-    profile: DeviceProfile,
+    apple_gpu_family: MTLGPUFamily,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
@@ -35,14 +33,14 @@ impl GemmProblem {
         weights_data_type: DataType,
         output_data_type: DataType,
         supports_mxu: bool,
-        profile: DeviceProfile,
+        apple_gpu_family: MTLGPUFamily,
     ) -> Self {
         Self {
             shape,
             weights_data_type,
             output_data_type,
             supports_mxu,
-            profile,
+            apple_gpu_family,
         }
     }
 
@@ -52,7 +50,7 @@ impl GemmProblem {
         } else {
             GemmEngine::Simdgroup
         };
-        self.finish_plan(engine, select_tiling(self.shape, engine, self.profile))
+        self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family))
     }
 
     #[cfg(test)]
@@ -61,7 +59,7 @@ impl GemmProblem {
         engine: GemmEngine,
     ) -> Result<GemmPlan, GemmPlanError> {
         self.validate_engine(engine)?;
-        Ok(self.finish_plan(engine, select_tiling(self.shape, engine, self.profile)))
+        Ok(self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family)))
     }
 
     pub(super) fn validate_engine(
@@ -75,39 +73,6 @@ impl GemmProblem {
             return Err(GemmPlanError::UnsupportedQuantLayout);
         }
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub fn plan_is_legal(
-        self,
-        plan: GemmPlan,
-    ) -> bool {
-        use super::specialization::GemmSpecialization;
-        use crate::backends::common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment};
-
-        if self.validate_engine(plan.engine).is_err()
-            || plan.engine == GemmEngine::Mxu && !plan.tiling.is_mxu_variant()
-            || plan.engine == GemmEngine::Simdgroup && plan.tiling.is_mxu_variant()
-            || plan.split_k == 0
-            || !self.shape.k.is_multiple_of(plan.split_k)
-        {
-            return false;
-        }
-        let alignment = GemmAlignment::new(
-            self.shape.m.is_multiple_of(plan.tiling.block_m()),
-            self.shape.n.is_multiple_of(plan.tiling.block_n()),
-            self.shape.k.is_multiple_of(plan.tiling.block_k()),
-        );
-        GemmSpecialization::from_plan(
-            plan,
-            self.shape,
-            self.weights_data_type,
-            self.shape.d_transform,
-            alignment,
-            GemmAPrologueKind::FullPrecision,
-            None,
-        )
-        .is_ok()
     }
 
     fn finish_plan(
@@ -199,11 +164,11 @@ fn mxu_is_eligible(shape: MatmulShape) -> bool {
 fn select_tiling(
     shape: MatmulShape,
     engine: GemmEngine,
-    profile: DeviceProfile,
+    apple_gpu_family: MTLGPUFamily,
 ) -> GemmTiling {
     match engine {
         GemmEngine::Simdgroup if shape.is_quant() => {
-            policy::simdgroup_quant_tile(shape.m, shape.n, shape.b_group_size.unwrap_or(0), profile)
+            policy::simdgroup_quant_tile(shape.m, shape.n, shape.b_group_size.unwrap_or(0), apple_gpu_family)
         },
         GemmEngine::Simdgroup => policy::simdgroup_fp_tile(shape.m, shape.n, shape.k),
         GemmEngine::Mxu if !shape.a_full_precision || shape.is_quant() => select_mxu_quant_tiling(shape),

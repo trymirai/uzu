@@ -1,4 +1,4 @@
-pub(crate) fn sysctl_string(name: &str) -> Option<String> {
+pub fn sysctl_string(name: &str) -> Option<String> {
     let name = std::ffi::CString::new(name).ok()?;
     let mut len = 0usize;
     let probe = unsafe { libc::sysctlbyname(name.as_ptr(), std::ptr::null_mut(), &mut len, std::ptr::null_mut(), 0) };
@@ -27,7 +27,7 @@ fn sysctl_u32(name: &str) -> Option<u32> {
     (read == 0).then_some(value)
 }
 
-pub(crate) fn perflevel_cores() -> (u8, u8) {
+pub fn perflevel_cores() -> (u8, u8) {
     let performance = sysctl_u32("hw.perflevel0.logicalcpu").unwrap_or(0);
     let efficiency = if sysctl_u32("hw.nperflevels").unwrap_or(1) > 1 {
         sysctl_u32("hw.perflevel1.logicalcpu").unwrap_or(0)

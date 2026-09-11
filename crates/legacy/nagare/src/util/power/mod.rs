@@ -1,27 +1,51 @@
-#![allow(dead_code)]
+mod error;
 
-mod apple;
-mod stub;
+pub use error::Error;
+use keisoku::{PowerMeter, PowerReading};
+use shoji::types::session::chat::ChatReplyEnergy;
 
-use shoji::types::session::chat::ChatReplyPowerStats;
-
-pub trait PowerRecorder: Send {
-    fn begin(&self);
-    fn finish(&self) -> Option<ChatReplyPowerStats>;
+pub struct EnergyRecorder {
+    meter: PowerMeter,
 }
 
-impl dyn PowerRecorder {
-    pub fn create() -> Box<dyn PowerRecorder> {
-        #[cfg(target_vendor = "apple")]
-        {
-            use crate::util::power::apple::ApplePowerRecorder;
-            Box::new(ApplePowerRecorder::new()) as Box<dyn PowerRecorder>
+impl EnergyRecorder {
+    pub fn new() -> Self {
+        Self {
+            meter: PowerMeter::new(),
         }
+    }
 
-        #[cfg(not(target_vendor = "apple"))]
-        {
-            use crate::util::power::stub::StubPowerRecorder;
-            Box::new(StubPowerRecorder::new()) as Box<dyn PowerRecorder>
-        }
+    pub fn begin(&mut self) -> Result<(), Error> {
+        self.meter.start()?;
+        Ok(())
+    }
+
+    pub fn split(&mut self) -> Result<ChatReplyEnergy, Error> {
+        Ok(energy(self.meter.split()?))
+    }
+
+    pub fn finish(&mut self) -> Result<ChatReplyEnergy, Error> {
+        Ok(energy(self.meter.stop()?))
+    }
+}
+
+fn energy(reading: PowerReading) -> ChatReplyEnergy {
+    match reading {
+        PowerReading::Total {
+            total,
+        } => ChatReplyEnergy::Total {
+            total: total.value() as f64,
+        },
+        PowerReading::Components {
+            cpu,
+            gpu,
+            ane,
+            ram,
+        } => ChatReplyEnergy::Components {
+            cpu: cpu.value() as f64,
+            gpu: gpu.value() as f64,
+            ane: ane.value() as f64,
+            dram: ram.value() as f64,
+        },
     }
 }

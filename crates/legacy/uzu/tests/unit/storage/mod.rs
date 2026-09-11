@@ -1,1 +1,0 @@
-mod lifecycle_mock_registry_model_test;

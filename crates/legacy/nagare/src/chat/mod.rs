@@ -23,8 +23,8 @@ use shoji::{
         basic::{CancelToken, SamplingParameters, ToolCall, ToolDescription, ToolNamespace, Value, parse_lenient_json},
         model::Model,
         session::chat::{
-            ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyFinishReason,
-            ChatReplyPowerStats, ChatReplySpeculatorStats, ChatReplyStats, ChatRole,
+            ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyEnergy,
+            ChatReplyFinishReason, ChatReplySpeculatorStats, ChatReplyStats, ChatRole,
         },
     },
 };
@@ -724,14 +724,15 @@ fn aggregate_stats(
     ChatReplyStats {
         duration: stats.iter().map(|stats| stats.duration).sum(),
         time_to_first_token: stats.iter().find_map(|stats| stats.time_to_first_token),
-        prefill_tokens_per_second: stats.iter().find_map(|stats| stats.prefill_tokens_per_second),
+        prefill_tokens_per_second: aggregate_prefill_rate(&stats),
         generate_tokens_per_second: aggregate_generate_rate(&stats),
         tokens_count_input: sum_optional_u32(&stats, |stats| stats.tokens_count_input),
         tokens_count_input_cached: sum_optional_u32(&stats, |stats| stats.tokens_count_input_cached),
         tokens_count_output: sum_optional_u32(&stats, |stats| stats.tokens_count_output),
         memory_used_bytes: stats.iter().filter_map(|stats| stats.memory_used_bytes).max(),
         speculator_stats,
-        power_stats: aggregate_power_stats(&stats),
+        input_energy: aggregate_input_energy(&stats),
+        output_energy: aggregate_output_energy(&stats),
     }
 }
 
@@ -772,6 +773,25 @@ fn aggregate_generate_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
     (token_intervals > 0 && duration > 0.0).then(|| token_intervals as f64 / duration)
 }
 
+fn aggregate_prefill_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
+    if let [stats] = stats {
+        return stats.prefill_tokens_per_second;
+    }
+
+    let (tokens, duration) = stats.iter().try_fold((0_u64, 0.0), |(tokens, duration), stats| {
+        let input_tokens = stats.tokens_count_input?;
+        if input_tokens == 0 {
+            return Some((tokens, duration));
+        }
+        let prefill_rate = stats.prefill_tokens_per_second?;
+        if !prefill_rate.is_finite() || prefill_rate <= 0.0 {
+            return None;
+        }
+        Some((tokens + u64::from(input_tokens), duration + f64::from(input_tokens) / prefill_rate))
+    })?;
+    (tokens > 0 && duration > 0.0).then(|| tokens as f64 / duration)
+}
+
 fn sum_optional_u32(
     stats: &[&ChatReplyStats],
     value: impl Fn(&ChatReplyStats) -> Option<u32>,
@@ -779,34 +799,28 @@ fn sum_optional_u32(
     stats.iter().try_fold(0_u32, |sum, stats| sum.checked_add(value(stats)?))
 }
 
-fn aggregate_power_stats(stats: &[&ChatReplyStats]) -> Option<ChatReplyPowerStats> {
-    let stats =
-        stats.iter().filter_map(|stats| stats.power_stats.as_ref().map(|power| (*stats, power))).collect::<Vec<_>>();
-    if stats.is_empty() {
-        return None;
+fn aggregate_input_energy(stats: &[&ChatReplyStats]) -> Option<ChatReplyEnergy> {
+    let mut phases = Vec::with_capacity(stats.len());
+    for stats in stats {
+        phases.push(stats.input_energy.as_ref()?);
     }
-
-    Some(ChatReplyPowerStats {
-        samples_count: stats.iter().map(|(_, power)| power.samples_count).sum(),
-        average_cpu_watts: duration_weighted_power(&stats, |power| power.average_cpu_watts),
-        average_gpu_watts: duration_weighted_power(&stats, |power| power.average_gpu_watts),
-        average_ane_watts: duration_weighted_power(&stats, |power| power.average_ane_watts),
-        average_ram_watts: duration_weighted_power(&stats, |power| power.average_ram_watts),
-        average_total_watts: duration_weighted_power(&stats, |power| power.average_total_watts),
-        energy_joules: stats.iter().map(|(_, power)| power.energy_joules).sum(),
-    })
+    aggregate_energy(phases)
 }
 
-fn duration_weighted_power(
-    stats: &[(&ChatReplyStats, &ChatReplyPowerStats)],
-    value: impl Fn(&ChatReplyPowerStats) -> f64,
-) -> f64 {
-    let duration = stats.iter().map(|(stats, _)| stats.duration).sum::<f64>();
-    if duration > 0.0 {
-        stats.iter().map(|(stats, power)| value(power) * stats.duration).sum::<f64>() / duration
-    } else {
-        stats.iter().map(|(_, power)| value(power)).sum::<f64>() / stats.len() as f64
+fn aggregate_output_energy(stats: &[&ChatReplyStats]) -> Option<ChatReplyEnergy> {
+    let mut phases = Vec::with_capacity(stats.len());
+    for stats in stats {
+        let tokens = stats.tokens_count_output?;
+        if tokens == 0 {
+            continue;
+        }
+        phases.push(stats.output_energy.as_ref()?);
     }
+    aggregate_energy(phases)
+}
+
+fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ChatReplyEnergy>) -> Option<ChatReplyEnergy> {
+    energy.into_iter().cloned().reduce(|total, energy| total + energy)
 }
 
 fn find_tools_definitions(messages: &mut [ChatMessage]) -> Option<&mut Vec<ToolNamespace>> {

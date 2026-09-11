@@ -1,6 +1,6 @@
 use crate::{metrics::MemoryMetrics, units::Bytes};
 
-pub(crate) fn read_memory() -> Option<MemoryMetrics> {
+pub fn read_memory() -> Option<MemoryMetrics> {
     let mut ram_total = 0u64;
     unsafe {
         let mut name = [libc::CTL_HW, libc::HW_MEMSIZE];

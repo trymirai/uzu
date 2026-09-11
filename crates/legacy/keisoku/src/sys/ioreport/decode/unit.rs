@@ -3,7 +3,7 @@ const QUANTITY_SHIFT: u32 = 56;
 const SI_SCALE_SHIFT: u32 = 32;
 const SI_EXPONENT_BIAS: i32 = 127;
 
-pub(crate) fn energy_joules(
+pub fn energy_joules(
     value: i64,
     unit: u64,
 ) -> f64 {

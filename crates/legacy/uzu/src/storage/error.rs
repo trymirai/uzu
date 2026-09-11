@@ -1,4 +1,5 @@
-use crate::{registry::RegistryError, storage::types::DownloadPhase};
+use download_manager::DownloadError;
+use shoji::types::model::ModelIdentifier;
 
 #[bindings::export(Error)]
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -8,36 +9,29 @@ pub enum StorageError {
     UnableToCreateDirectory {
         path: String,
     },
-    #[error("Unable to create download manager: {message}")]
-    UnableToCreateDownloadManager {
-        message: String,
-    },
     #[error("Download manager error: {message}")]
     DownloadManager {
         message: String,
     },
     #[error("Hash not found for file: {identifier}/{name}")]
     HashNotFound {
-        identifier: String,
+        identifier: ModelIdentifier,
         name: String,
     },
-    #[error("Invalid state transition from {from:?} to {to:?}")]
-    InvalidStateTransition {
-        from: DownloadPhase,
-        to: DownloadPhase,
+    #[error("Model not found: {identifier}")]
+    ModelNotFound {
+        identifier: ModelIdentifier,
     },
-    #[error("IO error: {message}")]
-    IO {
-        message: String,
+    #[error("Unsupported model: {identifier}")]
+    UnsupportedModel {
+        identifier: ModelIdentifier,
     },
-    #[error("Item not found: {identifier}")]
-    ItemNotFound {
-        identifier: String,
-    },
-    #[error(transparent)]
-    Registry(#[from] RegistryError),
-    #[error("Unsupported item: {identifier}")]
-    UnsupportedItem {
-        identifier: String,
-    },
+}
+
+impl From<DownloadError> for StorageError {
+    fn from(error: DownloadError) -> Self {
+        Self::DownloadManager {
+            message: error.to_string(),
+        }
+    }
 }

@@ -1,5 +1,7 @@
 // Qwen3.6-27B W4/ZP and W8/Symmetric, G32/G64.
 // Tuned on M1, M2, M2 Pro, M3 Max, M4, M4 Pro, M5 Max.
+use metal::MTLGPUFamily;
+
 use super::{
     super::{
         gemm::{GemmEngine, GemmPlan},
@@ -7,12 +9,9 @@ use super::{
     },
     QmvRoute,
 };
-use crate::backends::{
-    common::{
-        gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
-        kernel::matmul::MatmulShape,
-    },
-    metal::device_profile::{DeviceIdentity, DeviceProfile},
+use crate::backends::common::{
+    gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
+    kernel::matmul::MatmulShape,
 };
 
 const DOWN: u8 = 1 << 0;
@@ -25,7 +24,8 @@ const READOUT: u8 = 1 << 6;
 
 #[derive(Clone, Copy)]
 struct RouteRow {
-    identity: DeviceIdentity,
+    device_name: &'static str,
+    apple_gpu_family: MTLGPUFamily,
     bits: u32,
     group: u32,
     m: u32,
@@ -58,7 +58,11 @@ macro_rules! main_gemm { ($engine:ident, $tiling:ident, $split:literal) => { Qmv
 #[rustfmt::skip]
 macro_rules! qmv_format { (w4_zp_g32) => { (4, 32) }; (w4_zp_g64) => { (4, 64) }; (w8_sym_g32) => { (8, 32) }; (w8_sym_g64) => { (8, 64) }; }
 #[rustfmt::skip]
-macro_rules! row { ($identity:ident, $format:ident, $m:literal, $shapes:expr, $route:expr) => { RouteRow { identity: DeviceIdentity::$identity, bits: qmv_format!($format).0, group: qmv_format!($format).1, m: $m, shapes: $shapes, route: $route } }; }
+macro_rules! measured_device_name { (M1) => { "Apple M1" }; (M2) => { "Apple M2" }; (M2Pro) => { "Apple M2 Pro" }; (M3Max) => { "Apple M3 Max" }; (M4) => { "Apple M4" }; (M4Pro) => { "Apple M4 Pro" }; (M5Max) => { "Apple M5 Max" }; }
+#[rustfmt::skip]
+macro_rules! measured_apple_gpu_family { (M1) => { MTLGPUFamily::Apple7 }; (M2) => { MTLGPUFamily::Apple8 }; (M2Pro) => { MTLGPUFamily::Apple8 }; (M3Max) => { MTLGPUFamily::Apple9 }; (M4) => { MTLGPUFamily::Apple9 }; (M4Pro) => { MTLGPUFamily::Apple9 }; (M5Max) => { MTLGPUFamily::Apple10 }; }
+#[rustfmt::skip]
+macro_rules! row { ($device:ident, $format:ident, $m:literal, $shapes:expr, $route:expr) => { RouteRow { device_name: measured_device_name!($device), apple_gpu_family: measured_apple_gpu_family!($device), bits: qmv_format!($format).0, group: qmv_format!($format).1, m: $m, shapes: $shapes, route: $route } }; }
 
 #[rustfmt::skip]
 const ROWS: &[RouteRow] = &[
@@ -371,7 +375,9 @@ fn qmv_format(shape: &MatmulShape) -> Option<(u32, u32)> {
 }
 
 pub fn route(
-    device: DeviceProfile,
+    device_name: &str,
+    apple_gpu_family: MTLGPUFamily,
+    supports_mxu: bool,
     shape: &MatmulShape,
     all_bf16: bool,
 ) -> Option<QmvRoute> {
@@ -393,8 +399,8 @@ pub fn route(
     let matches =
         |row: &&RouteRow| row.bits == bits && row.group == group && row.m == shape.m && row.shapes & mask != 0;
     let route =
-        ROWS.iter().filter(matches).find(|row| row.identity == device.identity()).map(|row| row.route).or_else(|| {
-            let same_family = |row: &&RouteRow| device.gpu_family().contains(row.identity);
+        ROWS.iter().filter(matches).find(|row| row.device_name == device_name).map(|row| row.route).or_else(|| {
+            let same_family = |row: &&RouteRow| row.apple_gpu_family == apple_gpu_family;
             let mut routes = ROWS.iter().filter(matches).filter(same_family).map(|row| row.route);
             let route = routes.next()?;
             routes.all(|candidate| candidate == route).then_some(route)
@@ -406,7 +412,7 @@ pub fn route(
                 engine: GemmEngine::Mxu,
                 ..
             })
-        ) || device.supports_mxu()
+        ) || supports_mxu
     })
 }
 

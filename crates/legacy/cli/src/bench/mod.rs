@@ -32,7 +32,6 @@ pub async fn run_bench(
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     progress_bar.finish();
 
-    // Results
     let results_data = serde_json::to_string_pretty(&results).context("Failed to serialize benchmark results")?;
     fs::write(&output_path, results_data)
         .await
@@ -53,13 +52,13 @@ pub async fn run_bench(
         results.iter().map(|result| result.prompt_tokens_per_second).collect::<Vec<f64>>();
     let generate_tokens_per_second_list =
         results.iter().filter_map(|result| result.generate_tokens_per_second).collect::<Vec<f64>>();
-    let average_total_watts_list = results
-        .iter()
-        .filter_map(|result| result.power_stats.as_ref().map(|power| power.average_total_watts))
-        .collect::<Vec<f64>>();
     let energy_joules_list = results
         .iter()
-        .filter_map(|result| result.power_stats.as_ref().map(|power| power.energy_joules))
+        .filter_map(|result| {
+            let mut phases = result.input_energy.iter().chain(result.output_energy.iter()).map(|energy| energy.total());
+            let first = phases.next()?;
+            Some(first + phases.sum::<f64>())
+        })
         .collect::<Vec<f64>>();
     let joules_per_token_list = results.iter().filter_map(|result| result.joules_per_token).collect::<Vec<f64>>();
 
@@ -67,7 +66,6 @@ pub async fn run_bench(
     let time_to_first_token_metric = calculate_metric(&time_to_first_token_list);
     let prompt_tokens_per_second_metric = calculate_metric(&prompt_tokens_per_second_list);
     let generate_tokens_per_second_metric = calculate_metric(&generate_tokens_per_second_list);
-    let average_total_watts_metric = calculate_metric(&average_total_watts_list);
     let energy_joules_metric = calculate_metric(&energy_joules_list);
     let joules_per_token_metric = calculate_metric(&joules_per_token_list);
 
@@ -81,7 +79,6 @@ pub async fn run_bench(
         .add_row(vec!["TTFT, s", time_to_first_token_metric.as_str()])
         .add_row(vec!["Prompt, t/s", prompt_tokens_per_second_metric.as_str()])
         .add_row(vec!["Generate, t/s", generate_tokens_per_second_metric.as_str()])
-        .add_row(vec!["Total power, W", average_total_watts_metric.as_str()])
         .add_row(vec!["Total energy, J", energy_joules_metric.as_str()])
         .add_row(vec!["Energy per token, J/tok", joules_per_token_metric.as_str()]);
     let Some(column) = table.column_mut(1) else {

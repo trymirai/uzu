@@ -58,6 +58,23 @@ fn tool_call_round_trip_maps_to_chat_blocks() {
 }
 
 #[test]
+fn json_looking_tool_result_content_remains_text() {
+    for content in ["26", r#"{"number":1}"#, "[hello]", "[1,2,3]", r#"[{"number":228}]"#, r#"[{"text":"hi"}]"#] {
+        let block = tool_call_result_block("call_1", content.to_string());
+        let ChatContentBlock::ToolCallResult {
+            value,
+            ..
+        } = block
+        else {
+            panic!("expected tool call result");
+        };
+
+        let serialized = serde_json::to_value(value).expect("tool result should be serializable");
+        assert_eq!(serialized.as_str(), Some(content));
+    }
+}
+
+#[test]
 fn invalid_tool_call_arguments_stay_serializable() {
     let call = |arguments: &str| {
         to_tool_call(&OaiToolCall {
@@ -303,6 +320,28 @@ fn framed_tool_call_streams_multibyte_content_without_panicking() {
     fragments.push_str(&streamer.finish(0, &call).function.arguments);
     let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
     assert_eq!(parsed, serde_json::json!({ "content": "London — a city" }));
+}
+
+#[test]
+fn framed_tool_call_uses_valid_candidate_when_final_call_diverges() {
+    let markup = "<function=write_file>\n<parameter=path>\nrepro.rs\n</parameter>\n<parameter=content>\nlet x = \"hello\";\n</parameter>\n</function>";
+    let corrupted_call = ToolCall {
+        identifier: None,
+        name: "write_file".to_string(),
+        arguments: Value {
+            json: r#"{"path":"repro.rs","content":"let x = ","hello\";\"":""}"#.to_string(),
+        },
+    };
+
+    let mut streamer = ToolCallStreamer::new();
+    let mut fragments = String::new();
+    for delta in streamer.update(0, markup, &ToolParameterTypes::default()) {
+        fragments.push_str(&delta.function.arguments);
+    }
+    fragments.push_str(&streamer.finish(0, &corrupted_call).function.arguments);
+
+    let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
+    assert_eq!(parsed, serde_json::json!({"path": "repro.rs", "content": "let x = \"hello\";"}));
 }
 
 #[test]

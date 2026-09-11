@@ -8,7 +8,7 @@ use shoji::types::{
 use uzu::{
     engine::Engine,
     settings::Settings,
-    storage::types::{DownloadPhase, DownloadState},
+    storage::{DownloadPhase, DownloadState},
 };
 
 use crate::{
@@ -173,7 +173,7 @@ pub fn Application(
                     }
                     state.write().model_state = Some(ModelState {
                         model,
-                        download_state: DownloadState::not_downloaded(0),
+                        download_state: DownloadState::default(),
                         session_state: None,
                         thinking: ThinkingSupport::default(),
                         sampling_defaults: SamplingParameters::default(),

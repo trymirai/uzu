@@ -310,19 +310,13 @@ fn chat_reply_stats_component(
         .map(|speculator_stats| format!("{:.2} t/f", speculator_stats.tokens_per_forward_pass))
         .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let memory_used = stats.memory_used_bytes.map(format_memory_used).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
-    let power = stats
-        .power_stats
-        .as_ref()
-        .map(|power| format!("{:.2} W avg", power.average_total_watts))
-        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
-    let energy = stats
-        .power_stats
-        .as_ref()
-        .map(|power| format!("{:.2} J", power.energy_joules))
-        .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
-    let energy_per_token = stats
-        .joules_per_token()
-        .map(|joules_per_token| format!("{joules_per_token:.3} J/tok"))
+    let energy =
+        stats.total_joules().map(|energy| format!("{energy:.2} J")).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let input_energy_per_token =
+        stats.input_joules_per_token().map(|energy| energy.to_string()).unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
+    let output_energy_per_token = stats
+        .output_joules_per_token()
+        .map(|energy| energy.to_string())
         .unwrap_or_else(|| SYMBOL_LONG_DASH.to_string());
     let duration = format!("{:.2} s", stats.duration);
 
@@ -352,15 +346,15 @@ fn chat_reply_stats_component(
                 color: subtitle_color,
             )
             Text(
-                content: format!("average power: {power}"),
-                color: subtitle_color,
-            )
-            Text(
                 content: format!("total energy: {energy}"),
                 color: subtitle_color,
             )
             Text(
-                content: format!("energy per token: {energy_per_token}"),
+                content: format!("input energy per token: {input_energy_per_token}"),
+                color: subtitle_color,
+            )
+            Text(
+                content: format!("output energy per token: {output_energy_per_token}"),
                 color: subtitle_color,
             )
             Text(

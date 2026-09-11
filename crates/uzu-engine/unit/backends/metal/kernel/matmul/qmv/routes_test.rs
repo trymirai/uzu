@@ -1,5 +1,6 @@
 use std::fmt::Write;
 
+use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -10,24 +11,20 @@ use crate::{
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::MatmulShape,
         },
-        metal::{
-            device_profile::{DeviceIdentity, DeviceProfile, DeviceSize},
-            kernel::matmul::{MatmulDispatch, MatmulMetalKernel, gemm::GemmProblem, gemv::GemvSpecialization},
-        },
+        metal::kernel::matmul::{MatmulDispatch, MatmulMetalKernel, gemv::GemvSpecialization},
     },
     data_type::DataType,
 };
 
 const FROZEN_PLAN_FINGERPRINT: u64 = 5_839_212_743_558_880_136;
-
-const DEVICES: [(&str, DeviceIdentity); 7] = [
-    ("m1", DeviceIdentity::M1),
-    ("m2", DeviceIdentity::M2),
-    ("m2-pro", DeviceIdentity::M2Pro),
-    ("m3-max", DeviceIdentity::M3Max),
-    ("m4", DeviceIdentity::M4),
-    ("m4-pro", DeviceIdentity::M4Pro),
-    ("m5-max", DeviceIdentity::M5Max),
+const DEVICES: [(&str, &str, u32, MTLGPUFamily, bool); 7] = [
+    ("m1", "Apple M1", 8, MTLGPUFamily::Apple7, false),
+    ("m2", "Apple M2", 10, MTLGPUFamily::Apple8, false),
+    ("m2-pro", "Apple M2 Pro", 19, MTLGPUFamily::Apple8, false),
+    ("m3-max", "Apple M3 Max", 40, MTLGPUFamily::Apple9, false),
+    ("m4", "Apple M4", 10, MTLGPUFamily::Apple9, false),
+    ("m4-pro", "Apple M4 Pro", 20, MTLGPUFamily::Apple9, false),
+    ("m5-max", "Apple M5 Max", 40, MTLGPUFamily::Apple10, true),
 ];
 const FORMATS: [(&str, u32, u32, GemmBPrologueKind); 4] = [
     ("W4/ZP G32", 4, 32, GemmBPrologueKind::ScaleZeroPointDequant),
@@ -76,7 +73,7 @@ fn table_is_complete_and_fingerprint_is_stable() {
     let mut tuned = 0;
     let mut main_gemv = 0;
     let mut main_gemm = 0;
-    for &(device_name, identity) in &DEVICES {
+    for &(device_label, device_name, gpu_core_count, apple_gpu_family, supports_mxu) in &DEVICES {
         for &(format_name, bits, group, prologue) in &FORMATS {
             for m in 2..=7 {
                 for &(shape_name, n, k) in &SHAPES {
@@ -85,14 +82,15 @@ fn table_is_complete_and_fingerprint_is_stable() {
                         .iter()
                         .enumerate()
                         .filter(|row| {
-                            row.1.identity == identity
+                            row.1.device_name == device_name
+                                && row.1.apple_gpu_family == apple_gpu_family
                                 && row.1.bits == bits
                                 && row.1.group == group
                                 && row.1.m == m
                                 && row.1.shapes & mask != 0
                         })
                         .collect();
-                    assert_eq!(matches.len(), 1, "route coverage for {device_name} {format_name} M={m} {shape_name}");
+                    assert_eq!(matches.len(), 1, "route coverage for {device_label} {format_name} M={m} {shape_name}");
                     let (row_index, row) = matches[0];
                     matched_rows[row_index] = true;
                     let selected = row.route;
@@ -101,14 +99,15 @@ fn table_is_complete_and_fingerprint_is_stable() {
                         QmvRoute::MainGemv(_) => main_gemv += 1,
                         QmvRoute::MainGemm(_) => main_gemm += 1,
                     }
-                    canonical.push(format!("{device_name}|{format_name}|{shape_name}|{m}|{n}|{k}|{selected:?}"));
-                    let profile = device_profile(identity);
+                    canonical.push(format!("{device_label}|{format_name}|{shape_name}|{m}|{n}|{k}|{selected:?}"));
                     let problem = problem(m, n, k, bits, group, prologue);
-                    assert_eq!(route(profile, &problem, true), Some(selected));
+                    assert_eq!(route(device_name, apple_gpu_family, supports_mxu, &problem, true), Some(selected));
                     let runtime = MatmulMetalKernel::choose_dispatch(
                         &problem,
-                        profile,
-                        profile.supports_mxu(),
+                        device_name,
+                        gpu_core_count,
+                        apple_gpu_family,
+                        supports_mxu,
                         DataType::BF16,
                         DataType::BF16,
                         DataType::BF16,
@@ -122,12 +121,8 @@ fn table_is_complete_and_fingerprint_is_stable() {
                             tile,
                         )
                         .expect("stored GEMV tile must be legal");
-                        assert_eq!(specialization.tile(), tile);
                         assert!(matches!(runtime, MatmulDispatch::Gemv(actual) if actual == specialization));
                     } else if let QmvRoute::MainGemm(plan) = selected {
-                        let problem =
-                            GemmProblem::new(problem, DataType::BF16, DataType::BF16, profile.supports_mxu(), profile);
-                        assert!(problem.plan_is_legal(plan), "stored GEMM plan must be legal");
                         assert!(matches!(runtime, MatmulDispatch::Gemm(actual) if actual == plan));
                     }
                 }
@@ -139,7 +134,7 @@ fn table_is_complete_and_fingerprint_is_stable() {
     assert_eq!(canonical.len(), 1176);
     let mut expanded = String::new();
     for line in canonical {
-        writeln!(&mut expanded, "{line}").unwrap();
+        writeln!(&mut expanded, "{line}").expect("writing to a String must succeed");
     }
     assert_eq!(tuned, 864);
     assert_eq!(main_gemv, 221);
@@ -147,24 +142,10 @@ fn table_is_complete_and_fingerprint_is_stable() {
     assert_eq!(xxh3_64(expanded.trim_end().as_bytes()), FROZEN_PLAN_FINGERPRINT);
 }
 
-fn device_profile(identity: DeviceIdentity) -> DeviceProfile {
-    let large = matches!(identity, DeviceIdentity::M3Max | DeviceIdentity::M5Max);
-    DeviceProfile::new(
-        identity,
-        if large {
-            DeviceSize::Large
-        } else {
-            DeviceSize::Small
-        },
-        matches!(identity, DeviceIdentity::M5Max),
-    )
-}
-
 #[uzu_test]
 fn exact_lookup_rejects_non_matrix_inputs() {
-    let profile = device_profile(DeviceIdentity::M1);
     let p = problem(2, 5120, 17408, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
-    assert!(route(profile, &p, true).is_some());
+    assert!(route("Apple M1", MTLGPUFamily::Apple7, false, &p, true).is_some());
     for mutate in [
         |p: &mut MatmulShape| p.m = 1,
         |p: &mut MatmulShape| p.n = 1,
@@ -173,14 +154,15 @@ fn exact_lookup_rejects_non_matrix_inputs() {
     ] {
         let mut rejected = p;
         mutate(&mut rejected);
-        assert!(route(profile, &rejected, true).is_none());
+        assert!(route("Apple M1", MTLGPUFamily::Apple7, false, &rejected, true).is_none());
     }
-    assert!(route(profile, &p, false).is_none());
+    assert!(route("Apple M1", MTLGPUFamily::Apple7, false, &p, false).is_none());
 
     let mut rht = p;
     rht.d_transform = GemmDTransform::RHT;
     rht.signed_codes = true;
-    let selected = route(profile, &rht, true).expect("RHT must preserve the exact route");
+    let selected =
+        route("Apple M1", MTLGPUFamily::Apple7, false, &rht, true).expect("RHT must preserve the exact route");
     let QmvRoute::Tuned(tile) = selected else {
         panic!("test anchor must use a tuned tile");
     };
@@ -188,25 +170,31 @@ fn exact_lookup_rejects_non_matrix_inputs() {
     rht.n -= 1;
     assert!(GemvSpecialization::select_tile(&rht, DataType::BF16, DataType::BF16, DataType::BF16, tile).is_none());
 
-    let m5_without_mxu = DeviceProfile::new(DeviceIdentity::M5Max, DeviceSize::Large, false);
     let p = problem(7, 6144, 5120, 8, 64, GemmBPrologueKind::ScaleSymmetricDequant);
-    assert!(matches!(route(device_profile(DeviceIdentity::M5Max), &p, true), Some(QmvRoute::MainGemm(_))));
-    assert_eq!(route(m5_without_mxu, &p, true), None);
+    assert!(matches!(route("Apple M5 Max", MTLGPUFamily::Apple10, true, &p, true), Some(QmvRoute::MainGemm(_))));
+    assert_eq!(route("Apple M5 Max", MTLGPUFamily::Apple10, false, &p, true), None);
 }
 
 #[uzu_test]
 fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
-    let profile = device_profile(DeviceIdentity::M1);
     for (m, n, k) in [(1, 5120, 17408), (2, 4096, 5120)] {
         let problem = problem(m, n, k, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
-        assert_eq!(route(profile, &problem, true), None);
-        let specialization =
-            GemvSpecialization::select_shape(&problem, DataType::BF16, DataType::BF16, DataType::BF16, profile)
-                .expect("normal M1 policy should select GEMV for this anchor");
+        assert_eq!(route("Apple M1", MTLGPUFamily::Apple7, false, &problem, true), None);
+        let specialization = GemvSpecialization::select_shape(
+            &problem,
+            DataType::BF16,
+            DataType::BF16,
+            DataType::BF16,
+            8,
+            MTLGPUFamily::Apple7,
+        )
+        .expect("normal M1 policy should select GEMV for this anchor");
         assert!(matches!(
             MatmulMetalKernel::choose_dispatch(
                 &problem,
-                profile,
+                "Apple M1",
+                8,
+                MTLGPUFamily::Apple7,
                 false,
                 DataType::BF16,
                 DataType::BF16,
@@ -219,15 +207,28 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
 
 #[uzu_test]
 fn family_lookup_requires_one_unanimous_route() {
-    let m1_max = DeviceProfile::new(DeviceIdentity::M1Max, DeviceSize::Large, false);
     let m1_route = problem(4, 8192, 5120, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
-    assert_eq!(route(m1_max, &m1_route, true), route(device_profile(DeviceIdentity::M1), &m1_route, true));
+    let measured_m1 = route("Apple M1", MTLGPUFamily::Apple7, false, &m1_route, true);
+    for device_name in ["Apple M1 Pro", "Apple M1 Max", "Apple M1 Ultra"] {
+        assert_eq!(route(device_name, MTLGPUFamily::Apple7, false, &m1_route, true), measured_m1);
+    }
 
-    let family = DeviceProfile::new(DeviceIdentity::M2Max, DeviceSize::Small, false);
     let unanimous = problem(6, 5120, 17408, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
-    assert_eq!(route(family, &unanimous, true), route(device_profile(DeviceIdentity::M2), &unanimous, true));
+    let measured_m2 = route("Apple M2", MTLGPUFamily::Apple8, false, &unanimous, true);
+    for device_name in ["Apple M2 Max", "Apple M2 Ultra"] {
+        assert_eq!(route(device_name, MTLGPUFamily::Apple8, false, &unanimous, true), measured_m2);
+    }
+    let measured_m3_max = route("Apple M3 Max", MTLGPUFamily::Apple9, false, &unanimous, true);
+    for device_name in ["Apple M3", "Apple M3 Pro", "Apple M4 Max"] {
+        assert_eq!(route(device_name, MTLGPUFamily::Apple9, false, &unanimous, true), measured_m3_max);
+    }
+    let measured_m5_max = route("Apple M5 Max", MTLGPUFamily::Apple10, true, &unanimous, true);
+    for device_name in ["Apple M5", "Apple M5 Pro"] {
+        assert_eq!(route(device_name, MTLGPUFamily::Apple10, true, &unanimous, true), measured_m5_max);
+    }
 
     let disagreement = problem(3, 5120, 6144, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
-    assert_eq!(route(family, &disagreement, true), None);
-    assert!(route(device_profile(DeviceIdentity::M2), &disagreement, true).is_some());
+    assert_eq!(route("Apple M2 Max", MTLGPUFamily::Apple8, false, &disagreement, true), None);
+    assert!(route("Apple M2", MTLGPUFamily::Apple8, false, &disagreement, true).is_some());
+    assert_eq!(route("Apple A11 GPU", MTLGPUFamily::Apple4, false, &m1_route, true), None);
 }

@@ -44,7 +44,7 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
             return Ok(None);
         }
 
-        if !context.supports_mxu() {
+        if !context.supports_mxu {
             return Ok(None);
         }
 

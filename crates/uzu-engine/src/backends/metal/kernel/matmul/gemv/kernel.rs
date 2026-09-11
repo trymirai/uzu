@@ -1,3 +1,5 @@
+use metal::MTLGPUFamily;
+
 use super::policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK};
 use crate::{
     backends::{
@@ -8,7 +10,7 @@ use crate::{
             },
             kernel::matmul::MatmulShape,
         },
-        metal::{context::MetalContext, device_profile::DeviceProfile, error::MetalError, kernel::GemvMetalKernel},
+        metal::{context::MetalContext, error::MetalError, kernel::GemvMetalKernel},
     },
     data_type::DataType,
 };
@@ -34,24 +36,13 @@ pub struct GemvSpecialization {
 }
 
 impl GemvSpecialization {
-    #[cfg(test)]
-    pub fn tile(self) -> policy::GemvTile {
-        policy::GemvTile {
-            num_simdgroups: self.num_simdgroups,
-            k_split: self.k_split,
-            results_per_simdgroup: self.output_row_tile / (self.num_simdgroups / self.k_split),
-            input_row_tile: self.input_row_tile,
-            reduction_lanes: self.reduction_lanes,
-            group_lanes: self.group_lanes,
-        }
-    }
-
     pub fn select_shape(
         shape: &MatmulShape,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
-        device_profile: DeviceProfile,
+        gpu_core_count: u32,
+        apple_gpu_family: MTLGPUFamily,
     ) -> Option<Self> {
         let is_quant = shape.is_quant();
         let bits = shape.b_bits.unwrap_or(0);
@@ -60,7 +51,8 @@ impl GemvSpecialization {
             policy::gathered_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
         } else if is_quant {
             policy::quantized_tile(
-                device_profile,
+                gpu_core_count,
+                apple_gpu_family,
                 bits,
                 shape.b_group_size.unwrap_or(0),
                 shape.m,
@@ -79,7 +71,7 @@ impl GemvSpecialization {
             if shape.d_transform.contains(GemmDTransform::RHT) {
                 Some(policy::DEFAULT_TILE)
             } else {
-                Some(policy::fp_tile(shape.m, shape.n, shape.k, input_aligned, device_profile))
+                Some(policy::fp_tile(gpu_core_count, apple_gpu_family, shape.m, shape.n, shape.k, input_aligned))
             }
         };
         Self::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile?)

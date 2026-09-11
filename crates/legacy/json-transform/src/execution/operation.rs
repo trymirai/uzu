@@ -150,6 +150,17 @@ pub enum Operation {
         #[serde(default)]
         regex_engine: RegexEngine,
     },
+    /// Build an object from regex matches. Capture group 1 is the key and
+    /// capture group 2 is the value. Values are strings unless `parse_json_values`
+    /// is enabled and the captured text is a JSON object or array.
+    /// String → Object
+    RegexCaptureObject {
+        pattern: String,
+        #[serde(default)]
+        parse_json_values: bool,
+        #[serde(default)]
+        regex_engine: RegexEngine,
+    },
     /// Split a string at separators outside quoted strings and nested structures.
     /// String → Array<String>
     SplitTopLevel {
@@ -243,6 +254,9 @@ impl fmt::Display for Operation {
             Self::RegexFindAll {
                 ..
             } => write!(formatter, "regex_find_all"),
+            Self::RegexCaptureObject {
+                ..
+            } => write!(formatter, "regex_capture_object"),
             Self::SplitTopLevel {
                 separator,
             } => write!(formatter, "split_top_level({separator})"),
@@ -381,6 +395,11 @@ impl Operation {
                 pattern,
                 regex_engine,
             } => string::execute_regex_find_all(pattern, regex_engine, input),
+            Self::RegexCaptureObject {
+                pattern,
+                parse_json_values,
+                regex_engine,
+            } => string::execute_regex_capture_object(pattern, *parse_json_values, regex_engine, input),
             Self::SplitTopLevel {
                 separator,
             } => string::execute_split_top_level(*separator, input),

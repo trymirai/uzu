@@ -158,7 +158,7 @@ fn check_type<T: ArrayElement + Float>(
         assert_eq_float::<f32>(&expected.3, &actual.3, 2e-4, &format!("kh0 {msg}"));
     });
 
-    if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu() {
+    if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu {
         let actual = get_output::<Metal, T>(
             &q,
             &k,

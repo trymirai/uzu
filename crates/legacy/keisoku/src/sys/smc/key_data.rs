@@ -1,6 +1,6 @@
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub(super) struct SmcVersion {
+pub struct SmcVersion {
     major: u8,
     minor: u8,
     build: u8,
@@ -10,7 +10,7 @@ pub(super) struct SmcVersion {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub(super) struct SmcLimitData {
+pub struct SmcLimitData {
     version: u16,
     length: u16,
     cpu_plimit: u32,
@@ -20,24 +20,24 @@ pub(super) struct SmcLimitData {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub(super) struct SmcKeyInfo {
-    pub(super) data_size: u32,
-    pub(super) data_type: u32,
-    pub(super) data_attributes: u8,
+pub struct SmcKeyInfo {
+    pub data_size: u32,
+    pub data_type: u32,
+    pub data_attributes: u8,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub(super) struct SmcKeyData {
-    pub(super) key: u32,
-    pub(super) version: SmcVersion,
-    pub(super) limit: SmcLimitData,
-    pub(super) key_info: SmcKeyInfo,
-    pub(super) result: u8,
-    pub(super) status: u8,
-    pub(super) data8: u8,
-    pub(super) data32: u32,
-    pub(super) bytes: [u8; 32],
+pub struct SmcKeyData {
+    pub key: u32,
+    pub version: SmcVersion,
+    pub limit: SmcLimitData,
+    pub key_info: SmcKeyInfo,
+    pub result: u8,
+    pub status: u8,
+    pub data8: u8,
+    pub data32: u32,
+    pub bytes: [u8; 32],
 }
 
 const _: () = assert!(core::mem::size_of::<SmcKeyData>() == 80);

@@ -16,7 +16,7 @@ struct SleepState {
     waker: Option<Waker>,
 }
 
-pub(crate) struct Sleep {
+pub struct Sleep {
     state: Rc<RefCell<SleepState>>,
     timeout_id: i32,
     _done: Closure<dyn FnMut()>,

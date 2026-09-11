@@ -3,13 +3,13 @@ use objc2_core_foundation::{CFDictionary, CFRetained, CFType};
 use super::{IoReportFunctions, channels::Channels};
 use crate::sys::ioreport::IoReportGroups;
 
-pub(super) struct Subscription {
+pub struct Subscription {
     handle: CFRetained<CFType>,
     channels: Channels,
 }
 
 impl Subscription {
-    pub(super) fn for_groups(
+    pub fn for_groups(
         groups: IoReportGroups,
         functions: &IoReportFunctions,
     ) -> Option<Self> {
@@ -28,7 +28,7 @@ impl Subscription {
         })
     }
 
-    pub(super) fn snapshot(
+    pub fn snapshot(
         &self,
         functions: &IoReportFunctions,
     ) -> Option<CFRetained<CFDictionary>> {

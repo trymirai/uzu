@@ -40,6 +40,10 @@ impl<T> TaskJoinHandle<T> for WasmTaskJoinHandle {
         self.abort_handle.abort();
         let _ = self.completion.await;
     }
+
+    fn is_finished(&self) -> bool {
+        !self.completion.is_empty()
+    }
 }
 
 pub fn spawn<F: Future<Output: 'static> + 'static>(future: F) -> Box<dyn TaskJoinHandle<F::Output>> {

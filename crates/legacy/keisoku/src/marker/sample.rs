@@ -10,7 +10,7 @@ pub struct Sample<M: ChannelSet> {
 }
 
 impl<M: ChannelSet> Sample<M> {
-    pub(crate) fn new(values: M::Value) -> Self {
+    pub fn new(values: M::Value) -> Self {
         Self {
             values,
             marker: PhantomData,

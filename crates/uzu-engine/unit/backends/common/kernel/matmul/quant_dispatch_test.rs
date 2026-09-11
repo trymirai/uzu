@@ -467,7 +467,7 @@ fn mxu_quant_parity_bf16(
     #[case] method: QuantizationMethod,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    if !context.supports_mxu() {
+    if !context.supports_mxu {
         return;
     }
     let input = QuantInput::<bf16>::new(m, k, n, gs, bits, method, 0);
@@ -503,7 +503,7 @@ fn a8w_mxu_parity_bf16(
     #[case] method: QuantizationMethod,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    if !context.supports_mxu() {
+    if !context.supports_mxu {
         return;
     }
     let (k, n) = (256u32, 128u32);
@@ -529,7 +529,7 @@ fn a8w_mxu_parity_bf16(
 #[case::m33(33u32)]
 fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
     let context = MetalContext::new().expect("Metal context");
-    if !context.supports_mxu() {
+    if !context.supports_mxu {
         return;
     }
 
@@ -566,7 +566,7 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
 #[case::m33(33)]
 fn a8w4_zero_point_tail_parity(#[case] m: u32) {
     let context = MetalContext::new().expect("Metal context");
-    if !context.supports_mxu() {
+    if !context.supports_mxu {
         return;
     }
     let input = QuantInput::<bf16>::new(m, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
@@ -579,7 +579,7 @@ fn a8w4_zero_point_tail_parity(#[case] m: u32) {
 #[uzu_test]
 fn a8w4_zero_point_tail_signed_codes_parity() {
     let context = MetalContext::new().expect("Metal context");
-    if !context.supports_mxu() {
+    if !context.supports_mxu {
         return;
     }
     let input = QuantInput::<bf16>::new(33, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
@@ -633,7 +633,7 @@ fn a8w_mxu_output_bias_parity_bf16(
     #[case] with_output_hadamard: bool,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    if !context.supports_mxu() {
+    if !context.supports_mxu {
         return;
     }
 

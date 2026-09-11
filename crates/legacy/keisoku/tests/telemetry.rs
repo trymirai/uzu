@@ -14,7 +14,6 @@ fn available_telemetry() {
     let sensors = device.temperature_sensors();
     let voltage = device.voltage_sensors();
     let current = device.current_sensors();
-    let rail_power = device.rail_power();
 
     println!("--- keisoku available telemetry ---");
     println!("device     {}  {}E+{}P  {} GPU", chip, efficiency_cores, performance_cores, gpu_cores);
@@ -27,7 +26,6 @@ fn available_telemetry() {
     println!("sensors    {}", sensors.len());
     println!("voltage    {}", voltage.len());
     println!("current    {}", current.len());
-    println!("rail_power {}", rail_power.map_or("--".into(), |watts| format!("{:.2} W", watts.value())));
 
     if let Some(memory) = &memory {
         println!(

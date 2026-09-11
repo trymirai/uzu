@@ -51,7 +51,8 @@ bindings-wasm = [
 ]
 
 [dependencies]
-bindings-types.workspace = true
+bindings-types = { workspace = true, optional = true }
+bon.workspace = true
 bindings.workspace = true
 nagare-macros.workspace = true
 shoji.workspace = true
@@ -84,7 +85,7 @@ tsify = { workspace = true, optional = true }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 uuid.workspace = true
 
-[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 keisoku.workspace = true
 
 [build-dependencies]

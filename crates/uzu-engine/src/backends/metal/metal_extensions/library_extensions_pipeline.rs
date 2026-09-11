@@ -21,12 +21,13 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
         constants: Option<&MTLFunctionConstantValues>,
     ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         let function = match constants {
-            Some(const_values) => {
-                self.new_function_with_name_constant_values_error(function_name, const_values, std::ptr::null_mut())
-            },
-            None => self.new_function_with_name(function_name),
-        }
-        .ok_or_else(|| MetalError::CannotCreateFunction(function_name.to_owned()))?;
+            Some(const_values) => self
+                .new_function_with_name_constant_values(function_name, const_values)
+                .map_err(|error| MetalError::CannotCreateFunction(format!("{function_name}: {error}")))?,
+            None => self
+                .new_function_with_name(function_name)
+                .ok_or_else(|| MetalError::CannotCreateFunction(function_name.to_owned()))?,
+        };
 
         let device = self.device();
 

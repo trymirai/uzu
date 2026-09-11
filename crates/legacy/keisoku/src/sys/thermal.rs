@@ -15,7 +15,7 @@ impl ThermalPressure {
     }
 }
 
-pub(crate) fn read_thermal_pressure() -> Option<ThermalPressure> {
+pub fn read_thermal_pressure() -> Option<ThermalPressure> {
     unsafe extern "C" {
         fn notify_register_check(
             name: *const c_char,

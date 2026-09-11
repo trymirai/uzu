@@ -2,7 +2,7 @@ use obfstr::obfstr;
 
 use crate::sys::ioreport::kinds::DramFlow;
 
-pub(crate) fn strip_die_prefix(channel: &str) -> &str {
+pub fn strip_die_prefix(channel: &str) -> &str {
     let Some(rest) = channel.strip_prefix(obfstr!("DIE")) else {
         return channel;
     };
@@ -10,7 +10,7 @@ pub(crate) fn strip_die_prefix(channel: &str) -> &str {
     rest.strip_prefix(' ').unwrap_or(channel)
 }
 
-pub(crate) fn dcs_flow(aggregate: &str) -> Option<DramFlow> {
+pub fn dcs_flow(aggregate: &str) -> Option<DramFlow> {
     if aggregate == obfstr!("DCS RD") {
         Some(DramFlow::DramRead)
     } else if aggregate == obfstr!("DCS WR") {
@@ -20,7 +20,7 @@ pub(crate) fn dcs_flow(aggregate: &str) -> Option<DramFlow> {
     }
 }
 
-pub(crate) fn read_write_flow(name: &str) -> Option<DramFlow> {
+pub fn read_write_flow(name: &str) -> Option<DramFlow> {
     if name.ends_with(obfstr!(" RD")) {
         Some(DramFlow::DramRead)
     } else if name.ends_with(obfstr!(" WR")) {

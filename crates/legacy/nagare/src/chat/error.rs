@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use crate::util::power::Error as EnergyError;
+
 #[bindings::export(Error)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error)]
 #[non_exhaustive]
@@ -22,4 +25,13 @@ pub enum ChatSessionError {
     ToolTurnLimitExceeded {
         limit: u32,
     },
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+impl From<EnergyError> for ChatSessionError {
+    fn from(error: EnergyError) -> Self {
+        Self::Backend {
+            message: error.to_string(),
+        }
+    }
 }

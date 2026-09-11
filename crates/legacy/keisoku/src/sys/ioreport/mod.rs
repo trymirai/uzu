@@ -3,7 +3,7 @@ use core::{ffi::c_void, ptr::NonNull};
 use objc2_core_foundation::{CFDictionary, CFMutableDictionary, CFRetained, CFString, CFType, Type};
 
 pub mod decode;
-pub(crate) mod kinds;
+pub mod kinds;
 
 mod channel;
 mod channels;
@@ -13,8 +13,8 @@ mod raw_ioreport_sample;
 mod subscription;
 
 pub use groups::IoReportGroups;
-pub(crate) use io_report::IoReport;
-pub(crate) use raw_ioreport_sample::RawIOReportSample;
+pub use io_report::IoReport;
+pub use raw_ioreport_sample::RawIOReportSample;
 
 kanka::ffi_table! {
     struct IoReportFunctions from "/usr/lib/libIOReport.dylib" {
