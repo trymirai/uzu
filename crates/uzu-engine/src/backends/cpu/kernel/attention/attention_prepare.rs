@@ -35,7 +35,7 @@ fn apply_rope<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
 #[variants(ElementT, bf16)]
 #[variants(RopeT, f32)]
 pub fn attention_prepare<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
-    qkv: *const ElementT,
+    qkvg: *const ElementT,
     queries: *mut ElementT,
     #[optional(has_kv)] keys: Option<*mut ElementT>,
     #[optional(has_kv)] values: Option<*mut ElementT>,
@@ -46,6 +46,7 @@ pub fn attention_prepare<ElementT: ArrayElement + Float, RopeT: ArrayElement + F
     head_dim: u32,
     #[optional(has_rope)] rope_dim: Option<u32>,
     #[optional(has_kv)] kv_token_offset: Option<u32>,
+    input_row_stride: u32,
     batch_dim: u32,
     #[specialize] has_kv: bool,
     #[specialize] has_rope: bool,
@@ -82,22 +83,24 @@ pub fn attention_prepare<ElementT: ArrayElement + Float, RopeT: ArrayElement + F
     let num_q_heads = num_q_heads as usize;
     let head_dim = head_dim as usize;
     let batch_dim = batch_dim as usize;
+    let input_row_stride = input_row_stride as usize;
     let total_heads = if has_kv {
         num_q_heads + num_kv_heads * 2
     } else {
         num_q_heads
     };
+    assert!(input_row_stride >= total_heads * head_dim, "attention prepare row stride is too small");
 
     for batch_idx in 0..batch_dim {
         for head_idx in 0..total_heads {
-            let qkv_head = unsafe { qkv.add(batch_idx * total_heads * head_dim + head_idx * head_dim) };
+            let qkvg_head = unsafe { qkvg.add(batch_idx * input_row_stride + head_idx * head_dim) };
             let is_query = !has_kv || head_idx < num_q_heads;
             let is_key = has_kv && head_idx >= num_q_heads && head_idx < num_q_heads + num_kv_heads;
 
             for head_dim_idx in 0..head_dim {
-                let mut element = unsafe { *qkv_head.add(head_dim_idx) };
+                let mut element = unsafe { *qkvg_head.add(head_dim_idx) };
                 if has_rope && head_dim_idx < rope_dim && (is_query || is_key) {
-                    element = apply_rope(qkv_head, cosines, sines, batch_idx, head_dim_idx, rope_dim);
+                    element = apply_rope(qkvg_head, cosines, sines, batch_idx, head_dim_idx, rope_dim);
                 }
 
                 if is_query {
