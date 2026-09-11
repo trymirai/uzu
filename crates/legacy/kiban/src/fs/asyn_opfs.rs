@@ -12,7 +12,7 @@ use web_sys::{js_sys::Reflect, wasm_bindgen::JsValue};
 use super::opfs::{self, WriteCommandType, WriteParams};
 use crate::time::SystemTime;
 
-pub(crate) async fn dir_create_all(path: &str) -> Result<(), io::Error> {
+pub async fn dir_create_all(path: &str) -> Result<(), io::Error> {
     let mut root = get_root_dir().await?;
     for segment in normalized_segments(path)? {
         root = get_dir_handle(&root, &segment, true).await?;
@@ -20,7 +20,7 @@ pub(crate) async fn dir_create_all(path: &str) -> Result<(), io::Error> {
     Ok(())
 }
 
-pub(crate) async fn exists(path: &str) -> Result<bool, io::Error> {
+pub async fn exists(path: &str) -> Result<bool, io::Error> {
     let root = get_root_dir().await?;
     let (parent, name) = match resolve_parent(&root, path).await {
         Ok(path) => path,
@@ -40,7 +40,7 @@ pub(crate) async fn exists(path: &str) -> Result<bool, io::Error> {
     }
 }
 
-pub(crate) async fn file_copy(
+pub async fn file_copy(
     src_path: &str,
     dst_path: &str,
 ) -> Result<(), io::Error> {
@@ -89,7 +89,7 @@ pub(crate) async fn file_copy(
     Ok(())
 }
 
-pub(crate) async fn file_copy_if_absent(
+pub async fn file_copy_if_absent(
     src_path: &str,
     dst_path: &str,
 ) -> Result<(), io::Error> {
@@ -100,25 +100,25 @@ pub(crate) async fn file_copy_if_absent(
     file_copy(src_path, dst_path).await
 }
 
-pub(crate) async fn file_length(path: &str) -> Result<u64, io::Error> {
+pub async fn file_length(path: &str) -> Result<u64, io::Error> {
     let file = get_file_handle_root(path, false).await?;
     let size = file.size().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
     Ok(size)
 }
 
-pub(crate) async fn file_modified(path: &str) -> Result<SystemTime, io::Error> {
+pub async fn file_modified(path: &str) -> Result<SystemTime, io::Error> {
     let file_handle = get_file_handle_root(path, false).await?;
     let file = file_handle.get_file().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::InvalidInput))?;
     Ok(file.last_modified())
 }
 
-pub(crate) async fn file_read(path: &str) -> Result<Vec<u8>, io::Error> {
+pub async fn file_read(path: &str) -> Result<Vec<u8>, io::Error> {
     let file = get_file_handle_root(path, false).await?;
     let result = file.read().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
     Ok(result)
 }
 
-pub(crate) async fn file_read_range(
+pub async fn file_read_range(
     path: &str,
     range: impl RangeBounds<u64>,
 ) -> Result<Vec<u8>, io::Error> {
@@ -127,7 +127,7 @@ pub(crate) async fn file_read_range(
     Ok(result)
 }
 
-pub(crate) async fn file_remove(path: &str) -> Result<(), io::Error> {
+pub async fn file_remove(path: &str) -> Result<(), io::Error> {
     let root = get_root_dir().await?;
     let (parent, name) = resolve_parent(&root, path).await?;
     let _ = get_file_handle(parent.clone(), &name, false).await?;
@@ -135,7 +135,7 @@ pub(crate) async fn file_remove(path: &str) -> Result<(), io::Error> {
     Ok(())
 }
 
-pub(crate) async fn file_rename(
+pub async fn file_rename(
     src_path: &str,
     dst_path: &str,
 ) -> Result<(), io::Error> {
@@ -148,7 +148,7 @@ pub(crate) async fn file_rename(
     file_remove(src_path).await
 }
 
-pub(crate) async fn file_write(
+pub async fn file_write(
     path: &str,
     contents: &[u8],
 ) -> Result<(), io::Error> {
@@ -159,7 +159,7 @@ pub(crate) async fn file_write(
     Ok(())
 }
 
-pub(crate) async fn file_write_if_absent(
+pub async fn file_write_if_absent(
     path: &str,
     contents: &[u8],
 ) -> Result<(), io::Error> {
@@ -170,11 +170,11 @@ pub(crate) async fn file_write_if_absent(
     file_write(path, contents).await
 }
 
-pub(crate) async fn is_file(path: &str) -> bool {
+pub async fn is_file(path: &str) -> bool {
     get_file_handle_root(path, false).await.is_ok()
 }
 
-pub(crate) async fn get_dir_handle(
+pub async fn get_dir_handle(
     dir: &opfs::DirectoryHandle,
     path: &str,
     create: bool,
@@ -182,7 +182,7 @@ pub(crate) async fn get_dir_handle(
     dir.get_directory_handle(path, create).await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))
 }
 
-pub(crate) async fn get_file_handle(
+pub async fn get_file_handle(
     dir_handle: opfs::DirectoryHandle,
     path: &str,
     create: bool,
@@ -190,7 +190,7 @@ pub(crate) async fn get_file_handle(
     dir_handle.get_file_handle(path, create).await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))
 }
 
-pub(crate) async fn get_file_handle_root(
+pub async fn get_file_handle_root(
     path: &str,
     create: bool,
 ) -> Result<opfs::FileHandle, io::Error> {
@@ -199,11 +199,11 @@ pub(crate) async fn get_file_handle_root(
     get_file_handle(parent, &name, create).await
 }
 
-pub(crate) async fn get_root_dir() -> Result<opfs::DirectoryHandle, io::Error> {
+pub async fn get_root_dir() -> Result<opfs::DirectoryHandle, io::Error> {
     opfs::get_storage_root().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))
 }
 
-pub(crate) async fn resolve_parent(
+pub async fn resolve_parent(
     root: &opfs::DirectoryHandle,
     path: &str,
 ) -> Result<(opfs::DirectoryHandle, String), io::Error> {
@@ -259,7 +259,7 @@ fn create_if_absent_lock() -> &'static Mutex<()> {
     CREATE_IF_ABSENT_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-pub(crate) fn js_value_to_io_error(
+pub fn js_value_to_io_error(
     value: &JsValue,
     kind: ErrorKind,
 ) -> io::Error {

@@ -2,8 +2,8 @@
 
 pub mod fs;
 pub mod maybe;
-pub mod process;
 pub mod rt;
+pub mod stream;
 pub mod time;
 
 #[cfg(target_family = "wasm")]

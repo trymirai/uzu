@@ -169,7 +169,7 @@ pub async fn run_server(
     } else {
         None
     };
-    log::init(tracing::Level::DEBUG, file_logger.clone(), tracing::Level::DEBUG)?;
+    log::init(tracing::Level::INFO, file_logger.clone(), tracing::Level::DEBUG)?;
 
     let engine_config = EngineConfig::default().with_application_identifier("com.trymirai.cli".to_string());
     let engine = Engine::new(engine_config).await.context("Failed to create engine")?;

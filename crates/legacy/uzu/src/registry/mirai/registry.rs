@@ -1,6 +1,7 @@
 use std::{
     fs::{read_to_string, write},
     future::Future,
+    io,
     path::PathBuf,
     pin::Pin,
 };
@@ -49,7 +50,7 @@ impl Registry {
 impl RegistryTrait for Registry {
     type Error = RegistryError;
 
-    fn indentifier(&self) -> String {
+    fn identifier(&self) -> String {
         "mirai".to_string()
     }
 
@@ -57,7 +58,10 @@ impl RegistryTrait for Registry {
         Box::pin(async {
             match self.fetch_models().await {
                 Ok(models) => {
-                    if let Err(error) = self.save_registry(&models) {
+                    let saved = serde_json::to_vec_pretty(&models)
+                        .map_err(io::Error::other)
+                        .and_then(|contents| write(self.registry_path(), contents));
+                    if let Err(error) = saved {
                         tracing::warn!(?error, "failed to save Mirai registry");
                     }
                     Ok(models)
@@ -92,18 +96,6 @@ impl Registry {
 
     fn registry_path(&self) -> PathBuf {
         self.cache_path.join("registry.json")
-    }
-
-    fn save_registry(
-        &self,
-        models: &[Model],
-    ) -> Result<(), RegistryError> {
-        let contents = serde_json::to_vec_pretty(models).map_err(|error| RegistryError::UnableToGetModels {
-            message: format!("Unable to serialize registry: {}", error),
-        })?;
-        write(self.registry_path(), contents).map_err(|error| RegistryError::UnableToGetModels {
-            message: format!("Unable to write registry: {}", error),
-        })
     }
 
     fn load_registry(&self) -> Result<Vec<Model>, RegistryError> {

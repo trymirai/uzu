@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use iocraft::prelude::*;
 use tokio_stream::StreamExt;
-use uzu::storage::types::DownloadPhase;
+use uzu::storage::DownloadPhase;
 
 use crate::{
     common::thinking::ThinkingSupport,
@@ -45,7 +45,7 @@ pub fn SelectedModel(
             let identifier = model.identifier.clone();
             let downloader = engine.downloader(&model);
 
-            let mut stream = engine.storage_subscribe().await;
+            let mut stream = engine.storage_subscribe();
 
             let mut was_downloaded = false;
             if let Some(initial) = downloader.state().await {
@@ -65,7 +65,7 @@ pub fn SelectedModel(
                     continue;
                 }
 
-                if matches!(event_state.phase, DownloadPhase::Downloading {}) {
+                if event_state.is_in_progress() {
                     if last_progress_rendered_at
                         .is_some_and(|rendered_at| rendered_at.elapsed() < DOWNLOAD_PROGRESS_UPDATE_INTERVAL)
                     {
@@ -121,7 +121,9 @@ pub fn SelectedModel(
                             },
                             DownloadPhase::Paused {}
                             | DownloadPhase::NotDownloaded {}
-                            | DownloadPhase::Locked {}
+                            | DownloadPhase::Locked {
+                                ..
+                            }
                             | DownloadPhase::Error {
                                 ..
                             } => {
@@ -179,25 +181,26 @@ pub fn SelectedModel(
         None => element! { View }.into(),
         Some((model, download_state, session_status, thinking_support)) => {
             let is_downloaded = matches!(download_state.phase, DownloadPhase::Downloaded {});
-            let is_downloading = matches!(download_state.phase, DownloadPhase::Downloading {});
-            let status = if is_downloading {
-                let percent = (download_state.progress() * 100.0).round() as u32;
-                format!("{}%", percent)
-            } else if is_downloaded {
-                model
+            let is_downloading = download_state.is_in_progress();
+            let percent = (download_state.progress() * 100.0).round() as u32;
+            let status = match download_state.phase {
+                DownloadPhase::Downloading {} => format!("{percent}%"),
+                DownloadPhase::Locked {
+                    ..
+                } => format!("Locked {percent}%"),
+                DownloadPhase::Downloaded {} => model
                     .specializations
                     .iter()
                     .map(|specializations| specializations.name())
                     .collect::<Vec<String>>()
-                    .join(", ")
-            } else {
-                download_state.name()
+                    .join(", "),
+                _ => download_state.name(),
             };
             let progress_value = download_state.progress();
             let progress_size = format!(
                 "{:.2}/{:.2} GB",
-                download_state.downloaded_bytes.max(0) as f64 / 1_000_000_000.0,
-                download_state.total_bytes.max(0) as f64 / 1_000_000_000.0,
+                download_state.downloaded_bytes as f64 / 1_000_000_000.0,
+                download_state.total_bytes as f64 / 1_000_000_000.0,
             );
             let padding = theme.padding();
             let padding_wide = theme.padding_wide();

@@ -10,6 +10,15 @@ use indexmap::IndexMap;
 
 use crate::types::Configuration;
 
+const DEPLOYMENT_TARGET_ENVS: [&str; 6] = [
+    "IPHONEOS_DEPLOYMENT_TARGET",
+    "MACOSX_DEPLOYMENT_TARGET",
+    "TVOS_DEPLOYMENT_TARGET",
+    "WATCHOS_DEPLOYMENT_TARGET",
+    "XROS_DEPLOYMENT_TARGET",
+    "DRIVERKIT_DEPLOYMENT_TARGET",
+];
+
 #[derive(Debug, Clone)]
 pub struct Command {
     current_path: Option<PathBuf>,
@@ -147,6 +156,9 @@ impl Command {
             command.current_dir(current_path);
         }
         command.args(&self.arguments);
+        for key in DEPLOYMENT_TARGET_ENVS {
+            command.env_remove(key);
+        }
         for (key, value) in &self.envs {
             command.env(key, value);
         }

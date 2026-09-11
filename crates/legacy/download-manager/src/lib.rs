@@ -1,43 +1,36 @@
-mod checked_file_state;
-mod crc_utils;
+#[cfg(feature = "bindings-uniffi")]
+uniffi::setup_scaffolding!();
+
+mod backends;
+mod cached_download_task;
+mod crc32c;
+mod crc_receipt;
 mod download_error;
-mod download_info;
-mod download_log_event;
+mod download_id;
+mod download_manager;
+mod download_manager_type;
+mod download_phase;
 mod download_state;
-mod file_check;
-mod file_download_event;
-mod file_download_manager;
-mod file_download_phase;
-mod file_download_state;
-mod file_download_task;
-mod file_state;
-mod lock_file_info;
-mod lock_file_state;
-mod lock_manager;
+mod download_task;
+mod download_task_kind;
+mod download_task_request;
+mod file_download;
+mod group_download_task;
+mod locks;
 
-pub(crate) mod backends;
-pub(crate) mod file_download_task_actor;
-pub(crate) mod reducer;
-pub(crate) mod traits;
-
-pub use checked_file_state::CheckedFileState;
+#[cfg(target_vendor = "apple")]
+pub use backends::AppleBackendError;
+pub use backends::BackendError;
+pub use crc32c::Crc32c;
 pub use download_error::DownloadError;
-pub use download_info::DownloadInfo;
+pub use download_id::DownloadId;
+pub use download_manager::DownloadManager;
+pub use download_manager_type::DownloadManagerType;
+pub use download_phase::DownloadPhase;
 pub use download_state::DownloadState;
-pub use file_check::FileCheck;
-pub use file_download_event::FileDownloadEvent;
-pub use file_download_manager::{
-    DownloadEvent, DownloadEventSender, FileDownloadManager, FileDownloadManagerType, SharedDownloadEventSender,
-};
-pub use file_download_phase::FileDownloadPhase;
-pub use file_download_state::FileDownloadState;
-pub use file_download_task::FileDownloadTask;
-pub use file_state::FileState;
-pub use lock_file_info::LockFileInfo;
-pub use lock_file_state::LockFileState;
-pub use lock_manager::{acquire_lock, check_lock_file, release_lock_if_owned, try_acquire_lock};
-
-pub type DownloadId = uuid::Uuid;
-pub fn compute_download_id(destination_path: &std::path::Path) -> DownloadId {
-    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, destination_path.display().to_string().as_bytes())
-}
+pub use download_task::DownloadTask;
+pub use download_task_kind::DownloadTaskKind;
+pub use download_task_request::DownloadTaskRequest;
+pub use file_download::{FileDownloadError, FileDownloadTask};
+pub use group_download_task::GroupDownloadTask;
+pub use locks::{DestinationLock, LockError, LockOwner};

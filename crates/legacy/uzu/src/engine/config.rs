@@ -3,8 +3,8 @@ use std::env;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    engine::DownloadManagerType,
     settings::{SettingKind, Settings, SettingsError},
+    storage::DownloadManagerType,
 };
 
 pub const KEY_MIRAI_API_KEY: &str = "MIRAI_API_KEY";
