@@ -23,7 +23,7 @@ use shoji::{
         },
     },
     types::{
-        basic::{SamplingParameters, TokenId},
+        basic::{SamplingParameters, Token, TokenId},
         model::Model,
         session::chat::{
             ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyEnergy, ChatReplyFinishReason,
@@ -162,6 +162,10 @@ impl Session {
             if let Err(err) = self.state_reset().await {
                 return error_stream(err);
             }
+            tracing::debug!(
+                "Reprefill: {}",
+                describe_reprefill(&curr_all_tokens, &self.encoding.state().tokens, &curr_text, &new_text)
+            );
             new_all_tokens
         } else {
             match self.encoding.tokenize(&new_text[curr_text.len()..]) {
@@ -183,11 +187,13 @@ impl Session {
         }
         let time_prefill_start = Instant::now();
         let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
+        let output_tokens_start = self.encoding.state().tokens.len();
 
         let stream_state = StreamingState {
             config: config.clone(),
             cancel_token,
             encoding: &mut self.encoding,
+            output_tokens_start,
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
             #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -358,10 +364,55 @@ impl Session {
     }
 }
 
+fn describe_reprefill(
+    cached: &[Token],
+    rendered: &[Token],
+    cached_text: &str,
+    rendered_text: &str,
+) -> String {
+    let text_difference = cached_text.bytes().zip(rendered_text.bytes()).take_while(|(a, b)| a == b).count();
+    let token_difference = cached.iter().zip(rendered).take_while(|(a, b)| a.id == b.id).count();
+    let reason = if cached_text.starts_with(rendered_text) {
+        "rendered prompt is shorter than cached text"
+    } else {
+        "rendered text changed"
+    };
+    let token_difference_description = if token_difference == cached.len() && token_difference == rendered.len() {
+        "none (token IDs match)".to_string()
+    } else {
+        let describe = |token: Option<&Token>| {
+            token.map_or_else(|| "<end>".to_string(), |token| format!("{} ({:?})", token.id, token.value))
+        };
+        format!(
+            "{token_difference} (0-based), cached={}, rendered={}",
+            describe(cached.get(token_difference)),
+            describe(rendered.get(token_difference)),
+        )
+    };
+    let context = |label: &str, tokens: &[Token]| {
+        let start = token_difference.saturating_sub(3);
+        let end = (token_difference + 4).min(tokens.len());
+        let window: Vec<_> = tokens[start..end].iter().map(|token| (token.id, token.value.as_str())).collect();
+        format!("{label}[{start}..{end}]={window:?}")
+    };
+    format!(
+        "{reason}; discarding {} cached tokens, prefilling {} tokens; \
+         first_text_difference_byte={text_difference} (0-based), cached_bytes={}, rendered_bytes={}; \
+         first_token_difference={token_difference_description}; {}; {}",
+        cached.len(),
+        rendered.len(),
+        cached_text.len(),
+        rendered_text.len(),
+        context("cached_tokens", cached),
+        context("rendered_tokens", rendered),
+    )
+}
+
 struct StreamingState<'a> {
     config: ChatReplyConfig,
     cancel_token: CancellationToken,
     encoding: &'a mut Encoding,
+    output_tokens_start: usize,
     max_context_length: Option<usize>,
     stop_token_ids: Box<[u64]>,
     #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -377,6 +428,16 @@ struct StreamingState<'a> {
     total_tokens_output: usize,
     memory_usage: Option<usize>,
     metrics: Option<TokenStreamMetrics>,
+}
+
+impl Drop for StreamingState<'_> {
+    fn drop(&mut self) {
+        // Emit once per generated message, including streams stopped early.
+        tracing::debug!(
+            "Decoded tokens: {:?}",
+            self.encoding.state().tokens[self.output_tokens_start..].iter().map(|token| token.id).collect::<Vec<_>>()
+        );
+    }
 }
 
 impl StreamingState<'_> {

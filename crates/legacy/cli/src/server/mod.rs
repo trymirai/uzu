@@ -1,3 +1,6 @@
+mod log;
+mod request_info;
+
 pub mod chat_completions;
 pub mod chat_tool_calls;
 pub mod models;

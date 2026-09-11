@@ -20,6 +20,11 @@ pub fn start(
     name: &str,
     stdout: bool,
 ) {
+    // Applications can install their own tracing subscriber before creating an engine.
+    if tracing::dispatcher::has_been_set() {
+        return;
+    }
+
     INIT.call_once(|| {
         init(path, name, MAX_LOG_SIZE_BYTES, KEEP_LINES, stdout);
     });

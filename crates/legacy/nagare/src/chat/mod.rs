@@ -30,6 +30,7 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc, mpsc::UnboundedSender};
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 use uuid::Uuid;
 
 #[cfg(feature = "bindings-uniffi")]
@@ -638,7 +639,7 @@ impl ChatSession {
         let cancel_token = cancel_token_to_return.inner().clone();
         let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
         let session = self.clone();
-        let turn = async move { session.execute_turn(sender, input, config, cancel_token).await };
+        let turn = async move { session.execute_turn(sender, input, config, cancel_token).await }.in_current_span();
         #[cfg(feature = "bindings-pyo3")]
         bindings_pyo3::spawn_with_current_task_locals(turn);
         #[cfg(not(feature = "bindings-pyo3"))]
