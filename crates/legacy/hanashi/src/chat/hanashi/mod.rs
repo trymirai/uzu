@@ -1,4 +1,5 @@
 pub mod config;
+mod continuation;
 mod error;
 pub mod messages;
 mod ordering;
@@ -110,9 +111,7 @@ impl EncodingTrait for HanashiEncodingImpl {
             self.parser.set_variable("tools", serde_json::Value::Bool(true));
         }
 
-        let bos_token = self.config.tokens.bos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
-        let eos_token = self.config.tokens.eos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
-        let text = self.renderer.render(&messages, true, bos_token, eos_token, None)?;
+        let text = self.render_messages(&messages, true)?;
         let text_encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
         tracing::debug!("Encoded tokens: {:?}", text_encoding.get_ids());
         for token_id in text_encoding.get_ids() {
@@ -149,6 +148,16 @@ impl EncodingTrait for HanashiEncodingImpl {
 }
 
 impl HanashiEncodingImpl {
+    fn render_messages(
+        &mut self,
+        messages: &[ChatMessage],
+        add_preamble: bool,
+    ) -> Result<String, Error> {
+        let bos_token = self.config.tokens.bos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
+        let eos_token = self.config.tokens.eos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
+        Ok(self.renderer.render(messages, add_preamble, bos_token, eos_token, None)?)
+    }
+
     pub fn tokenize(
         &self,
         text: &str,
