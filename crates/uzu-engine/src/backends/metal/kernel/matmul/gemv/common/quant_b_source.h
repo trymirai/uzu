@@ -26,7 +26,8 @@ struct QuantBSource {
       thread U (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
       const thread GemvOperands<AT, BT, DT>& ops,
       const thread GemvParams& params,
-      const thread OutputTile<Tile, FULL_TILE>& tile
+      const thread OutputTile<Tile, FULL_TILE>& tile,
+      bool metadata_group_major
   ) {
     const uint groups = Metadata::group_count(params, GROUP_SIZE);
     const uint row_stride = Slice::row_stride(params);
@@ -48,7 +49,7 @@ struct QuantBSource {
     QuantPosition position = {group, 0};
     while (position.valid(groups)) {
       Metadata metadata;
-      metadata.load(position.group, groups, weight_row_indices, ops, params);
+      metadata.load(position.group, params.metadata_stride, metadata_group_major, weight_row_indices, ops, params);
       for (position.slice = 0; position.slice < Slice::SLICES_PER_LANE; position.slice++) {
         current.load_weights(position, weights, weight_row_indices, row_stride, group_offset);
         current.accumulate(result, position, ops, params, tile, group_offset, batch_remaining, metadata);

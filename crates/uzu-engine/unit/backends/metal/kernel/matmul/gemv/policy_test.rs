@@ -5,7 +5,7 @@ use super::*;
 use crate::{
     backends::common::{
         gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-        kernel::matmul::MatmulShape,
+        kernel::matmul::{MatmulShape, MetadataLayout},
     },
     data_type::DataType,
 };
@@ -180,6 +180,7 @@ fn quant_shape(
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
+        metadata_layout: MetadataLayout::RowMajor,
         d_transform,
     }
 }
@@ -198,6 +199,7 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
+        metadata_layout: MetadataLayout::RowMajor,
         d_transform: GemmDTransform::empty(),
     };
     assert!(
@@ -228,4 +230,21 @@ fn specialization_preserves_quantized_route_and_accumulate_tail() {
     let clean = select(8192, GemmDTransform::empty()).expect("quantized specialization");
     assert!(clean.output_row_tile() > DEFAULT_RESULTS_PER_SIMDGROUP);
     assert_eq!(select(8192 + clean.output_row_tile() / 2, GemmDTransform::ACCUMULATE), None);
+}
+
+#[uzu_test]
+fn gathered_group_major_is_not_a_gemv_route() {
+    let mut shape = quant_shape(1, 8192, GemmDTransform::empty());
+    shape.metadata_layout = MetadataLayout::GroupMajor;
+    shape.gathered = true;
+    assert!(
+        super::super::kernel::GemvSpecialization::select_tile(
+            &shape,
+            DataType::BF16,
+            DataType::BF16,
+            DataType::BF16,
+            qtile(8, 4),
+        )
+        .is_none()
+    );
 }

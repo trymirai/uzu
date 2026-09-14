@@ -2,7 +2,11 @@ use half::{bf16, f16};
 
 use crate::{
     backends::{
-        common::{AsBufferRangeRef, BufferArg, gpu_types::QuantizationMode, kernel::matmul::MatmulB},
+        common::{
+            AsBufferRangeRef, BufferArg,
+            gpu_types::QuantizationMode,
+            kernel::matmul::{MatmulB, MatmulError, MetadataLayout},
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -33,16 +37,21 @@ impl WeightData {
         b_transpose: bool,
         k: usize,
         n: usize,
-    ) -> Self {
+    ) -> Result<Self, MatmulError<Cpu>> {
         let alloc_ptr = |a: &crate::backends::common::Allocation<Cpu>| {
             let r = a.as_buffer_range_ref();
             SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
         };
+        if b.metadata_layout() == MetadataLayout::GroupMajor {
+            return Err(MatmulError::UnsupportedLayout {
+                path: "CpuMatmul",
+            });
+        }
         let bits_of = |mode| match mode {
             QuantizationMode::U4 => 4usize,
             _ => 8usize,
         };
-        match b {
+        Ok(match b {
             MatmulB::FullPrecision {
                 b: weights,
             } => {
@@ -65,6 +74,7 @@ impl WeightData {
                 mode,
                 group_size,
                 signed_codes,
+                ..
             } => WeightData::Quantized {
                 weights: alloc_ptr(weights),
                 scales: alloc_ptr(scales),
@@ -81,6 +91,7 @@ impl WeightData {
                 mode,
                 group_size,
                 signed_codes,
+                ..
             } => WeightData::Quantized {
                 weights: alloc_ptr(weights),
                 scales: alloc_ptr(scales),
@@ -96,6 +107,7 @@ impl WeightData {
                 mode,
                 group_size,
                 signed_codes,
+                ..
             } => WeightData::Quantized {
                 weights: alloc_ptr(weights),
                 scales: alloc_ptr(scales),
@@ -105,7 +117,7 @@ impl WeightData {
                 group_size: group_size as usize,
                 signed_codes,
             },
-        }
+        })
     }
 }
 

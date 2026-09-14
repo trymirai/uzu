@@ -6,6 +6,27 @@ use crate::{
     data_type::DataType,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataLayout {
+    /// `[N, G]`
+    RowMajor,
+    /// `[G, round_up_4(N)]`
+    GroupMajor,
+}
+
+impl MetadataLayout {
+    pub const fn row_stride(
+        self,
+        columns: u32,
+        groups: u32,
+    ) -> u32 {
+        match self {
+            Self::RowMajor => groups,
+            Self::GroupMajor => super::group_major_metadata::row_stride(columns),
+        }
+    }
+}
+
 pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
     FullPrecision {
         b: TB,
@@ -14,6 +35,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
         b: &'a Allocation<B>,
         scales: &'a Allocation<B>,
         biases: &'a Allocation<B>,
+        metadata_layout: MetadataLayout,
         mode: QuantizationMode,
         group_size: u32,
         signed_codes: bool,
@@ -22,6 +44,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
         b: &'a Allocation<B>,
         scales: &'a Allocation<B>,
         zero_points: &'a Allocation<B>,
+        metadata_layout: MetadataLayout,
         mode: QuantizationMode,
         group_size: u32,
         signed_codes: bool,
@@ -29,6 +52,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
     ScaleSymmetricDequant {
         b: &'a Allocation<B>,
         scales: &'a Allocation<B>,
+        metadata_layout: MetadataLayout,
         mode: QuantizationMode,
         group_size: u32,
         signed_codes: bool,
@@ -110,6 +134,26 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
                 signed_codes,
                 ..
             } => *signed_codes,
+        }
+    }
+
+    pub fn metadata_layout(&self) -> MetadataLayout {
+        match self {
+            Self::FullPrecision {
+                ..
+            } => MetadataLayout::RowMajor,
+            Self::ScaleBiasDequant {
+                metadata_layout,
+                ..
+            }
+            | Self::ScaleZeroPointDequant {
+                metadata_layout,
+                ..
+            }
+            | Self::ScaleSymmetricDequant {
+                metadata_layout,
+                ..
+            } => *metadata_layout,
         }
     }
 }

@@ -3,7 +3,10 @@ use uzu_engine_macros::uzu_test;
 
 use super::{super::specialization::GemmSpecialization, *};
 use crate::backends::{
-    common::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
+    common::{
+        gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
+        kernel::matmul::MetadataLayout,
+    },
     metal::kernel::matmul::MatmulMetalKernel,
 };
 
@@ -24,6 +27,7 @@ fn shape(
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
+        metadata_layout: MetadataLayout::RowMajor,
         d_transform: GemmDTransform::empty(),
     }
 }

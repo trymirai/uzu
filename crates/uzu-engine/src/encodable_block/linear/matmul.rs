@@ -115,8 +115,7 @@ impl<B: Backend> LinearMatmul<B> {
         let mut candidate = self.matmul_shape(1, false);
         candidate.signed_codes = true;
         let plan = self.kernel.lock().a8_activation_plan(&candidate, context)?;
-        self.matrix.make_codes_signed();
-        Some(plan)
+        self.matrix.try_prepare_a8_storage().then_some(plan)
     }
 
     pub(super) fn encode_with_a(
@@ -165,6 +164,7 @@ impl<B: Backend> LinearMatmul<B> {
             signed_codes: b.signed_codes(),
             a_full_precision,
             gathered: false,
+            metadata_layout: b.metadata_layout(),
             d_transform: self.d_ops().mask(),
         }
     }

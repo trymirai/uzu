@@ -4,7 +4,7 @@ use crate::{
     backends::common::{
         Allocation, Backend,
         gpu_types::{QuantizationMethod, QuantizationMode},
-        kernel::matmul::MatmulB,
+        kernel::matmul::{MatmulB, MetadataLayout, group_major_metadata},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
@@ -88,6 +88,10 @@ enum QuantizedCorrection<B: Backend> {
 struct Quantized<B: Backend> {
     scales: Allocation<B>,
     correction: QuantizedCorrection<B>,
+    metadata_layout: MetadataLayout,
+    weight_rows: u32,
+    weight_columns: u32,
+    value_bits: u32,
     info: QuantizationInfo,
     signed_codes: bool,
 }
@@ -155,6 +159,10 @@ impl<B: Backend> WeightMatrix<B> {
             quantized: Some(Quantized {
                 scales,
                 correction,
+                metadata_layout: MetadataLayout::RowMajor,
+                weight_rows: rows,
+                weight_columns: columns,
+                value_bits: data_type.size_in_bits() as u32,
                 info,
                 signed_codes: false,
             }),
@@ -201,6 +209,7 @@ impl<B: Backend> WeightMatrix<B> {
                 b: &self.values,
                 scales: &quantized.scales,
                 biases,
+                metadata_layout: quantized.metadata_layout,
                 mode,
                 group_size,
                 signed_codes,
@@ -209,6 +218,7 @@ impl<B: Backend> WeightMatrix<B> {
                 b: &self.values,
                 scales: &quantized.scales,
                 zero_points,
+                metadata_layout: quantized.metadata_layout,
                 mode,
                 group_size,
                 signed_codes,
@@ -216,6 +226,7 @@ impl<B: Backend> WeightMatrix<B> {
             QuantizedCorrection::Symmetric => MatmulB::ScaleSymmetricDequant {
                 b: &self.values,
                 scales: &quantized.scales,
+                metadata_layout: quantized.metadata_layout,
                 mode,
                 group_size,
                 signed_codes,
@@ -223,7 +234,24 @@ impl<B: Backend> WeightMatrix<B> {
         }
     }
 
-    pub fn make_codes_signed(&mut self) {
+    pub fn try_prepare_a8_storage(&mut self) -> bool {
+        {
+            let Some(quantized) = self.quantized.as_mut() else {
+                return false;
+            };
+            if quantized.metadata_layout == MetadataLayout::RowMajor {
+                if !quantized.can_use_a8_storage() {
+                    return false;
+                }
+                quantized.transpose_metadata();
+                quantized.metadata_layout = MetadataLayout::GroupMajor;
+            }
+        }
+        self.make_codes_signed();
+        true
+    }
+
+    fn make_codes_signed(&mut self) {
         let Some(quantized) = self.quantized.as_mut() else {
             return;
         };
@@ -238,6 +266,34 @@ impl<B: Backend> WeightMatrix<B> {
         words.iter_mut().for_each(|word| *word ^= broadcast_mask);
         prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
         quantized.signed_codes = true;
+    }
+}
+
+impl<B: Backend> Quantized<B> {
+    fn can_use_a8_storage(&self) -> bool {
+        let code_row_bytes = self.weight_columns / self.info.mode.packing_divisor();
+        group_major_metadata::row_stride(self.weight_rows) == self.weight_rows
+            && (self.info.mode != QuantizationMode::U4 || code_row_bytes.is_multiple_of(4))
+    }
+
+    fn transpose_metadata(&mut self) {
+        let groups = self.weight_columns.div_ceil(self.info.group_size);
+        let (rows, mode) = (self.weight_rows, self.info.mode);
+        group_major_metadata::transpose(self.scales.as_slice_mut(), rows, groups, self.value_bits);
+        match &mut self.correction {
+            QuantizedCorrection::Symmetric => {},
+            QuantizedCorrection::Biases(biases) => {
+                group_major_metadata::transpose(biases.as_slice_mut(), rows, groups, self.value_bits);
+            },
+            QuantizedCorrection::ZeroPoints(zero_points) => {
+                group_major_metadata::transpose(
+                    zero_points.as_slice_mut(),
+                    rows,
+                    groups,
+                    DataType::from(mode).size_in_bits() as u32,
+                );
+            },
+        }
     }
 }
 

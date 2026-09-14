@@ -15,7 +15,7 @@ use crate::{
             },
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape, MetadataLayout},
             },
         },
         metal::{
@@ -175,6 +175,7 @@ impl GemmKernel {
         let bits_per_b = arguments.b.bits_per_b();
         let group_size = arguments.b.group_size();
         let weights_signed_codes = arguments.b.signed_codes();
+        let metadata_layout = arguments.b.metadata_layout();
 
         let MatmulArguments {
             a,
@@ -268,6 +269,7 @@ impl GemmKernel {
                     aligned_inner_iterations: k / tiling.block_k(),
                     use_morton,
                     ab_scale,
+                    metadata_stride: 0,
                 };
 
                 let specialization = GemmSpecialization::from_plan(
@@ -308,6 +310,12 @@ impl GemmKernel {
             | MatmulB::ScaleSymmetricDequant {
                 ..
             }) => {
+                if metadata_layout == MetadataLayout::GroupMajor && shape.a_full_precision {
+                    return Err(MatmulError::UnsupportedLayout {
+                        path: "Gemm",
+                    }
+                    .into());
+                }
                 let (weights, scales, biases, zero_points) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
@@ -348,6 +356,7 @@ impl GemmKernel {
                             b_prologue,
                             bits_per_b,
                             group_size,
+                            metadata_layout,
                             *a_group_size,
                         )?;
                         if output_transform.contains(GemmDTransform::SOFT_CAP) {
@@ -501,6 +510,9 @@ impl GemmKernel {
             aligned_inner_iterations: kp / k_step,
             use_morton: false,
             ab_scale: 1.0,
+            metadata_stride: shape
+                .metadata_layout
+                .row_stride(shape.n, shape.b_group_size.map_or(0, |group_size| shape.k.div_ceil(group_size))),
         };
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
         part_kernel.encode(
@@ -555,10 +567,12 @@ fn validate_int8_activation_arguments(
     b_prologue: GemmBPrologueKind,
     bits_per_b: Option<u32>,
     weight_group_size: Option<u32>,
+    metadata_layout: MetadataLayout,
     a_group_size: u32,
 ) -> Result<(), MetalError> {
     let compatible = use_mxu
         && weights_signed_codes
+        && metadata_layout == MetadataLayout::GroupMajor
         && matches!(
             b_prologue,
             GemmBPrologueKind::ScaleSymmetricDequant
@@ -572,7 +586,7 @@ fn validate_int8_activation_arguments(
     if !compatible {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "symmetric int8 activations require a supported 32/64/128 activation and weight group",
+            reason: "symmetric int8 activations require group-major metadata and a supported 32/64/128 activation and weight group",
         }
         .into());
     }
@@ -603,5 +617,11 @@ fn quant_params(
         aligned_inner_iterations: outer_block_k(shape, plan.engine, plan.tiling).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
+        metadata_stride: metadata_stride(shape),
     }
+}
+
+fn metadata_stride(shape: MatmulShape) -> u32 {
+    let group_size = shape.b_group_size.expect("quantized GEMM requires a weight group size");
+    shape.metadata_layout.row_stride(shape.n, shape.k.div_ceil(group_size))
 }

@@ -8,7 +8,7 @@ use crate::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::MatmulShape,
+            kernel::matmul::{MatmulShape, MetadataLayout},
         },
         metal::{context::MetalContext, error::MetalError, kernel::GemvMetalKernel},
     },
@@ -33,6 +33,7 @@ pub struct GemvSpecialization {
     gathered: bool,
     signed_codes: bool,
     full_tile: bool,
+    metadata_group_major: bool,
 }
 
 impl GemvSpecialization {
@@ -84,6 +85,9 @@ impl GemvSpecialization {
         output_data_type: DataType,
         tile: policy::GemvTile,
     ) -> Option<Self> {
+        if shape.gathered && shape.metadata_layout == MetadataLayout::GroupMajor {
+            return None;
+        }
         if !shape.b_transpose || !shape.a_full_precision {
             return None;
         }
@@ -137,6 +141,7 @@ impl GemvSpecialization {
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
             full_tile: full_tile(shape, tile),
+            metadata_group_major: shape.metadata_layout == MetadataLayout::GroupMajor,
         };
         Some(specialization)
     }
@@ -171,6 +176,7 @@ impl GemvSpecialization {
             self.gathered,
             self.signed_codes,
             self.full_tile,
+            self.metadata_group_major,
         )
     }
 }
@@ -262,8 +268,7 @@ impl GemvKernel {
             });
         };
 
-        // Preserve each weight buffer's residency range.
-        let (scales, zero_points, biases) = match &b {
+        let (scales, biases, zero_points) = match &b {
             MatmulB::FullPrecision {
                 ..
             } => (None, None, None),
@@ -271,18 +276,21 @@ impl GemvKernel {
                 scales,
                 biases,
                 ..
-            } => (Some(*scales), None, Some(*biases)),
+            } => (Some(*scales), Some(*biases), None),
             MatmulB::ScaleZeroPointDequant {
                 scales,
                 zero_points,
                 ..
-            } => (Some(*scales), Some(*zero_points), None),
+            } => (Some(*scales), None, Some(*zero_points)),
             MatmulB::ScaleSymmetricDequant {
                 scales,
                 ..
             } => (Some(*scales), None, None),
         };
-
+        let metadata_stride = match b.group_size() {
+            Some(group_size) => b.metadata_layout().row_stride(n, k.div_ceil(group_size)),
+            None => 0,
+        };
         let output_group_count = n.div_ceil(specialization.output_row_tile());
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;
@@ -304,6 +312,7 @@ impl GemvKernel {
                 m,
                 ab_scale,
                 output_group_count,
+                metadata_stride,
                 soft_cap,
                 encoder,
             ),
@@ -333,6 +342,7 @@ impl GemvKernel {
                 m,
                 ab_scale,
                 output_group_count,
+                metadata_stride,
                 soft_cap,
                 encoder,
             ),

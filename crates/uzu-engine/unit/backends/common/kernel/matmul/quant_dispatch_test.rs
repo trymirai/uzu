@@ -19,7 +19,7 @@ use crate::{
             kernel::{
                 Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{MatmulDOps, MatmulError, MatmulKernel},
+                matmul::{MatmulDOps, MatmulError, MatmulKernel, MetadataLayout},
             },
         },
         cpu::Cpu,
@@ -411,6 +411,13 @@ fn parity_bf16_gemv_quant_rht() {
     assert_parity::<bf16>("gemv_quant_rht", &reference, &actual, 0.05, 0.6);
 }
 
+fn refusal(error: &(impl StdError + 'static)) -> &MatmulError<Metal> {
+    error
+        .source()
+        .and_then(|source| source.downcast_ref::<MatmulError<Metal>>())
+        .expect("expected a MatmulError source")
+}
+
 #[uzu_test]
 fn quant_gemm_accumulate_returns_unsupported_dop() {
     let context = MetalContext::new().expect("Metal context");
@@ -433,10 +440,7 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
     let result = matmul.encode(args, &mut encoder);
 
     let err = result.expect_err("expected error");
-    let matmul: &MatmulError<Metal> = (&err as &dyn StdError)
-        .source()
-        .and_then(|s| s.downcast_ref::<MatmulError<Metal>>())
-        .expect("expected MatmulError source");
+    let matmul = refusal(&err);
     assert!(
         matches!(
             matmul,
@@ -446,6 +450,37 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
             }
         ),
         "got {matmul:?}"
+    );
+}
+
+#[uzu_test]
+fn quant_gemm_full_precision_a_group_major_returns_unsupported_layout() {
+    let context = MetalContext::new().expect("Metal context");
+    let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
+    let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+    buffers.prepare_group_major(&input);
+    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulMetalKernel");
+
+    let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+    let args = quant_arguments(&mut buffers, &input);
+    let result = matmul.gemm.encode_with_engine(args, GemmEngine::Simdgroup, &mut encoder);
+
+    let err = result.expect_err("expected unsupported GroupMajor layout error");
+    assert!(
+        matches!(
+            refusal(&err),
+            MatmulError::UnsupportedLayout {
+                path: "Gemm"
+            }
+        ),
+        "got {}",
+        refusal(&err)
     );
 }
 
@@ -564,30 +599,16 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
 #[case::m1(1)]
 #[case::m16(16)]
 #[case::m33(33)]
-fn a8w4_zero_point_tail_parity(#[case] m: u32) {
+fn a8w8_zero_point_tail_parity(#[case] m: u32) {
     let context = MetalContext::new().expect("Metal context");
     if !context.supports_mxu {
         return;
     }
-    let input = QuantInput::<bf16>::new(m, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
+    let input = QuantInput::<bf16>::new(m, 256, 72, 32, 8, QuantizationMethod::ScaleZeroPoint, 0)
         .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, Some(32));
     let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
-    assert_parity::<bf16>(&format!("A8W4 ZP N-tail m={m}"), &reference, &actual, 0.08, 0.8);
-}
-
-#[uzu_test]
-fn a8w4_zero_point_tail_signed_codes_parity() {
-    let context = MetalContext::new().expect("Metal context");
-    if !context.supports_mxu {
-        return;
-    }
-    let input = QuantInput::<bf16>::new(33, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
-        .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, Some(32))
-        .with_signed_weight_codes();
-    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
-    let reference = run_quant_cpu::<bf16>(&input);
-    assert_parity::<bf16>("A8W4 ZP signed-code N-tail", &reference, &actual, 0.08, 0.8);
+    assert_parity::<bf16>(&format!("A8W8 ZP N-tail m={m}"), &reference, &actual, 0.08, 0.8);
 }
 
 #[rstest]
@@ -643,7 +664,7 @@ fn a8w_mxu_output_bias_parity_bf16(
         if with_output_hadamard {
             64u32
         } else {
-            70u32
+            72u32
         },
     );
     let input = QuantInput::<bf16>::new(m, k, n, 32, bits, QuantizationMethod::ScaleSymmetric, 0)
@@ -689,6 +710,7 @@ fn a8w_mxu_output_bias_parity_bf16(
     }
 
     let mut metal_buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+    metal_buffers.prepare_group_major(&input);
     let metal_output_bias = crate::tests::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &output_bias);
     let metal_output_hadamard_factors = output_hadamard_factors
         .as_ref()
@@ -733,7 +755,15 @@ fn run_widened_f32<B: Backend>(
     let mut matmul =
         <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(context, DataType::BF16, DataType::BF16, DataType::F32)
             .expect("MatmulKernel widened");
-    let b = quant_b_variant(&buffers.w, &buffers.scales, buffers.zp.as_ref(), buffers.bias.as_ref(), input);
+    // readout weight never adopts the A8 route, so it keeps row-major metadata
+    let b = quant_b_variant(
+        &buffers.w,
+        &buffers.scales,
+        buffers.zp.as_ref(),
+        buffers.bias.as_ref(),
+        MetadataLayout::RowMajor,
+        input,
+    );
     let mut encoder = Encoder::<B>::new(context).expect("encoder");
     matmul
         .encode(

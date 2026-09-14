@@ -14,7 +14,9 @@ use crate::{
             kernel::{
                 ActivationTransform, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{
+                    MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MetadataLayout, group_major_metadata,
+                },
             },
         },
         metal::{GemmEngine, Metal, MetalContext},
@@ -50,6 +52,8 @@ struct BenchmarkData {
     unsigned_weights: Allocation<Metal>,
     signed_weights: Allocation<Metal>,
     weight_scales: Allocation<Metal>,
+    /// The `[G, N]` scale plane the A8 MXU route reads.
+    group_major_weight_scales: Allocation<Metal>,
     activations: Allocation<Metal>,
     rht_factors: Allocation<Metal>,
     a_working: Allocation<Metal>,
@@ -78,6 +82,8 @@ impl BenchmarkData {
         let unsigned_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
         let signed_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_for_upload());
         let weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
+        let mut group_major_weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
+        group_major_metadata::transpose(group_major_weight_scales.as_slice_mut(), n, k.div_ceil(group_size), 16);
         let activations = alloc_allocation_with_data::<Metal, bf16>(context, &input.x);
         let rht: Vec<i32> = (0..k)
             .map(|index| {
@@ -95,6 +101,7 @@ impl BenchmarkData {
             unsigned_weights,
             signed_weights,
             weight_scales,
+            group_major_weight_scales,
             activations,
             rht_factors,
             a_working: alloc_allocation::<Metal, bf16>(context, (m * k) as usize),
@@ -124,6 +131,7 @@ impl BenchmarkData {
             b: MatmulB::ScaleSymmetricDequant {
                 b: &self.unsigned_weights,
                 scales: &self.weight_scales,
+                metadata_layout: MetadataLayout::RowMajor,
                 mode: self.mode,
                 group_size: self.group_size,
                 signed_codes: false,
@@ -171,7 +179,8 @@ fn encode_step(
                 },
                 b: MatmulB::ScaleSymmetricDequant {
                     b: &data.signed_weights,
-                    scales: &data.weight_scales,
+                    scales: &data.group_major_weight_scales,
+                    metadata_layout: MetadataLayout::GroupMajor,
                     mode: data.mode,
                     group_size: data.group_size,
                     signed_codes: true,
