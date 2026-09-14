@@ -59,11 +59,19 @@ fn compact_tool_call_continuation_preserves_sampled_prefix() {
     );
     let sampled_text = encoding.state().text();
     history.push(encoding.state().messages.last().unwrap().clone());
+    let generated_identifier = Some("generated-tool-call-id".to_string());
+    let ChatContentBlock::ToolCall {
+        value: tool_call,
+    } = history.last_mut().unwrap().content.last_mut().unwrap()
+    else {
+        panic!("expected parsed tool call");
+    };
+    tool_call.identifier.clone_from(&generated_identifier);
     let canonical = encoding.renderer.render(&history, false, None, None, None).unwrap();
     assert!(!canonical.starts_with(&sampled_text), "fixture must exercise a noncanonical sampled tool call");
     let sampled = encoding.state().tokens.clone();
     history.push(ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
-        identifier: None,
+        identifier: generated_identifier,
         name: Some("inspect".to_string()),
         value: Value {
             json: "\"done\"".to_string(),

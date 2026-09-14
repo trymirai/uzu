@@ -171,7 +171,6 @@ impl HanashiEncodingImpl {
         let previous_len = self.state.messages.len();
         if !self.supports_continuation
             || messages.len() <= previous_len
-            || !messages.starts_with(&self.state.messages)
             || !messages.last().is_some_and(|message| matches!(message.role, ChatRole::User {} | ChatRole::Tool {}))
             || !self.state.tokens.last().is_some_and(|token| token.is_special && token.value == MESSAGE_END)
             || !self.state.messages.last().is_some_and(|message| {
