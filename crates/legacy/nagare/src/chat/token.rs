@@ -132,13 +132,30 @@ impl Session {
         let time_start = Instant::now();
 
         let curr_all_tokens = self.encoding.state().tokens.clone();
-        let new_all_tokens = match self.build_input(input) {
-            Ok(input) => input,
+        let continuation = match self.encoding.try_append(input) {
+            Ok(continuation) => continuation,
             Err(err) => {
                 return error_stream(ChatSessionError::Backend {
                     message: err.to_string(),
                 });
             },
+        };
+        let continued = continuation.is_some();
+        if let Some(suffix) = continuation {
+            self.input_tokens = suffix.into_iter().map(u64::from).collect();
+        }
+
+        let new_all_tokens = if continued {
+            Vec::new()
+        } else {
+            match self.build_input(input) {
+                Ok(input) => input,
+                Err(err) => {
+                    return error_stream(ChatSessionError::Backend {
+                        message: err.to_string(),
+                    });
+                },
+            }
         };
 
         // The engine state can only be kept whole or reset, so reuse it whenever the session's
@@ -152,13 +169,15 @@ impl Session {
             text.push_str(&token.value);
             text
         });
-        let reset = !new_text.starts_with(&curr_text);
+        let reset = !continued && !new_text.starts_with(&curr_text);
         let cached_tokens_input = if reset {
             0
         } else {
             curr_all_tokens.len()
         };
-        self.input_tokens = if reset {
+        self.input_tokens = if continued {
+            std::mem::take(&mut self.input_tokens)
+        } else if reset {
             if let Err(err) = self.state_reset().await {
                 return error_stream(err);
             }

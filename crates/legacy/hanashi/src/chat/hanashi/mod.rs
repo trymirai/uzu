@@ -5,6 +5,9 @@ mod ordering;
 pub mod renderer;
 mod token;
 
+#[cfg(test)]
+mod continuation_test;
+
 use std::{collections::HashSet, sync::Arc};
 
 pub use error::Error;
@@ -36,6 +39,7 @@ pub struct HanashiEncodingImpl {
     framing_tokens: HashSet<String>,
     renderer: Renderer,
     validator: Validator,
+    supports_continuation: bool,
 
     state: State,
     tokenizer_decode_ids: Vec<u32>,
@@ -48,6 +52,7 @@ impl HanashiEncodingImpl {
         config: HanashiConfig,
         tokenizer: Arc<Tokenizer>,
     ) -> Result<Self, Error> {
+        let supports_continuation = matches!(config, HanashiConfig::Qwen35);
         let resolved_config = config.resolve()?;
         let parser = TokenStreamParser::new(resolved_config.parsing.clone())?;
         let framing_tokens = resolved_config.parsing.framing_config().tokens.into_iter().collect();
@@ -61,6 +66,7 @@ impl HanashiEncodingImpl {
             framing_tokens,
             renderer,
             validator,
+            supports_continuation,
             state: State::default(),
             tokenizer_decode_ids: vec![],
             tokenizer_decode_prefix: "".to_string(),
@@ -154,6 +160,59 @@ impl HanashiEncodingImpl {
     ) -> Result<Vec<TokenId>, Error> {
         let encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
         Ok(encoding.get_ids().to_vec())
+    }
+
+    pub fn try_append(
+        &mut self,
+        messages: &[ChatMessage],
+    ) -> Result<Option<Vec<TokenId>>, Error> {
+        const MESSAGE_END: &str = "<|im_end|>";
+
+        let previous_len = self.state.messages.len();
+        if !self.supports_continuation
+            || messages.len() <= previous_len
+            || !messages.starts_with(&self.state.messages)
+            || !messages.last().is_some_and(|message| matches!(message.role, ChatRole::User {} | ChatRole::Tool {}))
+            || !self.state.tokens.last().is_some_and(|token| token.is_special && token.value == MESSAGE_END)
+            || !self.state.messages.last().is_some_and(|message| {
+                matches!(message.role, ChatRole::Assistant {})
+                    && !message.content.iter().any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }))
+            })
+        {
+            return Ok(None);
+        }
+
+        let previous = self.fill_default_content(&self.state.messages)?;
+        let mut canonical_prefix = self.renderer.render(&previous, false, None, None, None)?;
+        if !canonical_prefix.ends_with("<|im_end|>\n") {
+            return Ok(None);
+        }
+        canonical_prefix.pop();
+
+        let rendered_messages = self.fill_default_content(messages)?;
+        let mut validator = Validator::new(self.config.ordering.clone());
+        for message in &rendered_messages {
+            validator.validate_next(&message.role)?;
+        }
+        let rendered = self.renderer.render(&rendered_messages, true, None, None, None)?;
+        let Some(suffix) = rendered.strip_prefix(&canonical_prefix) else {
+            return Ok(None);
+        };
+        let token_ids = self.tokenize(suffix)?;
+        if token_ids.is_empty() {
+            return Ok(None);
+        }
+
+        self.state.messages.extend(rendered_messages.into_iter().skip(previous_len));
+        self.validator = validator;
+        for token_id in &token_ids {
+            let token = self.resolve_token(*token_id, true)?;
+            self.push_token_to_parser(&token, true)?;
+            self.state.tokens.push(token);
+        }
+        self.parser.flush_extraction();
+        self.update_messages_from_parser_state()?;
+        Ok(Some(token_ids))
     }
 
     fn push_token_to_parser(
