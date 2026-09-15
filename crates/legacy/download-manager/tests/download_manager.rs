@@ -12,7 +12,7 @@ use tokio::time::timeout;
 use uuid::Uuid;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    matchers::{header, method, path},
 };
 
 use crate::common::{Behavior, MockRegistry, artifact_path, file_request, foreign_lock, model_request, wait_for_state};
@@ -490,5 +490,54 @@ async fn checksums(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std:
         };
         assert!(message.contains(algorithm), "unexpected error: {message}");
     }
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(DownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::native(DownloadManagerType::Native))]
+#[tokio::test(flavor = "multi_thread")]
+async fn bearer_token(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
+    let manager = manager(kind);
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/private"))
+        .and(header("authorization", "Bearer secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(HELLO))
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir()?;
+    let request = |name: &str, token: Option<&str>| {
+        DownloadTaskRequest::file()
+            .destination(directory.path().join(name))
+            .source_url(format!("{}/private", server.uri()))
+            .maybe_bearer_token(token.map(str::to_string))
+            .expected_bytes(HELLO.len() as u64)
+            .build()
+    };
+
+    let authenticated = manager.download_task(request("authenticated", Some("secret"))).await?;
+    assert!(!format!("{:?}", authenticated.request()).contains("secret"));
+    let mut progress = authenticated.progress();
+    authenticated.download().await?;
+    wait_for_state(&authenticated, &mut progress, |state| matches!(state.phase, DownloadPhase::Downloaded {})).await;
+    assert_eq!(tokio::fs::read(directory.path().join("authenticated")).await?, HELLO);
+
+    let anonymous = manager.download_task(request("anonymous", None)).await?;
+    let mut progress = anonymous.progress();
+    anonymous.download().await?;
+    wait_for_state(&anonymous, &mut progress, |state| matches!(state.phase, DownloadPhase::Error { .. })).await;
+    assert!(!directory.path().join("anonymous").exists());
+
+    let insecure = manager
+        .download_task(
+            DownloadTaskRequest::file()
+                .destination(directory.path().join("insecure"))
+                .source_url("http://example.invalid/private")
+                .bearer_token("secret".to_string())
+                .build(),
+        )
+        .await;
+    assert!(matches!(insecure, Err(DownloadError::InsecureRequest(_))));
     Ok(())
 }

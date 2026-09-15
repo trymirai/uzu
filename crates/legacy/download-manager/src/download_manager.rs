@@ -1,9 +1,11 @@
 use std::{
     collections::HashMap,
+    net::IpAddr,
     sync::{Arc, Mutex, PoisonError},
 };
 
 use kiban::rt::RuntimeHandle;
+use reqwest::Url;
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
@@ -140,12 +142,17 @@ impl DownloadManager {
         match &request.kind {
             DownloadTaskKind::File {
                 source_url,
+                bearer_token,
                 expected_checksum,
                 expected_bytes,
             } => {
+                if bearer_token.is_some() && !carries_token_securely(source_url) {
+                    return Err(DownloadError::InsecureRequest(source_url.clone()));
+                }
                 let config = Arc::new(DownloadConfig {
                     download_id: request.download_id(),
                     source_url: source_url.clone(),
+                    bearer_token: bearer_token.clone(),
                     destination: request.destination.clone(),
                     resume_artifact_path: self.backend.resume_artifact_path(&request.destination),
                     expected_checksum: expected_checksum.clone(),
@@ -173,4 +180,14 @@ impl DownloadManager {
             },
         }
     }
+}
+
+fn carries_token_securely(source_url: &str) -> bool {
+    Url::parse(source_url).is_ok_and(|url| {
+        url.scheme() == "https"
+            || url.host_str().is_some_and(|host| {
+                host.eq_ignore_ascii_case("localhost")
+                    || host.trim_matches(['[', ']']).parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
+            })
+    })
 }

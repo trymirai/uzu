@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use kiban::{fs, fs::PartFile, time::Instant};
 use reqwest::{
     Client, StatusCode,
-    header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE},
+    header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_RANGE, RANGE},
 };
 use tokio::sync::{oneshot::Sender as TokioOneshotSender, watch::Receiver as TokioWatchReceiver};
 
@@ -85,6 +85,9 @@ impl UniversalStream {
         let artifact = config.resume_artifact_path.as_path();
         let mut resume_from = fs::asyn::file_length(artifact).await.unwrap_or(0);
         let mut request = self.client.get(&config.source_url);
+        if let Some(token) = &config.bearer_token {
+            request = request.header(AUTHORIZATION, token.header_value());
+        }
         if resume_from > 0 {
             request = request.header(RANGE, format!("bytes={resume_from}-"));
         }

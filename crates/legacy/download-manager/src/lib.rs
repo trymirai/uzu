@@ -2,6 +2,7 @@
 uniffi::setup_scaffolding!();
 
 mod backends;
+mod bearer_token;
 mod cached_download_task;
 mod checksum;
 mod checksum_receipt;
@@ -21,6 +22,7 @@ mod locks;
 #[cfg(target_vendor = "apple")]
 pub use backends::AppleBackendError;
 pub use backends::BackendError;
+pub use bearer_token::BearerToken;
 pub use checksum::Checksum;
 pub use download_error::DownloadError;
 pub use download_id::DownloadId;
