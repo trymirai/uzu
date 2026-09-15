@@ -113,6 +113,7 @@ impl AppleBackend {
             AppleEventSink {
                 generation,
                 destination: config.destination.clone(),
+                expected_bytes: config.expected_bytes,
                 events,
                 runtime_handle: self.runtime_handle.clone(),
             },
