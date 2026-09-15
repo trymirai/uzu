@@ -40,10 +40,8 @@ impl HuggingFace {
         &self,
         repository: &Repository,
     ) -> Result<Vec<File>, RegistryError> {
-        let revision = repository.commit_hash.as_deref().filter(|hash| is_lower_hex(hash, 40)).ok_or_else(|| {
-            RegistryError::UnableToGetModels {
-                message: format!("{} has no pinned commit", repository.identifier),
-            }
+        let revision = repository.commit_hash.as_deref().ok_or_else(|| RegistryError::UnableToGetModels {
+            message: format!("{} has no revision", repository.identifier),
         })?;
         let mut metadata_url = self
             .url(["api", "models"].into_iter().chain(repository.identifier.split('/')).chain(["revision", revision]))?;
@@ -60,9 +58,10 @@ impl HuggingFace {
         let model: HuggingFaceModel = response.json().await.map_err(|error| RegistryError::UnableToGetModels {
             message: error.to_string(),
         })?;
-        if model.sha != revision {
+        let commit = model.sha.as_str();
+        if !is_lower_hex(commit, 40) {
             return Err(RegistryError::UnableToGetModels {
-                message: format!("Hugging Face returned revision {} instead of {revision}", model.sha),
+                message: format!("Hugging Face returned invalid commit {commit} for {revision}"),
             });
         }
         let files = model
@@ -99,7 +98,7 @@ impl HuggingFace {
                 };
                 Ok(File {
                     url: self
-                        .url(repository.identifier.split('/').chain(["resolve", revision]).chain(name.split('/')))?
+                        .url(repository.identifier.split('/').chain(["resolve", commit]).chain(name.split('/')))?
                         .into(),
                     name: name.clone(),
                     size: i64::try_from(size).map_err(|_| RegistryError::UnableToGetModels {
@@ -132,7 +131,7 @@ impl HuggingFace {
     }
 }
 
-fn is_lower_hex(
+pub fn is_lower_hex(
     value: &str,
     length: usize,
 ) -> bool {

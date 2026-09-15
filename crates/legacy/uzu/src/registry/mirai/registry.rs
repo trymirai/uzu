@@ -19,7 +19,7 @@ use super::{
     api::{HUGGING_FACE_URL, REGISTRY_URL},
     backend::Backend,
     fetch_models::FetchModels,
-    hugging_face::HuggingFace,
+    hugging_face::{HuggingFace, is_lower_hex},
 };
 use crate::{device::Device, registry::RegistryError};
 
@@ -147,7 +147,8 @@ impl Registry {
         if repository.commit_hash.is_none() {
             return Some(model);
         }
-        let previous = cached.iter().find_map(|previous| match &previous.accessibility {
+        let pinned_to_commit = repository.commit_hash.as_deref().is_some_and(|revision| is_lower_hex(revision, 40));
+        let previous = cached.iter().filter(|_| pinned_to_commit).find_map(|previous| match &previous.accessibility {
             ModelAccessibility::OnDevice {
                 source:
                     ModelSource::Registry {
