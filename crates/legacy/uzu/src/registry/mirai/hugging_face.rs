@@ -21,8 +21,14 @@ impl HuggingFace {
         #[builder(default = HUGGING_FACE_URL.to_string(), into)] endpoint: String,
         token: Option<BearerToken>,
     ) -> Result<Self, RegistryError> {
-        let client = Client::builder().timeout(Duration::from_secs(30)).build().map_err(unable_to_create)?;
-        let endpoint = Url::parse(&endpoint).map_err(unable_to_create)?;
+        let client = Client::builder().timeout(Duration::from_secs(30)).build().map_err(|error| {
+            RegistryError::UnableToCreate {
+                message: error.to_string(),
+            }
+        })?;
+        let endpoint = Url::parse(&endpoint).map_err(|error| RegistryError::UnableToCreate {
+            message: error.to_string(),
+        })?;
         Ok(Self {
             client,
             endpoint,
@@ -34,11 +40,11 @@ impl HuggingFace {
         &self,
         repository: &Repository,
     ) -> Result<Vec<File>, RegistryError> {
-        let revision = repository
-            .commit_hash
-            .as_deref()
-            .filter(|hash| is_lower_hex(hash, 40))
-            .ok_or_else(|| unable_to_get_models(format!("{} has no pinned commit", repository.identifier)))?;
+        let revision = repository.commit_hash.as_deref().filter(|hash| is_lower_hex(hash, 40)).ok_or_else(|| {
+            RegistryError::UnableToGetModels {
+                message: format!("{} has no pinned commit", repository.identifier),
+            }
+        })?;
         let mut metadata_url = self
             .url(["api", "models"].into_iter().chain(repository.identifier.split('/')).chain(["revision", revision]))?;
         metadata_url.set_query(Some("blobs=true"));
@@ -46,14 +52,18 @@ impl HuggingFace {
         if let Some(token) = &self.token {
             request = request.header(AUTHORIZATION, token.header_value());
         }
-        let response =
-            request.send().await.and_then(|response| response.error_for_status()).map_err(unable_to_get_models)?;
-        let model: HuggingFaceModel = response.json().await.map_err(unable_to_get_models)?;
+        let response = request.send().await.and_then(|response| response.error_for_status()).map_err(|error| {
+            RegistryError::UnableToGetModels {
+                message: error.to_string(),
+            }
+        })?;
+        let model: HuggingFaceModel = response.json().await.map_err(|error| RegistryError::UnableToGetModels {
+            message: error.to_string(),
+        })?;
         if model.sha != revision {
-            return Err(unable_to_get_models(format!(
-                "Hugging Face returned revision {} instead of {revision}",
-                model.sha
-            )));
+            return Err(RegistryError::UnableToGetModels {
+                message: format!("Hugging Face returned revision {} instead of {revision}", model.sha),
+            });
         }
         let files = model
             .siblings
@@ -62,7 +72,9 @@ impl HuggingFace {
             .map(|sibling| {
                 let name = &sibling.rfilename;
                 if name.contains(['\\', ':']) || name.split('/').any(|segment| matches!(segment, "" | "." | "..")) {
-                    return Err(unable_to_get_models(format!("invalid file name: {name}")));
+                    return Err(RegistryError::UnableToGetModels {
+                        message: format!("invalid file name: {name}"),
+                    });
                 }
                 let (size, hash) = match &sibling.lfs {
                     Some(lfs) => (
@@ -81,21 +93,26 @@ impl HuggingFace {
                     ),
                 };
                 let (Some(size), Some(hash)) = (size, hash) else {
-                    return Err(unable_to_get_models(format!("Hugging Face is missing size or digest for {name}")));
+                    return Err(RegistryError::UnableToGetModels {
+                        message: format!("Hugging Face is missing size or digest for {name}"),
+                    });
                 };
                 Ok(File {
                     url: self
                         .url(repository.identifier.split('/').chain(["resolve", revision]).chain(name.split('/')))?
                         .into(),
                     name: name.clone(),
-                    size: i64::try_from(size)
-                        .map_err(|_| unable_to_get_models(format!("file size overflow for {name}")))?,
+                    size: i64::try_from(size).map_err(|_| RegistryError::UnableToGetModels {
+                        message: format!("file size overflow for {name}"),
+                    })?,
                     hashes: vec![hash],
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
         if files.is_empty() {
-            return Err(unable_to_get_models(format!("{} has no files at {revision}", repository.identifier)));
+            return Err(RegistryError::UnableToGetModels {
+                message: format!("{} has no files at {revision}", repository.identifier),
+            });
         }
         Ok(files)
     }
@@ -106,7 +123,9 @@ impl HuggingFace {
     ) -> Result<Url, RegistryError> {
         let mut url = self.endpoint.clone();
         url.path_segments_mut()
-            .map_err(|_| unable_to_get_models("invalid Hugging Face endpoint"))?
+            .map_err(|_| RegistryError::UnableToGetModels {
+                message: "invalid Hugging Face endpoint".to_string(),
+            })?
             .clear()
             .extend(segments);
         Ok(url)
@@ -118,16 +137,4 @@ fn is_lower_hex(
     length: usize,
 ) -> bool {
     value.len() == length && value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-}
-
-fn unable_to_create(error: impl ToString) -> RegistryError {
-    RegistryError::UnableToCreate {
-        message: error.to_string(),
-    }
-}
-
-fn unable_to_get_models(error: impl ToString) -> RegistryError {
-    RegistryError::UnableToGetModels {
-        message: error.to_string(),
-    }
 }
