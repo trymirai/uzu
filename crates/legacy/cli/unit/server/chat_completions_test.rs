@@ -110,7 +110,7 @@ fn messages_with_support(
     json: &str,
     thinking_support: ThinkingSupport,
 ) -> Vec<ChatMessage> {
-    build_messages(&request(json), thinking_support).expect("valid request")
+    build_messages(request(json), thinking_support).expect("valid request")
 }
 
 #[test]
@@ -182,7 +182,7 @@ fn reasoning_effort_rejected_when_model_cannot_produce_it() {
         (ThinkingSupport::Unsupported, r#"{"messages":[],"reasoning_effort":"high"}"#),
     ] {
         let error =
-            build_messages(&request(body), support).expect_err("unfulfillable reasoning_effort should be rejected");
+            build_messages(request(body), support).expect_err("unfulfillable reasoning_effort should be rejected");
         assert!(
             matches!(error, MessageBuildError::ReasoningEffort(_)),
             "expected ReasoningEffort error, got {error:?}"
@@ -210,11 +210,11 @@ fn enable_thinking_honored_for_levels_model() {
 
 #[test]
 fn enable_thinking_rejected_when_model_cannot_produce_it() {
-    let error = build_messages(&request(r#"{"messages":[],"enable_thinking":false}"#), ThinkingSupport::AlwaysOn)
+    let error = build_messages(request(r#"{"messages":[],"enable_thinking":false}"#), ThinkingSupport::AlwaysOn)
         .expect_err("disabling an always-on model should be rejected");
     assert!(matches!(error, MessageBuildError::EnableThinking(_)), "expected EnableThinking error, got {error:?}");
 
-    let error = build_messages(&request(r#"{"messages":[],"enable_thinking":true}"#), ThinkingSupport::Unsupported)
+    let error = build_messages(request(r#"{"messages":[],"enable_thinking":true}"#), ThinkingSupport::Unsupported)
         .expect_err("enabling reasoning on an unsupported model should be rejected");
     assert!(matches!(error, MessageBuildError::EnableThinking(_)), "expected EnableThinking error, got {error:?}");
 }
@@ -226,7 +226,7 @@ fn enable_thinking_rejects_contradictions() {
         r#"{"messages":[],"enable_thinking":false,"reasoning_effort":"high"}"#,
         r#"{"messages":[],"enable_thinking":true,"reasoning_effort":"disabled"}"#,
     ] {
-        build_messages(&request(body), any_levels()).expect_err("contradictory thinking requests should be rejected");
+        build_messages(request(body), any_levels()).expect_err("contradictory thinking requests should be rejected");
     }
 }
 
@@ -244,7 +244,7 @@ fn enable_thinking_rejects_malformed_values() {
         r#"{"messages":[],"chat_template_kwargs":{"enable_thinking":1}}"#,
         r#"{"messages":[],"chat_template_kwargs":"nope"}"#,
     ] {
-        build_messages(&request(body), ThinkingSupport::Toggle(true))
+        build_messages(request(body), ThinkingSupport::Toggle(true))
             .expect_err("malformed enable_thinking should be rejected");
     }
 }
@@ -272,7 +272,7 @@ fn malformed_enable_thinking_passes_json_extraction() {
 #[test]
 fn reasoning_effort_rejects_unrecognized_values() {
     for body in [r#"{"messages":[],"reasoning_effort":"totally-bogus"}"#, r#"{"messages":[],"reasoning_effort":42}"#] {
-        let error = build_messages(&request(body), ThinkingSupport::default())
+        let error = build_messages(request(body), ThinkingSupport::default())
             .expect_err("bad reasoning_effort should be rejected");
         assert!(
             matches!(error, MessageBuildError::ReasoningEffort(_)),
@@ -366,6 +366,152 @@ fn message_content_accepts_string_null_and_text_parts() {
         r#"{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]}"#,
     );
     assert!(image.is_err());
+}
+
+#[test]
+fn compaction_merges_consecutive_assistant_text() {
+    let messages = messages_with_support(
+        r#"{"messages":[
+            {"role":"user","content":"Original task"},
+            {"role":"assistant","content":"Compacted session summary"},
+            {"role":"assistant","content":"Retained recent assistant turn"},
+            {"role":"assistant","content":"Another retained turn"},
+            {"role":"user","content":"Continue"}
+        ]}"#,
+        any_levels(),
+    );
+    assert_eq!(
+        messages,
+        vec![
+            ChatMessage::user().with_text("Original task".to_string()),
+            ChatMessage::assistant().with_text(
+                "Compacted session summary\n\nRetained recent assistant turn\n\nAnother retained turn".to_string()
+            ),
+            ChatMessage::user().with_text("Continue".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn compaction_preserves_reasoning_text_and_later_tool_calls() {
+    let messages = messages_with_support(
+        r#"{"messages":[
+            {"role":"user","content":"Original task"},
+            {"role":"assistant","reasoning_content":"Summary reasoning","content":"Summary","tool_calls":[]},
+            {"role":"assistant","reasoning_content":"Retained reasoning","content":[{"type":"text","text":"Retained "},{"type":"text","text":"turn"}],"tool_calls":[
+                {"id":"c1","type":"function","function":{"name":"lookup","arguments":"{\"query\":\"first\"}"}},
+                {"id":"c2","type":"function","function":{"name":"lookup","arguments":"{\"query\":\"second\"}"}}
+            ]},
+            {"role":"tool","tool_call_id":"c1","content":"First result"},
+            {"role":"tool","tool_call_id":"c2","content":"Second result"}
+        ]}"#,
+        any_levels(),
+    );
+    assert_eq!(messages.len(), 4);
+    let assistant = &messages[1];
+    assert_eq!(assistant.reasoning().as_deref(), Some("Summary reasoning\n\nRetained reasoning"));
+    assert_eq!(assistant.text().as_deref(), Some("Summary\n\nRetained turn"));
+    assert!(matches!(
+        &assistant.content[..],
+        [
+            ChatContentBlock::Reasoning { .. },
+            ChatContentBlock::Text { .. },
+            ChatContentBlock::ToolCall { .. },
+            ChatContentBlock::ToolCall { .. },
+        ]
+    ));
+    for (index, identifier, query) in [(0, "c1", "first"), (1, "c2", "second")] {
+        let call = &assistant.tool_calls()[index];
+        assert_eq!(call.identifier.as_deref(), Some(identifier));
+        assert_eq!(call.name, "lookup");
+        let arguments: serde_json::Value = serde_json::from_str(&call.arguments.json).unwrap();
+        assert_eq!(arguments, serde_json::json!({"query": query}));
+        let results = messages[index + 2].tool_call_results();
+        assert_eq!(results[0].0.as_deref(), Some(identifier));
+        assert_eq!(results[0].1.as_deref(), Some("lookup"));
+    }
+
+    // Exercise the real renderer: duplicate reasoning blocks would fail here.
+    let renderer = hanashi::chat::hanashi::renderer::Renderer::new(
+        hanashi::chat::hanashi::config::HanashiConfig::Qwen36.resolve().unwrap().rendering,
+    );
+    let prompt = renderer.render(&messages, true, None, None, None).unwrap();
+    for fragment in [
+        "Summary reasoning\n\nRetained reasoning",
+        "Summary\n\nRetained turn",
+        "<function=lookup>",
+        "First result",
+        "Second result",
+    ] {
+        assert!(prompt.contains(fragment), "missing {fragment:?} in {prompt:?}");
+    }
+}
+
+#[test]
+fn compaction_handles_empty_and_missing_assistant_channels() {
+    for (left, right, expected) in [
+        (None, None, None),
+        (None, Some(""), Some("")),
+        (Some(""), None, Some("")),
+        (Some(""), Some(""), Some("")),
+        (None, Some("retained"), Some("retained")),
+        (Some("summary"), None, Some("summary")),
+        (Some(""), Some("retained"), Some("retained")),
+        (Some("summary"), Some(""), Some("summary")),
+        (Some("summary"), Some("retained"), Some("summary\n\nretained")),
+    ] {
+        let body = serde_json::json!({"messages": [
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": left, "reasoning_content": left},
+            {"role": "assistant", "content": right, "reasoning_content": right},
+            {"role": "user", "content": "Continue"}
+        ]});
+        let messages = messages_with_support(&body.to_string(), any_levels());
+        assert_eq!(messages.len(), 3, "left={left:?}, right={right:?}");
+        assert_eq!(messages[1].text().as_deref(), expected);
+        assert_eq!(messages[1].reasoning().as_deref(), expected.filter(|text| !text.is_empty()));
+    }
+}
+
+#[test]
+fn compaction_does_not_merge_past_pending_tool_calls() {
+    let messages = messages_with_support(
+        r#"{"messages":[
+            {"role":"user","content":"Original task"},
+            {"role":"assistant","content":"Summary"},
+            {"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"first","arguments":"{}"}}]},
+            {"role":"assistant","content":"Unresolved call","tool_calls":[{"id":"c2","type":"function","function":{"name":"second","arguments":"{}"}}]},
+            {"role":"user","content":"Continue"}
+        ]}"#,
+        any_levels(),
+    );
+    // Keep the invalid assistant adjacency so Hanashi still rejects the missing tool results.
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[1].role, ChatRole::Assistant {});
+    assert_eq!(messages[2].role, ChatRole::Assistant {});
+    assert_eq!(messages[1].text().as_deref(), Some("Summary"));
+    assert_eq!(messages[2].text().as_deref(), Some("Unresolved call"));
+    assert_eq!(messages[1].tool_calls()[0].identifier.as_deref(), Some("c1"));
+    assert_eq!(messages[2].tool_calls()[0].identifier.as_deref(), Some("c2"));
+}
+
+#[test]
+fn compaction_normalization_keeps_prefix_matching_on_followup() {
+    let mut body = serde_json::json!({"messages": [
+        {"role":"user","content":"Original task"},
+        {"role":"assistant","content":"Summary"},
+        {"role":"assistant","content":"Retained turn"},
+        {"role":"user","content":"Continue"}
+    ]});
+    let mut current = messages_with_support(&body.to_string(), any_levels());
+    current.push(ChatMessage::assistant().with_text("Answer".to_string()));
+    body["messages"].as_array_mut().unwrap().extend([
+        serde_json::json!({"role":"assistant","content":"Answer"}),
+        serde_json::json!({"role":"user","content":"Next question"}),
+    ]);
+    let followup = messages_with_support(&body.to_string(), any_levels());
+    assert_eq!(followup.len(), 5);
+    assert!(messages_have_prefix(&followup, &current));
 }
 
 #[test]

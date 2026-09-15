@@ -9,7 +9,7 @@ fn request(json: &str) -> ChatCompletionRequest {
 }
 
 fn messages(json: &str) -> Vec<ChatMessage> {
-    build_messages(&request(json), ThinkingSupport::Unsupported).expect("valid request")
+    build_messages(request(json), ThinkingSupport::Unsupported).expect("valid request")
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn tool_call_round_trip_maps_to_chat_blocks() {
 #[test]
 fn json_looking_tool_result_content_remains_text() {
     for content in ["26", r#"{"number":1}"#, "[hello]", "[1,2,3]", r#"[{"number":228}]"#, r#"[{"text":"hi"}]"#] {
-        let block = tool_call_result_block("call_1", content.to_string());
+        let block = tool_call_result_block("call_1".to_string(), content.to_string());
         let ChatContentBlock::ToolCallResult {
             value,
             ..
@@ -77,7 +77,7 @@ fn json_looking_tool_result_content_remains_text() {
 #[test]
 fn invalid_tool_call_arguments_stay_serializable() {
     let call = |arguments: &str| {
-        to_tool_call(&OaiToolCall {
+        to_tool_call(OaiToolCall {
             index: None,
             id: "call_1".to_string(),
             kind: "function".to_string(),
@@ -124,12 +124,12 @@ fn tool_choice_controls_exposed_tools() {
 
     let unknown_function = with_choice(r#"{"type":"function","function":{"name":"missing"}}"#);
     assert!(
-        build_messages(&request(&unknown_function), ThinkingSupport::Unsupported).is_err(),
+        build_messages(request(&unknown_function), ThinkingSupport::Unsupported).is_err(),
         "undeclared forced function should be rejected"
     );
     let bogus_mode = with_choice(r#""sometimes""#);
     assert!(
-        build_messages(&request(&bogus_mode), ThinkingSupport::Unsupported).is_err(),
+        build_messages(request(&bogus_mode), ThinkingSupport::Unsupported).is_err(),
         "unrecognized tool_choice should be rejected"
     );
 }

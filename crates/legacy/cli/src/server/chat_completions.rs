@@ -237,26 +237,73 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
     }
 }
 
-fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
-    messages
-        .iter()
+fn append_message_text(
+    text: &mut Option<String>,
+    next: Option<String>,
+) {
+    let Some(next) = next else {
+        return;
+    };
+    match text {
+        Some(text) if !text.is_empty() => {
+            if !next.is_empty() {
+                text.push_str("\n\n");
+                text.push_str(&next);
+            }
+        },
+        _ => *text = Some(next),
+    }
+}
+
+fn normalize_assistant_messages(messages: Vec<OaiMessage>) -> Vec<OaiMessage> {
+    let mut normalized: Vec<OaiMessage> = Vec::with_capacity(messages.len());
+    for message in messages {
+        if message.role == "assistant"
+            && message.tool_call_id.is_none()
+            && let Some(previous) = normalized.last_mut()
+            && previous.role == "assistant"
+            && previous.tool_call_id.is_none()
+            && previous.tool_calls.as_ref().is_none_or(Vec::is_empty)
+        {
+            // Compaction can place a summary next to a retained assistant turn.
+            // Join each channel before conversion to avoid duplicate reasoning
+            // blocks, but keep assistants with pending tool calls separate.
+            append_message_text(&mut previous.content, message.content);
+            append_message_text(&mut previous.reasoning_content, message.reasoning_content);
+            previous.tool_calls = message.tool_calls;
+        } else {
+            normalized.push(message);
+        }
+    }
+    normalized
+}
+
+fn to_chat_messages(messages: Vec<OaiMessage>) -> Vec<ChatMessage> {
+    normalize_assistant_messages(messages)
+        .into_iter()
         .map(|message| {
             let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
             let mut chat_message = ChatMessage::for_role(role);
             // Block order matches how the session stores generated replies
             // (reasoning, then text, then tool calls) so a client that echoes
             // reasoning back keeps the message prefix intact.
-            if let Some(reasoning) = message.reasoning_content.as_ref().filter(|reasoning| !reasoning.is_empty()) {
-                chat_message = chat_message.with_reasoning(reasoning.clone());
+            if let Some(reasoning) = message.reasoning_content.filter(|reasoning| !reasoning.is_empty()) {
+                chat_message.content.push(ChatContentBlock::Reasoning {
+                    value: reasoning,
+                });
             }
-            if let Some(identifier) = &message.tool_call_id {
-                let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
-                chat_message = chat_message.with_block(result);
-            } else if let Some(content) = &message.content {
-                chat_message = chat_message.with_text(content.clone());
+            if let Some(identifier) = message.tool_call_id {
+                let result = tool_call_result_block(identifier, message.content.unwrap_or_default());
+                chat_message.content.push(result);
+            } else if let Some(content) = message.content {
+                chat_message.content.push(ChatContentBlock::Text {
+                    value: content,
+                });
             }
-            for tool_call in message.tool_calls.iter().flatten() {
-                chat_message = chat_message.with_tool_call(to_tool_call(tool_call));
+            for tool_call in message.tool_calls.into_iter().flatten() {
+                chat_message.content.push(ChatContentBlock::ToolCall {
+                    value: to_tool_call(tool_call),
+                });
             }
             chat_message
         })
@@ -392,13 +439,14 @@ fn requested_reasoning_effort(
 }
 
 pub(crate) fn build_messages(
-    request: &ChatCompletionRequest,
+    request: ChatCompletionRequest,
     thinking_support: ThinkingSupport,
 ) -> Result<Vec<ChatMessage>, MessageBuildError> {
     let tools =
         choose_tools(request.tools.as_deref(), request.tool_choice.as_ref()).map_err(MessageBuildError::ToolChoice)?;
-    let mut messages = to_chat_messages(&request.messages);
-    if let Some((effort, source)) = requested_reasoning_effort(request)? {
+    let reasoning_effort = requested_reasoning_effort(&request)?;
+    let mut messages = to_chat_messages(request.messages);
+    if let Some((effort, source)) = reasoning_effort {
         let fulfilled = thinking_support.fulfill_requested_effort(effort).map_err(|detail| source.error(detail))?;
         if let Some(effort) = fulfilled {
             // The engine reads the effort from a reasoning_effort block carried on a system
@@ -406,7 +454,9 @@ pub(crate) fn build_messages(
             // templates reject two system messages in a row.
             match messages.first_mut() {
                 Some(first) if first.role == (ChatRole::System {}) => {
-                    *first = first.clone().with_reasoning_effort(effort);
+                    first.content.push(ChatContentBlock::ReasoningEffort {
+                        value: effort,
+                    });
                 },
                 _ => messages.insert(0, ChatMessage::system().with_reasoning_effort(effort)),
             }
@@ -1197,7 +1247,11 @@ pub async fn handle_chat_completions(
             return invalid_request_response("response_format", error.code(), error.message());
         },
     };
-    let messages = match build_messages(&request, state.thinking_support) {
+    // The parser cannot type scalar arguments; the declared schemas restore
+    // the types when replies cross back into the OpenAI wire format.
+    let parameter_types = ToolParameterTypes::from_tools(request.tools.as_deref());
+
+    let messages = match build_messages(request, state.thinking_support) {
         Ok(messages) => messages,
         Err(error) => {
             let param = error.param();
@@ -1207,10 +1261,6 @@ pub async fn handle_chat_completions(
             return invalid_request_response(param, code, detail);
         },
     };
-
-    // The parser cannot type scalar arguments; the declared schemas restore
-    // the types when replies cross back into the OpenAI wire format.
-    let parameter_types = ToolParameterTypes::from_tools(request.tools.as_deref());
 
     let id = request_info.id.as_str().to_owned();
     if is_stream {

@@ -219,21 +219,21 @@ pub fn coerce_tool_call(
     }
 }
 
-pub fn to_tool_call(tool_call: &OaiToolCall) -> ToolCall {
+pub fn to_tool_call(tool_call: OaiToolCall) -> ToolCall {
     // Templates render arguments as key/value pairs; normalization guarantees
     // an object no matter what the client echoes back.
-    let arguments = &tool_call.function.arguments;
+    let arguments = tool_call.function.arguments;
     let json = if arguments.trim().is_empty() {
         "{}".to_string()
     } else {
         normalize_tool_call_arguments(Value {
-            json: arguments.clone(),
+            json: arguments,
         })
         .json
     };
     ToolCall {
-        identifier: Some(tool_call.id.clone()),
-        name: tool_call.function.name.clone(),
+        identifier: Some(tool_call.id),
+        name: tool_call.function.name,
         arguments: Value {
             json,
         },
@@ -241,12 +241,12 @@ pub fn to_tool_call(tool_call: &OaiToolCall) -> ToolCall {
 }
 
 pub fn tool_call_result_block(
-    identifier: &str,
+    identifier: String,
     content: String,
 ) -> ChatContentBlock {
     let value = serde_json::Value::String(content);
     ChatContentBlock::ToolCallResult {
-        identifier: Some(identifier.to_string()),
+        identifier: Some(identifier),
         name: None,
         value: value.into(),
     }
