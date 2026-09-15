@@ -1,8 +1,14 @@
+use super::parallel_rows;
+
 const GROUP_STRIDE_ALIGNMENT: u32 = 4;
 const COLUMN_TILE: usize = 512;
 
 pub const fn row_stride(columns: u32) -> u32 {
     columns.next_multiple_of(GROUP_STRIDE_ALIGNMENT)
+}
+
+pub const fn can_transpose_in_place(columns: u32) -> bool {
+    row_stride(columns) == columns
 }
 
 pub fn plane_bytes(
@@ -37,7 +43,7 @@ fn transpose_from(
     let row_bytes = row_stride(columns) as usize * bits as usize / u8::BITS as usize;
     let (groups, columns) = (groups as usize, columns as usize);
     let jobs = columns * groups;
-    for_each_row_block(output, row_bytes, groups, jobs, |first_row, block| {
+    parallel_rows::for_each_block(&mut output[..row_bytes * groups], row_bytes, jobs, |first_row, block| {
         block.fill(0);
         match bits {
             4 => transpose_u4(source, columns, groups, row_bytes, first_row, block),
@@ -45,29 +51,6 @@ fn transpose_from(
             16 => transpose_values::<2>(source, columns, groups, row_bytes, first_row, block),
             32 => transpose_values::<4>(source, columns, groups, row_bytes, first_row, block),
             _ => panic!("no [G, N] transpose for {bits}-bit entries"),
-        }
-    });
-}
-
-fn for_each_row_block<F>(
-    destination: &mut [u8],
-    row_bytes: usize,
-    rows: usize,
-    jobs: usize,
-    task: F,
-) where
-    F: Fn(usize, &mut [u8]) + Sync,
-{
-    const JOBS_PER_WORKER: usize = 1 << 16;
-    let num_workers = std::thread::available_parallelism()
-        .map_or(1, |parallelism| parallelism.get().saturating_sub(1).max(1))
-        .min(rows)
-        .min((jobs / JOBS_PER_WORKER).max(1));
-    let rows_per_worker = rows.div_ceil(num_workers);
-    std::thread::scope(|scope| {
-        for (index, block) in destination[..row_bytes * rows].chunks_mut(rows_per_worker * row_bytes).enumerate() {
-            let task = &task;
-            scope.spawn(move || task(index * rows_per_worker, block));
         }
     });
 }
@@ -123,7 +106,11 @@ fn transpose_u4(
             for byte_index in column_start / NIBBLES_PER_BYTE..column_end.div_ceil(NIBBLES_PER_BYTE) {
                 let low_column = byte_index * NIBBLES_PER_BYTE;
                 let high_column = low_column + 1;
-                let high_nibble = (high_column < columns).then(|| nibble(high_column)).unwrap_or(0);
+                let high_nibble = if high_column < columns {
+                    nibble(high_column)
+                } else {
+                    0
+                };
                 destination_row[byte_index] = nibble(low_column) | (high_nibble << BITS_PER_NIBBLE);
             }
         }

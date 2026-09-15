@@ -5,8 +5,6 @@ use num_traits::Float;
 use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
-#[cfg(backend = "metal")]
-use crate::backends::metal::{Metal, MetalContext};
 use crate::{
     array::ArrayElement,
     backends::{
@@ -23,8 +21,13 @@ use crate::{
     tests::{
         assert::assert_eq_float,
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
-        matmul::{QuantBuffers, QuantInput, quant_b_variant, run_quant_cpu},
+        matmul::{QuantBuffers, QuantInput, quant_b_variant},
     },
+};
+#[cfg(backend = "metal")]
+use crate::{
+    backends::metal::{Metal, MetalContext},
+    tests::matmul::run_quant_cpu,
 };
 
 struct Input<T: ArrayElement + Float> {

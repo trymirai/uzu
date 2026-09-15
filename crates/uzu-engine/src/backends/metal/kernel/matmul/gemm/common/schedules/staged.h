@@ -28,7 +28,6 @@ static METAL_FUNC auto make_staged_loader(
     const thread ThreadContext& thread_context
 ) {
   using Element = typename Core::RightElementType;
-  using Format = typename RightOperand::Format;
   const uint row_stride =
       uint(params->K) * uint(get_bytes_per_pack<RightOperand::BITS>()) / uint(get_pack_factor<RightOperand::BITS>());
   const uint groups_per_row = (uint(params->K) + uint(RightOperand::GROUP_SIZE) - 1) / uint(RightOperand::GROUP_SIZE);
@@ -47,7 +46,7 @@ static METAL_FUNC auto make_staged_loader(
         1,
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
-        Format::BITS>;
+        RightOperand::BITS>;
     return Loader(
         values,
         scales,
@@ -67,9 +66,10 @@ static METAL_FUNC auto make_staged_loader(
         1,
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
-        Format::BITS>;
-    const device uint8_t* zero_points = right.zp() + block_col * zero_point_row_stride<Format::BITS>(groups_per_row) +
-                                        ((Format::BITS == 4) ? first_group / 2 : first_group);
+        RightOperand::BITS>;
+    const device uint8_t* zero_points = right.zp() +
+                                        block_col * zero_point_row_stride<RightOperand::BITS>(groups_per_row) +
+                                        ((RightOperand::BITS == 4) ? first_group / 2 : first_group);
     return Loader(
         values,
         scales,
@@ -94,7 +94,7 @@ static METAL_FUNC auto make_staged_loader(
         1,
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
-        Format::BITS,
+        RightOperand::BITS,
         true>;
     return Loader(
         values,

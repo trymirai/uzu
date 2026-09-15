@@ -17,6 +17,7 @@ use crate::{
                 ActivationTransform, Kernels,
                 matmul::{
                     MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MetadataLayout, group_major_metadata,
+                    interleaved_w4,
                 },
             },
         },
@@ -228,9 +229,16 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         &mut self,
         input: &QuantInput<T>,
     ) {
+        if self.metadata_layout == MetadataLayout::GroupMajor {
+            return;
+        }
         let columns = input.n;
         let groups = input.k.div_ceil(input.group_size);
         assert_eq!(group_major_metadata::row_stride(columns), columns);
+        if input.mode == QuantizationMode::U4 {
+            let code_row_bytes = (input.k / input.mode.packing_divisor()) as usize;
+            interleaved_w4::convert(self.w.as_slice_mut(), code_row_bytes, input.signed_codes);
+        }
         let value_bits = size_of::<T>() as u32 * u8::BITS;
         group_major_metadata::transpose(self.scales.as_slice_mut(), columns, groups, value_bits);
         match input.quant_method {
@@ -265,7 +273,8 @@ pub fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
     metadata_layout: MetadataLayout,
     input: &QuantInput<T>,
 ) -> MatmulB<'a, B> {
-    let signed_codes = input.signed_codes;
+    let signed_codes =
+        input.signed_codes || (input.mode == QuantizationMode::U4 && metadata_layout == MetadataLayout::GroupMajor);
     match input.quant_method {
         QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
             b: w,

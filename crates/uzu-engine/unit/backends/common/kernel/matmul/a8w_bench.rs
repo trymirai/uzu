@@ -16,6 +16,7 @@ use crate::{
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
                     MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MetadataLayout, group_major_metadata,
+                    interleaved_w4,
                 },
             },
         },
@@ -50,7 +51,7 @@ impl BenchPath {
 
 struct BenchmarkData {
     unsigned_weights: Allocation<Metal>,
-    signed_weights: Allocation<Metal>,
+    a8_weights: Allocation<Metal>,
     weight_scales: Allocation<Metal>,
     /// The `[G, N]` scale plane the A8 MXU route reads.
     group_major_weight_scales: Allocation<Metal>,
@@ -80,7 +81,15 @@ impl BenchmarkData {
             .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, None);
 
         let unsigned_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
-        let signed_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_for_upload());
+        let mut a8_weights = input.weights_for_upload();
+        if bits == 4 {
+            interleaved_w4::convert(
+                bytemuck::cast_slice_mut(&mut a8_weights),
+                (k / input.mode.packing_divisor()) as usize,
+                input.signed_codes,
+            );
+        }
+        let a8_weights = alloc_allocation_with_data::<Metal, u32>(context, &a8_weights);
         let weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
         let mut group_major_weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
         group_major_metadata::transpose(group_major_weight_scales.as_slice_mut(), n, k.div_ceil(group_size), 16);
@@ -99,7 +108,7 @@ impl BenchmarkData {
         let groups = k / group_size;
         Self {
             unsigned_weights,
-            signed_weights,
+            a8_weights,
             weight_scales,
             group_major_weight_scales,
             activations,
@@ -178,7 +187,7 @@ fn encode_step(
                     group_size: 128,
                 },
                 b: MatmulB::ScaleSymmetricDequant {
-                    b: &data.signed_weights,
+                    b: &data.a8_weights,
                     scales: &data.group_major_weight_scales,
                     metadata_layout: MetadataLayout::GroupMajor,
                     mode: data.mode,
