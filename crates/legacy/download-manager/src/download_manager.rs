@@ -20,7 +20,8 @@ use crate::{
 pub struct DownloadManager {
     owner: LockOwner,
     backend: Arc<dyn Backend>,
-    tasks: Mutex<HashMap<DownloadId, (Weak<DownloadTask>, Option<TokioWatchReceiver<DownloadState>>)>>,
+    tasks: Mutex<HashMap<DownloadId, Weak<DownloadTask>>>,
+    live_states: Mutex<HashMap<DownloadId, TokioWatchReceiver<DownloadState>>>,
     construction_locks: Mutex<HashMap<DownloadId, Arc<TokioMutex<()>>>>,
 }
 
@@ -51,6 +52,7 @@ impl DownloadManager {
             },
             backend,
             tasks: Mutex::default(),
+            live_states: Mutex::default(),
             construction_locks: Mutex::default(),
         }
     }
@@ -85,27 +87,20 @@ impl DownloadManager {
         if let Some(cached) = self.cached(download_id, &request) {
             return cached;
         }
-        let stopping = self
-            .tasks
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&download_id)
-            .and_then(|(_, live_state)| live_state.clone());
+        let stopping = self.live_states.lock().unwrap_or_else(PoisonError::into_inner).get(&download_id).cloned();
         if let Some(mut live_state) = stopping {
             while live_state.changed().await.is_ok() {}
         }
         let task = Arc::new(self.build(&request, ancestors).await?);
-        let live_state = match &*task {
-            DownloadTask::File(file) => Some(file.live_state()),
-            DownloadTask::Group(_) => None,
-        };
         {
             let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
-            tasks.retain(|_, (task, live_state)| {
-                task.strong_count() > 0
-                    || live_state.as_ref().is_some_and(|live_state| live_state.has_changed().is_ok())
-            });
-            tasks.insert(download_id, (Arc::downgrade(&task), live_state));
+            tasks.retain(|_, task| task.strong_count() > 0);
+            tasks.insert(download_id, Arc::downgrade(&task));
+        }
+        if let DownloadTask::File(file) = &*task {
+            let mut live_states = self.live_states.lock().unwrap_or_else(PoisonError::into_inner);
+            live_states.retain(|_, live_state| live_state.has_changed().is_ok());
+            live_states.insert(download_id, file.live_state());
         }
         self.construction_locks
             .lock()
@@ -119,7 +114,7 @@ impl DownloadManager {
         download_id: DownloadId,
         request: &DownloadTaskRequest,
     ) -> Option<Result<Arc<DownloadTask>, DownloadError>> {
-        let task = self.tasks.lock().unwrap_or_else(PoisonError::into_inner).get(&download_id)?.0.upgrade()?;
+        let task = self.tasks.lock().unwrap_or_else(PoisonError::into_inner).get(&download_id)?.upgrade()?;
         Some(if task.request() == request {
             Ok(task)
         } else {
