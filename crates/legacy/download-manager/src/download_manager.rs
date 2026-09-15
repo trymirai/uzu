@@ -1,19 +1,18 @@
 use std::{
     collections::HashMap,
     net::IpAddr,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{Arc, Mutex, PoisonError, Weak},
 };
 
 use kiban::rt::RuntimeHandle;
 use reqwest::Url;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{Mutex as TokioMutex, watch::Receiver as TokioWatchReceiver};
 use uuid::Uuid;
 
 use crate::{
-    DownloadError, DownloadId, DownloadManagerType, DownloadTask, DownloadTaskKind, DownloadTaskRequest,
+    DownloadError, DownloadId, DownloadManagerType, DownloadState, DownloadTask, DownloadTaskKind, DownloadTaskRequest,
     GroupDownloadTask,
     backends::{Backend, UniversalBackend},
-    cached_download_task::CachedDownloadTask,
     file_download::{DownloadConfig, FileDownloadWorker},
     locks::LockOwner,
 };
@@ -21,7 +20,7 @@ use crate::{
 pub struct DownloadManager {
     owner: LockOwner,
     backend: Arc<dyn Backend>,
-    tasks: Mutex<HashMap<DownloadId, CachedDownloadTask>>,
+    tasks: Mutex<HashMap<DownloadId, (Weak<DownloadTask>, Option<TokioWatchReceiver<DownloadState>>)>>,
     construction_locks: Mutex<HashMap<DownloadId, Arc<TokioMutex<()>>>>,
 }
 
@@ -91,7 +90,7 @@ impl DownloadManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&download_id)
-            .and_then(|cached| cached.live_state.clone());
+            .and_then(|(_, live_state)| live_state.clone());
         if let Some(mut live_state) = stopping {
             while live_state.changed().await.is_ok() {}
         }
@@ -102,17 +101,11 @@ impl DownloadManager {
         };
         {
             let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
-            tasks.retain(|_, cached| {
-                cached.task.strong_count() > 0
-                    || cached.live_state.as_ref().is_some_and(|live_state| live_state.has_changed().is_ok())
+            tasks.retain(|_, (task, live_state)| {
+                task.strong_count() > 0
+                    || live_state.as_ref().is_some_and(|live_state| live_state.has_changed().is_ok())
             });
-            tasks.insert(
-                download_id,
-                CachedDownloadTask {
-                    task: Arc::downgrade(&task),
-                    live_state,
-                },
-            );
+            tasks.insert(download_id, (Arc::downgrade(&task), live_state));
         }
         self.construction_locks
             .lock()
@@ -126,7 +119,7 @@ impl DownloadManager {
         download_id: DownloadId,
         request: &DownloadTaskRequest,
     ) -> Option<Result<Arc<DownloadTask>, DownloadError>> {
-        let task = self.tasks.lock().unwrap_or_else(PoisonError::into_inner).get(&download_id)?.task.upgrade()?;
+        let task = self.tasks.lock().unwrap_or_else(PoisonError::into_inner).get(&download_id)?.0.upgrade()?;
         Some(if task.request() == request {
             Ok(task)
         } else {

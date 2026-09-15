@@ -3,7 +3,6 @@ uniffi::setup_scaffolding!();
 
 mod backends;
 mod bearer_token;
-mod cached_download_task;
 mod checksum;
 mod checksum_receipt;
 mod download_error;
