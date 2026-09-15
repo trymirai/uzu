@@ -493,7 +493,11 @@ impl GemmKernel {
             aligned_inner_iterations: kp / k_step,
             use_morton: false,
             ab_scale: 1.0,
-            metadata_stride: metadata_stride(shape),
+            metadata_stride: if shape.is_quant() {
+                metadata_stride(shape)
+            } else {
+                0
+            },
         };
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
         part_kernel.encode(
