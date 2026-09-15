@@ -1,6 +1,6 @@
 use shoji::types::{
     basic::Metadata,
-    model::{Model, ModelAccessibility, ModelBackend, ModelReference, ModelRegistry},
+    model::{Model, ModelAccessibility, ModelBackend, ModelRegistry, ModelSource},
 };
 
 use crate::ServedFile;
@@ -36,8 +36,8 @@ pub fn mock_model(
         properties: None,
         quantization: None,
         specializations: vec![],
-        accessibility: ModelAccessibility::Local {
-            reference: ModelReference::Mirai {
+        accessibility: ModelAccessibility::OnDevice {
+            source: ModelSource::Registry {
                 toolchain_version: "1.0".to_string(),
                 repository: None,
                 source_repository: None,

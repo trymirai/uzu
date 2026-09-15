@@ -14,7 +14,7 @@ use uuid::Uuid;
 use uzu::{
     engine::Downloader,
     storage::{DownloadManagerType, DownloadPhase, DownloadState, Storage},
-    types::model::{ModelAccessibility, ModelIdentifier, ModelReference},
+    types::model::{ModelAccessibility, ModelIdentifier, ModelSource},
 };
 
 use crate::common::TestStorage;
@@ -82,8 +82,8 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     assert!(destination.exists());
 
     let mut changed = model.clone();
-    if let ModelAccessibility::Local {
-        reference: ModelReference::Mirai {
+    if let ModelAccessibility::OnDevice {
+        source: ModelSource::Registry {
             files,
             ..
         },

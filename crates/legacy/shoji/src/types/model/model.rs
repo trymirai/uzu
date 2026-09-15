@@ -4,7 +4,7 @@ use crate::types::{
     basic::{Metadata, Value},
     model::{
         ModelAccessibility, ModelBackend, ModelFamily, ModelIdentifier, ModelProperties, ModelQuantization,
-        ModelReference, ModelRegistry, ModelSpecialization,
+        ModelRegistry, ModelSource, ModelSpecialization,
     },
 };
 
@@ -43,8 +43,8 @@ impl Model {
     }
 
     #[bindings::export(Method(Getter))]
-    pub fn is_local(&self) -> bool {
-        matches!(self.accessibility, ModelAccessibility::Local { .. })
+    pub fn is_on_device(&self) -> bool {
+        matches!(self.accessibility, ModelAccessibility::OnDevice { .. })
     }
 
     #[bindings::export(Method(Getter))]
@@ -56,8 +56,8 @@ impl Model {
     pub fn is_downloadable(&self) -> bool {
         matches!(
             self.accessibility,
-            ModelAccessibility::Local {
-                reference: ModelReference::Mirai { .. } | ModelReference::HuggingFace { .. }
+            ModelAccessibility::OnDevice {
+                source: ModelSource::Registry { .. }
             }
         )
     }
@@ -75,101 +75,52 @@ impl Model {
     #[bindings::export(Method(Getter))]
     pub fn repo_ids(&self) -> Vec<String> {
         match &self.accessibility {
-            ModelAccessibility::Local {
-                reference,
-                ..
-            } => match reference {
-                ModelReference::Mirai {
-                    repository,
-                    source_repository,
+            ModelAccessibility::OnDevice {
+                source:
+                    ModelSource::Registry {
+                        repository,
+                        source_repository,
+                        ..
+                    },
+            } => repository
+                .iter()
+                .chain(source_repository.iter())
+                .map(|repository| repository.identifier.clone())
+                .collect(),
+            ModelAccessibility::OnDevice {
+                source: ModelSource::Filesystem {
                     ..
-                } => {
-                    let mut result = vec![];
-                    if let Some(repository) = repository {
-                        result.push(repository.identifier.clone());
-                    }
-                    if let Some(source_repository) = source_repository {
-                        result.push(source_repository.identifier.clone());
-                    }
-                    result
                 },
-                ModelReference::HuggingFace {
-                    repository,
-                } => vec![repository.identifier.clone()],
-                ModelReference::Local {
-                    ..
-                } => vec![],
-            },
+            } => vec![],
             ModelAccessibility::Remote {
                 repository,
-                ..
-            } => {
-                let mut result = vec![];
-                if let Some(repository) = repository {
-                    result.push(repository.identifier.clone());
-                }
-                result
-            },
+            } => repository.iter().map(|repository| repository.identifier.clone()).collect(),
         }
     }
 
     #[bindings::export(Method(Getter))]
-    pub fn local_external_path(&self) -> Option<String> {
+    pub fn filesystem_path(&self) -> Option<String> {
         match &self.accessibility {
-            ModelAccessibility::Local {
-                reference,
-                ..
-            } => match reference {
-                ModelReference::Mirai {
-                    ..
-                } => None,
-                ModelReference::HuggingFace {
-                    ..
-                } => None,
-                ModelReference::Local {
+            ModelAccessibility::OnDevice {
+                source: ModelSource::Filesystem {
                     path,
-                } => Some(path.clone()),
-            },
-            ModelAccessibility::Remote {
-                ..
-            } => None,
-        }
-    }
-
-    #[bindings::export(Method(Getter))]
-    pub fn reference_name(&self) -> Option<String> {
-        match &self.accessibility {
-            ModelAccessibility::Local {
-                reference,
-                ..
-            } => Some(reference.name()),
-            ModelAccessibility::Remote {
-                ..
-            } => None,
+                },
+            } => Some(path.clone()),
+            _ => None,
         }
     }
 
     #[bindings::export(Method(Getter))]
     pub fn checkpoint_version(&self) -> Option<String> {
         match &self.accessibility {
-            ModelAccessibility::Local {
-                reference,
-                ..
-            } => match reference {
-                ModelReference::Mirai {
-                    toolchain_version,
-                    ..
-                } => Some(toolchain_version.clone()),
-                ModelReference::HuggingFace {
-                    repository,
-                } => repository.commit_hash.clone(),
-                ModelReference::Local {
-                    ..
-                } => None,
-            },
-            ModelAccessibility::Remote {
-                ..
-            } => None,
+            ModelAccessibility::OnDevice {
+                source:
+                    ModelSource::Registry {
+                        toolchain_version,
+                        ..
+                    },
+            } => Some(toolchain_version.clone()),
+            _ => None,
         }
     }
 }

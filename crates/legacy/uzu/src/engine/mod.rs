@@ -260,8 +260,8 @@ impl Engine {
     }
 
     #[bindings::export(Method(Getter))]
-    pub async fn models_local(&self) -> Result<Vec<Model>, EngineError> {
-        Ok(self.models().await?.into_iter().filter(|model| model.is_local()).collect())
+    pub async fn models_on_device(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_on_device()).collect())
     }
 
     #[bindings::export(Method(Getter))]
@@ -421,11 +421,11 @@ impl Engine {
         &self,
         model: &Model,
     ) -> Option<String> {
-        if !model.is_local() {
+        if !model.is_on_device() {
             return None;
         }
-        if let Some(local_external_path) = model.local_external_path() {
-            return Some(local_external_path);
+        if let Some(filesystem_path) = model.filesystem_path() {
+            return Some(filesystem_path);
         }
         let state = self.storage.state(&model.identifier).await.ok()?;
         if !matches!(state.phase, DownloadPhase::Downloaded {}) {

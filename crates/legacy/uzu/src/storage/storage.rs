@@ -5,7 +5,7 @@ use futures_util::future::join_all;
 use kiban::{fs, rt::RuntimeHandle};
 use shoji::types::{
     basic::File,
-    model::{Model, ModelAccessibility, ModelIdentifier, ModelReference},
+    model::{Model, ModelAccessibility, ModelIdentifier, ModelSource},
 };
 use tokio::sync::{
     Mutex as TokioMutex,
@@ -49,12 +49,11 @@ impl Storage {
         &self,
         model: &Model,
     ) -> Option<PathBuf> {
-        let reference_name = model.reference_name()?;
         let checkpoint_version = model.checkpoint_version()?;
         Some(
             Self::cache_path(&self.config)
                 .join("models")
-                .join(reference_name)
+                .join("mirai")
                 .join(model.cache_identifier())
                 .join(checkpoint_version),
         )
@@ -66,8 +65,8 @@ impl Storage {
     ) -> Result<(), StorageError> {
         let mut requests = HashMap::new();
         for model in models {
-            let ModelAccessibility::Local {
-                reference: ModelReference::Mirai {
+            let ModelAccessibility::OnDevice {
+                source: ModelSource::Registry {
                     files,
                     ..
                 },
