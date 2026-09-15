@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use bon::bon;
 use uuid::Uuid;
 
-use crate::{Crc32c, DownloadId, DownloadTaskKind};
+use crate::{Checksum, DownloadId, DownloadTaskKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DownloadTaskRequest {
@@ -17,14 +17,14 @@ impl DownloadTaskRequest {
     pub fn file(
         #[builder(into)] destination: PathBuf,
         #[builder(into)] source_url: String,
-        #[builder(into)] expected_crc32c: Option<Crc32c>,
+        expected_checksum: Option<Checksum>,
         expected_bytes: Option<u64>,
     ) -> Self {
         Self {
             destination,
             kind: DownloadTaskKind::File {
                 source_url,
-                expected_crc32c,
+                expected_checksum,
                 expected_bytes,
             },
         }

@@ -52,7 +52,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     for served in registry.files.iter() {
         let destination = cache_path.join(&served.file.name);
         assert_eq!(tokio::fs::read(&destination).await?, served.bytes.to_vec());
-        assert!(artifact_path(&destination, "crc").is_file());
+        assert!(artifact_path(&destination, "checksum").is_file());
     }
 
     storage.delete(&identifier).await?;
@@ -62,7 +62,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     for served in registry.files.iter() {
         let destination = cache_path.join(&served.file.name);
         assert!(!destination.exists());
-        assert!(!artifact_path(&destination, "crc").exists());
+        assert!(!artifact_path(&destination, "checksum").exists());
     }
 
     let served = registry.files.first().ok_or("mock registry must include files")?;

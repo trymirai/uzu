@@ -1,10 +1,10 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use download_manager::{DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
+use download_manager::{Checksum, DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
 use futures_util::future::join_all;
 use kiban::{fs, rt::RuntimeHandle};
 use shoji::types::{
-    basic::File,
+    basic::{File, HashMethod},
     model::{Model, ModelAccessibility, ModelIdentifier, ModelSource},
 };
 use tokio::sync::{
@@ -169,14 +169,22 @@ impl Storage {
         let subrequests = files
             .iter()
             .map(|file| {
-                let crc32c = file.crc32c().ok_or_else(|| StorageError::HashNotFound {
-                    identifier: model.identifier.clone(),
-                    name: file.name.clone(),
-                })?;
+                let checksum = file
+                    .hashes
+                    .first()
+                    .map(|hash| match hash.method {
+                        HashMethod::CRC32C => Checksum::Crc32c(hash.value.clone()),
+                        HashMethod::Sha256 => Checksum::Sha256(hash.value.clone()),
+                        HashMethod::GitBlobSha1 => Checksum::GitBlobSha1(hash.value.clone()),
+                    })
+                    .ok_or_else(|| StorageError::HashNotFound {
+                        identifier: model.identifier.clone(),
+                        name: file.name.clone(),
+                    })?;
                 Ok(DownloadTaskRequest::file()
                     .destination(&file.name)
                     .source_url(&file.url)
-                    .expected_crc32c(crc32c)
+                    .expected_checksum(checksum)
                     .maybe_expected_bytes(u64::try_from(file.size).ok())
                     .build())
             })

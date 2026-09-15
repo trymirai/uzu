@@ -194,7 +194,7 @@ impl Backend for AppleBackend {
                 && AppleTaskDescription::of(&task).is_some_and(|description| {
                     description.download_id == config.download_id
                         && description.source_url == config.source_url
-                        && description.crc32c == config.expected_crc32c
+                        && description.checksum == config.expected_checksum
                 })
             {
                 attached = Some(self.activate(task, &config, generation, events.clone()));

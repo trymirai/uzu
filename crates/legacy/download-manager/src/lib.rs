@@ -3,8 +3,8 @@ uniffi::setup_scaffolding!();
 
 mod backends;
 mod cached_download_task;
-mod crc32c;
-mod crc_receipt;
+mod checksum;
+mod checksum_receipt;
 mod download_error;
 mod download_id;
 mod download_manager;
@@ -21,7 +21,7 @@ mod locks;
 #[cfg(target_vendor = "apple")]
 pub use backends::AppleBackendError;
 pub use backends::BackendError;
-pub use crc32c::Crc32c;
+pub use checksum::Checksum;
 pub use download_error::DownloadError;
 pub use download_id::DownloadId;
 pub use download_manager::DownloadManager;

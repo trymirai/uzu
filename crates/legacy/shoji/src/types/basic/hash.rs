@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub enum HashMethod {
     #[serde(rename = "crc32c")]
     CRC32C,
+    Sha256,
+    GitBlobSha1,
 }
 
 #[bindings::export(Structure(Class))]

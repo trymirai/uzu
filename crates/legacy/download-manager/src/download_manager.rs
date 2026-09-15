@@ -140,7 +140,7 @@ impl DownloadManager {
         match &request.kind {
             DownloadTaskKind::File {
                 source_url,
-                expected_crc32c,
+                expected_checksum,
                 expected_bytes,
             } => {
                 let config = Arc::new(DownloadConfig {
@@ -148,7 +148,7 @@ impl DownloadManager {
                     source_url: source_url.clone(),
                     destination: request.destination.clone(),
                     resume_artifact_path: self.backend.resume_artifact_path(&request.destination),
-                    expected_crc32c: expected_crc32c.clone(),
+                    expected_checksum: expected_checksum.clone(),
                     expected_bytes: *expected_bytes,
                     owner: self.owner.clone(),
                 });
