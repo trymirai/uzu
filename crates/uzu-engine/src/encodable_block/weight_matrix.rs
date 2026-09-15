@@ -266,13 +266,14 @@ impl<B: Backend> Quantized<B> {
         if interleave_w4 {
             interleaved_w4::convert(values.as_slice_mut(), row_bytes, self.signed_codes);
             self.w4_codes_interleaved = true;
-        } else if self.info.mode != QuantizationMode::U4 && !self.signed_codes {
-            if let Some(sign_flip_mask) = self.info.mode.weight_codes_sign_flip_mask() {
-                let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
-                let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(values.as_slice_mut());
-                words.iter_mut().for_each(|word| *word ^= broadcast_mask);
-                prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
-            }
+        } else if self.info.mode != QuantizationMode::U4
+            && !self.signed_codes
+            && let Some(sign_flip_mask) = self.info.mode.weight_codes_sign_flip_mask()
+        {
+            let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
+            let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(values.as_slice_mut());
+            words.iter_mut().for_each(|word| *word ^= broadcast_mask);
+            prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
         }
         self.signed_codes = true;
         true
