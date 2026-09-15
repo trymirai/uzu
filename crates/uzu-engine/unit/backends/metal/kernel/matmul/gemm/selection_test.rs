@@ -1,12 +1,9 @@
 use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 
-use super::{super::specialization::GemmSpecialization, *};
+use super::*;
 use crate::backends::{
-    common::{
-        gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
-        kernel::matmul::MetadataLayout,
-    },
+    common::{gpu_types::gemm::GemmDTransform, kernel::matmul::MetadataLayout},
     metal::kernel::matmul::MatmulMetalKernel,
 };
 
@@ -45,14 +42,6 @@ fn problem(
     output_data_type: DataType,
 ) -> GemmProblem {
     GemmProblem::new(shape, DataType::BF16, output_data_type, true, MTLGPUFamily::Apple7)
-}
-
-fn plan(split_k: u32) -> GemmPlan {
-    GemmPlan {
-        engine: GemmEngine::Mxu,
-        tiling: GemmTiling::Tile64x64x256_Simdgroups2x2,
-        split_k,
-    }
 }
 
 #[uzu_test]
@@ -169,30 +158,6 @@ fn forced_engine_errors_are_preserved() {
         problem(invalid_layout, DataType::BF16).select_plan_for_engine(GemmEngine::Mxu),
         Err(GemmPlanError::UnsupportedQuantLayout)
     );
-}
-
-#[uzu_test]
-fn specialization_flags_are_preserved() {
-    let specialization = |shape, split_k| {
-        GemmSpecialization::from_plan(
-            plan(split_k),
-            shape,
-            DataType::BF16,
-            GemmDTransform::empty(),
-            GemmAlignment::new(true, true, true),
-            GemmAPrologueKind::FullPrecision,
-            None,
-        )
-        .unwrap()
-    };
-    for (split_k, hoist) in [(1, false), (2, true)] {
-        let spec = specialization(shape(64, 4096, 4096), split_k);
-        assert!(spec.stage_weight_scales);
-        assert_eq!(spec.hoist_operand_addressing, hoist);
-    }
-    let spec = specialization(quant(shape(64, 4096, 4096)), 1);
-    assert!(spec.stage_weight_scales);
-    assert!(spec.hoist_operand_addressing);
 }
 
 #[uzu_test]

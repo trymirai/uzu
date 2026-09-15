@@ -83,8 +83,6 @@ impl GemmKernel {
                     specialization.output_transform,
                     specialization.alignment,
                     specialization.signed_codes,
-                    specialization.stage_weight_scales,
-                    specialization.hoist_operand_addressing,
                 )?;
                 Ok(entry.insert(kernel))
             },
@@ -170,12 +168,6 @@ impl GemmKernel {
         let output_bias = arguments.d_transform.bias;
         let rht_factors = arguments.d_transform.rht_factors;
         let output_transform = arguments.d_transform.mask();
-
-        let b_prologue = arguments.b.b_prologue();
-        let bits_per_b = arguments.b.bits_per_b();
-        let group_size = arguments.b.group_size();
-        let weights_signed_codes = arguments.b.signed_codes();
-        let metadata_layout = arguments.b.metadata_layout();
 
         let MatmulArguments {
             a,
@@ -310,7 +302,7 @@ impl GemmKernel {
             | MatmulB::ScaleSymmetricDequant {
                 ..
             }) => {
-                if metadata_layout == MetadataLayout::GroupMajor && shape.a_full_precision {
+                if shape.metadata_layout == MetadataLayout::GroupMajor && shape.a_full_precision {
                     return Err(MatmulError::UnsupportedLayout {
                         path: "Gemm",
                     }
@@ -349,16 +341,7 @@ impl GemmKernel {
                         group_sums: activation_group_sums,
                         group_size: a_group_size,
                     } => {
-                        validate_int8_activation_arguments(
-                            use_mxu,
-                            weights_signed_codes,
-                            k,
-                            b_prologue,
-                            bits_per_b,
-                            group_size,
-                            metadata_layout,
-                            *a_group_size,
-                        )?;
+                        validate_int8_activation_arguments(use_mxu, shape, *a_group_size)?;
                         if output_transform.contains(GemmDTransform::SOFT_CAP) {
                             return Err(MatmulError::UnsupportedDOp {
                                 bit: GemmDTransform::SOFT_CAP,
@@ -510,9 +493,7 @@ impl GemmKernel {
             aligned_inner_iterations: kp / k_step,
             use_morton: false,
             ab_scale: 1.0,
-            metadata_stride: shape
-                .metadata_layout
-                .row_stride(shape.n, shape.b_group_size.map_or(0, |group_size| shape.k.div_ceil(group_size))),
+            metadata_stride: metadata_stride(shape),
         };
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
         part_kernel.encode(
@@ -562,27 +543,24 @@ impl GemmKernel {
 
 fn validate_int8_activation_arguments(
     use_mxu: bool,
-    weights_signed_codes: bool,
-    k: u32,
-    b_prologue: GemmBPrologueKind,
-    bits_per_b: Option<u32>,
-    weight_group_size: Option<u32>,
-    metadata_layout: MetadataLayout,
+    shape: MatmulShape,
     a_group_size: u32,
 ) -> Result<(), MetalError> {
     let compatible = use_mxu
-        && weights_signed_codes
-        && metadata_layout == MetadataLayout::GroupMajor
+        && shape.signed_codes
+        && shape.metadata_layout == MetadataLayout::GroupMajor
         && matches!(
-            b_prologue,
+            shape.b_prologue,
             GemmBPrologueKind::ScaleSymmetricDequant
                 | GemmBPrologueKind::ScaleBiasDequant
                 | GemmBPrologueKind::ScaleZeroPointDequant
         )
-        && matches!(bits_per_b, Some(4 | 8))
+        && matches!(shape.b_bits, Some(4 | 8))
         && matches!(a_group_size, 32 | 64 | 128)
-        && k.is_multiple_of(a_group_size)
-        && weight_group_size.is_some_and(|gs| matches!(gs, 32 | 64 | 128) && k.is_multiple_of(gs));
+        && shape.k.is_multiple_of(a_group_size)
+        && shape
+            .b_group_size
+            .is_some_and(|gs| matches!(gs, 32 | 64 | 128) && shape.k.is_multiple_of(gs) && a_group_size >= gs);
     if !compatible {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
