@@ -114,6 +114,7 @@ impl EncodingTrait for HanashiEncodingImpl {
         let eos_token = self.config.tokens.eos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
         let text = self.renderer.render(&messages, true, bos_token, eos_token, None)?;
         let text_encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
+        tracing::debug!("Encoded tokens: {:?}", text_encoding.get_ids());
         for token_id in text_encoding.get_ids() {
             let token = self.resolve_token(*token_id, true)?;
             self.push_token_to_parser(&token, true)?;

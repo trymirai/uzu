@@ -948,6 +948,7 @@ dependencies = [
  "tokio-stream",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
+ "tracing-subscriber",
  "unicode-segmentation",
  "unicode-width 0.2.2",
  "uuid",
@@ -2422,10 +2423,8 @@ dependencies = [
 name = "hanashi"
 version = "0.5.26"
 dependencies = [
- "fancy-regex 0.17.0",
  "indexmap 2.14.0",
  "libc",
- "llm_json",
  "minijinja",
  "minijinja-contrib",
  "openai-harmony",
@@ -2436,6 +2435,7 @@ dependencies = [
  "thiserror 2.0.18",
  "token-stream-parser",
  "tokenizers",
+ "tracing",
 ]
 
 [[package]]
@@ -5628,9 +5628,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.41"
+version = "0.23.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b92b125634d9b795e7beca796cc790df15a7fb38323bf3196fda83292d06b1f"
+checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
@@ -6518,7 +6518,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
