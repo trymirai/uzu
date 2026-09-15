@@ -17,6 +17,7 @@ impl TestStorage {
         tokio_handle: RuntimeHandle,
         models: Vec<Model>,
         download_manager_type: DownloadManagerType,
+        huggingface_api_key: Option<&str>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let temp_dir_guard = tempfile::tempdir()?;
         let config = Config::new(
@@ -24,6 +25,7 @@ impl TestStorage {
             Some(temp_dir_guard.path().to_path_buf()),
             "test_storage".to_string(),
             download_manager_type,
+            huggingface_api_key.map(str::to_string),
         );
         let storage = Storage::new(tokio_handle, config).await?;
         storage.refresh(&models).await?;

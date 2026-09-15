@@ -89,8 +89,13 @@ impl Engine {
         });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
-        let storage_config =
-            StorageConfig::new(device.clone(), None, "mirai".to_string(), config.download_manager_type);
+        let storage_config = StorageConfig::new(
+            device.clone(),
+            None,
+            "mirai".to_string(),
+            config.download_manager_type,
+            config.huggingface_api_key.clone(),
+        );
         let storage_cache_path = Storage::cache_path(&storage_config);
         logs::start(storage_cache_path.clone(), &format!("{}.log", storage_config.name), false);
         let storage = Arc::new(Storage::new(runtime_handle, storage_config).await?);
@@ -113,6 +118,7 @@ impl Engine {
             let mirai_registry = Box::new(
                 MiraiRegistry::builder()
                     .maybe_api_key(config.mirai_api_key)
+                    .maybe_huggingface_api_key(config.huggingface_api_key)
                     .device(device.clone())
                     .backends(vec![MiraiBackend {
                         identifier: uzu_backend_identifier.clone(),

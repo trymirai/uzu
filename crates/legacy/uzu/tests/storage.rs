@@ -14,10 +14,20 @@ use uuid::Uuid;
 use uzu::{
     engine::Downloader,
     storage::{DownloadManagerType, DownloadPhase, DownloadState, Storage},
-    types::model::{ModelAccessibility, ModelIdentifier, ModelSource},
+    types::{
+        basic::{File, Hash, HashMethod, Repository},
+        model::{Model, ModelAccessibility, ModelIdentifier, ModelSource},
+    },
+};
+use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{header, method, path},
 };
 
 use crate::common::TestStorage;
+
+const HELLO: &[u8] = b"hello\n";
+const REVISION: &str = "f5dec40ceb1d8c4b15f049bf5e185dd7be2cc150";
 
 #[rstest]
 #[case::universal(DownloadManagerType::Universal)]
@@ -26,7 +36,7 @@ use crate::common::TestStorage;
 async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let model = registry.models.first().ok_or("mock registry must include a model")?;
-    let test_storage = TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind).await?;
+    let test_storage = TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind, None).await?;
     let storage = &test_storage.storage;
     let identifier = model.identifier.clone();
     let cache_path = storage.cache_model_path(model).ok_or("model must have a cache path")?;
@@ -107,7 +117,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
 async fn downloader_streams(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let model = registry.models.first().ok_or("mock registry must include a model")?;
-    let test_storage = TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind).await?;
+    let test_storage = TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind, None).await?;
     let storage = Arc::clone(&test_storage.storage);
     let identifier = model.identifier.clone();
     let downloader = Downloader::new(identifier.clone(), Arc::clone(&storage));
@@ -135,6 +145,74 @@ async fn downloader_streams(#[case] kind: DownloadManagerType) -> Result<(), Box
     .await?;
     assert!(matches!(last.map(|state| state.phase), Some(DownloadPhase::Downloaded {})));
     assert!(downloader.progress().await?.next().await.is_none());
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(DownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::native(DownloadManagerType::Native))]
+#[tokio::test(flavor = "multi_thread")]
+async fn hugging_face_model(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let files = [
+        ("config.json", HashMethod::GitBlobSha1, "ce013625030ba8dba906f756967f9e9ca394464a"),
+        ("model.safetensors", HashMethod::Sha256, "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"),
+    ];
+    let mut served = Vec::new();
+    for (name, hash_method, digest) in files.clone() {
+        let route = format!("/trymirai/model/resolve/{REVISION}/{name}");
+        Mock::given(method("GET"))
+            .and(path(route.clone()))
+            .and(header("authorization", "Bearer hf_test"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(HELLO))
+            .mount(&server)
+            .await;
+        served.push(File {
+            url: format!("{}{route}", server.uri()),
+            name: name.to_string(),
+            size: HELLO.len() as i64,
+            hashes: vec![Hash {
+                method: hash_method,
+                value: digest.to_string(),
+            }],
+        });
+    }
+    let model = Model::external(
+        "pinned".to_string(),
+        "mirai".to_string(),
+        "Mirai".to_string(),
+        "uzu".to_string(),
+        "Uzu".to_string(),
+        "1".to_string(),
+        vec![],
+        ModelAccessibility::OnDevice {
+            source: ModelSource::Registry {
+                toolchain_version: "1".to_string(),
+                repository: Some(Repository {
+                    identifier: "trymirai/model".to_string(),
+                    commit_hash: Some(REVISION.to_string()),
+                    paths: None,
+                }),
+                source_repository: None,
+                files: served,
+            },
+        },
+        None,
+    );
+    let test_storage = TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind, Some("hf_test")).await?;
+    let storage = &test_storage.storage;
+    let cache_path = storage.cache_model_path(&model).ok_or("model must have a cache path")?;
+    assert_eq!(cache_path.file_name().and_then(|name| name.to_str()), Some(REVISION));
+    let mut events = storage.subscribe();
+
+    storage.download(&model.identifier).await?;
+    wait_for(storage, &model.identifier, &mut events, |state| matches!(state.phase, DownloadPhase::Downloaded {}))
+        .await;
+    for (name, ..) in files {
+        let destination = cache_path.join(name);
+        assert_eq!(tokio::fs::read(&destination).await?, HELLO);
+        assert!(artifact_path(&destination, "checksum").is_file());
+    }
     Ok(())
 }
 

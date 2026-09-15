@@ -7607,6 +7607,7 @@ dependencies = [
  "uzu-engine",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wiremock",
 ]
 
 [[package]]

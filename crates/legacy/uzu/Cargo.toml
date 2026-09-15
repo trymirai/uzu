@@ -135,6 +135,7 @@ schemars.workspace = true
 serde_json.workspace = true
 mock-registry.workspace = true
 rstest.workspace = true
+wiremock.workspace = true
 
 [[test]]
 name = "tool"

@@ -13,6 +13,8 @@ pub struct Config {
     pub name: String,
     #[serde(default)]
     pub download_manager_type: DownloadManagerType,
+    #[serde(skip)]
+    pub huggingface_api_key: Option<String>,
 }
 
 impl Config {
@@ -21,12 +23,14 @@ impl Config {
         base_path: Option<PathBuf>,
         name: String,
         download_manager_type: DownloadManagerType,
+        huggingface_api_key: Option<String>,
     ) -> Self {
         Self {
             device,
             base_path,
             name,
             download_manager_type,
+            huggingface_api_key,
         }
     }
 }
