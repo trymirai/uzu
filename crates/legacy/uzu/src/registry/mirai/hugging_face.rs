@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use bon::bon;
-use reqwest::{Client, Url};
+use download_manager::BearerToken;
+use reqwest::{Client, Url, header::AUTHORIZATION};
 use shoji::types::basic::{File, Hash, HashMethod, Repository};
 
 use super::{api::HUGGING_FACE_URL, hugging_face_model::HuggingFaceModel};
@@ -10,7 +11,7 @@ use crate::registry::RegistryError;
 pub struct HuggingFace {
     client: Client,
     endpoint: Url,
-    token: Option<String>,
+    token: Option<BearerToken>,
 }
 
 #[bon]
@@ -18,7 +19,7 @@ impl HuggingFace {
     #[builder]
     pub fn new(
         #[builder(default = HUGGING_FACE_URL.to_string(), into)] endpoint: String,
-        token: Option<String>,
+        token: Option<BearerToken>,
     ) -> Result<Self, RegistryError> {
         let client = Client::builder().timeout(Duration::from_secs(30)).build().map_err(unable_to_create)?;
         let endpoint = Url::parse(&endpoint).map_err(unable_to_create)?;
@@ -43,7 +44,7 @@ impl HuggingFace {
         metadata_url.set_query(Some("blobs=true"));
         let mut request = self.client.get(metadata_url);
         if let Some(token) = &self.token {
-            request = request.bearer_auth(token);
+            request = request.header(AUTHORIZATION, token.header_value());
         }
         let response =
             request.send().await.and_then(|response| response.error_for_status()).map_err(unable_to_get_models)?;

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use download_manager::{BearerToken, Checksum, DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
+use download_manager::{Checksum, DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
 use futures_util::future::join_all;
 use kiban::{fs, rt::RuntimeHandle};
 use shoji::types::{
@@ -13,7 +13,10 @@ use tokio::sync::{
 };
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
-use crate::storage::{Config, StorageError, model_tasks::ModelTasks};
+use crate::{
+    helpers::same_origin,
+    storage::{Config, StorageError, model_tasks::ModelTasks},
+};
 
 pub struct Storage {
     config: Config,
@@ -66,18 +69,15 @@ impl Storage {
         let mut requests = HashMap::new();
         for model in models {
             let ModelAccessibility::OnDevice {
-                source:
-                    ModelSource::Registry {
-                        repository,
-                        files,
-                        ..
-                    },
+                source: ModelSource::Registry {
+                    files,
+                    ..
+                },
             } = &model.accessibility
             else {
                 continue;
             };
-            let pinned = repository.as_ref().is_some_and(|repository| repository.commit_hash.is_some());
-            requests.entry(model.identifier.clone()).or_insert(self.request(model, files, pinned)?);
+            requests.entry(model.identifier.clone()).or_insert(self.request(model, files)?);
         }
         let missing: Vec<(ModelIdentifier, DownloadTaskRequest)> = {
             let mut tasks = self.tasks.lock().await;
@@ -165,16 +165,19 @@ impl Storage {
         &self,
         model: &Model,
         files: &[File],
-        authenticate: bool,
     ) -> Result<DownloadTaskRequest, StorageError> {
         let cache_path = self.cache_model_path(model).ok_or_else(|| StorageError::UnsupportedModel {
             identifier: model.identifier.clone(),
         })?;
-        let bearer_token =
-            authenticate.then(|| self.config.huggingface_api_key.clone().map(BearerToken::from)).flatten();
         let subrequests = files
             .iter()
             .map(|file| {
+                // Other origins reject a foreign bearer token: the Mirai CDN answers 401 to one.
+                let bearer_token = self
+                    .config
+                    .huggingface_api_key
+                    .clone()
+                    .filter(|_| same_origin(&file.url, &self.config.huggingface_url));
                 let checksum = file
                     .hashes
                     .first()
@@ -190,7 +193,7 @@ impl Storage {
                 Ok(DownloadTaskRequest::file()
                     .destination(&file.name)
                     .source_url(&file.url)
-                    .maybe_bearer_token(bearer_token.clone())
+                    .maybe_bearer_token(bearer_token)
                     .expected_checksum(checksum)
                     .maybe_expected_bytes(u64::try_from(file.size).ok())
                     .build())

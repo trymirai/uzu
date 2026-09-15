@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use download_manager::DownloadManagerType;
+use download_manager::{BearerToken, DownloadManagerType};
 use serde::{Deserialize, Serialize};
 
 use crate::device::Device;
@@ -13,8 +13,9 @@ pub struct Config {
     pub name: String,
     #[serde(default)]
     pub download_manager_type: DownloadManagerType,
+    pub huggingface_url: String,
     #[serde(skip)]
-    pub huggingface_api_key: Option<String>,
+    pub huggingface_api_key: Option<BearerToken>,
 }
 
 impl Config {
@@ -23,13 +24,15 @@ impl Config {
         base_path: Option<PathBuf>,
         name: String,
         download_manager_type: DownloadManagerType,
-        huggingface_api_key: Option<String>,
+        huggingface_url: String,
+        huggingface_api_key: Option<BearerToken>,
     ) -> Self {
         Self {
             device,
             base_path,
             name,
             download_manager_type,
+            huggingface_url,
             huggingface_api_key,
         }
     }

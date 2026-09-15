@@ -8,7 +8,7 @@ mod hugging_face_model;
 mod registry;
 mod types;
 
-pub use api::TELEMETRY_URL;
+pub use api::{HUGGING_FACE_URL, TELEMETRY_URL};
 pub use backend::Backend;
 pub use hugging_face::HuggingFace;
 pub use registry::Registry;

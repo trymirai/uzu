@@ -7,6 +7,7 @@ use std::{
 };
 
 use bon::bon;
+use download_manager::BearerToken;
 use futures::{StreamExt, stream};
 use nagare::api::{Client, Error as ApiError, IsTransient};
 use shoji::{
@@ -38,7 +39,7 @@ impl Registry {
     #[builder]
     pub fn new(
         api_key: Option<String>,
-        huggingface_api_key: Option<String>,
+        huggingface_api_key: Option<BearerToken>,
         device: Device,
         backends: Vec<Backend>,
         #[builder(default)] include_traces: bool,

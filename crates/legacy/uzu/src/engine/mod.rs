@@ -38,11 +38,11 @@ use crate::{
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
-        mirai::{Backend as MiraiBackend, Registry as MiraiRegistry, TELEMETRY_URL},
+        mirai::{Backend as MiraiBackend, HUGGING_FACE_URL, Registry as MiraiRegistry, TELEMETRY_URL},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
     settings::Settings,
-    storage::{Config as StorageConfig, DownloadPhase, DownloadState, Storage},
+    storage::{BearerToken, Config as StorageConfig, DownloadPhase, DownloadState, Storage},
 };
 
 #[bindings::export(Class)]
@@ -89,12 +89,14 @@ impl Engine {
         });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
+        let huggingface_api_key = config.huggingface_api_key.map(BearerToken::from);
         let storage_config = StorageConfig::new(
             device.clone(),
             None,
             "mirai".to_string(),
             config.download_manager_type,
-            config.huggingface_api_key.clone(),
+            HUGGING_FACE_URL.to_string(),
+            huggingface_api_key.clone(),
         );
         let storage_cache_path = Storage::cache_path(&storage_config);
         logs::start(storage_cache_path.clone(), &format!("{}.log", storage_config.name), false);
@@ -118,7 +120,7 @@ impl Engine {
             let mirai_registry = Box::new(
                 MiraiRegistry::builder()
                     .maybe_api_key(config.mirai_api_key)
-                    .maybe_huggingface_api_key(config.huggingface_api_key)
+                    .maybe_huggingface_api_key(huggingface_api_key)
                     .device(device.clone())
                     .backends(vec![MiraiBackend {
                         identifier: uzu_backend_identifier.clone(),
