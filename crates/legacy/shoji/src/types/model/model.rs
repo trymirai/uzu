@@ -117,9 +117,13 @@ impl Model {
                 source:
                     ModelSource::Registry {
                         toolchain_version,
+                        repository,
                         ..
                     },
-            } => Some(toolchain_version.clone()),
+            } => repository
+                .as_ref()
+                .and_then(|repository| repository.commit_hash.clone())
+                .or_else(|| Some(toolchain_version.clone())),
             _ => None,
         }
     }
