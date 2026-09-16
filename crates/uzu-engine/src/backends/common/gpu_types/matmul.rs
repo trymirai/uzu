@@ -17,9 +17,9 @@ pub struct GemmParams {
 
 /// Everything the trellis decode needs that is not already a `GemmParams` field.
 ///
-/// `l` and `k_bits` are runtime scalars rather than kernel variants on purpose:
-/// they only pick a mask and a stride, so specializing on them would multiply
-/// PSOs for nothing. `hash_a`/`hash_b` are `trellis_format::hash_params()`,
+/// `l`, `k_bits` and the tape geometry are runtime scalars rather than kernel
+/// variants on purpose: they only pick a mask, a stride and a walk, so
+/// specializing on them would multiply PSOs for nothing. `hash_a`/`hash_b` are `trellis_format::hash_params()`,
 /// passed as scalars so the kernel needs no codebook buffer at all. Build one
 /// with `trellis_format::trellis_params`, which is the only place these are
 /// derived.
@@ -36,4 +36,10 @@ pub struct TrellisParams {
     pub hash_b: u32,
     /// `1 / rms(codebook)`, folded into the per-row scale in the epilogue.
     pub codebook_scale: f32,
+    /// Steps in one tape of the row: the whole row, or
+    /// `TrellisConfig::restart_columns / V` when the row restarts.
+    pub tape_steps: u32,
+    /// Bits one tape occupies, `L + (tape_steps - 1) * k_bits_per_step`;
+    /// consecutive tapes of a row are this far apart.
+    pub tape_bits: u32,
 }

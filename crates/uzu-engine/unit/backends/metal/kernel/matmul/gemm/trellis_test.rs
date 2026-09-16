@@ -23,12 +23,15 @@ use super::*;
 use crate::{
     backends::common::kernel::{
         activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-        matmul::{MatmulDOps, trellis_format::TRELLIS_BLOCK_K},
+        matmul::{
+            MatmulDOps,
+            trellis_format::{TRELLIS_BLOCK_K, TrellisConfig},
+        },
     },
     tests::{
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
         matmul::trellis_fixture::{
-            CONFIG, Fixture, assert_probe_row, max_relative_error, oracle, probe_points, row_scales,
+            CONFIGS, Fixture, assert_probe_row, max_relative_error, oracle, probe_points, row_scales,
         },
         util::shared_metal_context,
     },
@@ -102,39 +105,84 @@ fn activations(
     (codes, scales)
 }
 
+/// The smallest multiple of `k` that is whole tapes of `config`.
+fn k_for(
+    config: TrellisConfig,
+    k: u32,
+) -> u32 {
+    let mut candidate = k;
+    while !config.divides(candidate) {
+        candidate += k;
+    }
+    candidate
+}
+
 #[uzu_test]
 fn trellis_gemm_matches_oracle() {
     let context = shared_metal_context();
     if !context.supports_mxu {
         return;
     }
-    let fixture = Fixture::new(&context, CONFIG, N, K, row_scales(N));
+    // Every layout: a split-K partition then starts mid-row, and for tapes
+    // wider than the 128-column partition alignment, mid-tape.
+    for config in CONFIGS {
+        let k = k_for(config, K);
+        let fixture = Fixture::new(&context, config, N, k, row_scales(N));
 
-    // M picks the tile: 16 -> 16x32, 17 and 32 -> 32x64, 64 and 128 -> 64x64.
-    // Split-K is only legal where `M * N` is a multiple of four, which is what
-    // the shipped reduce kernel requires.
-    for m in [16u32, 17, 32, 64, 128] {
-        let (a_codes, a_scales) = activations(m, K);
-        let groups = (K / ACTIVATION_SCALE_GROUP_SIZE) as usize;
-        let expected = oracle(&fixture, m, N, K, |row, index| {
-            f64::from(a_codes[row * K as usize + index])
+        // M picks the tile: 16 -> 16x32, 17 and 32 -> 32x64, 64 and 128 -> 64x64.
+        // Split-K is only legal where `M * N` is a multiple of four, which is
+        // what the shipped reduce kernel requires.
+        for m in [16u32, 17, 32, 64, 128] {
+            let (a_codes, a_scales) = activations(m, k);
+            let groups = (k / ACTIVATION_SCALE_GROUP_SIZE) as usize;
+            let expected = oracle(&fixture, m, N, k, |row, index| {
+                f64::from(a_codes[row * k as usize + index])
+                    * f64::from(a_scales[row * groups + index / ACTIVATION_SCALE_GROUP_SIZE as usize])
+            });
+            // A forced split has to leave every partition at least one staging
+            // block of K, which the shipped policy guarantees and this test has
+            // to reproduce: `split_k * TRELLIS_BLOCK_K <= K`. Past that,
+            // partitions read off the end of the tape.
+            let max_split = k / TRELLIS_BLOCK_K;
+            let splits: Vec<u32> = if (m * N).is_multiple_of(4) {
+                [1, 4, 8].into_iter().filter(|split_k| *split_k <= max_split).collect()
+            } else {
+                vec![1]
+            };
+            for split_k in splits {
+                let got = run(&context, &fixture, &a_codes, &a_scales, m, k, split_k);
+                let error = max_relative_error(&got[..(m * N) as usize], &expected);
+                assert!(error < 8e-3, "{config:?} M={m} split_k={split_k}: max relative error {error:e}");
+            }
+        }
+    }
+}
+
+/// A split-K partition that starts inside a tape and runs past its end: the
+/// cursor's wrap counter has to be seeded from where the partition starts, not
+/// from zero. `K = 1536` split in two puts the second partition at step 192 of
+/// 128-step tapes, and `K = 3072` at step 384 of 256-step ones.
+#[uzu_test]
+fn trellis_gemm_split_partition_wraps_mid_tape() {
+    let context = shared_metal_context();
+    if !context.supports_mxu {
+        return;
+    }
+    let m = 32u32;
+    for (config, k) in
+        [(TrellisConfig::new(16, 1).with_restart(512), 1536u32), (TrellisConfig::new(24, 3).with_restart(1024), 3072)]
+    {
+        let fixture = Fixture::new(&context, config, N, k, row_scales(N));
+        let (a_codes, a_scales) = activations(m, k);
+        let groups = (k / ACTIVATION_SCALE_GROUP_SIZE) as usize;
+        let expected = oracle(&fixture, m, N, k, |row, index| {
+            f64::from(a_codes[row * k as usize + index])
                 * f64::from(a_scales[row * groups + index / ACTIVATION_SCALE_GROUP_SIZE as usize])
         });
-        // A forced split has to leave every partition at least one staging
-        // block of K, which the shipped policy guarantees and this test has to
-        // reproduce: `split_k * TRELLIS_BLOCK_K <= K`. Past that, partitions
-        // read off the end of the tape.
-        let max_split = K / TRELLIS_BLOCK_K;
-        let splits: Vec<u32> = if (m * N).is_multiple_of(4) {
-            [1, 4, 8].into_iter().filter(|split_k| *split_k <= max_split).collect()
-        } else {
-            vec![1]
-        };
-        for split_k in splits {
-            let got = run(&context, &fixture, &a_codes, &a_scales, m, K, split_k);
-            let error = max_relative_error(&got[..(m * N) as usize], &expected);
-            assert!(error < 8e-3, "M={m} split_k={split_k}: max relative error {error:e}");
-        }
+
+        let got = run(&context, &fixture, &a_codes, &a_scales, m, k, 2);
+        let error = max_relative_error(&got[..(m * N) as usize], &expected);
+        assert!(error < 8e-3, "{config:?} K={k} split_k=2: max relative error {error:e}");
     }
 }
 
@@ -145,20 +193,24 @@ fn trellis_gemm_states_are_bit_exact() {
         return;
     }
     // A longer row so the probe reaches steps whose window read is misaligned in
-    // every one of the 32 possible ways.
-    let k = 1024u32;
-    let fixture = Fixture::new(&context, CONFIG, N, k, vec![bf16::ONE; N as usize]);
+    // every one of the 32 possible ways, and tapes that start at every
+    // alignment too.
+    for config in CONFIGS {
+        let k = k_for(config, 1024);
+        let fixture = Fixture::new(&context, config, N, k, vec![bf16::ONE; N as usize]);
 
-    let probes = probe_points(CONFIG.steps(k));
-    let m = probes.len() as u32;
-    let mut a_codes = vec![0i8; (m * k) as usize];
-    for (row, &(step, coordinate)) in probes.iter().enumerate() {
-        a_codes[row * k as usize + (step * 4 + coordinate) as usize] = 1;
-    }
-    let a_scales = vec![1.0f32; (m * (k / ACTIVATION_SCALE_GROUP_SIZE)) as usize];
+        let probes = probe_points(config, k);
+        let m = probes.len() as u32;
+        let mut a_codes = vec![0i8; (m * k) as usize];
+        for (row, &(step, coordinate)) in probes.iter().enumerate() {
+            a_codes[row * k as usize + (step * 4 + coordinate) as usize] = 1;
+        }
+        let a_scales = vec![1.0f32; (m * (k / ACTIVATION_SCALE_GROUP_SIZE)) as usize];
 
-    let got = run(&context, &fixture, &a_codes, &a_scales, m, k, 1);
-    for (row, &(step, coordinate)) in probes.iter().enumerate() {
-        assert_probe_row(&fixture, &got[row * N as usize..(row + 1) * N as usize], step, coordinate, "gemm");
+        let got = run(&context, &fixture, &a_codes, &a_scales, m, k, 1);
+        for (row, &(step, coordinate)) in probes.iter().enumerate() {
+            let label = format!("gemm {config:?}");
+            assert_probe_row(&fixture, &got[row * N as usize..(row + 1) * N as usize], step, coordinate, &label);
+        }
     }
 }

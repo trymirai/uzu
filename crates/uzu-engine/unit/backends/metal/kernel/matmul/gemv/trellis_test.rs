@@ -40,7 +40,8 @@ use crate::{
     tests::{
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
         matmul::trellis_fixture::{
-            CONFIG, Fixture, assert_probe_row, max_relative_error, oracle, probe_points, row_scales,
+            CONFIG, CONFIGS, Fixture, LALAMO_K2_R64, LALAMO_K3_R64, assert_probe_row, max_relative_error, oracle,
+            probe_points, row_scales,
         },
         util::shared_metal_context,
     },
@@ -113,15 +114,23 @@ fn assert_matches_oracle(
 #[uzu_test]
 fn trellis_gemv_matches_oracle() {
     let context = shared_metal_context();
-    // 512 is a power of two; 1152 is nine 128-column blocks and is NOT a
-    // multiple of the 256 the INT8 GEMV calls aligned, which is what the
-    // trellis K block replaces.
-    for k in [512u32, 1152] {
-        let fixture = Fixture::new(&context, CONFIG, N, k, row_scales(N));
-        for m in 1..=8u32 {
-            let a = activations(m, k);
-            let got = run(&context, &fixture, &a, m, N, k);
-            assert_matches_oracle(&fixture, &got, &a, m, N, k, &format!("K={k} M={m}"));
+    // 512 is a power of two and reaches the 32-lane tile at M <= 4; 1152 is
+    // nine 128-column blocks and is NOT a multiple of the 256 the INT8 GEMV
+    // calls aligned, which is what the trellis K block replaces, so it takes
+    // the eight-lane tile at every M; 1536 is three 512s for the widest
+    // restart and 2048 two 1024-column tapes, so the 32-lane tile wraps
+    // inside the row. Every layout runs at every K it fits.
+    for config in CONFIGS {
+        for k in [512u32, 1152, 1536, 2048] {
+            if !config.divides(k) {
+                continue;
+            }
+            let fixture = Fixture::new(&context, config, N, k, row_scales(N));
+            for m in 1..=8u32 {
+                let a = activations(m, k);
+                let got = run(&context, &fixture, &a, m, N, k);
+                assert_matches_oracle(&fixture, &got, &a, m, N, k, &format!("{config:?} K={k} M={m}"));
+            }
         }
     }
 }
@@ -154,15 +163,18 @@ fn trellis_gemv_spans_every_window() {
 fn trellis_gemv_states_are_bit_exact() {
     let context = shared_metal_context();
     // Long enough that the probe reaches steps whose funnel shift is misaligned
-    // in every one of the 32 possible ways.
+    // in every one of the 32 possible ways, on the whole-row tape and on both
+    // tapes lalamo fits.
     let k = 1024u32;
-    let fixture = Fixture::new(&context, CONFIG, N, k, vec![bf16::ONE; N as usize]);
+    for config in [CONFIG, LALAMO_K2_R64, LALAMO_K3_R64] {
+        let fixture = Fixture::new(&context, config, N, k, vec![bf16::ONE; N as usize]);
 
-    for &(step, coordinate) in probe_points(CONFIG.steps(k)).iter() {
-        let mut a = vec![bf16::ZERO; k as usize];
-        a[(step * 4 + coordinate) as usize] = bf16::ONE;
-        let got = run(&context, &fixture, &a, 1, N, k);
-        assert_probe_row(&fixture, &got[..N as usize], step, coordinate, "gemv");
+        for &(step, coordinate) in probe_points(config, k).iter() {
+            let mut a = vec![bf16::ZERO; k as usize];
+            a[(step * 4 + coordinate) as usize] = bf16::ONE;
+            let got = run(&context, &fixture, &a, 1, N, k);
+            assert_probe_row(&fixture, &got[..N as usize], step, coordinate, &format!("gemv {config:?}"));
+        }
     }
 }
 

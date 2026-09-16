@@ -34,10 +34,12 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
         group_size: u32,
         signed_codes: bool,
     },
-    /// QTIP bitshift-trellis weights: `b` is one bit tape per row and `scales`
-    /// one scale per row. There are no per-group scales, biases or zero points
-    /// and no stored codes — the weights are hashed out of `config` plus the
-    /// tape, and the decode lands directly in int8.
+    /// QTIP bitshift-trellis weights: `b` is one tape row per weight row, each
+    /// `TrellisConfig::row_stride_words(k)` words (a fitter's back-to-back byte
+    /// rows go through `TrellisTape::from_packed_rows` to get there), and
+    /// `scales` one scale per row. There are no per-group scales, biases or
+    /// zero points and no stored codes — the weights are hashed out of `config`
+    /// plus the tape, and the decode lands directly in int8.
     ///
     /// Packing, codebook construction and the decode oracle live in
     /// [`trellis_format`](super::trellis_format); the device-side decode lives

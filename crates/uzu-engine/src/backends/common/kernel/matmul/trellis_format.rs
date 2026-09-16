@@ -10,9 +10,8 @@
 //!
 //! # Format
 //!
-//! A weight row is one bit tape. With window `L`, [`TRELLIS_V`] weights per step
-//! and `k` bits per weight (`KV = k*V` bits injected per step,
-//! `steps = cols / V`):
+//! A tape is `T` trellis steps. With window `L`, [`TRELLIS_V`] weights per step
+//! and `k` bits per weight (`KV = k*V` bits injected per step):
 //!
 //! ```text
 //! s_0 = header
@@ -25,26 +24,41 @@
 //! codes in DESCENDING step order with the header above them):
 //!
 //! ```text
-//! bits [(steps-1-t)*KV, (steps-t)*KV)     c_t,  t = 1 .. steps-1
-//! bits [(steps-1)*KV, (steps-1)*KV + L)   s_0
+//! bits [(T-1-t)*KV, (T-t)*KV)     c_t,  t = 1 .. T-1
+//! bits [(T-1)*KV, (T-1)*KV + L)   s_0
 //! ```
 //!
 //! The payoff is that `s_t` is then literally one L-bit LSB-first field:
 //!
 //! ```text
-//! s_t = (row_as_integer >> ((steps-1-t)*KV)) & ((1 << L) - 1)
+//! s_t = (tape_as_integer >> ((T-1-t)*KV)) & ((1 << L) - 1)
 //! ```
 //!
 //! so a kernel reads a state with one shift and one mask, with no block
-//! reassembly and no special case for the first steps of a row. See the
+//! reassembly and no special case for the first steps of a tape. See the
 //! "WHY DESCENDING" section of `qtip/oracle.py` for the derivation: it is
 //! forced, given that `s_t`'s low `KV` bits are `c_t` and the next `KV` are
 //! `c_{t-1}`.
 //!
-//! Rate is `k + (L - KV) / cols` bits per weight; the `s_0` header is the
-//! overhead term. Dropping it and seeding the window with zero is a real bug —
-//! every recovered state would disagree with the fitted stream — which is why
-//! it is stored explicitly.
+//! A weight row is `cols / restart_columns` such tapes, each of
+//! `T = restart_columns / V` steps, bit-concatenated and nothing between them:
+//! tape `b` starts at bit `b * (L + (T-1)*KV)`. Without a restart the row is one
+//! tape of `cols / V` steps, and every formula above holds with `T = steps`.
+//! Step `t` of a row is therefore the window at
+//!
+//! ```text
+//! (t / T) * (L + (T-1)*KV) + (T-1 - t % T) * KV
+//! ```
+//!
+//! which is what [`TrellisConfig::window_bit_offset`] and the device `Walk`
+//! both implement. Every tape restarts the recurrence from its own `s_0`, and
+//! that is the point: the fitter buys a free choice of path at every tape start
+//! for `L - KV` bits per tape.
+//!
+//! Rate is `k + (L - KV) / restart_columns` bits per weight; the `s_0` header is
+//! the overhead term. Dropping it and seeding the window with zero is a real
+//! bug — every recovered state would disagree with the fitted stream — which is
+//! why it is stored explicitly.
 //!
 //! # The codebook
 //!
@@ -73,6 +87,19 @@ pub const TRELLIS_V: u32 = 4;
 /// there is one scale per row and this is a staging block.
 pub const TRELLIS_BLOCK_K: u32 = 64;
 
+/// Columns of the narrowest K unit a kernel walks: one GEMV lane's run of
+/// `TrellisSlice::STATES_PER_LANE` states. A tape is whole runs, so a run never
+/// straddles a header.
+pub const TRELLIS_TAPE_UNIT: u32 = 16;
+
+/// Columns of the widest K group a kernel walks: the 32-lane GEMV's block,
+/// `gemv::policy::trellis_k_block(32)`. The GEMM group ([`TRELLIS_BLOCK_K`])
+/// and the eight-lane GEMV block (128) sit between this and
+/// [`TRELLIS_TAPE_UNIT`], all powers of two, so a tape that divides this or is
+/// whole multiples of it nests with every group the dispatch can pick: a group
+/// is whole tapes, or a tape is whole groups.
+pub const TRELLIS_WIDEST_K_GROUP: u32 = 512;
+
 /// The splitmix64 finalizer (Steele/Lea), verbatim from `qtip/codebooks.h`.
 fn splitmix64(
     x: u64,
@@ -93,13 +120,22 @@ pub fn hash_params() -> (u32, u32) {
     ((splitmix64(0, DEFAULT_SEED) as u32) | 1, splitmix64(1, DEFAULT_SEED) as u32)
 }
 
-/// A `(L, k)` trellis configuration. `V` is [`TRELLIS_V`] everywhere.
+/// A `(L, k)` trellis configuration and how a row is cut into tapes. `V` is
+/// [`TRELLIS_V`] everywhere.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TrellisConfig {
     /// Window width in bits; the state is `L` bits wide, `1 <= L <= 32`.
     pub l: u32,
     /// Bits per weight; `k * V` bits are injected per step.
     pub k: u32,
+    /// Columns per tape, or `None` for one tape spanning the row. See the
+    /// module doc for the layout; the same field on lalamo's `TrellisSpec`
+    /// writes it.
+    ///
+    /// The kernels walk K in groups of their own, so a tape has to nest with
+    /// those: whole [`TRELLIS_TAPE_UNIT`]s, and either a divisor of
+    /// [`TRELLIS_WIDEST_K_GROUP`] or whole multiples of it.
+    pub restart_columns: Option<u32>,
 }
 
 impl TrellisConfig {
@@ -110,6 +146,17 @@ impl TrellisConfig {
         Self {
             l,
             k,
+            restart_columns: None,
+        }
+    }
+
+    pub const fn with_restart(
+        self,
+        columns: u32,
+    ) -> Self {
+        Self {
+            restart_columns: Some(columns),
+            ..self
         }
     }
 
@@ -127,7 +174,27 @@ impl TrellisConfig {
     }
 
     const fn is_valid(&self) -> bool {
-        1 <= self.l && self.l <= 32 && self.k >= 1 && self.kv() <= self.l
+        let restart_ok = match self.restart_columns {
+            None => true,
+            Some(columns) => {
+                columns >= TRELLIS_TAPE_UNIT
+                    && columns.is_multiple_of(TRELLIS_TAPE_UNIT)
+                    && (TRELLIS_WIDEST_K_GROUP.is_multiple_of(columns)
+                        || columns.is_multiple_of(TRELLIS_WIDEST_K_GROUP))
+            },
+        };
+        1 <= self.l && self.l <= 32 && self.k >= 1 && self.kv() <= self.l && restart_ok
+    }
+
+    /// Whether a `cols`-column row is a whole number of tapes.
+    pub const fn divides(
+        &self,
+        cols: u32,
+    ) -> bool {
+        match self.restart_columns {
+            None => cols.is_multiple_of(TRELLIS_V),
+            Some(columns) => cols.is_multiple_of(columns),
+        }
     }
 
     pub const fn steps(
@@ -137,11 +204,40 @@ impl TrellisConfig {
         cols / TRELLIS_V
     }
 
+    /// Steps in one tape: the whole row without a restart.
+    pub const fn tape_steps(
+        &self,
+        cols: u32,
+    ) -> u32 {
+        match self.restart_columns {
+            None => self.steps(cols),
+            Some(columns) => columns / TRELLIS_V,
+        }
+    }
+
+    pub const fn tapes(
+        &self,
+        cols: u32,
+    ) -> u32 {
+        match self.restart_columns {
+            None => 1,
+            Some(columns) => cols / columns,
+        }
+    }
+
+    /// Bits of one tape: its header and the codes of every later step.
+    pub const fn tape_bits(
+        &self,
+        cols: u32,
+    ) -> u32 {
+        self.l + (self.tape_steps(cols) - 1) * self.kv()
+    }
+
     pub const fn bits_per_row(
         &self,
         cols: u32,
     ) -> u32 {
-        self.l + (self.steps(cols) - 1) * self.kv()
+        self.tapes(cols) * self.tape_bits(cols)
     }
 
     pub const fn bytes_per_row(
@@ -163,13 +259,15 @@ impl TrellisConfig {
         self.bits_per_row(cols).div_ceil(32) + 4
     }
 
-    /// Bit offset of the L-bit window that spells out `s_t` (packing v2).
-    const fn window_bit_offset(
+    /// Bit offset of the L-bit window that spells out `s_t` (packing v2): the
+    /// tape holding step `t`, then the descending position inside it.
+    pub const fn window_bit_offset(
         &self,
         t: u32,
-        steps: u32,
+        cols: u32,
     ) -> u32 {
-        (steps - 1 - t) * self.kv()
+        let tape_steps = self.tape_steps(cols);
+        (t / tape_steps) * self.tape_bits(cols) + (tape_steps - 1 - t % tape_steps) * self.kv()
     }
 }
 
@@ -295,8 +393,9 @@ impl TrellisTape {
         seed: u64,
     ) -> Self {
         assert!(config.is_valid(), "invalid trellis config {config:?}");
-        assert!(cols.is_multiple_of(TRELLIS_V), "cols must be a multiple of V");
+        assert!(config.divides(cols), "cols must be a whole number of tapes");
         let steps = config.steps(cols);
+        let tape_steps = config.tape_steps(cols);
         let stride = config.row_stride_words(cols);
         let kv = config.kv();
         let code_mask = (1u64 << kv) - 1;
@@ -310,9 +409,44 @@ impl TrellisTape {
         let mut words = vec![0u32; (rows * stride) as usize];
         for row in 0..rows as usize {
             let destination = &mut words[row * stride as usize..(row + 1) * stride as usize];
-            write_field(destination, (steps - 1) * kv, config.l, (next() & state_mask) as u32);
-            for step in 1..steps {
-                write_field(destination, config.window_bit_offset(step, steps), kv, (next() & code_mask) as u32);
+            for step in 0..steps {
+                let offset = config.window_bit_offset(step, cols);
+                if step.is_multiple_of(tape_steps) {
+                    write_field(destination, offset, config.l, (next() & state_mask) as u32);
+                } else {
+                    write_field(destination, offset, kv, (next() & code_mask) as u32);
+                }
+            }
+        }
+        Self {
+            config,
+            rows,
+            cols,
+            words,
+        }
+    }
+
+    /// A tape from rows as a fitter writes them: `bytes_per_row` bytes each,
+    /// back to back, nothing between rows. lalamo's `TrellisMatrix.export` is
+    /// this, and here is the one place the kernels' `row_stride_words` padding
+    /// is put in.
+    pub fn from_packed_rows(
+        config: TrellisConfig,
+        rows: u32,
+        cols: u32,
+        bytes: &[u8],
+    ) -> Self {
+        assert!(config.is_valid(), "invalid trellis config {config:?}");
+        assert!(config.divides(cols), "cols must be a whole number of tapes");
+        let row_bytes = config.bytes_per_row(cols) as usize;
+        assert_eq!(bytes.len(), rows as usize * row_bytes, "expected {rows} rows of {row_bytes} bytes");
+        let stride = config.row_stride_words(cols) as usize;
+        let mut words = vec![0u32; rows as usize * stride];
+        for (row, source) in bytes.chunks(row_bytes).enumerate() {
+            for (index, chunk) in source.chunks(4).enumerate() {
+                let mut padded = [0u8; 4];
+                padded[..chunk.len()].copy_from_slice(chunk);
+                words[row * stride + index] = u32::from_le_bytes(padded);
             }
         }
         Self {
@@ -340,27 +474,32 @@ impl TrellisTape {
             let source = self.row(row);
             for step in 0..steps {
                 out[(row * steps + step) as usize] =
-                    read_field(source, self.config.window_bit_offset(step, steps), self.config.l);
+                    read_field(source, self.config.window_bit_offset(step, self.cols), self.config.l);
             }
         }
         out
     }
 
     /// `[rows][steps]` states obtained by running the trellis recurrence over
-    /// the unpacked code stream. Independent of [`Self::states`], which reads
-    /// windows; the two agreeing is what pins packing v2 down.
+    /// the unpacked code stream, restarted from the header of every tape.
+    /// Independent of [`Self::states`], which reads windows; the two agreeing
+    /// is what pins packing v2 down.
     pub fn states_by_recurrence(&self) -> Vec<u32> {
         let steps = self.config.steps(self.cols);
+        let tape_steps = self.config.tape_steps(self.cols);
         let kv = self.config.kv();
         let mask = self.config.state_mask();
         let mut out = vec![0u32; (self.rows * steps) as usize];
         for row in 0..self.rows {
             let source = self.row(row);
-            let mut state = read_field(source, (steps - 1) * kv, self.config.l);
-            out[(row * steps) as usize] = state;
-            for step in 1..steps {
-                let code = read_field(source, self.config.window_bit_offset(step, steps), kv);
-                state = (state.wrapping_shl(kv) & mask) | code;
+            let mut state = 0u32;
+            for step in 0..steps {
+                let offset = self.config.window_bit_offset(step, self.cols);
+                if step.is_multiple_of(tape_steps) {
+                    state = read_field(source, offset, self.config.l);
+                } else {
+                    state = (state.wrapping_shl(kv) & mask) | read_field(source, offset, kv);
+                }
                 out[(row * steps + step) as usize] = state;
             }
         }
@@ -388,8 +527,8 @@ impl TrellisTape {
     }
 }
 
-/// The device-side constants for `config` over a `k`-column tape, or `None` if
-/// `config` is not one this format can express.
+/// The device-side constants for `config` over `k`-column rows, or `None` if
+/// `config` is not one this format can express or `k` is not whole tapes.
 ///
 /// Both kernel paths build their `TrellisParams` here, so the tape stride, the
 /// hash pair and the codebook scale have exactly one definition and no caller
@@ -398,7 +537,7 @@ pub fn trellis_params(
     config: TrellisConfig,
     k: u32,
 ) -> Option<TrellisParams> {
-    if !config.is_valid() || !k.is_multiple_of(TRELLIS_V) {
+    if !config.is_valid() || !config.divides(k) {
         return None;
     }
     let (hash_a, hash_b) = hash_params();
@@ -409,5 +548,7 @@ pub fn trellis_params(
         hash_a,
         hash_b,
         codebook_scale: codebook_scale(),
+        tape_steps: config.tape_steps(k),
+        tape_bits: config.tape_bits(k),
     })
 }

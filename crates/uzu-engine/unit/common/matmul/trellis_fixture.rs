@@ -34,6 +34,32 @@ use crate::{
 /// the two-word read at every shift.
 pub const CONFIG: TrellisConfig = TrellisConfig::new(32, 3);
 
+/// The tapes lalamo fits (trymirai/lalamo#364): 64 columns at `L = 16`, so one
+/// GEMM K group is one tape and one GEMV K block is two or eight of them; 136
+/// bits at `k = 2` and 196 at `k = 3`, so the tapes of a row are not word
+/// aligned.
+pub const LALAMO_K2_R64: TrellisConfig = TrellisConfig::new(16, 2).with_restart(64);
+pub const LALAMO_K3_R64: TrellisConfig = TrellisConfig::new(16, 3).with_restart(64);
+
+/// Every layout the kernel tests sweep: the whole-row tape, lalamo's two, the
+/// two tapes narrower than a GEMM K group, the two wider than it that a group
+/// still divides (the GEMM wraps every 2 and every 4 groups, the eight-lane
+/// GEMV every 2 at 256), a tape as wide as the 32-lane GEMV's block, one twice
+/// that (the 32-lane tile wraps every 2 blocks), and a multiple of the block
+/// that is not a power of two.
+pub const CONFIGS: [TrellisConfig; 10] = [
+    CONFIG,
+    LALAMO_K2_R64,
+    LALAMO_K3_R64,
+    TrellisConfig::new(16, 2).with_restart(16),
+    TrellisConfig::new(16, 2).with_restart(32),
+    TrellisConfig::new(32, 3).with_restart(128),
+    TrellisConfig::new(16, 2).with_restart(256),
+    TrellisConfig::new(16, 1).with_restart(512),
+    TrellisConfig::new(24, 3).with_restart(1024),
+    TrellisConfig::new(16, 1).with_restart(1536),
+];
+
 pub struct Fixture {
     pub tape: TrellisTape,
     /// `[n][k]` int8 codes — the weights in the basis the MXU sees, before
@@ -109,9 +135,24 @@ pub fn max_relative_error(
     got.iter().zip(expected).fold(0.0f32, |acc, (&g, &e)| acc.max((g.to_f32() - e).abs())) / scale
 }
 
-/// `(step, coordinate)` pairs for the bit-exact probe.
-pub fn probe_points(steps: u32) -> Vec<(u32, u32)> {
-    [0, 1, 2, 3, 5, 33, steps / 2, steps - 1].iter().flat_map(|&s| (0..4u32).map(move |j| (s, j))).collect()
+/// `(step, coordinate)` pairs for the bit-exact probe: both ends of the row,
+/// every alignment of the window read, and both sides of the first two tape
+/// boundaries when the row restarts.
+pub fn probe_points(
+    config: TrellisConfig,
+    cols: u32,
+) -> Vec<(u32, u32)> {
+    let steps = config.steps(cols);
+    let tape_steps = config.tape_steps(cols);
+    let mut probes = vec![0, 1, 2, 3, 5, 33, steps / 2, steps - 1];
+    for boundary in [tape_steps, 2 * tape_steps] {
+        if boundary < steps {
+            probes.extend([boundary - 1, boundary, boundary + 1]);
+        }
+    }
+    probes.sort_unstable();
+    probes.dedup();
+    probes.iter().flat_map(|&s| (0..4u32).map(move |j| (s, j))).collect()
 }
 
 /// One probe row: `got` is the kernel's `[n]` output for a one-hot activation at
