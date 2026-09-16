@@ -87,6 +87,7 @@ schemars = { workspace = true, optional = true }
 test-tag.workspace = true
 proptest.workspace = true
 criterion.workspace = true
+libtest-mimic.workspace = true
 rand.workspace = true
 rand_distr.workspace = true
 is_close.workspace = true
