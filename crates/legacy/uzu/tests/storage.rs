@@ -13,11 +13,24 @@ use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use uuid::Uuid;
 use uzu::{
     engine::Downloader,
+    registry::mirai::HUGGING_FACE_URL,
     storage::{DownloadManagerType, DownloadPhase, DownloadState, Storage},
-    types::model::{ModelAccessibility, ModelIdentifier, ModelReference},
+    types::{
+        basic::{File, Hash, HashMethod, Repository},
+        model::{Model, ModelAccessibility, ModelIdentifier, ModelSource},
+    },
+};
+use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{header, header_exists, method, path},
 };
 
 use crate::common::TestStorage;
+
+const HELLO: &[u8] = b"hello\n";
+const HELLO_SHA256: &str = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
+const HELLO_GIT_BLOB_SHA1: &str = "ce013625030ba8dba906f756967f9e9ca394464a";
+const REVISION: &str = "f5dec40ceb1d8c4b15f049bf5e185dd7be2cc150";
 
 #[rstest]
 #[case::universal(DownloadManagerType::Universal)]
@@ -26,7 +39,8 @@ use crate::common::TestStorage;
 async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let model = registry.models.first().ok_or("mock registry must include a model")?;
-    let test_storage = TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind).await?;
+    let test_storage =
+        TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind, HUGGING_FACE_URL, None).await?;
     let storage = &test_storage.storage;
     let identifier = model.identifier.clone();
     let cache_path = storage.cache_model_path(model).ok_or("model must have a cache path")?;
@@ -52,7 +66,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     for served in registry.files.iter() {
         let destination = cache_path.join(&served.file.name);
         assert_eq!(tokio::fs::read(&destination).await?, served.bytes.to_vec());
-        assert!(artifact_path(&destination, "crc").is_file());
+        assert!(artifact_path(&destination, "checksum").is_file());
     }
 
     storage.delete(&identifier).await?;
@@ -62,7 +76,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     for served in registry.files.iter() {
         let destination = cache_path.join(&served.file.name);
         assert!(!destination.exists());
-        assert!(!artifact_path(&destination, "crc").exists());
+        assert!(!artifact_path(&destination, "checksum").exists());
     }
 
     let served = registry.files.first().ok_or("mock registry must include files")?;
@@ -82,8 +96,8 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     assert!(destination.exists());
 
     let mut changed = model.clone();
-    if let ModelAccessibility::Local {
-        reference: ModelReference::Mirai {
+    if let ModelAccessibility::OnDevice {
+        source: ModelSource::Registry {
             files,
             ..
         },
@@ -107,7 +121,8 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
 async fn downloader_streams(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let model = registry.models.first().ok_or("mock registry must include a model")?;
-    let test_storage = TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind).await?;
+    let test_storage =
+        TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind, HUGGING_FACE_URL, None).await?;
     let storage = Arc::clone(&test_storage.storage);
     let identifier = model.identifier.clone();
     let downloader = Downloader::new(identifier.clone(), Arc::clone(&storage));
@@ -135,6 +150,97 @@ async fn downloader_streams(#[case] kind: DownloadManagerType) -> Result<(), Box
     .await?;
     assert!(matches!(last.map(|state| state.phase), Some(DownloadPhase::Downloaded {})));
     assert!(downloader.progress().await?.next().await.is_none());
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(DownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::native(DownloadManagerType::Native))]
+#[tokio::test(flavor = "multi_thread")]
+async fn hugging_face_model(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
+    let hugging_face = MockServer::start().await;
+    let route = format!("/trymirai/model/resolve/{REVISION}/model.safetensors");
+    Mock::given(method("GET"))
+        .and(path(route.clone()))
+        .and(header("authorization", "Bearer hf_test"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(HELLO))
+        .mount(&hugging_face)
+        .await;
+    // Like the Mirai CDN, this origin rejects any bearer token, so its file must download anonymously.
+    let cdn = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/config.json"))
+        .and(header_exists("authorization"))
+        .respond_with(ResponseTemplate::new(401))
+        .with_priority(1)
+        .mount(&cdn)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/config.json"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(HELLO))
+        .mount(&cdn)
+        .await;
+    let files = vec![
+        File {
+            url: format!("{}/config.json", cdn.uri()),
+            name: "config.json".to_string(),
+            size: HELLO.len() as i64,
+            hashes: vec![Hash {
+                method: HashMethod::GitBlobSha1,
+                value: HELLO_GIT_BLOB_SHA1.to_string(),
+            }],
+        },
+        File {
+            url: format!("{}{route}", hugging_face.uri()),
+            name: "model.safetensors".to_string(),
+            size: HELLO.len() as i64,
+            hashes: vec![Hash {
+                method: HashMethod::Sha256,
+                value: HELLO_SHA256.to_string(),
+            }],
+        },
+    ];
+    let model = Model::external(
+        "pinned".to_string(),
+        "mirai".to_string(),
+        "Mirai".to_string(),
+        "uzu".to_string(),
+        "Uzu".to_string(),
+        "1".to_string(),
+        vec![],
+        ModelAccessibility::OnDevice {
+            source: ModelSource::Registry {
+                toolchain_version: "1".to_string(),
+                repository: Some(Repository {
+                    identifier: "trymirai/model".to_string(),
+                    commit_hash: Some(REVISION.to_string()),
+                    paths: None,
+                }),
+                source_repository: None,
+                files,
+            },
+        },
+        None,
+    );
+    let test_storage =
+        TestStorage::new(RuntimeHandle::current(), vec![model.clone()], kind, &hugging_face.uri(), Some("hf_test"))
+            .await?;
+    let storage = &test_storage.storage;
+    let cache_path = storage.cache_model_path(&model).ok_or("model must have a cache path")?;
+    assert_eq!(cache_path.file_name().and_then(|name| name.to_str()), Some(REVISION));
+    let mut events = storage.subscribe();
+
+    storage.download(&model.identifier).await?;
+    let state = wait_for(storage, &model.identifier, &mut events, |state| {
+        matches!(state.phase, DownloadPhase::Downloaded {} | DownloadPhase::Error { .. })
+    })
+    .await;
+    assert!(matches!(state.phase, DownloadPhase::Downloaded {}), "got {:?}", state.phase);
+    for name in ["config.json", "model.safetensors"] {
+        let destination = cache_path.join(name);
+        assert_eq!(tokio::fs::read(&destination).await?, HELLO);
+        assert!(artifact_path(&destination, "checksum").is_file());
+    }
     Ok(())
 }
 

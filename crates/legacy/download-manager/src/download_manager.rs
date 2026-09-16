@@ -1,17 +1,18 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, PoisonError},
+    net::IpAddr,
+    sync::{Arc, Mutex, PoisonError, Weak},
 };
 
 use kiban::rt::RuntimeHandle;
-use tokio::sync::Mutex as TokioMutex;
+use reqwest::Url;
+use tokio::sync::{Mutex as TokioMutex, watch::Receiver as TokioWatchReceiver};
 use uuid::Uuid;
 
 use crate::{
-    DownloadError, DownloadId, DownloadManagerType, DownloadTask, DownloadTaskKind, DownloadTaskRequest,
+    DownloadError, DownloadId, DownloadManagerType, DownloadState, DownloadTask, DownloadTaskKind, DownloadTaskRequest,
     GroupDownloadTask,
     backends::{Backend, UniversalBackend},
-    cached_download_task::CachedDownloadTask,
     file_download::{DownloadConfig, FileDownloadWorker},
     locks::LockOwner,
 };
@@ -19,7 +20,8 @@ use crate::{
 pub struct DownloadManager {
     owner: LockOwner,
     backend: Arc<dyn Backend>,
-    tasks: Mutex<HashMap<DownloadId, CachedDownloadTask>>,
+    tasks: Mutex<HashMap<DownloadId, Weak<DownloadTask>>>,
+    live_states: Mutex<HashMap<DownloadId, TokioWatchReceiver<DownloadState>>>,
     construction_locks: Mutex<HashMap<DownloadId, Arc<TokioMutex<()>>>>,
 }
 
@@ -50,6 +52,7 @@ impl DownloadManager {
             },
             backend,
             tasks: Mutex::default(),
+            live_states: Mutex::default(),
             construction_locks: Mutex::default(),
         }
     }
@@ -84,33 +87,20 @@ impl DownloadManager {
         if let Some(cached) = self.cached(download_id, &request) {
             return cached;
         }
-        let stopping = self
-            .tasks
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&download_id)
-            .and_then(|cached| cached.live_state.clone());
+        let stopping = self.live_states.lock().unwrap_or_else(PoisonError::into_inner).get(&download_id).cloned();
         if let Some(mut live_state) = stopping {
             while live_state.changed().await.is_ok() {}
         }
         let task = Arc::new(self.build(&request, ancestors).await?);
-        let live_state = match &*task {
-            DownloadTask::File(file) => Some(file.live_state()),
-            DownloadTask::Group(_) => None,
-        };
         {
             let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
-            tasks.retain(|_, cached| {
-                cached.task.strong_count() > 0
-                    || cached.live_state.as_ref().is_some_and(|live_state| live_state.has_changed().is_ok())
-            });
-            tasks.insert(
-                download_id,
-                CachedDownloadTask {
-                    task: Arc::downgrade(&task),
-                    live_state,
-                },
-            );
+            tasks.retain(|_, task| task.strong_count() > 0);
+            tasks.insert(download_id, Arc::downgrade(&task));
+        }
+        if let DownloadTask::File(file) = &*task {
+            let mut live_states = self.live_states.lock().unwrap_or_else(PoisonError::into_inner);
+            live_states.retain(|_, live_state| live_state.has_changed().is_ok());
+            live_states.insert(download_id, file.live_state());
         }
         self.construction_locks
             .lock()
@@ -124,7 +114,7 @@ impl DownloadManager {
         download_id: DownloadId,
         request: &DownloadTaskRequest,
     ) -> Option<Result<Arc<DownloadTask>, DownloadError>> {
-        let task = self.tasks.lock().unwrap_or_else(PoisonError::into_inner).get(&download_id)?.task.upgrade()?;
+        let task = self.tasks.lock().unwrap_or_else(PoisonError::into_inner).get(&download_id)?.upgrade()?;
         Some(if task.request() == request {
             Ok(task)
         } else {
@@ -140,15 +130,20 @@ impl DownloadManager {
         match &request.kind {
             DownloadTaskKind::File {
                 source_url,
-                expected_crc32c,
+                bearer_token,
+                expected_checksum,
                 expected_bytes,
             } => {
+                if bearer_token.is_some() && !carries_token_securely(source_url) {
+                    return Err(DownloadError::InsecureRequest(source_url.clone()));
+                }
                 let config = Arc::new(DownloadConfig {
                     download_id: request.download_id(),
                     source_url: source_url.clone(),
+                    bearer_token: bearer_token.clone(),
                     destination: request.destination.clone(),
                     resume_artifact_path: self.backend.resume_artifact_path(&request.destination),
-                    expected_crc32c: expected_crc32c.clone(),
+                    expected_checksum: expected_checksum.clone(),
                     expected_bytes: *expected_bytes,
                     owner: self.owner.clone(),
                 });
@@ -173,4 +168,14 @@ impl DownloadManager {
             },
         }
     }
+}
+
+fn carries_token_securely(source_url: &str) -> bool {
+    Url::parse(source_url).is_ok_and(|url| {
+        url.scheme() == "https"
+            || url.host_str().is_some_and(|host| {
+                host.eq_ignore_ascii_case("localhost")
+                    || host.trim_matches(['[', ']']).parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
+            })
+    })
 }

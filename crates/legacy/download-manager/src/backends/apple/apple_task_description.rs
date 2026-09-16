@@ -1,7 +1,7 @@
 use objc2_foundation::NSURLSessionDownloadTask;
 use serde::{Deserialize, Serialize};
 
-use crate::{Crc32c, DownloadId, file_download::DownloadConfig};
+use crate::{Checksum, DownloadId, file_download::DownloadConfig};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AppleTaskDescription {
@@ -9,7 +9,7 @@ pub struct AppleTaskDescription {
     pub download_id: DownloadId,
     pub source_url: String,
     #[serde(default)]
-    pub crc32c: Option<Crc32c>,
+    pub checksum: Option<Checksum>,
 }
 
 impl From<&DownloadConfig> for AppleTaskDescription {
@@ -17,7 +17,7 @@ impl From<&DownloadConfig> for AppleTaskDescription {
         Self {
             download_id: config.download_id,
             source_url: config.source_url.clone(),
-            crc32c: config.expected_crc32c.clone(),
+            checksum: config.expected_checksum.clone(),
         }
     }
 }

@@ -8,7 +8,7 @@ use kiban::fs;
 use crate::{
     DownloadPhase, DownloadState,
     backends::{ActiveTask, BackendError, BackendEventSender, DownloadGeneration, VerifyError},
-    crc_receipt::CrcReceipt,
+    checksum_receipt::ChecksumReceipt,
     file_download::DownloadConfig,
     locks::{DestinationLock, LockError},
 };
@@ -57,7 +57,7 @@ pub trait Backend: Send + Sync {
     ) -> Result<(DownloadState, Option<DestinationLock>), BackendError> {
         let untouched = !fs::asyn::is_file(&config.destination).await
             && !fs::asyn::is_file(&config.resume_artifact_path).await
-            && !CrcReceipt::exists(&config.destination).await
+            && !ChecksumReceipt::exists(&config.destination).await
             && DestinationLock::foreign_owner(&config.destination, &config.owner).await.is_none();
         let pending_task = self.has_pending_task(config).await?;
         if untouched && !pending_task {
@@ -95,7 +95,7 @@ pub trait Backend: Send + Sync {
                 let _ = fs::asyn::remove_file(&config.resume_artifact_path).await;
             } else {
                 let _ = fs::asyn::remove_file(&config.destination).await;
-                CrcReceipt::remove(&config.destination).await;
+                ChecksumReceipt::remove(&config.destination).await;
             }
         }
         let (phase, downloaded_bytes, total_bytes) = match (downloaded, resume_bytes, foreign_owner) {
@@ -126,16 +126,16 @@ pub trait Backend: Send + Sync {
                 actual,
             });
         }
-        let Some(crc) = &config.expected_crc32c else {
+        let Some(checksum) = &config.expected_checksum else {
             return Ok(actual);
         };
-        if CrcReceipt::matches(&config.destination, crc).await {
+        if ChecksumReceipt::matches(&config.destination, checksum).await {
             return Ok(actual);
         }
-        if !crc.verify(&config.destination).await? {
-            return Err(VerifyError::Crc);
+        if !checksum.verify(&config.destination).await? {
+            return Err(VerifyError::Checksum(checksum.algorithm()));
         }
-        let _ = CrcReceipt::save(&config.destination, crc).await;
+        let _ = ChecksumReceipt::save(&config.destination, checksum).await;
         Ok(actual)
     }
 
@@ -145,6 +145,6 @@ pub trait Backend: Send + Sync {
     ) {
         let _ = fs::asyn::remove_file(&config.resume_artifact_path).await;
         let _ = fs::asyn::remove_file(&config.destination).await;
-        CrcReceipt::remove(&config.destination).await;
+        ChecksumReceipt::remove(&config.destination).await;
     }
 }
