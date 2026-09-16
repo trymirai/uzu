@@ -6,6 +6,7 @@ mod dense_buffer;
 mod error;
 mod kernel;
 mod metal_extensions;
+mod metal_timestamp_heap;
 mod sparse;
 
 pub use backend::Metal;

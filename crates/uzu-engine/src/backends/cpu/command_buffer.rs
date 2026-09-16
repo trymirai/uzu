@@ -1,5 +1,5 @@
 use std::{
-    sync::mpsc,
+    sync::{Arc, OnceLock, mpsc},
     time::{Duration, Instant},
 };
 
@@ -110,6 +110,15 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
     }
 
     fn pop_debug_group(&mut self) {}
+
+    fn timestamp(&mut self) -> Arc<OnceLock<Instant>> {
+        let timestamp = Arc::new(OnceLock::new());
+        let recorded = timestamp.clone();
+        self.push_command(move || {
+            let _ = recorded.set(Instant::now());
+        });
+        timestamp
+    }
 
     fn end_encoding(self) -> CpuCommandBufferExecutable {
         CpuCommandBufferExecutable {

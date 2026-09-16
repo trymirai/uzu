@@ -1,8 +1,8 @@
 use std::{
     mem::size_of_val,
     ops::{Bound, Range, RangeBounds},
-    sync::Arc,
-    time::Duration,
+    sync::{Arc, OnceLock},
+    time::{Duration, Instant},
 };
 
 use bytemuck::{AnyBitPattern, NoUninit};
@@ -165,6 +165,10 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         self.command_buffer.pop_debug_group();
     }
 
+    pub fn timestamp(&mut self) -> Arc<OnceLock<Instant>> {
+        self.command_buffer.timestamp()
+    }
+
     pub fn as_command_buffer_mut(&mut self) -> &mut <B::CommandBuffer as CommandBuffer>::Encoding {
         &mut self.command_buffer
     }
@@ -219,3 +223,7 @@ impl<B: Backend> Completed<B> {
         self.command_buffer.gpu_execution_time()
     }
 }
+
+#[cfg(test)]
+#[path = "../../../unit/backends/common/encoder_test.rs"]
+mod tests;

@@ -1,7 +1,7 @@
 use std::{
     ops::Range,
-    sync::{Arc, mpsc},
-    time::Duration,
+    sync::{Arc, OnceLock, mpsc},
+    time::{Duration, Instant},
 };
 
 use metal::{
@@ -17,7 +17,7 @@ use crate::backends::{
         Buffer, BufferGpuAddressRangeExt, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
         CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
     },
-    metal::{Metal, MetalContext, error::MetalError},
+    metal::{Metal, MetalContext, error::MetalError, metal_timestamp_heap::MetalTimestampHeap},
 };
 
 pub struct MetalCommandBuffer;
@@ -73,6 +73,7 @@ impl CommandBufferInitial for MetalCommandBufferInitial {
             reads: RangeSet::new(),
             writes: RangeSet::new(),
             context: self.context,
+            timestamp_heap: None,
         }
     }
 }
@@ -112,6 +113,7 @@ pub struct MetalCommandBufferEncoding {
     reads: RangeSet<usize>,
     writes: RangeSet<usize>,
     pub(super) context: Arc<MetalContext>,
+    timestamp_heap: Option<MetalTimestampHeap>,
 }
 
 impl MetalCommandBufferEncoding {
@@ -210,11 +212,20 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         self.compute_encoder.pop_debug_group();
     }
 
-    fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
+    fn timestamp(&mut self) -> Arc<OnceLock<Instant>> {
+        let timestamp = Arc::new(OnceLock::new());
+        self.timestamp_heap
+            .get_or_insert_with(|| MetalTimestampHeap::new(&self.context.device))
+            .write(&self.compute_encoder, timestamp.clone());
+        timestamp
+    }
+
+    fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
         MetalCommandBufferExecutable {
             command_allocator: self.command_allocator.clone(),
             command_buffer: self.command_buffer.clone(),
             context: self.context.clone(),
+            timestamp_heap: self.timestamp_heap.take(),
         }
     }
 }
@@ -235,6 +246,7 @@ pub struct MetalCommandBufferExecutable {
     command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
     command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
     context: Arc<MetalContext>,
+    timestamp_heap: Option<MetalTimestampHeap>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
@@ -260,6 +272,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
             _command_allocator: self.command_allocator,
             _command_buffer: self.command_buffer,
             receiver,
+            timestamp_heap: self.timestamp_heap,
         }
     }
 }
@@ -268,18 +281,23 @@ pub struct MetalCommandBufferPending {
     _command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
     _command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
     receiver: mpsc::Receiver<Result<Duration, String>>,
+    timestamp_heap: Option<MetalTimestampHeap>,
 }
 
 impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
 
     fn wait_until_completed(self) -> Result<MetalCommandBufferCompleted, MetalError> {
+        let gpu_execution_time = self
+            .receiver
+            .recv_timeout(Duration::from_secs(60))
+            .map_err(MetalError::CommandBufferWait)?
+            .map_err(MetalError::CommandBufferExecution)?;
+        if let Some(heap) = self.timestamp_heap {
+            heap.resolve();
+        }
         Ok(MetalCommandBufferCompleted {
-            gpu_execution_time: self
-                .receiver
-                .recv_timeout(Duration::from_secs(60))
-                .map_err(MetalError::CommandBufferWait)?
-                .map_err(MetalError::CommandBufferExecution)?,
+            gpu_execution_time,
         })
     }
 }

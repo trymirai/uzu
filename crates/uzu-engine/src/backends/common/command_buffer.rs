@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+    sync::{Arc, OnceLock},
+    time::{Duration, Instant},
+};
 
 use crate::backends::common::{Backend, Buffer, BufferRangeMut, BufferRangeRef};
 
@@ -42,6 +45,8 @@ pub trait CommandBufferEncoding {
     );
 
     fn pop_debug_group(&mut self);
+
+    fn timestamp(&mut self) -> Arc<OnceLock<Instant>>;
 
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
