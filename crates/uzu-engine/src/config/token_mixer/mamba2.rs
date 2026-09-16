@@ -1,6 +1,8 @@
 use uzu_engine_macros::uzu_config;
 
-use crate::config::{activation::AnyActivation, convolutions::SeparableCausalConvConfig, linear::LinearConfig};
+use crate::config::{
+    activation::AnyActivation, linear::LinearConfig, token_mixer::convolutions::SeparableCausalConvConfig,
+};
 
 #[uzu_config(super::TokenMixerConfig)]
 pub struct Mamba2Config {
@@ -9,6 +11,7 @@ pub struct Mamba2Config {
     pub conv_config: SeparableCausalConvConfig,
     pub activation: AnyActivation,
 
+    pub kernel_size: u32,
     pub num_heads: u32,
     pub num_groups: u32,
     pub head_dim: u32,

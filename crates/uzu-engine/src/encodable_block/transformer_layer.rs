@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder, kernel::ActivationTransform},
     config::transformer_layer::{TransformerLayerConfig, TransformerLayerConvConfig},
     data_type::DataType,
     encodable_block::{
@@ -19,6 +19,8 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum TransformerLayerError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
     ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Mixer error: {0}")]
@@ -40,9 +42,11 @@ pub enum TransformerLayerError<B: Backend> {
 }
 
 struct TransformerLayerConv<B: Backend> {
+    model_dim: u32,
     pre_conv: SeparableCausalConv<B>,
     kernel_projection: Box<dyn Linear<B>>,
     post_conv: SeparableCausalConv<B>,
+    input_rht: Option<(ActivationTransform<B>, Allocation<B>)>,
     coefficient_count: u32,
 }
 
@@ -69,9 +73,12 @@ impl<B: Backend> TransformerLayerConv<B> {
         config: &TransformerLayerConvConfig,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
+        input_hadamard_factors: Option<Allocation<B>>,
     ) -> Result<Self, TransformerLayerError<B>> {
         let pre_conv = SeparableCausalConv::new(
             model_dim,
+            config.conv_kernel_size,
+            config.conv_group_size,
             data_type,
             &config.conv_config,
             &parameter_tree.subtree("pre_conv"),
@@ -79,14 +86,15 @@ impl<B: Backend> TransformerLayerConv<B> {
         )?;
         let post_conv = SeparableCausalConv::new(
             model_dim,
+            config.conv_kernel_size,
+            config.conv_group_size,
             data_type,
             &config.conv_config,
             &parameter_tree.subtree("post_conv"),
             context,
         )?;
 
-        let group_size = config.conv_config.coefficient_group_size.expect("coefficient_group_size is required");
-        let coefficient_count = config.conv_config.kernel_size * (model_dim / group_size);
+        let coefficient_count = config.conv_kernel_size * (model_dim / config.conv_group_size);
         let projection_dim = coefficient_count * 2;
         let kernel_projection = <dyn Linear<B>>::new(
             model_dim,
@@ -97,10 +105,17 @@ impl<B: Backend> TransformerLayerConv<B> {
             &parameter_tree.subtree("kernel_projection"),
         )?;
 
+        let input_rht = input_hadamard_factors
+            .map(|factors| ActivationTransform::input_rht(context, data_type, true).map(|kernel| (kernel, factors)))
+            .transpose()
+            .map_err(TransformerLayerError::Backend)?;
+
         Ok(Self {
+            model_dim,
             pre_conv,
             kernel_projection,
             post_conv,
+            input_rht,
             coefficient_count,
         })
     }
@@ -114,8 +129,11 @@ impl<B: Backend> TransformerLayerConv<B> {
         let mut projection_input = encoder.allocate_scratch(input.size())?;
         encoder.encode_copy(input, .., &mut projection_input, ..);
         let coefficients = self.kernel_projection.encode(projection_input, sequence_length, encoder)?;
-        let output =
+        let mut output =
             self.pre_conv.encode(input, &coefficients, 2 * self.coefficient_count, 0, sequence_length, encoder)?;
+        if let Some((transform, factors)) = &self.input_rht {
+            transform.encode_fp_in_place(&mut output, factors, sequence_length, self.model_dim, encoder);
+        }
         Ok((output, coefficients))
     }
 
@@ -182,6 +200,21 @@ impl<B: Backend> TransformerLayer<B> {
             context,
         )?;
 
+        let (mixer_conv, mixer_hadamard_factors) = match &layer_config.mixer_conv_config {
+            Some(config) => (
+                Some(TransformerLayerConv::new(
+                    context,
+                    model_dim,
+                    config,
+                    &parameter_tree.subtree("mixer_conv"),
+                    data_type,
+                    mixer_hadamard_factors,
+                )?),
+                None,
+            ),
+            None => (None, mixer_hadamard_factors),
+        };
+
         let pre_mixer_norm = if let Some(pre_mixer_norm_config) = &layer_config.pre_mixer_norm_config {
             Some(Normalization::new(
                 model_dim,
@@ -228,6 +261,21 @@ impl<B: Backend> TransformerLayer<B> {
             data_type,
         )?;
 
+        let (mlp_conv, mlp_input_hadamard_factors) = match &layer_config.mlp_conv_config {
+            Some(config) => (
+                Some(TransformerLayerConv::new(
+                    context,
+                    model_dim,
+                    config,
+                    &parameter_tree.subtree("mlp_conv"),
+                    data_type,
+                    mlp_input_hadamard_factors,
+                )?),
+                None,
+            ),
+            None => (None, mlp_input_hadamard_factors),
+        };
+
         let pre_mlp_norm = Normalization::new(
             model_dim,
             mlp_input_hadamard_factors,
@@ -267,21 +315,6 @@ impl<B: Backend> TransformerLayer<B> {
             )
             .expect("Failed to create per-layer embedding projection")
         });
-
-        let mixer_conv = layer_config
-            .mixer_conv_config
-            .as_ref()
-            .map(|config| {
-                TransformerLayerConv::new(context, model_dim, config, &parameter_tree.subtree("mixer_conv"), data_type)
-            })
-            .transpose()?;
-        let mlp_conv = layer_config
-            .mlp_conv_config
-            .as_ref()
-            .map(|config| {
-                TransformerLayerConv::new(context, model_dim, config, &parameter_tree.subtree("mlp_conv"), data_type)
-            })
-            .transpose()?;
 
         Ok(Self {
             layer_index,

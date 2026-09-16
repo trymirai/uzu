@@ -6,7 +6,7 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, SeparableCausalConvKernel},
     },
-    config::convolutions::SeparableCausalConvConfig,
+    config::token_mixer::convolutions::SeparableCausalConvConfig,
     data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -30,14 +30,13 @@ pub struct SeparableCausalConv<B: Backend> {
 impl<B: Backend> SeparableCausalConv<B> {
     pub fn new(
         model_dim: u32,
+        kernel_size: u32,
+        group_size: u32,
         data_type: DataType,
         config: &SeparableCausalConvConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
     ) -> Result<Self, ConvolutionNewError<B>> {
-        let kernel_size = config.kernel_size;
-        let group_size = config.coefficient_group_size.expect("coefficient_group_size is required");
-
         assert!(model_dim.is_multiple_of(4));
         assert!(group_size.is_multiple_of(4));
         assert!(model_dim.is_multiple_of(group_size));

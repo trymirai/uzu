@@ -1,7 +1,6 @@
 pub mod activation;
 pub mod classifier;
 pub mod clipping;
-pub mod convolutions;
 pub mod decoder;
 pub mod dflash;
 pub mod embedding;
