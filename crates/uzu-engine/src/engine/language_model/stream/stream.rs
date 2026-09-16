@@ -94,7 +94,8 @@ struct DecodingStatePending<B: Backend> {
     capture_span: Option<CaptureSpan<B>>,
     hidden_features: Option<Box<[Allocation<B>]>>,
     output_norm: Option<Allocation<B>>,
-    output_tokens: Allocation<B>,
+    output_tokens: Arc<Allocation<B>>,
+    _input_token_source: Option<Arc<Allocation<B>>>,
 }
 
 enum DecodingState<B: Backend> {
@@ -349,7 +350,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 capture_span,
                 hidden_features: None,
                 output_norm,
-                output_tokens: output_tokens.unwrap(),
+                output_tokens: Arc::new(output_tokens.unwrap()),
+                _input_token_source: None,
             })
         } else {
             // TODO: this leaks previous LanguageModelStreamOptions
@@ -589,7 +591,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     token,
                     ..
                 } => (*token, None),
-                ForwardPassChaining::InFlight(pending) => (0, Some(&pending.output_tokens)),
+                ForwardPassChaining::InFlight(pending) => (0, Some(pending.output_tokens.clone())),
             };
             (TrieNode::new(token, self.model_state.prng.derive(context_length as u64), 0.0), chain_copy, true)
         };
@@ -605,7 +607,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             Encoder::<B>::new_with_pool_name(&self.model.engine.context, self.allocation_pool.clone(), Some("decode"))
                 .map_err(LanguageModelStreamError::Backend)?;
 
-        let token_ids = if let Some(chain_copy) = chain_copy {
+        let token_ids = if let Some(chain_copy) = chain_copy.as_deref() {
             let mut token_ids =
                 encoder.allocate_scratch(DataType::U32.size_in_bytes()).map_err(LanguageModelStreamError::Backend)?;
             encoder.encode_copy(chain_copy, .., &mut token_ids, ..);
@@ -764,7 +766,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 decoder_output.hidden_features
             },
             output_norm: decoder_output.final_hidden,
-            output_tokens,
+            output_tokens: Arc::new(output_tokens),
+            _input_token_source: chain_copy,
         });
 
         Ok(Some(
