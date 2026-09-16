@@ -6,7 +6,7 @@ use reqwest::{Client, Url, header::AUTHORIZATION};
 use shoji::types::basic::{File, Hash, HashMethod, Repository};
 
 use super::{api::HUGGING_FACE_URL, hugging_face_model::HuggingFaceModel};
-use crate::registry::RegistryError;
+use crate::{helpers::same_origin, registry::RegistryError};
 
 pub struct HuggingFace {
     client: Client,
@@ -34,6 +34,13 @@ impl HuggingFace {
             endpoint,
             token,
         })
+    }
+
+    pub fn serves(
+        &self,
+        files: &[File],
+    ) -> bool {
+        !files.is_empty() && files.iter().all(|file| same_origin(&file.url, self.endpoint.as_str()))
     }
 
     pub async fn files(

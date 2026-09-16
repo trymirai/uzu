@@ -6,8 +6,8 @@ use uzu::{
     registry::mirai::{Backend, HuggingFace, Registry},
     traits::Registry as RegistryTrait,
     types::{
-        basic::{HashMethod, Repository},
-        model::{ModelAccessibility, ModelSource},
+        basic::{File, Hash, HashMethod, Repository},
+        model::{Model, ModelAccessibility, ModelSource},
     },
 };
 use wiremock::{
@@ -126,21 +126,25 @@ async fn hugging_face_rejects_bad_metadata() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+fn pinned(
+    identifier: &str,
+    revision: &str,
+) -> Value {
+    json!({
+        "type": "mirai",
+        "toolchain_version": "1",
+        "repository": { "identifier": identifier, "commit_hash": revision, "paths": null },
+        "source_repository": null,
+        "files": []
+    })
+}
+
 #[tokio::test]
 async fn mirai_registry_resolves_pinned_models_once() -> Result<(), Box<dyn std::error::Error>> {
     let hugging_face = MockServer::start().await;
     mount_hugging_face(&hugging_face, REVISION, 1).await;
     mount_hugging_face(&hugging_face, "main", 2).await;
     let mirai = MockServer::start().await;
-    let pinned = |identifier: &str, revision: &str| {
-        json!({
-            "type": "mirai",
-            "toolchain_version": "1",
-            "repository": { "identifier": identifier, "commit_hash": revision, "paths": null },
-            "source_repository": null,
-            "files": []
-        })
-    };
     Mock::given(method("POST"))
         .and(path("/fetch/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -169,6 +173,34 @@ async fn mirai_registry_resolves_pinned_models_once() -> Result<(), Box<dyn std:
         .mount(&mirai)
         .await;
     let directory = tempfile::tempdir()?;
+    // A cache left by an older engine points the pinned files at the Mirai CDN; it must be re-resolved, not reused.
+    let stale = Model::external(
+        "pinned".to_string(),
+        "mirai".to_string(),
+        "Mirai".to_string(),
+        "uzu".to_string(),
+        "Uzu".to_string(),
+        "1".to_string(),
+        vec![],
+        ModelAccessibility::OnDevice {
+            source: ModelSource::Registry {
+                toolchain_version: "1".to_string(),
+                repository: Some(repository(REVISION, None)),
+                source_repository: None,
+                files: vec![File {
+                    url: "https://assets.example/model.safetensors".to_string(),
+                    name: "model.safetensors".to_string(),
+                    size: 6,
+                    hashes: vec![Hash {
+                        method: HashMethod::CRC32C,
+                        value: "AAAAAA==".to_string(),
+                    }],
+                }],
+            },
+        },
+        None,
+    );
+    std::fs::write(directory.path().join("registry.json"), serde_json::to_vec(&vec![stale])?)?;
 
     for _ in 0..2 {
         let registry = Registry::builder()

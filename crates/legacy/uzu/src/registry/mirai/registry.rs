@@ -156,7 +156,7 @@ impl Registry {
                         files,
                         ..
                     },
-            } if previous_repository == repository => Some(files.clone()),
+            } if previous_repository == repository && self.hugging_face.serves(files) => Some(files.clone()),
             _ => None,
         });
         *files = match previous {
