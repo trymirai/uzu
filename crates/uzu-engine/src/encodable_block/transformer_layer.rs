@@ -86,7 +86,8 @@ impl<B: Backend> TransformerLayerConv<B> {
         )?;
 
         let group_size = config.conv_config.coefficient_group_size.expect("coefficient_group_size is required");
-        let projection_dim = 2 * config.conv_config.kernel_size * (model_dim / group_size);
+        let coefficient_count = config.conv_config.kernel_size * (model_dim / group_size);
+        let projection_dim = coefficient_count * 2;
         let kernel_projection = <dyn Linear<B>>::new(
             model_dim,
             [projection_dim],
@@ -100,7 +101,7 @@ impl<B: Backend> TransformerLayerConv<B> {
             pre_conv,
             kernel_projection,
             post_conv,
-            coefficient_count: config.conv_config.kernel_size * (model_dim / group_size),
+            coefficient_count,
         })
     }
 
