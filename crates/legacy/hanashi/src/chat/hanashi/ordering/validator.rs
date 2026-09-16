@@ -2,6 +2,11 @@ use shoji::types::session::chat::{ChatContentBlock, ChatMessage, ChatRole};
 
 use crate::chat::hanashi::ordering::{Config, Error};
 
+enum ToolCallValidationMode {
+    History,
+    Streamed,
+}
+
 pub struct Validator {
     current: Option<ChatRole>,
     config: Config,
@@ -22,7 +27,7 @@ impl Validator {
     /// Check complete input messages, including calls whose IDs were assigned after decoding.
     /// An empty pending list at the end allows the next generated assistant reply.
     pub fn validate_tool_calls<'a>(messages: impl IntoIterator<Item = &'a ChatMessage>) -> Result<(), Error> {
-        let count = Self::validate_streamed_tool_calls(messages)?;
+        let count = Self::validate_tool_call_batches(messages, ToolCallValidationMode::History)?;
         if count > 0 {
             return Err(Error::UnresolvedToolCalls {
                 count,
@@ -31,27 +36,50 @@ impl Validator {
         Ok(())
     }
 
-    /// Validate assistant transitions and return the number of calls still awaiting results.
-    /// A generated reply may end with pending calls for the caller to execute.
+    /// Validate assistant transitions and return the number of unresolved calls and candidates.
+    /// A generated reply may end with calls or candidates for the caller to handle.
     pub fn validate_streamed_tool_calls<'a>(
         messages: impl IntoIterator<Item = &'a ChatMessage>
     ) -> Result<usize, Error> {
+        Self::validate_tool_call_batches(messages, ToolCallValidationMode::Streamed)
+    }
+
+    fn validate_tool_call_batches<'a>(
+        messages: impl IntoIterator<Item = &'a ChatMessage>,
+        mode: ToolCallValidationMode,
+    ) -> Result<usize, Error> {
         let mut pending: Vec<(Option<&str>, Option<&str>)> = Vec::new();
+        let mut pending_candidates = 0;
         for message in messages {
             match message.role {
                 ChatRole::Assistant {} => {
-                    if !pending.is_empty() {
+                    let count = pending.len() + pending_candidates;
+                    if count > 0 {
                         return Err(Error::UnresolvedToolCalls {
-                            count: pending.len(),
+                            count,
                         });
                     }
-                    // Candidates cannot be executed and must not block a retry.
+                    // Execution abandons the entire batch if any call could not be finalized.
+                    // Historical batches like this must not block a later external retry.
+                    if matches!(mode, ToolCallValidationMode::History)
+                        && message
+                            .content
+                            .iter()
+                            .any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }))
+                    {
+                        continue;
+                    }
                     for block in &message.content {
-                        if let ChatContentBlock::ToolCall {
-                            value,
-                        } = block
-                        {
-                            pending.push((value.identifier.as_deref(), Some(value.name.as_str())));
+                        match block {
+                            ChatContentBlock::ToolCall {
+                                value,
+                            } => pending.push((value.identifier.as_deref(), Some(value.name.as_str()))),
+                            // Within one generation, candidates must block a subsequent assistant
+                            // frame, even if tool results resolve the finished calls in the batch.
+                            ChatContentBlock::ToolCallCandidate {
+                                ..
+                            } => pending_candidates += 1,
+                            _ => {},
                         }
                     }
                 },
@@ -86,7 +114,7 @@ impl Validator {
                 _ => {},
             }
         }
-        Ok(pending.len())
+        Ok(pending.len() + pending_candidates)
     }
 
     pub fn validate_next(
