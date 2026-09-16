@@ -269,12 +269,12 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
     ) -> Result<(), B::Error> {
         let copies = self.cache.accept(accepted_indices);
 
-        for copies_chunk in copies.chunks(B::MAX_INLINE_BYTES / size_of::<Copy>()) {
+        if !copies.is_empty() {
             self.kv_cache_update.encode(
                 self.keys.as_mut(),
                 self.values.as_mut(),
-                copies_chunk,
-                copies_chunk.len() as u32,
+                &copies,
+                copies.len() as u32,
                 self.element_dim,
                 encoder,
             );

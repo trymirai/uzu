@@ -6,17 +6,11 @@ mod dense_buffer;
 mod error;
 mod kernel;
 mod metal_extensions;
+mod metal_timestamp_heap;
 mod sparse;
 
-use crate::backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE;
-
-const METAL_SIMD_SIZE: u32 = 32;
-
-const _: () = {
-    assert!(HADAMARD_TRANSFORM_BLOCK_SIZE == METAL_SIMD_SIZE);
-};
-
 pub use backend::Metal;
+// TODO: This should be removed
 pub use context::MetalContext;
 #[cfg(test)]
 pub use kernel::matmul::gemm::GemmEngine;

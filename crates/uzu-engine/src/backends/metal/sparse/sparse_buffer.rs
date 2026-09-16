@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions, MTLSparsePageSize};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResidencySet, MTLResourceOptions, MTLSparsePageSize};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeSet;
 
@@ -39,6 +39,12 @@ impl MetalSparseBuffer {
             )
             .ok_or(MetalError::SparseBufferAlloc(aligned_capacity))?;
 
+        let residency_set_locked = context.residency_set.lock();
+        residency_set_locked.add_allocation(buffer.as_ref());
+        residency_set_locked.commit();
+        residency_set_locked.request_residency();
+        drop(residency_set_locked);
+
         Ok(Self {
             buffer,
             mapped_pages: RangeSet::new(),
@@ -68,6 +74,9 @@ impl Drop for MetalSparseBuffer {
     fn drop(&mut self) {
         let context = self.context.clone();
         self.unmap(&context, &(0..self.total_pages())).expect("Failed to unmap");
+        let residency_set_locked = context.residency_set.lock();
+        residency_set_locked.remove_allocation(self.buffer.as_ref());
+        residency_set_locked.commit();
     }
 }
 
@@ -75,11 +84,11 @@ impl Buffer for MetalSparseBuffer {
     type Backend = Metal;
 
     fn gpu_ptr(&self) -> usize {
-        self.buffer.gpu_ptr()
+        self.buffer.gpu_address() as usize
     }
 
     fn size(&self) -> usize {
-        self.buffer.size()
+        self.buffer.length()
     }
 }
 

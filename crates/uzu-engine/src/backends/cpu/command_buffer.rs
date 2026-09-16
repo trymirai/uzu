@@ -1,13 +1,13 @@
 use std::{
-    sync::mpsc,
+    sync::{Arc, OnceLock, mpsc},
     time::{Duration, Instant},
 };
 
 use crate::{
     backends::{
         common::{
-            AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
-            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
+            CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
         },
         cpu::{Cpu, error::CpuError},
     },
@@ -103,13 +103,6 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         });
     }
 
-    fn encode_barrier(
-        &mut self,
-        _after: AccessFlags,
-        _before: AccessFlags,
-    ) {
-    }
-
     fn push_debug_group(
         &mut self,
         _name: &str,
@@ -117,6 +110,15 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
     }
 
     fn pop_debug_group(&mut self) {}
+
+    fn timestamp(&mut self) -> Arc<OnceLock<Instant>> {
+        let timestamp = Arc::new(OnceLock::new());
+        let recorded = timestamp.clone();
+        self.push_command(move || {
+            let _ = recorded.set(Instant::now());
+        });
+        timestamp
+    }
 
     fn end_encoding(self) -> CpuCommandBufferExecutable {
         CpuCommandBufferExecutable {
