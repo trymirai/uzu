@@ -95,6 +95,7 @@ impl EncodingTrait for HanashiEncodingImpl {
         messages: Self::Input,
     ) -> Result<(), Self::Error> {
         let messages = self.fill_default_content(&messages)?;
+        Validator::validate_tool_calls(self.state.messages.iter().chain(&messages))?;
         for message in &messages {
             self.validator.validate_next(&message.role)?;
         }
@@ -121,6 +122,12 @@ impl EncodingTrait for HanashiEncodingImpl {
             self.state.tokens.push(token);
         }
         self.parser.flush_extraction();
+        if self.state.messages.last().is_some_and(|message| message.role == (ChatRole::Assistant {})) {
+            // The generation prompt opens a new assistant message. Reserve its own slot
+            // so role-based synchronization does not overwrite the final history message.
+            self.validator.validate_next(&ChatRole::Assistant {})?;
+            self.state.messages.push(ChatMessage::assistant());
+        }
         self.update_messages_from_parser_state()?;
         Ok(())
     }

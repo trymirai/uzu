@@ -2,6 +2,11 @@ use shoji::types::session::chat::ChatRole;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Expected tool results for {count} pending tool call(s) before 'assistant'")]
+    UnresolvedToolCalls {
+        count: usize,
+    },
+
     #[error("Expected one of [{expected}] after '{after}', got '{got}'")]
     InvalidTransition {
         after: String,
