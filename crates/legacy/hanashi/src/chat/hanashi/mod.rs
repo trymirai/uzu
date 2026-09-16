@@ -12,7 +12,7 @@ use shoji::types::{
     basic::{Token, TokenId},
     session::chat::{ChatContentBlock, ChatMessage, ChatModelCapabilities, ChatRole},
 };
-use token_stream_parser::{Parser as _, token_stream::TokenStreamParser};
+use token_stream_parser::{Parser as _, ParserState as _, token_stream::TokenStreamParser};
 use tokenizers::{Tokenizer, step_decode_stream};
 
 use self::{
@@ -100,16 +100,6 @@ impl EncodingTrait for HanashiEncodingImpl {
         }
         self.state.messages.extend(messages.clone());
 
-        // let transformation pipelines gate tool-call extraction on whether tools were declared
-        let tools_declared = self
-            .state
-            .messages
-            .iter()
-            .any(|message| message.content.iter().any(|block| matches!(block, ChatContentBlock::Tools { .. })));
-        if tools_declared {
-            self.parser.set_variable("tools", serde_json::Value::Bool(true));
-        }
-
         let bos_token = self.config.tokens.bos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
         let eos_token = self.config.tokens.eos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
         let text = self.renderer.render(&messages, true, bos_token, eos_token, None)?;
@@ -119,6 +109,38 @@ impl EncodingTrait for HanashiEncodingImpl {
             let token = self.resolve_token(*token_id, true)?;
             self.push_token_to_parser(&token, true)?;
             self.state.tokens.push(token);
+        }
+        if self.state.messages.last().is_some_and(|message| message.role == (ChatRole::Assistant {})) {
+            // Parse from the generation prompt's open frame so assistant-merging
+            // transformations cannot include history in the new reply.
+            let prompt_tokens: Vec<_> = self
+                .parser
+                .reduction()
+                .state()
+                .sections
+                .last()
+                .ok_or(SynchronizationError::Desynchronization)?
+                .tokens()
+                .into_iter()
+                .cloned()
+                .collect();
+            self.parser.reset();
+            for token in &prompt_tokens {
+                self.parser.push_bulk(token)?;
+            }
+
+            // Reserve a separate reply so synchronization preserves the final history message.
+            self.validator.validate_next(&ChatRole::Assistant {})?;
+            self.state.messages.push(ChatMessage::assistant());
+        }
+        // Restore tool context after any parser reset, before extracting the reply.
+        let tools_declared = self
+            .state
+            .messages
+            .iter()
+            .any(|message| message.content.iter().any(|block| matches!(block, ChatContentBlock::Tools { .. })));
+        if tools_declared {
+            self.parser.set_variable("tools", serde_json::Value::Bool(true));
         }
         self.parser.flush_extraction();
         self.update_messages_from_parser_state()?;
