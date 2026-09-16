@@ -474,7 +474,7 @@ impl<B: Backend> Weaver<B> {
             .readout_query_projection
             .encode(normalized_output, batch_node_count, encoder)
             .map_err(WeaverEncodeError::Backend)?;
-        let logit_residuals = target_embedding.encode_readout_sparse(
+        let logit_residuals = target_embedding.encode_readout_sparse_raw(
             &query,
             batch_candidate_ids,
             batch_node_count,
