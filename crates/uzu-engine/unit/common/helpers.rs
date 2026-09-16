@@ -88,7 +88,7 @@ pub fn write_allocation<B: Backend, T: ArrayElement>(
     assert!(bytes.len() <= range.len(), "source data is larger than destination allocation");
     let destination = unsafe {
         std::slice::from_raw_parts_mut(
-            (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
+            (buffer_range.buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start),
             range.len(),
         )
     };

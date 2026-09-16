@@ -12,8 +12,14 @@ use crate::{
         per_layer_embedding::PerLayerEmbeddingProjection,
     },
     parameters::{ParameterLoaderError, ParameterTree},
+    trace::{Array, TransformerLayerActivationsTap, TransformerLayerActivationsTapRequest},
     utils::maybe_mut::MaybeMut,
 };
+
+pub struct TransformerLayerEncodeOutput<B: Backend> {
+    pub hidden: Allocation<B>,
+    pub tap: TransformerLayerActivationsTap<B>,
+}
 
 #[derive(Debug, Error)]
 pub enum TransformerLayerError<B: Backend> {
@@ -37,6 +43,8 @@ pub enum TransformerLayerError<B: Backend> {
 
 pub struct TransformerLayer<B: Backend> {
     pub layer_index: u32,
+    pub model_dim: u32,
+    pub data_type: DataType,
     pub pre_mixer_norm: Option<Normalization<B>>,
     pub kv_source_layer_index: Option<u32>,
     pub mixer: Box<dyn Mixer<B>>,
@@ -180,6 +188,8 @@ impl<B: Backend> TransformerLayer<B> {
 
         Ok(Self {
             layer_index,
+            model_dim,
+            data_type,
             pre_mixer_norm,
             kv_source_layer_index: layer_config.kv_source_layer_index,
             mixer,
@@ -199,9 +209,14 @@ impl<B: Backend> TransformerLayer<B> {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
+        tap_request: Option<&TransformerLayerActivationsTapRequest>,
         encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
+    ) -> Result<TransformerLayerEncodeOutput<B>, B::Error> {
         encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
+
+        let request = tap_request.unwrap_or(&TransformerLayerActivationsTapRequest::NONE);
+        let mut tap = TransformerLayerActivationsTap::default();
+        let shape = [1, batch_dim.size(), self.model_dim];
 
         let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
             pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut), encoder)?
@@ -210,20 +225,44 @@ impl<B: Backend> TransformerLayer<B> {
             encoder.encode_copy(&input, .., shortcut, ..);
             input
         };
+        if request.inputs {
+            tap.inputs = Some(Array::capture(shortcut, &shape, self.data_type, encoder)?);
+        }
+        if request.pre_mixer_norm {
+            tap.pre_mixer_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
+        }
 
         // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
         let mut hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
+        if request.mixer {
+            tap.mixer = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
+        }
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
             hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
+            if request.post_mixer_norm {
+                tap.post_mixer_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
+            }
         }
 
         hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), encoder)?;
+        if request.mlp_inputs {
+            tap.mlp_inputs = Some(Array::capture(shortcut, &shape, self.data_type, encoder)?);
+        }
+        if request.pre_mlp_norm {
+            tap.pre_mlp_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
+        }
 
         hidden = self.mlp.encode(hidden, batch_dim.size(), encoder)?;
+        if request.mlp {
+            tap.mlp = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
+        }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
             hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
+            if request.post_mlp_norm {
+                tap.post_mlp_norm = Some(Array::capture(&hidden, &shape, self.data_type, encoder)?);
+            }
         }
 
         if let Some(ple_projection) = &self.ple_projection {
@@ -234,6 +273,9 @@ impl<B: Backend> TransformerLayer<B> {
 
         encoder.pop_debug_group();
 
-        Ok(hidden)
+        Ok(TransformerLayerEncodeOutput {
+            hidden,
+            tap,
+        })
     }
 }

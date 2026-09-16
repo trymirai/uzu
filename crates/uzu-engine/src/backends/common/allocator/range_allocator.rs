@@ -17,7 +17,7 @@ pub enum AllocationType {
 struct AvailableRanges {
     by_start: BTreeMap<usize, usize>,
     by_len: BTreeSet<(usize, usize, usize)>,
-    total_len: usize,
+    pub total_len: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -47,10 +47,6 @@ impl AvailableRanges {
         let mut available_ranges = Self::default();
         available_ranges.insert(range);
         available_ranges
-    }
-
-    fn total_len(&self) -> usize {
-        self.total_len
     }
 
     fn insert(
@@ -159,7 +155,7 @@ pub struct RangeAllocator {
     aliasable_ranges_by_pool: Vec<AvailableRanges>,
     pool_ranges_by_pool: Vec<AvailableRanges>,
     pool_live_allocations: Vec<usize>,
-    total_available: usize,
+    pub total_available: usize,
 }
 
 impl RangeAllocator {
@@ -266,7 +262,7 @@ impl RangeAllocator {
         }
 
         if let Some(aliasable_ranges) = self.aliasable_ranges_by_pool.get_mut(pool) {
-            self.total_available -= aliasable_ranges.total_len();
+            self.total_available -= aliasable_ranges.total_len;
             *aliasable_ranges = AvailableRanges::default();
         }
 
@@ -281,12 +277,8 @@ impl RangeAllocator {
         }
     }
 
-    pub fn total_available(&self) -> usize {
-        self.total_available
-    }
-
     pub fn is_empty(&self) -> bool {
-        self.free_ranges.total_len() == self.full_len
+        self.free_ranges.total_len == self.full_len
     }
 
     fn ensure_pool(

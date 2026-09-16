@@ -18,7 +18,7 @@ use crate::backends::metal::{
 pub struct MetalSparseHeapPool {
     heaps: Vec<Arc<Mutex<MetalSparseHeap>>>,
     heap_capacity: usize,
-    page_size: MTLSparsePageSize,
+    pub page_size: MTLSparsePageSize,
 }
 
 impl MetalSparseHeapPool {
@@ -166,10 +166,6 @@ impl MetalSparseHeapPool {
     #[cfg(test)]
     pub fn heaps_count(&self) -> usize {
         self.heaps.len()
-    }
-
-    pub fn page_size(&self) -> MTLSparsePageSize {
-        self.page_size
     }
 }
 

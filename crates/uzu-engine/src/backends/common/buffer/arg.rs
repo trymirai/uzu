@@ -8,7 +8,7 @@ pub trait BufferArg<'a, B: Backend>: Copy {
 impl<'a, B: Backend, T: AsBufferRangeRef<Buffer: Buffer<Backend = B>>> BufferArg<'a, B> for &'a T {
     fn into_parts(self) -> (&'a dyn Buffer<Backend = B>, usize, usize) {
         let buffer_range = self.as_buffer_range_ref();
-        let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
+        let (buffer, range) = (buffer_range.buffer, buffer_range.range());
         (buffer, range.start, range.end - range.start)
     }
 }
@@ -32,7 +32,7 @@ pub trait BufferArgMut<'a, B: Backend> {
 
 impl<'a, B: Backend, Buf: Buffer<Backend = B>> BufferArgMut<'a, B> for BufferRangeMut<'a, Buf> {
     fn into_parts(self) -> (&'a dyn Buffer<Backend = B>, usize, usize) {
-        let (buffer, range) = (self.buffer(), self.range());
+        let (buffer, range) = (self.buffer, self.range());
         (buffer, range.start, range.len())
     }
 }
@@ -40,7 +40,7 @@ impl<'a, B: Backend, Buf: Buffer<Backend = B>> BufferArgMut<'a, B> for BufferRan
 impl<'a, B: Backend, T: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> BufferArgMut<'a, B> for &'a mut T {
     fn into_parts(self) -> (&'a dyn Buffer<Backend = B>, usize, usize) {
         let buffer_range = self.as_buffer_range_mut();
-        let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
+        let (buffer, range) = (buffer_range.buffer, buffer_range.range());
         (buffer, range.start, range.end - range.start)
     }
 }

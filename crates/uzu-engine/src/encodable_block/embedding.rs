@@ -64,10 +64,10 @@ enum EmbeddingTying<B: Backend> {
 pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
     input_scale: f32,
-    data_type: DataType,
+    pub data_type: DataType,
     logit_transform: Option<LogitTransform<B>>,
-    vocab_size: u32,
-    model_dim: u32,
+    pub vocab_size: u32,
+    pub model_dim: u32,
 }
 
 struct LogitTransform<B: Backend> {
@@ -78,18 +78,6 @@ struct LogitTransform<B: Backend> {
 }
 
 impl<B: Backend> Embedding<B> {
-    pub(crate) fn data_type(&self) -> DataType {
-        self.data_type
-    }
-
-    pub(crate) fn vocab_size(&self) -> u32 {
-        self.vocab_size
-    }
-
-    pub(crate) fn model_dim(&self) -> u32 {
-        self.model_dim
-    }
-
     fn readout_input_hadamard(&self) -> Option<&InputHadamard<B>> {
         match &self.tying {
             EmbeddingTying::Untied {
@@ -424,7 +412,7 @@ impl<B: Backend> Embedding<B> {
             readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
         } else {
             let mut widened = <B::Kernels as Kernels>::MatmulKernel::new(
-                encoder.context(),
+                encoder.context,
                 self.data_type,
                 self.data_type,
                 output_data_type,

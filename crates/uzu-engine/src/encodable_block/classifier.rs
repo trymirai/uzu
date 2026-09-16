@@ -12,7 +12,13 @@ use crate::{
         transformer::{Transformer, TransformerNewError},
     },
     parameters::ParameterTree,
+    trace::{Array, ClassifierActivationsTap, ClassifierActivationsTapRequest, ClassifierTap, ClassifierTapRequest},
 };
+
+pub struct ClassifierEncodeOutput<B: Backend> {
+    pub logits: Allocation<B>,
+    pub tap: ClassifierTap<B>,
+}
 
 #[derive(Debug, Error)]
 pub enum ClassifierError<B: Backend> {
@@ -32,6 +38,7 @@ pub enum ClassifierError<B: Backend> {
 
 pub struct Classifier<B: Backend> {
     hidden_dim: u32,
+    num_labels: u32,
     data_type: DataType,
     embedding: Embedding<B>,
     embedding_norm: Normalization<B>,
@@ -95,6 +102,7 @@ impl<B: Backend> Classifier<B> {
 
         Ok(Self {
             hidden_dim: config.hidden_dim,
+            num_labels: config.num_labels,
             data_type,
             embedding,
             embedding_norm,
@@ -112,14 +120,24 @@ impl<B: Backend> Classifier<B> {
         &self,
         token_ids: &Allocation<B>,
         batch_dim: u32,
+        tap_request: Option<&ClassifierTapRequest>,
         encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, ClassifierError<B>> {
+    ) -> Result<ClassifierEncodeOutput<B>, ClassifierError<B>> {
         encoder.push_debug_group("classifier");
+
+        let request = tap_request.unwrap_or(&ClassifierTapRequest::NONE);
+        let activations_request = request.activations.as_ref().unwrap_or(&ClassifierActivationsTapRequest::NONE);
+        let mut activations = ClassifierActivationsTap::default();
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim, encoder)?;
 
         let hidden =
             self.embedding_norm.encode(&embedded, 0, batch_dim, None, encoder).map_err(ClassifierError::Backend)?;
+        if activations_request.embedding_norm_output {
+            let shape = [1, batch_dim, self.hidden_dim];
+            activations.embedding_norm_output =
+                Some(Array::capture(&hidden, &shape, self.data_type, encoder).map_err(ClassifierError::Backend)?);
+        }
 
         let nodes = (0..batch_dim)
             .map(|index| TrieNode {
@@ -128,21 +146,53 @@ impl<B: Backend> Classifier<B> {
                 height: index,
             })
             .collect::<Box<[TrieNode]>>();
-        let hidden = self
+        let transformer_output = self
             .transformer
-            .encode(hidden, None, &BatchTopology::new(&nodes, true), Some(0..batch_dim), None, None, encoder)
-            .map_err(ClassifierError::Backend)?
-            .output
-            .unwrap();
+            .encode(
+                hidden,
+                None,
+                &BatchTopology::new(&nodes, true),
+                Some(0..batch_dim),
+                None,
+                None,
+                activations_request.transformer.as_ref(),
+                encoder,
+            )
+            .map_err(ClassifierError::Backend)?;
+        activations.transformer = activations_request.transformer.is_some().then_some(transformer_output.tap);
+        let hidden = transformer_output.output.unwrap();
 
         let mut pooled =
             encoder.allocate_scratch_for_shape(&[self.hidden_dim], self.data_type).map_err(ClassifierError::Backend)?;
         self.pooling.encode(&hidden, &mut pooled, batch_dim, self.hidden_dim, 1, encoder);
+        if activations_request.output_pooling {
+            let shape = [1, self.hidden_dim];
+            activations.output_pooling =
+                Some(Array::capture(&pooled, &shape, self.data_type, encoder).map_err(ClassifierError::Backend)?);
+        }
 
         let logits = self.prediction_head.encode(pooled, 1, encoder).map_err(ClassifierError::Backend)?;
+        let logits_shape = [1, self.num_labels];
+        if activations_request.logits {
+            activations.logits = Some(
+                Array::capture(&logits, &logits_shape, self.data_type, encoder).map_err(ClassifierError::Backend)?,
+            );
+        }
+        let mut tap = ClassifierTap {
+            logits: None,
+            activations: request.activations.is_some().then_some(activations),
+        };
+        if request.logits {
+            tap.logits = Some(
+                Array::capture(&logits, &logits_shape, self.data_type, encoder).map_err(ClassifierError::Backend)?,
+            );
+        }
 
         encoder.pop_debug_group();
 
-        Ok(logits)
+        Ok(ClassifierEncodeOutput {
+            logits,
+            tap,
+        })
     }
 }

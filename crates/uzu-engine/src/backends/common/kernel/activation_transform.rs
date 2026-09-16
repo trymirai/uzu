@@ -20,8 +20,8 @@ pub struct ActivationTransform<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationTransformKernel,
     ops: ActivationTransformOp,
     in_place: bool,
-    activation_group_size: u32,
-    sum_group_size: Option<u32>,
+    pub activation_group_size: u32,
+    pub sum_group_size: Option<u32>,
 }
 
 impl<B: Backend> ActivationTransform<B> {
@@ -175,13 +175,5 @@ impl<B: Backend> ActivationTransform<B> {
 
     pub fn emit_group_sums(&self) -> bool {
         self.sum_group_size.is_some()
-    }
-
-    pub fn activation_group_size(&self) -> u32 {
-        self.activation_group_size
-    }
-
-    pub fn sum_group_size(&self) -> Option<u32> {
-        self.sum_group_size
     }
 }

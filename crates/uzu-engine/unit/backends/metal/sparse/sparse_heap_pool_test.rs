@@ -371,7 +371,7 @@ fn test_remap_two_buffers_after_unmap_does_not_grow_pool() {
 fn test_heap_capacity_pages_matches_byte_capacity() {
     let ctx = create_context::<Metal>();
     let pool = ctx.sparse_heap_pool();
-    let page_size_bytes = pool.page_size().in_bytes();
+    let page_size_bytes = pool.page_size.in_bytes();
 
     assert_eq!(pool.heap_capacity_pages(), pool.heap_capacity_bytes() / page_size_bytes);
 }

@@ -28,7 +28,7 @@ impl<B: Backend> Allocation<B> {
 
     pub fn as_slice_mut<T: NoUninit + AnyBitPattern>(&mut self) -> &mut [T] {
         let buffer_range = self.as_buffer_range_mut();
-        let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
+        let (buffer, range) = (buffer_range.buffer, buffer_range.range());
         let bytes = unsafe {
             std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len())
         };
@@ -44,7 +44,7 @@ impl<B: Backend> Allocation<B> {
 
     pub fn as_slice<T: AnyBitPattern>(&self) -> &[T] {
         let buffer_range = self.as_buffer_range_ref();
-        let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
+        let (buffer, range) = (buffer_range.buffer, buffer_range.range());
         let bytes = unsafe {
             std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
         };
@@ -236,7 +236,7 @@ impl<B: Backend> Allocator<B> {
         });
 
         if allocator_buffers.len() > 1 {
-            allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
+            allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available);
         }
     }
 
@@ -245,16 +245,16 @@ impl<B: Backend> Allocator<B> {
         mut index: usize,
     ) {
         while index > 0
-            && allocator_buffers[index].range_allocator.total_available()
-                < allocator_buffers[index - 1].range_allocator.total_available()
+            && allocator_buffers[index].range_allocator.total_available
+                < allocator_buffers[index - 1].range_allocator.total_available
         {
             allocator_buffers.swap(index, index - 1);
             index -= 1;
         }
 
         while index + 1 < allocator_buffers.len()
-            && allocator_buffers[index].range_allocator.total_available()
-                > allocator_buffers[index + 1].range_allocator.total_available()
+            && allocator_buffers[index].range_allocator.total_available
+                > allocator_buffers[index + 1].range_allocator.total_available
         {
             allocator_buffers.swap(index, index + 1);
             index += 1;

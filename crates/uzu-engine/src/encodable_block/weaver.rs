@@ -125,7 +125,7 @@ pub struct Weaver<B: Backend> {
     frontier_insert_children: <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel,
     model_dim: u32,
     target_model_dim: u32,
-    max_depth: u32,
+    pub max_depth: u32,
     candidate_pool_size: u32,
 }
 
@@ -280,10 +280,6 @@ impl<B: Backend> Weaver<B> {
             max_depth: config.max_depth,
             candidate_pool_size: config.candidate_pool_size,
         })
-    }
-
-    pub fn max_depth(&self) -> u32 {
-        self.max_depth
     }
 
     fn encode_prefix(
@@ -498,7 +494,7 @@ impl<B: Backend> Weaver<B> {
             batch_node_count,
             self.candidate_pool_size,
             shape.expand_width,
-            target_embedding.vocab_size(),
+            target_embedding.vocab_size,
             encoder,
         );
 
@@ -554,7 +550,7 @@ impl<B: Backend> Weaver<B> {
 
         // Rank the draft logits: the top `candidate_pool_size` tokens per
         // lookahead row form the candidate pool node expansions draw from.
-        let vocab_size = target_embedding.vocab_size();
+        let vocab_size = target_embedding.vocab_size;
         assert!(
             logits.size() >= size_for_shape(&[pool_depth_count, vocab_size], DataType::F32),
             "draft logits do not cover the lookahead rows"

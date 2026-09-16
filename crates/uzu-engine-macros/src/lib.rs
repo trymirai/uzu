@@ -1,8 +1,15 @@
 mod dsl;
+mod taps;
 mod uzu_config;
 mod uzu_test;
 
 use proc_macro::TokenStream;
+
+// Tap DSL
+#[proc_macro]
+pub fn taps(input: TokenStream) -> TokenStream {
+    taps::taps(input)
+}
 
 // CPU kernel DSL
 #[proc_macro_attribute]

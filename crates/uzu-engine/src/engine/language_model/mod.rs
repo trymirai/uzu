@@ -21,6 +21,7 @@ use crate::{
 
 pub mod state;
 pub mod stream;
+pub mod trace;
 
 #[cfg(grammar)]
 pub mod grammar;
@@ -36,6 +37,7 @@ pub struct LanguageModel<B: Backend> {
     /// answer (e.g. "</think>"); None when the model does not separate them.
     end_of_thinking_tag: Option<String>,
     tokenizer: Arc<Tokenizer>,
+    tap: crate::trace::DecoderTap<B>,
     #[cfg(grammar)]
     vocab_size: usize,
 }
@@ -122,6 +124,7 @@ impl<B: Backend> Engine<B> {
             generation_config,
             end_of_thinking_tag,
             tokenizer,
+            tap: crate::trace::DecoderTap::default(),
             #[cfg(grammar)]
             vocab_size,
         })

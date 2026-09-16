@@ -218,7 +218,7 @@ impl MatmulKernel for MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = match self.select_dispatch(&shape, encoder.context()) {
+        let plan = match self.select_dispatch(&shape, encoder.context) {
             MatmulDispatch::Gemv(gemv) => {
                 return self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from);
             },

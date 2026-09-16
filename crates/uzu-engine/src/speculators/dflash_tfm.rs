@@ -199,7 +199,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
     ) -> Result<TrieNode, DFlashTreeError<B>> {
         assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
 
-        let block_size = self.dflash.block_size();
+        let block_size = self.dflash.block_size;
         let dflash_depth = shape.dflash_depth_override.unwrap_or(block_size);
         if !(2..=block_size).contains(&dflash_depth) {
             return Err(DFlashTreeError::InvalidTreeShape(format!(
@@ -207,7 +207,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             )));
         }
 
-        let root_position = state.context_length();
+        let root_position = state.context_length;
 
         let mut encoder = Encoder::new_with_pool_name(&*self.context, allocation_pool, Some("speculator propose"))
             .map_err(DFlashTreeError::Backend)?;
@@ -283,11 +283,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 let weaver =
                     self.weaver.as_ref().expect("weaver tree construction requires a speculator with weaver weights");
                 // `max_depth` counts the root; the weaver's `max_depth` counts edges.
-                if shape.max_tree_depth < 2 || shape.max_tree_depth > weaver.max_depth() + 1 {
+                if shape.max_tree_depth < 2 || shape.max_tree_depth > weaver.max_depth + 1 {
                     return Err(DFlashTreeError::InvalidTreeShape(format!(
                         "tree max_depth {} is outside 2..={}",
                         shape.max_tree_depth,
-                        weaver.max_depth() + 1
+                        weaver.max_depth + 1
                     )));
                 }
                 if shape.max_tree_depth > dflash_depth {
@@ -305,7 +305,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     dflash_depth,
                     &mut encoder,
                 )?;
-                let depth_seeds = (0..weaver.max_depth())
+                let depth_seeds = (0..weaver.max_depth)
                     .map(|depth| prng.derive(root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
                 let tree = weaver.encode_tree(

@@ -122,16 +122,16 @@ impl<B: Backend> Sampling<B> {
 
         // TODO: repetition penalty is vibe coded garbage, remove or rewrite properly
         let penalized_logits = if let Some(repetition_penalty) = repetition_penalty {
-            assert!(batch_dim.is_flat(), "repetition_penalty currently only supports flat batches");
+            assert!(batch_dim.is_flat, "repetition_penalty currently only supports flat batches");
             let suffix_repetition_length =
                 suffix_repetition_length.expect("suffix_repetition_length is required for repetition_penalty");
 
             let mut logits_copy = encoder.allocate_scratch(logits.as_buffer_range_ref().range().len())?;
-            let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(encoder.context(), self.data_type)?;
+            let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(encoder.context, self.data_type)?;
             tensor_copy.encode(logits, &mut logits_copy, self.vocab_size * sampling_length, encoder);
 
             let repetition_penalty_kernel =
-                <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(encoder.context(), self.data_type)?;
+                <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(encoder.context, self.data_type)?;
             repetition_penalty_kernel.encode(
                 logits,
                 &mut logits_copy,
@@ -158,7 +158,7 @@ impl<B: Backend> Sampling<B> {
                 let key = vacant.key();
 
                 let kernel = <B::Kernels as Kernels>::UnifiedSamplingKernel::new(
-                    encoder.context(),
+                    encoder.context,
                     self.data_type,
                     key.is_stochastic,
                     key.has_bitmask,
@@ -173,7 +173,7 @@ impl<B: Backend> Sampling<B> {
         };
 
         let mut output =
-            encoder.context().create_allocation(sampling_length as usize * size_of::<u32>(), AllocationType::Global)?;
+            encoder.context.create_allocation(sampling_length as usize * size_of::<u32>(), AllocationType::Global)?;
 
         kernel.encode(
             logits,
