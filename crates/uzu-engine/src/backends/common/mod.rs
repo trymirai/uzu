@@ -8,6 +8,7 @@ mod encoder;
 pub mod gpu_types;
 mod hazard_tracker;
 pub mod kernel;
+pub mod microfloat;
 
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
 pub use backend::Backend;
