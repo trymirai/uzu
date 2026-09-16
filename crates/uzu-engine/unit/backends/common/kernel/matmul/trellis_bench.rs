@@ -6,8 +6,8 @@
 //!
 //! WHAT IS BEING COMPARED. The INT4 cell is the SHIPPED production dispatch —
 //! g32 `ScaleZeroPoint` weights through `MatmulKernel::encode`, i.e. exactly
-//! what a model runs today at these batch widths — and `trellis` is
-//! `MatmulB::Trellis` through the same entry point. `bf16` is the dense
+//! what a model runs today at these batch widths — and the `trellis_*` cells
+//! are `MatmulB::Trellis` through the same entry point. `bf16` is the dense
 //! reference at the same shape. All cells of one `(shape, M)` are adjacent in
 //! time and every conclusion is a within-`(shape, M)` ratio.
 //!
@@ -244,13 +244,33 @@ fn anchor_cell(
 
 /// The config the prototype study benchmarked: `k = 3`, so 3 bits per weight
 /// plus a 32-bit header per row.
-const CONFIG: TrellisConfig = TrellisConfig::new(32, 3);
+const CONFIG_K3: TrellisConfig = TrellisConfig::new(32, 3);
+/// The 2-bit config, which is most of what the shipped packages use.
+const CONFIG_K2: TrellisConfig = TrellisConfig::new(32, 2);
+/// What lalamo fits (trymirai/lalamo#364): `L = 16` and a tape per 64 columns,
+/// so a 16-bit header every 64 weights instead of one per row -- 136 bits per
+/// 64 weights at `k = 2` and 196 at `k = 3`, against 128 and 192 -- and a tape
+/// walk that is not word aligned. Against the whole-row cell of the same `k`
+/// these price the wrap plus 6% (`k = 2`) or 2% (`k = 3`) more tape traffic;
+/// `L` itself is not a confound, the kernel only masks with it.
+const CONFIG_K2_R64: TrellisConfig = TrellisConfig::new(16, 2).with_restart(64);
+const CONFIG_K3_R64: TrellisConfig = TrellisConfig::new(16, 3).with_restart(64);
+
+/// `(cell name, config)` for every trellis cell of a `(shape, M)`.
+const TRELLIS_CELLS: [(&str, TrellisConfig); 4] = [
+    ("trellis_k2", CONFIG_K2),
+    ("trellis_k3", CONFIG_K3),
+    ("trellis_k2_r64", CONFIG_K2_R64),
+    ("trellis_k3_r64", CONFIG_K3_R64),
+];
 
 /// `(label, N, K)`, named after the Qwen3.6-27B matrices they come from: the
-/// two starved N = 5120 matrices, the wide one, and the one the GEMM tile
-/// target leaves completely unsplit.
-const SHAPES: [(&str, u32, u32); 4] = [
+/// two starved N = 5120 matrices, the wide one, the one the GEMM tile target
+/// leaves completely unsplit, and the two mid-width projections between them.
+const SHAPES: [(&str, u32, u32); 6] = [
     ("in_proj_16480x5120", 16480, 5120),
+    ("qkv_8192x5120", 8192, 5120),
+    ("gate_6144x5120", 6144, 5120),
     ("mlp_down_5120x17408", 5120, 17408),
     ("out_proj_5120x6144", 5120, 6144),
     ("mlp_up_34816x5120", 34816, 5120),
@@ -304,6 +324,7 @@ struct TrellisCell {
     m: u32,
     n: u32,
     k: u32,
+    config: TrellisConfig,
 }
 
 impl TrellisCell {
@@ -313,10 +334,12 @@ impl TrellisCell {
         n: u32,
         k: u32,
         int8_activations: bool,
+        config: TrellisConfig,
     ) -> Self {
-        let words = TrellisTape::random(CONFIG, n, k, 0x1234_5EED).words;
+        let words = TrellisTape::random(config, n, k, 0x1234_5EED).words;
         let row_scales: Vec<bf16> = (0..n).map(|r| bf16::from_f32(0.002 + 0.001 * ((r % 19) as f32) / 19.0)).collect();
         Self {
+            config,
             tapes: cold_pool(context, words),
             row_scales: alloc_allocation_with_data::<Metal, bf16>(context, &row_scales),
             quantize: int8_activations.then(|| ActivationQuantize::new(context, None, k)),
@@ -349,7 +372,7 @@ impl TrellisCell {
             b: MatmulB::Trellis {
                 b: self.tapes.next_mut(),
                 scales: &self.row_scales,
-                config: CONFIG,
+                config: self.config,
             },
             b_leading_dimension: None,
             b_transpose: true,
@@ -420,10 +443,10 @@ fn bench_trellis_gemm(c: &mut Criterion) {
 
     for (label, n, k) in SHAPES {
         for m in [16u32, 32, 64] {
-            {
-                let mut trellis = TrellisCell::new(&context, m, n, k, true);
-                report_plan(&context, &matmul, &format!("trellis/{label}/M{m}"), &trellis.shape(), true);
-                cell(&mut group, &context, &group_path, &format!("trellis/{label}/M{m}"), |encoder| {
+            for (cell_name, cfg) in TRELLIS_CELLS {
+                let mut trellis = TrellisCell::new(&context, m, n, k, true, cfg);
+                report_plan(&context, &matmul, &format!("{cell_name}/{label}/M{m}"), &trellis.shape(), true);
+                cell(&mut group, &context, &group_path, &format!("{cell_name}/{label}/M{m}"), |encoder| {
                     trellis.encode(&mut matmul, encoder);
                 });
             }
@@ -501,10 +524,10 @@ fn bench_trellis_gemv(c: &mut Criterion) {
 
     for (label, n, k) in SHAPES {
         for m in [1u32, 2, 4, 6, 8] {
-            {
-                let mut trellis = TrellisCell::new(&context, m, n, k, false);
-                report_plan(&context, &matmul, &format!("trellis/{label}/M{m}"), &trellis.shape(), false);
-                cell(&mut group, &context, &group_path, &format!("trellis/{label}/M{m}"), |encoder| {
+            for (cell_name, cfg) in TRELLIS_CELLS {
+                let mut trellis = TrellisCell::new(&context, m, n, k, false, cfg);
+                report_plan(&context, &matmul, &format!("{cell_name}/{label}/M{m}"), &trellis.shape(), false);
+                cell(&mut group, &context, &group_path, &format!("{cell_name}/{label}/M{m}"), |encoder| {
                     trellis.encode(&mut matmul, encoder);
                 });
             }
