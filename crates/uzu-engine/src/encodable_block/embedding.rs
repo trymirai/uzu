@@ -78,15 +78,15 @@ struct LogitTransform<B: Backend> {
 }
 
 impl<B: Backend> Embedding<B> {
-    pub(crate) fn data_type(&self) -> DataType {
+    pub fn data_type(&self) -> DataType {
         self.data_type
     }
 
-    pub(crate) fn vocab_size(&self) -> u32 {
+    pub fn vocab_size(&self) -> u32 {
         self.vocab_size
     }
 
-    pub(crate) fn model_dim(&self) -> u32 {
+    pub fn model_dim(&self) -> u32 {
         self.model_dim
     }
 
@@ -378,6 +378,36 @@ impl<B: Backend> Embedding<B> {
         output_data_type: DataType,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        let mut output_allocation = self.encode_readout_raw(batch_dim, input_allocation, output_data_type, encoder)?;
+        let native_output = output_data_type == self.data_type;
+
+        if let Some(logit_transform) = &self.logit_transform {
+            let length = batch_dim * self.vocab_size;
+            let kernel = if native_output {
+                &logit_transform.kernel
+            } else {
+                assert_eq!(output_data_type, DataType::F32, "unsupported readout output data type");
+                logit_transform.widened_kernel.as_ref().expect("widened logit transform kernel is missing")
+            };
+            kernel.encode(
+                &mut output_allocation,
+                length,
+                logit_transform.scale,
+                logit_transform.soft_cap.unwrap_or(0.0),
+                encoder,
+            );
+        }
+
+        Ok(output_allocation)
+    }
+
+    pub fn encode_readout_raw(
+        &self,
+        batch_dim: u32,
+        input_allocation: &Allocation<B>,
+        output_data_type: DataType,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
         encoder.push_debug_group("embedding readout");
 
         assert!(batch_dim > 0, "Embedding readout requires at least one row");
@@ -433,31 +463,12 @@ impl<B: Backend> Embedding<B> {
             widened.encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
         }
 
-        if let Some(logit_transform) = &self.logit_transform {
-            let length = batch_dim * self.vocab_size;
-            let kernel = if native_output {
-                &logit_transform.kernel
-            } else {
-                assert_eq!(output_data_type, DataType::F32, "unsupported readout output data type");
-                logit_transform.widened_kernel.as_ref().expect("widened logit transform kernel is missing")
-            };
-            kernel.encode(
-                &mut output_allocation,
-                length,
-                logit_transform.scale,
-                logit_transform.soft_cap.unwrap_or(0.0),
-                encoder,
-            );
-        }
-
         encoder.pop_debug_group();
 
         Ok(output_allocation)
     }
 
-    /// Per-row candidate readout via the GEMV B-row gather: `out[r][j] == dense[r][token_ids[r][j]]`,
-    /// soft-capped when configured, one dispatch. Caller guarantees `token_ids < vocab_size`.
-    pub(crate) fn encode_readout_sparse(
+    pub fn encode_readout_sparse_raw(
         &self,
         input: &Allocation<B>,
         token_ids: &Allocation<B>,
@@ -493,11 +504,6 @@ impl<B: Backend> Embedding<B> {
             None => input,
         };
 
-        let fuse_soft_cap = match &self.logit_transform {
-            Some(logit_transform) if logit_transform.scale != 1.0 => None,
-            Some(logit_transform) => logit_transform.soft_cap,
-            None => None,
-        };
         readout
             .lock()
             .encode(
@@ -510,10 +516,7 @@ impl<B: Backend> Embedding<B> {
                     b_leading_dimension: None,
                     b_transpose: true,
                     d: &mut output,
-                    d_transform: MatmulDOps {
-                        soft_cap: fuse_soft_cap,
-                        ..MatmulDOps::none()
-                    },
+                    d_transform: MatmulDOps::none(),
                     gather_indices: Some(token_ids),
                     m: rows,
                     n: ids_per_row,
@@ -522,19 +525,6 @@ impl<B: Backend> Embedding<B> {
                 encoder,
             )
             .map_err(EmbeddingError::BackendError)?;
-
-        if let Some(logit_transform) = &self.logit_transform
-            && logit_transform.scale != 1.0
-        {
-            let length = rows * ids_per_row;
-            logit_transform.kernel.encode(
-                &mut output,
-                length,
-                logit_transform.scale,
-                logit_transform.soft_cap.unwrap_or(0.0),
-                encoder,
-            );
-        }
 
         encoder.pop_debug_group();
 
