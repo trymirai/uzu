@@ -131,7 +131,8 @@ pub fn Application(
             .register("model", "Choose the model", false, || Box::new(ModelRegistriesFlow))
             .register("settings", "Configure thinking and sampling", true, || Box::new(SettingsFlow))
             .register("theme", "Choose the theme", false, || Box::new(ThemeFlow))
-            .register("exit", "Exit the CLI", false, || Box::new(ExitFlow)),
+            .register("exit", "Exit the CLI", false, || Box::new(ExitFlow))
+            .register("quit", "Exit the CLI", false, || Box::new(ExitFlow)),
         model_state: None,
     });
     let (width, _) = hooks.use_terminal_size();
