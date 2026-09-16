@@ -196,3 +196,53 @@ fn tool_calls_without_identifiers_accept_results() {
     encoding.encode(history.clone()).unwrap();
     assert_reply_preserves_history(&mut encoding, &history);
 }
+
+#[test]
+fn unfinished_tool_call_candidate_allows_a_new_user_turn() {
+    let mut encoding = encoding(HanashiConfig::Qwen3Instruct);
+    let history = vec![
+        ChatMessage::user().with_text("Weather?".into()),
+        ChatMessage::assistant().with_tool_call_candidate(json!({"name": "get_weather"}).into()),
+        ChatMessage::user().with_text("Try again".into()),
+    ];
+    encoding.encode(history.clone()).unwrap();
+    assert_reply_preserves_history(&mut encoding, &history);
+}
+
+const GENERATED_TOOL_CALL: &str =
+    concat!("<tool_call>\n{\"name\":\"get_weather\",\"arguments\":{\"city\":\"London\"}}\n</tool_call>", "<|im_end|>");
+
+#[test]
+fn decoding_cannot_hide_a_pending_tool_call_with_another_assistant_frame() {
+    for bulk in [false, true] {
+        let mut encoding = encoding(HanashiConfig::Qwen3Instruct);
+        encoding.encode(vec![ChatMessage::user().with_text("Weather?".into())]).unwrap();
+        let extra_frame = "<|im_start|>assistant\nSkipped the tool.<|im_end|>";
+        let result = if bulk {
+            encoding.decode(encoding.tokenize(&format!("{GENERATED_TOOL_CALL}{extra_frame}")).unwrap())
+        } else {
+            for token in encoding.tokenize(GENERATED_TOOL_CALL).unwrap() {
+                encoding.decode(vec![token]).unwrap();
+            }
+            assert_eq!(encoding.state().messages.last().unwrap().tool_calls().len(), 1);
+            encoding.tokenize(extra_frame).unwrap().into_iter().try_for_each(|token| encoding.decode(vec![token]))
+        };
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("pending tool call"), "{error}");
+        if !bulk {
+            assert_eq!(encoding.state().messages.last().unwrap().tool_calls().len(), 1);
+        }
+    }
+}
+
+#[test]
+fn decoding_can_finish_with_a_tool_call_awaiting_execution() {
+    let mut encoding = encoding(HanashiConfig::Qwen3Instruct);
+    encoding.encode(vec![ChatMessage::user().with_text("Weather?".into())]).unwrap();
+    for token in encoding.tokenize(GENERATED_TOOL_CALL).unwrap() {
+        encoding.decode(vec![token]).unwrap();
+    }
+    let calls = encoding.state().messages.last().unwrap().tool_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "get_weather");
+}

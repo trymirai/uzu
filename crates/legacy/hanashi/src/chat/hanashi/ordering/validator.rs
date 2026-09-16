@@ -22,6 +22,20 @@ impl Validator {
     /// Check complete input messages, including calls whose IDs were assigned after decoding.
     /// An empty pending list at the end allows the next generated assistant reply.
     pub fn validate_tool_calls<'a>(messages: impl IntoIterator<Item = &'a ChatMessage>) -> Result<(), Error> {
+        let count = Self::validate_streamed_tool_calls(messages)?;
+        if count > 0 {
+            return Err(Error::UnresolvedToolCalls {
+                count,
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate assistant transitions and return the number of calls still awaiting results.
+    /// A generated reply may end with pending calls for the caller to execute.
+    pub fn validate_streamed_tool_calls<'a>(
+        messages: impl IntoIterator<Item = &'a ChatMessage>
+    ) -> Result<usize, Error> {
         let mut pending: Vec<(Option<&str>, Option<&str>)> = Vec::new();
         for message in messages {
             match message.role {
@@ -31,17 +45,13 @@ impl Validator {
                             count: pending.len(),
                         });
                     }
+                    // Candidates cannot be executed and must not block a retry.
                     for block in &message.content {
-                        match block {
-                            ChatContentBlock::ToolCall {
-                                value,
-                            } => {
-                                pending.push((value.identifier.as_deref(), Some(value.name.as_str())));
-                            },
-                            ChatContentBlock::ToolCallCandidate {
-                                ..
-                            } => pending.push((None, None)),
-                            _ => {},
+                        if let ChatContentBlock::ToolCall {
+                            value,
+                        } = block
+                        {
+                            pending.push((value.identifier.as_deref(), Some(value.name.as_str())));
                         }
                     }
                 },
@@ -76,12 +86,7 @@ impl Validator {
                 _ => {},
             }
         }
-        if !pending.is_empty() {
-            return Err(Error::UnresolvedToolCalls {
-                count: pending.len(),
-            });
-        }
-        Ok(())
+        Ok(pending.len())
     }
 
     pub fn validate_next(
