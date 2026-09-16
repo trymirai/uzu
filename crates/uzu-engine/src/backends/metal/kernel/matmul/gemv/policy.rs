@@ -1,6 +1,8 @@
 use metal::MTLGPUFamily;
 
-use crate::backends::metal::context::LARGE_MIN_GPU_CORES;
+use crate::backends::{
+    common::kernel::matmul::trellis_format::TRELLIS_WIDEST_K_GROUP, metal::context::LARGE_MIN_GPU_CORES,
+};
 
 mod quantized;
 
@@ -55,11 +57,15 @@ pub(super) const DEFAULT_TILE: GemvTile = tile(DEFAULT_NUM_SIMDGROUPS, 1, DEFAUL
 
 /// K values one trellis threadgroup step covers: `reduction_lanes *
 /// states_per_lane(4) * weights_per_state(4)`. `TrellisSlice` assumes K is a
-/// whole number of these, which is also what makes the tape advance by whole
-/// 32-bit words.
+/// whole number of these.
 pub(super) const fn trellis_k_block(reduction_lanes: u32) -> u32 {
     reduction_lanes * 16
 }
+
+const _: () = assert!(
+    trellis_k_block(32) == TRELLIS_WIDEST_K_GROUP,
+    "the widest trellis K group the format admits is the 32-lane GEMV block"
+);
 
 impl GemvTile {
     pub const fn quantized(

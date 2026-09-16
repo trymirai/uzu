@@ -37,13 +37,13 @@ namespace quantized {
 ///     states all sit at the SAME trellis step and differ only by weight ROW.
 ///     One shift and one word offset serve all of them, and consecutive slots
 ///     are a fixed number of tape words apart.
-///   * one K group advances the step by `STEPS_PER_BLOCK`, i.e. the bit offset
-///     falls by `THREADGROUP_BLOCK_K * k` bits, which for `V == 4` is always a
-///     whole number of 32-bit words. `bit_offset & 31` is therefore
-///     loop-invariant and `bit_offset >> 5` is an induction variable.
+///   * one K group advances the step by `STEPS_PER_BLOCK`, which moves the bit
+///     offset by an amount `trellis::Walk` knows in advance: a constant for a
+///     whole-row tape or a group that is whole tapes, a constant plus a
+///     periodic jump when a tape spans several groups.
 ///
-/// so `stage()` never recomputes a shift, a mask, the out-of-range row test or
-/// the threadgroup destination.
+/// so `stage()` recomputes one shift and one word index per K group, and never
+/// the mask, the out-of-range row test or the threadgroup destination.
 ///
 /// N RAGGEDNESS is handled by the `live` mask rather than by the fragment load:
 /// weight rows past `N` stage an exact zero, so the MMA needs no N guard and the
@@ -78,13 +78,12 @@ struct TrellisCursor {
   /// The staged block, as words. Its allocation is `uint`-typed for exactly this
   /// reason; see `operands::stage_block`.
   threadgroup uint* block;
-  /// Tape word holding the low bits of slot 0's state for the current K group.
-  const device uint* word;
-  /// Bit position of the state inside `word` -- loop-invariant, see above.
-  uint shift;
-  /// Tape words between two slots, and between two K groups.
+  /// Slot 0's tape row.
+  const device uint* row;
+  /// Where this thread's step sits in that row, and how a K group moves it.
+  uzu::trellis::Walk walk;
+  /// Tape words between two slots.
   uint slot_words;
-  uint words_per_group;
   uint state_mask;
   uint hash_a;
   uint hash_b;
@@ -106,20 +105,23 @@ struct TrellisCursor {
   ) {
     const uint kv = right.trellis->k_bits_per_step;
     const uint row_stride_words = right.trellis->row_stride_words;
-    const uint steps = uint(params->K) / uint(uzu::trellis::TRELLIS_V);
     const uint thread_index = thread_context.simdgroup_index * METAL_SIMD_SIZE + thread_context.simd_lane_id;
     const ushort step = ushort(thread_index % STEPS_PER_BLOCK);
     const ushort slot_row = ushort(thread_index / STEPS_PER_BLOCK);
-    const uzu::trellis::Walk tape =
-        uzu::trellis::walk(steps, tile.k_offset / uint(uzu::trellis::TRELLIS_V) + uint(step), STEPS_PER_BLOCK, kv);
     const uint block_row_base = uint(tile.block_col);
 
     TrellisCursor cursor;
     cursor.block = reinterpret_cast<threadgroup uint*>(shared);
-    cursor.word = right.tape + (ulong)(block_row_base + slot_row) * (ulong)row_stride_words + (ulong)tape.word_offset;
-    cursor.shift = tape.shift;
+    cursor.row = right.tape + (ulong)(block_row_base + slot_row) * (ulong)row_stride_words;
+    cursor.walk = uzu::trellis::walk(
+        tile.k_offset / uint(uzu::trellis::TRELLIS_V),
+        uint(step),
+        STEPS_PER_BLOCK,
+        kv,
+        right.trellis->tape_steps,
+        right.trellis->tape_bits
+    );
     cursor.slot_words = uint(SLOT_ROWS) * row_stride_words;
-    cursor.words_per_group = tape.block_words;
     cursor.state_mask = uzu::trellis::state_mask(right.trellis->l);
     cursor.hash_a = right.trellis->hash_a;
     cursor.hash_b = right.trellis->hash_b;
@@ -143,6 +145,8 @@ struct TrellisCursor {
   /// instantiations must run it the same number of times.
   METAL_FUNC void stage() thread {
     threadgroup_barrier(mem_flags::mem_threadgroup);
+    const device uint* word = row + walk.word();
+    const uint shift = walk.shift();
     // The N guard, hoisted out of the unroll. `live` does not change across K
     // groups, so the common case -- every slot inside N -- can run the whole
     // unroll with NO per-slot conditional at all, and only the one ragged N
@@ -166,7 +170,7 @@ struct TrellisCursor {
       }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    word -= words_per_group;
+    walk.advance();
   }
 
   METAL_FUNC Fragment load(const uint chunk_index) const thread {

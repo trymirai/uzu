@@ -26,5 +26,7 @@ typedef struct {
   uint32_t hash_a;
   uint32_t hash_b;
   float codebook_scale;
+  uint32_t tape_steps;
+  uint32_t tape_bits;
 } TrellisParams;
 } // namespace uzu::matmul

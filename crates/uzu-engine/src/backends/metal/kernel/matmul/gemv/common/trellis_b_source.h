@@ -70,13 +70,8 @@ private:
     Metadata metadata;
     metadata.load(weight_row_indices, ops, trellis);
 
-    Slice current = Slice::make(
-        reinterpret_cast<const device uint*>(ops.b),
-        weight_row_indices,
-        tile.reduction_lane,
-        params.in_vec_size,
-        trellis
-    );
+    Slice current =
+        Slice::make(reinterpret_cast<const device uint*>(ops.b), weight_row_indices, tile.reduction_lane, trellis);
 
     const uint blocks = params.in_vec_size / Slice::BLOCK_VALUES;
     const uint batch_remaining = params.batch_size - tile.input_row;

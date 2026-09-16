@@ -70,11 +70,11 @@ public:
 /// shifting it down `KV` bits at a time, so nothing here needs a compile-time
 /// bit offset, a word index or a branch. A wider run would need one.
 ///
-/// ADDRESS ARITHMETIC. One block of `REDUCTION_LANES * STATES_PER_LANE` steps is
-/// `REDUCTION_LANES * STATES_PER_LANE * KV` bits, which for `V == 4` and eight
-/// reduction lanes is always a whole number of words. `bit_offset & 31` is
-/// therefore loop-invariant and the row pointers just walk down, so the K loop
-/// never recomputes a `>> 5`, a `& 31` or a row product.
+/// ADDRESS ARITHMETIC. A lane's run sits inside one tape of the row
+/// (`TrellisConfig::is_valid` makes a tape whole runs), and `trellis::Walk`
+/// knows what one K block of `REDUCTION_LANES * STATES_PER_LANE` steps does to
+/// its bit offset, so the K loop recomputes one `>> 5` and one `& 31` per block
+/// and never a row product.
 /// `KV` is the tape's bits-per-step when the caller knows it at compile time and
 /// 0 when it does not; see the state extraction in `accumulate`.
 template <typename Tile, typename AT, typename BT, typename DT, bool FULL_TILE, uint KV>
@@ -105,17 +105,12 @@ private:
   UZU_CONST uint RAW_WORDS = RUN_WORDS + 1;
 
   static_assert(Tile::GROUP_LANES == 1, "a trellis lane owns whole trellis states");
-  // 32 steps of KV bits is KV whole words for any KV, which is what makes
-  // `block_words` exact and `shift` loop-invariant.
-  static_assert((BLOCK_VALUES / V) % 32 == 0, "one K block must advance the tape by whole words");
 
   /// The run normalized to bit 0, little-endian.
   uint run[Tile::ROWS_PER_LANE][RUN_WORDS];
-  /// This lane's tape word for each weight row, and the bit of the run's base
-  /// inside it -- loop-invariant, see above.
-  const device uint* head[Tile::ROWS_PER_LANE];
-  uint shift;
-  uint block_words;
+  /// Each weight row's tape, and where this lane's run sits in it.
+  const device uint* row[Tile::ROWS_PER_LANE];
+  uzu::trellis::Walk walk;
 
 public:
   /// `weight_rows` are the tape rows this lane reduces; `reduction_lane` picks
@@ -124,21 +119,22 @@ public:
       const device uint* tape,
       const thread uint (&weight_rows)[Tile::ROWS_PER_LANE],
       uint reduction_lane,
-      uint in_vec_size,
       const constant uzu::matmul::TrellisParams& trellis
   ) {
-    const uint kv = trellis.k_bits_per_step;
-    const uint steps = in_vec_size / V;
-    const uzu::trellis::Walk run =
-        uzu::trellis::walk(steps, STATES_PER_LANE * (reduction_lane + 1u) - 1u, BLOCK_VALUES / V, kv);
     const uint stride = trellis.row_stride_words;
 
     TrellisSlice slice;
-    slice.shift = run.shift;
-    slice.block_words = run.block_words;
+    slice.walk = uzu::trellis::walk(
+        0u,
+        STATES_PER_LANE * (reduction_lane + 1u) - 1u,
+        BLOCK_VALUES / V,
+        trellis.k_bits_per_step,
+        trellis.tape_steps,
+        trellis.tape_bits
+    );
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
-      slice.head[R] = tape + (ulong)weight_rows[R] * (ulong)stride + (ulong)run.word_offset;
+      slice.row[R] = tape + (ulong)weight_rows[R] * (ulong)stride;
     });
     return slice;
   }
@@ -146,24 +142,20 @@ public:
   /// One load per weight row, then one funnel shift that normalizes the run to
   /// bit 0. Every load is issued before any shift, so the runs arrive together.
   METAL_FUNC void load_weights() thread {
+    const uint word = walk.word();
+    const uint shift = walk.shift();
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
+      const device uint* head = row[R] + word;
       uint raw[RAW_WORDS];
-      uzu::const_for_loop<0, int(RAW_WORDS), 1>([&](auto i) UZU_ALWAYS_INLINE { raw[i.value] = head[R][i.value]; });
+      uzu::const_for_loop<0, int(RAW_WORDS), 1>([&](auto i) UZU_ALWAYS_INLINE { raw[i.value] = head[i.value]; });
       uzu::const_for_loop<0, int(RUN_WORDS), 1>([&](auto i) UZU_ALWAYS_INLINE {
         run[R][i.value] = uint((((ulong)raw[i.value + 1] << 32) | (ulong)raw[i.value]) >> shift);
       });
     });
   }
 
-  /// Step to the next K block. A block is a whole number of tape words, so the
-  /// shift stays put and only the pointers move.
-  METAL_FUNC void advance() thread {
-    Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
-      constexpr uint R = decltype(output_index)::value;
-      head[R] -= block_words;
-    });
-  }
+  METAL_FUNC void advance() thread { walk.advance(); }
 
   /// Decode this lane's run and accumulate it into the batch. `column` is the
   /// first K column of the run.
