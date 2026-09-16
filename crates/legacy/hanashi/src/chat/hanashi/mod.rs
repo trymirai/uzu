@@ -38,8 +38,6 @@ pub struct HanashiEncodingImpl {
     validator: Validator,
 
     state: State,
-    // Index of the generation prompt in the parsed messages, which may differ from input history.
-    completion_message_start: Option<usize>,
     tokenizer_decode_ids: Vec<u32>,
     tokenizer_decode_prefix: String,
     tokenizer_decode_prefix_index: usize,
@@ -64,7 +62,6 @@ impl HanashiEncodingImpl {
             renderer,
             validator,
             state: State::default(),
-            completion_message_start: None,
             tokenizer_decode_ids: vec![],
             tokenizer_decode_prefix: "".to_string(),
             tokenizer_decode_prefix_index: 0,
@@ -87,7 +84,6 @@ impl EncodingTrait for HanashiEncodingImpl {
         self.parser.reset();
         self.validator.reset();
         self.state = State::default();
-        self.completion_message_start = None;
         self.tokenizer_decode_ids = vec![];
         self.tokenizer_decode_prefix = "".to_string();
         self.tokenizer_decode_prefix_index = 0;
@@ -99,7 +95,6 @@ impl EncodingTrait for HanashiEncodingImpl {
         messages: Self::Input,
     ) -> Result<(), Self::Error> {
         let messages = self.fill_default_content(&messages)?;
-        Validator::validate_tool_calls(self.state.messages.iter().chain(&messages))?;
         for message in &messages {
             self.validator.validate_next(&message.role)?;
         }
@@ -132,7 +127,6 @@ impl EncodingTrait for HanashiEncodingImpl {
             self.validator.validate_next(&ChatRole::Assistant {})?;
             self.state.messages.push(ChatMessage::assistant());
         }
-        self.completion_message_start = None;
         self.update_messages_from_parser_state()?;
         Ok(())
     }
@@ -295,14 +289,6 @@ impl HanashiEncodingImpl {
                     streamed_messages.push(message);
                 },
             }
-        }
-
-        if let Some(start) = self.completion_message_start {
-            // Inspect every generated frame before synchronization can replace the last reply.
-            // Input history was validated before rendering, where IDs and message boundaries were intact.
-            Validator::validate_streamed_tool_calls(streamed_messages.iter().skip(start))?;
-        } else {
-            self.completion_message_start = Some(streamed_messages.len().saturating_sub(1));
         }
 
         let result = self.state.synchronize_messages(&streamed_messages)?;

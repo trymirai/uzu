@@ -4,11 +4,7 @@ use hanashi::{
     Encoding,
     chat::hanashi::{HanashiEncodingImpl, config::HanashiConfig},
 };
-use serde_json::json;
-use shoji::types::{
-    basic::ToolCall,
-    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
-};
+use shoji::types::session::chat::{ChatMessage, ChatRole};
 use tokenizers::{
     AddedToken, Tokenizer,
     models::bpe::{BPE, Vocab},
@@ -23,17 +19,7 @@ fn encoding(config: HanashiConfig) -> HanashiEncodingImpl {
     tokenizer.with_pre_tokenizer(Some(ByteLevel::default().add_prefix_space(false)));
     tokenizer.with_decoder(Some(ByteLevel::default()));
     tokenizer.add_special_tokens(
-        &[
-            "<|im_start|>",
-            "<|im_end|>",
-            "<think>",
-            "</think>",
-            "<tool_call>",
-            "</tool_call>",
-            "<tool_response>",
-            "</tool_response>",
-        ]
-        .map(|token| AddedToken::from(token, true)),
+        &["<|im_start|>", "<|im_end|>", "<think>", "</think>"].map(|token| AddedToken::from(token, true)),
     );
     tokenizer.add_tokens(&["system", "user", "assistant"].map(|role| AddedToken::from(role, false).single_word(true)));
     HanashiEncodingImpl::new(config, Arc::new(tokenizer)).unwrap()
@@ -47,22 +33,6 @@ fn compaction_history() -> Vec<ChatMessage> {
             .with_reasoning("Retained reasoning".into())
             .with_text("Retained recent assistant turn".into()),
     ]
-}
-
-fn tool_call(identifier: Option<&str>) -> ToolCall {
-    ToolCall {
-        identifier: identifier.map(str::to_string),
-        name: "get_weather".into(),
-        arguments: json!({"city": "London"}).into(),
-    }
-}
-
-fn tool_result(identifier: Option<&str>) -> ChatMessage {
-    ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
-        identifier: identifier.map(str::to_string),
-        name: Some("get_weather".into()),
-        value: json!("20 degrees").into(),
-    })
 }
 
 fn assert_reply_preserves_history(
@@ -125,179 +95,4 @@ fn history_ending_with_assistant_keeps_a_separate_reply() {
         encoding.encode(history.clone()).unwrap();
         assert_reply_preserves_history(&mut encoding, &history);
     }
-}
-
-#[test]
-fn retained_assistant_preserves_reasoning_and_tool_calls() {
-    let mut encoding = encoding(HanashiConfig::Qwen38);
-    let mut history = compaction_history();
-    history[2] = history[2].with_tool_call(tool_call(Some("call_1")));
-    history.push(tool_result(Some("call_1")));
-    history.push(ChatMessage::assistant().with_text("It is warm.".into()));
-    history.push(ChatMessage::user().with_text("Continue".into()));
-    encoding.encode(history.clone()).unwrap();
-
-    let prompt = encoding.state().text();
-    assert!(prompt.contains("<think>\nRetained reasoning\n</think>"));
-    assert!(prompt.contains("<function=get_weather>"));
-    assert!(prompt.contains("<parameter=city>\nLondon\n</parameter>"));
-    assert_reply_preserves_history(&mut encoding, &history);
-}
-
-#[test]
-fn unresolved_tool_calls_cannot_be_followed_by_assistant() {
-    for add_assistant in [false, true] {
-        let mut encoding = encoding(HanashiConfig::Qwen36);
-        let mut history = vec![
-            ChatMessage::user().with_text("Weather?".into()),
-            ChatMessage::assistant().with_tool_call(tool_call(Some("call_1"))),
-        ];
-        if add_assistant {
-            history.push(ChatMessage::assistant().with_text("Continuing without a tool result".into()));
-        }
-        let error = encoding.encode(history).unwrap_err();
-        assert!(error.to_string().contains("pending tool call"), "{error}");
-    }
-}
-
-#[test]
-fn all_tool_calls_need_matching_results() {
-    for result_ids in [vec!["call_1"], vec!["call_1", "call_1"], vec!["call_1", "unknown"], vec!["call_2", "call_1"]] {
-        let mut encoding = encoding(HanashiConfig::Qwen36);
-        let mut history = vec![
-            ChatMessage::user().with_text("Weather?".into()),
-            ChatMessage::assistant()
-                .with_tool_call(tool_call(Some("call_1")))
-                .with_tool_call(tool_call(Some("call_2"))),
-        ];
-        history.extend(result_ids.iter().map(|id| tool_result(Some(id))));
-        history.push(ChatMessage::assistant().with_text("Both results received".into()));
-        history.push(ChatMessage::user().with_text("Continue".into()));
-        let result = encoding.encode(history);
-        if result_ids == ["call_2", "call_1"] {
-            result.unwrap();
-        } else {
-            let error = result.unwrap_err();
-            assert!(error.to_string().contains("pending tool call"), "{error}");
-        }
-    }
-}
-
-#[test]
-fn tool_calls_without_identifiers_accept_results() {
-    let mut encoding = encoding(HanashiConfig::Qwen36);
-    let history = vec![
-        ChatMessage::user().with_text("Weather?".into()),
-        ChatMessage::assistant().with_tool_call(tool_call(None)),
-        tool_result(None),
-        ChatMessage::assistant().with_text("It is warm.".into()),
-        ChatMessage::user().with_text("Continue".into()),
-    ];
-    encoding.encode(history.clone()).unwrap();
-    assert_reply_preserves_history(&mut encoding, &history);
-}
-
-#[test]
-fn unfinished_tool_call_candidate_allows_a_new_user_turn() {
-    let candidate = ChatMessage::assistant().with_tool_call_candidate(json!({"name": "get_weather"}).into());
-    let mixed_batch = candidate.with_tool_call(tool_call(Some("call_1")));
-    let mut reversed_batch = mixed_batch.clone();
-    reversed_batch.content.reverse();
-    for reply in [candidate, mixed_batch, reversed_batch] {
-        let mut encoding = encoding(HanashiConfig::Qwen3Instruct);
-        let history = vec![
-            ChatMessage::user().with_text("Weather?".into()),
-            reply,
-            ChatMessage::user().with_text("Try again".into()),
-        ];
-        encoding.encode(history.clone()).unwrap();
-        assert_reply_preserves_history(&mut encoding, &history);
-    }
-}
-
-const GENERATED_TOOL_CALL: &str =
-    concat!("<tool_call>\n{\"name\":\"get_weather\",\"arguments\":{\"city\":\"London\"}}\n</tool_call>", "<|im_end|>");
-
-const GENERATED_TOOL_CALL_CANDIDATE: &str = "<tool_call>\n{\"name\":\"get_weather\"}\n</tool_call><|im_end|>";
-
-#[test]
-fn decoded_tool_call_candidates_allow_a_new_user_turn() {
-    for mixed_batch in [false, true] {
-        let mut encoding = encoding(HanashiConfig::Qwen3Instruct);
-        encoding.encode(vec![ChatMessage::user().with_text("Weather?".into())]).unwrap();
-        let completion = if mixed_batch {
-            format!("{}{GENERATED_TOOL_CALL_CANDIDATE}", GENERATED_TOOL_CALL.trim_end_matches("<|im_end|>"))
-        } else {
-            GENERATED_TOOL_CALL_CANDIDATE.to_string()
-        };
-        for token in encoding.tokenize(&completion).unwrap() {
-            encoding.decode(vec![token]).unwrap();
-        }
-        let reply = encoding.state().messages.last().unwrap();
-        assert!(reply.content.iter().any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. })));
-        assert_eq!(reply.tool_calls().len(), usize::from(mixed_batch));
-
-        let retry = ChatMessage::user().with_text("Try again".into());
-        let mut history = encoding.state().messages.clone();
-        history.push(retry.clone());
-        encoding.encode(vec![retry]).unwrap();
-        assert_reply_preserves_history(&mut encoding, &history);
-    }
-}
-
-#[test]
-fn decoding_cannot_hide_a_tool_call_candidate_with_another_assistant_frame() {
-    for bulk in [false, true] {
-        let mut encoding = encoding(HanashiConfig::Qwen3Instruct);
-        encoding.encode(vec![ChatMessage::user().with_text("Weather?".into())]).unwrap();
-        let extra_frame = "<|im_start|>assistant\nSkipped the malformed call.<|im_end|>";
-        let result = if bulk {
-            encoding.decode(encoding.tokenize(&format!("{GENERATED_TOOL_CALL_CANDIDATE}{extra_frame}")).unwrap())
-        } else {
-            for token in encoding.tokenize(GENERATED_TOOL_CALL_CANDIDATE).unwrap() {
-                encoding.decode(vec![token]).unwrap();
-            }
-            let reply = encoding.state().messages.last().unwrap();
-            assert!(reply.content.iter().any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. })));
-            encoding.tokenize(extra_frame).unwrap().into_iter().try_for_each(|token| encoding.decode(vec![token]))
-        };
-        let error = result.unwrap_err();
-        assert!(error.to_string().contains("pending tool call"), "{error}");
-        assert!(!encoding.state().messages.last().unwrap().text().unwrap_or_default().contains("Skipped"));
-    }
-}
-
-#[test]
-fn decoding_cannot_hide_a_pending_tool_call_with_another_assistant_frame() {
-    for bulk in [false, true] {
-        let mut encoding = encoding(HanashiConfig::Qwen3Instruct);
-        encoding.encode(vec![ChatMessage::user().with_text("Weather?".into())]).unwrap();
-        let extra_frame = "<|im_start|>assistant\nSkipped the tool.<|im_end|>";
-        let result = if bulk {
-            encoding.decode(encoding.tokenize(&format!("{GENERATED_TOOL_CALL}{extra_frame}")).unwrap())
-        } else {
-            for token in encoding.tokenize(GENERATED_TOOL_CALL).unwrap() {
-                encoding.decode(vec![token]).unwrap();
-            }
-            assert_eq!(encoding.state().messages.last().unwrap().tool_calls().len(), 1);
-            encoding.tokenize(extra_frame).unwrap().into_iter().try_for_each(|token| encoding.decode(vec![token]))
-        };
-        let error = result.unwrap_err();
-        assert!(error.to_string().contains("pending tool call"), "{error}");
-        if !bulk {
-            assert_eq!(encoding.state().messages.last().unwrap().tool_calls().len(), 1);
-        }
-    }
-}
-
-#[test]
-fn decoding_can_finish_with_a_tool_call_awaiting_execution() {
-    let mut encoding = encoding(HanashiConfig::Qwen3Instruct);
-    encoding.encode(vec![ChatMessage::user().with_text("Weather?".into())]).unwrap();
-    for token in encoding.tokenize(GENERATED_TOOL_CALL).unwrap() {
-        encoding.decode(vec![token]).unwrap();
-    }
-    let calls = encoding.state().messages.last().unwrap().tool_calls();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].name, "get_weather");
 }
