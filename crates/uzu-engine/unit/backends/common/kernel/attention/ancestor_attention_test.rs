@@ -158,7 +158,7 @@ fn ancestor_attention_matches_cpu() {
 }
 
 #[uzu_test]
-#[ignore = "benchmark"]
+#[ignore]
 fn benchmark_ancestor_attention() {
     const BATCH: u32 = 32;
     const SAMPLES: usize = 50;
