@@ -10,13 +10,9 @@ pub fn uzu_test(
 
     let ignore_attr =
         func.attrs.iter().position(|attr| attr.path().is_ident("ignore")).map(|index| func.attrs.remove(index));
-    let (ignore, ignore_message) = match ignore_attr.as_ref().map(|attr| &attr.meta) {
-        None => (quote! { false }, quote! { ::core::option::Option::None }),
-        Some(Meta::Path(_)) => (quote! { true }, quote! { ::core::option::Option::None }),
-        Some(Meta::NameValue(name_value)) => {
-            let message = &name_value.value;
-            (quote! { true }, quote! { ::core::option::Option::Some(#message) })
-        },
+    let ignore = match ignore_attr.as_ref().map(|attr| &attr.meta) {
+        None => quote! { false },
+        Some(Meta::Path(_)) => quote! { true },
         Some(meta) => {
             return syn::Error::new_spanned(meta, "unsupported #[ignore] form").to_compile_error().into();
         },
@@ -31,28 +27,14 @@ pub fn uzu_test(
         #[test_case]
         #[allow(non_upper_case_globals)]
         const #const_name: crate::tests::harness::UzuTest =
-            crate::tests::harness::UzuTest::Test(&crate::tests::harness::test::TestDescAndFn {
-                desc: crate::tests::harness::test::TestDesc {
-                    name: crate::tests::harness::test::StaticTestName(concat!(
-                        module_path!(),
-                        "::",
-                        stringify!(#name),
-                    )),
-                    ignore: #ignore,
-                    ignore_message: #ignore_message,
-                    source_file: file!(),
-                    start_line: line!() as usize,
-                    start_col: column!() as usize,
-                    end_line: line!() as usize,
-                    end_col: column!() as usize,
-                    should_panic: crate::tests::harness::test::ShouldPanic::No,
-                    compile_fail: false,
-                    no_run: false,
-                    test_type: crate::tests::harness::test::TestType::Unknown,
-                },
-                testfn: crate::tests::harness::test::StaticTestFn(|| {
-                    crate::tests::harness::test::assert_test_result(#name())
-                }),
+            crate::tests::harness::UzuTest::Test(&crate::tests::harness::UzuTestCase {
+                name: concat!(
+                    module_path!(),
+                    "::",
+                    stringify!(#name),
+                ),
+                ignore: #ignore,
+                run: #name,
             });
     }
     .into()

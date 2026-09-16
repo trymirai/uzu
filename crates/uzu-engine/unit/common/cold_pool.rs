@@ -31,7 +31,7 @@ impl<T, F: FnMut() -> T> ColdPool<T, F> {
     }
 }
 
-pub(crate) fn copy_count(
+pub fn copy_count(
     working_set: usize,
     bytes_per_copy: usize,
 ) -> usize {
