@@ -7591,6 +7591,7 @@ dependencies = [
  "shoji",
  "sysinfo",
  "tempfile",
+ "test-tag",
  "thiserror 2.0.18",
  "tokenizers",
  "tokio",
