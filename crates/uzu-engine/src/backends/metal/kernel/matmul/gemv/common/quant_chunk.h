@@ -26,13 +26,12 @@ struct QuantChunk {
       uint chunk,
       thread float (&values)[VALUES],
       float origin,
-      bool signed_codes,
-      bool interleaved_w4
+      bool signed_codes
   ) {
     const uint word = chunk * (BITS == 4 ? 1u : 2u);
     const uint word0 = words[word / 4u][word % 4u];
     const uint word1 = BITS == 4 ? 0u : words[(word + 1u) / 4u][(word + 1u) % 4u];
-    decode_words(word0, word1, values, origin, signed_codes, interleaved_w4);
+    decode_words(word0, word1, values, origin, signed_codes);
   }
 
   template <bool ALIGNED, typename AT>
@@ -62,19 +61,12 @@ struct QuantChunk {
   }
 
 private:
-  static METAL_FUNC uint nibble_bit_offset(uint index, bool interleaved_w4) {
-    constexpr uint INTERLEAVE_LANES = WORD_BYTES;
-    return interleaved_w4 ? (index % INTERLEAVE_LANES) * BITS_PER_BYTE + (index / INTERLEAVE_LANES) * BITS
-                          : BITS * index;
-  }
-
   static METAL_FUNC void decode_words(
       uint word0,
       uint word1,
       thread float (&values)[VALUES],
       float origin,
-      bool signed_codes,
-      bool interleaved_w4
+      bool signed_codes
   ) {
     constexpr uint CODES_PER_WORD = WORD_BITS / BITS;
     constexpr uint W8_SIGN_BITS = 0x80808080u;
@@ -82,9 +74,7 @@ private:
       word0 ^= signed_codes ? W4_SIGN_MASK : 0u;
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < VALUES; i++) {
-        values[i] =
-            as_type<float>(extract_bits(word0, nibble_bit_offset(i, interleaved_w4), BITS) | MANTISSA_BASE_BITS) -
-            origin;
+        values[i] = as_type<float>(extract_bits(word0, BITS * i, BITS) | MANTISSA_BASE_BITS) - origin;
       }
     } else {
       const uint mask = signed_codes ? W8_SIGN_BITS : 0u;

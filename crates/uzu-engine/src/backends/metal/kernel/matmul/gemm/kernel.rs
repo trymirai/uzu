@@ -1,6 +1,7 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use super::{
+    super::supports_integer_right_operand,
     GemmEngine, GemmPlan,
     selection::{GemmProblem, outer_block_k},
     specialization::GemmSpecialization,
@@ -551,7 +552,7 @@ fn validate_int8_activation_arguments(
     a_group_size: u32,
 ) -> Result<(), MetalError> {
     let compatible = use_mxu
-        && shape.signed_codes
+        && supports_integer_right_operand(&shape)
         && shape.metadata_layout == MetadataLayout::GroupMajor
         && matches!(
             shape.b_prologue,
@@ -559,7 +560,6 @@ fn validate_int8_activation_arguments(
                 | GemmBPrologueKind::ScaleBiasDequant
                 | GemmBPrologueKind::ScaleZeroPointDequant
         )
-        && matches!(shape.b_bits, Some(4 | 8))
         && matches!(a_group_size, 32 | 64 | 128)
         && shape.k.is_multiple_of(a_group_size)
         && shape

@@ -59,7 +59,6 @@ struct IntegerSchedule {
   UZU_CONST bool HAS_ZERO_POINTS = RightOperand::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant;
   UZU_CONST bool HAS_BIAS = RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant;
   UZU_CONST uchar RIGHT_CODE_OFFSET = uchar(RightOperand::CODE_ORIGIN);
-  UZU_CONST bool INTERLEAVED_W4 = RightOperand::BITS == 4;
 
   template <typename Core, bool ALIGNED_M>
   struct LeftMetadata {
@@ -278,7 +277,7 @@ struct IntegerSchedule {
         !(RightOperand::SCHEME == GemmBPrologueKind::ScaleSymmetricDequant &&
           Core::TILING == GemmTiling::Tile128x128x256_Simdgroups4x4);
 
-    auto left_codes = quantized::make_left_cursor<HOIST_OPERAND_ADDRESSING, INTERLEAVED_W4, Core, ALIGNED_M>(
+    auto left_codes = quantized::make_left_cursor<HOIST_OPERAND_ADDRESSING, Core, RightOperand, ALIGNED_M>(
         left_storage,
         params,
         tile,

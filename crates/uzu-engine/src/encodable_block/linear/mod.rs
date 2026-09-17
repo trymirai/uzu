@@ -11,7 +11,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        kernel::matmul::{A8ActivationPlan, ActivationFormat},
+        kernel::{ActivationQuantization, matmul::ActivationFormat},
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -66,7 +66,7 @@ pub enum LinearInput<B: Backend> {
 
 pub struct LinearInputPreparation<B: Backend> {
     pub input_factors: Allocation<B>,
-    pub a8_plan: Option<A8ActivationPlan>,
+    pub activation_quantization: Option<ActivationQuantization>,
 }
 
 #[derive(Debug, Error)]

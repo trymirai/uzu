@@ -12,11 +12,10 @@ use crate::{
             Allocation, Backend, Encoder,
             gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
             kernel::{
-                ActivationTransform, Kernels,
+                ActivationQuantization, ActivationTransform, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
                     MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MetadataLayout, group_major_metadata,
-                    interleaved_w4,
                 },
             },
         },
@@ -77,18 +76,11 @@ impl BenchmarkData {
         group_size: u32,
         seed: u64,
     ) -> Self {
-        let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed)
-            .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, None);
+        let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed);
+        let input = input.with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, None);
 
         let unsigned_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
-        let mut a8_weights = input.weights_for_upload();
-        if bits == 4 {
-            interleaved_w4::convert(
-                bytemuck::cast_slice_mut(&mut a8_weights),
-                (k / input.mode.packing_divisor()) as usize,
-                input.signed_codes,
-            );
-        }
+        let a8_weights = input.weights_for_upload();
         let a8_weights = alloc_allocation_with_data::<Metal, u32>(context, &a8_weights);
         let weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
         let mut group_major_weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
@@ -192,7 +184,7 @@ fn encode_step(
                     metadata_layout: MetadataLayout::GroupMajor,
                     mode: data.mode,
                     group_size: data.group_size,
-                    signed_codes: true,
+                    signed_codes: !matches!(data.mode, QuantizationMode::U4),
                 },
                 b_leading_dimension: None,
                 b_transpose: true,
@@ -270,10 +262,19 @@ fn bench_a8w(c: &mut Criterion) {
     if !context.supports_mxu {
         return;
     }
-    let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, 128, None).expect("prepare kernel");
     let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, true).expect("hadamard kernel");
 
     for bits in [8u32, 4u32] {
+        let prepare = ActivationTransform::<Metal>::quantize(
+            &context,
+            DataType::BF16,
+            ActivationQuantization {
+                scale_group_size: 128,
+                sum_group_size: None,
+                codes_grouped_by_nibble: bits == 4,
+            },
+        )
+        .expect("prepare kernel");
         bench_bits(c, &context, &prepare, &hadamard, bits);
     }
 }

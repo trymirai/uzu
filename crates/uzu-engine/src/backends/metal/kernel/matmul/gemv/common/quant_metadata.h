@@ -14,7 +14,6 @@ private:
   float origin[Tile::ROWS_PER_LANE];
   float bias[Tile::ROWS_PER_LANE];
   bool signed_codes;
-  bool interleaved_w4;
 
 public:
   static METAL_FUNC uint group_count(const thread GemvParams& params, uint group_size) {
@@ -30,7 +29,6 @@ public:
       const thread GemvParams& params
   ) thread {
     signed_codes = params.signed_codes;
-    interleaved_w4 = BITS == 4 && metadata_group_major;
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
       const uint row = weight_rows[R];
@@ -63,7 +61,7 @@ public:
       uint row,
       thread float (&values)[QuantChunk<BITS>::VALUES]
   ) const thread {
-    QuantChunk<BITS>::decode(words, chunk, values, origin[row], signed_codes, interleaved_w4);
+    QuantChunk<BITS>::decode(words, chunk, values, origin[row], signed_codes);
   }
 
   METAL_FUNC void fold(

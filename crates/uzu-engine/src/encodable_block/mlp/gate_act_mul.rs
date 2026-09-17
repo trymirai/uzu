@@ -3,10 +3,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
         gpu_types::ActivationType,
-        kernel::{
-            GatedActMul, GatedActMulSettings,
-            matmul::{A8ActivationPlan, ActivationFormat},
-        },
+        kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::ActivationFormat},
     },
     config::{activation::AnyActivation, clipping::ClippingBounds},
     data_type::DataType,
@@ -19,7 +16,7 @@ pub struct MlpGateActMulEncodable<B: Backend> {
     hidden_dim: u32,
     data_type: DataType,
     hadamard_factors: Option<Allocation<B>>,
-    a8_plan: Option<A8ActivationPlan>,
+    activation_quantization: Option<ActivationQuantization>,
     quantized_kernel: Option<GatedActMul<B>>,
 }
 
@@ -33,18 +30,16 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         hidden_dim: u32,
         input_preparation: Option<LinearInputPreparation<B>>,
     ) -> Result<Self, B::Error> {
-        let (hadamard_factors, a8_plan) = input_preparation
-            .map_or((None, None), |preparation| (Some(preparation.input_factors), preparation.a8_plan));
+        let (hadamard_factors, activation_quantization) = input_preparation
+            .map_or((None, None), |preparation| (Some(preparation.input_factors), preparation.activation_quantization));
         let settings = GatedActMulSettings {
             activation_alpha: activation.custom_alpha(),
             gate_clipping,
             value_clipping,
         };
         let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some(), settings)?;
-        let quantized_kernel = a8_plan
-            .map(|plan| {
-                GatedActMul::quantized(context, data_type, plan.activation_group_size, plan.sum_group_size, settings)
-            })
+        let quantized_kernel = activation_quantization
+            .map(|quantization| GatedActMul::quantized(context, data_type, quantization, settings))
             .transpose()?;
         Ok(Self {
             fp_kernel,
@@ -52,7 +47,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             hidden_dim,
             data_type,
             hadamard_factors,
-            a8_plan,
+            activation_quantization,
             quantized_kernel,
         })
     }
@@ -70,15 +65,15 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             panic!("Identity activation is not supported for kernel")
         }
         let input = if act_format == ActivationFormat::Int8
-            && let Some(plan) = self.a8_plan
+            && let Some(quantization) = self.activation_quantization
         {
             let kernel = self.quantized_kernel.as_ref().expect("INT8 input requires a quantized gate kernel");
             let mut values = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(
-                &[batch_dim, self.hidden_dim.div_ceil(plan.activation_group_size)],
+                &[batch_dim, self.hidden_dim.div_ceil(quantization.scale_group_size)],
                 DataType::F32,
             ))?;
-            let mut group_sums = plan
+            let mut group_sums = quantization
                 .sum_group_size
                 .map(|group_size| {
                     encoder.allocate_scratch(size_for_shape(
@@ -102,7 +97,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 values,
                 scales,
                 group_sums,
-                group_size: plan.activation_group_size,
+                group_size: quantization.scale_group_size,
             }
         } else {
             let mut hidden = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;

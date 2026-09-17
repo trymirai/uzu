@@ -10,12 +10,6 @@ pub enum ActivationFormat {
     Int8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct A8ActivationPlan {
-    pub activation_group_size: u32,
-    pub sum_group_size: Option<u32>,
-}
-
 #[derive(Clone, Copy)]
 pub struct MatmulShape {
     pub m: u32,

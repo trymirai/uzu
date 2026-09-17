@@ -4,7 +4,7 @@ use crate::{
     backends::common::{
         Allocation, Backend,
         gpu_types::{QuantizationMethod, QuantizationMode},
-        kernel::matmul::{MatmulB, MetadataLayout, group_major_metadata, interleaved_w4},
+        kernel::matmul::{MatmulB, MetadataLayout, group_major_metadata},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
@@ -94,7 +94,6 @@ struct Quantized<B: Backend> {
     value_bits: u32,
     info: QuantizationInfo,
     signed_codes: bool,
-    w4_codes_interleaved: bool,
 }
 
 pub struct WeightMatrix<B: Backend> {
@@ -166,7 +165,6 @@ impl<B: Backend> WeightMatrix<B> {
                 value_bits: data_type.size_in_bits() as u32,
                 info,
                 signed_codes: false,
-                w4_codes_interleaved: false,
             }),
         })
     }
@@ -250,32 +248,24 @@ impl<B: Backend> Quantized<B> {
         values: &mut Allocation<B>,
     ) -> bool {
         let transpose_metadata = self.metadata_layout == MetadataLayout::RowMajor;
-        let interleave_w4 = self.info.mode == QuantizationMode::U4 && !self.w4_codes_interleaved;
-        let row_bytes = (self.weight_columns / self.info.mode.packing_divisor()) as usize;
-
         if transpose_metadata && !group_major_metadata::can_transpose_in_place(self.weight_rows) {
-            return false;
-        }
-        if interleave_w4 && !interleaved_w4::can_interleave(row_bytes) {
             return false;
         }
         if transpose_metadata {
             self.transpose_metadata();
             self.metadata_layout = MetadataLayout::GroupMajor;
         }
-        if interleave_w4 {
-            interleaved_w4::convert(values.as_slice_mut(), row_bytes, self.signed_codes);
-            self.w4_codes_interleaved = true;
-        } else if self.info.mode != QuantizationMode::U4
-            && !self.signed_codes
-            && let Some(sign_flip_mask) = self.info.mode.weight_codes_sign_flip_mask()
-        {
-            let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
-            let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(values.as_slice_mut());
-            words.iter_mut().for_each(|word| *word ^= broadcast_mask);
-            prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
+        if self.info.mode != QuantizationMode::U4 {
+            if !self.signed_codes
+                && let Some(sign_flip_mask) = self.info.mode.weight_codes_sign_flip_mask()
+            {
+                let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
+                let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(values.as_slice_mut());
+                words.iter_mut().for_each(|word| *word ^= broadcast_mask);
+                prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
+            }
+            self.signed_codes = true;
         }
-        self.signed_codes = true;
         true
     }
 

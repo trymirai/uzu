@@ -542,12 +542,13 @@ fn a8w_mxu_parity_bf16(
         return;
     }
     let (k, n) = (256u32, 128u32);
-    let input = QuantInput::<bf16>::new(m, k, n, weight_gs, bits, method, 0).with_prepared_a(
-        ACTIVATION_SCALE_GROUP_SIZE,
-        (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
-    );
+    let (input, reference_input) = QuantInput::<bf16>::new(m, k, n, weight_gs, bits, method, 0)
+        .with_prepared_a_and_reference(
+            ACTIVATION_SCALE_GROUP_SIZE,
+            (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
+        );
     let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
-    let reference = run_quant_cpu::<bf16>(&input);
+    let reference = run_quant_cpu::<bf16>(&reference_input);
     assert_parity::<bf16>(
         &format!("A8W{bits} MXU m={m} weight_gs={weight_gs} method={method:?}"),
         &reference,
@@ -577,12 +578,14 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
             (8, QuantizationMethod::ScaleBias),
             (4, QuantizationMethod::ScaleZeroPoint),
         ] {
-            let input = QuantInput::<bf16>::new(m, 256, 72, weight_group_size, bits, method, 0).with_prepared_a(
-                activation_group_size,
-                (method != QuantizationMethod::ScaleSymmetric).then_some(activation_group_size.min(weight_group_size)),
-            );
+            let (input, reference_input) = QuantInput::<bf16>::new(m, 256, 72, weight_group_size, bits, method, 0)
+                .with_prepared_a_and_reference(
+                    activation_group_size,
+                    (method != QuantizationMethod::ScaleSymmetric)
+                        .then_some(activation_group_size.min(weight_group_size)),
+                );
             let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
-            let reference = run_quant_cpu::<bf16>(&input);
+            let reference = run_quant_cpu::<bf16>(&reference_input);
             assert_parity::<bf16>(
                 &format!("A8W{bits} act{activation_group_size} weight{weight_group_size} m={m} method={method:?}"),
                 &reference,
@@ -667,8 +670,8 @@ fn a8w_mxu_output_bias_parity_bf16(
             72u32
         },
     );
-    let input = QuantInput::<bf16>::new(m, k, n, 32, bits, QuantizationMethod::ScaleSymmetric, 0)
-        .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, None);
+    let (input, reference_input) = QuantInput::<bf16>::new(m, k, n, 32, bits, QuantizationMethod::ScaleSymmetric, 0)
+        .with_prepared_a_and_reference(ACTIVATION_SCALE_GROUP_SIZE, None);
     let output_bias: Vec<bf16> = (0..n).map(|column| bf16::from_f32(0.25 + 0.05 * (column % 7) as f32)).collect();
     let output_hadamard_factors: Option<Vec<i32>> = with_output_hadamard.then(|| {
         (0..n)
@@ -683,7 +686,7 @@ fn a8w_mxu_output_bias_parity_bf16(
     });
 
     let cpu_context = <Cpu as Backend>::Context::new().expect("CPU context");
-    let mut cpu_buffers = QuantBuffers::<Cpu, bf16>::allocate(&cpu_context, &input);
+    let mut cpu_buffers = QuantBuffers::<Cpu, bf16>::allocate(&cpu_context, &reference_input);
     let cpu_output_hadamard_factors = output_hadamard_factors
         .as_ref()
         .map(|factors| crate::tests::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, factors));
@@ -695,7 +698,7 @@ fn a8w_mxu_output_bias_parity_bf16(
     )
     .expect("CPU matmul kernel");
     let mut cpu_encoder = Encoder::<Cpu>::new(&cpu_context).expect("CPU encoder");
-    let mut cpu_arguments = quant_arguments(&mut cpu_buffers, &input);
+    let mut cpu_arguments = quant_arguments(&mut cpu_buffers, &reference_input);
     cpu_arguments.d_transform = MatmulDOps {
         rht_factors: cpu_output_hadamard_factors.as_ref(),
         ..MatmulDOps::none()

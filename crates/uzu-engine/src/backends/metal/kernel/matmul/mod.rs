@@ -16,8 +16,9 @@ use crate::{
             BufferArg, Encoder,
             gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
             kernel::{
+                ActivationQuantization,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{A8ActivationPlan, ActivationFormat, MatmulArguments, MatmulError, MatmulKernel, MatmulShape},
+                matmul::{ActivationFormat, MatmulArguments, MatmulError, MatmulKernel, MatmulShape},
             },
         },
         metal::{Metal, context::MetalContext, error::MetalError},
@@ -36,6 +37,10 @@ pub struct MatmulMetalKernel {
 enum MatmulDispatch {
     Gemv(GemvSpecialization),
     Gemm(GemmPlan),
+}
+
+fn supports_integer_right_operand(shape: &MatmulShape) -> bool {
+    matches!((shape.b_bits, shape.signed_codes), (Some(4), _) | (Some(8), true))
 }
 
 impl MatmulMetalKernel {
@@ -156,12 +161,12 @@ impl MatmulKernel for MatmulMetalKernel {
         })
     }
 
-    fn a8_activation_plan(
+    fn select_activation_quantization(
         &self,
         shape: &MatmulShape,
         context: &MetalContext,
-    ) -> Option<A8ActivationPlan> {
-        let activation_group_size = ACTIVATION_SCALE_GROUP_SIZE;
+    ) -> Option<ActivationQuantization> {
+        let activation_scale_group_size = ACTIVATION_SCALE_GROUP_SIZE;
         let Some(weight_group_size @ (32 | 64 | 128)) = shape.b_group_size else {
             return None;
         };
@@ -170,11 +175,10 @@ impl MatmulKernel for MatmulMetalKernel {
             || self.output_data_type != DataType::BF16
             || shape.a_full_precision
             || !shape.is_quant()
-            || !shape.signed_codes
+            || !supports_integer_right_operand(shape)
             || !shape.b_transpose
             || shape.b_leading_dimension.is_some()
-            || !matches!(shape.b_bits, Some(4 | 8))
-            || !shape.k.is_multiple_of(activation_group_size)
+            || !shape.k.is_multiple_of(activation_scale_group_size)
             || !shape.k.is_multiple_of(weight_group_size)
         {
             return None;
@@ -183,13 +187,14 @@ impl MatmulKernel for MatmulMetalKernel {
         let sum_group_size = match shape.b_prologue {
             GemmBPrologueKind::ScaleSymmetricDequant => None,
             GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant => {
-                Some(weight_group_size.min(activation_group_size))
+                Some(weight_group_size.min(activation_scale_group_size))
             },
             GemmBPrologueKind::FullPrecision => return None,
         };
-        Some(A8ActivationPlan {
-            activation_group_size,
+        Some(ActivationQuantization {
+            scale_group_size: activation_scale_group_size,
             sum_group_size,
+            codes_grouped_by_nibble: shape.b_bits == Some(4),
         })
     }
 
@@ -198,7 +203,9 @@ impl MatmulKernel for MatmulMetalKernel {
         bf16_shape: &MatmulShape,
         context: &MetalContext,
     ) -> ActivationFormat {
-        if matches!(self.select_dispatch(bf16_shape, context), MatmulDispatch::Gemv(_)) {
+        if !supports_integer_right_operand(bf16_shape)
+            || matches!(self.select_dispatch(bf16_shape, context), MatmulDispatch::Gemv(_))
+        {
             return ActivationFormat::Bf16;
         }
 

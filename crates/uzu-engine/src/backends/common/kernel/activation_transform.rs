@@ -16,12 +16,17 @@ fn assert_row_width(element_count: u32) {
 
 pub const ACTIVATION_SCALE_GROUP_SIZE: u32 = 128;
 
+#[derive(Clone, Copy)]
+pub struct ActivationQuantization {
+    pub scale_group_size: u32,
+    pub sum_group_size: Option<u32>,
+    pub codes_grouped_by_nibble: bool,
+}
+
 pub struct ActivationTransform<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationTransformKernel,
-    ops: ActivationTransformOp,
     in_place: bool,
-    activation_group_size: u32,
-    sum_group_size: Option<u32>,
+    quantization: Option<ActivationQuantization>,
 }
 
 impl<B: Backend> ActivationTransform<B> {
@@ -30,23 +35,25 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         ops: ActivationTransformOp,
         in_place: bool,
-        activation_group_size: u32,
-        sum_group_size: Option<u32>,
+        quantization: Option<ActivationQuantization>,
     ) -> Result<Self, B::Error> {
+        let (codes_grouped_by_nibble, scale_group_size, sum_group_size) = match quantization {
+            Some(q) => (q.codes_grouped_by_nibble, q.scale_group_size, q.sum_group_size),
+            None => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, None),
+        };
         let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(
             context,
             data_type,
             ops,
+            codes_grouped_by_nibble,
             in_place,
-            activation_group_size,
+            scale_group_size,
             sum_group_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE),
         )?;
         Ok(Self {
             kernel,
-            ops,
             in_place,
-            activation_group_size,
-            sum_group_size,
+            quantization,
         })
     }
 
@@ -55,7 +62,7 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::InputRht, in_place, HADAMARD_TRANSFORM_BLOCK_SIZE, None)
+        Self::new(context, data_type, ActivationTransformOp::InputRht, in_place, None)
     }
 
     pub fn output_rht(
@@ -63,28 +70,27 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::OutputRht, in_place, HADAMARD_TRANSFORM_BLOCK_SIZE, None)
+        Self::new(context, data_type, ActivationTransformOp::OutputRht, in_place, None)
     }
 
     pub fn quantize(
         context: &B::Context,
         data_type: DataType,
-        activation_group_size: u32,
-        sum_group_size: Option<u32>,
+        quantization: ActivationQuantization,
     ) -> Result<Self, B::Error> {
-        let ops = if sum_group_size.is_some() {
-            ActivationTransformOp::QuantizeWithGroupSums
-        } else {
-            ActivationTransformOp::Quantize
-        };
-        if let Some(group_size) = sum_group_size {
+        if let Some(group_size) = quantization.sum_group_size {
             assert!(matches!(group_size, 32 | 64 | 128), "unsupported correction group ({group_size})");
         }
         assert!(
-            matches!(activation_group_size, 32 | 64 | 128),
-            "unsupported activation group ({activation_group_size})"
+            matches!(quantization.scale_group_size, 32 | 64 | 128),
+            "unsupported activation group ({})",
+            quantization.scale_group_size
         );
-        Self::new(context, data_type, ops, false, activation_group_size, sum_group_size)
+        let op = quantization
+            .sum_group_size
+            .map_or(ActivationTransformOp::Quantize, |_| ActivationTransformOp::QuantizeWithGroupSums);
+        let in_place = false;
+        Self::new(context, data_type, op, in_place, Some(quantization))
     }
 
     /// `input` and `output` must be distinct buffers.
@@ -97,7 +103,7 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         encoder: &mut Encoder<B>,
     ) {
-        assert!(!self.quantizes() && !self.in_place);
+        assert!(self.quantization.is_none() && !self.in_place);
         assert_row_width(element_count);
         self.kernel.encode(
             Some(input),
@@ -120,7 +126,7 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         encoder: &mut Encoder<B>,
     ) {
-        assert!(!self.quantizes() && self.in_place);
+        assert!(self.quantization.is_none() && self.in_place);
         assert_row_width(element_count);
         self.kernel.encode(
             None::<&Allocation<B>>,
@@ -146,14 +152,14 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         encoder: &mut Encoder<B>,
     ) {
-        assert!(self.quantizes());
+        let quantization = self.quantization.expect("quantized activation transform required");
         assert_row_width(element_count);
         assert!(
-            element_count.is_multiple_of(self.activation_group_size),
+            element_count.is_multiple_of(quantization.scale_group_size),
             "quantized activation row ({element_count}) must be a multiple of scale group ({})",
-            self.activation_group_size
+            quantization.scale_group_size
         );
-        if let Some(group_size) = self.sum_group_size {
+        if let Some(group_size) = quantization.sum_group_size {
             assert!(element_count.is_multiple_of(group_size));
         }
         self.kernel.encode(
@@ -169,19 +175,15 @@ impl<B: Backend> ActivationTransform<B> {
         );
     }
 
-    fn quantizes(&self) -> bool {
-        matches!(self.ops, ActivationTransformOp::Quantize | ActivationTransformOp::QuantizeWithGroupSums)
-    }
-
     pub fn emit_group_sums(&self) -> bool {
-        self.sum_group_size.is_some()
+        self.quantization.is_some_and(|quantization| quantization.sum_group_size.is_some())
     }
 
-    pub fn activation_group_size(&self) -> u32 {
-        self.activation_group_size
+    pub fn scale_group_size(&self) -> u32 {
+        self.quantization.expect("quantized activation transform required").scale_group_size
     }
 
     pub fn sum_group_size(&self) -> Option<u32> {
-        self.sum_group_size
+        self.quantization.and_then(|quantization| quantization.sum_group_size)
     }
 }

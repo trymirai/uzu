@@ -14,10 +14,9 @@ use crate::{
             Allocation, Backend, Context, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
-                ActivationTransform, Kernels,
+                ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
                     MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MetadataLayout, group_major_metadata,
-                    interleaved_w4,
                 },
             },
         },
@@ -26,6 +25,7 @@ use crate::{
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
+#[derive(Clone)]
 pub struct PreparedInt8A {
     pub values: Vec<i8>,
     pub scales: Vec<f32>,
@@ -33,6 +33,7 @@ pub struct PreparedInt8A {
     pub activation_scale_group_size: u32,
 }
 
+#[derive(Clone)]
 pub struct QuantInput<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,
     pub scales: Vec<T>,
@@ -119,14 +120,35 @@ impl<T: ArrayElement + Float> QuantInput<T> {
     }
 
     pub fn with_prepared_a(
-        mut self,
-        activation_group_size: u32,
+        self,
+        activation_scale_group_size: u32,
         sum_group_size: Option<u32>,
     ) -> Self {
-        self.signed_codes = true;
+        let codes_grouped_by_nibble = self.mode == QuantizationMode::U4;
+        self.with_prepared_a_layout(activation_scale_group_size, sum_group_size, codes_grouped_by_nibble)
+    }
+
+    pub fn with_prepared_a_and_reference(
+        self,
+        activation_scale_group_size: u32,
+        sum_group_size: Option<u32>,
+    ) -> (Self, Self) {
+        let codes_grouped_by_nibble = self.mode == QuantizationMode::U4;
+        let reference = self.clone().with_prepared_a_layout(activation_scale_group_size, sum_group_size, false);
+        let actual = self.with_prepared_a_layout(activation_scale_group_size, sum_group_size, codes_grouped_by_nibble);
+        (actual, reference)
+    }
+
+    fn with_prepared_a_layout(
+        mut self,
+        activation_scale_group_size: u32,
+        sum_group_size: Option<u32>,
+        codes_grouped_by_nibble: bool,
+    ) -> Self {
+        self.signed_codes = self.mode != QuantizationMode::U4;
         let rows = self.m;
         let columns = self.k;
-        assert!(columns.is_multiple_of(activation_group_size));
+        assert!(columns.is_multiple_of(activation_scale_group_size));
         if let Some(group_size) = sum_group_size {
             assert!(columns.is_multiple_of(group_size));
         }
@@ -135,12 +157,19 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let factors = alloc_allocation_with_data::<Cpu, i32>(&context, &vec![1; columns as usize]);
         let element_count = rows * columns;
         let mut values = alloc_allocation::<Cpu, i8>(&context, element_count as usize);
-        let mut scales = alloc_allocation::<Cpu, f32>(&context, (element_count / activation_group_size) as usize);
+        let mut scales = alloc_allocation::<Cpu, f32>(&context, (element_count / activation_scale_group_size) as usize);
         let mut group_sums = sum_group_size
             .map(|group_size| alloc_allocation::<Cpu, i32>(&context, (element_count / group_size) as usize));
-        let transform =
-            ActivationTransform::<Cpu>::quantize(&context, T::data_type(), activation_group_size, sum_group_size)
-                .expect("CPU activation quantization transform");
+        let transform = ActivationTransform::<Cpu>::quantize(
+            &context,
+            T::data_type(),
+            ActivationQuantization {
+                scale_group_size: activation_scale_group_size,
+                sum_group_size,
+                codes_grouped_by_nibble,
+            },
+        )
+        .expect("CPU activation quantization transform");
         let mut encoder = Encoder::<Cpu>::new(&context).expect("CPU encoder");
         transform.encode_quantize(
             &input,
@@ -158,7 +187,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             values: allocation_to_vec(&values),
             scales: allocation_to_vec(&scales),
             group_sums: group_sums.map_or_else(Vec::new, |sums| allocation_to_vec(&sums)),
-            activation_scale_group_size: activation_group_size,
+            activation_scale_group_size,
         });
         self
     }
@@ -235,10 +264,6 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         let columns = input.n;
         let groups = input.k.div_ceil(input.group_size);
         assert_eq!(group_major_metadata::row_stride(columns), columns);
-        if input.mode == QuantizationMode::U4 {
-            let code_row_bytes = (input.k / input.mode.packing_divisor()) as usize;
-            interleaved_w4::convert(self.w.as_slice_mut(), code_row_bytes, input.signed_codes);
-        }
         let value_bits = size_of::<T>() as u32 * u8::BITS;
         group_major_metadata::transpose(self.scales.as_slice_mut(), columns, groups, value_bits);
         match input.quant_method {
@@ -273,8 +298,7 @@ pub fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
     metadata_layout: MetadataLayout,
     input: &QuantInput<T>,
 ) -> MatmulB<'a, B> {
-    let signed_codes =
-        input.signed_codes || (input.mode == QuantizationMode::U4 && metadata_layout == MetadataLayout::GroupMajor);
+    let signed_codes = input.signed_codes;
     match input.quant_method {
         QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
             b: w,

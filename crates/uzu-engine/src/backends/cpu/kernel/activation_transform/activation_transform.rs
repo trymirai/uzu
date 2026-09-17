@@ -15,6 +15,7 @@ pub fn quantize_transformed_row(
     values: &mut [i8],
     scales: &mut [f32],
     mut group_sums: Option<&mut [i32]>,
+    grouped_by_weight_nibble: bool,
 ) {
     assert_eq!(transformed.len(), values.len());
     assert_eq!(scales.len(), transformed.len() / activation_scale_group_size);
@@ -32,7 +33,13 @@ pub fn quantize_transformed_row(
         for (index, &value) in source.iter().enumerate() {
             let code = quantize_symmetric_i8(value, scale);
             let absolute_index = scale_group_index * activation_scale_group_size + index;
-            values[absolute_index] = code;
+            // Weight-nibble grouping maps [0, 1, 2, 3, 4, 5, 6, 7] to [0, 4, 1, 5, 2, 6, 3, 7].
+            let output_index = if grouped_by_weight_nibble {
+                (absolute_index / 8) * 8 + (absolute_index % 2) * 4 + (absolute_index % 8) / 2
+            } else {
+                absolute_index
+            };
+            values[output_index] = code;
             if let Some(group_sums) = group_sums.as_deref_mut() {
                 group_sums[absolute_index / sum_group_size.expect("correction group")] += code as i32;
             }
@@ -47,15 +54,18 @@ pub fn activation_transform<T: ArrayElement + Float>(
     #[optional(ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht)] fp_out: Option<
         *mut T,
     >,
-    #[optional(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)]
+    #[optional(ops == ActivationTransformOp::Quantize
+        || ops == ActivationTransformOp::QuantizeWithGroupSums)]
     q_out: Option<*mut i8>,
-    #[optional(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)]
+    #[optional(ops == ActivationTransformOp::Quantize
+        || ops == ActivationTransformOp::QuantizeWithGroupSums)]
     scales_out: Option<*mut f32>,
     #[optional(ops == ActivationTransformOp::QuantizeWithGroupSums)] group_sums_out: Option<*mut i32>,
     rht_factors: *const i32,
     batch_size: u32,
     element_count: u32,
     #[specialize] ops: ActivationTransformOp,
+    #[specialize] grouped_by_weight_nibble: bool,
     #[specialize] in_place: bool,
     #[specialize] activation_scale_group_size: u32,
     #[specialize] sum_group_size: u32,
@@ -123,6 +133,7 @@ pub fn activation_transform<T: ArrayElement + Float>(
                 values,
                 scales,
                 sums,
+                grouped_by_weight_nibble,
             );
         } else {
             let fp_out = fp_out.expect("FP transform requires fp_out");

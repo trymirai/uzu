@@ -6,11 +6,8 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{
-            Kernels,
-            matmul::{
-                A8ActivationPlan, ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
-                MatmulShape,
-            },
+            ActivationQuantization, Kernels,
+            matmul::{ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulShape},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -111,11 +108,11 @@ impl<B: Backend> LinearMatmul<B> {
     pub(super) fn prepare_a8(
         &mut self,
         context: &B::Context,
-    ) -> Option<A8ActivationPlan> {
+    ) -> Option<ActivationQuantization> {
         let mut candidate = self.matmul_shape(1, false);
         candidate.signed_codes = true;
-        let plan = self.kernel.lock().a8_activation_plan(&candidate, context)?;
-        self.matrix.try_prepare_a8_storage().then_some(plan)
+        let quantization = self.kernel.lock().select_activation_quantization(&candidate, context)?;
+        self.matrix.try_prepare_a8_storage().then_some(quantization)
     }
 
     pub(super) fn encode_with_a(
@@ -174,9 +171,6 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        if !self.matmul_b().signed_codes() {
-            return ActivationFormat::Bf16;
-        }
         let bf16_shape = self.matmul_shape(batch_dim, true);
         self.kernel.lock().select_activation_format(&bf16_shape, context)
     }
