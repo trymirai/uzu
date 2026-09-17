@@ -10,12 +10,12 @@ use crate::{
         common::{
             Allocation, BufferArg, Encoder,
             gpu_types::{
-                GemmParams,
+                GemmParams, TrellisParams,
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform},
             },
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape, trellis_format::trellis_params},
             },
         },
         metal::{
@@ -116,6 +116,7 @@ impl GemmKernel {
             self.output_data_type,
             context.supports_mxu,
             context.apple_gpu_family,
+            context.gpu_core_count,
         )
     }
 
@@ -240,6 +241,7 @@ impl GemmKernel {
                         None,
                         None,
                         None,
+                        None,
                         &mut *d,
                         ab_scale,
                         shape,
@@ -292,6 +294,7 @@ impl GemmKernel {
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
+                    None,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
@@ -307,25 +310,45 @@ impl GemmKernel {
             }
             | MatmulB::ScaleSymmetricDequant {
                 ..
+            }
+            | MatmulB::Trellis {
+                ..
             }) => {
-                let (weights, scales, biases, zero_points) = match quant_b {
+                let (weights, scales, biases, zero_points, trellis) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
                         scales,
                         biases,
                         ..
-                    } => (w, Some(scales), Some(biases), None),
+                    } => (w, Some(scales), Some(biases), None, None),
                     MatmulB::ScaleZeroPointDequant {
                         b: w,
                         scales,
                         zero_points,
                         ..
-                    } => (w, Some(scales), None, Some(zero_points)),
+                    } => (w, Some(scales), None, Some(zero_points), None),
                     MatmulB::ScaleSymmetricDequant {
                         b: w,
                         scales,
                         ..
-                    } => (w, Some(scales), None, None),
+                    } => (w, Some(scales), None, None, None),
+                    // The tape is the `b` buffer and the per-row scales are the
+                    // `scales` buffer, so everything downstream -- alignment,
+                    // params, split-K, the specialization -- is the shipped
+                    // quantized path unchanged; only these constants are new.
+                    MatmulB::Trellis {
+                        b: w,
+                        scales,
+                        config,
+                    } => {
+                        let Some(params) = trellis_params(config, shape.k) else {
+                            return Err(MatmulError::<Metal>::UnsupportedLayout {
+                                path: "Gemm trellis",
+                            }
+                            .into());
+                        };
+                        (w, Some(scales), None, None, Some(params))
+                    },
                     _ => unreachable!(),
                 };
 
@@ -382,6 +405,7 @@ impl GemmKernel {
                         scales,
                         biases,
                         zero_points,
+                        trellis,
                         &mut *d,
                         ab_scale,
                         shape,
@@ -414,6 +438,7 @@ impl GemmKernel {
                         a_int8,
                         a_scales,
                         a_group_sums,
+                        trellis,
                         std::slice::from_ref(&params),
                         group_count_x,
                         group_count_y,
@@ -440,6 +465,7 @@ impl GemmKernel {
         scales: Option<&Allocation<Metal>>,
         biases: Option<&Allocation<Metal>>,
         zero_points: Option<&Allocation<Metal>>,
+        trellis: Option<TrellisParams>,
         d: &mut Allocation<Metal>,
         ab_scale: f32,
         shape: MatmulShape,
@@ -515,6 +541,7 @@ impl GemmKernel {
             a_int8,
             a_scales,
             a_group_sums,
+            trellis,
             std::slice::from_ref(&params),
             base_gx,
             base_gy,
@@ -564,6 +591,7 @@ fn validate_int8_activation_arguments(
             GemmBPrologueKind::ScaleSymmetricDequant
                 | GemmBPrologueKind::ScaleBiasDequant
                 | GemmBPrologueKind::ScaleZeroPointDequant
+                | GemmBPrologueKind::Trellis
         )
         && matches!(bits_per_b, Some(4 | 8))
         && matches!(a_group_size, 32 | 64 | 128)
@@ -605,3 +633,7 @@ fn quant_params(
         ab_scale,
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../../../unit/backends/metal/kernel/matmul/gemm/trellis_test.rs"]
+mod trellis_tests;

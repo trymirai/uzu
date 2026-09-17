@@ -6,3 +6,5 @@ mod quant_dispatch_test;
 mod quant_gemm_bench;
 mod quant_gemv_bench;
 mod qwen3_bench;
+mod trellis_bench;
+mod trellis_format_test;

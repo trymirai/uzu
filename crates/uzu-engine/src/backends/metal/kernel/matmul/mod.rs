@@ -33,7 +33,11 @@ pub struct MatmulMetalKernel {
     output_data_type: DataType,
 }
 
-enum MatmulDispatch {
+/// What a shape actually routes to. `pub` and `Debug` so the trellis
+/// bench can ASSERT and PRINT the plan a cell takes, rather than deriving it a
+/// second time from the same policy code.
+#[derive(Debug)]
+pub enum MatmulDispatch {
     Gemv(GemvSpecialization),
     Gemm(GemmPlan),
 }
@@ -47,6 +51,14 @@ impl MatmulMetalKernel {
         output_data_type: DataType,
     ) -> bool {
         if shape.gathered || plan.engine != gemm::GemmEngine::Mxu {
+            return false;
+        }
+        // Trellis decode costs ~9 instructions per weight, so the batch widths
+        // below are exactly where keeping the weights in registers pays; the
+        // thresholds here were measured against INT4/INT8 codes and say nothing
+        // about a tape. The GEMM takes over at M > GEMV_MAX_BATCH, where
+        // `GemvSpecialization::select_shape` stops returning a tile.
+        if shape.b_prologue == GemmBPrologueKind::Trellis {
             return false;
         }
         match (shape.m, shape.n == shape.k, (weights_data_type, input_data_type, output_data_type)) {
@@ -98,7 +110,14 @@ impl MatmulMetalKernel {
             gpu_core_count,
             apple_gpu_family,
         );
-        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, apple_gpu_family);
+        let problem = GemmProblem::new(
+            *shape,
+            weights_data_type,
+            output_data_type,
+            supports_mxu,
+            apple_gpu_family,
+            gpu_core_count,
+        );
         let plan = problem.select_plan();
         match gemv {
             None => MatmulDispatch::Gemm(plan),
@@ -111,7 +130,7 @@ impl MatmulMetalKernel {
         }
     }
 
-    fn select_dispatch(
+    pub fn select_dispatch(
         &self,
         shape: &MatmulShape,
         context: &MetalContext,
@@ -181,7 +200,8 @@ impl MatmulKernel for MatmulMetalKernel {
         }
 
         let sum_group_size = match shape.b_prologue {
-            GemmBPrologueKind::ScaleSymmetricDequant => None,
+            // Symmetric weights: no zero point, so no group sums to correct with.
+            GemmBPrologueKind::ScaleSymmetricDequant | GemmBPrologueKind::Trellis => None,
             GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant => {
                 Some(weight_group_size.min(activation_group_size))
             },

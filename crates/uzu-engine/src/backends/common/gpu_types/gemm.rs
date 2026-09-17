@@ -15,6 +15,12 @@ pub enum GemmBPrologueKind {
     ScaleBiasDequant,
     ScaleZeroPointDequant,
     ScaleSymmetricDequant,
+    /// QTIP bitshift-trellis weights: a per-row bit tape decoded by hashing the
+    /// trellis state, with one row scale and no per-group scales or biases.
+    /// See `kernel::matmul::trellis_format`. GEMM only, and only with int8
+    /// activations on the MXU: the decode emits int8 into threadgroup memory
+    /// and the integer schedule reads its fragments from there.
+    Trellis,
 }
 
 bitflags! {

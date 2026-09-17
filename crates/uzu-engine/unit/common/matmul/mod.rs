@@ -2,6 +2,8 @@ pub mod bench;
 pub mod harness;
 pub mod quant;
 pub mod shape;
+#[cfg(backend = "metal")]
+pub mod trellis_fixture;
 
 pub use bench::{iter_encode_loop, iter_encode_loop_named};
 pub use harness::{Case, cpu_reference, deterministic_input};

@@ -3,6 +3,7 @@
 #include <metal_stdlib>
 
 #include "../../../generated/gemm.h"
+#include "../../../generated/matmul.h"
 #include "../../common/mxu_fragment/integer_formats.h"
 
 using namespace metal;
@@ -41,18 +42,26 @@ struct LeftOperand {
 template <GemmBPrologueKind PROLOGUE, ushort BITS_, ushort GROUP_SIZE_, typename Element>
 struct RightOperand {
   UZU_CONST bool QUANTIZED = PROLOGUE != GemmBPrologueKind::FullPrecision;
+  /// The weights are hashed out of a bit tape rather than read as codes, so the
+  /// operand is DECODED INTO THREADGROUP MEMORY once per K block and the K loop
+  /// reads its fragments from there. `GROUP_SIZE` is that staging block, not a
+  /// quantization group: there is one scale per row.
+  UZU_CONST bool STAGED = PROLOGUE == GemmBPrologueKind::Trellis;
   UZU_CONST ushort BITS = QUANTIZED ? BITS_ : 0;
   UZU_CONST ushort GROUP_SIZE = QUANTIZED ? GROUP_SIZE_ : 0;
   UZU_CONST GemmBPrologueKind SCHEME = PROLOGUE;
-  UZU_CONST bool NEEDS_CORRECTION = QUANTIZED && PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
+  UZU_CONST bool NEEDS_CORRECTION = QUANTIZED && !STAGED && PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
 
   static_assert(!QUANTIZED || BITS_ == 4 || BITS_ == 8, "quantized integer weights must use 4 or 8 bits");
   static_assert(!QUANTIZED || PROLOGUE != GemmBPrologueKind::FullPrecision, "quantized weights need a scheme");
+  static_assert(!STAGED || BITS_ == 8, "a staged decode hands the MXU int8");
 
   using CodeElement = int8_t;
   using ScaleElement = Element;
   using DenseElement = Element;
-  using ElementType = DenseElement;
+  /// What the MMA fragments hold. The trellis decode emits int8 directly, so the
+  /// staged tile IS the operand; every other scheme dequantizes into `Element`.
+  using ElementType = metal::conditional_t<STAGED, CodeElement, DenseElement>;
   using Format = metal::conditional_t<
       QUANTIZED,
       uzu::matmul::IntegerFormat<BITS_, uzu::matmul::Signedness::Signed>,
@@ -90,6 +99,10 @@ struct RightStorage {
   const device typename Right::ScaleElement* scales;
   const device typename Right::ScaleElement* biases;
   const device uint8_t* zero_points;
+  /// The bit tape, and the window/hash/scale constants that read it. Both null
+  /// unless `Right::STAGED`; `scales` doubles as the one-scale-per-row vector.
+  const device uint* tape;
+  const constant uzu::matmul::TrellisParams* trellis;
   bool signed_codes;
 
   METAL_FUNC const device typename Right::ScaleElement* bias() const thread {
@@ -126,10 +139,13 @@ METAL_FUNC RightStorage<Right> pack_right(
     const device Element* scales,
     const device Element* biases,
     const device uint8_t* zero_points,
+    const constant uzu::matmul::TrellisParams* trellis,
     const bool signed_codes
 ) {
   if constexpr (!Right::QUANTIZED) {
-    return {dense, nullptr, nullptr, nullptr, nullptr, false};
+    return {dense, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, false};
+  } else if constexpr (Right::STAGED) {
+    return {nullptr, nullptr, scales, nullptr, nullptr, reinterpret_cast<const device uint*>(dense), trellis, true};
   } else {
     return {
         nullptr,
@@ -137,8 +153,25 @@ METAL_FUNC RightStorage<Right> pack_right(
         scales,
         Right::SCHEME == GemmBPrologueKind::ScaleBiasDequant ? biases : nullptr,
         Right::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant ? zero_points : nullptr,
+        nullptr,
+        nullptr,
         signed_codes
     };
+  }
+}
+
+/// The threadgroup block the schedule stages `B` into: the `uint`-typed
+/// allocation for a trellis tile, `b_shared` for every other scheme. See
+/// `GEMM_TRELLIS_TG_WORDS` in `gemm.metal` for why the tile needs its own.
+template <typename Right, typename Element>
+METAL_FUNC threadgroup typename Right::ElementType* stage_block(
+    threadgroup Element* b_shared,
+    threadgroup uint* b_trellis
+) {
+  if constexpr (Right::STAGED) {
+    return reinterpret_cast<threadgroup typename Right::ElementType*>(b_trellis);
+  } else {
+    return b_shared;
   }
 }
 

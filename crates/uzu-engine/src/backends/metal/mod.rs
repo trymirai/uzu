@@ -4,7 +4,7 @@ mod command_buffer;
 mod context;
 mod dense_buffer;
 mod error;
-mod kernel;
+pub mod kernel;
 mod metal_extensions;
 mod sparse;
 

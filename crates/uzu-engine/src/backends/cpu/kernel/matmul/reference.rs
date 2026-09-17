@@ -105,6 +105,9 @@ impl WeightData {
                 group_size: group_size as usize,
                 signed_codes,
             },
+            MatmulB::Trellis {
+                ..
+            } => unimplemented!("trellis weights have no CPU reference; `trellis_format` is the oracle"),
         }
     }
 }

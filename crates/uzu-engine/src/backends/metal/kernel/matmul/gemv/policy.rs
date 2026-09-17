@@ -53,6 +53,14 @@ const fn tile(
 
 pub(super) const DEFAULT_TILE: GemvTile = tile(DEFAULT_NUM_SIMDGROUPS, 1, DEFAULT_RESULTS_PER_SIMDGROUP);
 
+/// K values one trellis threadgroup step covers: `reduction_lanes *
+/// states_per_lane(4) * weights_per_state(4)`. `TrellisSlice` assumes K is a
+/// whole number of these, which is also what makes the tape advance by whole
+/// 32-bit words.
+pub(super) const fn trellis_k_block(reduction_lanes: u32) -> u32 {
+    reduction_lanes * 16
+}
+
 impl GemvTile {
     pub const fn quantized(
         num_simdgroups: u32,

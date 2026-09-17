@@ -10,6 +10,7 @@
 #include "../operands.h"
 #include "../quantized/cache.h"
 #include "../quantized/cursor.h"
+#include "../trellis_loader.h"
 #include "tile_context.h"
 
 using namespace metal;
@@ -34,6 +35,10 @@ struct IntegerSchedule {
       const thread ThreadContext& thread_context
   ) {
     static_assert(LeftOperand::QUANTIZED && RightOperand::QUANTIZED, "integer schedule requires quantized operands");
+    // A staged right operand owns `shared` for its decoded tile, so the weight
+    // scales cannot also live there. They are one scale per row for that scheme,
+    // which is what registers are for anyway.
+    constexpr bool STAGE_SCALES = STAGE_WEIGHT_SCALES && !RightOperand::STAGED;
     static_assert(LeftOperand::GROUP_SIZE % Core::SIMDGROUP_BLOCK_K == 0, "left groups must contain MMA chunks");
     static_assert(RightOperand::GROUP_SIZE % Core::SIMDGROUP_BLOCK_K == 0, "right groups must contain MMA chunks");
     static_assert(
@@ -51,18 +56,18 @@ struct IntegerSchedule {
             tile,
             thread_context
         );
-    auto right_codes = quantized::
-        make_cursor<quantized::Axis::Columns, HOIST_OPERAND_ADDRESSING, Core, typename RightOperand::Format, ALIGNED_N>(
-            right_storage,
-            params,
-            tile,
-            thread_context
-        );
+    auto right_codes = quantized::make_right_cursor<HOIST_OPERAND_ADDRESSING, Core, RightOperand, ALIGNED_N>(
+        right_storage,
+        shared,
+        params,
+        tile,
+        thread_context
+    );
 
     quantized::Cache<quantized::Residency::Registers, Core, typename Core::LeftStorage, LeftOperand, ALIGNED_M>
         left_scales(left_storage, shared, params, tile, thread_context);
     quantized::Cache<
-        STAGE_WEIGHT_SCALES ? quantized::Residency::Threadgroup : quantized::Residency::Registers,
+        STAGE_SCALES ? quantized::Residency::Threadgroup : quantized::Residency::Registers,
         Core,
         typename Core::RightStorage,
         RightOperand,
@@ -72,7 +77,7 @@ struct IntegerSchedule {
     typename Core::AccumFragment accumulator;
     accumulator.clear();
 
-    if constexpr (STAGE_WEIGHT_SCALES) {
+    if constexpr (STAGE_SCALES) {
       right_scales.prefetch(0);
     }
 
@@ -82,13 +87,16 @@ struct IntegerSchedule {
 
     METAL_PRAGMA_NO_UNROLL
     for (int k_group_index = 0; k_group_index < k_group_count; ++k_group_index) {
-      if constexpr (STAGE_WEIGHT_SCALES) {
+      if constexpr (STAGE_SCALES) {
         threadgroup_barrier(mem_flags::mem_threadgroup);
         if (k_group_index + 1 < k_group_count) {
           right_scales.prefetch(uint(k_group_index + 1));
         }
       }
       right_scales.fill(k_group_index);
+      if constexpr (RightOperand::STAGED) {
+        right_codes.stage();
+      }
 
       for (int span_index = 0; span_index < spans_per_k_group; ++span_index) {
         const uint span_offset = uint(k_group_index * int(RightOperand::GROUP_SIZE)) + uint(span_index * int(SPAN));

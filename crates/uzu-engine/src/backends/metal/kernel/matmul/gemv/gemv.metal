@@ -7,10 +7,19 @@
 #include "common/tile.h"
 #include "common/quant_b_source.h"
 #include "common/reduce.h"
+#include "common/trellis_b_source.h"
 
 using namespace metal;
 using namespace uzu;
 using namespace uzu::gemm;
+
+// A trellis tape is neither a dense operand nor a code array: its weights only
+// exist once a state has been hashed, and one scale covers a whole row. It is
+// therefore a third B source, sharing the tile geometry, the reduce and the
+// epilogue with the other two. `BITS` reports the width of what the decode
+// hands the accumulator and `GROUP_SIZE` is 0 because there is no quantization
+// group -- see `select_tile`, which is where those are chosen.
+#define GEMV_TRELLIS (B_PROLOGUE == GemmBPrologueKind::Trellis)
 
 template <
     typename AT,
@@ -35,7 +44,8 @@ VARIANTS(
     GemmBPrologueKind::FullPrecision,
     GemmBPrologueKind::ScaleBiasDequant,
     GemmBPrologueKind::ScaleZeroPointDequant,
-    GemmBPrologueKind::ScaleSymmetricDequant)
+    GemmBPrologueKind::ScaleSymmetricDequant,
+    GemmBPrologueKind::Trellis)
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
@@ -47,11 +57,11 @@ VARIANTS(GROUP_LANES, 1, 2, 4, 8, 16)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
 
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
-CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
+CONSTRAINT(GEMV_TRELLIS || ((BITS == 0) == (GROUP_SIZE == 0)))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(BITS == 0 || K_SPLIT == 1)
 CONSTRAINT(BITS != 0 || (INPUT_ROW_TILE == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && GROUP_LANES == 1))
-CONSTRAINT(INPUT_ROW_TILE != 1 || REDUCTION_LANES == 32)
+CONSTRAINT(GEMV_TRELLIS || INPUT_ROW_TILE != 1 || REDUCTION_LANES == 32)
 CONSTRAINT(
     INPUT_ROW_TILE == 1 ||
     (K_SPLIT == 1 && INPUT_ALIGNED && AT == "bfloat" && DT == "bfloat" && GROUP_LANES == 1))
@@ -61,7 +71,7 @@ CONSTRAINT(
 #define INPUT_ROWS(FIRST, LAST) (INPUT_ROW_TILE >= FIRST && INPUT_ROW_TILE <= LAST)
 
 CONSTRAINT(
-    INPUT_ROW_TILE == 1 ||
+    INPUT_ROW_TILE == 1 || GEMV_TRELLIS ||
     (((B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8) ||
       (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant && BITS == 4)) &&
      (GROUP_SIZE == 32 || GROUP_SIZE == 64) &&
@@ -75,7 +85,7 @@ CONSTRAINT(
 
 // Keep only selector-reachable geometry families.
 CONSTRAINT(
-    BITS == 0 ||
+    BITS == 0 || GEMV_TRELLIS ||
     (NUM_SIMDGROUPS == 2 &&
      (OUTPUT_ROW_TILE == 2 || OUTPUT_ROW_TILE == 4 || OUTPUT_ROW_TILE == 8 ||
       (INPUT_ROW_TILE > 1 && OUTPUT_ROW_TILE == 16))) ||
@@ -86,7 +96,7 @@ CONSTRAINT(
 CONSTRAINT(
     BITS == 0 || (AT == "bfloat" && DT == "bfloat") ||
     (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32))
-CONSTRAINT(BITS != 8 || (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32) || INPUT_ROW_TILE > 1)
+CONSTRAINT(GEMV_TRELLIS || BITS != 8 || (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32) || INPUT_ROW_TILE > 1)
 CONSTRAINT(INPUT_ALIGNED || K_SPLIT == 1)
 CONSTRAINT(K_SPLIT <= NUM_SIMDGROUPS && NUM_SIMDGROUPS % K_SPLIT == 0)
 CONSTRAINT(OUTPUT_ROW_TILE % (NUM_SIMDGROUPS / K_SPLIT) == 0)
@@ -103,12 +113,26 @@ CONSTRAINT(BITS != 4 || (GROUP_SIZE / GROUP_LANES) % 16 == 0)
 CONSTRAINT(BITS != 8 || (GROUP_SIZE / GROUP_LANES) % 8 == 0)
 CONSTRAINT(BITS != 0 || REDUCTION_LANES == 32)
 CONSTRAINT(
-    BITS == 0 || INPUT_ROW_TILE > 1 || (BITS == 4 &&
+    BITS == 0 || GEMV_TRELLIS || INPUT_ROW_TILE > 1 || (BITS == 4 &&
      ((GROUP_SIZE == 16 && GROUP_LANES == 1) || (GROUP_SIZE == 32 && GROUP_LANES == 2) ||
       (GROUP_SIZE == 64 && GROUP_LANES == 4) || (GROUP_SIZE == 128 && GROUP_LANES == 8))) ||
     (BITS == 8 &&
      ((GROUP_SIZE == 16 && GROUP_LANES == 2) || (GROUP_SIZE == 32 && GROUP_LANES == 4) ||
       (GROUP_SIZE == 64 && GROUP_LANES == 8) || (GROUP_SIZE == 128 && GROUP_LANES == 16))))
+// The trellis family: THREE geometries split on the batch width, at input row
+// tiles 1, 2, 4 and 8 -- routing rounds M up to one of those, so nothing else is
+// reachable.  The exemptions above only remove the quantized families' geometry
+// rules from a prologue they were not written for; this is what pins the family
+// down.  `GemvSpecialization::select_shape`'s trellis arm is where each geometry
+// is CHOSEN and why; this must agree with it, and with `TrellisSlice`'s
+// `GROUP_LANES == 1` and whole-word block assertions.
+CONSTRAINT(
+    !GEMV_TRELLIS ||
+    (AT == "bfloat" && BT == "bfloat" && DT == "bfloat" && BITS == 8 && GROUP_SIZE == 0 && K_SPLIT == 1 &&
+     INPUT_ALIGNED && GROUP_LANES == 1 &&
+     ((GEMV_TILE(8, 32, 8) && (INPUT_ROW_TILE == 1 || INPUT_ROW_TILE == 2)) ||
+      (GEMV_TILE(16, 32, 8) && INPUT_ROW_TILE == 4) ||
+      (GEMV_TILE(16, 8, 2) && (INPUT_ROW_TILE == 1 || INPUT_ROW_TILE == 2 || INPUT_ROW_TILE == 8)))))
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales
@@ -131,6 +155,7 @@ KERNEL(Gemv)(
     const constant uint& group_count_x,
     const constant float& soft_cap
         OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
+    const constant uzu::matmul::TrellisParams& trellis OPTIONAL(GEMV_TRELLIS),
     const GemmDTransform output_transform SPECIALIZE,
     const bool gathered SPECIALIZE,
     const bool signed_codes SPECIALIZE,
@@ -152,7 +177,9 @@ KERNEL(Gemv)(
         OutputTile<Tile, FullTile>::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, out_vec_size);
     thread float result[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
 
-    if constexpr (BITS == 0) {
+    if constexpr (GEMV_TRELLIS) {
+      TrellisBSource<Tile, AT, BT, DT, INPUT_ALIGNED, FullTile>::accumulate(result, ops, params, tile, trellis);
+    } else if constexpr (BITS == 0) {
       FullPrecisionBSource<Tile, AT, BT, DT, INPUT_ALIGNED, FullTile>::accumulate(result, ops, params, tile);
     } else {
       QuantBSource<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FullTile>::accumulate(

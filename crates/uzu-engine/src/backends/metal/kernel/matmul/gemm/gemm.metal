@@ -11,14 +11,24 @@ using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
-#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant)
+#define GEMM_TRELLIS (B_PROLOGUE == GemmBPrologueKind::Trellis)
+// Trellis weights are symmetric like ScaleSymmetricDequant: the decode emits
+// signed levels around zero, so there is no zero point to correct for.
+#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION                                                                             \
+  (A_IS_INT8 && !GEMM_TRELLIS && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_INTEGER_TGB_ELEMENTS                                                                                      \
-  ((B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant)                                                            \
-       ? (2 * gemm_tiling_block_n(GEMM_TILING))                                                                        \
-       : (2 * gemm_tiling_block_n(GEMM_TILING) * (1 + 4 / int(sizeof(BT)))))
+  (GEMM_TRELLIS ? 1                                                                                                    \
+                : ((B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant)                                            \
+                       ? (2 * gemm_tiling_block_n(GEMM_TILING))                                                        \
+                       : (2 * gemm_tiling_block_n(GEMM_TILING) * (1 + 4 / int(sizeof(BT))))))
+// The decoded trellis tile: BLOCK_N int8 rows of GROUP_SIZE columns, padded the
+// way `MxuMmaCore::SHARED_STRIDE_B` pads them, addressed as words because the
+// decode stores four weights at a time. It cannot share `b_shared`: that array
+// is `BT`-typed, so it is only 2-byte aligned and the 32-bit stores would fault.
+#define GEMM_TRELLIS_TG_WORDS (GEMM_TRELLIS ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16) / 4) : 1)
 #define GEMM_TGB_ELEMENTS                                                                                              \
   ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT))))         \
                                : (A_IS_INT8 ? GEMM_INTEGER_TGB_ELEMENTS : 1))                                          \
@@ -60,7 +70,8 @@ VARIANTS(
     GemmBPrologueKind::FullPrecision,
     GemmBPrologueKind::ScaleBiasDequant,
     GemmBPrologueKind::ScaleZeroPointDequant,
-    GemmBPrologueKind::ScaleSymmetricDequant)
+    GemmBPrologueKind::ScaleSymmetricDequant,
+    GemmBPrologueKind::Trellis)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 VARIANTS(
@@ -108,6 +119,23 @@ CONSTRAINT(
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
 CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (A_GROUP_SIZE == 0))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || A_GROUP_SIZE >= 32)
+// A trellis tape is decoded into threadgroup memory as int8 and fed to the
+// integer schedule, so it is the a8 path with one substitution: `GROUP_SIZE` is
+// the STAGING block K, not a quantization group, and `BITS` is the width of the
+// decode's output. Only the tiles the a8 policy actually selects are compiled.
+//
+// `GROUP_SIZE == 64` here must match `trellis_format::TRELLIS_BLOCK_K`, which is
+// what the host reports as the weight group size; a mismatch is a missing entry
+// point at dispatch time, not a compile error. `A_GROUP_SIZE == 128` is
+// `ACTIVATION_SCALE_GROUP_SIZE`, the only activation group the a8 route uses.
+CONSTRAINT(
+    B_PROLOGUE != GemmBPrologueKind::Trellis ||
+    (BITS == 8 && GROUP_SIZE == 64 &&
+     A_PROLOGUE == GemmAPrologueKind::Int8Symmetric &&
+     A_GROUP_SIZE == 128 &&
+     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
+      GEMM_TILING == GemmTiling::Tile32x64x256_Simdgroups2x2 ||
+      GEMM_TILING == GemmTiling::Tile64x64x256_Simdgroups2x2)))
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
     const device BT* b,
@@ -125,6 +153,7 @@ KERNEL(Gemm)(
     const device int8_t* a_int8 OPTIONAL(A_IS_INT8),
     const device float* a_scales OPTIONAL(A_IS_INT8),
     const device int32_t* a_group_sums OPTIONAL(NEEDS_ASYMMETRIC_WEIGHT_CORRECTION),
+    const constant uzu::matmul::TrellisParams& trellis OPTIONAL(GEMM_TRELLIS),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
@@ -136,6 +165,7 @@ KERNEL(Gemm)(
     const bool hoist_operand_addressing SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
+    threadgroup uint b_trellis[GEMM_TRELLIS_TG_WORDS],
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint group_z GROUPS(group_count_z),
@@ -158,7 +188,8 @@ KERNEL(Gemm)(
       "kernel bindings and operand correction policy must agree"
   );
   const auto left_storage = operands::pack_left<LeftOperand, AT>(a, a_int8, a_scales, a_group_sums);
-  const auto right_storage = operands::pack_right<RightOperand, BT>(b, scales, biases, zero_points, signed_codes);
+  const auto right_storage =
+      operands::pack_right<RightOperand, BT>(b, scales, biases, zero_points, &trellis, signed_codes);
 
   static_assert(
       !A_IS_INT8 || GEMM_TGB_ELEMENTS >= GEMM_INTEGER_TGB_ELEMENTS,
@@ -176,7 +207,7 @@ KERNEL(Gemm)(
         output_transform,
         output_bias,
         rht_factors,
-        b_shared,
+        operands::stage_block<RightOperand>(b_shared, b_trellis),
         stage_weight_scales,
         hoist_operand_addressing,
         thread_context

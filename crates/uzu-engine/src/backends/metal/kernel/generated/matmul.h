@@ -18,4 +18,13 @@ typedef struct {
   bool use_morton;
   float ab_scale;
 } GemmParams;
+
+typedef struct {
+  uint32_t l;
+  uint32_t k_bits_per_step;
+  uint32_t row_stride_words;
+  uint32_t hash_a;
+  uint32_t hash_b;
+  float codebook_scale;
+} TrellisParams;
 } // namespace uzu::matmul
