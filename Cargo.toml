@@ -106,6 +106,7 @@ clang-ast = "0.1"
 rangemap = "1.7.1"
 parking_lot = "0.12"
 futures = "0.3"
+jobserver = "0.1"
 tokio = "1.49"
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 tokio-util = { version = "0.7.17", default-features = false, features = ["rt"] }
