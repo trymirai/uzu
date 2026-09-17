@@ -5,7 +5,7 @@ use super::*;
 use crate::{
     backends::common::{
         gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-        kernel::matmul::MatmulShape,
+        kernel::matmul::{MatmulBKind, MatmulShape},
     },
     data_type::DataType,
 };
@@ -174,6 +174,7 @@ fn quant_shape(
         k: 4096,
         b_transpose: true,
         b_leading_dimension: None,
+        b_kind: MatmulBKind::Integer,
         b_prologue: GemmBPrologueKind::ScaleZeroPointDequant,
         b_bits: Some(4),
         b_group_size: Some(32),
@@ -192,6 +193,7 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
         k: 1152,
         b_transpose: true,
         b_leading_dimension: None,
+        b_kind: MatmulBKind::Integer,
         b_prologue: GemmBPrologueKind::ScaleZeroPointDequant,
         b_bits: Some(4),
         b_group_size: Some(64),

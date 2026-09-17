@@ -7,6 +7,7 @@
 #include "../../../common/fragment.h"
 #include "../../../common/mxu_gemm_loop.h"
 #include "../gemm_alignment.h"
+#include "../microfloat_loader.h"
 #include "../operands.h"
 #include "../quant_scale_bias.h"
 #include "../quant_scale_zero_point.h"
@@ -19,7 +20,41 @@ namespace gemm {
 namespace schedules {
 
 template <typename Core, typename RightOperand>
-static METAL_FUNC auto make_staged_loader(
+static METAL_FUNC auto make_mxfp4_loader(
+    const typename Core::RightStorage right,
+    const constant uzu::matmul::GemmParams* params,
+    const size_t block_col,
+    const uint k_offset,
+    threadgroup typename Core::RightElementType* staging,
+    const thread ThreadContext& thread_context
+) {
+  static_assert(RightOperand::MICROFLOAT, "MXFP4 loader requires MXFP4 weights");
+  using Element = typename Core::RightElementType;
+  const size_t code_row_stride = size_t(params->K) / 2;
+  const size_t scale_row_stride = size_t(params->K) / RightOperand::GROUP_SIZE;
+  const device uint8_t* codes = right.codes + block_col * code_row_stride + size_t(k_offset) / 2;
+  const device uint8_t* scales = right.microfloat_scales + block_col * scale_row_stride;
+  using Loader = Mxfp4BlockLoader<
+      Element,
+      Core::THREADGROUP_BLOCK_N,
+      Core::THREADGROUP_BLOCK_K,
+      Core::SHARED_STRIDE_B,
+      Core::THREADGROUP_THREADS,
+      RightOperand::GROUP_SIZE>;
+  return Loader(
+      codes,
+      scales,
+      code_row_stride,
+      scale_row_stride,
+      k_offset,
+      staging,
+      thread_context.simdgroup_index,
+      thread_context.simd_lane_id
+  );
+}
+
+template <typename Core, typename RightOperand>
+static METAL_FUNC auto make_integer_loader(
     const typename Core::RightStorage right,
     const constant uzu::matmul::GemmParams* params,
     const size_t block_col,
@@ -136,6 +171,25 @@ static METAL_FUNC auto make_full_precision_loader(
   return Loader(values, params->leading_dimension_b, staging, thread_context);
 }
 
+template <typename Core>
+static METAL_FUNC auto make_staged_loader(
+    const typename Core::RightStorage right,
+    const constant uzu::matmul::GemmParams* params,
+    const size_t block_col,
+    const uint k_offset,
+    threadgroup typename Core::RightElementType* staging,
+    const thread ThreadContext& thread_context
+) {
+  using Right = typename Core::Right;
+  if constexpr (Right::DENSE) {
+    return make_full_precision_loader<Core>(right, params, block_col, k_offset, staging, thread_context);
+  } else if constexpr (Right::MICROFLOAT) {
+    return make_mxfp4_loader<Core, Right>(right, params, block_col, k_offset, staging, thread_context);
+  } else {
+    return make_integer_loader<Core, Right>(right, params, block_col, k_offset, staging, thread_context);
+  }
+}
+
 struct StagedSchedule {
   template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool, bool>
   static METAL_FUNC typename Core::AccumFragment launch(
@@ -169,14 +223,7 @@ struct StagedSchedule {
         staging + tile.tile_col_offset * Core::SHARED_STRIDE_B,
         int(Core::SHARED_STRIDE_B)
     );
-    auto loader = make_staged_loader<Core, typename Core::RightOperand>(
-        right,
-        params,
-        tile.block_col,
-        tile.k_offset,
-        staging,
-        thread_context
-    );
+    auto loader = make_staged_loader<Core>(right, params, tile.block_col, tile.k_offset, staging, thread_context);
 
     typename Core::AccumFragment accumulator;
     accumulator.clear();

@@ -11,8 +11,12 @@ using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
-#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant)
-#define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
+#define B_IS_INTEGER (B_PROLOGUE != GemmBPrologueKind::FullPrecision)
+#define B_IS_MXFP4 (B_PROLOGUE == GemmBPrologueKind::FullPrecision && BITS == 4)
+#define B_IS_DENSE (!B_IS_INTEGER && !B_IS_MXFP4)
+#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION                                                                             \
+  (A_IS_INT8 && B_IS_INTEGER && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant)
+#define GEMM_MXU_QUANT (USE_MXU && B_IS_INTEGER && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_INTEGER_TGB_ELEMENTS                                                                                      \
@@ -36,10 +40,11 @@ template <
     uint GROUP_SIZE,
     GemmAPrologueKind A_PROLOGUE,
     uint A_GROUP_SIZE>
-VARIANTS(AT, bfloat, float)
-VARIANTS(BT, bfloat, float)
-VARIANTS(DT, bfloat, float)
+VARIANTS(AT, half, bfloat, float)
+VARIANTS(BT, half, bfloat, float)
+VARIANTS(DT, half, bfloat, float)
 CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
+CONSTRAINT(B_IS_MXFP4 || (AT != "half" && BT != "half" && DT != "half"))
 VARIANTS(
     GEMM_TILING,
     GemmTiling::Tile8x32x32_Simdgroups1x1,
@@ -76,26 +81,34 @@ CONSTRAINT(
      GEMM_TILING == GemmTiling::Tile64x32x256_Simdgroups4x1 ||
      GEMM_TILING == GemmTiling::Tile64x64x256_Simdgroups2x2 ||
      GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4))
-CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
+CONSTRAINT(B_IS_DENSE == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
+CONSTRAINT(!B_IS_MXFP4 || (GROUP_SIZE == 16 || GROUP_SIZE == 32))
+CONSTRAINT(!B_IS_MXFP4 || !USE_MXU)
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(
     GROUP_SIZE != 16 ||
     GEMM_TILING == GemmTiling::Tile64x64x16_Simdgroups2x2)
 CONSTRAINT(
-    B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
+    !B_IS_MXFP4 ||
+    GEMM_TILING == GemmTiling::Tile64x64x16_Simdgroups2x2 ||
+    GEMM_TILING == GemmTiling::Tile8x32x32_Simdgroups1x1 ||
+    GEMM_TILING == GemmTiling::Tile32x32x32_Simdgroups2x2 ||
+    GEMM_TILING == GemmTiling::Tile64x64x32_Simdgroups2x2)
+CONSTRAINT(
+    B_IS_DENSE ||
     (TRANSPOSE_B &&
      (GEMM_TILING != GemmTiling::Tile64x64x16_Simdgroups2x2 ||
       GROUP_SIZE == 16)))
 CONSTRAINT(
-    B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
+    B_IS_DENSE ||
     GEMM_TILING != GemmTiling::Tile128x128x256_Simdgroups4x4 ||
     GROUP_SIZE <= 64)
 CONSTRAINT(
     !(GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
       GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4) ||
     (TRANSPOSE_B &&
-     (B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
+     (B_IS_DENSE ||
       A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || BITS == 4 || BITS == 8)
@@ -104,7 +117,9 @@ CONSTRAINT(
     (GROUP_SIZE % METAL_SIMD_SIZE == 0 && GROUP_SIZE != 0))
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
-    (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
+    (TRANSPOSE_B && !B_IS_DENSE))
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || !B_IS_MXFP4)
+CONSTRAINT(B_IS_DENSE || TRANSPOSE_B)
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
 CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (A_GROUP_SIZE == 0))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || A_GROUP_SIZE >= 32)
@@ -118,6 +133,8 @@ KERNEL(Gemm)(
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
     const device uint8_t* zero_points
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
+    const device uint8_t* microfloat_scales OPTIONAL(B_IS_MXFP4),
+    const device BT* microfloat_outer_scale OPTIONAL(B_IS_MXFP4),
     const device BT* output_bias
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const device int32_t* rht_factors
@@ -135,7 +152,8 @@ KERNEL(Gemm)(
     const bool stage_weight_scales SPECIALIZE,
     const bool hoist_operand_addressing SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
-    threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
+    threadgroup typename operands::RightOperand<B_PROLOGUE, BITS, GROUP_SIZE, BT>::ElementType
+        b_shared[GEMM_TGB_ELEMENTS],
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint group_z GROUPS(group_count_z),
@@ -151,14 +169,22 @@ KERNEL(Gemm)(
   (void)thread_y;
   (void)thread_z;
 
-  using LeftOperand = operands::LeftOperandFor<A_PROLOGUE, AT, ushort(A_GROUP_SIZE)>;
-  using RightOperand = operands::RightOperandFor<B_PROLOGUE, ushort(BITS), ushort(GROUP_SIZE), BT>;
+  using LeftOperand = operands::LeftOperand<A_PROLOGUE, AT, ushort(A_GROUP_SIZE)>;
+  using RightOperand = operands::RightOperand<B_PROLOGUE, ushort(BITS), ushort(GROUP_SIZE), BT>;
   static_assert(
       NEEDS_ASYMMETRIC_WEIGHT_CORRECTION == (A_IS_INT8 && RightOperand::NEEDS_CORRECTION),
       "kernel bindings and operand correction policy must agree"
   );
   const auto left_storage = operands::pack_left<LeftOperand, AT>(a, a_int8, a_scales, a_group_sums);
-  const auto right_storage = operands::pack_right<RightOperand, BT>(b, scales, biases, zero_points, signed_codes);
+  const auto right_storage = operands::pack_right<RightOperand, BT>(
+      b,
+      scales,
+      biases,
+      zero_points,
+      microfloat_scales,
+      microfloat_outer_scale,
+      signed_codes
+  );
 
   static_assert(
       !A_IS_INT8 || GEMM_TGB_ELEMENTS >= GEMM_INTEGER_TGB_ELEMENTS,

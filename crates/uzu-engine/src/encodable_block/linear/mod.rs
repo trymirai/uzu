@@ -100,7 +100,8 @@ impl<B: Backend> dyn Linear<B> {
         match spec {
             spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
             | AnyWeightMatrixSpec::MLXSpec(_)
-            | AnyWeightMatrixSpec::IntSpec(_)) => {
+            | AnyWeightMatrixSpec::IntSpec(_)
+            | AnyWeightMatrixSpec::MicrofloatSpec(_)) => {
                 let block = LinearMatmul::load(
                     context,
                     spec,
