@@ -150,6 +150,11 @@ fn insert_into_context(
 
 #[cfg(test)]
 mod tests {
+    use shoji::types::{
+        basic::{ToolCall, Value},
+        session::chat::ChatContentBlock,
+    };
+
     use super::*;
     use crate::chat::hanashi::config::HanashiConfig;
 
@@ -266,6 +271,42 @@ mod tests {
             prompt.ends_with("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
             "expected a thinking-disabled generation prompt, got: {prompt:?}"
         );
+    }
+
+    #[test]
+    fn qwen38_tool_call_json_preserves_cached_text() {
+        let renderer = renderer(HanashiConfig::Qwen38);
+        let history = vec![system_message_with_effort(ReasoningEffort::Disabled), user_message()];
+        let prompt = render(&renderer, history.clone());
+
+        // Generated parameter text, including the nested edit shape from the reprefill log.
+        for items in [
+            r#"["<"]"#,
+            r##"[{"oldText": "#include <stddef.h>", "newText": "<>&'\"\\\n\t\r\u0001", "literal": "\\u003c"}]"##,
+            r#"{"nested": ["<>&'"]}"#,
+        ] {
+            let generated = format!(
+                "<tool_call>\n<function=echo>\n<parameter=items>\n{items}\n</parameter>\n</function>\n</tool_call><|im_end|>"
+            );
+            let cached_text = format!("{prompt}{generated}");
+            // Rebuild the assistant message from the structured arguments echoed by the client.
+            let mut continuation = history.clone();
+            continuation.push(ChatMessage::assistant().with_tool_call(ToolCall {
+                identifier: Some("call_1".to_string()),
+                name: "echo".to_string(),
+                arguments: Value::from(serde_json::json!({
+                    "items": serde_json::from_str::<serde_json::Value>(items).unwrap()
+                })),
+            }));
+            continuation.push(ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+                identifier: Some("call_1".to_string()),
+                name: Some("echo".to_string()),
+                value: Value::from(serde_json::json!("ok")),
+            }));
+
+            let rendered = render(&renderer, continuation);
+            assert!(rendered.starts_with(&cached_text), "cached prefix changed for {items}: {rendered}");
+        }
     }
 
     #[test]
