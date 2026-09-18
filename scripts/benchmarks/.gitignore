@@ -1,0 +1,4 @@
+.ruff_cache/
+.venv/
+__pycache__/
+*.egg-info/
