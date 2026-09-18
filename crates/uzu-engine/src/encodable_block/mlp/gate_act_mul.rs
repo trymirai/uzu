@@ -97,7 +97,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 values,
                 scales,
                 group_sums,
-                group_size: quantization.scale_group_size,
+                scale_group_size: quantization.scale_group_size,
+                code_layout: quantization.code_layout,
             }
         } else {
             let mut hidden = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;

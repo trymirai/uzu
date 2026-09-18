@@ -95,7 +95,7 @@ impl<B: Backend> GatedActMul<B> {
             context,
             data_type,
             op,
-            quantization.codes_grouped_by_nibble,
+            quantization.code_layout.is_grouped_by_nibble(),
             options,
             scale_group_size as u32,
             sum_group_size,

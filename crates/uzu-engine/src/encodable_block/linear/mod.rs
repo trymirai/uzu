@@ -11,7 +11,10 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        kernel::{ActivationQuantization, matmul::ActivationFormat},
+        kernel::{
+            ActivationQuantization,
+            matmul::{ActivationFormat, Int8CodeLayout},
+        },
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -60,7 +63,8 @@ pub enum LinearInput<B: Backend> {
         values: Allocation<B>,
         scales: Allocation<B>,
         group_sums: Option<Allocation<B>>,
-        group_size: u32,
+        scale_group_size: u32,
+        code_layout: Int8CodeLayout,
     },
 }
 

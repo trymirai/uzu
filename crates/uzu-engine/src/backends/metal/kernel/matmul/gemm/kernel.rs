@@ -16,7 +16,9 @@ use crate::{
             },
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape, QuantParamsLayout},
+                matmul::{
+                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape, QuantParamsLayout,
+                },
             },
         },
         metal::{
@@ -334,17 +336,24 @@ impl GemmKernel {
                         values,
                         scales: activation_scales,
                         group_sums: activation_group_sums,
-                        group_size: a_group_size,
+                        scale_group_size,
+                        code_layout,
                     } => {
-                        validate_int8_activation_arguments(use_mxu, shape, *a_group_size)?;
+                        validate_int8_left_operand(
+                            use_mxu,
+                            shape,
+                            *scale_group_size,
+                            *code_layout,
+                            activation_group_sums.is_some(),
+                        )?;
                         if output_transform.contains(GemmDTransform::SOFT_CAP) {
                             return Err(MatmulError::UnsupportedDOp {
                                 bit: GemmDTransform::SOFT_CAP,
-                                path: "Gemm int8 activations",
+                                path: "Gemm int8 left operand",
                             }
                             .into());
                         }
-                        (None, Some(*values), Some(*activation_scales), *activation_group_sums, Some(*a_group_size))
+                        (None, Some(*values), Some(*activation_scales), *activation_group_sums, Some(*scale_group_size))
                     },
                 };
 
@@ -451,8 +460,11 @@ impl GemmKernel {
                 values,
                 scales,
                 group_sums,
-                group_size,
-            } => (None, Some(values), Some(scales), group_sums, GemmAPrologueKind::Int8Symmetric, Some(group_size)),
+                scale_group_size,
+                code_layout: _,
+            } => {
+                (None, Some(values), Some(scales), group_sums, GemmAPrologueKind::Int8Symmetric, Some(scale_group_size))
+            },
         };
         let tiling = plan.tiling;
         let split_k = plan.split_k;
@@ -540,11 +552,29 @@ impl GemmKernel {
     }
 }
 
-fn validate_int8_activation_arguments(
+fn validate_int8_left_operand(
     use_mxu: bool,
     shape: MatmulShape,
     a_group_size: u32,
+    code_layout: Int8CodeLayout,
+    has_group_sums: bool,
 ) -> Result<(), MetalError> {
+    if shape.b_bits.and_then(Int8CodeLayout::for_right_bits) != Some(code_layout) {
+        return Err(MatmulError::IncompatibleA {
+            path: "Gemm",
+            reason: "left code layout is incompatible with the right operand",
+        }
+        .into());
+    }
+    let needs_group_sums =
+        matches!(shape.b_prologue, GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant);
+    if needs_group_sums && !has_group_sums {
+        return Err(MatmulError::IncompatibleA {
+            path: "Gemm",
+            reason: "quantized correction requires left group sums",
+        }
+        .into());
+    }
     let compatible = use_mxu
         && supports_integer_right_operand(&shape)
         && shape.params_layout == QuantParamsLayout::GroupOutput
@@ -562,7 +592,7 @@ fn validate_int8_activation_arguments(
     if !compatible {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "symmetric int8 activations require group-major metadata and a supported 32/64/128 activation and weight group",
+            reason: "symmetric int8 left operands require group-major metadata and supported 32/64/128 groups",
         }
         .into());
     }

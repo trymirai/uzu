@@ -105,8 +105,7 @@ CONSTRAINT(
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
 CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (A_GROUP_SIZE == 0))
 // The integer schedule drains one weight group at a time, so an activation
-// group narrower than the weight group has no kernel; `validate_int8_activation_arguments`
-// rejects the shape before dispatch.
+// group narrower than the weight group has no kernel.
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || A_GROUP_SIZE >= GROUP_SIZE)
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),

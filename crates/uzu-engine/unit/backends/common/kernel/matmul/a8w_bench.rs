@@ -14,7 +14,9 @@ use crate::{
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParamsLayout},
+                matmul::{
+                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParamsLayout,
+                },
             },
         },
         metal::{GemmEngine, Metal, MetalContext},
@@ -174,7 +176,9 @@ fn encode_step(
                     values: &data.a_int8,
                     scales: &data.a_scales,
                     group_sums: None,
-                    group_size: 128,
+                    scale_group_size: 128,
+                    code_layout: Int8CodeLayout::for_right_bits(DataType::from(data.mode).size_in_bits() as u32)
+                        .expect("W4/W8 benchmark"),
                 },
                 b: MatmulB::ScaleSymmetricDequant {
                     b: &data.a8_weights,
@@ -269,7 +273,7 @@ fn bench_a8w(c: &mut Criterion) {
             ActivationQuantization {
                 scale_group_size: 128,
                 sum_group_size: None,
-                codes_grouped_by_nibble: bits == 4,
+                code_layout: Int8CodeLayout::for_right_bits(bits).expect("W4/W8 benchmark"),
             },
         )
         .expect("prepare kernel");

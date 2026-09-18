@@ -19,7 +19,8 @@ use crate::{
                 ActivationQuantization,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
-                    ActivationFormat, MatmulArguments, MatmulError, MatmulKernel, MatmulShape, QuantParamsLayout,
+                    ActivationFormat, Int8CodeLayout, MatmulArguments, MatmulError, MatmulKernel, MatmulShape,
+                    QuantParamsLayout,
                 },
             },
         },
@@ -194,10 +195,11 @@ impl MatmulKernel for MatmulMetalKernel {
             },
             GemmBPrologueKind::FullPrecision => return None,
         };
+        let code_layout = shape.b_bits.and_then(Int8CodeLayout::for_right_bits)?;
         Some(ActivationQuantization {
             scale_group_size: activation_scale_group_size,
             sum_group_size,
-            codes_grouped_by_nibble: shape.b_bits == Some(4),
+            code_layout,
         })
     }
 

@@ -229,13 +229,15 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 values,
                 scales,
                 group_sums,
-                group_size,
+                scale_group_size,
+                code_layout,
             } => self.encode_with_a(
                 MatmulA::Int8Symmetric {
                     values: &values,
                     scales: &scales,
                     group_sums: group_sums.as_ref(),
-                    group_size,
+                    scale_group_size,
+                    code_layout,
                 },
                 batch_dim,
                 encoder,

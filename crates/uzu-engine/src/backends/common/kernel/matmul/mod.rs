@@ -10,7 +10,7 @@ pub use arguments::MatmulArguments;
 pub use d_ops::MatmulDOps;
 pub use error::MatmulError;
 pub use kernel::MatmulKernel;
-pub use matmul_a::MatmulA;
+pub use matmul_a::{Int8CodeLayout, MatmulA};
 pub use matmul_b::MatmulB;
 pub use routing::{ActivationFormat, MatmulShape};
 

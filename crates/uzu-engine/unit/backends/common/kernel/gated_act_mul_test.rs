@@ -10,7 +10,7 @@ use crate::{
         common::{
             Allocation, Backend, Context, Encoder,
             gpu_types::ActivationType,
-            kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings},
+            kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::Int8CodeLayout},
         },
         cpu::Cpu,
     },
@@ -130,7 +130,7 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> V
         ActivationQuantization {
             scale_group_size: 128,
             sum_group_size: None,
-            codes_grouped_by_nibble: true,
+            code_layout: Int8CodeLayout::GroupedByNibble,
         },
         GatedActMulSettings::default(),
     )

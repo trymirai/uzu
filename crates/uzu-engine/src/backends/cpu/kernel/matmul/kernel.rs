@@ -9,7 +9,7 @@ use crate::{
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
-        cpu::{Cpu, context::CpuContext, error::CpuError},
+        cpu::{Cpu, context::CpuContext, error::CpuError, kernel::activation_transform::nibble_grouped_index},
     },
     data_type::DataType,
     utils::pointers::{SendPtr, SendPtrMut},
@@ -91,6 +91,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 values: SendPtr<u8>,
                 scales: SendPtr<u8>,
                 group_size: usize,
+                codes_grouped_by_nibble: bool,
             },
         }
         let a_data = match a {
@@ -106,7 +107,8 @@ impl MatmulKernel for MatmulCpuKernel {
                 values,
                 scales,
                 group_sums: _,
-                group_size: a_group_size,
+                scale_group_size: a_group_size,
+                code_layout,
             } => {
                 let compatible = matches!(a_group_size, 32 | 64 | 128)
                     && k.is_multiple_of(a_group_size)
@@ -141,6 +143,7 @@ impl MatmulKernel for MatmulCpuKernel {
                         unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
                     ),
                     group_size: a_group_size as usize,
+                    codes_grouped_by_nibble: code_layout.is_grouped_by_nibble(),
                 }
             },
         };
@@ -202,10 +205,16 @@ impl MatmulKernel for MatmulCpuKernel {
                                     values,
                                     scales,
                                     group_size,
+                                    codes_grouped_by_nibble,
                                 } => {
                                     let groups = k_u.div_ceil(group_size);
                                     let group = inner / group_size;
-                                    let q = *(values.as_ptr() as *const i8).add(row * k_u + inner) as f32;
+                                    let code_index = if codes_grouped_by_nibble {
+                                        nibble_grouped_index(inner)
+                                    } else {
+                                        inner
+                                    };
+                                    let q = *(values.as_ptr() as *const i8).add(row * k_u + code_index) as f32;
                                     let scale = *(scales.as_ptr() as *const f32).add(row * groups + group);
                                     q * scale
                                 },

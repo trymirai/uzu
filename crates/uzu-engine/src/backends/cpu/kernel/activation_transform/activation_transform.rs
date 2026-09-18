@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::{Float, NumCast};
 use uzu_engine_macros::kernel;
 
-use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8};
+use super::{hadamard_transform, min_max_symmetric_divisor, nibble_grouped_index, quantize_symmetric_i8};
 use crate::{
     array::ArrayElement,
     backends::common::gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
@@ -35,7 +35,7 @@ pub fn quantize_transformed_row(
             let absolute_index = scale_group_index * activation_scale_group_size + index;
             // Weight-nibble grouping maps [0, 1, 2, 3, 4, 5, 6, 7] to [0, 4, 1, 5, 2, 6, 3, 7].
             let output_index = if grouped_by_weight_nibble {
-                (absolute_index / 8) * 8 + (absolute_index % 2) * 4 + (absolute_index % 8) / 2
+                nibble_grouped_index(absolute_index)
             } else {
                 absolute_index
             };

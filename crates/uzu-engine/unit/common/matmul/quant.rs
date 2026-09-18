@@ -15,11 +15,14 @@ use crate::{
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParamsLayout},
+                matmul::{
+                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParamsLayout,
+                },
             },
         },
         cpu::Cpu,
     },
+    data_type::DataType,
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
@@ -28,7 +31,7 @@ pub struct PreparedInt8A {
     pub values: Vec<i8>,
     pub scales: Vec<f32>,
     pub group_sums: Vec<i32>,
-    pub activation_scale_group_size: u32,
+    pub quantization: ActivationQuantization,
 }
 
 #[derive(Clone)]
@@ -160,8 +163,9 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         activation_scale_group_size: u32,
         sum_group_size: Option<u32>,
     ) -> Self {
-        let codes_grouped_by_nibble = self.mode == QuantizationMode::U4;
-        self.with_prepared_a_layout(activation_scale_group_size, sum_group_size, codes_grouped_by_nibble)
+        let code_layout = Int8CodeLayout::for_right_bits(DataType::from(self.mode).size_in_bits() as u32)
+            .expect("W4/W8 quantization");
+        self.with_prepared_a_layout(activation_scale_group_size, sum_group_size, code_layout)
     }
 
     pub fn with_prepared_a_and_reference(
@@ -169,9 +173,14 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         activation_scale_group_size: u32,
         sum_group_size: Option<u32>,
     ) -> (Self, Self) {
-        let codes_grouped_by_nibble = self.mode == QuantizationMode::U4;
-        let reference = self.clone().with_prepared_a_layout(activation_scale_group_size, sum_group_size, false);
-        let actual = self.with_prepared_a_layout(activation_scale_group_size, sum_group_size, codes_grouped_by_nibble);
+        let code_layout = Int8CodeLayout::for_right_bits(DataType::from(self.mode).size_in_bits() as u32)
+            .expect("W4/W8 quantization");
+        let reference = self.clone().with_prepared_a_layout(
+            activation_scale_group_size,
+            sum_group_size,
+            Int8CodeLayout::Sequential,
+        );
+        let actual = self.with_prepared_a_layout(activation_scale_group_size, sum_group_size, code_layout);
         (actual, reference)
     }
 
@@ -179,7 +188,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         mut self,
         activation_scale_group_size: u32,
         sum_group_size: Option<u32>,
-        codes_grouped_by_nibble: bool,
+        code_layout: Int8CodeLayout,
     ) -> Self {
         self.signed_codes = self.mode != QuantizationMode::U4;
         let rows = self.m;
@@ -202,7 +211,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             ActivationQuantization {
                 scale_group_size: activation_scale_group_size,
                 sum_group_size,
-                codes_grouped_by_nibble,
+                code_layout,
             },
         )
         .expect("CPU activation quantization transform");
@@ -223,7 +232,11 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             values: allocation_to_vec(&values),
             scales: allocation_to_vec(&scales),
             group_sums: group_sums.map_or_else(Vec::new, |sums| allocation_to_vec(&sums)),
-            activation_scale_group_size,
+            quantization: ActivationQuantization {
+                scale_group_size: activation_scale_group_size,
+                sum_group_size,
+                code_layout,
+            },
         });
         self
     }
@@ -312,7 +325,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
                 );
             },
             QuantizationMethod::ScaleZeroPoint => {
-                let correction_bits = crate::data_type::DataType::from(input.mode).size_in_bits() as u32;
+                let correction_bits = DataType::from(input.mode).size_in_bits() as u32;
                 transpose_metadata(
                     self.zp.as_mut().expect("zp buffer").as_slice_mut(),
                     columns,
@@ -384,13 +397,14 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     } = buffers;
     let b = quant_b_variant(&*w, &*scales, zp.as_ref(), bias.as_ref(), *params_layout, input);
     let a = match &input.prepared_a {
-        Some(_) => MatmulA::Int8Symmetric {
+        Some(prepared) => MatmulA::Int8Symmetric {
             values: prepared_a.as_ref().expect("prepared activation buffer"),
             scales: prepared_a_scales.as_ref().expect("prepared activation scales"),
             // Symmetric weights carry no correction term, so the GEMM never reads these.
             group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
                 .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
-            group_size: input.prepared_a.as_ref().expect("prepared activation metadata").activation_scale_group_size,
+            scale_group_size: prepared.quantization.scale_group_size,
+            code_layout: prepared.quantization.code_layout,
         },
         None => MatmulA::FullPrecision {
             values: x,

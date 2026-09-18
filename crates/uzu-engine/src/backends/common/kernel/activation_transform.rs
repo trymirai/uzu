@@ -2,7 +2,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
-        kernel::ActivationTransformKernel,
+        kernel::{ActivationTransformKernel, matmul::Int8CodeLayout},
     },
     data_type::DataType,
 };
@@ -20,7 +20,7 @@ pub const ACTIVATION_SCALE_GROUP_SIZE: u32 = 128;
 pub struct ActivationQuantization {
     pub scale_group_size: u32,
     pub sum_group_size: Option<u32>,
-    pub codes_grouped_by_nibble: bool,
+    pub code_layout: Int8CodeLayout,
 }
 
 pub struct ActivationTransform<B: Backend> {
@@ -38,7 +38,7 @@ impl<B: Backend> ActivationTransform<B> {
         quantization: Option<ActivationQuantization>,
     ) -> Result<Self, B::Error> {
         let (codes_grouped_by_nibble, scale_group_size, sum_group_size) = match quantization {
-            Some(q) => (q.codes_grouped_by_nibble, q.scale_group_size, q.sum_group_size),
+            Some(q) => (q.code_layout.is_grouped_by_nibble(), q.scale_group_size, q.sum_group_size),
             None => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, None),
         };
         let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(
@@ -173,17 +173,5 @@ impl<B: Backend> ActivationTransform<B> {
             element_count,
             encoder,
         );
-    }
-
-    pub fn emit_group_sums(&self) -> bool {
-        self.quantization.is_some_and(|quantization| quantization.sum_group_size.is_some())
-    }
-
-    pub fn scale_group_size(&self) -> u32 {
-        self.quantization.expect("quantized activation transform required").scale_group_size
-    }
-
-    pub fn sum_group_size(&self) -> Option<u32> {
-        self.quantization.and_then(|quantization| quantization.sum_group_size)
     }
 }

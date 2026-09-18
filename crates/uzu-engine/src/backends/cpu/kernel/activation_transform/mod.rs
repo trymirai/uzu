@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 pub mod activation_transform;
 
 use crate::backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE;
@@ -5,6 +7,15 @@ use crate::backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE;
 pub const INT8_SYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
 
 pub use activation_transform::quantize_transformed_row;
+
+// [0, 1, 2, 3, 4, 5, 6, 7] -> [0, 4, 1, 5, 2, 6, 3, 7]
+pub fn nibble_grouped_index(index: usize) -> usize {
+    const NIBBLES_PER_BYTE: usize = 2;
+    const CODES_PER_WORD: usize = size_of::<u32>() * NIBBLES_PER_BYTE;
+    const NIBBLE_GROUP_SIZE: usize = CODES_PER_WORD / NIBBLES_PER_BYTE;
+    let offset = index % CODES_PER_WORD;
+    index - offset + (offset % NIBBLES_PER_BYTE) * NIBBLE_GROUP_SIZE + offset / NIBBLES_PER_BYTE
+}
 
 pub fn min_max_symmetric_divisor(values: &[f32]) -> f32 {
     let (min, max) =

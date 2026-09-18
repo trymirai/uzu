@@ -112,7 +112,7 @@ mod quantize {
         backends::{
             common::{
                 Backend, Context, Encoder,
-                kernel::{ActivationQuantization, ActivationTransform},
+                kernel::{ActivationQuantization, ActivationTransform, matmul::Int8CodeLayout},
             },
             cpu::Cpu,
         },
@@ -128,7 +128,7 @@ mod quantize {
         scale_group_size: u32,
         emit_group_sums: bool,
         sum_group_size: Option<u32>,
-        codes_grouped_by_nibble: bool,
+        code_layout: Int8CodeLayout,
     ) -> (Vec<i8>, Vec<f32>, Option<Vec<i32>>) {
         let scale_groups = columns / scale_group_size;
         let sum_groups = sum_group_size.map_or(0, |group_size| columns / group_size);
@@ -145,7 +145,7 @@ mod quantize {
             ActivationQuantization {
                 scale_group_size,
                 sum_group_size,
-                codes_grouped_by_nibble,
+                code_layout,
             },
         )
         .expect("quantize transform");
@@ -169,7 +169,7 @@ mod quantize {
         scale_group_size: u32,
         emit_group_sums: bool,
         sum_group_size: Option<u32>,
-        codes_grouped_by_nibble: bool,
+        code_layout: Int8CodeLayout,
     ) {
         let rows = 3;
         let columns = 256;
@@ -192,7 +192,7 @@ mod quantize {
             scale_group_size,
             emit_group_sums,
             sum_group_size,
-            codes_grouped_by_nibble,
+            code_layout,
         );
 
         for_each_backend!(|B| {
@@ -204,7 +204,7 @@ mod quantize {
                 scale_group_size,
                 emit_group_sums,
                 sum_group_size,
-                codes_grouped_by_nibble,
+                code_layout,
             );
 
             for (index, (&actual, &expected)) in actual_scales.iter().zip(&expected_scales).enumerate() {
@@ -238,23 +238,23 @@ mod quantize {
 
     #[uzu_test]
     fn quantize_with_group_sums_matches_cpu() {
-        check_quantize(128, true, Some(BLOCK_SIZE), false);
+        check_quantize(128, true, Some(BLOCK_SIZE), Int8CodeLayout::Sequential);
     }
 
     #[uzu_test]
     fn quantize_without_group_sums_matches_cpu() {
-        check_quantize(128, false, None, false);
+        check_quantize(128, false, None, Int8CodeLayout::Sequential);
     }
 
     #[uzu_test]
     fn quantize_compact_scale_g128_sum_g64_matches_cpu() {
-        check_quantize(128, true, Some(64), false);
+        check_quantize(128, true, Some(64), Int8CodeLayout::Sequential);
     }
 
     #[uzu_test]
     fn quantize_scale_g32_and_g64_match_cpu() {
-        check_quantize(32, false, None, false);
-        check_quantize(64, false, None, false);
-        check_quantize(128, false, None, true);
+        check_quantize(32, false, None, Int8CodeLayout::Sequential);
+        check_quantize(64, false, None, Int8CodeLayout::Sequential);
+        check_quantize(128, false, None, Int8CodeLayout::GroupedByNibble);
     }
 }
