@@ -10,7 +10,7 @@ app = Typer(add_completion=False)
 def run_mlx():
     config = MlxRunRequest(
         # model_path="~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-2B-MLX-8bit/snapshots/e6ffd0033d03c9efa880984e611028e0da63905f",
-        model_path="mlx-community/Qwen3.5-2B-8bit",
+        model_path="mlx-community/Qwen3.5-4B-8bit",
         prompt="Tell me about London",
     )
     response: MlxRunResponse = backend_mlx.run(config)

@@ -14,6 +14,16 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = ["ruff>=0.16.8", "ty>=0.0.81"]
 
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "setup.py" },
+    { file = "setup.cfg" },
+    { dir = "src" },
+    { file = "src/mach/**/*.c" },
+    { file = "src/mach/**/*.h" },
+]
+
 [tool.ruff]
 line-length = 120
 
@@ -22,4 +32,5 @@ extend-select = ["E501"]
 
 [tool.setuptools]
 py-modules = ["main"]
+packages = ["mach"]
 package-dir = { "" = "src" }
