@@ -228,7 +228,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         self
     }
 
-    pub(crate) fn weights_for_upload(&self) -> Vec<u32> {
+    pub fn weights_for_upload(&self) -> Vec<u32> {
         let mut words = self.w_packed.clone();
         let sign_flip_mask = self.signed_codes.then(|| self.mode.weight_codes_sign_flip_mask()).flatten();
         if let Some(mask) = sign_flip_mask {
@@ -238,7 +238,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         words
     }
 
-    pub(crate) fn weight_buffer_bytes(&self) -> usize {
+    pub fn weight_buffer_bytes(&self) -> usize {
         size_of_val(self.w_packed.as_slice())
             + size_of_val(self.scales.as_slice())
             + self.biases.as_ref().map_or(0, |biases| size_of_val(biases.as_slice()))
