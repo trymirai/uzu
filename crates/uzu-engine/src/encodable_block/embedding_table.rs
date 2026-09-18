@@ -5,7 +5,7 @@ use crate::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{FullPrecisionEmbeddingLookupKernel, QuantizedEmbeddingLookupKernel},
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, WeightLayout},
+    config::weight_matrix::{AnyWeightMatrixSpec, QuantParamsLayout, WeightLayout},
     data_type::DataType,
     encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -58,6 +58,11 @@ impl<B: Backend> EmbeddingTable<B> {
         output_hadamard_factors: Option<Allocation<B>>,
     ) -> Result<Self, EmbeddingTableError<B>> {
         let matrix = WeightMatrix::load(tree, spec, WeightLayout::InputOutput, embedding_dim, vocab_size, data_type)?;
+        if matrix.quantization().is_some_and(|info| info.params_layout != QuantParamsLayout::OutputGroup) {
+            return Err(EmbeddingTableError::UnsupportedConfiguration(
+                "embedding quantization parameters must use output-group layout".into(),
+            ));
+        }
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
             return Err(EmbeddingTableError::UnsupportedConfiguration(
                 "output-hadamard factors require a quantized table".into(),
