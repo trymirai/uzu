@@ -9,11 +9,11 @@ from mlx import nn
 from mlx_lm.generate import GenerationResponse
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from chat import ChatMessage
-from common import get_model_path
+from common import ChatMessage, get_model_path
+from mach import MemoryCounters, get_memory_counters
 
 
-@dataclass
+@dataclass(frozen=True)
 class MlxRunRequest:
     # Model location:
     #   str for a Hugging Face repository ID,
@@ -40,7 +40,7 @@ class MlxRunRequest:
     draft_tokens: int = 2
 
 
-@dataclass
+@dataclass(frozen=True)
 class MlxRunResponse:
     text: str
 
@@ -62,6 +62,9 @@ class MlxRunResponse:
 
     # Total prompt processing and generation time, in seconds, excluding model loading.
     duration: float
+
+    # Memory counters collected using the Mach API.
+    memory_counters: MemoryCounters
 
 
 def run(request: MlxRunRequest) -> MlxRunResponse:
@@ -93,9 +96,12 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
     time_first_token: float = -1.0
     draft_flags: list[bool] = []
     response: GenerationResponse | None = None
+    memory_graphics_peak_total: int = 0
+    memory_with_graphics_peak: MemoryCounters = get_memory_counters()
 
     # create and run inference loop
     time_start: float = time.perf_counter()
+
     stream: Generator[GenerationResponse] = mlx_lm.stream_generate(
         model=model,
         tokenizer=tokenizer,
@@ -110,6 +116,12 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
             time_first_token = time.perf_counter() - time_start
         text += response.text
         draft_flags.append(response.from_draft)
+
+        memory_curr = get_memory_counters()
+        if memory_curr.graphics_total > memory_graphics_peak_total:
+            memory_graphics_peak_total = memory_curr.graphics_total
+            memory_with_graphics_peak = memory_curr
+
     time_total: float = time.perf_counter() - time_start
 
     if response is None:
@@ -130,4 +142,5 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
         tokens_per_fp=tokens_per_forward_pass,
         peak_memory=response.peak_memory,
         duration=time_total,
+        memory_counters=memory_with_graphics_peak,
     )
