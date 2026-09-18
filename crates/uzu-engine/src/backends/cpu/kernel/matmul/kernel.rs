@@ -9,7 +9,7 @@ use crate::{
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
-        cpu::{Cpu, context::CpuContext, error::CpuError},
+        cpu::{Cpu, context::CpuContext, error::CpuError, kernel::activation_transform::nibble_grouped_index},
     },
     data_type::DataType,
     utils::pointers::{SendPtr, SendPtrMut},
@@ -91,6 +91,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 values: SendPtr<u8>,
                 scales: SendPtr<u8>,
                 group_size: usize,
+                codes_grouped_by_nibble: bool,
             },
         }
         let a_data = match a {
@@ -106,7 +107,8 @@ impl MatmulKernel for MatmulCpuKernel {
                 values,
                 scales,
                 group_sums: _,
-                group_size: a_group_size,
+                scale_group_size: a_group_size,
+                code_layout,
             } => {
                 let compatible = matches!(a_group_size, 32 | 64 | 128)
                     && k.is_multiple_of(a_group_size)
@@ -141,6 +143,7 @@ impl MatmulKernel for MatmulCpuKernel {
                         unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
                     ),
                     group_size: a_group_size as usize,
+                    codes_grouped_by_nibble: code_layout.is_grouped_by_nibble(),
                 }
             },
         };
@@ -157,7 +160,7 @@ impl MatmulKernel for MatmulCpuKernel {
             (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_buffer_range.range().start) as *mut u8
         });
 
-        let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u);
+        let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u)?;
 
         let bias_after_rht = post_rht.is_some();
         let command_buffer = encoder.as_command_buffer_mut();
@@ -179,7 +182,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     } else {
                         4
                     };
-                    Some((num_groups_k, zero_point_stride, pack_factor))
+                    Some((zero_point_stride, pack_factor))
                 },
                 WeightData::FullPrecision {
                     ..
@@ -202,10 +205,16 @@ impl MatmulKernel for MatmulCpuKernel {
                                     values,
                                     scales,
                                     group_size,
+                                    codes_grouped_by_nibble,
                                 } => {
                                     let groups = k_u.div_ceil(group_size);
                                     let group = inner / group_size;
-                                    let q = *(values.as_ptr() as *const i8).add(row * k_u + inner) as f32;
+                                    let code_index = if codes_grouped_by_nibble {
+                                        nibble_grouped_index(inner)
+                                    } else {
+                                        inner
+                                    };
+                                    let q = *(values.as_ptr() as *const i8).add(row * k_u + code_index) as f32;
                                     let scale = *(scales.as_ptr() as *const f32).add(row * groups + group);
                                     q * scale
                                 },
@@ -231,11 +240,14 @@ impl MatmulKernel for MatmulCpuKernel {
                                     bits,
                                     group_size,
                                     signed_codes,
+                                    metadata_group_major,
+                                    metadata_stride,
                                 } => {
-                                    let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
+                                    let (zero_point_stride, pack_factor) = quant_layout.unwrap();
                                     let weight_linear_index = b_col * k_u + inner;
                                     let word_index = weight_linear_index / pack_factor;
-                                    let bit_offset = (weight_linear_index % pack_factor) * *bits;
+                                    let code_index_in_word = weight_linear_index % pack_factor;
+                                    let bit_offset = code_index_in_word * *bits;
                                     let weights_words = weights.as_ptr() as *const u32;
                                     let word = weights_words.add(word_index).read_unaligned();
                                     let code_mask = (1u32 << bits) - 1;
@@ -245,29 +257,39 @@ impl MatmulKernel for MatmulCpuKernel {
                                     }
                                     let quantized_value = f32::from(weight_code);
                                     let group_index = inner / group_size;
-                                    let scale = read_f32(
-                                        scales.as_ptr(),
-                                        weights_data_type,
-                                        b_col * num_groups_k + group_index,
-                                    );
+                                    let metadata_index = if *metadata_group_major {
+                                        group_index * metadata_stride + b_col
+                                    } else {
+                                        b_col * metadata_stride + group_index
+                                    };
+                                    let scale = read_f32(scales.as_ptr(), weights_data_type, metadata_index);
                                     let midpoint = (1u32 << (bits - 1)) as f32;
                                     let zero_point = zero_points.map(|zp| {
                                         if *bits == 4 {
-                                            let byte_index = b_col * zero_point_stride + (group_index >> 1);
+                                            let byte_index = if *metadata_group_major {
+                                                group_index * metadata_stride / 2 + b_col / 2
+                                            } else {
+                                                b_col * zero_point_stride + group_index / 2
+                                            };
                                             let byte_value = *zp.as_ptr().add(byte_index);
-                                            if (group_index & 1) == 0 {
+                                            let packed_index = if *metadata_group_major {
+                                                b_col
+                                            } else {
+                                                group_index
+                                            };
+                                            if packed_index.is_multiple_of(2) {
                                                 (byte_value & 0x0F) as f32
                                             } else {
                                                 ((byte_value >> 4) & 0x0F) as f32
                                             }
                                         } else {
-                                            *zp.as_ptr().add(b_col * zero_point_stride + group_index) as f32
+                                            *zp.as_ptr().add(metadata_index) as f32
                                         }
                                     });
                                     let bias_term = if let Some(zp) = zero_point {
                                         -scale * zp
                                     } else if let Some(b) = biases {
-                                        read_f32(b.as_ptr(), weights_data_type, b_col * num_groups_k + group_index)
+                                        read_f32(b.as_ptr(), weights_data_type, metadata_index)
                                     } else {
                                         -scale * midpoint
                                     };

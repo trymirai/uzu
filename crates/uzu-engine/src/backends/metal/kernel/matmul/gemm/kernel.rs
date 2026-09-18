@@ -1,6 +1,7 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use super::{
+    super::supports_integer_right_operand,
     GemmEngine, GemmPlan,
     selection::{GemmProblem, outer_block_k},
     specialization::GemmSpecialization,
@@ -15,7 +16,9 @@ use crate::{
             },
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape},
+                matmul::{
+                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape, QuantParamsLayout,
+                },
             },
         },
         metal::{
@@ -83,8 +86,6 @@ impl GemmKernel {
                     specialization.output_transform,
                     specialization.alignment,
                     specialization.signed_codes,
-                    specialization.stage_weight_scales,
-                    specialization.hoist_operand_addressing,
                 )?;
                 Ok(entry.insert(kernel))
             },
@@ -170,11 +171,6 @@ impl GemmKernel {
         let output_bias = arguments.d_transform.bias;
         let rht_factors = arguments.d_transform.rht_factors;
         let output_transform = arguments.d_transform.mask();
-
-        let b_prologue = arguments.b.b_prologue();
-        let bits_per_b = arguments.b.bits_per_b();
-        let group_size = arguments.b.group_size();
-        let weights_signed_codes = arguments.b.signed_codes();
 
         let MatmulArguments {
             a,
@@ -268,6 +264,7 @@ impl GemmKernel {
                     aligned_inner_iterations: k / tiling.block_k(),
                     use_morton,
                     ab_scale,
+                    metadata_group_stride: 0,
                 };
 
                 let specialization = GemmSpecialization::from_plan(
@@ -339,25 +336,24 @@ impl GemmKernel {
                         values,
                         scales: activation_scales,
                         group_sums: activation_group_sums,
-                        group_size: a_group_size,
+                        scale_group_size,
+                        code_layout,
                     } => {
-                        validate_int8_activation_arguments(
+                        validate_int8_left_operand(
                             use_mxu,
-                            weights_signed_codes,
-                            k,
-                            b_prologue,
-                            bits_per_b,
-                            group_size,
-                            *a_group_size,
+                            shape,
+                            *scale_group_size,
+                            *code_layout,
+                            activation_group_sums.is_some(),
                         )?;
                         if output_transform.contains(GemmDTransform::SOFT_CAP) {
                             return Err(MatmulError::UnsupportedDOp {
                                 bit: GemmDTransform::SOFT_CAP,
-                                path: "Gemm int8 activations",
+                                path: "Gemm int8 left operand",
                             }
                             .into());
                         }
-                        (None, Some(*values), Some(*activation_scales), *activation_group_sums, Some(*a_group_size))
+                        (None, Some(*values), Some(*activation_scales), *activation_group_sums, Some(*scale_group_size))
                     },
                 };
 
@@ -464,8 +460,11 @@ impl GemmKernel {
                 values,
                 scales,
                 group_sums,
-                group_size,
-            } => (None, Some(values), Some(scales), group_sums, GemmAPrologueKind::Int8Symmetric, Some(group_size)),
+                scale_group_size,
+                code_layout: _,
+            } => {
+                (None, Some(values), Some(scales), group_sums, GemmAPrologueKind::Int8Symmetric, Some(scale_group_size))
+            },
         };
         let tiling = plan.tiling;
         let split_k = plan.split_k;
@@ -501,6 +500,11 @@ impl GemmKernel {
             aligned_inner_iterations: kp / k_step,
             use_morton: false,
             ab_scale: 1.0,
+            metadata_group_stride: if shape.is_quant() {
+                shape.params_layout.group_stride(shape.n)
+            } else {
+                0
+            },
         };
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
         part_kernel.encode(
@@ -548,31 +552,47 @@ impl GemmKernel {
     }
 }
 
-fn validate_int8_activation_arguments(
+fn validate_int8_left_operand(
     use_mxu: bool,
-    weights_signed_codes: bool,
-    k: u32,
-    b_prologue: GemmBPrologueKind,
-    bits_per_b: Option<u32>,
-    weight_group_size: Option<u32>,
+    shape: MatmulShape,
     a_group_size: u32,
+    code_layout: Int8CodeLayout,
+    has_group_sums: bool,
 ) -> Result<(), MetalError> {
+    if shape.b_bits.and_then(Int8CodeLayout::for_right_bits) != Some(code_layout) {
+        return Err(MatmulError::IncompatibleA {
+            path: "Gemm",
+            reason: "left code layout is incompatible with the right operand",
+        }
+        .into());
+    }
+    let needs_group_sums =
+        matches!(shape.b_prologue, GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant);
+    if needs_group_sums && !has_group_sums {
+        return Err(MatmulError::IncompatibleA {
+            path: "Gemm",
+            reason: "quantized correction requires left group sums",
+        }
+        .into());
+    }
     let compatible = use_mxu
-        && weights_signed_codes
+        && supports_integer_right_operand(&shape)
+        && shape.params_layout == QuantParamsLayout::GroupOutput
         && matches!(
-            b_prologue,
+            shape.b_prologue,
             GemmBPrologueKind::ScaleSymmetricDequant
                 | GemmBPrologueKind::ScaleBiasDequant
                 | GemmBPrologueKind::ScaleZeroPointDequant
         )
-        && matches!(bits_per_b, Some(4 | 8))
         && matches!(a_group_size, 32 | 64 | 128)
-        && k.is_multiple_of(a_group_size)
-        && weight_group_size.is_some_and(|gs| matches!(gs, 32 | 64 | 128) && k.is_multiple_of(gs));
+        && shape.k.is_multiple_of(a_group_size)
+        && shape
+            .b_group_size
+            .is_some_and(|gs| matches!(gs, 32 | 64 | 128) && shape.k.is_multiple_of(gs) && a_group_size >= gs);
     if !compatible {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "symmetric int8 activations require a supported 32/64/128 activation and weight group",
+            reason: "symmetric int8 left operands require group-major metadata and supported 32/64/128 groups",
         }
         .into());
     }
@@ -603,5 +623,6 @@ fn quant_params(
         aligned_inner_iterations: outer_block_k(shape, plan.engine, plan.tiling).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
+        metadata_group_stride: shape.params_layout.group_stride(shape.n),
     }
 }

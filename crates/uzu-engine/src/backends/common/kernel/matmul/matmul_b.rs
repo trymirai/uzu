@@ -3,6 +3,7 @@ use crate::{
         Allocation, Backend, BufferArg,
         gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
     },
+    config::weight_matrix::QuantParamsLayout,
     data_type::DataType,
 };
 
@@ -14,6 +15,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
         b: &'a Allocation<B>,
         scales: &'a Allocation<B>,
         biases: &'a Allocation<B>,
+        params_layout: QuantParamsLayout,
         mode: QuantizationMode,
         group_size: u32,
         signed_codes: bool,
@@ -22,6 +24,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
         b: &'a Allocation<B>,
         scales: &'a Allocation<B>,
         zero_points: &'a Allocation<B>,
+        params_layout: QuantParamsLayout,
         mode: QuantizationMode,
         group_size: u32,
         signed_codes: bool,
@@ -29,6 +32,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
     ScaleSymmetricDequant {
         b: &'a Allocation<B>,
         scales: &'a Allocation<B>,
+        params_layout: QuantParamsLayout,
         mode: QuantizationMode,
         group_size: u32,
         signed_codes: bool,
@@ -110,6 +114,26 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
                 signed_codes,
                 ..
             } => *signed_codes,
+        }
+    }
+
+    pub fn params_layout(&self) -> QuantParamsLayout {
+        match self {
+            Self::FullPrecision {
+                ..
+            } => QuantParamsLayout::OutputGroup,
+            Self::ScaleBiasDequant {
+                params_layout,
+                ..
+            }
+            | Self::ScaleZeroPointDequant {
+                params_layout,
+                ..
+            }
+            | Self::ScaleSymmetricDequant {
+                params_layout,
+                ..
+            } => *params_layout,
         }
     }
 }

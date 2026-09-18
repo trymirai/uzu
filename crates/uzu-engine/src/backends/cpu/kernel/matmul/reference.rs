@@ -2,7 +2,11 @@ use half::{bf16, f16};
 
 use crate::{
     backends::{
-        common::{AsBufferRangeRef, BufferArg, gpu_types::QuantizationMode, kernel::matmul::MatmulB},
+        common::{
+            AsBufferRangeRef, BufferArg,
+            gpu_types::QuantizationMode,
+            kernel::matmul::{MatmulB, MatmulError, QuantParamsLayout},
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -23,6 +27,8 @@ pub(super) enum WeightData {
         bits: usize,
         group_size: usize,
         signed_codes: bool,
+        metadata_group_major: bool,
+        metadata_stride: usize,
     },
 }
 
@@ -33,7 +39,7 @@ impl WeightData {
         b_transpose: bool,
         k: usize,
         n: usize,
-    ) -> Self {
+    ) -> Result<Self, MatmulError<Cpu>> {
         let alloc_ptr = |a: &crate::backends::common::Allocation<Cpu>| {
             let r = a.as_buffer_range_ref();
             SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
@@ -42,7 +48,7 @@ impl WeightData {
             QuantizationMode::U4 => 4usize,
             _ => 8usize,
         };
-        match b {
+        let (weights, scales, zero_points, biases, params_layout, mode, group_size, signed_codes) = match b {
             MatmulB::FullPrecision {
                 b: weights,
             } => {
@@ -52,11 +58,11 @@ impl WeightData {
                     n
                 });
                 let (buffer, byte_off, _) = weights.into_parts();
-                WeightData::FullPrecision {
+                return Ok(WeightData::FullPrecision {
                     ptr: SendPtr(unsafe { &*buffer.downcast().get() }.as_ptr().wrapping_byte_add(byte_off)),
                     leading_dimension,
                     transpose: b_transpose,
-                }
+                });
             },
             MatmulB::ScaleBiasDequant {
                 b: weights,
@@ -65,15 +71,8 @@ impl WeightData {
                 mode,
                 group_size,
                 signed_codes,
-            } => WeightData::Quantized {
-                weights: alloc_ptr(weights),
-                scales: alloc_ptr(scales),
-                zero_points: None,
-                biases: Some(alloc_ptr(biases)),
-                bits: bits_of(mode),
-                group_size: group_size as usize,
-                signed_codes,
-            },
+                params_layout,
+            } => (weights, scales, None, Some(biases), params_layout, mode, group_size, signed_codes),
             MatmulB::ScaleZeroPointDequant {
                 b: weights,
                 scales,
@@ -81,31 +80,28 @@ impl WeightData {
                 mode,
                 group_size,
                 signed_codes,
-            } => WeightData::Quantized {
-                weights: alloc_ptr(weights),
-                scales: alloc_ptr(scales),
-                zero_points: Some(alloc_ptr(zero_points)),
-                biases: None,
-                bits: bits_of(mode),
-                group_size: group_size as usize,
-                signed_codes,
-            },
+                params_layout,
+            } => (weights, scales, Some(zero_points), None, params_layout, mode, group_size, signed_codes),
             MatmulB::ScaleSymmetricDequant {
                 b: weights,
                 scales,
                 mode,
                 group_size,
                 signed_codes,
-            } => WeightData::Quantized {
-                weights: alloc_ptr(weights),
-                scales: alloc_ptr(scales),
-                zero_points: None,
-                biases: None,
-                bits: bits_of(mode),
-                group_size: group_size as usize,
-                signed_codes,
-            },
-        }
+                params_layout,
+            } => (weights, scales, None, None, params_layout, mode, group_size, signed_codes),
+        };
+        Ok(WeightData::Quantized {
+            weights: alloc_ptr(weights),
+            scales: alloc_ptr(scales),
+            zero_points: zero_points.map(alloc_ptr),
+            biases: biases.map(alloc_ptr),
+            bits: bits_of(mode),
+            group_size: group_size as usize,
+            signed_codes,
+            metadata_group_major: params_layout == QuantParamsLayout::GroupOutput,
+            metadata_stride: params_layout.row_stride(n as u32, (k as u32).div_ceil(group_size)) as usize,
+        })
     }
 }
 

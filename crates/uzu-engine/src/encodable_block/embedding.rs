@@ -13,7 +13,7 @@ use crate::{
     config::{
         embedding::AnyEmbeddingConfig,
         weight_matrix::{
-            AnyWeightMatrixSpec, Layout,
+            AnyWeightMatrixSpec, QuantParamsLayout, WeightLayout,
             hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
         },
     },
@@ -247,7 +247,7 @@ impl<B: Backend> Embedding<B> {
                         let matrix = WeightMatrix::load(
                             &output_embedding_tree.subtree("quantized"),
                             *quantization_spec,
-                            Layout::OutputInput,
+                            WeightLayout::OutputInput,
                             vocab_size,
                             model_dim,
                             data_type,
@@ -277,7 +277,7 @@ impl<B: Backend> Embedding<B> {
                         let matrix = WeightMatrix::load(
                             &output_embedding_tree,
                             spec,
-                            Layout::OutputInput,
+                            WeightLayout::OutputInput,
                             vocab_size,
                             model_dim,
                             data_type,
@@ -289,6 +289,12 @@ impl<B: Backend> Embedding<B> {
                         }
                     },
                 };
+                if output.matrix.quantization().is_some_and(|info| info.params_layout != QuantParamsLayout::OutputGroup)
+                {
+                    return Err(EmbeddingError::UnsupportedConfiguration(
+                        "readout quantization parameters must use output-group layout".into(),
+                    ));
+                }
 
                 (
                     EmbeddingTying::Untied {

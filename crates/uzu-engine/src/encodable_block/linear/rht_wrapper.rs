@@ -6,8 +6,8 @@ use crate::{
         Allocation, Backend, Encoder,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
-            ActivationTransform,
-            matmul::{A8ActivationPlan, ActivationFormat, MatmulA},
+            ActivationQuantization, ActivationTransform,
+            matmul::{ActivationFormat, MatmulA},
         },
     },
     config::weight_matrix::{
@@ -36,6 +36,7 @@ enum InputRht<B: Backend> {
     A8 {
         fallback: ActivationTransform<B>,
         a8: ActivationTransform<B>,
+        quantization: ActivationQuantization,
     },
 }
 
@@ -85,8 +86,15 @@ impl<B: Backend> RHTLinearWrapper<B> {
             weights_data_type,
             parameter_tree,
         )?;
-        let a8_plan = inner_linear.prepare_a8(context);
-        Self::build_self_contained(context, input_dimension, input_data_type, input_factors, inner_linear, a8_plan)
+        let activation_quantization = inner_linear.prepare_a8(context);
+        Self::build_self_contained(
+            context,
+            input_dimension,
+            input_data_type,
+            input_factors,
+            inner_linear,
+            activation_quantization,
+        )
     }
 
     pub(super) fn try_new_with_input_preparation(
@@ -116,8 +124,8 @@ impl<B: Backend> RHTLinearWrapper<B> {
             weights_data_type,
             parameter_tree,
         )?;
-        let a8_plan = inner_linear.prepare_a8(context);
-        if let Some(a8_plan) = a8_plan
+        let activation_quantization = inner_linear.prepare_a8(context);
+        if let Some(activation_quantization) = activation_quantization
             && !allow_prequantized_activation
         {
             let wrapper = Self::build_self_contained(
@@ -126,7 +134,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
                 input_data_type,
                 input_factors,
                 inner_linear,
-                Some(a8_plan),
+                Some(activation_quantization),
             )?;
             Ok(Some((Box::new(wrapper), None)))
         } else {
@@ -134,7 +142,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
                 Box::new(inner_linear),
                 Some(LinearInputPreparation {
                     input_factors,
-                    a8_plan,
+                    activation_quantization,
                 }),
             )))
         }
@@ -182,22 +190,18 @@ impl<B: Backend> RHTLinearWrapper<B> {
         input_data_type: DataType,
         input_factors: Allocation<B>,
         inner_linear: LinearMatmul<B>,
-        a8_plan: Option<A8ActivationPlan>,
+        activation_quantization: Option<ActivationQuantization>,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
         let input_transform = ActivationTransform::input_rht(context, input_data_type, true)
             .map_err(RHTLinearWrapperError::BackendError)?;
-        let input_rht = match a8_plan {
-            Some(plan) => {
-                let quantized = ActivationTransform::quantize(
-                    context,
-                    input_data_type,
-                    plan.activation_group_size,
-                    plan.sum_group_size,
-                )
-                .map_err(RHTLinearWrapperError::BackendError)?;
+        let input_rht = match activation_quantization {
+            Some(quantization) => {
+                let quantized = ActivationTransform::quantize(context, input_data_type, quantization)
+                    .map_err(RHTLinearWrapperError::BackendError)?;
                 InputRht::A8 {
                     fallback: input_transform,
                     a8: quantized,
+                    quantization,
                 }
             },
             None => InputRht::FullPrecision(input_transform),
@@ -241,18 +245,19 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
 
         if let InputRht::A8 {
             a8: quantized,
+            quantization,
             ..
         } = &self.input_rht
             && self.inner_linear.select_activation_format(batch_dim, encoder.context()) == ActivationFormat::Int8
         {
-            let activation_group_size = quantized.activation_group_size();
-            let scale_groups_per_row = self.input_dimension.div_ceil(activation_group_size);
+            let activation_scale_group_size = quantization.scale_group_size;
+            let scale_groups_per_row = self.input_dimension.div_ceil(activation_scale_group_size);
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales =
                 encoder.allocate_scratch(size_for_shape(&[batch_dim, scale_groups_per_row], DataType::F32))?;
-            let mut group_sums = quantized
-                .sum_group_size()
+            let mut group_sums = quantization
+                .sum_group_size
                 .map(|group_size| self.input_dimension.div_ceil(group_size))
                 .map(|groups| encoder.allocate_scratch(size_for_shape(&[batch_dim, groups], DataType::I32)))
                 .transpose()?;
@@ -272,7 +277,8 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                     values: &values,
                     scales: &scales,
                     group_sums: group_sums.as_ref(),
-                    group_size: activation_group_size,
+                    scale_group_size: quantization.scale_group_size,
+                    code_layout: quantization.code_layout,
                 },
                 batch_dim,
                 encoder,

@@ -13,7 +13,7 @@ use crate::{
             gpu_types::QuantizationMethod,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParamsLayout},
             },
         },
         cpu::Cpu,
@@ -23,6 +23,11 @@ use crate::{
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
         matmul::{QuantBuffers, QuantInput, quant_b_variant},
     },
+};
+#[cfg(backend = "metal")]
+use crate::{
+    backends::metal::{Metal, MetalContext},
+    tests::matmul::run_quant_cpu,
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -149,6 +154,42 @@ fn gemv_bf16(
     test::<bf16>(m, k, n, 0.1);
 }
 
+#[cfg(backend = "metal")]
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::w4_zero_point(4, QuantizationMethod::ScaleZeroPoint)]
+#[case::w8_bias(8, QuantizationMethod::ScaleBias)]
+fn group_major_gemv_bf16(
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+) {
+    let context = MetalContext::new().expect("Metal context");
+    let input = QuantInput::<bf16>::new(1, 256, 72, 32, bits, method, 0);
+    let reference = run_quant_cpu::<bf16>(&input);
+
+    let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+    buffers.prepare_group_major(&input);
+    let actual = run_gemv::<Metal, bf16>(
+        &context,
+        &buffers.x,
+        quant_b_variant(
+            &buffers.w,
+            &buffers.scales,
+            buffers.zp.as_ref(),
+            buffers.bias.as_ref(),
+            QuantParamsLayout::GroupOutput,
+            &input,
+        ),
+        None,
+        1,
+        input.n as usize,
+        input.k as usize,
+        None,
+    );
+
+    assert_eq_float(&reference, &actual, 0.05, &format!("GroupOutput GEMV W{bits} {method:?}"));
+}
+
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::m1(1, 128, 64)]
@@ -249,8 +290,16 @@ fn gemv_gather() {
             let context = <B as Backend>::Context::new().expect("context");
             let buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
             let ids_alloc = alloc_allocation_with_data::<B, u32>(&context, &ids);
-            let variant =
-                || quant_b_variant(&buffers.w, &buffers.scales, buffers.zp.as_ref(), buffers.bias.as_ref(), &input);
+            let variant = || {
+                quant_b_variant(
+                    &buffers.w,
+                    &buffers.scales,
+                    buffers.zp.as_ref(),
+                    buffers.bias.as_ref(),
+                    QuantParamsLayout::OutputGroup,
+                    &input,
+                )
+            };
             (
                 run_gemv::<B, bf16>(&context, &buffers.x, variant(), None, m, vocab, k, None),
                 run_gemv::<B, bf16>(&context, &buffers.x, variant(), Some(&ids_alloc), m, ids_per_row, k, None),

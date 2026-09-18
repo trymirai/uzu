@@ -6,14 +6,11 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{
-            Kernels,
-            matmul::{
-                A8ActivationPlan, ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
-                MatmulShape,
-            },
+            ActivationQuantization, Kernels,
+            matmul::{ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulShape},
         },
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, Layout},
+    config::weight_matrix::{AnyWeightMatrixSpec, WeightLayout},
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearInput},
@@ -83,8 +80,14 @@ impl<B: Backend> LinearMatmul<B> {
             }
         }
 
-        let matrix =
-            WeightMatrix::load(weights_tree, spec, Layout::OutputInput, output_dim, input_dim, weights_data_type)?;
+        let matrix = WeightMatrix::load(
+            weights_tree,
+            spec,
+            WeightLayout::OutputInput,
+            output_dim,
+            input_dim,
+            weights_data_type,
+        )?;
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
             return Err(LinearMatmulError::UnsupportedConfiguration(
                 "fused output-hadamard factors require quantized weights".into(),
@@ -111,12 +114,11 @@ impl<B: Backend> LinearMatmul<B> {
     pub(super) fn prepare_a8(
         &mut self,
         context: &B::Context,
-    ) -> Option<A8ActivationPlan> {
+    ) -> Option<ActivationQuantization> {
         let mut candidate = self.matmul_shape(1, false);
         candidate.signed_codes = true;
-        let plan = self.kernel.lock().a8_activation_plan(&candidate, context)?;
-        self.matrix.make_codes_signed();
-        Some(plan)
+        let quantization = self.kernel.lock().select_activation_quantization(&candidate, context)?;
+        self.matrix.try_prepare_a8_storage().then_some(quantization)
     }
 
     pub(super) fn encode_with_a(
@@ -165,6 +167,7 @@ impl<B: Backend> LinearMatmul<B> {
             signed_codes: b.signed_codes(),
             a_full_precision,
             gathered: false,
+            params_layout: b.params_layout(),
             d_transform: self.d_ops().mask(),
         }
     }
@@ -174,9 +177,6 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        if !self.matmul_b().signed_codes() {
-            return ActivationFormat::Bf16;
-        }
         let bf16_shape = self.matmul_shape(batch_dim, true);
         self.kernel.lock().select_activation_format(&bf16_shape, context)
     }
@@ -229,13 +229,15 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 values,
                 scales,
                 group_sums,
-                group_size,
+                scale_group_size,
+                code_layout,
             } => self.encode_with_a(
                 MatmulA::Int8Symmetric {
                     values: &values,
                     scales: &scales,
                     group_sums: group_sums.as_ref(),
-                    group_size,
+                    scale_group_size,
+                    code_layout,
                 },
                 batch_dim,
                 encoder,

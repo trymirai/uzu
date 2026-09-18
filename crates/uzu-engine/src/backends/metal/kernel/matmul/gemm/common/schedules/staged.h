@@ -28,16 +28,17 @@ static METAL_FUNC auto make_staged_loader(
     const thread ThreadContext& thread_context
 ) {
   using Element = typename Core::RightElementType;
-  using Format = typename RightOperand::Format;
   const uint row_stride =
       uint(params->K) * uint(get_bytes_per_pack<RightOperand::BITS>()) / uint(get_pack_factor<RightOperand::BITS>());
   const uint groups_per_row = (uint(params->K) + uint(RightOperand::GROUP_SIZE) - 1) / uint(RightOperand::GROUP_SIZE);
   const uint first_group = k_offset / uint(RightOperand::GROUP_SIZE);
+  const int params_group_stride = int(params->metadata_group_stride);
+  const int params_output_stride = params_group_stride == 1 ? int(groups_per_row) : 1;
+  const int params_offset = int(block_col) * params_output_stride + int(first_group) * params_group_stride;
+  const device Element* scales = right.scales + params_offset;
   const device uint8_t* values = right.codes + size_t(block_col) * row_stride +
                                  size_t(k_offset) * size_t(get_bytes_per_pack<RightOperand::BITS>()) /
                                      size_t(get_pack_factor<RightOperand::BITS>());
-  const device Element* scales = right.scales + block_col * groups_per_row + first_group;
-
   if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant) {
     using Loader = QuantizedBlockLoaderScaleBias<
         Element,
@@ -47,13 +48,14 @@ static METAL_FUNC auto make_staged_loader(
         1,
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
-        Format::BITS>;
+        RightOperand::BITS>;
     return Loader(
         values,
         scales,
-        right.bias() + block_col * groups_per_row + first_group,
+        right.bias() + params_offset,
         right.signed_codes,
         int(params->K),
+        params_group_stride,
         staging,
         thread_context.simdgroup_index,
         thread_context.simd_lane_id
@@ -67,16 +69,17 @@ static METAL_FUNC auto make_staged_loader(
         1,
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
-        Format::BITS>;
-    const device uint8_t* zero_points = right.zp() + block_col * zero_point_row_stride<Format::BITS>(groups_per_row) +
-                                        ((Format::BITS == 4) ? first_group / 2 : first_group);
+        RightOperand::BITS,
+        false>;
     return Loader(
         values,
         scales,
-        zero_points,
+        right.zp(),
         right.signed_codes,
         int(params->K),
-        int(groups_per_row),
+        params_group_stride,
+        uint(block_col) * zero_point_bit_stride<RightOperand::BITS>(params_output_stride) +
+            first_group * zero_point_bit_stride<RightOperand::BITS>(params_group_stride),
         staging,
         thread_context.simdgroup_index,
         thread_context.simd_lane_id
@@ -94,14 +97,14 @@ static METAL_FUNC auto make_staged_loader(
         1,
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
-        Format::BITS,
+        RightOperand::BITS,
         true>;
     return Loader(
         values,
         scales,
         right.signed_codes,
         int(params->K),
-        int(groups_per_row),
+        params_group_stride,
         staging,
         thread_context.simdgroup_index,
         thread_context.simd_lane_id
@@ -137,7 +140,7 @@ static METAL_FUNC auto make_full_precision_loader(
 }
 
 struct StagedSchedule {
-  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool, bool>
+  template <typename Core, bool ALIGNED_M, bool ALIGNED_N>
   static METAL_FUNC typename Core::AccumFragment launch(
       typename Core::LeftStorage left,
       typename Core::RightStorage right,

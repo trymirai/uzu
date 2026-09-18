@@ -27,6 +27,7 @@ PUBLIC KERNEL(ActivationTransform)(
     constant uint& batch_size,
     constant uint& element_count,
     const ActivationTransformOp ops SPECIALIZE,
+    const bool grouped_by_weight_nibble SPECIALIZE,
     const bool in_place SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
     const uint sum_group_size SPECIALIZE,
@@ -78,7 +79,8 @@ PUBLIC KERNEL(ActivationTransform)(
   const int8_t code =
       static_cast<int8_t>(clamp(round(value / scale), -ACTIVATION_QUANT_INT8_MAX, ACTIVATION_QUANT_INT8_MAX));
   if (in_bounds) {
-    q_out[element_index] = code;
+    const uint output_factor_index = grouped_by_weight_nibble ? nibble_grouped_index(factor_index) : factor_index;
+    q_out[batch_index * element_count + output_factor_index] = code;
   }
   write_activation_quantization_group(
       scales_out,
