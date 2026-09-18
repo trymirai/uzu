@@ -14,9 +14,7 @@ use crate::{
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{
-                    MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MetadataLayout, group_major_metadata,
-                },
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParamsLayout},
             },
         },
         metal::{GemmEngine, Metal, MetalContext},
@@ -24,7 +22,7 @@ use crate::{
     data_type::DataType,
     tests::{
         helpers::{alloc_allocation, alloc_allocation_with_data},
-        matmul::{QuantInput, iter_encode_loop_named, qwen3_layer_shapes},
+        matmul::{QuantInput, iter_encode_loop_named, qwen3_layer_shapes, transpose_metadata},
         util::{shared_metal_context, type_short_name},
     },
 };
@@ -84,7 +82,7 @@ impl BenchmarkData {
         let a8_weights = alloc_allocation_with_data::<Metal, u32>(context, &a8_weights);
         let weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
         let mut group_major_weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
-        group_major_metadata::transpose(group_major_weight_scales.as_slice_mut(), n, k.div_ceil(group_size), 16);
+        transpose_metadata(group_major_weight_scales.as_slice_mut(), n, k.div_ceil(group_size), 16);
         let activations = alloc_allocation_with_data::<Metal, bf16>(context, &input.x);
         let rht: Vec<i32> = (0..k)
             .map(|index| {
@@ -132,7 +130,7 @@ impl BenchmarkData {
             b: MatmulB::ScaleSymmetricDequant {
                 b: &self.unsigned_weights,
                 scales: &self.weight_scales,
-                metadata_layout: MetadataLayout::RowMajor,
+                params_layout: QuantParamsLayout::OutputGroup,
                 mode: self.mode,
                 group_size: self.group_size,
                 signed_codes: false,
@@ -181,7 +179,7 @@ fn encode_step(
                 b: MatmulB::ScaleSymmetricDequant {
                     b: &data.a8_weights,
                     scales: &data.group_major_weight_scales,
-                    metadata_layout: MetadataLayout::GroupMajor,
+                    params_layout: QuantParamsLayout::GroupOutput,
                     mode: data.mode,
                     group_size: data.group_size,
                     signed_codes: !matches!(data.mode, QuantizationMode::U4),

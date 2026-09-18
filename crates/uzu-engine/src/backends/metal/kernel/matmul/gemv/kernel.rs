@@ -8,7 +8,7 @@ use crate::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::{MatmulShape, MetadataLayout},
+            kernel::matmul::{MatmulShape, QuantParamsLayout},
         },
         metal::{context::MetalContext, error::MetalError, kernel::GemvMetalKernel},
     },
@@ -85,7 +85,7 @@ impl GemvSpecialization {
         output_data_type: DataType,
         tile: policy::GemvTile,
     ) -> Option<Self> {
-        if shape.gathered && shape.metadata_layout == MetadataLayout::GroupMajor {
+        if shape.gathered && shape.params_layout == QuantParamsLayout::GroupOutput {
             return None;
         }
         if !shape.b_transpose || !shape.a_full_precision {
@@ -141,7 +141,7 @@ impl GemvSpecialization {
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
             full_tile: full_tile(shape, tile),
-            metadata_group_major: shape.metadata_layout == MetadataLayout::GroupMajor,
+            metadata_group_major: shape.params_layout == QuantParamsLayout::GroupOutput,
         };
         Some(specialization)
     }
@@ -288,7 +288,7 @@ impl GemvKernel {
             } => (Some(*scales), None, None),
         };
         let metadata_stride = match b.group_size() {
-            Some(group_size) => b.metadata_layout().row_stride(n, k.div_ceil(group_size)),
+            Some(group_size) => b.params_layout().row_stride(n, k.div_ceil(group_size)),
             None => 0,
         };
         let output_group_count = n.div_ceil(specialization.output_row_tile());

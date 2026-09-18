@@ -18,7 +18,9 @@ use crate::{
             kernel::{
                 ActivationQuantization,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{ActivationFormat, MatmulArguments, MatmulError, MatmulKernel, MatmulShape},
+                matmul::{
+                    ActivationFormat, MatmulArguments, MatmulError, MatmulKernel, MatmulShape, QuantParamsLayout,
+                },
             },
         },
         metal::{Metal, context::MetalContext, error::MetalError},
@@ -175,6 +177,7 @@ impl MatmulKernel for MatmulMetalKernel {
             || self.output_data_type != DataType::BF16
             || shape.a_full_precision
             || !shape.is_quant()
+            || shape.params_layout != QuantParamsLayout::GroupOutput
             || !supports_integer_right_operand(shape)
             || !shape.b_transpose
             || shape.b_leading_dimension.is_some()
@@ -203,7 +206,8 @@ impl MatmulKernel for MatmulMetalKernel {
         bf16_shape: &MatmulShape,
         context: &MetalContext,
     ) -> ActivationFormat {
-        if !supports_integer_right_operand(bf16_shape)
+        if bf16_shape.params_layout != QuantParamsLayout::GroupOutput
+            || !supports_integer_right_operand(bf16_shape)
             || matches!(self.select_dispatch(bf16_shape, context), MatmulDispatch::Gemv(_))
         {
             return ActivationFormat::Bf16;

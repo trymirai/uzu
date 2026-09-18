@@ -16,7 +16,7 @@ use crate::{
             },
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape, MetadataLayout},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape, QuantParamsLayout},
             },
         },
         metal::{
@@ -262,7 +262,7 @@ impl GemmKernel {
                     aligned_inner_iterations: k / tiling.block_k(),
                     use_morton,
                     ab_scale,
-                    metadata_stride: 0,
+                    metadata_group_stride: 0,
                 };
 
                 let specialization = GemmSpecialization::from_plan(
@@ -303,12 +303,6 @@ impl GemmKernel {
             | MatmulB::ScaleSymmetricDequant {
                 ..
             }) => {
-                if shape.metadata_layout == MetadataLayout::GroupMajor && shape.a_full_precision {
-                    return Err(MatmulError::UnsupportedLayout {
-                        path: "Gemm",
-                    }
-                    .into());
-                }
                 let (weights, scales, biases, zero_points) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
@@ -494,8 +488,8 @@ impl GemmKernel {
             aligned_inner_iterations: kp / k_step,
             use_morton: false,
             ab_scale: 1.0,
-            metadata_stride: if shape.is_quant() {
-                metadata_stride(shape)
+            metadata_group_stride: if shape.is_quant() {
+                shape.params_layout.group_stride(shape.n)
             } else {
                 0
             },
@@ -553,7 +547,7 @@ fn validate_int8_activation_arguments(
 ) -> Result<(), MetalError> {
     let compatible = use_mxu
         && supports_integer_right_operand(&shape)
-        && shape.metadata_layout == MetadataLayout::GroupMajor
+        && shape.params_layout == QuantParamsLayout::GroupOutput
         && matches!(
             shape.b_prologue,
             GemmBPrologueKind::ScaleSymmetricDequant
@@ -599,11 +593,6 @@ fn quant_params(
         aligned_inner_iterations: outer_block_k(shape, plan.engine, plan.tiling).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
-        metadata_stride: metadata_stride(shape),
+        metadata_group_stride: shape.params_layout.group_stride(shape.n),
     }
-}
-
-fn metadata_stride(shape: MatmulShape) -> u32 {
-    let group_size = shape.b_group_size.expect("quantized GEMM requires a weight group size");
-    shape.metadata_layout.row_stride(shape.n, shape.k.div_ceil(group_size))
 }

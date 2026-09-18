@@ -50,7 +50,7 @@ struct MetadataContext {
   short right_column_limit;
   uint left_group_count;
   uint right_group_count;
-  uint right_metadata_stride;
+  uint right_metadata_group_stride;
 };
 
 template <typename LeftOperand, typename RightOperand>
@@ -146,21 +146,21 @@ struct IntegerSchedule {
         uint right_column_start = metadata_context.right_column_base + uint(right_column_offset);
         if constexpr (!ALIGNED_N) {
           right_column_start =
-              min(right_column_start, metadata_context.right_metadata_stride - METADATA_COLUMNS_PER_LOAD);
+              min(right_column_start, metadata_context.right_metadata_group_stride - METADATA_COLUMNS_PER_LOAD);
         }
         scales[tile_n] = *reinterpret_cast<const device ScaleVector*>(
-            right.scales + right_group_index * metadata_context.right_metadata_stride + right_column_start
+            right.scales + right_group_index * metadata_context.right_metadata_group_stride + right_column_start
         );
         if constexpr (HAS_BIAS) {
           bias_offsets[tile_n] = *reinterpret_cast<const device OffsetVector*>(
-              right.bias() + right_group_index * metadata_context.right_metadata_stride + right_column_start
+              right.bias() + right_group_index * metadata_context.right_metadata_group_stride + right_column_start
           );
           bias_offsets[tile_n] += scales[tile_n] * ScaleElement(RIGHT_CODE_OFFSET);
         }
         if constexpr (HAS_ZERO_POINTS) {
           const device uint8_t* zero_point_row =
-              right.zp() +
-              right_group_index * zero_point_row_stride<RightOperand::BITS>(metadata_context.right_metadata_stride);
+              right.zp() + right_group_index *
+                               zero_point_row_stride<RightOperand::BITS>(metadata_context.right_metadata_group_stride);
           if constexpr (RightOperand::BITS == 4) {
             const ushort packed = *reinterpret_cast<const device ushort*>(zero_point_row + (right_column_start >> 1));
             uint spread = (uint(packed) | (uint(packed) << 8)) & 0x00FF00FFu;
@@ -298,7 +298,7 @@ struct IntegerSchedule {
         short(tile.simdgroup_limit_n - position.x),
         uint(params->K) / uint(LeftOperand::GROUP_SIZE),
         uint(params->K) / RIGHT_GROUP_SIZE,
-        params->metadata_stride,
+        params->metadata_group_stride,
     };
     const uint first_right_group = tile.k_offset / RIGHT_GROUP_SIZE;
 

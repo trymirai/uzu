@@ -13,7 +13,7 @@ use crate::{
             gpu_types::QuantizationMethod,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MetadataLayout},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParamsLayout},
             },
         },
         cpu::Cpu,
@@ -177,7 +177,7 @@ fn group_major_gemv_bf16(
             &buffers.scales,
             buffers.zp.as_ref(),
             buffers.bias.as_ref(),
-            MetadataLayout::GroupMajor,
+            QuantParamsLayout::GroupOutput,
             &input,
         ),
         None,
@@ -187,7 +187,7 @@ fn group_major_gemv_bf16(
         None,
     );
 
-    assert_eq_float(&reference, &actual, 0.05, &format!("GroupMajor GEMV W{bits} {method:?}"));
+    assert_eq_float(&reference, &actual, 0.05, &format!("GroupOutput GEMV W{bits} {method:?}"));
 }
 
 #[rstest]
@@ -296,7 +296,7 @@ fn gemv_gather() {
                     &buffers.scales,
                     buffers.zp.as_ref(),
                     buffers.bias.as_ref(),
-                    MetadataLayout::RowMajor,
+                    QuantParamsLayout::OutputGroup,
                     &input,
                 )
             };

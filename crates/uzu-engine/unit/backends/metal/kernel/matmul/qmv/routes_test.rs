@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-            kernel::matmul::{MatmulShape, MetadataLayout},
+            kernel::matmul::{MatmulShape, QuantParamsLayout},
         },
         metal::kernel::matmul::{MatmulDispatch, MatmulMetalKernel, gemv::GemvSpecialization},
     },
@@ -62,7 +62,7 @@ fn problem(
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
-        metadata_layout: MetadataLayout::RowMajor,
+        params_layout: QuantParamsLayout::OutputGroup,
         d_transform: GemmDTransform::empty(),
     }
 }

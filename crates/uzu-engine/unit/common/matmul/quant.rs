@@ -15,9 +15,7 @@ use crate::{
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
-                matmul::{
-                    MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MetadataLayout, group_major_metadata,
-                },
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParamsLayout},
             },
         },
         cpu::Cpu,
@@ -55,6 +53,44 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
         4 => QuantizationMode::U4,
         8 => QuantizationMode::U8,
         _ => unreachable!("unsupported bits: {bits}"),
+    }
+}
+
+pub fn transpose_metadata(
+    plane: &mut [u8],
+    columns: u32,
+    groups: u32,
+    bits: u32,
+) {
+    let (columns, groups) = (columns as usize, groups as usize);
+    let row_stride = QuantParamsLayout::GroupOutput.row_stride(columns as u32, groups as u32) as usize;
+    let source_bytes = columns * (groups * bits as usize).div_ceil(u8::BITS as usize);
+    let output_bytes = groups * row_stride * bits as usize / u8::BITS as usize;
+    let source = plane[..source_bytes].to_vec();
+    plane[..output_bytes].fill(0);
+
+    match bits {
+        4 => {
+            let source_row_bytes = groups.div_ceil(2);
+            for group in 0..groups {
+                for column in 0..columns {
+                    let value = (source[column * source_row_bytes + group / 2] >> (group % 2 * 4)) & 0x0f;
+                    plane[group * row_stride / 2 + column / 2] |= value << (column % 2 * 4);
+                }
+            }
+        },
+        8 | 16 | 32 => {
+            let width = bits as usize / u8::BITS as usize;
+            for group in 0..groups {
+                for column in 0..columns {
+                    let source_offset = (column * groups + group) * width;
+                    let destination = (group * row_stride + column) * width;
+                    plane[destination..destination + width]
+                        .copy_from_slice(&source[source_offset..source_offset + width]);
+                }
+            }
+        },
+        _ => panic!("unsupported metadata width: {bits}"),
     }
 }
 
@@ -215,7 +251,7 @@ pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
     pub scales: Allocation<B>,
     pub zp: Option<Allocation<B>>,
     pub bias: Option<Allocation<B>>,
-    metadata_layout: MetadataLayout,
+    params_layout: QuantParamsLayout,
     pub x: Allocation<B>,
     pub prepared_a: Option<Allocation<B>>,
     pub prepared_a_scales: Option<Allocation<B>>,
@@ -230,7 +266,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         input: &QuantInput<T>,
     ) -> Self {
         Self {
-            metadata_layout: MetadataLayout::RowMajor,
+            params_layout: QuantParamsLayout::OutputGroup,
             w: alloc_allocation_with_data::<B, u32>(context, &input.weights_for_upload()),
             scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
             zp: input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(context, zp)),
@@ -258,17 +294,17 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         &mut self,
         input: &QuantInput<T>,
     ) {
-        if self.metadata_layout == MetadataLayout::GroupMajor {
+        if self.params_layout == QuantParamsLayout::GroupOutput {
             return;
         }
         let columns = input.n;
         let groups = input.k.div_ceil(input.group_size);
-        assert_eq!(group_major_metadata::row_stride(columns), columns);
+        assert_eq!(QuantParamsLayout::GroupOutput.group_stride(columns), columns);
         let value_bits = size_of::<T>() as u32 * u8::BITS;
-        group_major_metadata::transpose(self.scales.as_slice_mut(), columns, groups, value_bits);
+        transpose_metadata(self.scales.as_slice_mut(), columns, groups, value_bits);
         match input.quant_method {
             QuantizationMethod::ScaleBias => {
-                group_major_metadata::transpose(
+                transpose_metadata(
                     self.bias.as_mut().expect("bias buffer").as_slice_mut(),
                     columns,
                     groups,
@@ -277,7 +313,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
             },
             QuantizationMethod::ScaleZeroPoint => {
                 let correction_bits = crate::data_type::DataType::from(input.mode).size_in_bits() as u32;
-                group_major_metadata::transpose(
+                transpose_metadata(
                     self.zp.as_mut().expect("zp buffer").as_slice_mut(),
                     columns,
                     groups,
@@ -286,7 +322,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
             },
             QuantizationMethod::ScaleSymmetric => {},
         }
-        self.metadata_layout = MetadataLayout::GroupMajor;
+        self.params_layout = QuantParamsLayout::GroupOutput;
     }
 }
 
@@ -295,7 +331,7 @@ pub fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
     scales: &'a Allocation<B>,
     zero_points: Option<&'a Allocation<B>>,
     biases: Option<&'a Allocation<B>>,
-    metadata_layout: MetadataLayout,
+    params_layout: QuantParamsLayout,
     input: &QuantInput<T>,
 ) -> MatmulB<'a, B> {
     let signed_codes = input.signed_codes;
@@ -304,7 +340,7 @@ pub fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
             b: w,
             scales,
             biases: biases.expect("bias buffer"),
-            metadata_layout,
+            params_layout,
             mode: input.mode,
             group_size: input.group_size,
             signed_codes,
@@ -313,7 +349,7 @@ pub fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
             b: w,
             scales,
             zero_points: zero_points.expect("zp buffer"),
-            metadata_layout,
+            params_layout,
             mode: input.mode,
             group_size: input.group_size,
             signed_codes,
@@ -321,7 +357,7 @@ pub fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
         QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
             b: w,
             scales,
-            metadata_layout,
+            params_layout,
             mode: input.mode,
             group_size: input.group_size,
             signed_codes,
@@ -338,7 +374,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         scales,
         zp,
         bias,
-        metadata_layout,
+        params_layout,
         x,
         prepared_a,
         prepared_a_scales,
@@ -346,7 +382,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         y,
         ..
     } = buffers;
-    let b = quant_b_variant(&*w, &*scales, zp.as_ref(), bias.as_ref(), *metadata_layout, input);
+    let b = quant_b_variant(&*w, &*scales, zp.as_ref(), bias.as_ref(), *params_layout, input);
     let a = match &input.prepared_a {
         Some(_) => MatmulA::Int8Symmetric {
             values: prepared_a.as_ref().expect("prepared activation buffer"),
@@ -376,8 +412,18 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
 }
 
 pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
+    run_quant_cpu_with_params_layout(input, QuantParamsLayout::OutputGroup)
+}
+
+pub fn run_quant_cpu_with_params_layout<T: ArrayElement + Float>(
+    input: &QuantInput<T>,
+    params_layout: QuantParamsLayout,
+) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
+    if params_layout == QuantParamsLayout::GroupOutput {
+        buffers.prepare_group_major(input);
+    }
     let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         T::data_type(),
@@ -398,7 +444,7 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
     dispatch: TestDispatch,
 ) -> Vec<T> {
     let mut buffers = QuantBuffers::<Metal, T>::allocate(context, input);
-    if input.prepared_a.is_some() && group_major_metadata::row_stride(input.n) == input.n {
+    if input.prepared_a.is_some() && QuantParamsLayout::GroupOutput.group_stride(input.n) == input.n {
         buffers.prepare_group_major(input);
     }
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(

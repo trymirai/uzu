@@ -19,7 +19,7 @@ use crate::{
             kernel::{
                 Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{MatmulDOps, MatmulError, MatmulKernel, MetadataLayout},
+                matmul::{MatmulDOps, MatmulError, MatmulKernel, QuantParamsLayout},
             },
         },
         cpu::Cpu,
@@ -30,7 +30,7 @@ use crate::{
         matmul::{
             QuantBuffers, QuantInput,
             harness::TestDispatch,
-            quant::{run_quant_cpu, run_quant_metal},
+            quant::{run_quant_cpu, run_quant_cpu_with_params_layout, run_quant_metal},
             quant_arguments, quant_b_variant,
         },
     },
@@ -419,6 +419,20 @@ fn refusal(error: &(impl StdError + 'static)) -> &MatmulError<Metal> {
 }
 
 #[uzu_test]
+fn cpu_group_major_quantized_gemm_matches_row_major() {
+    for bits in [4, 8] {
+        for method in
+            [QuantizationMethod::ScaleBias, QuantizationMethod::ScaleZeroPoint, QuantizationMethod::ScaleSymmetric]
+        {
+            let input = QuantInput::<bf16>::new(4, 128, 16, 32, bits, method, 0);
+            let expected = run_quant_cpu(&input);
+            let actual = run_quant_cpu_with_params_layout(&input, QuantParamsLayout::GroupOutput);
+            assert_parity("CPU GroupOutput", &expected, &actual, 0.05, 0.5);
+        }
+    }
+}
+
+#[uzu_test]
 fn quant_gemm_accumulate_returns_unsupported_dop() {
     let context = MetalContext::new().expect("Metal context");
     let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
@@ -454,9 +468,10 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
 }
 
 #[uzu_test]
-fn quant_gemm_full_precision_a_group_major_returns_unsupported_layout() {
+fn quant_gemm_full_precision_a_group_major_matches_cpu() {
     let context = MetalContext::new().expect("Metal context");
     let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
+    let reference = run_quant_cpu(&input);
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     buffers.prepare_group_major(&input);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
@@ -469,19 +484,10 @@ fn quant_gemm_full_precision_a_group_major_returns_unsupported_layout() {
 
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let args = quant_arguments(&mut buffers, &input);
-    let result = matmul.gemm.encode_with_engine(args, GemmEngine::Simdgroup, &mut encoder);
-
-    let err = result.expect_err("expected unsupported GroupMajor layout error");
-    assert!(
-        matches!(
-            refusal(&err),
-            MatmulError::UnsupportedLayout {
-                path: "Gemm"
-            }
-        ),
-        "got {}",
-        refusal(&err)
-    );
+    matmul.gemm.encode_with_engine(args, GemmEngine::Simdgroup, &mut encoder).unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
+    assert_parity("GroupOutput GEMM", &reference, &actual, 0.05, 0.5);
 }
 
 #[rstest]
@@ -764,7 +770,7 @@ fn run_widened_f32<B: Backend>(
         &buffers.scales,
         buffers.zp.as_ref(),
         buffers.bias.as_ref(),
-        MetadataLayout::RowMajor,
+        QuantParamsLayout::OutputGroup,
         input,
     );
     let mut encoder = Encoder::<B>::new(context).expect("encoder");

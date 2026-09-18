@@ -23,7 +23,7 @@ use crate::{
     },
     config::{
         mlp::{mixture_of_experts::MixtureOfExpertsConfig, routing_function::AnyRoutingFunction},
-        weight_matrix::{AnyWeightMatrixSpec, Layout, full_precision_spec::FullPrecisionSpec},
+        weight_matrix::{AnyWeightMatrixSpec, WeightLayout, full_precision_spec::FullPrecisionSpec},
     },
     data_type::DataType,
     encodable_block::mlp::Mlp,
@@ -126,7 +126,7 @@ impl<B: Backend> MoeBlock<B> {
         let router_weights_tree = router_tree.subtree("weights");
         let router_spec = router_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let AnyWeightMatrixSpec::FullPrecisionSpec(FullPrecisionSpec {
-            layout: Layout::OutputInput,
+            layout: WeightLayout::OutputInput,
             ..
         }) = &router_spec
         else {

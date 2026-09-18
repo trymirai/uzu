@@ -39,6 +39,7 @@ struct QuantizedBlockLoaderScaleBias {
   const int tile_stride;
   short group_step_counter;
   const int group_stride;
+  const int params_output_stride;
 
   const short thread_index;
   const short tile_row_index;
@@ -56,6 +57,7 @@ struct QuantizedBlockLoaderScaleBias {
       const device T* biases_,
       const bool signed_codes_,
       const int src_leading_dim_,
+      const int params_group_stride_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
       ushort simd_lane_id [[thread_index_in_simdgroup]]
@@ -65,14 +67,19 @@ struct QuantizedBlockLoaderScaleBias {
             REDUCTION_DIMENSION ? THREADGROUP_TILE_COLS_PACKED * BYTES_PER_PACK
                                 : THREADGROUP_TILE_ROWS * src_leading_dim_ * BYTES_PER_PACK / PACK_FACTOR
         ),
-        group_step_counter(0), group_stride(THREADGROUP_TILE_ROWS * src_leading_dim_ / GROUP_SIZE),
+        group_step_counter(0),
+        group_stride(
+            REDUCTION_DIMENSION == 1 ? params_group_stride_ : THREADGROUP_TILE_ROWS * src_leading_dim_ / GROUP_SIZE
+        ),
+        params_output_stride(params_group_stride_ == 1 ? (src_leading_dim_ + GROUP_SIZE - 1) / GROUP_SIZE : 1),
         thread_index(simd_group_id * 32 + simd_lane_id),
         tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
         tile_col_index((READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED),
         dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * PACK_FACTOR),
         src(src_ + tile_row_index * src_leading_dim_ * BYTES_PER_PACK / PACK_FACTOR + tile_col_index * BYTES_PER_PACK),
-        scales(scales_ + tile_row_index * src_leading_dim_ / GROUP_SIZE),
-        biases(biases_ + tile_row_index * src_leading_dim_ / GROUP_SIZE), signed_codes(signed_codes_) {}
+        scales(scales_ + (REDUCTION_DIMENSION == 1 ? tile_row_index * params_output_stride : 0)),
+        biases(biases_ + (REDUCTION_DIMENSION == 1 ? tile_row_index * params_output_stride : 0)),
+        signed_codes(signed_codes_) {}
 
   void load_unsafe() const {
     if constexpr (TILE_HAS_IDLE_THREADS) {
@@ -131,12 +138,12 @@ struct QuantizedBlockLoaderScaleBias {
         group_step_counter++;
         if (group_step_counter == GROUP_STEPS_PER_BLOCK) {
           group_step_counter = 0;
-          scales++;
-          biases++;
+          scales += group_stride;
+          biases += group_stride;
         }
       } else {
-        scales++;
-        biases++;
+        scales += group_stride;
+        biases += group_stride;
       }
     } else {
       scales += group_stride;

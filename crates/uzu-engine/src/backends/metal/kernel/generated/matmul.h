@@ -11,7 +11,7 @@ typedef struct {
   uint32_t K;
   uint32_t leading_dimension_a;
   uint32_t leading_dimension_b;
-  uint32_t metadata_stride;
+  uint32_t metadata_group_stride;
   uint32_t leading_dimension_d;
   uint32_t threadgroups_per_column;
   uint32_t threadgroups_per_row;

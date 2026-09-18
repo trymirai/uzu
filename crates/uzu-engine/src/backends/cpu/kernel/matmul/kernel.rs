@@ -179,7 +179,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     } else {
                         4
                     };
-                    Some((num_groups_k, zero_point_stride, pack_factor))
+                    Some((zero_point_stride, pack_factor))
                 },
                 WeightData::FullPrecision {
                     ..
@@ -231,11 +231,14 @@ impl MatmulKernel for MatmulCpuKernel {
                                     bits,
                                     group_size,
                                     signed_codes,
+                                    metadata_group_major,
+                                    metadata_stride,
                                 } => {
-                                    let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
+                                    let (zero_point_stride, pack_factor) = quant_layout.unwrap();
                                     let weight_linear_index = b_col * k_u + inner;
                                     let word_index = weight_linear_index / pack_factor;
-                                    let bit_offset = (weight_linear_index % pack_factor) * *bits;
+                                    let code_index_in_word = weight_linear_index % pack_factor;
+                                    let bit_offset = code_index_in_word * *bits;
                                     let weights_words = weights.as_ptr() as *const u32;
                                     let word = weights_words.add(word_index).read_unaligned();
                                     let code_mask = (1u32 << bits) - 1;
@@ -245,29 +248,39 @@ impl MatmulKernel for MatmulCpuKernel {
                                     }
                                     let quantized_value = f32::from(weight_code);
                                     let group_index = inner / group_size;
-                                    let scale = read_f32(
-                                        scales.as_ptr(),
-                                        weights_data_type,
-                                        b_col * num_groups_k + group_index,
-                                    );
+                                    let metadata_index = if *metadata_group_major {
+                                        group_index * metadata_stride + b_col
+                                    } else {
+                                        b_col * metadata_stride + group_index
+                                    };
+                                    let scale = read_f32(scales.as_ptr(), weights_data_type, metadata_index);
                                     let midpoint = (1u32 << (bits - 1)) as f32;
                                     let zero_point = zero_points.map(|zp| {
                                         if *bits == 4 {
-                                            let byte_index = b_col * zero_point_stride + (group_index >> 1);
+                                            let byte_index = if *metadata_group_major {
+                                                group_index * metadata_stride / 2 + b_col / 2
+                                            } else {
+                                                b_col * zero_point_stride + group_index / 2
+                                            };
                                             let byte_value = *zp.as_ptr().add(byte_index);
-                                            if (group_index & 1) == 0 {
+                                            let packed_index = if *metadata_group_major {
+                                                b_col
+                                            } else {
+                                                group_index
+                                            };
+                                            if packed_index.is_multiple_of(2) {
                                                 (byte_value & 0x0F) as f32
                                             } else {
                                                 ((byte_value >> 4) & 0x0F) as f32
                                             }
                                         } else {
-                                            *zp.as_ptr().add(b_col * zero_point_stride + group_index) as f32
+                                            *zp.as_ptr().add(metadata_index) as f32
                                         }
                                     });
                                     let bias_term = if let Some(zp) = zero_point {
                                         -scale * zp
                                     } else if let Some(b) = biases {
-                                        read_f32(b.as_ptr(), weights_data_type, b_col * num_groups_k + group_index)
+                                        read_f32(b.as_ptr(), weights_data_type, metadata_index)
                                     } else {
                                         -scale * midpoint
                                     };
