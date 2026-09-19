@@ -35,7 +35,7 @@ let package = Package(
         ),
         .target(
             name: "UzuMetalIOSimulatorStubs",
-            path: "Sources/UzuMetalIOSimulatorStubs",
+            path: "crates/legacy/uzu/bindings/swift/Sources/UzuMetalIOSimulatorStubs",
             publicHeadersPath: "include"
         ),
         .executableTarget(
