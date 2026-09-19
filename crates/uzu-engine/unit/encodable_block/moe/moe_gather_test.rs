@@ -7,7 +7,7 @@ use super::MoeGather;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Encoder},
+        common::{Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context},
         cpu::Cpu,
     },
     tests::{
@@ -32,7 +32,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let ids_allocation = alloc_allocation_with_data::<B, i32>(&context, &input.bucket_ids);
     let sumk_allocation = alloc_allocation_with_data::<B, u32>(&context, &sumk_data);
     let gather = MoeGather::<B>::new(&context, T::data_type()).expect("MoeGather::new");
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     let x_perm_allocation = gather
         .encode(
             &x_allocation,
@@ -41,10 +41,10 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
             input.t as u32,
             (input.sum_k / input.t) as u32,
             input.d_model as u32,
-            &mut encoder,
+            &mut command_buffer,
         )
         .expect("Failed to encode MoE gather");
-    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let output = allocation_to_vec::<B, T>(&x_perm_allocation);
     drop(x_perm_allocation);

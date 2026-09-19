@@ -7,7 +7,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::ShortConvTrieKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::ShortConvTrieKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -64,7 +67,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let suffix_state_size = suffix_len * model_dim * state_stride;
     let mut suffix_state = alloc_allocation::<B, T>(&context, suffix_state_size.max(1));
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &in_proj,
         &w,
@@ -78,9 +81,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         input.in_proj_stride,
         input.state_stride,
         input.model_dim,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     (allocation_to_vec(&out), allocation_to_vec(&suffix_state))
 }

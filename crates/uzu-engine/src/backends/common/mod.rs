@@ -4,9 +4,7 @@ mod buffer;
 mod command_buffer;
 mod context;
 mod device_capabilities;
-mod encoder;
 pub mod gpu_types;
-mod hazard_tracker;
 pub mod kernel;
 
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
@@ -19,11 +17,9 @@ pub use buffer::{
     sparse::{SparseBuffer, SparseBufferExt},
 };
 pub use command_buffer::{
-    AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-    CommandBufferInitial, CommandBufferPending,
+    CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferEncodingExt, CommandBufferExecutable,
+    CommandBufferPending,
 };
 pub use context::Context;
 pub use device_capabilities::DeviceCapabilities;
-pub use encoder::{Completed, Encoder, Executable, Pending};
-pub use hazard_tracker::Access;
 pub use kernel::Kernels;

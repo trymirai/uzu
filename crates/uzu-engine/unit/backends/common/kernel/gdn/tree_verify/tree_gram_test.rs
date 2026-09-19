@@ -7,7 +7,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::BuildTreeGramKernel,
+        },
         cpu::Cpu,
         metal::Metal,
     },
@@ -91,7 +94,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     // outputs stay comparable on the skipped batch.
     let mut kh0 = alloc_allocation_with_data::<B, f32>(&context, &vec![0.0f32; kh0_len]);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &q,
         &k,
@@ -111,9 +114,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         VALUE_HEADS as u32,
         HEAD_K_DIM as u32,
         HEAD_V_DIM as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     (allocation_to_vec(&a_packed), allocation_to_vec(&qkd), allocation_to_vec(&a_inv), allocation_to_vec(&kh0))
 }

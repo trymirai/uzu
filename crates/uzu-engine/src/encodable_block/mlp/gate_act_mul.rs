@@ -1,7 +1,7 @@
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, Backend, CommandBuffer, CommandBufferEncoding,
         gpu_types::ActivationType,
         kernel::{
             GatedActMul, GatedActMulSettings,
@@ -59,12 +59,12 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
 
     pub fn encode_for_linear(
         &self,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         fused_up: &Allocation<B>,
         batch_dim: u32,
         act_format: ActivationFormat,
     ) -> Result<LinearInput<B>, B::Error> {
-        encoder.push_debug_group("gate act mul");
+        command_buffer.push_debug_group("gate act mul");
 
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
@@ -73,15 +73,16 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             && let Some(plan) = self.a8_plan
         {
             let kernel = self.quantized_kernel.as_ref().expect("INT8 input requires a quantized gate kernel");
-            let mut values = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], DataType::I8))?;
-            let mut scales = encoder.allocate_scratch(size_for_shape(
+            let mut values =
+                command_buffer.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], DataType::I8))?;
+            let mut scales = command_buffer.allocate_scratch(size_for_shape(
                 &[batch_dim, self.hidden_dim.div_ceil(plan.activation_group_size)],
                 DataType::F32,
             ))?;
             let mut group_sums = plan
                 .sum_group_size
                 .map(|group_size| {
-                    encoder.allocate_scratch(size_for_shape(
+                    command_buffer.allocate_scratch(size_for_shape(
                         &[batch_dim, self.hidden_dim.div_ceil(group_size)],
                         DataType::I32,
                     ))
@@ -96,7 +97,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 self.hidden_dim,
                 batch_dim,
                 self.activation.act_type(),
-                encoder,
+                command_buffer,
             );
             LinearInput::Int8Symmetric {
                 values,
@@ -105,7 +106,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 group_size: plan.activation_group_size,
             }
         } else {
-            let mut hidden = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;
+            let mut hidden =
+                command_buffer.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;
             self.fp_kernel.encode_fp(
                 fused_up,
                 None,
@@ -116,12 +118,12 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 0,
                 0,
                 self.activation.act_type(),
-                encoder,
+                command_buffer,
             );
             LinearInput::FullPrecision(hidden)
         };
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(input)
     }

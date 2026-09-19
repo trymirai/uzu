@@ -4,13 +4,17 @@ use super::policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK};
 use crate::{
     backends::{
         common::{
+            CommandBufferEncoding,
             gpu_types::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
             kernel::matmul::MatmulShape,
         },
-        metal::{context::MetalContext, error::MetalError, kernel::GemvMetalKernel},
+        metal::{
+            command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
+            kernel::GemvMetalKernel,
+        },
     },
     data_type::DataType,
 };
@@ -186,7 +190,7 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use crate::backends::{
     common::{
-        BufferArg, Encoder,
+        BufferArg,
         kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
     },
     metal::Metal,
@@ -234,7 +238,7 @@ impl GemvKernel {
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         specialization: GemvSpecialization,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulError<Metal>> {
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
@@ -284,7 +288,7 @@ impl GemvKernel {
         };
 
         let output_group_count = n.div_ceil(specialization.output_row_tile());
-        let context = encoder.context();
+        let context = command_buffer.context();
         let pipeline = self.get_or_create(context, specialization)?;
         match b {
             MatmulB::FullPrecision {
@@ -305,7 +309,7 @@ impl GemvKernel {
                 ab_scale,
                 output_group_count,
                 soft_cap,
-                encoder,
+                command_buffer,
             ),
             MatmulB::ScaleBiasDequant {
                 b: weights,
@@ -334,7 +338,7 @@ impl GemvKernel {
                 ab_scale,
                 output_group_count,
                 soft_cap,
-                encoder,
+                command_buffer,
             ),
         }
 

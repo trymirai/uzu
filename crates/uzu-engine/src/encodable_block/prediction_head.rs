@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, Backend, CommandBuffer, CommandBufferEncoding,
         gpu_types::ActivationType,
         kernel::{ActivationKernel, Kernels},
     },
@@ -90,16 +90,22 @@ impl<B: Backend> PredictionHead<B> {
         &self,
         input: Allocation<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("prediction head");
+        command_buffer.push_debug_group("prediction head");
 
-        let mut hidden = self.dense_projection.encode(input, batch_dim, encoder)?;
-        self.activation_kernel.encode(None::<&Allocation<B>>, &mut hidden, self.hidden_dim, self.activation, encoder);
-        let normalized = self.normalization.encode(&hidden, 0, batch_dim, None, encoder)?;
-        let logits = self.readout.encode(normalized, batch_dim, encoder)?;
+        let mut hidden = self.dense_projection.encode(input, batch_dim, command_buffer)?;
+        self.activation_kernel.encode(
+            None::<&Allocation<B>>,
+            &mut hidden,
+            self.hidden_dim,
+            self.activation,
+            command_buffer,
+        );
+        let normalized = self.normalization.encode(&hidden, 0, batch_dim, None, command_buffer)?;
+        let logits = self.readout.encode(normalized, batch_dim, command_buffer)?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(logits)
     }

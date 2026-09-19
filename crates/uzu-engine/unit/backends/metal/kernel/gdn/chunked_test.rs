@@ -7,7 +7,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Context, Kernels,
+            AsBufferRangeMut, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
             kernel::{DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel},
         },
         metal::Metal,
@@ -74,8 +74,8 @@ fn run_prefill<T: ArrayElement>(
     let mut k = alloc_allocation::<Metal, f32>(context, case.suffix_len * case.key_dim);
     let mut beta = alloc_allocation::<Metal, f32>(context, case.suffix_len * NUM_V_HEADS);
     let mut decay = alloc_allocation::<Metal, f32>(context, case.suffix_len * NUM_V_HEADS);
-    let mut encoder = Encoder::new(context).expect("encoder");
-    encoder.encode_fill(&mut state, 0);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    command_buffer.encode_fill(state.as_buffer_range_mut(), 0);
 
     match mode {
         PrefillMode::Recurrent => {
@@ -102,7 +102,7 @@ fn run_prefill<T: ArrayElement>(
                 case.key_dim as u32,
                 case.value_dim as u32,
                 case.suffix_len as u32,
-                &mut encoder,
+                &mut command_buffer,
             );
             <BackendKernels<Metal> as Kernels>::DeltaNetPrefillKernel::new(context, T::data_type(), HEAD_K_DIM as u32)
                 .expect("prefill")
@@ -121,7 +121,7 @@ fn run_prefill<T: ArrayElement>(
                     case.value_dim as u32,
                     case.suffix_len as u32,
                     HEAD_V_DIM.div_ceil(16) as u32,
-                    &mut encoder,
+                    &mut command_buffer,
                 );
         },
         PrefillMode::Chunked => {
@@ -142,7 +142,7 @@ fn run_prefill<T: ArrayElement>(
                         value_dim: case.value_dim as u32,
                         suffix_len: case.suffix_len as u32,
                     },
-                    &mut encoder,
+                    &mut command_buffer,
                 )
                 .expect("chunked encode");
         },
@@ -159,9 +159,9 @@ fn run_prefill<T: ArrayElement>(
         case.total_proj_dim as u32,
         1e-6,
         case.suffix_len as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     (
         allocation_to_vec::<Metal, T>(&out).into_iter().map(|value| cast(value).unwrap()).collect(),

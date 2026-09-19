@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, Backend, CommandBuffer,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::matmul::{A8ActivationPlan, ActivationFormat},
     },
@@ -26,17 +26,17 @@ pub trait Linear<B: Backend>: Send + Sync {
         &self,
         input: Allocation<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error>;
 
     fn encode_input(
         &self,
         input: LinearInput<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
         match input {
-            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, encoder),
+            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, command_buffer),
             LinearInput::Int8Symmetric {
                 ..
             } => {

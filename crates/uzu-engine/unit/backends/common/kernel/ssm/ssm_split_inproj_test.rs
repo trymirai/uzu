@@ -7,7 +7,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::SplitInProjKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::SplitInProjKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -72,7 +75,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let mut z_out = alloc_allocation::<B, T>(&context, z_out_size);
     let mut dt_out = alloc_allocation::<B, T>(&context, dt_out_size);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &input_allocation,
         &mut conv_out,
@@ -84,9 +87,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         input.conv_dim,
         input.inner_dim,
         input.num_heads,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
         conv_out: allocation_to_vec(&conv_out),

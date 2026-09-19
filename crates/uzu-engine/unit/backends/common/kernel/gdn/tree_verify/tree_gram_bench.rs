@@ -178,7 +178,7 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                     make_buffers(&context, batch_size, tree_size).0
                 });
                 group.bench_function(benchmark_id, |bencher| {
-                    iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
+                    iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |command_buffer| {
                         let buffers = buffers.next_mut();
                         kernel.encode(
                             &buffers.q,
@@ -199,7 +199,7 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                             VALUE_HEADS as u32,
                             HEAD_K_DIM as u32,
                             HEAD_V_DIM as u32,
-                            encoder,
+                            command_buffer,
                         );
                     });
                 });

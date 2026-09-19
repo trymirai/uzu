@@ -481,7 +481,7 @@ impl CpuCompiler {
             });
 
             quote! {
-                encoder.as_command_buffer_mut().push_command(move || #monomorphized_function(#function_call_args_joined));
+                command_buffer.push_command(move || #monomorphized_function(#function_call_args_joined));
             }
         };
 
@@ -579,9 +579,9 @@ impl CpuCompiler {
             make_encode(quote! {})
         };
 
-        encode_lifetimes.push(quote! { 'encoder });
+        encode_lifetimes.push(quote! { 'command_buffer });
         encode_args_defs
-            .push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu> });
+            .push(quote! { command_buffer: &'command_buffer mut <<crate::backends::cpu::Cpu as crate::backends::common::Backend>::CommandBuffer as crate::backends::common::CommandBuffer>::Encoding });
 
         let tokens = quote! {
             #[allow(non_snake_case)]

@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, Backend, CommandBuffer, Kernels,
         kernel::{FullPrecisionEmbeddingLookupKernel, QuantizedEmbeddingLookupKernel},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -102,7 +102,7 @@ impl<B: Backend> EmbeddingTable<B> {
         output: &mut Allocation<B>,
         batch_dim: u32,
         scale: f32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         match &self.lookup {
             LookupKernel::FullPrecision(kernel) => kernel.encode(
@@ -113,7 +113,7 @@ impl<B: Backend> EmbeddingTable<B> {
                 self.vocab_size,
                 self.embedding_dim,
                 scale,
-                encoder,
+                command_buffer,
             ),
             LookupKernel::Quantized(kernel) => kernel.encode(
                 token_ids,
@@ -127,7 +127,7 @@ impl<B: Backend> EmbeddingTable<B> {
                 self.vocab_size,
                 self.embedding_dim,
                 scale,
-                encoder,
+                command_buffer,
             ),
         }
     }

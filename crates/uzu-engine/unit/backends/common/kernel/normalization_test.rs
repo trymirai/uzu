@@ -7,7 +7,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::NormalizationKernel},
+        common::{
+            Allocation, Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+            Kernels, kernel::NormalizationKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -54,7 +57,7 @@ fn get_output<
     let scales_allocation = scales.map(|scales| alloc_allocation_with_data::<B, AffineT>(&context, scales));
     let mut output_allocation = alloc_allocation_with_data::<B, OutputT>(&context, &vec![OutputT::zero(); input.len()]);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         Some((&input_allocation, 0)),
         scales_allocation.as_ref(),
@@ -67,9 +70,9 @@ fn get_output<
         epsilon,
         0.0,
         1.0,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     allocation_to_vec::<B, OutputT>(&output_allocation)
 }

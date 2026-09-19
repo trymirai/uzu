@@ -5,7 +5,8 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder, Kernels,
+            Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, CommandBufferEncoding, CommandBufferExecutable,
+            CommandBufferPending, Context, Kernels,
             gpu_types::trie::TrieNode as GpuTrieNode,
             kernel::{AttentionArguments, AttentionKernel},
         },
@@ -15,7 +16,7 @@ use crate::{
     encodable_block::{mixer::attention::KVCacheView, sampling::PRng},
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_command_buffer},
     },
     trie::TrieNode,
 };
@@ -227,7 +228,7 @@ fn run_single_pass_attention(
     let key_cache_buffer = create_attention_cache_allocation(keys, seq_len, context);
     let value_cache_buffer = create_attention_cache_allocation(values, seq_len, context);
     let sinks_buffer = sinks.map(|sinks| create_sinks_allocation(sinks, context));
-    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     let pooled_output = kernel.encode(
         AttentionArguments {
             queries: &query_buffer,
@@ -238,12 +239,12 @@ fn run_single_pass_attention(
             sinks: sinks_buffer.as_ref(),
             cache: KVCacheView::full(0),
         },
-        &mut encoder,
+        &mut command_buffer,
     )?;
     let mut output_buffer = alloc_allocation::<Metal, f32>(context, num_heads * seq_len * head_dim);
-    encoder.encode_copy(&pooled_output, .., &mut output_buffer, ..);
+    command_buffer.encode_copy(pooled_output.as_buffer_range_ref(), output_buffer.as_buffer_range_mut());
     drop(pooled_output);
-    submit_encoder(encoder);
+    submit_command_buffer(command_buffer);
 
     let output_slice: Vec<f32> = allocation_to_vec(&output_buffer);
     let kernel_output = convert_kernel_output(&output_slice, batch_size, num_heads, seq_len, head_dim);
@@ -296,7 +297,7 @@ fn run_gemm_attention(
     let value_allocation = create_attention_cache_allocation(values, seq_len, context);
 
     let sinks_allocation = sinks.map(|sinks| create_sinks_allocation(sinks, context));
-    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
 
     let args = AttentionArguments {
         queries: &query_allocation,
@@ -308,10 +309,10 @@ fn run_gemm_attention(
         cache: KVCacheView::full(0),
     };
 
-    let pooled_output = kernel.encode(args, &mut encoder)?;
+    let pooled_output = kernel.encode(args, &mut command_buffer)?;
     let mut output_allocation = alloc_allocation::<Metal, f32>(context, num_heads * seq_len * head_dim);
-    encoder.encode_copy(&pooled_output, .., &mut output_allocation, ..);
-    let completed = encoder.end_encoding().submit().wait_until_completed()?;
+    command_buffer.encode_copy(pooled_output.as_buffer_range_ref(), output_allocation.as_buffer_range_mut());
+    let completed = command_buffer.end_encoding().submit().wait_until_completed()?;
     drop(pooled_output);
     drop(completed);
 
@@ -478,7 +479,7 @@ fn run_two_pass_attention(
     let keys_buffer = create_attention_cache_allocation(keys, seq_len, context);
     let values_buffer = create_attention_cache_allocation(values, seq_len, context);
     let sinks_buffer = sinks.map(|sinks| create_sinks_allocation(sinks, context));
-    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
 
     let pooled_output = kernel.encode(
         AttentionArguments {
@@ -490,12 +491,12 @@ fn run_two_pass_attention(
             sinks: sinks_buffer.as_ref(),
             cache: KVCacheView::full(0),
         },
-        &mut encoder,
+        &mut command_buffer,
     )?;
     let mut output_buffer = alloc_allocation::<Metal, f32>(context, num_heads * seq_len * head_dim);
-    encoder.encode_copy(&pooled_output, .., &mut output_buffer, ..);
+    command_buffer.encode_copy(pooled_output.as_buffer_range_ref(), output_buffer.as_buffer_range_mut());
     drop(pooled_output);
-    submit_encoder(encoder);
+    submit_command_buffer(command_buffer);
 
     let output_slice: Vec<f32> = allocation_to_vec(&output_buffer);
     let kernel_output = convert_kernel_output(&output_slice, batch_size, num_heads, seq_len, head_dim);
@@ -613,11 +614,11 @@ fn run_attention_with_kernel<B: Backend>(
         sinks: None,
         cache,
     };
-    let mut encoder = Encoder::<B>::new(context).expect("encoder");
-    let pooled = kernel.encode(arguments, &mut encoder).expect("encode");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let pooled = kernel.encode(arguments, &mut command_buffer).expect("encode");
     let mut output = alloc_allocation::<B, bf16>(context, suffix_length * num_q_heads * head_dim);
-    encoder.encode_copy(&pooled, .., &mut output, ..);
-    let completed = encoder.end_encoding().submit().wait_until_completed().expect("submit");
+    command_buffer.encode_copy(pooled.as_buffer_range_ref(), output.as_buffer_range_mut());
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().expect("submit");
     drop(pooled);
     drop(completed);
     allocation_to_vec::<B, bf16>(&output)

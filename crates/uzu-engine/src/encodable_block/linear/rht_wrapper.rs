@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, Backend, CommandBuffer, CommandBufferEncoding,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationTransform,
@@ -217,24 +217,24 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         &self,
         input: Allocation<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        self.encode_input(LinearInput::FullPrecision(input), batch_dim, encoder)
+        self.encode_input(LinearInput::FullPrecision(input), batch_dim, command_buffer)
     }
 
     fn encode_input(
         &self,
         input: LinearInput<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("linear (rht)");
+        command_buffer.push_debug_group("linear (rht)");
 
         let input = match input {
             LinearInput::FullPrecision(input) => input,
             input => {
-                let output = self.inner_linear.encode_input(input, batch_dim, encoder);
-                encoder.pop_debug_group();
+                let output = self.inner_linear.encode_input(input, batch_dim, command_buffer);
+                command_buffer.pop_debug_group();
                 return output;
             },
         };
@@ -243,18 +243,18 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             a8: quantized,
             ..
         } = &self.input_rht
-            && self.inner_linear.select_activation_format(batch_dim, encoder.context()) == ActivationFormat::Int8
+            && self.inner_linear.select_activation_format(batch_dim, command_buffer.context()) == ActivationFormat::Int8
         {
             let activation_group_size = quantized.activation_group_size();
             let scale_groups_per_row = self.input_dimension.div_ceil(activation_group_size);
             let mut values =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
+                command_buffer.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
             let mut scales =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, scale_groups_per_row], DataType::F32))?;
+                command_buffer.allocate_scratch(size_for_shape(&[batch_dim, scale_groups_per_row], DataType::F32))?;
             let mut group_sums = quantized
                 .sum_group_size()
                 .map(|group_size| self.input_dimension.div_ceil(group_size))
-                .map(|groups| encoder.allocate_scratch(size_for_shape(&[batch_dim, groups], DataType::I32)))
+                .map(|groups| command_buffer.allocate_scratch(size_for_shape(&[batch_dim, groups], DataType::I32)))
                 .transpose()?;
 
             quantized.encode_quantize(
@@ -265,7 +265,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 &self.input_factors,
                 batch_dim,
                 self.input_dimension,
-                encoder,
+                command_buffer,
             );
             let output = self.inner_linear.encode_with_a(
                 MatmulA::Int8Symmetric {
@@ -275,10 +275,10 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                     group_size: activation_group_size,
                 },
                 batch_dim,
-                encoder,
+                command_buffer,
             )?;
 
-            encoder.pop_debug_group();
+            command_buffer.pop_debug_group();
             return Ok(output);
         }
 
@@ -290,10 +290,16 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 ..
             } => transform,
         };
-        full_precision.encode_fp_in_place(&mut input, &self.input_factors, batch_dim, self.input_dimension, encoder);
-        let output = self.inner_linear.encode(input, batch_dim, encoder)?;
+        full_precision.encode_fp_in_place(
+            &mut input,
+            &self.input_factors,
+            batch_dim,
+            self.input_dimension,
+            command_buffer,
+        );
+        let output = self.inner_linear.encode(input, batch_dim, command_buffer)?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
         Ok(output)
     }
 }

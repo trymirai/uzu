@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, Backend, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, QKVNormKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
@@ -120,18 +120,18 @@ impl<B: Backend> QKVNorm<B> {
         &self,
         qkv: &mut Allocation<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.encode_packed(qkv, batch_dim, self.num_q_heads, encoder)
+        self.encode_packed(qkv, batch_dim, self.num_q_heads, command_buffer)
     }
 
     pub fn encode_key_value(
         &self,
         key_value: &mut Allocation<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.encode_packed(key_value, batch_dim, 0, encoder)
+        self.encode_packed(key_value, batch_dim, 0, command_buffer)
     }
 
     fn encode_packed(
@@ -139,9 +139,9 @@ impl<B: Backend> QKVNorm<B> {
         buffer: &mut Allocation<B>,
         batch_dim: u32,
         q_heads: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        encoder.push_debug_group("qkv norm");
+        command_buffer.push_debug_group("qkv norm");
 
         let kv = self.num_kv_heads;
         let total_heads = q_heads + 2 * kv;
@@ -165,11 +165,11 @@ impl<B: Backend> QKVNorm<B> {
                 head_offset,
                 head_count,
                 head.config.upcast_mode == UpcastMode::FullLayer,
-                encoder,
+                command_buffer,
             );
         }
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(())
     }

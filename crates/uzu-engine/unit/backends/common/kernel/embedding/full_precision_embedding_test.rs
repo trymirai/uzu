@@ -6,7 +6,10 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::FullPrecisionEmbeddingLookupKernel},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+        kernel::FullPrecisionEmbeddingLookupKernel,
+    },
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend},
 };
 
@@ -59,7 +62,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let weights_allocation = alloc_allocation_with_data::<B, T>(&context, &input.weights);
     let mut output = alloc_allocation::<B, T>(&context, input.batch_size * input.model_dim);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
     kernel.encode(
         &token_ids_allocation,
         &weights_allocation,
@@ -68,9 +71,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         input.vocab_size as u32,
         input.model_dim as u32,
         input.input_scale,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     allocation_to_vec(&output)
 }

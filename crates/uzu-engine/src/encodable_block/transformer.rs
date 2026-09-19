@@ -3,7 +3,9 @@ use std::ops::Range;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::TensorAddScaleKernel},
+    backends::common::{
+        Allocation, Backend, CommandBuffer, CommandBufferEncoding, Kernels, kernel::TensorAddScaleKernel,
+    },
     config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
     data_type::DataType,
     encodable_block::{
@@ -56,21 +58,21 @@ impl<B: Backend> TransformerState<B> {
     pub fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        encoder.push_debug_group("transformer accept");
+        command_buffer.push_debug_group("transformer accept");
 
         for layer_state in &mut self.layer_states {
             let TransformerLayerStateType::Owned(layer_state) = layer_state else {
                 continue;
             };
 
-            layer_state.encode_accept(accepted_indices, encoder)?;
+            layer_state.encode_accept(accepted_indices, command_buffer)?;
         }
 
         self.context_length += accepted_indices.len() as u32;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(())
     }
@@ -162,11 +164,11 @@ impl<B: Backend> Transformer<B> {
         shortcut: &Allocation<B>,
         hidden: &Allocation<B>,
         batch_size: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut output = encoder.allocate_scratch(hidden.size())?;
+        let mut output = command_buffer.allocate_scratch(hidden.size())?;
         let elements = batch_size * self.model_dim;
-        self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, encoder);
+        self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, command_buffer);
         Ok(output)
     }
 
@@ -231,7 +233,7 @@ impl<B: Backend> Transformer<B> {
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
         let mut hidden = input;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
@@ -240,7 +242,7 @@ impl<B: Backend> Transformer<B> {
             self.layers.len()
         };
 
-        let mut shortcut = encoder.allocate_scratch(hidden.size())?;
+        let mut shortcut = command_buffer.allocate_scratch(hidden.size())?;
         let mut hidden_features =
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
@@ -250,7 +252,7 @@ impl<B: Backend> Transformer<B> {
         let precalculated_ropes = self
             .ropes
             .iter()
-            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, encoder))
+            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
             .collect::<Result<Box<[_]>, B::Error>>()?;
 
         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
@@ -279,13 +281,13 @@ impl<B: Backend> Transformer<B> {
                 precalculated_rope,
                 batch_dim,
                 layer_state,
-                encoder,
+                command_buffer,
             )?;
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
                     if layer_index == layer.layer_index {
-                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), encoder)?;
+                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), command_buffer)?;
                         hidden_features[feature_index] = Some(feature);
                     }
                 }
@@ -319,7 +321,7 @@ impl<B: Backend> Transformer<B> {
             output_range.start,
             output_range.end - output_range.start,
             Some(&mut shortcut),
-            encoder,
+            command_buffer,
         )?;
 
         Ok(TransformerEncodeOutput {

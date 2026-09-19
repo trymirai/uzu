@@ -8,7 +8,7 @@ use parking_lot::Mutex;
 
 use crate::{
     backends::common::{
-        Allocation, AllocationType, AsBufferRangeRef, Backend, Context, Encoder, Kernels,
+        Allocation, AsBufferRangeRef, Backend, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         kernel::{RepetitionPenaltyKernel, TensorCopyKernel, UnifiedSamplingKernel},
     },
     data_type::DataType,
@@ -90,9 +90,9 @@ impl<B: Backend> Sampling<B> {
         sampling_method: &SamplingMethod,
         batch_dim: &BatchTopology,
         sampling_range: Range<u32>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("sampling");
+        command_buffer.push_debug_group("sampling");
 
         let sampling_length = sampling_range.end - sampling_range.start;
 
@@ -126,12 +126,12 @@ impl<B: Backend> Sampling<B> {
             let suffix_repetition_length =
                 suffix_repetition_length.expect("suffix_repetition_length is required for repetition_penalty");
 
-            let mut logits_copy = encoder.allocate_scratch(logits.as_buffer_range_ref().range().len())?;
-            let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(encoder.context(), self.data_type)?;
-            tensor_copy.encode(logits, &mut logits_copy, self.vocab_size * sampling_length, encoder);
+            let mut logits_copy = command_buffer.allocate_scratch(logits.as_buffer_range_ref().range().len())?;
+            let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(command_buffer.context(), self.data_type)?;
+            tensor_copy.encode(logits, &mut logits_copy, self.vocab_size * sampling_length, command_buffer);
 
             let repetition_penalty_kernel =
-                <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(encoder.context(), self.data_type)?;
+                <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(command_buffer.context(), self.data_type)?;
             repetition_penalty_kernel.encode(
                 logits,
                 &mut logits_copy,
@@ -142,7 +142,7 @@ impl<B: Backend> Sampling<B> {
                 self.vocab_size,
                 sampling_range.start,
                 sampling_length,
-                encoder,
+                command_buffer,
             );
             Some(logits_copy)
         } else {
@@ -158,7 +158,7 @@ impl<B: Backend> Sampling<B> {
                 let key = vacant.key();
 
                 let kernel = <B::Kernels as Kernels>::UnifiedSamplingKernel::new(
-                    encoder.context(),
+                    command_buffer.context(),
                     self.data_type,
                     key.is_stochastic,
                     key.has_bitmask,
@@ -172,8 +172,7 @@ impl<B: Backend> Sampling<B> {
             },
         };
 
-        let mut output =
-            encoder.context().create_allocation(sampling_length as usize * size_of::<u32>(), AllocationType::Global)?;
+        let mut output = command_buffer.context().create_allocation(sampling_length as usize * size_of::<u32>())?;
 
         kernel.encode(
             logits,
@@ -186,10 +185,10 @@ impl<B: Backend> Sampling<B> {
             min_p,
             self.vocab_size,
             sampling_length,
-            encoder,
+            command_buffer,
         );
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

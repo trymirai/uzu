@@ -9,7 +9,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder,
+            Allocation, Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::QuantizationMethod,
             kernel::{
                 Kernels,
@@ -72,7 +72,7 @@ fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
     let mut kernel =
         <B::Kernels as Kernels>::MatmulKernel::new(context, T::data_type(), T::data_type(), T::data_type())
             .expect("MatmulKernel");
-    let mut encoder = Encoder::new(context).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     kernel
         .encode(
             MatmulArguments {
@@ -93,10 +93,10 @@ fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
                 n: n_out as u32,
                 k: k as u32,
             },
-            &mut encoder,
+            &mut command_buffer,
         )
         .expect("encode failed");
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<B, T>(&d)
 }
 

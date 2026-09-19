@@ -8,7 +8,7 @@ pub use moe::{MoeBlock, MoeBlockError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, CommandBuffer},
     config::mlp::AnyMLPConfig,
     data_type::DataType,
     encodable_block::linear::{Linear, LinearBlockError},
@@ -20,7 +20,7 @@ pub trait Mlp<B: Backend>: Send + Sync {
         &self,
         input: Allocation<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error>;
 }
 

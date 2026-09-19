@@ -7,7 +7,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dScanKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            gpu_types::ActivationType, kernel::Conv1dScanKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -101,7 +104,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let mut c_out = alloc_allocation::<B, T>(&context, c_out_size);
     let mut state_out = alloc_allocation::<B, T>(&context, state_size);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &padded,
         &w,
@@ -118,9 +121,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         input.inner_dim,
         input.proj_dim,
         input.activation_type,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
         x_out: allocation_to_vec(&x_out),

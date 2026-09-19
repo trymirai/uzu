@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, Backend, CommandBuffer, CommandBufferEncoding,
         kernel::{
             Kernels,
             matmul::{
@@ -123,10 +123,10 @@ impl<B: Backend> LinearMatmul<B> {
         &self,
         a: MatmulA<'_, B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
         let mut output =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
+            command_buffer.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
         self.kernel.lock().encode(
             MatmulArguments {
@@ -141,7 +141,7 @@ impl<B: Backend> LinearMatmul<B> {
                 n: self.output_dim,
                 k: self.input_dim,
             },
-            encoder,
+            command_buffer,
         )?;
 
         Ok(output)
@@ -199,9 +199,9 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         &self,
         input: Allocation<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("matmul");
+        command_buffer.push_debug_group("matmul");
 
         let output = self.encode_with_a(
             MatmulA::FullPrecision {
@@ -209,10 +209,10 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 offset: 0,
             },
             batch_dim,
-            encoder,
+            command_buffer,
         )?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }
@@ -221,10 +221,10 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         &self,
         input: LinearInput<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
         match input {
-            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, encoder),
+            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, command_buffer),
             LinearInput::Int8Symmetric {
                 values,
                 scales,
@@ -238,7 +238,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                     group_size,
                 },
                 batch_dim,
-                encoder,
+                command_buffer,
             ),
         }
     }

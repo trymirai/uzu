@@ -1,5 +1,5 @@
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::Unsupported},
+    backends::common::{Allocation, Backend, CommandBuffer, Kernels, kernel::Unsupported},
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
 };
 
@@ -16,7 +16,7 @@ pub trait DeltaNetTreeVerify: Sized + Send + Sync {
     fn encode(
         &self,
         arguments: TreeVerifyEncodeArguments<'_, Self::Backend>,
-        encoder: &mut Encoder<Self::Backend>,
+        command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error>;
 }
 
@@ -37,7 +37,7 @@ impl<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Unsupported<B>>>> DeltaNet
     fn encode(
         &self,
         _arguments: TreeVerifyEncodeArguments<'_, B>,
-        _encoder: &mut Encoder<B>,
+        _command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
         unreachable!("unsupported DeltaNet tree verifier cannot encode")
     }

@@ -8,7 +8,8 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            AsBufferRangeMut, AsBufferRangeRef, Backend, CommandBufferEncoding, CommandBufferExecutable,
+            CommandBufferPending, Context, Kernels,
             kernel::{AttentionArguments, AttentionKernel, AttentionKernelConfig},
         },
         cpu::Cpu,
@@ -100,15 +101,15 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         cache: KVCacheView::full(segment_prefix_length as u32),
     };
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     let kernel = <B::Kernels as Kernels>::AttentionKernel::new(context.as_ref(), config)
         .expect("Failed to create attention kernel");
-    let pooled_output = kernel.encode(args, &mut encoder).expect("Failed to encode attention");
+    let pooled_output = kernel.encode(args, &mut command_buffer).expect("Failed to encode attention");
     let mut output_allocation =
         alloc_allocation::<B, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
-    encoder.encode_copy(&pooled_output, .., &mut output_allocation, ..);
+    command_buffer.encode_copy(pooled_output.as_buffer_range_ref(), output_allocation.as_buffer_range_mut());
     drop(pooled_output);
-    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     drop(completed);
 
     allocation_to_vec::<B, T>(&output_allocation)
@@ -121,7 +122,7 @@ fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let keys = alloc_allocation_with_data::<Metal, T>(context.as_ref(), &input.keys);
     let values = alloc_allocation_with_data::<Metal, T>(context.as_ref(), &input.values);
     let cache = KVCacheView::full((input.sequence_length - input.suffix_length) as u32);
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     let pooled = super::gemm::AttentionGemm::new(&config)
         .encode(
             AttentionArguments {
@@ -133,14 +134,14 @@ fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
                 sinks: None,
                 cache,
             },
-            &mut encoder,
+            &mut command_buffer,
         )
         .expect("Failed to encode AttentionGemm");
     let mut output =
         alloc_allocation::<Metal, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
-    encoder.encode_copy(&pooled, .., &mut output, ..);
+    command_buffer.encode_copy(pooled.as_buffer_range_ref(), output.as_buffer_range_mut());
     drop(pooled);
-    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     drop(completed);
     allocation_to_vec::<Metal, T>(&output)
 }

@@ -9,7 +9,6 @@ pub enum AllocationType {
     Pooled {
         pool: usize,
         can_alias_before: bool,
-        can_alias_after: bool,
     },
 }
 
@@ -186,7 +185,6 @@ impl RangeAllocator {
             AllocationType::Pooled {
                 pool,
                 can_alias_before: true,
-                can_alias_after: _,
             } => Some(pool),
             _ => None,
         };
@@ -218,7 +216,6 @@ impl RangeAllocator {
             AllocationType::Pooled {
                 pool,
                 can_alias_before: _,
-                can_alias_after: _,
             } => {
                 self.ensure_pool(pool);
                 self.pool_live_allocations[pool] += 1;
@@ -245,14 +242,11 @@ impl RangeAllocator {
             AllocationType::Pooled {
                 pool,
                 can_alias_before: _,
-                can_alias_after,
             } => {
                 self.pool_live_allocations[pool] -= 1;
 
-                if can_alias_after {
-                    self.aliasable_ranges_by_pool[pool].insert(range.clone());
-                    self.total_available += range.len();
-                }
+                self.aliasable_ranges_by_pool[pool].insert(range.clone());
+                self.total_available += range.len();
             },
         };
     }

@@ -2,14 +2,14 @@ use super::reference::{WeightData, read_f32, write_f32};
 use crate::{
     backends::{
         common::{
-            Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
+            Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Kernels,
             gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
-        cpu::{Cpu, context::CpuContext, error::CpuError},
+        cpu::{Cpu, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError},
     },
     data_type::DataType,
     utils::pointers::{SendPtr, SendPtrMut},
@@ -56,7 +56,7 @@ impl MatmulKernel for MatmulCpuKernel {
     fn encode<'a, 'b, 'd, TB: BufferArg<'b, Cpu>>(
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Cpu, TB>,
-        encoder: &mut Encoder<Cpu>,
+        command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<(), CpuError> {
         let output_scale = arguments.d_transform.ab_scale;
         let accumulate = arguments.d_transform.accumulate;
@@ -160,7 +160,6 @@ impl MatmulKernel for MatmulCpuKernel {
         let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u);
 
         let bias_after_rht = post_rht.is_some();
-        let command_buffer = encoder.as_command_buffer_mut();
         command_buffer.push_command(move || {
             let quant_layout = match &weight_data {
                 WeightData::Quantized {
@@ -295,10 +294,10 @@ impl MatmulKernel for MatmulCpuKernel {
         });
 
         if let Some(factors) = post_rht {
-            self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, encoder);
+            self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, command_buffer);
             if let Some(bias) = bias_alloc {
                 let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
-                self.bias_add.encode(None::<&Allocation<Cpu>>, bias, &mut *d, n, output_length, encoder);
+                self.bias_add.encode(None::<&Allocation<Cpu>>, bias, &mut *d, n, output_length, command_buffer);
             }
         }
 

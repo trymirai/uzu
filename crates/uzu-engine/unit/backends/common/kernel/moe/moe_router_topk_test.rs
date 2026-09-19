@@ -8,7 +8,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Encoder, Kernels, kernel::MoeRouterTopKKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::MoeRouterTopKKernel,
+        },
         cpu::Cpu,
     },
     tests::helpers::{
@@ -59,7 +62,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         router_norm_epsilon.is_some(),
     )
     .expect("kernel");
-    let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &input_allocation,
         &weights_allocation,
@@ -75,9 +78,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         renorm,
         router_norm_epsilon,
         router_input_scale,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     (allocation_to_vec(&ids), allocation_to_vec(&probs))
 }

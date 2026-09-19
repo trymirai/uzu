@@ -2,8 +2,9 @@ use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, Backend, CommandBuffer, CommandBufferEncoding, Kernels,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationTransform, LogitTransformKernel,
@@ -346,12 +347,12 @@ impl<B: Backend> Embedding<B> {
         &self,
         token_ids: &Allocation<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
-        encoder.push_debug_group("embedding lookup");
+        command_buffer.push_debug_group("embedding lookup");
 
-        let mut output = encoder
-            .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
+        let mut output = command_buffer
+            .allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))
             .map_err(EmbeddingError::BackendError)?;
 
         let table = match &self.tying {
@@ -364,9 +365,9 @@ impl<B: Backend> Embedding<B> {
                 ..
             } => input_table,
         };
-        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, encoder);
+        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }
@@ -376,9 +377,10 @@ impl<B: Backend> Embedding<B> {
         batch_dim: u32,
         input_allocation: &Allocation<B>,
         output_data_type: DataType,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
-        let mut output_allocation = self.encode_readout_raw(batch_dim, input_allocation, output_data_type, encoder)?;
+        let mut output_allocation =
+            self.encode_readout_raw(batch_dim, input_allocation, output_data_type, command_buffer)?;
         let native_output = output_data_type == self.data_type;
 
         if let Some(logit_transform) = &self.logit_transform {
@@ -394,7 +396,7 @@ impl<B: Backend> Embedding<B> {
                 length,
                 logit_transform.scale,
                 logit_transform.soft_cap.unwrap_or(0.0),
-                encoder,
+                command_buffer,
             );
         }
 
@@ -406,15 +408,15 @@ impl<B: Backend> Embedding<B> {
         batch_dim: u32,
         input_allocation: &Allocation<B>,
         output_data_type: DataType,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
-        encoder.push_debug_group("embedding readout");
+        command_buffer.push_debug_group("embedding readout");
 
         assert!(batch_dim > 0, "Embedding readout requires at least one row");
         let native_output = output_data_type == self.data_type;
         let input_hadamard = self.readout_input_hadamard();
-        let mut output_allocation = encoder
-            .allocate_scratch_for_shape(&[batch_dim, self.vocab_size], output_data_type)
+        let mut output_allocation = command_buffer
+            .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size], output_data_type))
             .map_err(EmbeddingError::BackendError)?;
 
         let (matrix, readout) = self.readout_operands();
@@ -422,14 +424,14 @@ impl<B: Backend> Embedding<B> {
         let a = match input_hadamard {
             Some(input_hadamard) => {
                 let mut transformed =
-                    encoder.allocate_scratch(input_allocation.size()).map_err(EmbeddingError::BackendError)?;
+                    command_buffer.allocate_scratch(input_allocation.size()).map_err(EmbeddingError::BackendError)?;
                 input_hadamard.kernel.encode_fp(
                     input_allocation,
                     &mut transformed,
                     &input_hadamard.factors,
                     batch_dim,
                     self.model_dim,
-                    encoder,
+                    command_buffer,
                 );
                 rht_input.insert(transformed)
             },
@@ -451,19 +453,19 @@ impl<B: Backend> Embedding<B> {
             k: self.model_dim,
         };
         if native_output {
-            readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+            readout.lock().encode(arguments, command_buffer).map_err(EmbeddingError::BackendError)?;
         } else {
             let mut widened = <B::Kernels as Kernels>::MatmulKernel::new(
-                encoder.context(),
+                command_buffer.context(),
                 self.data_type,
                 self.data_type,
                 output_data_type,
             )
             .map_err(EmbeddingError::BackendError)?;
-            widened.encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+            widened.encode(arguments, command_buffer).map_err(EmbeddingError::BackendError)?;
         }
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output_allocation)
     }
@@ -474,30 +476,31 @@ impl<B: Backend> Embedding<B> {
         token_ids: &Allocation<B>,
         rows: u32,
         ids_per_row: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
-        encoder.push_debug_group("embedding readout (sparse)");
+        command_buffer.push_debug_group("embedding readout (sparse)");
 
         assert!(rows > 0 && ids_per_row > 0);
         let input_hadamard = self.readout_input_hadamard();
         let (matrix, readout) = self.readout_operands();
         let b = matrix.matmul_b();
 
-        let mut output = encoder
-            .allocate_scratch_for_shape(&[rows, ids_per_row], self.data_type)
+        let mut output = command_buffer
+            .allocate_scratch(size_for_shape(&[rows, ids_per_row], self.data_type))
             .map_err(EmbeddingError::BackendError)?;
 
         let mut rht_input: Option<Allocation<B>> = None;
         let a = match input_hadamard {
             Some(input_hadamard) => {
-                let mut transformed = encoder.allocate_scratch(input.size()).map_err(EmbeddingError::BackendError)?;
+                let mut transformed =
+                    command_buffer.allocate_scratch(input.size()).map_err(EmbeddingError::BackendError)?;
                 input_hadamard.kernel.encode_fp(
                     input,
                     &mut transformed,
                     &input_hadamard.factors,
                     rows,
                     self.model_dim,
-                    encoder,
+                    command_buffer,
                 );
                 rht_input.insert(transformed)
             },
@@ -522,11 +525,11 @@ impl<B: Backend> Embedding<B> {
                     n: ids_per_row,
                     k: self.model_dim,
                 },
-                encoder,
+                command_buffer,
             )
             .map_err(EmbeddingError::BackendError)?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

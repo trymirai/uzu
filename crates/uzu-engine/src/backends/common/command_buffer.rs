@@ -1,74 +1,38 @@
-use std::time::Duration;
+use std::{mem::size_of_val, time::Duration};
 
-use super::{Backend, Buffer, BufferRangeMut, BufferRangeRef};
+use bytemuck::{AnyBitPattern, NoUninit};
+
+use crate::backends::common::{Allocation, Backend, Buffer, BufferRangeMut, BufferRangeRef};
 
 pub trait CommandBuffer {
     type Backend: Backend<CommandBuffer = Self>;
 
-    type Initial: CommandBufferInitial<CommandBuffer = Self>;
     type Encoding: CommandBufferEncoding<CommandBuffer = Self>;
     type Executable: CommandBufferExecutable<CommandBuffer = Self>;
     type Pending: CommandBufferPending<CommandBuffer = Self>;
     type Completed: CommandBufferCompleted<CommandBuffer = Self>;
 }
 
-pub trait CommandBufferInitial: Send {
-    type CommandBuffer: CommandBuffer<Initial = Self>;
-
-    fn start_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Encoding;
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AccessFlags {
-    pub compute_read: bool,
-    pub compute_write: bool,
-    pub copy_read: bool,
-    pub copy_write: bool,
-}
-
-impl AccessFlags {
-    pub fn empty() -> Self {
-        Self {
-            compute_read: false,
-            compute_write: false,
-            copy_read: false,
-            copy_write: false,
-        }
-    }
-
-    pub fn with_compute_read(mut self) -> Self {
-        self.compute_read = true;
-        self
-    }
-    pub fn with_compute_write(mut self) -> Self {
-        self.compute_write = true;
-        self
-    }
-    pub fn with_copy_read(mut self) -> Self {
-        self.copy_read = true;
-        self
-    }
-    pub fn with_copy_write(mut self) -> Self {
-        self.copy_write = true;
-        self
-    }
-
-    pub fn compute_read() -> Self {
-        Self::empty().with_compute_read()
-    }
-    pub fn compute_write() -> Self {
-        Self::empty().with_compute_write()
-    }
-    pub fn copy_read() -> Self {
-        Self::empty().with_copy_read()
-    }
-    pub fn copy_write() -> Self {
-        Self::empty().with_copy_write()
-    }
-}
-
 pub trait CommandBufferEncoding {
     type CommandBuffer: CommandBuffer<Encoding = Self>;
+
+    fn context(&self) -> &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Context;
+
+    fn allocate_constant(
+        &mut self,
+        size: usize,
+    ) -> Result<
+        Allocation<<Self::CommandBuffer as CommandBuffer>::Backend>,
+        <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error,
+    >;
+
+    fn allocate_scratch(
+        &mut self,
+        size: usize,
+    ) -> Result<
+        Allocation<<Self::CommandBuffer as CommandBuffer>::Backend>,
+        <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error,
+    >;
 
     fn encode_copy<
         Src: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>,
@@ -85,12 +49,6 @@ pub trait CommandBufferEncoding {
         value: u8,
     );
 
-    fn encode_barrier(
-        &mut self,
-        after: AccessFlags,
-        before: AccessFlags,
-    );
-
     fn push_debug_group(
         &mut self,
         name: &str,
@@ -100,6 +58,22 @@ pub trait CommandBufferEncoding {
 
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
+
+pub trait CommandBufferEncodingExt: CommandBufferEncoding {
+    fn allocate_constant_from_slice<T: NoUninit + AnyBitPattern>(
+        &mut self,
+        data: &[T],
+    ) -> Result<
+        Allocation<<Self::CommandBuffer as CommandBuffer>::Backend>,
+        <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error,
+    > {
+        let mut allocation = self.allocate_constant(size_of_val(data))?;
+        allocation.copyin(data);
+        Ok(allocation)
+    }
+}
+
+impl<T: CommandBufferEncoding> CommandBufferEncodingExt for T {}
 
 pub trait CommandBufferExecutable: Send {
     type CommandBuffer: CommandBuffer<Executable = Self>;

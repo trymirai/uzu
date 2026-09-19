@@ -2,12 +2,18 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
-use crate::backends::{
-    common::{
-        Allocation, BufferArg, Encoder,
-        kernel::{AttentionArguments, AttentionKernelConfig, AttentionSinglePassKernel},
+use crate::{
+    array::size_for_shape,
+    backends::{
+        common::{
+            Allocation, BufferArg, CommandBufferEncoding,
+            kernel::{AttentionArguments, AttentionKernelConfig, AttentionSinglePassKernel},
+        },
+        metal::{
+            Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
+            kernel::AttentionSinglePassMetalKernel,
+        },
     },
-    metal::{Metal, context::MetalContext, error::MetalError, kernel::AttentionSinglePassMetalKernel},
 };
 
 pub struct AttentionSinglePass {
@@ -48,14 +54,14 @@ impl AttentionSinglePass {
     pub fn encode<'a, KT: BufferArg<'a, Metal>, VT: BufferArg<'a, Metal>>(
         &self,
         arguments: AttentionArguments<'a, Metal, KT, VT>,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<Allocation<Metal>, MetalError> {
         let config = self.config;
-        let mut output = encoder.allocate_constant_for_shape(
+        let mut output = command_buffer.allocate_scratch(size_for_shape(
             &[arguments.suffix_length, config.num_q_heads, config.head_dim],
             config.data_type,
-        )?;
-        let kernel = self.get_or_create(encoder.context(), arguments.trie.is_some())?;
+        ))?;
+        let kernel = self.get_or_create(command_buffer.context(), arguments.trie.is_some())?;
         kernel.encode(
             arguments.queries,
             arguments.keys,
@@ -74,7 +80,7 @@ impl AttentionSinglePass {
             arguments.sinks,
             config.num_q_heads,
             arguments.suffix_length,
-            encoder,
+            command_buffer,
         );
         Ok(output)
     }

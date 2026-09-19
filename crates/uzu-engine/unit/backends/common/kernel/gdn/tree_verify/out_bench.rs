@@ -116,7 +116,7 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
                 )
                 .expect("BuildTreeOutKernel");
                 group.bench_function(benchmark_id, |bencher| {
-                    iter_encode_loop_named::<Metal, _>(context, bencher, &benchmark_path, |encoder| {
+                    iter_encode_loop_named::<Metal, _>(context, bencher, &benchmark_path, |command_buffer| {
                         kernel.encode(
                             &buffers.q,
                             &buffers.prefix,
@@ -132,7 +132,7 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
                             VALUE_HEADS as u32,
                             HEAD_K_DIM as u32,
                             HEAD_V_DIM as u32,
-                            encoder,
+                            command_buffer,
                         );
                     });
                 });

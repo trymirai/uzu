@@ -6,7 +6,10 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorCopyKernel},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+        kernel::TensorCopyKernel,
+    },
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend},
 };
 
@@ -44,9 +47,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let src_allocation = alloc_allocation_with_data::<B, T>(&context, &input.src[..size]);
     let mut dst_allocation = alloc_allocation::<B, T>(&context, size);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(&src_allocation, &mut dst_allocation, input.length, &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    kernel.encode(&src_allocation, &mut dst_allocation, input.length, &mut command_buffer);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     allocation_to_vec::<B, T>(&dst_allocation)
 }

@@ -3,7 +3,8 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+        Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, CommandBuffer, CommandBufferEncoding,
+        CommandBufferEncodingExt, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
     config::token_mixer::short_conv::ShortConvConfig,
@@ -44,7 +45,7 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let suffix_state_type =
             self.suffix_state.take().expect("Called short conv state encode accept on a state with nothing to accept");
@@ -63,11 +64,9 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
             } => {
                 let conv_state_size = self.conv_state.size();
                 let accepted_offset = accepted_index as usize * conv_state_size;
-                encoder.encode_copy(
-                    &conv_states,
-                    accepted_offset..accepted_offset + conv_state_size,
-                    &mut self.conv_state,
-                    ..,
+                command_buffer.encode_copy(
+                    conv_states.as_buffer_range_ref().subrange(accepted_offset..accepted_offset + conv_state_size),
+                    self.conv_state.as_buffer_range_mut(),
                 );
                 Ok(())
             },
@@ -182,9 +181,9 @@ impl<B: Backend> ShortConv<B> {
         &self,
         in_projected: &Allocation<B>,
         state: &mut ShortConvState<B>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut conv_output = encoder.allocate_scratch_for_shape(&[self.hidden_dim], self.data_type)?;
+        let mut conv_output = command_buffer.allocate_scratch(size_for_shape(&[self.hidden_dim], self.data_type))?;
         self.short_conv_decode.encode(
             in_projected,
             &self.conv_weight,
@@ -197,7 +196,7 @@ impl<B: Backend> ShortConv<B> {
             self.hidden_dim * 3,
             self.kernel_size - 1,
             self.hidden_dim,
-            encoder,
+            command_buffer,
         );
         Ok(conv_output)
     }
@@ -207,12 +206,13 @@ impl<B: Backend> ShortConv<B> {
         in_projected: &Allocation<B>,
         batch_dim: u32,
         state: &mut ShortConvState<B>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
         let state_stride = self.kernel_size - 1;
         let padded_rows = state_stride + batch_dim;
 
-        let mut padded = encoder.allocate_scratch_for_shape(&[padded_rows, self.hidden_dim], self.data_type)?;
+        let mut padded =
+            command_buffer.allocate_scratch(size_for_shape(&[padded_rows, self.hidden_dim], self.data_type))?;
         self.short_conv_pack.encode(
             &state.conv_state,
             in_projected,
@@ -221,10 +221,11 @@ impl<B: Backend> ShortConv<B> {
             batch_dim,
             self.hidden_dim * 3,
             self.hidden_dim,
-            encoder,
+            command_buffer,
         );
 
-        let mut conv_output = encoder.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
+        let mut conv_output =
+            command_buffer.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;
         self.short_conv_prefill.encode(
             &padded,
             in_projected,
@@ -237,7 +238,7 @@ impl<B: Backend> ShortConv<B> {
             self.hidden_dim * 3,
             state_stride,
             self.hidden_dim,
-            encoder,
+            command_buffer,
         );
         Ok(conv_output)
     }
@@ -248,11 +249,12 @@ impl<B: Backend> ShortConv<B> {
         batch_dim: u32,
         token_parents: &Allocation<B>,
         state: &mut ShortConvState<B>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
-        let mut conv_output = encoder.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
-        let mut conv_states =
-            encoder.allocate_scratch_for_shape(&[batch_dim, self.kernel_size - 1, self.hidden_dim], self.data_type)?;
+        let mut conv_output =
+            command_buffer.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;
+        let mut conv_states = command_buffer
+            .allocate_scratch(size_for_shape(&[batch_dim, self.kernel_size - 1, self.hidden_dim], self.data_type))?;
         self.short_conv_trie.encode(
             in_projected,
             &self.conv_weight,
@@ -266,7 +268,7 @@ impl<B: Backend> ShortConv<B> {
             self.hidden_dim * 3,
             self.kernel_size - 1,
             self.hidden_dim,
-            encoder,
+            command_buffer,
         );
         Ok((conv_output, conv_states))
     }
@@ -286,21 +288,19 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         _max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
-        let mut conv_state = context.create_allocation(
-            size_for_shape(&[self.kernel_size - 1, self.hidden_dim], self.data_type),
-            AllocationType::Global,
-        )?;
+        let mut conv_state =
+            context.create_allocation(size_for_shape(&[self.kernel_size - 1, self.hidden_dim], self.data_type))?;
 
         let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
-        let mut suffix_state = context.create_allocation(
-            size_for_shape(&[suffix_capacity, self.kernel_size - 1, self.hidden_dim], self.data_type),
-            AllocationType::Global,
-        )?;
+        let mut suffix_state = context.create_allocation(size_for_shape(
+            &[suffix_capacity, self.kernel_size - 1, self.hidden_dim],
+            self.data_type,
+        ))?;
 
-        let mut zero_encoder = Encoder::<B>::new(context)?;
-        zero_encoder.encode_fill(&mut conv_state, 0);
-        zero_encoder.encode_fill(&mut suffix_state, 0);
-        zero_encoder.end_encoding().submit().wait_until_completed()?;
+        let mut zero_command_buffer = context.create_command_buffer(None, None)?;
+        zero_command_buffer.encode_fill(conv_state.as_buffer_range_mut(), 0);
+        zero_command_buffer.encode_fill(suffix_state.as_buffer_range_mut(), 0);
+        zero_command_buffer.end_encoding().submit().wait_until_completed()?;
 
         Ok(Box::new(ShortConvState {
             conv_state,
@@ -314,9 +314,9 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("short conv");
+        command_buffer.push_debug_group("short conv");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for short conv mixer");
 
@@ -328,31 +328,31 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
 
         assert!(state.suffix_state.is_none(), "short conv called with state with unaccepted tokens");
 
-        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
+        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
 
         let conv_output = if batch_dim.full_accept() {
             let conv_output = if batch_dim.size() == 1 {
-                self.encode_decode_conv(&in_projected, state, encoder)?
+                self.encode_decode_conv(&in_projected, state, command_buffer)?
             } else {
-                self.encode_prefill_conv(&in_projected, batch_dim.size(), state, encoder)?
+                self.encode_prefill_conv(&in_projected, batch_dim.size(), state, command_buffer)?
             };
             state.suffix_state = Some(ShortConvStateSuffixStatus::Flat {
                 suffix_length: batch_dim.size(),
             });
             conv_output
         } else {
-            let token_parents = encoder.allocate_constant_from_slice(batch_dim.parents())?;
+            let token_parents = command_buffer.allocate_constant_from_slice(batch_dim.parents())?;
             let (conv_output, conv_states) =
-                self.encode_trie_conv(&in_projected, batch_dim.size(), &token_parents, state, encoder)?;
+                self.encode_trie_conv(&in_projected, batch_dim.size(), &token_parents, state, command_buffer)?;
             state.suffix_state = Some(ShortConvStateSuffixStatus::Trie {
                 conv_states,
             });
             conv_output
         };
 
-        let output = self.out_projection.encode(conv_output, batch_dim.size(), encoder)?;
+        let output = self.out_projection.encode(conv_output, batch_dim.size(), command_buffer)?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

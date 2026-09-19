@@ -3,7 +3,7 @@ use std::ops::Range;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, CommandBuffer, CommandBufferEncoding},
     config::decoder::DecoderConfig,
     data_type::DataType,
     encodable_block::{
@@ -142,13 +142,15 @@ impl<B: Backend> Decoder<B> {
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         state: &mut TransformerState<B>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
-        encoder.push_debug_group("decoder");
+        command_buffer.push_debug_group("decoder");
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), encoder)?;
+        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
-            embedding_norm.encode(&embedded, 0, batch_dim.size(), None, encoder).map_err(DecoderError::Backend)?
+            embedding_norm
+                .encode(&embedded, 0, batch_dim.size(), None, command_buffer)
+                .map_err(DecoderError::Backend)?
         } else {
             embedded
         };
@@ -156,7 +158,7 @@ impl<B: Backend> Decoder<B> {
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
             Some(
                 per_layer_embedding
-                    .encode(token_ids, &embedded, batch_dim.size(), encoder)
+                    .encode(token_ids, &embedded, batch_dim.size(), command_buffer)
                     .map_err(DecoderError::Backend)?,
             )
         } else {
@@ -172,7 +174,7 @@ impl<B: Backend> Decoder<B> {
                 output_range.clone(),
                 hidden_feature_layer_indices,
                 Some(state),
-                encoder,
+                command_buffer,
             )
             .map_err(DecoderError::Backend)?;
 
@@ -182,7 +184,7 @@ impl<B: Backend> Decoder<B> {
                 output_range.end - output_range.start,
                 output,
                 self.embedding.data_type(),
-                encoder,
+                command_buffer,
             )?)
         } else {
             None
@@ -193,7 +195,7 @@ impl<B: Backend> Decoder<B> {
             transformer_output.output
         };
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(DecoderEncodeOutput {
             logits,

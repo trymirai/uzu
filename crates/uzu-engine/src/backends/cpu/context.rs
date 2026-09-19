@@ -1,17 +1,18 @@
 use std::{
     path::Path,
-    sync::{Arc, mpsc},
+    sync::{Arc, Weak, mpsc},
     thread,
 };
 
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
-    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, dense_buffer::CpuBuffer, error::CpuError},
+    cpu::{Cpu, command_buffer::CpuCommandBufferEncoding, dense_buffer::CpuBuffer, error::CpuError},
 };
 
 pub struct CpuContext {
-    allocator: Arc<Allocator<Cpu>>,
-    command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>,
+    pub(super) allocator: Arc<Allocator<Cpu>>,
+    pub(super) command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>,
+    weak_self: Weak<CpuContext>,
 }
 
 impl Context for CpuContext {
@@ -29,6 +30,7 @@ impl Context for CpuContext {
         Ok(Arc::new_cyclic(|weak_self| CpuContext {
             allocator: Allocator::new(weak_self.clone()),
             command_queue: command_queue_sender,
+            weak_self: weak_self.clone(),
         }))
     }
 
@@ -46,23 +48,23 @@ impl Context for CpuContext {
     fn create_allocation(
         &self,
         size: usize,
-        allocation_type: AllocationType<Cpu>,
     ) -> Result<Allocation<Cpu>, CpuError> {
-        self.allocator.allocate(size, allocation_type)
+        self.allocator.allocate(size, AllocationType::Global)
     }
 
-    fn create_allocation_pool(
-        &self,
-        reusable: bool,
-    ) -> AllocationPool<Cpu> {
-        self.allocator.create_pool(reusable)
+    fn create_allocation_pool(&self) -> Arc<AllocationPool<Cpu>> {
+        Arc::new(self.allocator.create_pool())
     }
 
     fn create_command_buffer(
         &self,
         _name: Option<&str>,
-    ) -> Result<CpuCommandBufferInitial, CpuError> {
-        Ok(CpuCommandBufferInitial::new(self.command_queue.clone()))
+        allocation_pool: Option<Arc<AllocationPool<Cpu>>>,
+    ) -> Result<CpuCommandBufferEncoding, CpuError> {
+        Ok(CpuCommandBufferEncoding::new(
+            self.weak_self.upgrade().unwrap(),
+            allocation_pool.unwrap_or_else(|| self.create_allocation_pool()),
+        ))
     }
 
     fn create_sparse_buffer(

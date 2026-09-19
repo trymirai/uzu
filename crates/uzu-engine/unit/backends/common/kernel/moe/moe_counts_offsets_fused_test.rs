@@ -3,7 +3,10 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::MoeCountsOffsetsFusedKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::MoeCountsOffsetsFusedKernel,
+        },
         cpu::Cpu,
     },
     tests::helpers::{
@@ -50,7 +53,7 @@ fn get_output<B: Backend>(
     let num_tiles = e.div_ceil(512).max(1);
     let mut partials = alloc_allocation::<B, u32>(&context, num_tiles * 512);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &topk_ids_allocation,
         &mut offsets,
@@ -59,9 +62,9 @@ fn get_output<B: Backend>(
         t as u32,
         e as u32,
         k as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let offsets = allocation_to_vec::<B, u32>(&offsets);
     let sum_k = allocation_to_vec::<B, u32>(&sum_k)[0];

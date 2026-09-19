@@ -7,7 +7,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::ActivationKernel},
+        common::{
+            Allocation, Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+            Kernels, gpu_types::ActivationType, kernel::ActivationKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -41,16 +44,16 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     if input.in_place {
         let mut output_allocation = alloc_allocation_with_data::<B, T>(&context, &input.data);
-        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
-        kernel.encode(None::<&Allocation<B>>, &mut output_allocation, n as u32, input.act_type, &mut encoder);
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
+        kernel.encode(None::<&Allocation<B>>, &mut output_allocation, n as u32, input.act_type, &mut command_buffer);
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         allocation_to_vec::<B, T>(&output_allocation)
     } else {
         let input_allocation = alloc_allocation_with_data::<B, T>(&context, &input.data);
         let mut output_allocation = alloc_allocation::<B, T>(&context, n);
-        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
-        kernel.encode(Some(&input_allocation), &mut output_allocation, n as u32, input.act_type, &mut encoder);
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
+        kernel.encode(Some(&input_allocation), &mut output_allocation, n as u32, input.act_type, &mut command_buffer);
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         allocation_to_vec::<B, T>(&output_allocation)
     }
 }

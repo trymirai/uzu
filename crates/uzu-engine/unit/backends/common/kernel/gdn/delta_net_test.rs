@@ -7,7 +7,8 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            AsBufferRangeMut, Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+            Kernels,
             kernel::{
                 Conv1dPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel,
                 DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
@@ -39,7 +40,7 @@ fn run_conv_update<B: Backend>(
     let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(&context, DataType::F32, true)
         .expect("Failed to create kernel");
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &w_array,
         Some(&b_array),
@@ -48,9 +49,9 @@ fn run_conv_update<B: Backend>(
         kernel_size,
         conv_dim,
         state_stride,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let out = allocation_prefix_to_vec::<B, f32>(&in_out, conv_dim as usize);
     let new_state = allocation_to_vec::<B, f32>(&state_allocation);
@@ -82,7 +83,7 @@ fn run_delta_net_update<B: Backend>(
     let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetUpdateKernel::new(&context, DataType::F32, head_k_dim)
         .expect("Failed to create kernel");
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &in_proj_array,
         &a_log_array,
@@ -96,9 +97,9 @@ fn run_delta_net_update<B: Backend>(
         key_dim,
         value_dim,
         1e-6f32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let out = allocation_to_vec::<B, f32>(&out);
     let new_state = allocation_to_vec::<B, f32>(&state_allocation);
@@ -196,7 +197,7 @@ fn test_delta_net_conv_scan() {
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetConvScanKernel::new(&context, DataType::BF16, true)
             .expect("scan");
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     pack_kernel.encode(
         &state_array,
         &in_proj_array,
@@ -205,7 +206,7 @@ fn test_delta_net_conv_scan() {
         total_proj_dim as u32,
         suffix_len as u32,
         conv_dim as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
     scan_kernel.encode(
         &padded_array,
@@ -219,9 +220,9 @@ fn test_delta_net_conv_scan() {
         tap_count as u32,
         conv_dim as u32,
         total_proj_dim as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let in_proj_result: Vec<bf16> = allocation_to_vec(&in_proj_array);
     let in_proj_result: Vec<f32> = in_proj_result.into_iter().map(f32::from).collect();
@@ -344,7 +345,7 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
     let norm_k =
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, T::data_type()).unwrap();
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     prep_k.encode(
         &in_proj_array,
         &a_log_array,
@@ -359,7 +360,7 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
         key_dim as u32,
         value_dim as u32,
         suffix_len as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
     prefill_k.encode(
         &q_norm_array,
@@ -376,7 +377,7 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
         value_dim as u32,
         suffix_len as u32,
         num_dv_groups,
-        &mut encoder,
+        &mut command_buffer,
     );
     norm_k.encode(
         &mut out_array,
@@ -389,9 +390,9 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
         total_proj_dim as u32,
         1e-6f32,
         suffix_len as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let out: Vec<T> = allocation_to_vec(&out_array);
     let out = out.into_iter().map(|value| value.to_f32().expect("output to f32")).collect();
@@ -519,7 +520,7 @@ fn test_delta_net_prefill_prep() {
         true,
     )
     .unwrap();
-    let mut cpu_enc = Encoder::new(cpu_ctx.as_ref()).expect("encoder");
+    let mut cpu_enc = cpu_ctx.create_command_buffer(None, None).expect("command buffer");
     cpu_prep.encode(
         &cpu_in_proj,
         &cpu_a_log,
@@ -571,7 +572,7 @@ fn test_delta_net_prefill_prep() {
     )
     .unwrap();
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     prep_k.encode(
         &in_proj_array,
         &a_log_array,
@@ -586,9 +587,9 @@ fn test_delta_net_prefill_prep() {
         key_dim as u32,
         value_dim as u32,
         suffix_len as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let gpu_q = allocation_to_vec::<Metal, bf16>(&q_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
     let gpu_k = allocation_to_vec::<Metal, bf16>(&k_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
@@ -664,7 +665,7 @@ fn bench_delta_net_prefill() {
     eprintln!("  state_size={state_size} ({:.2} MB)", state_size as f64 * 4.0 / 1024.0 / 1024.0);
 
     let prep_result = run_perf_with_warmup("prep_only", 5, 50, || {
-        let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
         prep_k.encode(
             &in_proj_array,
             &a_log_array,
@@ -679,9 +680,9 @@ fn bench_delta_net_prefill() {
             key_dim as u32,
             value_dim as u32,
             suffix_len as u32,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     });
     prep_result.print();
 
@@ -689,8 +690,8 @@ fn bench_delta_net_prefill() {
     let mut state_array = alloc_allocation::<Metal, f32>(&context, state_size);
 
     let prefill_result = run_perf_with_warmup("prep+prefill+norm_gate", 5, 50, || {
-        let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
-        encoder.encode_fill(&mut state_array, 0);
+        let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+        command_buffer.encode_fill(state_array.as_buffer_range_mut(), 0);
         prep_k.encode(
             &in_proj_array,
             &a_log_array,
@@ -705,7 +706,7 @@ fn bench_delta_net_prefill() {
             key_dim as u32,
             value_dim as u32,
             suffix_len as u32,
-            &mut encoder,
+            &mut command_buffer,
         );
         prefill_k.encode(
             &q_norm_array,
@@ -722,7 +723,7 @@ fn bench_delta_net_prefill() {
             value_dim as u32,
             suffix_len as u32,
             num_dv_groups,
-            &mut encoder,
+            &mut command_buffer,
         );
         norm_k.encode(
             &mut out_array,
@@ -735,9 +736,9 @@ fn bench_delta_net_prefill() {
             total_proj_dim as u32,
             1e-6f32,
             suffix_len as u32,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     });
     prefill_result.print();
 }

@@ -1,6 +1,6 @@
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, Backend, CommandBuffer, Kernels,
         gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::ActivationTransformKernel,
     },
@@ -95,7 +95,7 @@ impl<B: Backend> ActivationTransform<B> {
         rht_factors: &Allocation<B>,
         batch_size: u32,
         element_count: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         assert!(!self.quantizes() && !self.in_place);
         assert_row_width(element_count);
@@ -108,7 +108,7 @@ impl<B: Backend> ActivationTransform<B> {
             rht_factors,
             batch_size,
             element_count,
-            encoder,
+            command_buffer,
         );
     }
 
@@ -118,7 +118,7 @@ impl<B: Backend> ActivationTransform<B> {
         rht_factors: &Allocation<B>,
         batch_size: u32,
         element_count: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         assert!(!self.quantizes() && self.in_place);
         assert_row_width(element_count);
@@ -131,7 +131,7 @@ impl<B: Backend> ActivationTransform<B> {
             rht_factors,
             batch_size,
             element_count,
-            encoder,
+            command_buffer,
         );
     }
 
@@ -144,7 +144,7 @@ impl<B: Backend> ActivationTransform<B> {
         rht_factors: &Allocation<B>,
         batch_size: u32,
         element_count: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         assert!(self.quantizes());
         assert_row_width(element_count);
@@ -165,7 +165,7 @@ impl<B: Backend> ActivationTransform<B> {
             rht_factors,
             batch_size,
             element_count,
-            encoder,
+            command_buffer,
         );
     }
 

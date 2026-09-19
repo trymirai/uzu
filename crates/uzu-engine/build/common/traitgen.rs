@@ -65,8 +65,8 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         .collect::<(Vec<_>, Vec<_>)>();
 
     let mut encode_generics = encode_lifetime_generics.into_iter().flatten().collect::<Vec<_>>();
-    encode_generics.push(quote! { 'encoder });
-    args.push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<Self::Backend> });
+    encode_generics.push(quote! { 'command_buffer });
+    args.push(quote! { command_buffer: &'command_buffer mut <<Self::Backend as crate::backends::common::Backend>::CommandBuffer as crate::backends::common::CommandBuffer>::Encoding });
 
     let kernel_trait = quote! {
         #[allow(clippy::style, clippy::complexity, clippy::perf)]

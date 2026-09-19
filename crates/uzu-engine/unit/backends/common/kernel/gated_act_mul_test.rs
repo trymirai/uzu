@@ -8,7 +8,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder,
+            Allocation, Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::ActivationType,
             kernel::{GatedActMul, GatedActMulSettings},
         },
@@ -64,7 +64,7 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
     let hadamard_factors = alloc_allocation_with_data::<B, i32>(&context, &input.hadamard_factors);
     let mut output = alloc_allocation::<B, T>(&context, output_length);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
     kernel.encode_fp(
         &fused_up,
         None::<&Allocation<B>>,
@@ -75,9 +75,9 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
         0,
         0,
         input.act_type,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     allocation_to_vec::<B, T>(&output)
 }
@@ -176,7 +176,7 @@ fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -
     let per_layer_input = alloc_allocation_with_data::<B, T>(&context, &input.per_layer_input);
     let mut output = alloc_allocation::<B, T>(&context, (input.batch_dim * input.gated_dim) as usize);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
     kernel.encode_fp(
         &gate_out,
         Some(&per_layer_input),
@@ -187,9 +187,9 @@ fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -
         input.value_offset,
         input.value_row_stride,
         input.act_type,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     allocation_to_vec::<B, T>(&output)
 }
@@ -251,7 +251,7 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
             .expect("create transformed GatedActMul");
         let fused_up = alloc_allocation_with_data::<B, T>(&context, &fused_up);
         let mut output = alloc_allocation::<B, T>(&context, GATED_DIM as usize);
-        let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
         kernel.encode_fp(
             &fused_up,
             None::<&Allocation<B>>,
@@ -262,9 +262,9 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
             0,
             0,
             ActivationType::SILU,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
         let output = allocation_to_vec::<B, T>(&output);
         assert_eq_float(

@@ -78,7 +78,6 @@ impl<B: Backend> Drop for Allocation<B> {
 }
 
 pub struct AllocationPool<B: Backend> {
-    reusable: bool,
     allocator: Arc<Allocator<B>>,
     pool_number: usize,
 }
@@ -135,7 +134,6 @@ impl<B: Backend> Allocator<B> {
             } => RangeAllocationType::Pooled {
                 pool: pool.pool_number,
                 can_alias_before: !cpu_available,
-                can_alias_after: !(cpu_available && pool.reusable),
             },
         };
 
@@ -183,14 +181,10 @@ impl<B: Backend> Allocator<B> {
         })
     }
 
-    pub fn create_pool(
-        self: &Arc<Self>,
-        reusable: bool,
-    ) -> AllocationPool<B> {
+    pub fn create_pool(self: &Arc<Self>) -> AllocationPool<B> {
         let pool_number = self.next_pool_number.fetch_add(1, Ordering::Relaxed);
 
         AllocationPool {
-            reusable,
             allocator: self.clone(),
             pool_number,
         }
@@ -261,7 +255,3 @@ impl<B: Backend> Allocator<B> {
         }
     }
 }
-
-#[cfg(all(test, backend = "metal"))]
-#[path = "../../../../unit/backends/common/allocator/allocator.rs"]
-mod tests;

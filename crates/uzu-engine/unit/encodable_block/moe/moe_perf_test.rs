@@ -5,7 +5,7 @@ use uzu_engine_macros::uzu_test;
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGather};
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
@@ -59,7 +59,8 @@ fn test_moe_e2e_decode_perf() {
 
             // Time fused Router+TopK
             let fused_perf = run_perf_with_warmup("Router+TopK (FUSED)", 5, 20, || {
-                let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+                let mut command_buffer =
+                    ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
                 router_topk.encode(
                     &x_buf,
                     &router_w_buf,
@@ -75,9 +76,9 @@ fn test_moe_e2e_decode_perf() {
                     true,
                     None::<f32>,
                     None::<f32>,
-                    &mut encoder,
+                    &mut command_buffer,
                 );
-                encoder.end_encoding().submit().wait_until_completed().unwrap();
+                command_buffer.end_encoding().submit().wait_until_completed().unwrap();
             });
             fused_perf.print();
             eprintln!("    Total:   {:8.1} µs/token", fused_perf.mean_ms * 1000.0);
@@ -128,7 +129,8 @@ fn test_moe_e2e_prefill_perf() {
 
             // Time fused Router+TopK
             let fused_perf = run_perf_with_warmup("Router+TopK (FUSED)", 5, 20, || {
-                let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+                let mut command_buffer =
+                    ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
                 router_topk.encode(
                     &x_buf,
                     &router_w_buf,
@@ -144,9 +146,9 @@ fn test_moe_e2e_prefill_perf() {
                     true,
                     None::<f32>,
                     None::<f32>,
-                    &mut encoder,
+                    &mut command_buffer,
                 );
-                encoder.end_encoding().submit().wait_until_completed().unwrap();
+                command_buffer.end_encoding().submit().wait_until_completed().unwrap();
             });
             eprintln!("    Total:   {:8.3} ms", fused_perf.mean_ms);
             eprintln!(
@@ -253,7 +255,7 @@ fn test_moe_pipeline_breakdown_decode() {
 
         // Testing: Router + TopK + Counts+Offsets (FUSED)
         let router_topk_fused_perf = run_perf_with_warmup("Router+TopK (FUSED)", 2, 5, || {
-            let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+            let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
             router_topk_fused_kernel.encode(
                 &x_buf,
                 &router_w_buf,
@@ -269,13 +271,13 @@ fn test_moe_pipeline_breakdown_decode() {
                 true,
                 None::<f32>,
                 None::<f32>,
-                &mut encoder,
+                &mut command_buffer,
             );
-            encoder.end_encoding().submit().wait_until_completed().unwrap();
+            command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         });
 
         let counts_offsets_perf = run_perf_with_warmup("Counts+Offsets (FUSED)", 2, 5, || {
-            let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+            let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
             counts_offsets_kernel.encode(
                 &topk_ids_buf,
                 &mut offsets_buf,
@@ -284,13 +286,13 @@ fn test_moe_pipeline_breakdown_decode() {
                 t as u32,
                 e as u32,
                 k as u32,
-                &mut encoder,
+                &mut command_buffer,
             );
-            encoder.end_encoding().submit().wait_until_completed().unwrap();
+            command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         });
 
         let scatter_perf = run_perf_with_warmup("Scatter", 2, 5, || {
-            let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+            let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
             scatter_bases_kernel.encode(
                 &partials_buf,
                 &mut block_bases_buf,
@@ -299,7 +301,7 @@ fn test_moe_pipeline_breakdown_decode() {
                 num_blocks as u32,
                 num_tiles as u32,
                 0u32,
-                &mut encoder,
+                &mut command_buffer,
             );
             scatter_map_kernel.encode(
                 &topk_ids_buf,
@@ -315,32 +317,32 @@ fn test_moe_pipeline_breakdown_decode() {
                 num_blocks as u32,
                 num_tiles as u32,
                 &mut tok2row_buf,
-                &mut encoder,
+                &mut command_buffer,
             );
-            encoder.end_encoding().submit().wait_until_completed().unwrap();
+            command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         });
 
         let gather_perf = run_perf_with_warmup("Gather", 2, 5, || {
-            let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+            let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
             let x_perm = gather
-                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k as u32, d_model as u32, &mut encoder)
+                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k as u32, d_model as u32, &mut command_buffer)
                 .expect("failed to encode MoE gather");
-            let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+            let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
             drop(x_perm);
             drop(completed);
         });
 
         let (x_perm_buf, x_perm_completed) = {
-            let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+            let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
             let x_perm = gather
-                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k as u32, d_model as u32, &mut encoder)
+                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t as u32, k as u32, d_model as u32, &mut command_buffer)
                 .expect("failed to encode MoE gather");
-            let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+            let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
             (x_perm, completed)
         };
 
         let experts_perf = run_perf_with_warmup("Experts (MAIN COMPUTE)", 2, 5, || {
-            let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+            let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
             let output = experts_kernel
                 .encode(
                     MoeExpertsTwoPassArguments {
@@ -360,10 +362,10 @@ fn test_moe_pipeline_breakdown_decode() {
                         up_clip_max: 21.0,
                         silu_alpha: 1.702,
                     },
-                    &mut encoder,
+                    &mut command_buffer,
                 )
                 .expect("failed to encode MoE experts");
-            let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+            let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
             drop(output);
             drop(completed);
         });
@@ -371,7 +373,7 @@ fn test_moe_pipeline_breakdown_decode() {
         drop(x_perm_completed);
 
         let finalize_perf = run_perf_with_warmup("Finalize", 2, 5, || {
-            let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+            let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
             finalize_kernel.encode(
                 &tok2row_buf,
                 &topk_probs_buf,
@@ -380,9 +382,9 @@ fn test_moe_pipeline_breakdown_decode() {
                 t as u32,
                 d_model as u32,
                 k as u32,
-                &mut encoder,
+                &mut command_buffer,
             );
-            encoder.end_encoding().submit().wait_until_completed().unwrap();
+            command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         });
 
         // Print results

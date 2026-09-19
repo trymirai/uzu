@@ -7,7 +7,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::TensorAddScaleKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::TensorAddScaleKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -53,7 +56,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         false => alloc_allocation::<B, T>(&context, length),
     };
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         input_allocation.as_ref(),
         &bias_allocation,
@@ -61,9 +64,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         input.num_cols,
         input.length,
         input.scale,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     allocation_to_vec::<B, T>(&output_allocation)
 }

@@ -3,7 +3,7 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::{
         common::{
-            Backend, Encoder, Kernels,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
             gpu_types::weaver::{FrontierIdx, MetadataIdx, TreeIdx},
             kernel::{WeaverFrontierInsertChildrenKernel, WeaverFrontierSelectKernel},
         },
@@ -45,7 +45,7 @@ fn select<B: Backend>() -> Vec<u32> {
     let mut candidate_ids = alloc_allocation_with_data::<B, u32>(&context, &[0; 4 * 3]);
     let mut candidate_scores = alloc_allocation_with_data::<B, f32>(&context, &[0.0; 4 * 3]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(&context).unwrap();
-    let mut encoder = Encoder::new(context.as_ref()).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &mut frontier,
         &mut tree,
@@ -67,9 +67,9 @@ fn select<B: Backend>() -> Vec<u32> {
         3,
         4,
         3,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     [frontier, tree, slot_ancestors, token, metadata, ancestors, valid, candidate_ids]
         .iter()
         .flat_map(allocation_to_vec)
@@ -92,9 +92,9 @@ fn insert_children<B: Backend>() -> Vec<u32> {
     let scores = alloc_allocation_with_data::<B, f32>(&context, &[-0.1, -0.2, -0.3, 8.0, 8.0, 8.0, 0.1, 0.2, 0.3]);
     let mut frontier = alloc_allocation_with_data::<B, u32>(&context, &[42; FrontierIdx::COUNT * 16]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(&context).unwrap();
-    let mut encoder = Encoder::new(context.as_ref()).unwrap();
-    kernel.encode(&tree, &metadata, &valid, &ids, &scores, &mut frontier, 16, 4, 3, 3, &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    kernel.encode(&tree, &metadata, &valid, &ids, &scores, &mut frontier, 16, 4, 3, 3, &mut command_buffer);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec(&frontier)
 }
 

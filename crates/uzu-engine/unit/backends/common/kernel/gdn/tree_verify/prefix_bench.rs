@@ -50,7 +50,7 @@ fn bench_build_tree_prefix(c: &mut Criterion) {
                 "{}/Kernel/GDNTreeVerify/BuildTreePrefix/B1_T{tree_size}_HV{value_heads}",
                 type_short_name::<Metal>()
             );
-            iter_encode_loop_named::<Metal, _>(&context, bencher, &benchmark_path, |encoder| {
+            iter_encode_loop_named::<Metal, _>(&context, bencher, &benchmark_path, |command_buffer| {
                 let buffers = buffers.next_mut();
                 kernel.encode(
                     &buffers.trie,
@@ -59,7 +59,7 @@ fn bench_build_tree_prefix(c: &mut Criterion) {
                     batch_size as u32,
                     tree_size as u32,
                     value_heads as u32,
-                    encoder,
+                    command_buffer,
                 );
             });
         });

@@ -8,7 +8,8 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::{
         common::{
-            Allocation, Backend, Encoder, Kernels, gpu_types::weaver::MetadataIdx, kernel::AncestorAttentionKernel,
+            Allocation, Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+            CommandBufferPending, Context, Kernels, gpu_types::weaver::MetadataIdx, kernel::AncestorAttentionKernel,
         },
         cpu::Cpu,
         metal::Metal,
@@ -115,7 +116,7 @@ impl<B: Backend> Runner<B> {
         &mut self,
         repetitions: u32,
     ) -> Duration {
-        let mut encoder = Encoder::new(self.context.as_ref()).unwrap();
+        let mut command_buffer = self.context.create_command_buffer(None, None).unwrap();
         for _ in 0..repetitions {
             self.kernel.encode(
                 &self.prefix_kv,
@@ -134,10 +135,10 @@ impl<B: Backend> Runner<B> {
                 self.node_capacity,
                 MAX_DEPTH,
                 1.0 / (HEAD_DIM as f32).sqrt(),
-                &mut encoder,
+                &mut command_buffer,
             );
         }
-        encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
     }
 }
 

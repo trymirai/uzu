@@ -11,7 +11,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder,
+            Allocation, Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 ActivationTransform, Kernels,
@@ -138,7 +138,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let transform =
             ActivationTransform::<Cpu>::quantize(&context, T::data_type(), activation_group_size, sum_group_size)
                 .expect("CPU activation quantization transform");
-        let mut encoder = Encoder::<Cpu>::new(&context).expect("CPU encoder");
+        let mut command_buffer = context.create_command_buffer(None, None).unwrap();
         transform.encode_quantize(
             &input,
             &mut values,
@@ -147,9 +147,9 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             &factors,
             rows,
             columns,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().expect("CPU activation quantization");
+        command_buffer.end_encoding().submit().wait_until_completed().expect("CPU activation quantization");
 
         self.prepared_a = Some(PreparedInt8A {
             values: allocation_to_vec(&values),
@@ -311,9 +311,9 @@ pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
         T::data_type(),
     )
     .expect("MatmulCpuKernel");
-    let mut encoder = Encoder::<Cpu>::new(&context).expect("encoder");
-    matmul.encode(quant_arguments(&mut buffers, input), &mut encoder).expect("encode cpu quant");
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    matmul.encode(quant_arguments(&mut buffers, input), &mut command_buffer).expect("encode cpu quant");
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<Cpu, T>(&buffers.y)
 }
 
@@ -331,13 +331,13 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
         T::data_type(),
     )
     .expect("MatmulMetalKernel");
-    let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let args = quant_arguments(&mut buffers, input);
     if let Some(engine) = dispatch {
-        matmul.gemm.encode_with_engine(args, engine, &mut encoder).expect("forced GEMM engine encode failed");
+        matmul.gemm.encode_with_engine(args, engine, &mut command_buffer).expect("forced GEMM engine encode failed");
     } else {
-        matmul.encode(args, &mut encoder).expect("matmul encode failed");
+        matmul.encode(args, &mut command_buffer).expect("matmul encode failed");
     }
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<Metal, T>(&buffers.y)
 }

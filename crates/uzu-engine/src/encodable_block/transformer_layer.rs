@@ -1,7 +1,10 @@
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, kernel::ActivationTransform},
+    backends::common::{
+        Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, CommandBuffer, CommandBufferEncoding,
+        kernel::ActivationTransform,
+    },
     config::transformer_layer::{TransformerLayerConfig, TransformerLayerConvConfig},
     data_type::DataType,
     encodable_block::{
@@ -124,15 +127,21 @@ impl<B: Backend> TransformerLayerConv<B> {
         &self,
         input: &Allocation<B>,
         sequence_length: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
-        let mut projection_input = encoder.allocate_scratch(input.size())?;
-        encoder.encode_copy(input, .., &mut projection_input, ..);
-        let coefficients = self.kernel_projection.encode(projection_input, sequence_length, encoder)?;
-        let mut output =
-            self.pre_conv.encode(input, &coefficients, 2 * self.coefficient_count, 0, sequence_length, encoder)?;
+        let mut projection_input = command_buffer.allocate_scratch(input.size())?;
+        command_buffer.encode_copy(input.as_buffer_range_ref(), projection_input.as_buffer_range_mut());
+        let coefficients = self.kernel_projection.encode(projection_input, sequence_length, command_buffer)?;
+        let mut output = self.pre_conv.encode(
+            input,
+            &coefficients,
+            2 * self.coefficient_count,
+            0,
+            sequence_length,
+            command_buffer,
+        )?;
         if let Some((transform, factors)) = &self.input_rht {
-            transform.encode_fp_in_place(&mut output, factors, sequence_length, self.model_dim, encoder);
+            transform.encode_fp_in_place(&mut output, factors, sequence_length, self.model_dim, command_buffer);
         }
         Ok((output, coefficients))
     }
@@ -142,7 +151,7 @@ impl<B: Backend> TransformerLayerConv<B> {
         input: &Allocation<B>,
         coefficients: &Allocation<B>,
         sequence_length: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
         self.post_conv.encode(
             input,
@@ -150,7 +159,7 @@ impl<B: Backend> TransformerLayerConv<B> {
             2 * self.coefficient_count,
             self.coefficient_count,
             sequence_length,
-            encoder,
+            command_buffer,
         )
     }
 }
@@ -339,20 +348,21 @@ impl<B: Backend> TransformerLayer<B> {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group(&format!("transformer layer {}", self.layer_index));
+        command_buffer.push_debug_group(&format!("transformer layer {}", self.layer_index));
 
         let mut hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
-            pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut), encoder)?
+            pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut), command_buffer)?
         } else {
             assert!(self.layer_index == 0);
-            encoder.encode_copy(&input, .., shortcut, ..);
+            command_buffer.encode_copy(input.as_buffer_range_ref(), shortcut.as_buffer_range_mut());
             input
         };
 
         let mixer_coefficients = if let Some(convolution) = &self.mixer_conv {
-            let (output, coefficients) = convolution.encode_pre_convolution(&hidden, batch_dim.size(), encoder)?;
+            let (output, coefficients) =
+                convolution.encode_pre_convolution(&hidden, batch_dim.size(), command_buffer)?;
             hidden = output;
             Some(coefficients)
         } else {
@@ -360,45 +370,53 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
-        hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, encoder)?;
+        hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
 
         if let Some(coefficients) = mixer_coefficients {
             let convolution = self.mixer_conv.as_ref().expect("mixer convolution required");
-            hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), encoder)?;
+            hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), command_buffer)?;
         }
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
-            hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
+            hidden = post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None, command_buffer)?;
         }
 
-        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), encoder)?;
+        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut), command_buffer)?;
 
         let mlp_coefficients = if let Some(convolution) = &self.mlp_conv {
-            let (output, coefficients) = convolution.encode_pre_convolution(&hidden, batch_dim.size(), encoder)?;
+            let (output, coefficients) =
+                convolution.encode_pre_convolution(&hidden, batch_dim.size(), command_buffer)?;
             hidden = output;
             Some(coefficients)
         } else {
             None
         };
 
-        hidden = self.mlp.encode(hidden, batch_dim.size(), encoder)?;
+        hidden = self.mlp.encode(hidden, batch_dim.size(), command_buffer)?;
 
         if let Some(coefficients) = mlp_coefficients {
             let convolution = self.mlp_conv.as_ref().expect("mlp convolution required");
-            hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), encoder)?;
+            hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), command_buffer)?;
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None, encoder)?;
+            hidden = post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None, command_buffer)?;
         }
 
         if let Some(ple_projection) = &self.ple_projection {
             let per_layer_inputs = per_layer_inputs.expect("per-layer inputs required for PLE layer");
-            ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_dim.size(), encoder)?;
-            encoder.encode_fill(&mut hidden, 0);
+            ple_projection.encode(
+                self.layer_index,
+                per_layer_inputs,
+                shortcut,
+                &hidden,
+                batch_dim.size(),
+                command_buffer,
+            )?;
+            command_buffer.encode_fill(hidden.as_buffer_range_mut(), 0);
         }
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(hidden)
     }

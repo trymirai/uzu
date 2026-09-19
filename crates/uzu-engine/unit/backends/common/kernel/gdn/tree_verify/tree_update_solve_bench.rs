@@ -8,7 +8,7 @@ use uzu_engine_macros::uzu_bench;
 
 use crate::{
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
+        common::{Allocation, Backend, CommandBuffer, Context, Kernels, kernel::TreeUpdateSolveKernel},
         metal::Metal,
     },
     data_type::DataType,
@@ -196,9 +196,9 @@ fn bench_tree_update_solve(c: &mut Criterion) {
 
             group.throughput(Throughput::Elements((batch_size * tree_size * NUM_V_HEADS * HEAD_V_DIM) as u64));
             group.bench_function(benchmark_id, |bencher| {
-                iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
+                iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |command_buffer| {
                     let buffers = buffers.next_mut();
-                    encode(&kernel, buffers, batch_size, tree_size, encoder);
+                    encode(&kernel, buffers, batch_size, tree_size, command_buffer);
                 });
             });
         }
@@ -212,7 +212,7 @@ fn encode(
     buffers: &mut TreeUpdateSolveBuffers,
     batch_size: usize,
     tree_size: usize,
-    encoder: &mut Encoder<Metal>,
+    command_buffer: &mut <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding,
 ) {
     kernel.encode(
         Some(&buffers.kh0),
@@ -227,6 +227,6 @@ fn encode(
         tree_size as u32,
         NUM_V_HEADS as u32,
         HEAD_V_DIM as u32,
-        encoder,
+        command_buffer,
     );
 }

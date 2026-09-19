@@ -2,7 +2,7 @@ use bitflags::bitflags;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, Backend, CommandBuffer, Kernels,
         gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::GatedActMulKernel,
     },
@@ -138,7 +138,7 @@ impl<B: Backend> GatedActMul<B> {
         value_offset: u32,
         value_row_stride: u32,
         act_type: ActivationType,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         assert_eq!(self.ops, GatedActMulOp::FullPrecision);
         assert_eq!(self.options.contains(GatedActMulOptions::INTERLEAVED), value_operand.is_none());
@@ -167,7 +167,7 @@ impl<B: Backend> GatedActMul<B> {
             gate_clip_max,
             value_clip_min,
             value_clip_max,
-            encoder,
+            command_buffer,
         );
     }
 
@@ -181,7 +181,7 @@ impl<B: Backend> GatedActMul<B> {
         gated_dim: u32,
         batch_dim: u32,
         act_type: ActivationType,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         assert!(matches!(self.ops, GatedActMulOp::Quantize | GatedActMulOp::QuantizeWithGroupSums));
         assert!(self.options.contains(GatedActMulOptions::INTERLEAVED));
@@ -212,7 +212,7 @@ impl<B: Backend> GatedActMul<B> {
             gate_clip_max,
             value_clip_min,
             value_clip_max,
-            encoder,
+            command_buffer,
         );
     }
 }

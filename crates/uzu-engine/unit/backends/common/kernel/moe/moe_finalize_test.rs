@@ -6,7 +6,10 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Encoder, Kernels, kernel::MoeFinalizeKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::MoeFinalizeKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -35,7 +38,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let mut y_out = alloc_allocation::<B, T>(&context, input.t * input.d_model);
 
     let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(&context, DataType::BF16).expect("finalize kernel");
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     finalize.encode(
         &tok2row,
         &probs,
@@ -44,9 +47,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         input.t as u32,
         input.d_model as u32,
         input.k as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     allocation_to_vec(&y_out)
 }
