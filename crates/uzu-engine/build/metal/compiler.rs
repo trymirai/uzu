@@ -25,7 +25,7 @@ use crate::{
         identifiers::KernelPath, kernel::Kernel,
     },
     debug_log,
-    metal::gpu_types::gpu_type_gen,
+    metal::{compression, gpu_types::gpu_type_gen},
 };
 
 const MIN_VARIANTS_PER_SHARD: usize = 8;
@@ -225,7 +225,7 @@ impl MetalCompiler {
                 .iter()
                 .map(|file| {
                     if self.metallib_compressed {
-                        file.with_added_extension("zst")
+                        file.with_added_extension("lzfse")
                     } else {
                         file.clone()
                     }
@@ -243,7 +243,7 @@ impl MetalCompiler {
                             let compressed_file = compressed_file.clone();
                             tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                                 let metallib_source = fs::read(metallib_file)?;
-                                fs::write(compressed_file, zstd::encode_all(metallib_source.as_slice(), 22)?)?;
+                                fs::write(compressed_file, compression::compress(metallib_source.as_slice()))?;
                                 Ok(())
                             })
                             .await??;

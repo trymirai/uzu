@@ -24,9 +24,9 @@ let package = Package(
             dependencies: ["uzu", "UzuMetalIOSimulatorStubs"],
             linkerSettings: [
                 .linkedLibrary("c++"),
-                .linkedFramework("SystemConfiguration"),
+                .linkedLibrary("compression"),
+                .linkedFramework("SystemConfiguration", .when(platforms: [.macOS])),
                 .linkedFramework("Metal"),
-                .linkedFramework("MetalPerformanceShadersGraph"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
             ]

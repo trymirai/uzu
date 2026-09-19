@@ -26,6 +26,7 @@ use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
     metal::{
         command_buffer::MetalCommandBufferInitial,
+        decompression,
         sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
     },
 };
@@ -70,8 +71,7 @@ impl MetalContext {
 
         let maybe_uncompressed_data_owned;
         let data = if compressed {
-            maybe_uncompressed_data_owned = zstd::decode_all(data).map_err(MetalError::CannotDecompressLibrary)?;
-
+            maybe_uncompressed_data_owned = decompression::decompress(data);
             &maybe_uncompressed_data_owned
         } else {
             data
