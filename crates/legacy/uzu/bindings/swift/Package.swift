@@ -29,6 +29,7 @@ let package = Package(
                 .linkedFramework("MetalPerformanceShadersGraph"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
+                .linkedFramework("AVFAudio", .when(platforms: [.iOS])),
             ]
         ),
         .target(
