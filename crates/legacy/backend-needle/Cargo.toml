@@ -1,0 +1,27 @@
+[package]
+name = "backend-needle"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+shoji.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures.workspace = true
+tokio-util.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+libloading = "0.8"
+
+[dev-dependencies]
+tempfile.workspace = true
+rstest.workspace = true
+
+[lints]
+workspace = true

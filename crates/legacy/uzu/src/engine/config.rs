@@ -17,6 +17,13 @@ pub const KEY_GEMINI_API_KEY: &str = "GEMINI_API_KEY";
 pub const KEY_XAI_API_KEY: &str = "XAI_API_KEY";
 pub const KEY_BASETEN_API_KEY: &str = "BASETEN_API_KEY";
 pub const KEY_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
+pub const KEY_NEEDLE3_LIB_PATH: &str = "NEEDLE3_LIB_PATH";
+pub const KEY_NEEDLE_WEIGHTS_PATH: &str = "NEEDLE_WEIGHTS_PATH";
+pub const KEY_NEEDLE_MODELS_DIR: &str = "NEEDLE_MODELS_DIR";
+
+fn default_true() -> bool {
+    true
+}
 
 #[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -35,6 +42,14 @@ pub struct EngineConfig {
     pub openrouter_api_key: Option<String>,
     pub allow_ollama_usage: bool,
     pub allow_lmstudio_usage: bool,
+    #[serde(default = "default_true")]
+    pub allow_needle_usage: bool,
+    #[serde(default)]
+    pub needle_lib_path: Option<String>,
+    #[serde(default)]
+    pub needle_weights_path: Option<String>,
+    #[serde(default)]
+    pub needle_models_dir: Option<String>,
     #[serde(default)]
     pub download_manager_type: DownloadManagerType,
 }
@@ -55,6 +70,10 @@ impl Default for EngineConfig {
             openrouter_api_key: env::var(KEY_OPENROUTER_API_KEY).ok(),
             allow_ollama_usage: true,
             allow_lmstudio_usage: true,
+            allow_needle_usage: true,
+            needle_lib_path: env::var(KEY_NEEDLE3_LIB_PATH).ok(),
+            needle_weights_path: env::var(KEY_NEEDLE_WEIGHTS_PATH).ok(),
+            needle_models_dir: env::var(KEY_NEEDLE_MODELS_DIR).ok(),
             download_manager_type: DownloadManagerType::default(),
         }
     }
@@ -82,6 +101,9 @@ impl EngineConfig {
         synchronize_field!(SettingKind::Secret, xai_api_key, KEY_XAI_API_KEY.to_string());
         synchronize_field!(SettingKind::Secret, baseten_api_key, KEY_BASETEN_API_KEY.to_string());
         synchronize_field!(SettingKind::Secret, openrouter_api_key, KEY_OPENROUTER_API_KEY.to_string());
+        synchronize_field!(SettingKind::Config, needle_lib_path, KEY_NEEDLE3_LIB_PATH.to_string());
+        synchronize_field!(SettingKind::Config, needle_weights_path, KEY_NEEDLE_WEIGHTS_PATH.to_string());
+        synchronize_field!(SettingKind::Config, needle_models_dir, KEY_NEEDLE_MODELS_DIR.to_string());
 
         Ok(())
     }
@@ -249,5 +271,80 @@ impl EngineConfig {
             download_manager_type,
             ..self.clone()
         }
+    }
+
+    #[bindings::export(Method)]
+    pub fn with_allow_needle_usage(
+        &self,
+        allow_needle_usage: bool,
+    ) -> Self {
+        Self {
+            allow_needle_usage,
+            ..self.clone()
+        }
+    }
+
+    #[bindings::export(Method)]
+    pub fn with_needle_lib_path(
+        &self,
+        needle_lib_path: String,
+    ) -> Self {
+        Self {
+            needle_lib_path: Some(needle_lib_path),
+            ..self.clone()
+        }
+    }
+
+    #[bindings::export(Method)]
+    pub fn with_needle_weights_path(
+        &self,
+        needle_weights_path: String,
+    ) -> Self {
+        Self {
+            needle_weights_path: Some(needle_weights_path),
+            ..self.clone()
+        }
+    }
+
+    #[bindings::export(Method)]
+    pub fn with_needle_models_dir(
+        &self,
+        needle_models_dir: String,
+    ) -> Self {
+        Self {
+            needle_models_dir: Some(needle_models_dir),
+            ..self.clone()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn needle_fields_default_when_absent_from_json() {
+        let config: EngineConfig = serde_json::from_str(
+            r#"{
+                "application_identifier": null,
+                "mirai_api_key": null,
+                "lalamo_path": null,
+                "local_path": null,
+                "huggingface_api_key": null,
+                "openai_api_key": null,
+                "anthropic_api_key": null,
+                "gemini_api_key": null,
+                "xai_api_key": null,
+                "baseten_api_key": null,
+                "openrouter_api_key": null,
+                "allow_ollama_usage": true,
+                "allow_lmstudio_usage": true
+            }"#,
+        )
+        .unwrap();
+        assert!(config.allow_needle_usage);
+        assert!(config.needle_lib_path.is_none());
+        assert!(config.needle_weights_path.is_none());
+        assert!(config.needle_models_dir.is_none());
     }
 }

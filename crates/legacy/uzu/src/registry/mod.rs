@@ -3,6 +3,7 @@ mod error;
 pub mod local;
 mod merged;
 pub mod mirai;
+pub mod needle;
 pub mod openai;
 
 pub use cached::CachedRegistry;

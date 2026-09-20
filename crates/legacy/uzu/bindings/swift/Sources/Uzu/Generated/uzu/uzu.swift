@@ -1996,11 +1996,15 @@ public struct EngineConfig: Equatable, Hashable, Codable {
     public var openrouterApiKey: String?
     public var allowOllamaUsage: Bool
     public var allowLmstudioUsage: Bool
+    public var allowNeedleUsage: Bool
+    public var needleLibPath: String?
+    public var needleWeightsPath: String?
+    public var needleModelsDir: String?
     public var downloadManagerType: DownloadManagerType
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(applicationIdentifier: String?, miraiApiKey: String?, lalamoPath: String?, localPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: DownloadManagerType) {
+    public init(applicationIdentifier: String?, miraiApiKey: String?, lalamoPath: String?, localPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, allowNeedleUsage: Bool, needleLibPath: String?, needleWeightsPath: String?, needleModelsDir: String?, downloadManagerType: DownloadManagerType) {
         self.applicationIdentifier = applicationIdentifier
         self.miraiApiKey = miraiApiKey
         self.lalamoPath = lalamoPath
@@ -2014,6 +2018,10 @@ public struct EngineConfig: Equatable, Hashable, Codable {
         self.openrouterApiKey = openrouterApiKey
         self.allowOllamaUsage = allowOllamaUsage
         self.allowLmstudioUsage = allowLmstudioUsage
+        self.allowNeedleUsage = allowNeedleUsage
+        self.needleLibPath = needleLibPath
+        self.needleWeightsPath = needleWeightsPath
+        self.needleModelsDir = needleModelsDir
         self.downloadManagerType = downloadManagerType
     }
 
@@ -2023,6 +2031,15 @@ public func withAllowLmstudioUsage(allowLmstudioUsage: Bool) -> EngineConfig  {
     uniffi_uzu_fn_method_engineconfig_with_allow_lmstudio_usage(
             FfiConverterTypeEngineConfig_lower(self),
         FfiConverterBool.lower(allowLmstudioUsage),$0
+    )
+})
+}
+    
+public func withAllowNeedleUsage(allowNeedleUsage: Bool) -> EngineConfig  {
+    return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
+    uniffi_uzu_fn_method_engineconfig_with_allow_needle_usage(
+            FfiConverterTypeEngineConfig_lower(self),
+        FfiConverterBool.lower(allowNeedleUsage),$0
     )
 })
 }
@@ -2117,6 +2134,33 @@ public func withMiraiApiKey(miraiApiKey: String) -> EngineConfig  {
 })
 }
     
+public func withNeedleLibPath(needleLibPath: String) -> EngineConfig  {
+    return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
+    uniffi_uzu_fn_method_engineconfig_with_needle_lib_path(
+            FfiConverterTypeEngineConfig_lower(self),
+        FfiConverterString.lower(needleLibPath),$0
+    )
+})
+}
+    
+public func withNeedleModelsDir(needleModelsDir: String) -> EngineConfig  {
+    return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
+    uniffi_uzu_fn_method_engineconfig_with_needle_models_dir(
+            FfiConverterTypeEngineConfig_lower(self),
+        FfiConverterString.lower(needleModelsDir),$0
+    )
+})
+}
+    
+public func withNeedleWeightsPath(needleWeightsPath: String) -> EngineConfig  {
+    return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
+    uniffi_uzu_fn_method_engineconfig_with_needle_weights_path(
+            FfiConverterTypeEngineConfig_lower(self),
+        FfiConverterString.lower(needleWeightsPath),$0
+    )
+})
+}
+    
 public func withOpenaiApiKey(openaiApiKey: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_openai_api_key(
@@ -2172,6 +2216,10 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
                 openrouterApiKey: FfiConverterOptionString.read(from: &buf), 
                 allowOllamaUsage: FfiConverterBool.read(from: &buf), 
                 allowLmstudioUsage: FfiConverterBool.read(from: &buf), 
+                allowNeedleUsage: FfiConverterBool.read(from: &buf), 
+                needleLibPath: FfiConverterOptionString.read(from: &buf), 
+                needleWeightsPath: FfiConverterOptionString.read(from: &buf), 
+                needleModelsDir: FfiConverterOptionString.read(from: &buf), 
                 downloadManagerType: FfiConverterTypeDownloadManagerType.read(from: &buf)
         )
     }
@@ -2190,6 +2238,10 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.openrouterApiKey, into: &buf)
         FfiConverterBool.write(value.allowOllamaUsage, into: &buf)
         FfiConverterBool.write(value.allowLmstudioUsage, into: &buf)
+        FfiConverterBool.write(value.allowNeedleUsage, into: &buf)
+        FfiConverterOptionString.write(value.needleLibPath, into: &buf)
+        FfiConverterOptionString.write(value.needleWeightsPath, into: &buf)
+        FfiConverterOptionString.write(value.needleModelsDir, into: &buf)
         FfiConverterTypeDownloadManagerType.write(value.downloadManagerType, into: &buf)
     }
 }

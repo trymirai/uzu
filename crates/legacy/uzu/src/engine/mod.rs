@@ -7,6 +7,7 @@ mod error;
 
 use std::{collections::HashMap, sync::Arc};
 
+use backend_needle::{Backend as NeedleBackend, Config as NeedleConfig, DiscoveryHints};
 use backend_remote::openai::Backend as OpenAIBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
@@ -39,6 +40,7 @@ use crate::{
         CachedRegistry, MergedRegistry, RegistryError,
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
         mirai::{Backend as MiraiBackend, Registry as MiraiRegistry, TELEMETRY_URL},
+        needle::Registry as NeedleRegistry,
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
     settings::Settings,
@@ -179,6 +181,30 @@ impl Engine {
             let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
             engine.add_registry(Box::new(registry)).await?;
             engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
+        }
+
+        if config.allow_needle_usage {
+            match NeedleConfig::discover(DiscoveryHints {
+                lib_path: config.needle_lib_path.clone(),
+                weights_path: config.needle_weights_path.clone(),
+                models_dir: config.needle_models_dir.clone(),
+            }) {
+                Ok(needle_config) => match NeedleBackend::try_new(needle_config.clone()) {
+                    Ok(backend) => {
+                        engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
+                        match NeedleRegistry::new(needle_config) {
+                            Ok(registry) => {
+                                if let Err(error) = engine.add_registry(Box::new(registry)).await {
+                                    tracing::warn!(?error, "needle registry not added");
+                                }
+                            },
+                            Err(error) => tracing::info!(?error, "needle registry not created"),
+                        }
+                    },
+                    Err(error) => tracing::info!(?error, "needle backend not registered"),
+                },
+                Err(error) => tracing::info!(?error, "needle not discovered"),
+            }
         }
 
         Ok(engine)

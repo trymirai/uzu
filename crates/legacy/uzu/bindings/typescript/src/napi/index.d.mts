@@ -991,8 +991,12 @@ export declare class EngineConfig {
   openrouterApiKey?: string
   allowOllamaUsage: boolean
   allowLmstudioUsage: boolean
+  allowNeedleUsage: boolean
+  needleLibPath?: string
+  needleWeightsPath?: string
+  needleModelsDir?: string
   downloadManagerType: DownloadManagerType
-  constructor(applicationIdentifier?: string, miraiApiKey?: string, lalamoPath?: string, localPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, downloadManagerType: DownloadManagerType)
+  constructor(applicationIdentifier?: string, miraiApiKey?: string, lalamoPath?: string, localPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, allowNeedleUsage: boolean, needleLibPath?: string, needleWeightsPath?: string, needleModelsDir?: string, downloadManagerType: DownloadManagerType)
 
   static create(): EngineConfig
   withApplicationIdentifier(applicationIdentifier: string): EngineConfig
@@ -1008,6 +1012,10 @@ export declare class EngineConfig {
   withOpenrouterApiKey(openrouterApiKey: string): EngineConfig
   withAllowOllamaUsage(allowOllamaUsage: boolean): EngineConfig
   withAllowLmstudioUsage(allowLmstudioUsage: boolean): EngineConfig
+  withAllowNeedleUsage(allowNeedleUsage: boolean): EngineConfig
+  withNeedleLibPath(needleLibPath: string): EngineConfig
+  withNeedleWeightsPath(needleWeightsPath: string): EngineConfig
+  withNeedleModelsDir(needleModelsDir: string): EngineConfig
   withDownloadManagerType(downloadManagerType: DownloadManagerType): EngineConfig
 }
 

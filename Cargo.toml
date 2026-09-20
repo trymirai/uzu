@@ -7,6 +7,7 @@ members = [
     "crates/legacy/bindings",
     "crates/legacy/shoji",
     "crates/legacy/backend-remote",
+    "crates/legacy/backend-needle",
     "crates/legacy/json-transform",
     "crates/legacy/token-stream-parser",
     "crates/legacy/hanashi",
@@ -50,6 +51,7 @@ shoji = { path = "crates/legacy/shoji", default-features = false }
 uzu-engine = { path = "crates/uzu-engine", default-features = false }
 uzu-engine-macros = { path = "crates/uzu-engine-macros" }
 backend-remote = { path = "crates/legacy/backend-remote", default-features = false }
+backend-needle = { path = "crates/legacy/backend-needle", default-features = false }
 json-transform = { path = "crates/legacy/json-transform", default-features = false }
 token-stream-parser = { path = "crates/legacy/token-stream-parser", default-features = false }
 hanashi = { path = "crates/legacy/hanashi", default-features = false }

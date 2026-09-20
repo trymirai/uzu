@@ -84,6 +84,7 @@ tsify = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 backend-remote.workspace = true
+backend-needle.workspace = true
 bon.workspace = true
 nagare.workspace = true
 hanashi.workspace = true
