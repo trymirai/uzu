@@ -7,7 +7,7 @@ use nagare::{
     tool::uzu_tool_function,
 };
 use shoji::types::{
-    basic::{CancelToken, ToolCall},
+    basic::{CancelToken, SamplingSeed, ToolCall},
     model::Model,
     session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyStats, ChatRole},
 };
@@ -116,10 +116,19 @@ pub async fn ensure_session(
         }
     }
 
-    let engine = state.read().engine.clone();
+    let (engine, seed, no_tools) = {
+        let state = state.read();
+        (state.engine.clone(), state.seed, state.no_tools)
+    };
     let session = match async {
-        let mut session = engine.chat(model.clone(), ChatConfig::default()).await?;
-        if session.supports_tool_calls().await {
+        let mut config = ChatConfig::default();
+        if let Some(seed) = seed {
+            config = config.with_sampling_seed(SamplingSeed::Custom {
+                seed,
+            });
+        }
+        let mut session = engine.chat(model.clone(), config).await?;
+        if !no_tools && session.supports_tool_calls().await {
             session.add_tool(get_current_date_time).await?;
             session.add_tool(sleep).await?;
         }
