@@ -1,16 +1,29 @@
 import time
-from collections.abc import Generator
-from dataclasses import dataclass
+from collections.abc import Callable, Generator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
 import mlx_lm
 from mlx import nn
 from mlx_lm.generate import GenerationResponse
+from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from common import ChatMessage, get_model_path
 from mach import MemoryCounters, get_memory_counters
+
+
+@dataclass(frozen=True)
+class MlxSampling:
+    temp: float = 0.0
+    top_p: float = 0.0
+    min_p: float = 0.0
+    min_tokens_to_keep: int = 1
+    top_k: int = 0
+    xtc_probability: float = 0.0
+    xtc_threshold: float = 0.0
+    xtc_special_tokens: list[int] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -38,6 +51,9 @@ class MlxRunRequest:
 
     # Number of tokens proposed per speculative decoding round; ignored without a draft model.
     draft_tokens: int = 2
+
+    # Sampling parameters
+    sampling: MlxSampling | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +115,20 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
     memory_graphics_peak_total: int = 0
     memory_with_graphics_peak: MemoryCounters = get_memory_counters()
 
+    # sampling
+    sampler: Callable | None = None
+    if request.sampling is not None:
+        sampler = make_sampler(
+            temp=request.sampling.temp,
+            top_p=request.sampling.top_p,
+            min_p=request.sampling.min_p,
+            min_tokens_to_keep=request.sampling.min_tokens_to_keep,
+            top_k=request.sampling.top_k,
+            xtc_probability=request.sampling.xtc_probability,
+            xtc_threshold=request.sampling.xtc_threshold,
+            xtc_special_tokens=request.sampling.xtc_special_tokens,
+        )
+
     # create and run inference loop
     time_start: float = time.perf_counter()
 
@@ -110,6 +140,7 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
         draft_model=draft_model,
         prefill_step_size=request.prefill_step_size,
         num_draft_tokens=request.draft_tokens,
+        sampler=sampler,
     )
     for response in stream:
         if time_first_token < 0.0:

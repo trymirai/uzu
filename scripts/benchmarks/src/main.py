@@ -1,7 +1,7 @@
 from typer import Typer
 
-import backend_mlx
-from backend_mlx import MlxRunRequest, MlxRunResponse
+import engine_mlx
+from engine_mlx import MlxRunRequest, MlxRunResponse
 
 app = Typer(add_completion=False)
 
@@ -13,7 +13,7 @@ def run_mlx():
         model_path="mlx-community/Qwen3.5-4B-8bit",
         prompt="Tell me about London",
     )
-    response: MlxRunResponse = backend_mlx.run(config)
+    response: MlxRunResponse = engine_mlx.run(config)
     print(response)
 
 
