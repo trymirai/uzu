@@ -7,15 +7,13 @@ use uzu::{
     settings::SettingsError,
 };
 
-use crate::interactive::{components::Application, model::ModelResolutionError};
+use crate::interactive::components::Application;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum CliError {
     #[error(transparent)]
     Engine(#[from] EngineError),
-    #[error(transparent)]
-    ModelResolution(#[from] ModelResolutionError),
     #[error(transparent)]
     Settigs(#[from] SettingsError),
     #[error("Rendering error: {message}")]
