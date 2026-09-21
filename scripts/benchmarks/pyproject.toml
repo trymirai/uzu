@@ -2,7 +2,12 @@
 name = "benchmarks"
 version = "0.1.0"
 requires-python = ">=3.13.7"
-dependencies = ["mlx==0.32.2", "mlx-lm==0.31.3", "typer>=0.27.2"]
+dependencies = [
+    "mlx==0.32.2",
+    "mlx-lm==0.31.3",
+    "mtplx==2.11.3",
+    "typer>=0.27.2",
+]
 
 [project.scripts]
 benchmarks = "main:app"
