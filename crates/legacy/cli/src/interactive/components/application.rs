@@ -18,7 +18,6 @@ use crate::{
         components::{CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme},
         flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
-        model::resolve_model_id,
         sessions::{self, SessionState},
     },
 };
@@ -148,21 +147,7 @@ pub fn Application(
         let engine = state.read().engine.clone();
         let mut state = state;
         async move {
-            let initial_model = match requested_model {
-                Some(model) => match resolve_model_id(&engine, model).await {
-                    Ok(model) => model,
-                    Err(error) => {
-                        state.write().history.push(HistoryCellType::CommandResult {
-                            result: format!("Failed to resolve model: {error}"),
-                        });
-                        state.write().flow = Some(Box::new(ModelRegistriesFlow));
-                        return;
-                    },
-                },
-                None => None,
-            };
-
-            let Some(identifier) = initial_model else {
+            let Some(identifier) = requested_model else {
                 state.write().flow = Some(Box::new(ModelRegistriesFlow));
                 return;
             };

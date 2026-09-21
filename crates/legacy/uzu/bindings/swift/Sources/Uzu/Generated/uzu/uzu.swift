@@ -1985,7 +1985,6 @@ public func FfiConverterTypeDevice_lower(_ value: Device) -> RustBuffer {
 public struct EngineConfig: Equatable, Hashable, Codable {
     public var applicationIdentifier: String?
     public var miraiApiKey: String?
-    public var lalamoPath: String?
     public var localPath: String?
     public var huggingfaceApiKey: String?
     public var openaiApiKey: String?
@@ -2000,10 +1999,9 @@ public struct EngineConfig: Equatable, Hashable, Codable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(applicationIdentifier: String?, miraiApiKey: String?, lalamoPath: String?, localPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: DownloadManagerType) {
+    public init(applicationIdentifier: String?, miraiApiKey: String?, localPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: DownloadManagerType) {
         self.applicationIdentifier = applicationIdentifier
         self.miraiApiKey = miraiApiKey
-        self.lalamoPath = lalamoPath
         self.localPath = localPath
         self.huggingfaceApiKey = huggingfaceApiKey
         self.openaiApiKey = openaiApiKey
@@ -2090,15 +2088,6 @@ public func withHuggingfaceApiKey(huggingfaceApiKey: String) -> EngineConfig  {
 })
 }
     
-public func withLalamoPath(lalamoPath: String) -> EngineConfig  {
-    return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
-    uniffi_uzu_fn_method_engineconfig_with_lalamo_path(
-            FfiConverterTypeEngineConfig_lower(self),
-        FfiConverterString.lower(lalamoPath),$0
-    )
-})
-}
-    
 public func withLocalPath(localPath: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_local_path(
@@ -2161,7 +2150,6 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
             try EngineConfig(
                 applicationIdentifier: FfiConverterOptionString.read(from: &buf), 
                 miraiApiKey: FfiConverterOptionString.read(from: &buf), 
-                lalamoPath: FfiConverterOptionString.read(from: &buf), 
                 localPath: FfiConverterOptionString.read(from: &buf), 
                 huggingfaceApiKey: FfiConverterOptionString.read(from: &buf), 
                 openaiApiKey: FfiConverterOptionString.read(from: &buf), 
@@ -2179,7 +2167,6 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
     public static func write(_ value: EngineConfig, into buf: inout [UInt8]) {
         FfiConverterOptionString.write(value.applicationIdentifier, into: &buf)
         FfiConverterOptionString.write(value.miraiApiKey, into: &buf)
-        FfiConverterOptionString.write(value.lalamoPath, into: &buf)
         FfiConverterOptionString.write(value.localPath, into: &buf)
         FfiConverterOptionString.write(value.huggingfaceApiKey, into: &buf)
         FfiConverterOptionString.write(value.openaiApiKey, into: &buf)

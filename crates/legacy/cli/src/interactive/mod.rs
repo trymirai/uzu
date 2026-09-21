@@ -16,10 +16,12 @@ mod components;
 mod flows;
 mod helpers;
 mod list;
-mod model;
+mod non_interactive;
 mod sampling;
 mod sessions;
 mod util;
+
+pub use non_interactive::run_non_interactive;
 
 const APP_IDENTIFIER: &str = "com.trymirai.cli";
 
