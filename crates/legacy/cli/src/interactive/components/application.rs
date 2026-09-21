@@ -31,6 +31,8 @@ pub struct ApplicationProps {
     pub settings: Option<Settings>,
     pub model: Option<String>,
     pub reasoning_effort: Option<ReasoningEffort>,
+    pub seed: Option<i64>,
+    pub no_tools: bool,
 }
 
 pub struct ModelState {
@@ -48,6 +50,8 @@ pub struct ApplicationState {
     preferences: Preferences,
     /// Session-scoped thinking override from the command line; never persisted.
     thinking_override: Option<ThinkingPreference>,
+    pub seed: Option<i64>,
+    pub no_tools: bool,
     pub engine: Engine,
     pub settings: Option<Settings>,
     pub flow: Option<Box<dyn Flow>>,
@@ -124,6 +128,8 @@ pub fn Application(
             level: effort,
             enabled: effort != ReasoningEffort::Disabled,
         }),
+        seed: props.seed,
+        no_tools: props.no_tools,
         flow: None,
         history: Vec::new(),
         registry: FlowRegistry::default()

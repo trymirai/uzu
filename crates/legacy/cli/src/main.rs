@@ -18,6 +18,12 @@ struct Cli {
     /// Overrides the saved preference for this run only; never persisted.
     #[arg(long, value_name = "EFFORT")]
     reasoning_effort: Option<ReasoningEffort>,
+    /// Sampling seed for interactive chat sessions.
+    #[arg(long, value_name = "SEED", allow_negative_numbers = true)]
+    seed: Option<i64>,
+    /// Disable built-in tools in interactive chat sessions.
+    #[arg(long)]
+    no_tools: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -83,7 +89,7 @@ async fn main() -> Result<()> {
         Some(Commands::Storage {
             download_manager,
         }) => storage::run(download_manager).await?,
-        None => interactive::run_interactive(cli.model, cli.reasoning_effort).await?,
+        None => interactive::run_interactive(cli.model, cli.reasoning_effort, cli.seed, cli.no_tools).await?,
     }
 
     Ok(())
