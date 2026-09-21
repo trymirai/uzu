@@ -23,8 +23,13 @@
           overlays = [(import rust-overlay)];
         };
 
-        rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+        rustToolchainNixCC = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+        rustToolchainHostCC = rustToolchainNixCC.overrideAttrs (_: {
+          depsHostHostPropagated = [];
+          propagatedBuildInputs = [];
+          depsTargetTargetPropagated = [];
+        });
+        craneLibNixCC = (crane.mkLib pkgs).overrideToolchain rustToolchainNixCC;
 
         aar-extract = pkgs.ipsw.overrideAttrs (old: {
           pname = "aar-extract";
@@ -95,10 +100,31 @@
           };
         };
 
-        buildInputs = with pkgs; (lib.optionals pkgs.stdenv.hostPlatform.isLinux [alsa-lib]) ++ (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [apple-sdk_26]);
-        nativeBuildInputs = with pkgs; [cmake] ++ (lib.optionals pkgs.stdenv.hostPlatform.isLinux [pkg-config]) ++ (lib.optionals pkgs.stdenv.hostPlatform.isDarwin [metal-toolchain]);
+        hostToolchainBuildInputs = with pkgs; (lib.optionals stdenv.hostPlatform.isLinux [alsa-lib]);
+        nixToolchainBuildInputs = hostToolchainBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [apple-sdk_26]);
 
-        mirai = craneLib.buildPackage {
+        hostToolchainNativeBuildInputs = with pkgs; [cmake] ++ (lib.optionals stdenv.hostPlatform.isLinux [pkg-config]);
+        nixToolchainNativeBuildInputs = hostToolchainNativeBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [metal-toolchain]);
+
+        commonDevshellPackages = with pkgs;
+          [
+            nil
+            uv
+            wasmtime
+            evcxr
+            cargo-deny
+            cargo-nextest
+            cargo-hack
+            cargo-expand
+            cargo-flamegraph
+            cargo-show-asm
+            critcmp
+          ]
+          ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [cargo-swift tuist]);
+        hostToolchainDevshellPackages = commonDevshellPackages ++ [rustToolchainHostCC];
+        nixToolchainDevshellPackages = commonDevshellPackages ++ [rustToolchainNixCC];
+
+        mirai = craneLibNixCC.buildPackage {
           pname = "mirai";
           src = ./.;
 
@@ -108,7 +134,8 @@
             install -Dm755 target/release/cli $out/bin/mirai
           '';
 
-          inherit buildInputs nativeBuildInputs;
+          buildInputs = nixToolchainBuildInputs;
+          nativeBuildInputs = nixToolchainNativeBuildInputs;
 
           doCheck = false;
         };
@@ -120,23 +147,22 @@
           default = mirai;
         };
 
-        devShells.default = pkgs.mkShell {
-          inherit buildInputs nativeBuildInputs;
+        devShells = {
+          default = pkgs.mkShell {
+            buildInputs = nixToolchainBuildInputs;
+            nativeBuildInputs = nixToolchainNativeBuildInputs;
 
-          packages = with pkgs; [
-            nil
-            uv
-            wasmtime
-            evcxr
-            rustToolchain
-            cargo-deny
-            cargo-nextest
-            cargo-hack
-            cargo-expand
-            cargo-flamegraph
-            cargo-show-asm
-            critcmp
-          ];
+            packages = nixToolchainDevshellPackages;
+          };
+
+          host-xcode = pkgs.mkShellNoCC {
+            buildInputs = hostToolchainBuildInputs;
+            nativeBuildInputs = hostToolchainNativeBuildInputs;
+
+            packages = hostToolchainDevshellPackages;
+
+            TUIST_GENERATE_OPEN = "false";
+          };
         };
       }
     );
