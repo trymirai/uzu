@@ -8,6 +8,11 @@ from engine_mtplx import MtplxRunRequest, MtplxRunResponse
 app = Typer(add_completion=False)
 
 
+@app.command("llamacpp")
+def run_llamacpp():
+    pass
+
+
 @app.command("mlx")
 def run_mlx():
     request = MlxRunRequest(

@@ -1,0 +1,13 @@
+---
+AccessModifierOffset: -4
+AlignAfterOpenBracket: BlockIndent
+AllowAllArgumentsOnNextLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: None
+BasedOnStyle: Google
+BinPackArguments: false
+BinPackLongBracedList: false
+BreakBeforeBraces: Attach
+ColumnLimit: 120
+IndentWidth: 4
