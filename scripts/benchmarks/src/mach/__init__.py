@@ -25,7 +25,7 @@ class MemoryCounters(ctypes.Structure):
     malloc_in_use: int
     malloc_max_in_use: int
 
-    # Keep field types and order identical to memory_counters_t in _mach.c.
+    # Keep field types and order identical to memory_counters_t in memory_counters.h.
     _fields_ = [
         ("pid", ctypes.c_int32),
         ("phys_footprint", ctypes.c_uint64),
