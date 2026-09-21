@@ -31,7 +31,7 @@ class MlxRunRequest:
     # Model location:
     #   str for a Hugging Face repository ID,
     #   Path for a local model directory.
-    model_path: str | Path
+    model: str | Path
 
     # Raw input text or chat messages formatted using the target tokenizer's chat template.
     prompt: str | list[ChatMessage]
@@ -58,34 +58,19 @@ class MlxRunRequest:
 
 @dataclass(frozen=True)
 class MlxRunResponse:
-    text: str
-
-    # Time to the first generated token, in seconds.
-    time_first_token: float
-
-    # Prompt processing throughput, in tokens per second.
+    text: str = field(repr=False)
+    time_to_first_token: float
     prompt_tps: float
-
-    # Token generation throughput, in tokens per second.
     generation_tps: float
-
-    # Average generated tokens per target forward pass: 1 without speculative decoding;
-    # may exceed 1 with speculative decoding.
     tokens_per_fp: float
-
-    # Peak allocated memory, in gigabytes (GB).
-    peak_memory: float
-
-    # Total prompt processing and generation time, in seconds, excluding model loading.
+    peak_memory: int
     duration: float
-
-    # Memory counters collected using the Mach API.
     memory_counters: MemoryCounters
 
 
 def run(request: MlxRunRequest) -> MlxRunResponse:
     # load main model
-    model_path: str = get_model_path(request.model_path)
+    model_path: str = get_model_path(request.model)
     model: nn.Module
     tokenizer: TokenizerWrapper
     model, tokenizer = cast(tuple[nn.Module, TokenizerWrapper], mlx_lm.load(model_path))
@@ -93,7 +78,7 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
     # load draft model
     draft_model: nn.Module | None = None
     if request.draft_model_path is not None:
-        draft_model_path: str = get_model_path(request.model_path)
+        draft_model_path: str = get_model_path(request.model)
         draft_tokenizer: TokenizerWrapper
         draft_model, draft_tokenizer = cast(tuple[nn.Module, TokenizerWrapper], mlx_lm.load(draft_model_path))
         if draft_tokenizer.vocab_size != tokenizer.vocab_size:
@@ -109,11 +94,11 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
 
     # prepare variables
     text: str = ""
-    time_first_token: float = -1.0
+    time_to_first_token: float = -1.0
     draft_flags: list[bool] = []
     response: GenerationResponse | None = None
-    memory_graphics_peak_total: int = 0
-    memory_with_graphics_peak: MemoryCounters = get_memory_counters()
+    mem_graphics_max: int = 0
+    mem_counters_max: MemoryCounters = get_memory_counters()
 
     # sampling
     sampler: Callable | None = None
@@ -143,15 +128,15 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
         sampler=sampler,
     )
     for response in stream:
-        if time_first_token < 0.0:
-            time_first_token = time.perf_counter() - time_start
+        if time_to_first_token < 0.0:
+            time_to_first_token = time.perf_counter() - time_start
         text += response.text
         draft_flags.append(response.from_draft)
 
-        memory_curr = get_memory_counters()
-        if memory_curr.graphics_total > memory_graphics_peak_total:
-            memory_graphics_peak_total = memory_curr.graphics_total
-            memory_with_graphics_peak = memory_curr
+        mem_counters = get_memory_counters()
+        if mem_counters.graphics_total > mem_graphics_max:
+            mem_graphics_max = mem_counters.graphics_total
+            mem_counters_max = mem_counters
 
     time_total: float = time.perf_counter() - time_start
 
@@ -167,11 +152,11 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
 
     return MlxRunResponse(
         text=text,
-        time_first_token=time_first_token,
+        time_to_first_token=time_to_first_token,
         prompt_tps=response.prompt_tps,
         generation_tps=response.generation_tps,
         tokens_per_fp=tokens_per_forward_pass,
-        peak_memory=response.peak_memory,
+        peak_memory=int(response.peak_memory * 1024**3),
         duration=time_total,
-        memory_counters=memory_with_graphics_peak,
+        memory_counters=mem_counters_max,
     )

@@ -1,19 +1,33 @@
 from typer import Typer
 
 import engine_mlx
+import engine_mtplx
 from engine_mlx import MlxRunRequest, MlxRunResponse
+from engine_mtplx import MtplxRunRequest, MtplxRunResponse
 
 app = Typer(add_completion=False)
 
 
 @app.command("mlx")
 def run_mlx():
-    config = MlxRunRequest(
-        # model_path="~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-2B-MLX-8bit/snapshots/e6ffd0033d03c9efa880984e611028e0da63905f",
-        model_path="mlx-community/Qwen3.5-4B-8bit",
+    request = MlxRunRequest(
+        model="mlx-community/Qwen3.6-27B-4bit",
         prompt="Tell me about London",
+        max_tokens=256,
     )
-    response: MlxRunResponse = engine_mlx.run(config)
+    response: MlxRunResponse = engine_mlx.run(request)
+    print(response)
+
+
+@app.command("mtplx")
+def run_mtplx():
+    request = MtplxRunRequest(
+        model="Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed-V2",
+        prompt="Tell me about London",
+        speculative_depth=1,
+        max_tokens=256,
+    )
+    response: MtplxRunResponse = engine_mtplx.run(request)
     print(response)
 
 
