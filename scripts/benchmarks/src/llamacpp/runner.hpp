@@ -8,17 +8,18 @@
 #include "memory_counters.h"
 
 struct SamplingConfig {
-    int32_t top_k = 0;
-    float top_p = 1.0f;
-    float min_p = 0.0f;
-    float temp = 1.0f;
+    std::optional<int32_t> top_k;
+    std::optional<float> top_p;
+    std::optional<float> min_p;
+    std::optional<float> temp;
 };
 
 struct RunRequest {
     std::string model;
     Content input;
-    size_t max_tokens;
-    std::optional<SamplingConfig> sampling;
+    std::optional<size_t> max_tokens = std::nullopt;
+    std::optional<size_t> speculative_depth = std::nullopt;
+    std::optional<SamplingConfig> sampling = std::nullopt;
 };
 
 struct RunResponse {

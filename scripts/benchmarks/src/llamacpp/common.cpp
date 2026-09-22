@@ -2,6 +2,51 @@
 
 #include <arg.h>
 #include <common.h>
+#include <ggml-cpp.h>
+
+bool has_mtp_weights(
+    const std::filesystem::path& model_path,
+    const llama_model* model
+) {
+    if (llama_model_n_layer_nextn(model) == 0) {
+        return false;
+    }
+
+    // Some GGUFs retain NextN metadata after removing the heads, and Granite-Switch uses it for a router.
+    // Check for actual MTP tensors, including in later shards of a split GGUF.
+    const std::string tensor_name = "blk." + std::to_string(llama_model_n_layer(model)) + ".nextn.eh_proj.weight";
+    const auto read_header = [](const char* path) {
+        gguf_context_ptr header{gguf_init_from_file(path, {true, nullptr})};
+        if (!header) {
+            throw std::runtime_error(std::string{"Failed to read GGUF metadata: "} + path);
+        }
+        return header;
+    };
+
+    auto header = read_header(model_path.c_str());
+    if (gguf_find_tensor(header.get(), tensor_name.c_str()) >= 0) {
+        return true;
+    }
+    const int64_t split_key = gguf_find_key(header.get(), "split.count");
+    const uint16_t split_count = split_key < 0 ? 1 : gguf_get_val_u16(header.get(), split_key);
+    if (split_count <= 1) {
+        return false;
+    }
+
+    std::vector<char> prefix(model_path.string().size() + 1);
+    if (llama_split_prefix(prefix.data(), prefix.size(), model_path.c_str(), 0, split_count) <= 0) {
+        throw std::runtime_error("Invalid split GGUF path: " + model_path.string());
+    }
+    std::vector<char> split_path(prefix.size());
+    for (uint16_t i = 1; i < split_count; ++i) {
+        llama_split_path(split_path.data(), split_path.size(), prefix.data(), i, split_count);
+        header = read_header(split_path.data());
+        if (gguf_find_tensor(header.get(), tensor_name.c_str()) >= 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 memory_counters_t collect_memory_counters() {
     memory_counters_t memory_counters{};
@@ -14,7 +59,10 @@ memory_counters_t collect_memory_counters() {
     return memory_counters;
 }
 
-std::string decode_token(const llama_vocab* vocab, llama_token token) {
+std::string decode_token(
+    const llama_vocab* vocab,
+    llama_token token
+) {
     std::vector<char> piece(128);
     int32_t piece_len = llama_token_to_piece(vocab, token, piece.data(), piece.size(), 0, true);
     if (piece_len < 0) {
@@ -46,7 +94,10 @@ std::filesystem::path get_model_path(const std::string& model) {
     return params.model.path;
 }
 
-std::vector<llama_token> get_tokens(const Content& content_variant, const llama_model_ptr& model) {
+std::vector<llama_token> get_tokens(
+    const Content& content_variant,
+    const llama_model_ptr& model
+) {
     std::vector<llama_token> prompt_tokens;
     if (std::holds_alternative<std::string>(content_variant)) {
         const std::string text = std::get<std::string>(content_variant);
@@ -64,7 +115,8 @@ std::vector<llama_token> get_tokens(const Content& content_variant, const llama_
         }
     } else if (std::holds_alternative<std::vector<ChatMessage>>(content_variant)) {
         const auto& chat = std::get<std::vector<ChatMessage>>(content_variant);
-        std::vector<llama_chat_message> messages(chat.size());
+        std::vector<llama_chat_message> messages;
+        messages.reserve(chat.size());
         for (const auto& message : chat) {
             messages.push_back({message.role.c_str(), message.message.c_str()});
         }

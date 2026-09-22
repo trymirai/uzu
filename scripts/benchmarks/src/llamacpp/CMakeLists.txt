@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.31)
+include(FetchContent)
 
 # project setup
 project(benchmark_llamacpp LANGUAGES C CXX)
@@ -6,8 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# llama.cpp dependency
-include(FetchContent)
+# llama.cpp
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries")
 set(LLAMA_BUILD_COMMON ON CACHE BOOL "Build common utilities")
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "Build upstream tests")
@@ -22,17 +22,41 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama_cpp)
 
+# CLI11
+FetchContent_Declare(
+    cli11
+    GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+    GIT_TAG v2.7.2
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(cli11)
+
+# Glaze
+FetchContent_Declare(
+    glaze
+    GIT_REPOSITORY https://github.com/stephenberry/glaze.git
+    GIT_TAG v8.4.0
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(glaze)
+
+# memory counters
 add_library(mach_memory STATIC ../mach/memory_counters.c)
 target_include_directories(mach_memory PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../mach)
 
+# sources
 add_executable(benchmark_llamacpp 
     main.cpp 
     common.cpp
     runner.cpp
 )
+
+# libraries
 target_link_libraries(benchmark_llamacpp 
     PRIVATE 
         llama 
         llama-common 
+        CLI11::CLI11
+        glaze::glaze
         mach_memory
 )
