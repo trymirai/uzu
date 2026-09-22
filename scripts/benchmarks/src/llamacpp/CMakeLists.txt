@@ -25,5 +25,14 @@ FetchContent_MakeAvailable(llama_cpp)
 add_library(mach_memory STATIC ../mach/memory_counters.c)
 target_include_directories(mach_memory PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../mach)
 
-add_executable(benchmark_llamacpp main.cpp)
-target_link_libraries(benchmark_llamacpp PRIVATE llama llama-common mach_memory)
+add_executable(benchmark_llamacpp 
+    main.cpp 
+    common.cpp
+    runner.cpp
+)
+target_link_libraries(benchmark_llamacpp 
+    PRIVATE 
+        llama 
+        llama-common 
+        mach_memory
+)

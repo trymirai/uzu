@@ -30,7 +30,7 @@ class MtplxRunRequest:
     # Raw input text or chat messages formatted using the target tokenizer's chat template.
     prompt: str | list[ChatMessage]
 
-    speculative_depth: int
+    speculative_depth: int = 3
 
     # Maximum number of tokens to generate, excluding prompt tokens.
     max_tokens: int = 256
