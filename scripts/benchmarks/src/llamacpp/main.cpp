@@ -5,20 +5,33 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <variant>
 #include <vector>
 
-#include "common.hpp"
 #include "memory_counters.h"
 
+struct ChatMessage {
+    std::string message;
+    std::string role;
+};
+
 using Content = std::variant<std::string, std::vector<ChatMessage>>;
+
+struct SamplingConfig {
+    int32_t top_k = 0;
+    float top_p = 1.0f;
+    float min_p = 0.0f;
+    float temp = 1.0f;
+};
 
 struct RunRequest {
     std::string model;
     Content input;
     size_t max_tokens;
+    std::optional<SamplingConfig> sampling;
 };
 
 struct RunResponse {
@@ -167,8 +180,14 @@ RunResponse run(const RunRequest& request) {
     // prepare sampling
     llama_sampler_chain_params sampler_chain_params = llama_sampler_chain_default_params();
     llama_sampler_ptr sampler_chain{llama_sampler_chain_init(sampler_chain_params)};
-    // TODO replace: if sampling is nullptr
-    if (true) {
+    if (request.sampling.has_value()) {
+        const SamplingConfig sampling = request.sampling.value();
+        llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_top_k(sampling.top_k));
+        llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_top_p(sampling.top_p, 1));
+        llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_min_p(sampling.min_p, 1));
+        llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_temp(sampling.temp));
+        llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+    } else {
         llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_greedy());
     }
 
