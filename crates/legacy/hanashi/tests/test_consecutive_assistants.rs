@@ -5,8 +5,8 @@ use hanashi::{
     chat::hanashi::{HanashiEncodingImpl, config::HanashiConfig},
 };
 use shoji::types::{
-    basic::{ToolDescription, ToolFunction, ToolNamespace},
-    session::chat::{ChatMessage, ChatRole},
+    basic::{ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value},
+    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
 };
 use tokenizers::{
     AddedToken, Tokenizer,
@@ -26,7 +26,10 @@ fn encoding(config: HanashiConfig) -> HanashiEncodingImpl {
     special_tokens.push("<bos>".into());
     tokenizer
         .add_special_tokens(&special_tokens.into_iter().map(|token| AddedToken::from(token, true)).collect::<Vec<_>>());
-    tokenizer.add_tokens(&["system", "user", "assistant"].map(|role| AddedToken::from(role, false).single_word(true)));
+    tokenizer.add_tokens(
+        &["system", "user", "assistant", "model", "developer"]
+            .map(|role| AddedToken::from(role, false).single_word(true)),
+    );
     config.tokens.bos_token_id = config.tokens.bos_token_id.map(|_| tokenizer.token_to_id("<bos>").unwrap());
     HanashiEncodingImpl::new(
         HanashiConfig::Custom {
@@ -217,4 +220,55 @@ fn history_ending_with_assistant_preserves_tool_context() {
             assert!(reply.text().unwrap().contains("\"parameters\""));
         }
     }
+}
+
+#[test]
+fn literal_tool_markup_preserves_history() {
+    let mut encoding = encoding(HanashiConfig::Qwen38);
+    let history = vec![
+        ChatMessage::user().with_text("Check the weather.".into()),
+        ChatMessage::assistant().with_text("<tool_call>\n<function=weather>\n</function>\n</tool_call>".into()),
+        ChatMessage::user().with_text("<tool_response>\nSunny.\n</tool_response>".into()),
+    ];
+    encoding.encode(history.clone()).unwrap();
+    assert!(encoding.state().text().contains("<tool_response>\nSunny.\n</tool_response>"));
+    assert_reply_preserves_history(
+        &mut encoding,
+        &history,
+        "Done thinking.</think>\n\nResumed successfully.<|im_end|>",
+    );
+}
+
+#[test]
+fn functiongemma_tool_result_continues_the_model_frame() {
+    let mut encoding = encoding(HanashiConfig::FunctionGemma);
+    let history = vec![
+        ChatMessage::developer()
+            .with_text("You are a model that can do function calling with the following functions".into())
+            .with_tool_namespaces(vec![]),
+        ChatMessage::user().with_text("What time is it?".into()),
+        ChatMessage::assistant().with_tool_call(ToolCall {
+            identifier: None,
+            name: "clock".into(),
+            arguments: Value {
+                json: "{}".into(),
+            },
+        }),
+        ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+            identifier: None,
+            name: Some("clock".into()),
+            value: Value {
+                json: r#"{"time":"17:03"}"#.into(),
+            },
+        }),
+    ];
+    encoding.encode(history.clone()).unwrap();
+    assert_eq!(encoding.state().messages, history);
+    let completion = "It is 17:03.<end_of_turn>";
+    for token in encoding.tokenize(completion).unwrap() {
+        encoding.decode(vec![token]).unwrap();
+        assert_eq!(&encoding.state().messages[..history.len()], &history);
+        assert_eq!(encoding.state().messages.len(), history.len() + 1);
+    }
+    assert_eq!(encoding.state().messages.last().unwrap().text().as_deref(), Some("It is 17:03."));
 }

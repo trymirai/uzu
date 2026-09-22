@@ -110,9 +110,14 @@ impl EncodingTrait for HanashiEncodingImpl {
             self.push_token_to_parser(&token, true)?;
             self.state.tokens.push(token);
         }
-        if self.state.messages.last().is_some_and(|message| message.role == (ChatRole::Assistant {})) {
-            // Parse from the generation prompt's open frame so assistant-merging
-            // transformations cannot include history in the new reply.
+        if self
+            .state
+            .messages
+            .last()
+            .is_some_and(|message| matches!(message.role, ChatRole::User {} | ChatRole::Assistant {}))
+        {
+            // Parse only the new assistant frame: history may contain literal tool markup
+            // or consecutive assistant messages that the parser would otherwise merge.
             let prompt_tokens: Vec<_> = self
                 .parser
                 .reduction()
