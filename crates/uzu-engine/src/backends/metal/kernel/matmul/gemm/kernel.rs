@@ -239,6 +239,7 @@ impl GemmKernel {
                         &mut *d,
                         ab_scale,
                         0,
+                        0,
                         shape,
                         plan,
                         output_transform,
@@ -265,6 +266,7 @@ impl GemmKernel {
                     aligned_inner_iterations: k / tiling.block_k(),
                     use_morton,
                     ab_scale,
+                    metadata_output_stride: 0,
                     metadata_group_stride: 0,
                 };
 
@@ -306,7 +308,12 @@ impl GemmKernel {
             | MatmulB::ScaleSymmetricDequant {
                 ..
             }) => {
-                let metadata_group_stride = quant_b.quant_params_stride(self.weights_data_type, k);
+                let metadata_row_stride = quant_b.quant_params_stride(self.weights_data_type, k);
+                let (metadata_output_stride, metadata_group_stride) = match shape.params_layout {
+                    Some(QuantParamsLayout::OutputGroup) => (metadata_row_stride, 1),
+                    Some(QuantParamsLayout::GroupOutput) => (1, metadata_row_stride),
+                    None => unreachable!("quantized GEMM requires quantization parameter layout"),
+                };
                 let (weights, scales, biases, zero_points) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
@@ -369,7 +376,7 @@ impl GemmKernel {
                 let tiling = plan.tiling;
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-                let params = quant_params(shape, plan, ab_scale, metadata_group_stride);
+                let params = quant_params(shape, plan, ab_scale, metadata_output_stride, metadata_group_stride);
                 let group_count_x = n.div_ceil(tiling.block_n());
                 let group_count_y = m.div_ceil(tiling.block_m());
 
@@ -382,6 +389,7 @@ impl GemmKernel {
                         zero_points,
                         &mut *d,
                         ab_scale,
+                        metadata_output_stride,
                         metadata_group_stride,
                         shape,
                         plan,
@@ -441,6 +449,7 @@ impl GemmKernel {
         zero_points: Option<&Allocation<Metal>>,
         d: &mut Allocation<Metal>,
         ab_scale: f32,
+        metadata_output_stride: u32,
         metadata_group_stride: u32,
         shape: MatmulShape,
         plan: GemmPlan,
@@ -504,6 +513,7 @@ impl GemmKernel {
             aligned_inner_iterations: kp / k_step,
             use_morton: false,
             ab_scale: 1.0,
+            metadata_output_stride,
             metadata_group_stride,
         };
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
@@ -603,6 +613,7 @@ fn quant_params(
     shape: MatmulShape,
     plan: GemmPlan,
     ab_scale: f32,
+    metadata_output_stride: u32,
     metadata_group_stride: u32,
 ) -> GemmParams {
     let MatmulShape {
@@ -624,6 +635,7 @@ fn quant_params(
         aligned_inner_iterations: outer_block_k(shape, plan.engine, plan.tiling).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
+        metadata_output_stride,
         metadata_group_stride,
     }
 }

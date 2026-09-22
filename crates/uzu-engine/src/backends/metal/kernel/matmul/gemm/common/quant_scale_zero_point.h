@@ -68,6 +68,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       const bool signed_codes_,
       const int src_leading_dim_,
       const int params_group_stride_,
+      const int params_output_stride_,
       const uint zero_point_bit_offset_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
@@ -83,7 +84,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
             REDUCTION_DIMENSION == 1 ? params_group_stride_
                                      : THREADGROUP_TILE_ROWS * ((src_leading_dim_ + GROUP_SIZE - 1) / GROUP_SIZE)
         ),
-        params_output_stride(params_group_stride_ == 1 ? (src_leading_dim_ + GROUP_SIZE - 1) / GROUP_SIZE : 1),
+        params_output_stride(params_output_stride_),
         zero_point_group_bit_stride(zero_point_bit_stride<ushort(BITS)>(params_group_stride_)),
         thread_index(simd_group_id * 32 + simd_lane_id),
         tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
@@ -107,6 +108,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       const bool signed_codes_,
       const int src_leading_dim_,
       const int params_group_stride_,
+      const int params_output_stride_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
       ushort simd_lane_id [[thread_index_in_simdgroup]]
@@ -118,6 +120,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
             signed_codes_,
             src_leading_dim_,
             params_group_stride_,
+            params_output_stride_,
             0,
             dst_,
             simd_group_id,

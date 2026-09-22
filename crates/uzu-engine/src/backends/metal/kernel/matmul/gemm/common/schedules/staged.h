@@ -30,10 +30,9 @@ static METAL_FUNC auto make_staged_loader(
   using Element = typename Core::RightElementType;
   const uint row_stride =
       uint(params->K) * uint(get_bytes_per_pack<RightOperand::BITS>()) / uint(get_pack_factor<RightOperand::BITS>());
-  const uint groups_per_row = (uint(params->K) + uint(RightOperand::GROUP_SIZE) - 1) / uint(RightOperand::GROUP_SIZE);
   const uint first_group = k_offset / uint(RightOperand::GROUP_SIZE);
   const int params_group_stride = int(params->metadata_group_stride);
-  const int params_output_stride = params_group_stride == 1 ? int(groups_per_row) : 1;
+  const int params_output_stride = int(params->metadata_output_stride);
   const int params_offset = int(block_col) * params_output_stride + int(first_group) * params_group_stride;
   const device Element* scales = right.scales + params_offset;
   const device uint8_t* values = right.codes + size_t(block_col) * row_stride +
@@ -56,6 +55,7 @@ static METAL_FUNC auto make_staged_loader(
         right.signed_codes,
         int(params->K),
         params_group_stride,
+        params_output_stride,
         staging,
         thread_context.simdgroup_index,
         thread_context.simd_lane_id
@@ -78,6 +78,7 @@ static METAL_FUNC auto make_staged_loader(
         right.signed_codes,
         int(params->K),
         params_group_stride,
+        params_output_stride,
         uint(block_col) * zero_point_bit_stride<RightOperand::BITS>(params_output_stride) +
             first_group * zero_point_bit_stride<RightOperand::BITS>(params_group_stride),
         staging,
@@ -105,6 +106,7 @@ static METAL_FUNC auto make_staged_loader(
         right.signed_codes,
         int(params->K),
         params_group_stride,
+        params_output_stride,
         staging,
         thread_context.simdgroup_index,
         thread_context.simd_lane_id

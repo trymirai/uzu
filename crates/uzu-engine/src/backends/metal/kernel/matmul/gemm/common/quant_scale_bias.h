@@ -58,6 +58,7 @@ struct QuantizedBlockLoaderScaleBias {
       const bool signed_codes_,
       const int src_leading_dim_,
       const int params_group_stride_,
+      const int params_output_stride_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
       ushort simd_lane_id [[thread_index_in_simdgroup]]
@@ -71,8 +72,7 @@ struct QuantizedBlockLoaderScaleBias {
         group_stride(
             REDUCTION_DIMENSION == 1 ? params_group_stride_ : THREADGROUP_TILE_ROWS * src_leading_dim_ / GROUP_SIZE
         ),
-        params_output_stride(params_group_stride_ == 1 ? (src_leading_dim_ + GROUP_SIZE - 1) / GROUP_SIZE : 1),
-        thread_index(simd_group_id * 32 + simd_lane_id),
+        params_output_stride(params_output_stride_), thread_index(simd_group_id * 32 + simd_lane_id),
         tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
         tile_col_index((READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED),
         dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * PACK_FACTOR),

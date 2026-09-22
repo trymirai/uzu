@@ -7,6 +7,7 @@ pub struct GemmParams {
     pub K: u32,
     pub leading_dimension_a: u32,
     pub leading_dimension_b: u32,
+    pub metadata_output_stride: u32,
     pub metadata_group_stride: u32,
     pub leading_dimension_d: u32,
     pub threadgroups_per_column: u32,

@@ -468,7 +468,7 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
 }
 
 #[uzu_test]
-fn quant_gemm_group_output_prefix_matches_cpu() {
+fn quant_gemm_parameter_layout_prefix_matches_cpu() {
     let context = MetalContext::new().expect("Metal context");
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
@@ -478,24 +478,29 @@ fn quant_gemm_group_output_prefix_matches_cpu() {
     )
     .expect("MatmulMetalKernel");
 
-    for (k, logical_n) in [(128, 4), (256, 4)] {
-        let input = QuantInput::<bf16>::new(64, k, 12, 32, 8, QuantizationMethod::ScaleBias, 0);
-        let reference = run_quant_cpu(&input);
-        let mut buffers =
-            QuantBuffers::<Metal, bf16>::allocate_with_params_layout(&context, &input, QuantParamsLayout::GroupOutput);
+    for params_layout in [QuantParamsLayout::OutputGroup, QuantParamsLayout::GroupOutput] {
+        for (k, logical_n) in [(128, 4), (256, 4)] {
+            let input = QuantInput::<bf16>::new(64, k, 12, 32, 8, QuantizationMethod::ScaleBias, 0);
+            let reference = run_quant_cpu(&input);
+            let mut buffers = QuantBuffers::<Metal, bf16>::allocate_with_params_layout(&context, &input, params_layout);
 
-        let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
-        let mut args = quant_arguments(&mut buffers, &input);
-        args.n = logical_n;
-        matmul.gemm.encode_with_engine(args, GemmEngine::Simdgroup, &mut encoder).unwrap();
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
-        let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
-        let expected: Vec<_> = reference
-            .chunks_exact(input.n as usize)
-            .flat_map(|row| row[..logical_n as usize].iter().copied())
-            .collect();
+            let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+            let mut args = quant_arguments(&mut buffers, &input);
+            args.n = logical_n;
+            matmul.gemm.encode_with_engine(args, GemmEngine::Simdgroup, &mut encoder).unwrap();
+            encoder.end_encoding().submit().wait_until_completed().unwrap();
+            let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
+            let expected: Vec<_> = reference
+                .chunks_exact(input.n as usize)
+                .flat_map(|row| row[..logical_n as usize].iter().copied())
+                .collect();
+            let layout_name = match params_layout {
+                QuantParamsLayout::OutputGroup => "OutputGroup",
+                QuantParamsLayout::GroupOutput => "GroupOutput",
+            };
 
-        assert_parity("GroupOutput GEMM prefix", &expected, &actual[..expected.len()], 0.05, 0.5);
+            assert_parity(&format!("{layout_name} GEMM prefix"), &expected, &actual[..expected.len()], 0.05, 0.5);
+        }
     }
 }
 
