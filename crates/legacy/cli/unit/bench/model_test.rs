@@ -1,5 +1,8 @@
 use serde_json::json;
-use uzu::types::session::chat::{ChatContentBlock, ChatRole};
+use uzu::types::{
+    basic::ToolDescription,
+    session::chat::{ChatContentBlock, ChatRole},
+};
 
 use super::*;
 
@@ -41,7 +44,14 @@ fn tool_replay_preserves_wire_input_and_builds_complete_context() {
     assert_eq!(messages.len(), 6);
     assert_eq!(messages[0].role, ChatRole::System {});
     assert_eq!(messages[1].role, ChatRole::Developer {});
-    assert_eq!(messages[1].tool_namespaces()[0].tools.len(), 1);
+    let namespaces = messages[1].tool_namespaces();
+    assert_eq!(namespaces[0].tools.len(), 1);
+    let ToolDescription::Function {
+        tool_function,
+    } = &namespaces[0].tools[0];
+    assert_eq!(tool_function.name, "clock");
+    assert_eq!(tool_function.description, "Get time");
+    assert_eq!(serde_json::to_value(&tool_function.parameters).unwrap(), input["tools"][0]["function"]["parameters"]);
     assert!(matches!(messages[3].content[0], ChatContentBlock::Reasoning { .. }));
     assert_eq!(messages[3].text().as_deref(), Some("Checking"));
     let calls = messages[3].tool_calls();
