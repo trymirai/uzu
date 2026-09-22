@@ -2,6 +2,7 @@ use serde_json::Value;
 
 use crate::{
     TransformError,
+    execution::operation::ReplaceEscape,
     regex::{Regex, RegexEngine},
 };
 
@@ -20,6 +21,7 @@ pub fn execute_format(
 pub fn execute_regex_replace(
     pattern: &str,
     template: &str,
+    escape: Option<ReplaceEscape>,
     regex_engine: &RegexEngine,
     input: Value,
 ) -> Result<Value, TransformError> {
@@ -27,8 +29,83 @@ pub fn execute_regex_replace(
         return Ok(Value::Null);
     };
     let regex = Regex::new(pattern, regex_engine)?;
-    let replaced = regex.replace_all(&text, template);
+    let replaced = match escape {
+        None => regex.replace_all(&text, template),
+        Some(ReplaceEscape::Json) => replace_all_escaped(&regex, &text, template, json_string_body),
+    };
     Ok(Value::String(replaced))
+}
+
+/// The body of the JSON string literal for `text`: what `serde_json` would write between the quotes.
+fn json_string_body(text: &str) -> String {
+    let literal = serde_json::to_string(text).unwrap_or_default();
+    literal[1..literal.len() - 1].to_string()
+}
+
+/// replace_all with capture groups passed through `escape` before substitution. The template supports `$N`,
+/// `${N}` and `$$`; an unmatched group substitutes nothing, like the regex crate.
+fn replace_all_escaped(
+    regex: &Regex,
+    text: &str,
+    template: &str,
+    escape: fn(&str) -> String,
+) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut last = 0usize;
+    for captures in regex.captures_iter(text) {
+        let Some(whole) = captures.get(0) else {
+            continue;
+        };
+        output.push_str(&text[last..whole.start]);
+        let mut chars = template.chars().peekable();
+        while let Some(character) = chars.next() {
+            if character != '$' {
+                output.push(character);
+                continue;
+            }
+            match chars.peek() {
+                Some('$') => {
+                    chars.next();
+                    output.push('$');
+                },
+                Some('{') => {
+                    chars.next();
+                    let mut digits = String::new();
+                    while let Some(&next) = chars.peek() {
+                        chars.next();
+                        if next == '}' {
+                            break;
+                        }
+                        digits.push(next);
+                    }
+                    if let Ok(index) = digits.parse::<usize>() {
+                        if let Some(group) = captures.get(index) {
+                            output.push_str(&escape(&group.text));
+                        }
+                    }
+                },
+                Some(next) if next.is_ascii_digit() => {
+                    let mut digits = String::new();
+                    while let Some(&next) = chars.peek() {
+                        if !next.is_ascii_digit() {
+                            break;
+                        }
+                        digits.push(next);
+                        chars.next();
+                    }
+                    if let Ok(index) = digits.parse::<usize>() {
+                        if let Some(group) = captures.get(index) {
+                            output.push_str(&escape(&group.text));
+                        }
+                    }
+                },
+                _ => output.push('$'),
+            }
+        }
+        last = whole.end;
+    }
+    output.push_str(&text[last..]);
+    output
 }
 
 #[tracing::instrument(skip_all)]

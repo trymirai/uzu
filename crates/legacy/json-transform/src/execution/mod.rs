@@ -7,7 +7,7 @@ mod operation;
 mod string;
 
 pub use condition::Condition;
-pub use operation::{CallTarget, GetTarget, Operation, PathSegment, Pipeline, SwitchCase};
+pub use operation::{CallTarget, GetTarget, Operation, PathSegment, Pipeline, ReplaceEscape, SwitchCase};
 use serde_json::Value;
 
 use crate::{TransformError, TransformSchema};

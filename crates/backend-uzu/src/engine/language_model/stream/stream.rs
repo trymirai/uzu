@@ -191,7 +191,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             model_state.last_output_token.take();
 
             // NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
-            let max_batch_size = 1024;
+            let max_batch_size = 64; // QTIP S exact kernels accept batches of at most 64 tokens (padded_batch assert)
             let number_of_batches = input.len().div_ceil(max_batch_size);
 
             model_state

@@ -1,7 +1,7 @@
 mod helpers;
 
 use helpers::{execute_root, schema_with_root};
-use json_transform::{execution::Operation, regex::RegexEngine};
+use json_transform::{execution::{Operation, ReplaceEscape}, regex::RegexEngine};
 use serde_json::json;
 
 // Format
@@ -98,6 +98,7 @@ fn test_regex_replace_simple_substitution() {
         vec![Operation::RegexReplace {
             pattern: "<escape>".to_string(),
             template: "\"".to_string(),
+            escape: None,
             regex_engine: RegexEngine::Standard,
         }],
         json!("Hello <escape>World<escape>"),
@@ -112,6 +113,7 @@ fn test_regex_replace_with_captures() {
         vec![Operation::RegexReplace {
             pattern: r"(\w+)\.call\(([\s\S]*)\)".to_string(),
             template: r#"{"name": "$1", "arguments": "$2"}"#.to_string(),
+            escape: None,
             regex_engine: RegexEngine::Standard,
         }],
         json!("get_weather.call(city=London)"),
@@ -126,6 +128,7 @@ fn test_regex_replace_substitutes_capture_groups() {
         vec![Operation::RegexReplace {
             pattern: r"(\w+)\((.*)\)".to_string(),
             template: r#"{"name": "$1", "arguments": "$2"}"#.to_string(),
+            escape: None,
             regex_engine: RegexEngine::Standard,
         }],
         json!("get_temperature(city=London, unit=celsius)"),
@@ -402,4 +405,21 @@ fn test_repair_json_incomplete_then_parse() {
 #[test]
 fn test_repair_json_python_dict_to_json() {
     validate_repair("{'city': 'London'}", r#"{"city": "London"}"#);
+}
+
+#[test]
+fn test_regex_replace_json_escape_keeps_template_valid_json() {
+    let result = execute_root(
+        vec![Operation::RegexReplace {
+            pattern: r"<parameter=(\w+)>\n([\s\S]*?)\n</parameter>".to_string(),
+            template: "\"$1\": \"$2\"".to_string(),
+            escape: Some(ReplaceEscape::Json),
+            regex_engine: RegexEngine::Standard,
+        }],
+        json!("<parameter=content>\nconsole.log(\"hi\");\nlet s = 'a\\b';\n</parameter>"),
+    )
+    .unwrap();
+    let text = format!("{{ {} }}", result.as_str().unwrap());
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed, json!({"content": "console.log(\"hi\");\nlet s = 'a\\b';"}));
 }

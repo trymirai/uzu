@@ -84,7 +84,8 @@
                                         {
                                             "type": "regex_replace",
                                             "pattern": "<parameter=(\\w+)>\\n([\\s\\S]*?)\\n</parameter>",
-                                            "template": "\"$1\": \"$2\""
+                                            "template": "\"$1\": \"$2\"",
+                                            "escape": "json"
                                         }
                                     ]
                                 },

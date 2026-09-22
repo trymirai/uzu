@@ -157,13 +157,22 @@ impl Session {
         // if new_all_tokens = curr_all_tokens + suffix, then just encode suffix,
         // else reset state and encode all tokens
         let mut reset = new_all_tokens.len() <= curr_all_tokens.len();
+        let mut first_mismatch: Option<usize> = None;
         if !reset {
             for i in 0..curr_all_tokens.len() {
                 if new_all_tokens[i] != curr_all_tokens[i].id as u64 {
                     reset = true;
+                    first_mismatch = Some(i);
                     break;
                 }
             }
+        }
+        if std::env::var("UZU_SESSION_TRACE").is_ok() {
+            let tail = |v: &[u64]| v.iter().rev().take(12).rev().cloned().collect::<Vec<_>>();
+            let curr_ids: Vec<u64> = curr_all_tokens.iter().map(|t| t.id as u64).collect();
+            eprintln!("token session: curr={} new={} reset={} first_mismatch={:?} curr_tail={:?} new_at_mismatch={:?}",
+                curr_all_tokens.len(), new_all_tokens.len(), reset, first_mismatch, tail(&curr_ids),
+                first_mismatch.map(|i| new_all_tokens[i.saturating_sub(6)..(i + 6).min(new_all_tokens.len())].to_vec()));
         }
         self.input_tokens = if reset {
             if let Err(err) = self.state_reset().await {

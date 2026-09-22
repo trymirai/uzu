@@ -107,11 +107,13 @@ pub fn tool_call_result_block(
     identifier: &str,
     content: String,
 ) -> ChatContentBlock {
-    let value = serde_json::from_str::<serde_json::Value>(&content).unwrap_or(serde_json::Value::String(content));
+    // Keep the client's tool output verbatim, the way llama.cpp and vLLM render OpenAI tool messages. Parsing it as
+    // JSON re-serialized objects (different tokens from the original text) and failed outright on arrays, which the
+    // chat template cannot run a containment check on.
     ChatContentBlock::ToolCallResult {
         identifier: Some(identifier.to_string()),
         name: None,
-        value: value.into(),
+        value: serde_json::Value::String(content).into(),
     }
 }
 
@@ -178,8 +180,76 @@ pub fn oai_tool_call(
         kind: "function".to_string(),
         function: OaiFunctionCall {
             name: tool_call.name.clone(),
-            arguments: tool_call.arguments.json.clone(),
+            arguments: normalize_arguments(&tool_call.arguments.json),
         },
+    }
+}
+
+/// The arguments the engine stores for a tool call, as the JSON object text a client expects. When the model's
+/// argument JSON was invalid (typically a raw newline inside a string value), the engine keeps the text as a JSON
+/// string instead of an object; unwrap that string and escape the control characters so the client can parse it.
+/// llama.cpp never surfaces this case because its tool-call grammar forbids invalid JSON, so this levels the engines.
+pub fn normalize_arguments(raw: &str) -> String {
+    let out = match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(serde_json::Value::String(inner)) => {
+            let repaired = repair_json_strings(&inner);
+            match serde_json::from_str::<serde_json::Value>(&repaired) {
+                Ok(value) if value.is_object() => repaired,
+                _ => raw.to_string(),
+            }
+        },
+        Ok(_) => raw.to_string(),
+        Err(_) => repair_json_strings(raw),
+    };
+    if std::env::var("UZU_SESSION_TRACE").is_ok() && out != raw {
+        eprintln!("tool call arguments normalized: {raw:?} -> {out:?}");
+    }
+    out
+}
+
+/// Escape raw control characters inside JSON string literals. Models sometimes emit a literal newline inside a
+/// string argument; llama.cpp never surfaces that because its tool-call grammar forbids it, so accept it here too.
+/// The input is returned unchanged when it already parses, or when the repair does not make it parse.
+pub fn repair_json_strings(raw: &str) -> String {
+    if serde_json::from_str::<serde_json::Value>(raw).is_ok() {
+        return raw.to_string();
+    }
+    let mut out = String::with_capacity(raw.len() + 16);
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in raw.chars() {
+        if !in_string {
+            if ch == '"' {
+                in_string = true;
+            }
+            out.push(ch);
+            continue;
+        }
+        if escaped {
+            out.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => {
+                escaped = true;
+                out.push(ch);
+            },
+            '"' => {
+                in_string = false;
+                out.push(ch);
+            },
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    if serde_json::from_str::<serde_json::Value>(&out).is_ok() {
+        out
+    } else {
+        raw.to_string()
     }
 }
 

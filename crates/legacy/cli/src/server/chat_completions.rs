@@ -34,7 +34,7 @@ use crate::{
         ServerState,
         chat_tool_calls::{
             OaiTool, OaiToolCall, backfill_tool_result_names, choose_tools, insert_tools_message, reply_tool_calls,
-            to_tool_call, tool_call_deltas, tool_call_result_block, withhold_stream_text,
+            normalize_arguments, to_tool_call, tool_call_deltas, tool_call_result_block, withhold_stream_text,
         },
     },
 };
@@ -216,6 +216,25 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
+/// Two user messages in a row (OpenCode's title request sends them) are joined into one: the engine's role
+/// sequencing allows a single user turn, while llama.cpp simply renders both.
+fn merge_consecutive_user_messages(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let mut merged: Vec<ChatMessage> = Vec::with_capacity(messages.len());
+    for message in messages {
+        if message.role == (ChatRole::User {}) && message.tool_call_results().is_empty() {
+            if let Some(last) = merged.last_mut() {
+                if last.role == (ChatRole::User {}) && last.tool_call_results().is_empty() {
+                    let text = [last.text().unwrap_or_default(), message.text().unwrap_or_default()].join("\n\n");
+                    *last = ChatMessage::user().with_text(text);
+                    continue;
+                }
+            }
+        }
+        merged.push(message);
+    }
+    merged
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum MessageBuildError {
     ToolChoice(String),
@@ -292,6 +311,13 @@ fn parse_enable_thinking(request: &ChatCompletionRequest) -> Result<Option<bool>
         })
         .transpose()?
         .flatten();
+    // Server-side default for clients that never send the flag (agent harnesses): UZU_SERVER_THINKING=0 disables thinking.
+    let server_default = match std::env::var("UZU_SERVER_THINKING").ok().as_deref() {
+        Some("0") | Some("false") | Some("off") => Some(false),
+        Some("1") | Some("true") | Some("on") => Some(true),
+        _ => None,
+    };
+    let top_level = top_level.or(if template_kwarg.is_none() { server_default } else { None });
     match (top_level, template_kwarg) {
         (Some(top_level), Some(template_kwarg)) if top_level != template_kwarg => {
             Err(MessageBuildError::EnableThinking(
@@ -350,12 +376,19 @@ pub(crate) fn build_messages(
 ) -> Result<Vec<ChatMessage>, MessageBuildError> {
     let tools =
         choose_tools(request.tools.as_deref(), request.tool_choice.as_ref()).map_err(MessageBuildError::ToolChoice)?;
-    let mut messages = to_chat_messages(&request.messages);
+    let mut messages = merge_consecutive_user_messages(to_chat_messages(&request.messages));
     if let Some((effort, source)) = requested_reasoning_effort(request)? {
         let fulfilled = thinking_support.fulfill_requested_effort(effort).map_err(|detail| source.error(detail))?;
         if let Some(effort) = fulfilled {
-            // The engine reads the effort from a reasoning_effort block carried on a system message.
-            messages.insert(0, ChatMessage::system().with_reasoning_effort(effort));
+            // The engine reads the effort from a reasoning_effort block carried on a system message. Attach it to the
+            // client's own system message when there is one: the engine rejects two consecutive system messages.
+            match messages.first_mut() {
+                Some(first) if first.role == (ChatRole::System {}) => {
+                    let existing = std::mem::replace(first, ChatMessage::system());
+                    *first = existing.with_reasoning_effort(effort);
+                },
+                _ => messages.insert(0, ChatMessage::system().with_reasoning_effort(effort)),
+            }
         }
     }
     backfill_tool_result_names(&mut messages);
@@ -411,6 +444,37 @@ fn invalid_request_response(
             },
         }),
     ))
+}
+
+/// A backend failure (template render, engine error) is reported as an HTTP 500 error object, not as assistant text:
+/// agent harnesses would otherwise take the error message for the model's answer and stop.
+fn internal_error_response(message: &str) -> ChatCompletionResult {
+    eprintln!("server error: {message}");
+    ChatCompletionResult::Error(status::Custom(
+        Status::InternalServerError,
+        Json(OaiErrorResponse {
+            error: OaiError {
+                message: message.to_string(),
+                kind: "server_error".to_string(),
+                param: None,
+                code: None,
+            },
+        }),
+    ))
+}
+
+/// The streaming counterpart: an OpenAI-style `{"error": ...}` event, which SDK clients surface as a failed request.
+fn error_event_json(message: &str) -> String {
+    eprintln!("server error: {message}");
+    serde_json::to_string(&OaiErrorResponse {
+        error: OaiError {
+            message: message.to_string(),
+            kind: "server_error".to_string(),
+            param: None,
+            code: None,
+        },
+    })
+    .unwrap_or_default()
 }
 
 fn with_response_format_grammar(
@@ -494,31 +558,6 @@ fn usage_from_stats(stats: &ChatReplyStats) -> ChatCompletionUsage {
     }
 }
 
-fn error_response(
-    id: String,
-    model: String,
-    created: i64,
-    message: &str,
-) -> ChatCompletionResponse {
-    ChatCompletionResponse {
-        id,
-        object: "chat.completion".to_string(),
-        created,
-        model,
-        choices: vec![ChatCompletionChoice {
-            index: 0,
-            message: OaiMessage {
-                role: "assistant".to_string(),
-                content: Some(format!("Error: {message}")),
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: None,
-            },
-            finish_reason: "stop".to_string(),
-        }],
-        usage: ChatCompletionUsage::default(),
-    }
-}
 
 fn chunk_json(
     id: &str,
@@ -543,6 +582,41 @@ fn chunk_json(
     serde_json::to_string(&chunk).unwrap_or_default()
 }
 
+/// Normalized view of a message for prefix matching: role, trimmed text, tool calls (name + parsed arguments, since
+/// clients re-serialize the arguments they send back), tool results. Ids and metadata are ignored.
+fn message_key(message: &ChatMessage) -> String {
+    let text = message.text().unwrap_or_default();
+    let calls: Vec<(String, Result<serde_json::Value, String>)> = message
+        .tool_calls()
+        .iter()
+        .map(|call| {
+            let normalized = normalize_arguments(&call.arguments.json);
+            (call.name.clone(), serde_json::from_str::<serde_json::Value>(&normalized).map_err(|_| normalized))
+        })
+        .collect();
+    format!("{:?}|{}|{:?}|{:?}", message.role, text.trim(), calls, message.tool_call_results())
+}
+
+/// If the session's stored history is a prefix of the incoming conversation, return only the new messages so the
+/// session continues from its cached context; otherwise reset the session and return the whole conversation.
+async fn continue_or_reset(
+    session: &ChatSession,
+    messages: Vec<ChatMessage>,
+) -> Result<Vec<ChatMessage>, uzu::session::chat::ChatSessionError> {
+    if std::env::var("UZU_SERVER_NO_CONTINUE").is_err() {
+        let history = session.messages().await;
+        if !history.is_empty() && messages.len() > history.len() {
+            let same = history.iter().zip(messages.iter()).all(|(a, b)| message_key(a) == message_key(b));
+            if same {
+                eprintln!("session continue: {} cached messages, {} new", history.len(), messages.len() - history.len());
+                return Ok(messages[history.len()..].to_vec());
+            }
+        }
+    }
+    session.reset().await?;
+    Ok(messages)
+}
+
 async fn run_blocking(
     session: Arc<Mutex<ChatSession>>,
     messages: Vec<ChatMessage>,
@@ -550,11 +624,12 @@ async fn run_blocking(
     id: String,
     model: String,
     created: i64,
-) -> ChatCompletionResponse {
+) -> ChatCompletionResult {
     let session = session.lock().await;
-    if let Err(error) = session.reset().await {
-        return error_response(id, model, created, &error.to_string());
-    }
+    let messages = match continue_or_reset(&session, messages).await {
+        Ok(input) => input,
+        Err(error) => return internal_error_response(&error.to_string()),
+    };
 
     match session.reply(messages, config).await {
         Ok(replies) => match replies.last() {
@@ -569,7 +644,7 @@ async fn run_blocking(
                 if tool_calls.is_none() && finish_reason == "tool_calls" {
                     finish_reason = "stop".to_string();
                 }
-                ChatCompletionResponse {
+                ChatCompletionResult::Json(Json(ChatCompletionResponse {
                     id,
                     object: "chat.completion".to_string(),
                     created,
@@ -586,11 +661,11 @@ async fn run_blocking(
                         finish_reason,
                     }],
                     usage: usage_from_stats(&reply.stats),
-                }
+                }))
             },
-            None => error_response(id, model, created, "No response generated"),
+            None => internal_error_response("No response generated"),
         },
-        Err(error) => error_response(id, model, created, &error.to_string()),
+        Err(error) => internal_error_response(&error.to_string()),
     }
 }
 
@@ -604,21 +679,15 @@ async fn run_stream(
     sender: mpsc::UnboundedSender<Event>,
 ) {
     let session = session.lock().await;
-    if let Err(error) = session.reset().await {
-        let _ = sender.send(Event::data(chunk_json(
-            &id,
-            &model,
-            created,
-            StreamDelta {
-                content: Some(format!("Error: {error}")),
-                ..StreamDelta::default()
-            },
-            Some("stop".to_string()),
-            None,
-        )));
-        let _ = sender.send(Event::data("[DONE]"));
-        return;
-    }
+    let has_tools = messages.iter().any(|message| !message.tool_namespaces().is_empty());
+    let messages = match continue_or_reset(&session, messages).await {
+        Ok(input) => input,
+        Err(error) => {
+            let _ = sender.send(Event::data(error_event_json(&error.to_string())));
+            let _ = sender.send(Event::data("[DONE]"));
+            return;
+        },
+    };
 
     let _ = sender.send(Event::data(chunk_json(
         &id,
@@ -632,7 +701,6 @@ async fn run_stream(
         None,
     )));
 
-    let has_tools = messages.iter().any(|message| !message.tool_namespaces().is_empty());
     let stream = session.reply_with_stream(messages, config).await;
     let mut emitted = 0usize;
     let mut emitted_tool_calls = 0usize;
@@ -700,17 +768,7 @@ async fn run_stream(
                 error,
             } => {
                 errored = true;
-                let _ = sender.send(Event::data(chunk_json(
-                    &id,
-                    &model,
-                    created,
-                    StreamDelta {
-                        content: Some(format!("Error: {error}")),
-                        ..StreamDelta::default()
-                    },
-                    Some("stop".to_string()),
-                    None,
-                )));
+                let _ = sender.send(Event::data(error_event_json(&error.to_string())));
                 break;
             },
         }
@@ -783,8 +841,7 @@ pub async fn handle_chat_completions(
         ChatCompletionResult::Stream(EventStream::from(body))
     } else {
         let session = Arc::clone(&state.session);
-        let response = run_blocking(session, messages, config, id, model, created).await;
-        ChatCompletionResult::Json(Json(response))
+        run_blocking(session, messages, config, id, model, created).await
     }
 }
 

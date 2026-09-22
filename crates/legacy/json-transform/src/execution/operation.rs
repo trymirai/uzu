@@ -46,6 +46,13 @@ pub enum CallTarget {
     },
 }
 
+/// How capture groups are escaped before substitution in a RegexReplace template.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplaceEscape {
+    Json,
+}
+
 /// A single case in a Switch operation.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SwitchCase {
@@ -136,10 +143,14 @@ pub enum Operation {
         template: String,
     },
     /// Regex replace_all on a string. Template can reference capture groups via `$1`, `$2`.
+    /// With `escape: "json"`, each capture group is escaped as the body of a JSON string literal before it is
+    /// substituted, so a template like `"$1": "$2"` stays valid JSON when the group holds newlines or quotes.
     /// String → String
     RegexReplace {
         pattern: String,
         template: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        escape: Option<ReplaceEscape>,
         #[serde(default)]
         regex_engine: RegexEngine,
     },
@@ -375,8 +386,9 @@ impl Operation {
             Self::RegexReplace {
                 pattern,
                 template,
+                escape,
                 regex_engine,
-            } => string::execute_regex_replace(pattern, template, regex_engine, input),
+            } => string::execute_regex_replace(pattern, template, *escape, regex_engine, input),
             Self::RegexFindAll {
                 pattern,
                 regex_engine,
