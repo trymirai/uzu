@@ -115,7 +115,7 @@ impl ToolParameterTypes {
             let parameters = properties
                 .iter()
                 .filter_map(|(name, property)| {
-                    let types = declared_types(property, &schema);
+                    let types = declared_types(property, &schema, 8);
                     (!types.is_empty()).then(|| (name.clone(), types))
                 })
                 .collect();
@@ -139,7 +139,12 @@ impl ToolParameterTypes {
 fn declared_types(
     property: &serde_json::Value,
     root: &serde_json::Value,
+    depth: u32,
 ) -> Vec<String> {
+    // the schema comes from the client, so a `$ref` cycle must end the walk rather than the process
+    if depth == 0 {
+        return Vec::new();
+    }
     let property = match property.get("$ref").and_then(serde_json::Value::as_str) {
         Some(reference) => reference.strip_prefix('#').and_then(|pointer| root.pointer(pointer)).unwrap_or(property),
         None => property,
@@ -153,7 +158,7 @@ fn declared_types(
             .iter()
             .filter_map(|key| property.get(*key).and_then(serde_json::Value::as_array))
             .flatten()
-            .flat_map(|branch| declared_types(branch, root))
+            .flat_map(|branch| declared_types(branch, root, depth - 1))
             .collect(),
     }
 }

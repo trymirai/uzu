@@ -114,7 +114,9 @@ fn coerce_to_schema_with_root(
     {
         return coerce_to_schema_with_root(value, non_null_schema, root_schema);
     }
-    // a union of shapes: container text goes to the first branch it parses as
+    // A union of shapes: container text goes to the first branch it parses as. Unlike the OpenAI boundary, which
+    // keeps the text when the union admits a string, a tool implementation deserializes what it declared, so the
+    // container branch wins here.
     if let Json::String(text) = &value
         && let Some(branches) = schema.get("anyOf").or_else(|| schema.get("oneOf")).and_then(Json::as_array)
     {
