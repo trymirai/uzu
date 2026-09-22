@@ -16,13 +16,13 @@ from mach import MemoryCounters, get_memory_counters
 
 @dataclass(frozen=True)
 class MlxSampling:
-    temp: float = 0.0
-    top_p: float = 0.0
-    min_p: float = 0.0
-    min_tokens_to_keep: int = 1
-    top_k: int = 0
-    xtc_probability: float = 0.0
-    xtc_threshold: float = 0.0
+    temp: float | None = None
+    top_p: float | None = None
+    min_p: float | None = None
+    min_tokens_to_keep: int | None = None
+    top_k: int | None = None
+    xtc_probability: float | None = None
+    xtc_threshold: float | None = None
     xtc_special_tokens: list[int] = field(default_factory=list)
 
 
@@ -32,27 +32,11 @@ class MlxRunRequest:
     #   str for a Hugging Face repository ID,
     #   Path for a local model directory.
     model: str | Path
-
-    # Raw input text or chat messages formatted using the target tokenizer's chat template.
     prompt: str | list[ChatMessage]
-
-    # Maximum number of tokens to generate, excluding prompt tokens.
-    max_tokens: int = 256
-
-    # Maximum number of prompt tokens processed per prefill step.
-    prefill_step_size: int = 2048
-
-    # Draft model location:
-    #   str for a Hugging Face repository ID,
-    #   Path for a local model directory.
-    #   None disables speculative decoding.
-    # Must use the same tokenizer as the target;
+    max_tokens: int | None = None
+    prefill_step_size: int | None = None
     draft_model_path: str | Path | None = None
-
-    # Number of tokens proposed per speculative decoding round; ignored without a draft model.
-    draft_tokens: int = 3
-
-    # Sampling parameters
+    draft_tokens: int | None = None
     sampling: MlxSampling | None = None
 
 
@@ -104,14 +88,14 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
     sampler: Callable | None = None
     if request.sampling is not None:
         sampler = make_sampler(
-            temp=request.sampling.temp,
-            top_p=request.sampling.top_p,
-            min_p=request.sampling.min_p,
-            min_tokens_to_keep=request.sampling.min_tokens_to_keep,
-            top_k=request.sampling.top_k,
-            xtc_probability=request.sampling.xtc_probability,
-            xtc_threshold=request.sampling.xtc_threshold,
-            xtc_special_tokens=request.sampling.xtc_special_tokens,
+            temp=request.sampling.temp or 0.0,
+            top_p=request.sampling.top_p or 0.0,
+            min_p=request.sampling.min_p or 0.0,
+            min_tokens_to_keep=request.sampling.min_tokens_to_keep or 1,
+            top_k=request.sampling.top_k or 0,
+            xtc_probability=request.sampling.xtc_probability or 0.0,
+            xtc_threshold=request.sampling.xtc_threshold or 0.0,
+            xtc_special_tokens=request.sampling.xtc_special_tokens or [],
         )
 
     # create and run inference loop
@@ -121,7 +105,7 @@ def run(request: MlxRunRequest) -> MlxRunResponse:
         model=model,
         tokenizer=tokenizer,
         prompt=prompt,
-        max_tokens=request.max_tokens,
+        max_tokens=request.max_tokens or 256,
         draft_model=draft_model,
         prefill_step_size=request.prefill_step_size,
         num_draft_tokens=request.draft_tokens,
