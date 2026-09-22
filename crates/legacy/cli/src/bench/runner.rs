@@ -11,7 +11,7 @@ use uzu::{
     types::{
         basic::SamplingMethod,
         model::ModelAccessibility,
-        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyEnergy},
+        session::chat::{ChatConfig, ChatReplyConfig, ChatReplyEnergy},
     },
 };
 use uzu_engine::{VERSION, data_type::DataType};
@@ -41,6 +41,7 @@ impl BenchRunner {
         &self,
         mut progress: Option<F>,
     ) -> Result<Vec<BenchResult>> {
+        let messages = self.task.to_chat_messages()?;
         let model_path_string = self.model_path.trim_end_matches('/').to_string();
         let model_path = PathBuf::from(&model_path_string);
         let parent_path = model_path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
@@ -58,8 +59,6 @@ impl BenchRunner {
         }
 
         let device = self.get_device_info();
-
-        let messages: Vec<ChatMessage> = self.task.messages.iter().map(|msg| msg.to_chat_message()).collect();
 
         let session_config = ChatConfig::default();
         let session = engine.chat(model, session_config).await?;
