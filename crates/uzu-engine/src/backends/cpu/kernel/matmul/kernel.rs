@@ -160,7 +160,7 @@ impl MatmulKernel for MatmulCpuKernel {
             (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_buffer_range.range().start) as *mut u8
         });
 
-        let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u)?;
+        let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u, weights_data_type)?;
 
         let bias_after_rht = post_rht.is_some();
         let command_buffer = encoder.as_command_buffer_mut();

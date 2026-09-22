@@ -23,7 +23,7 @@ pub struct MatmulShape {
     pub signed_codes: bool,
     pub a_full_precision: bool,
     pub gathered: bool,
-    pub params_layout: QuantParamsLayout,
+    pub params_layout: Option<QuantParamsLayout>,
     pub d_transform: GemmDTransform,
 }
 
@@ -43,7 +43,7 @@ impl MatmulShape {
             signed_codes: arguments.b.signed_codes(),
             a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
             gathered: arguments.gather_indices.is_some(),
-            params_layout: arguments.b.params_layout(),
+            params_layout: arguments.b.quant_params_layout(),
             d_transform: arguments.d_transform.mask(),
         }
     }

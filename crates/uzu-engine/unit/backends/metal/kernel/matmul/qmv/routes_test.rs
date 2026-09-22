@@ -62,7 +62,7 @@ fn problem(
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
-        params_layout: QuantParamsLayout::OutputGroup,
+        params_layout: Some(QuantParamsLayout::OutputGroup),
         d_transform: GemmDTransform::empty(),
     }
 }

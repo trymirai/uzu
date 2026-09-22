@@ -85,9 +85,6 @@ impl GemvSpecialization {
         output_data_type: DataType,
         tile: policy::GemvTile,
     ) -> Option<Self> {
-        if shape.gathered && shape.params_layout == QuantParamsLayout::GroupOutput {
-            return None;
-        }
         if !shape.b_transpose || !shape.a_full_precision {
             return None;
         }
@@ -141,7 +138,7 @@ impl GemvSpecialization {
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
             full_tile: full_tile(shape, tile),
-            metadata_group_major: shape.params_layout == QuantParamsLayout::GroupOutput,
+            metadata_group_major: shape.params_layout == Some(QuantParamsLayout::GroupOutput),
         };
         Some(specialization)
     }
@@ -287,10 +284,7 @@ impl GemvKernel {
                 ..
             } => (Some(*scales), None, None),
         };
-        let metadata_stride = match b.group_size() {
-            Some(group_size) => b.params_layout().row_stride(n, k.div_ceil(group_size)),
-            None => 0,
-        };
+        let metadata_stride = b.quant_params_stride(self.weights_data_type, k);
         let output_group_count = n.div_ceil(specialization.output_row_tile());
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;

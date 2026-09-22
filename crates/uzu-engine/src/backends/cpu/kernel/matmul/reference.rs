@@ -39,7 +39,9 @@ impl WeightData {
         b_transpose: bool,
         k: usize,
         n: usize,
+        params_data_type: DataType,
     ) -> Result<Self, MatmulError<Cpu>> {
+        let params_stride = b.quant_params_stride(params_data_type, k as u32) as usize;
         let alloc_ptr = |a: &crate::backends::common::Allocation<Cpu>| {
             let r = a.as_buffer_range_ref();
             SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
@@ -100,7 +102,7 @@ impl WeightData {
             group_size: group_size as usize,
             signed_codes,
             metadata_group_major: params_layout == QuantParamsLayout::GroupOutput,
-            metadata_stride: params_layout.row_stride(n as u32, (k as u32).div_ceil(group_size)) as usize,
+            metadata_stride: params_stride,
         })
     }
 }

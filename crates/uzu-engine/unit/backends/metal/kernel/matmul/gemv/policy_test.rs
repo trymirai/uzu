@@ -180,7 +180,7 @@ fn quant_shape(
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
-        params_layout: QuantParamsLayout::OutputGroup,
+        params_layout: Some(QuantParamsLayout::OutputGroup),
         d_transform,
     }
 }
@@ -199,7 +199,7 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
-        params_layout: QuantParamsLayout::OutputGroup,
+        params_layout: Some(QuantParamsLayout::OutputGroup),
         d_transform: GemmDTransform::empty(),
     };
     assert!(
@@ -233,9 +233,9 @@ fn specialization_preserves_quantized_route_and_accumulate_tail() {
 }
 
 #[uzu_test]
-fn gathered_group_major_is_not_a_gemv_route() {
+fn gathered_group_major_is_a_gemv_route() {
     let mut shape = quant_shape(1, 8192, GemmDTransform::empty());
-    shape.params_layout = QuantParamsLayout::GroupOutput;
+    shape.params_layout = Some(QuantParamsLayout::GroupOutput);
     shape.gathered = true;
     assert!(
         super::super::kernel::GemvSpecialization::select_tile(
@@ -245,6 +245,6 @@ fn gathered_group_major_is_not_a_gemv_route() {
             DataType::BF16,
             qtile(8, 4),
         )
-        .is_none()
+        .is_some()
     );
 }

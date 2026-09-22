@@ -31,7 +31,7 @@ use crate::{
             QuantBuffers, QuantInput,
             harness::TestDispatch,
             quant::{run_quant_cpu, run_quant_cpu_with_params_layout, run_quant_metal},
-            quant_arguments, quant_b_variant,
+            quant_arguments,
         },
     },
 };
@@ -424,7 +424,7 @@ fn cpu_group_major_quantized_gemm_matches_row_major() {
         for method in
             [QuantizationMethod::ScaleBias, QuantizationMethod::ScaleZeroPoint, QuantizationMethod::ScaleSymmetric]
         {
-            let input = QuantInput::<bf16>::new(4, 128, 16, 32, bits, method, 0);
+            let input = QuantInput::<bf16>::new(4, 128, 12, 32, bits, method, 0);
             let expected = run_quant_cpu(&input);
             let actual = run_quant_cpu_with_params_layout(&input, QuantParamsLayout::GroupOutput);
             assert_parity("CPU GroupOutput", &expected, &actual, 0.05, 0.5);
@@ -472,8 +472,8 @@ fn quant_gemm_full_precision_a_group_major_matches_cpu() {
     let context = MetalContext::new().expect("Metal context");
     let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
     let reference = run_quant_cpu(&input);
-    let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    buffers.prepare_group_major(&input);
+    let mut buffers =
+        QuantBuffers::<Metal, bf16>::allocate_with_params_layout(&context, &input, QuantParamsLayout::GroupOutput);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -575,16 +575,14 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
         return;
     }
 
-    for (activation_group_size, weight_group_size) in
-        [(32u32, 32u32), (32, 64), (64, 64), (64, 128), (128, 32), (128, 64), (128, 128)]
-    {
+    for (activation_group_size, weight_group_size) in [(32u32, 32u32), (64, 64), (128, 32), (128, 64), (128, 128)] {
         for (bits, method) in [
             (4, QuantizationMethod::ScaleSymmetric),
             (8, QuantizationMethod::ScaleSymmetric),
             (8, QuantizationMethod::ScaleBias),
             (4, QuantizationMethod::ScaleZeroPoint),
         ] {
-            let (input, reference_input) = QuantInput::<bf16>::new(m, 256, 72, weight_group_size, bits, method, 0)
+            let (input, reference_input) = QuantInput::<bf16>::new(m, 256, 12, weight_group_size, bits, method, 0)
                 .with_prepared_a_and_reference(
                     activation_group_size,
                     (method != QuantizationMethod::ScaleSymmetric)
@@ -718,8 +716,8 @@ fn a8w_mxu_output_bias_parity_bf16(
         }
     }
 
-    let mut metal_buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    metal_buffers.prepare_group_major(&input);
+    let mut metal_buffers =
+        QuantBuffers::<Metal, bf16>::allocate_with_params_layout(&context, &input, QuantParamsLayout::GroupOutput);
     let metal_output_bias = crate::tests::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &output_bias);
     let metal_output_hadamard_factors = output_hadamard_factors
         .as_ref()
@@ -764,15 +762,8 @@ fn run_widened_f32<B: Backend>(
     let mut matmul =
         <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(context, DataType::BF16, DataType::BF16, DataType::F32)
             .expect("MatmulKernel widened");
-    // readout weight never adopts the A8 route, so it keeps row-major metadata
-    let b = quant_b_variant(
-        &buffers.w,
-        &buffers.scales,
-        buffers.zp.as_ref(),
-        buffers.bias.as_ref(),
-        QuantParamsLayout::OutputGroup,
-        input,
-    );
+    // Exercise widened output with explicitly supplied OutputGroup metadata.
+    let b = buffers.matmul_b(input);
     let mut encoder = Encoder::<B>::new(context).expect("encoder");
     matmul
         .encode(

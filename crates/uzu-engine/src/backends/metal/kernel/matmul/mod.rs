@@ -178,7 +178,7 @@ impl MatmulKernel for MatmulMetalKernel {
             || self.output_data_type != DataType::BF16
             || shape.a_full_precision
             || !shape.is_quant()
-            || shape.params_layout != QuantParamsLayout::GroupOutput
+            || shape.params_layout != Some(QuantParamsLayout::GroupOutput)
             || !supports_integer_right_operand(shape)
             || !shape.b_transpose
             || shape.b_leading_dimension.is_some()
@@ -208,7 +208,7 @@ impl MatmulKernel for MatmulMetalKernel {
         bf16_shape: &MatmulShape,
         context: &MetalContext,
     ) -> ActivationFormat {
-        if bf16_shape.params_layout != QuantParamsLayout::GroupOutput
+        if bf16_shape.params_layout != Some(QuantParamsLayout::GroupOutput)
             || !supports_integer_right_operand(bf16_shape)
             || matches!(self.select_dispatch(bf16_shape, context), MatmulDispatch::Gemv(_))
         {

@@ -59,6 +59,15 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
     }
 }
 
+fn pad<T: ArrayElement>(
+    values: &[T],
+    minimum_len: usize,
+) -> Vec<T> {
+    let mut padded = values.to_vec();
+    padded.resize(values.len().max(minimum_len), T::zeroed());
+    padded
+}
+
 pub fn transpose_metadata(
     plane: &mut [u8],
     columns: u32,
@@ -66,7 +75,7 @@ pub fn transpose_metadata(
     bits: u32,
 ) {
     let (columns, groups) = (columns as usize, groups as usize);
-    let row_stride = QuantParamsLayout::GroupOutput.row_stride(columns as u32, groups as u32) as usize;
+    let row_stride = QuantParamsLayout::GroupOutput.group_stride(columns as u32) as usize;
     let source_bytes = columns * (groups * bits as usize).div_ceil(u8::BITS as usize);
     let output_bytes = groups * row_stride * bits as usize / u8::BITS as usize;
     let source = plane[..source_bytes].to_vec();
@@ -278,12 +287,33 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         context: &B::Context,
         input: &QuantInput<T>,
     ) -> Self {
-        Self {
-            params_layout: QuantParamsLayout::OutputGroup,
+        Self::allocate_with_params_layout(context, input, QuantParamsLayout::OutputGroup)
+    }
+
+    pub fn allocate_with_params_layout(
+        context: &B::Context,
+        input: &QuantInput<T>,
+        params_layout: QuantParamsLayout,
+    ) -> Self {
+        let groups = input.k.div_ceil(input.group_size);
+        let plane_len = |packing_divisor| {
+            let [rows, columns] = params_layout.plane_shape(input.n, groups, packing_divisor);
+            (rows * columns) as usize
+        };
+        let metadata_elements = plane_len(1);
+        let zero_point_bytes = plane_len(input.mode.packing_divisor());
+        let mut buffers = Self {
+            params_layout,
             w: alloc_allocation_with_data::<B, u32>(context, &input.weights_for_upload()),
-            scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
-            zp: input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(context, zp)),
-            bias: input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(context, b)),
+            scales: alloc_allocation_with_data::<B, T>(context, &pad(&input.scales, metadata_elements)),
+            zp: input
+                .zero_points
+                .as_ref()
+                .map(|zero_points| alloc_allocation_with_data::<B, u8>(context, &pad(zero_points, zero_point_bytes))),
+            bias: input
+                .biases
+                .as_ref()
+                .map(|biases| alloc_allocation_with_data::<B, T>(context, &pad(biases, metadata_elements))),
             x: alloc_allocation_with_data::<B, T>(context, &input.x),
             prepared_a: input
                 .prepared_a
@@ -300,19 +330,26 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
                 .map(|prepared| alloc_allocation_with_data::<B, i32>(context, &prepared.group_sums)),
             y: alloc_allocation::<B, T>(context, (input.m as usize) * (input.n as usize)),
             _t: std::marker::PhantomData,
+        };
+        if params_layout == QuantParamsLayout::GroupOutput {
+            buffers.transpose_quant_params(input);
         }
+        buffers
     }
 
-    pub fn prepare_group_major(
+    pub fn matmul_b<'a>(
+        &'a self,
+        input: &QuantInput<T>,
+    ) -> MatmulB<'a, B> {
+        quant_b_variant(&self.w, &self.scales, self.zp.as_ref(), self.bias.as_ref(), self.params_layout, input)
+    }
+
+    fn transpose_quant_params(
         &mut self,
         input: &QuantInput<T>,
     ) {
-        if self.params_layout == QuantParamsLayout::GroupOutput {
-            return;
-        }
         let columns = input.n;
         let groups = input.k.div_ceil(input.group_size);
-        assert_eq!(QuantParamsLayout::GroupOutput.group_stride(columns), columns);
         let value_bits = size_of::<T>() as u32 * u8::BITS;
         transpose_metadata(self.scales.as_slice_mut(), columns, groups, value_bits);
         match input.quant_method {
@@ -335,11 +372,10 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
             },
             QuantizationMethod::ScaleSymmetric => {},
         }
-        self.params_layout = QuantParamsLayout::GroupOutput;
     }
 }
 
-pub fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
+fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
     w: &'a Allocation<B>,
     scales: &'a Allocation<B>,
     zero_points: Option<&'a Allocation<B>>,
@@ -434,10 +470,7 @@ pub fn run_quant_cpu_with_params_layout<T: ArrayElement + Float>(
     params_layout: QuantParamsLayout,
 ) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Cpu context");
-    let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
-    if params_layout == QuantParamsLayout::GroupOutput {
-        buffers.prepare_group_major(input);
-    }
+    let mut buffers = QuantBuffers::<Cpu, T>::allocate_with_params_layout(&context, input, params_layout);
     let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         T::data_type(),
@@ -457,10 +490,13 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
     input: &QuantInput<T>,
     dispatch: TestDispatch,
 ) -> Vec<T> {
-    let mut buffers = QuantBuffers::<Metal, T>::allocate(context, input);
-    if input.prepared_a.is_some() && QuantParamsLayout::GroupOutput.group_stride(input.n) == input.n {
-        buffers.prepare_group_major(input);
-    }
+    let params_layout = if input.prepared_a.is_some() && QuantParamsLayout::GroupOutput.group_stride(input.n) == input.n
+    {
+        QuantParamsLayout::GroupOutput
+    } else {
+        QuantParamsLayout::OutputGroup
+    };
+    let mut buffers = QuantBuffers::<Metal, T>::allocate_with_params_layout(context, input, params_layout);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         context,
         T::data_type(),

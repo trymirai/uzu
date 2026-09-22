@@ -501,7 +501,7 @@ impl GemmKernel {
             use_morton: false,
             ab_scale: 1.0,
             metadata_group_stride: if shape.is_quant() {
-                shape.params_layout.group_stride(shape.n)
+                shape.params_layout.map_or(0, |layout| layout.group_stride(shape.n))
             } else {
                 0
             },
@@ -577,7 +577,7 @@ fn validate_int8_left_operand(
     }
     let compatible = use_mxu
         && supports_integer_right_operand(&shape)
-        && shape.params_layout == QuantParamsLayout::GroupOutput
+        && shape.params_layout == Some(QuantParamsLayout::GroupOutput)
         && matches!(
             shape.b_prologue,
             GemmBPrologueKind::ScaleSymmetricDequant
@@ -623,6 +623,6 @@ fn quant_params(
         aligned_inner_iterations: outer_block_k(shape, plan.engine, plan.tiling).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
-        metadata_group_stride: shape.params_layout.group_stride(shape.n),
+        metadata_group_stride: shape.params_layout.map_or(0, |layout| layout.group_stride(shape.n)),
     }
 }

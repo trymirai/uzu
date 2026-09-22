@@ -6,7 +6,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::matmul::{MatmulB, QuantParamsLayout},
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, WeightLayout},
+    config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -24,25 +24,22 @@ pub struct QuantizationInfo {
     pub mode: QuantizationMode,
     pub method: QuantizationMethod,
     pub group_size: u32,
-    pub params_layout: QuantParamsLayout,
 }
 
 pub struct ParsedWeightSpec {
-    pub weight_layout: WeightLayout,
+    pub layout: Layout,
     pub quantization: Option<QuantizationInfo>,
 }
 
 pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeightSpec, WeightMatrixError<B>> {
-    let (weight_layout, quantized) = match spec {
+    let (layout, quantized) = match spec {
         AnyWeightMatrixSpec::FullPrecisionSpec(spec) => (spec.layout.clone(), None),
-        AnyWeightMatrixSpec::MLXSpec(spec) => (
-            spec.weight_layout.clone(),
-            Some((spec.params_layout, spec.bits, spec.group_size, QuantizationMethod::ScaleBias)),
-        ),
+        AnyWeightMatrixSpec::MLXSpec(spec) => {
+            (spec.layout.clone(), Some((spec.bits, spec.group_size, QuantizationMethod::ScaleBias)))
+        },
         AnyWeightMatrixSpec::IntSpec(spec) => (
-            spec.weight_layout.clone(),
+            spec.layout.clone(),
             Some((
-                spec.params_layout,
                 spec.bits,
                 spec.group_size,
                 if spec.is_symmetric {
@@ -56,7 +53,7 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
     };
     let quantization = match quantized {
         None => None,
-        Some((params_layout, bits, group_size, method)) => {
+        Some((bits, group_size, method)) => {
             let mode = match bits {
                 4 => QuantizationMode::U4,
                 8 => QuantizationMode::U8,
@@ -73,14 +70,20 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
                 mode,
                 method,
                 group_size,
-                params_layout,
             })
         },
     };
     Ok(ParsedWeightSpec {
-        weight_layout,
+        layout,
         quantization,
     })
+}
+
+fn params_layout_for(layout: Layout) -> QuantParamsLayout {
+    match layout {
+        Layout::OutputInput => QuantParamsLayout::GroupOutput,
+        Layout::InputOutput => QuantParamsLayout::OutputGroup,
+    }
 }
 
 enum QuantizedCorrection<B: Backend> {
@@ -93,6 +96,7 @@ struct Quantized<B: Backend> {
     scales: Allocation<B>,
     correction: QuantizedCorrection<B>,
     info: QuantizationInfo,
+    params_layout: QuantParamsLayout,
     signed_codes: bool,
 }
 
@@ -105,21 +109,21 @@ impl<B: Backend> WeightMatrix<B> {
     pub fn load(
         tree: &ParameterTree<B>,
         spec: AnyWeightMatrixSpec,
-        required_weight_layout: WeightLayout,
+        required_layout: Layout,
         output_dim: u32,
         input_dim: u32,
         data_type: DataType,
     ) -> Result<Self, WeightMatrixError<B>> {
         let ParsedWeightSpec {
-            weight_layout,
+            layout,
             quantization: quantization_info,
         } = parse_spec(&spec)?;
-        if weight_layout != required_weight_layout {
+        if layout != required_layout {
             return Err(WeightMatrixError::UnsupportedConfiguration(format!(
-                "expected {required_weight_layout:?} weight layout, got {weight_layout:?}"
+                "expected {required_layout:?} weight layout, got {layout:?}"
             )));
         }
-        let (rows, columns) = physical_shape(&weight_layout, output_dim, input_dim);
+        let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
         let Some(info) = quantization_info else {
             let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_allocation()?;
@@ -128,7 +132,7 @@ impl<B: Backend> WeightMatrix<B> {
                 quantized: None,
             });
         };
-        let params_layout = info.params_layout;
+        let params_layout = params_layout_for(layout.clone());
 
         let group_size = info.group_size;
         let packing_divisor = info.mode.packing_divisor();
@@ -162,6 +166,7 @@ impl<B: Backend> WeightMatrix<B> {
                 scales,
                 correction,
                 info,
+                params_layout,
                 signed_codes: false,
             }),
         })
@@ -207,7 +212,7 @@ impl<B: Backend> WeightMatrix<B> {
                 b: &self.values,
                 scales: &quantized.scales,
                 biases,
-                params_layout: quantized.info.params_layout,
+                params_layout: quantized.params_layout,
                 mode,
                 group_size,
                 signed_codes,
@@ -216,7 +221,7 @@ impl<B: Backend> WeightMatrix<B> {
                 b: &self.values,
                 scales: &quantized.scales,
                 zero_points,
-                params_layout: quantized.info.params_layout,
+                params_layout: quantized.params_layout,
                 mode,
                 group_size,
                 signed_codes,
@@ -224,7 +229,7 @@ impl<B: Backend> WeightMatrix<B> {
             QuantizedCorrection::Symmetric => MatmulB::ScaleSymmetricDequant {
                 b: &self.values,
                 scales: &quantized.scales,
-                params_layout: quantized.info.params_layout,
+                params_layout: quantized.params_layout,
                 mode,
                 group_size,
                 signed_codes,
@@ -245,7 +250,7 @@ impl<B: Backend> Quantized<B> {
         &mut self,
         values: &mut Allocation<B>,
     ) -> bool {
-        if self.info.params_layout != QuantParamsLayout::GroupOutput {
+        if self.params_layout != QuantParamsLayout::GroupOutput {
             return false;
         }
         if self.info.mode != QuantizationMode::U4 {
@@ -264,12 +269,12 @@ impl<B: Backend> Quantized<B> {
 }
 
 fn physical_shape(
-    weight_layout: &WeightLayout,
+    layout: &Layout,
     output_dim: u32,
     input_dim: u32,
 ) -> (u32, u32) {
-    match weight_layout {
-        WeightLayout::OutputInput => (output_dim, input_dim),
-        WeightLayout::InputOutput => (input_dim, output_dim),
+    match layout {
+        Layout::OutputInput => (output_dim, input_dim),
+        Layout::InputOutput => (input_dim, output_dim),
     }
 }

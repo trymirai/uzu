@@ -10,7 +10,7 @@ use crate::{
             matmul::{ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulShape},
         },
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, WeightLayout},
+    config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearInput},
@@ -80,14 +80,8 @@ impl<B: Backend> LinearMatmul<B> {
             }
         }
 
-        let matrix = WeightMatrix::load(
-            weights_tree,
-            spec,
-            WeightLayout::OutputInput,
-            output_dim,
-            input_dim,
-            weights_data_type,
-        )?;
+        let matrix =
+            WeightMatrix::load(weights_tree, spec, Layout::OutputInput, output_dim, input_dim, weights_data_type)?;
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
             return Err(LinearMatmulError::UnsupportedConfiguration(
                 "fused output-hadamard factors require quantized weights".into(),
@@ -167,7 +161,7 @@ impl<B: Backend> LinearMatmul<B> {
             signed_codes: b.signed_codes(),
             a_full_precision,
             gathered: false,
-            params_layout: b.params_layout(),
+            params_layout: b.quant_params_layout(),
             d_transform: self.d_ops().mask(),
         }
     }
