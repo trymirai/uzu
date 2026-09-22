@@ -917,7 +917,7 @@ static inline void qtip_gaussian_fixture_batch(
     device const uchar* codes,
     device const float2* codebook,
     device const bfloat2* activations,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     const constant uint& rows,
@@ -953,7 +953,7 @@ static inline void qtip_gaussian_fixture_ksplit_batch(
     device const uchar* codes,
     device const TABLE* codebook,
     device const bfloat2* activations,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     const constant uint& rows,
@@ -1003,7 +1003,7 @@ static inline void qtip_gaussian_fixture_paired_batch8(
     device const uchar* codes,
     device const float2* codebook,
     device const bfloat2* activations,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     const constant uint& rows,
@@ -1080,7 +1080,7 @@ template <uint TOKENS, uint LANES_PER_ROW, uint SIMD_GROUPS, bool ONE_MULTIPLY>
 static inline void qtip_gaussian_computed_walsh_batch(
     device const uchar* codes,
     device const bfloat2* activations,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     const constant uint& rows,
@@ -1154,7 +1154,7 @@ static inline void qtip_gaussian_fixture_packed_subgroup_batch(
     device const uchar* codes,
     device const float2* codebook,
     device const bfloat2* activations,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     const constant uint& rows,
@@ -1234,7 +1234,7 @@ static inline void qtip_gaussian_fixture_mxu(
     device const uchar* codes,
     device const Codebook* codebook,
     device const bfloat2* activations,
-    device const half* scales,
+    device const float* scales,
     device const Gain* gains,
     device bfloat* output,
     uint rows,
@@ -1517,7 +1517,7 @@ static inline void qtip_gaussian_one_mul_a8_mxu(
     device const uchar* codes,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     uint rows,
@@ -1596,7 +1596,7 @@ static inline void qtip_gaussian_one_mul_a8_mxu_direct(
     device const uchar* codes,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     uint rows,
@@ -1717,7 +1717,7 @@ static inline void qtip_gaussian_one_mul_a8_mxu_direct_packed(
     device const uchar* codes,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     uint rows,
@@ -1830,7 +1830,7 @@ static inline void qtip_gaussian_one_mul_a8_mxu_direct_words(
     device const uint* code_words,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     uint rows,
@@ -1904,7 +1904,7 @@ template <uint COLS, uint PARTITIONS>
 static inline void qtip_gaussian_one_mul_a8_mxu_split_k(
     device const uchar* codes,
     device const int8_t* activations,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device int32_t* partials,
     uint rows,
@@ -1984,7 +1984,7 @@ template <uint COLS, uint PARTITIONS>
 static inline void qtip_gaussian_one_mul_a8_mxu_reduce(
     device const int32_t* partials,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     uint rows,
@@ -2022,7 +2022,7 @@ static inline void qtip_gaussian_one_mul_a8_mxu_fused_split_k(
     device const uchar* codes,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     threadgroup int32_t* partials,
@@ -2161,7 +2161,7 @@ static inline void qtip_gaussian_int8_lut_a8_mxu_fused_split_k(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     threadgroup int32_t* partials,
@@ -2264,7 +2264,7 @@ static inline void qtip_gaussian_int8_lut_a8_mxu_staged(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     threadgroup int8_t* weight_shared,
@@ -2373,7 +2373,7 @@ static inline void qtip_gaussian_computed_v2_a8_mxu_cooperative_b16(
     device const uchar* codes,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     threadgroup int8_t* weight_shared,
@@ -2466,7 +2466,7 @@ static inline void qtip_gaussian_int8_lut_a8_mxu_direct(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const Gain* gains,
     device bfloat* output,
     float codebook_scale,
@@ -2627,7 +2627,7 @@ static inline void qtip_gaussian_int8_lut_a8_mxu_direct_v4_restarted(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     float codebook_scale,
@@ -2751,7 +2751,7 @@ static inline void qtip_gaussian_one_mul_a8_mxu_paired_k3_row_split2(
     device const uchar* codes,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     uint rows,
@@ -2830,7 +2830,7 @@ static inline void qtip_gaussian_one_mul_a8_mxu_paired_k3_row_split_grouped(
     device const uchar* codes,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     uint rows,
@@ -2943,7 +2943,7 @@ static inline void qtip_gaussian_one_mul_a8_mxu_atomic_split_k(
     device const uchar* codes,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     threadgroup _atomic<int32_t>* sums,
@@ -3040,7 +3040,7 @@ static inline void qtip_gaussian_dense_a8_mxu_fused_split_k(
     device const int8_t* weights,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const half* gains,
     device bfloat* output,
     threadgroup int32_t* partials,
@@ -3126,7 +3126,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     const constant float& codebook_scale, \
@@ -3164,7 +3164,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     const constant float& codebook_scale, \
@@ -3201,7 +3201,7 @@ static inline void qtip_gaussian_computed_v4_a8_mxu_staged_b16(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     threadgroup int8_t* weight_shared,
@@ -3318,7 +3318,7 @@ static inline void qtip_gaussian_fixture_v4_mxu(
     device const uchar* codes,
     device const Codebook* codebook,
     device const bfloat* activations,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     uint rows,
@@ -3804,7 +3804,7 @@ KERNEL(NAME)( \
     device const uchar* codes, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const half* gains, \
     device bfloat* output, \
     const constant uint& rows, \

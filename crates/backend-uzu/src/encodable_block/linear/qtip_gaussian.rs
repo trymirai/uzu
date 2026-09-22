@@ -1,3 +1,4 @@
+use half::f16;
 use thiserror::Error;
 
 use crate::{
@@ -235,6 +236,43 @@ impl<B: Backend> QtipGaussianLinear<B> {
                 .validate(&[output_dimension, bytes_per_row], DataType::U8)?
                 .read_allocation()?
         };
+        // Row scales are handed to the kernels as f32. Physical packages store them as f16; S packages store f16
+        // or f32 per leaf and carry QAT post gains the dense checkpoint applied per row after the rotation. A row
+        // rotation commutes with a per-row factor, so those gains fold into the row scale here, in f32, exactly as
+        // the reference loader multiplies them.
+        let post_gain_axes: &[String] = spec.post_gain_axes.as_deref().unwrap_or(&[]);
+        assert!(post_gain_axes.iter().all(|axis| axis == "row"), "unsupported post gain axes {post_gain_axes:?}");
+        let mut scales_f32 = match spec.scale_dtype.as_deref().unwrap_or("float16") {
+            "float16" => parameter_tree
+                .leaf("scales")?
+                .validate(&[output_dimension], DataType::F16)?
+                .read_slice::<f16>()?
+                .iter()
+                .map(|scale| scale.to_f32())
+                .collect::<Vec<f32>>(),
+            "float32" => parameter_tree
+                .leaf("scales")?
+                .validate(&[output_dimension], DataType::F32)?
+                .read_slice::<f32>()?
+                .into_vec(),
+            other => panic!("row scales of dtype {other} are not supported by this runtime"),
+        };
+        for index in 0..post_gain_axes.len() {
+            let gains = parameter_tree
+                .leaf(&format!("post_gains.{index}"))?
+                .validate(&[output_dimension], DataType::F32)?
+                .read_slice::<f32>()?;
+            for (scale, gain) in scales_f32.iter_mut().zip(gains.iter()) {
+                *scale *= gain;
+            }
+        }
+        let scales = {
+            let mut allocation = context
+                .create_allocation(scales_f32.len() * std::mem::size_of::<f32>(), AllocationType::Global)
+                .map_err(QtipGaussianLinearError::BackendError)?;
+            allocation.copyin(&scales_f32);
+            allocation
+        };
         Ok(Self {
             kernel: <B::Kernels as Kernels>::QtipSExactKernel::new(context)
                 .map_err(QtipGaussianLinearError::BackendError)?,
@@ -244,7 +282,7 @@ impl<B: Backend> QtipGaussianLinear<B> {
             state_bits,
             table_mode,
             codebook_scale,
-            scales: parameter_tree.leaf("scales")?.validate(&[output_dimension], DataType::F16)?.read_allocation()?,
+            scales,
             gains: parameter_tree.leaf("gains")?.validate(&[output_dimension], DataType::BF16)?.read_allocation()?,
             signs: shared
                 .leaf(&format!("signs_{dimension}"))?

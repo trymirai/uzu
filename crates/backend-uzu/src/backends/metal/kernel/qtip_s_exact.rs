@@ -627,7 +627,8 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
         } = arguments;
         assert!(matches!(columns, 5120 | 6144 | 17408));
         assert_eq!(input.size(), size_for_shape(&[batch, columns], DataType::BF16));
-        assert_eq!(scales.size(), size_for_shape(&[rows], DataType::F16));
+        // Row scales arrive as f32: S packages store some leaves' scales in f32 and fold post gains at load.
+        assert_eq!(scales.size(), size_for_shape(&[rows], DataType::F32));
         assert_eq!(gains.size(), size_for_shape(&[rows], DataType::BF16));
         assert_eq!(signs.size(), size_for_shape(&[columns], DataType::F32));
         let (power, order) = match columns {

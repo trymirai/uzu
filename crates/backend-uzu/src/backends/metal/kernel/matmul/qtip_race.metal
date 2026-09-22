@@ -328,7 +328,7 @@ static inline void qtip_race_dt(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     device int32_t* partials,
@@ -539,7 +539,7 @@ static inline void qtip_race_b16t(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     device int32_t* partials,
@@ -686,7 +686,7 @@ static inline void qtip_race_v4_cs(
     device const int8_t* codebook_split,
     device const int8_t* activations_half,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     device int32_t* partials,
@@ -822,7 +822,7 @@ static inline void qtip_race_v4_cs_b16t(
     device const int8_t* codebook_split,
     device const int8_t* activations_half,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     device int32_t* partials,
@@ -959,7 +959,7 @@ static inline void qtip_race_as(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     device int32_t* partials,
@@ -1134,7 +1134,7 @@ static inline void qtip_race_v4_csk(
     device const int8_t* codebook_split,
     device const int8_t* activations_half,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     device int32_t* partials,
@@ -1254,7 +1254,7 @@ static inline void qtip_race_v4_split(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     float codebook_scale,
@@ -1380,7 +1380,7 @@ static inline void qtip_race_b16(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     float codebook_scale,
@@ -1513,7 +1513,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -1553,7 +1553,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -1630,7 +1630,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -1681,7 +1681,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook_split, \
     device const int8_t* activations_half, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -1715,7 +1715,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook_split, \
     device const int8_t* activations_half, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -1746,7 +1746,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -1771,7 +1771,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -1854,7 +1854,7 @@ static inline void qtip_race_sw(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     threadgroup int8_t* staging,
@@ -1995,7 +1995,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -2021,7 +2021,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -2047,7 +2047,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -2110,7 +2110,7 @@ static inline void qtip_race_bnt(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     float codebook_scale,
@@ -2243,7 +2243,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -2267,7 +2267,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -2300,7 +2300,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -2326,7 +2326,7 @@ KERNEL(NAME)( \
     device const int8_t* codebook, \
     device const int8_t* activations, \
     device const float* activation_scales, \
-    device const half* scales, \
+    device const float* scales, \
     device const ushort* gains_bf16, \
     device bfloat* output, \
     device int32_t* partials, \
@@ -2361,7 +2361,7 @@ static inline void qtip_race_dt_tg(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     threadgroup int8_t* table,
@@ -2484,7 +2484,7 @@ static inline void qtip_race_dt_v8(
     device const int8_t* codebook,
     device const int8_t* activations,
     device const float* activation_scales,
-    device const half* scales,
+    device const float* scales,
     device const ushort* gains_bf16,
     device bfloat* output,
     float codebook_scale,

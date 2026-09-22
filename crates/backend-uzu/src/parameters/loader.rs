@@ -224,6 +224,21 @@ impl<'loader, B: Backend> ParameterTree<'loader, B> {
         })
     }
 
+    /// Marks every tensor under `name` as validated without reading it, for data this runtime derives from the
+    /// config instead (S packages ship precomputed rotary tables). Returns the acknowledged keys.
+    pub fn acknowledge_subtree(
+        &self,
+        name: &str,
+    ) -> Vec<String> {
+        let prefix = format!("{}.", self.join_prefix(name));
+        let keys = self.loader.index.keys().filter(|key| key.starts_with(&prefix)).cloned().collect::<Vec<_>>();
+        let mut validated_tensors = self.loader.validated_tensors.borrow_mut();
+        for key in &keys {
+            validated_tensors.insert(key.clone());
+        }
+        keys
+    }
+
     pub fn metadata<T: DeserializeStrictOwned>(
         &self,
         name: &str,

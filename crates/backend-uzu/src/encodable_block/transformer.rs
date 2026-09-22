@@ -104,6 +104,13 @@ impl<B: Backend> Transformer<B> {
     ) -> Result<Self, TransformerNewError<B>> {
         let mut ropes: Vec<AnyRoPEConfig> = Vec::new();
 
+        // S packages ship the precomputed rotary tables (`ropes.<index>.cosines|sines`); this runtime derives the
+        // same tables from the layers' rope configs per request, so acknowledge them for the strict tensor check.
+        let precomputed_ropes = parameter_tree.acknowledge_subtree("ropes");
+        if !precomputed_ropes.is_empty() && std::env::var("UZU_SESSION_TRACE").is_ok() {
+            eprintln!("package rotary tables not used (derived from config): {precomputed_ropes:?}");
+        }
+
         let num_layers = transformer_config.layer_configs.len() as u32;
         let layers = transformer_config
             .layer_configs
