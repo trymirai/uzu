@@ -23,8 +23,15 @@ done
 if [ ! -f "$PACKAGE/encoding.json" ]; then
   FAMILY="${3:-$(python3 - "$PACKAGE/config.json" <<'PY'
 import json, sys
-decoder = json.load(open(sys.argv[1])).get("decoder_config", {})
-print("muse-glimmer" if decoder.get("ple_model_config") else "qwen3.8")
+layers = json.load(open(sys.argv[1]))["decoder_config"]["transformer_config"]["layer_configs"]
+mixers = {layer["mixer_config"].get("type") for layer in layers}
+fused = any("qkvg_projection_config" in layer["mixer_config"] for layer in layers)
+if mixers == {"DeltaNetConfig"}:
+    print("qwen3.8")
+elif fused:
+    print("muse-glimmer")
+else:
+    sys.exit("cannot tell the chat encoding from the config; pass it as the third argument")
 PY
 )}"
   printf '[{"name": "%s", "type": "hanashi"}]\n' "$FAMILY" > "$PACKAGE/encoding.json"
