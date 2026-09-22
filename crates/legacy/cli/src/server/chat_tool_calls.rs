@@ -5,7 +5,7 @@ use uuid::Uuid;
 use uzu::{
     session::chat::normalize_tool_call_arguments,
     types::{
-        basic::{ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value},
+        basic::{ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value, parse_lenient_json},
         session::chat::{ChatContentBlock, ChatMessage, ChatRole},
     },
 };
@@ -115,13 +115,7 @@ impl ToolParameterTypes {
             let parameters = properties
                 .iter()
                 .filter_map(|(name, property)| {
-                    let types = match property.get("type")? {
-                        serde_json::Value::String(kind) => vec![kind.clone()],
-                        serde_json::Value::Array(kinds) => {
-                            kinds.iter().filter_map(|kind| kind.as_str().map(str::to_string)).collect()
-                        },
-                        _ => return None,
-                    };
+                    let types = declared_types(property, &schema);
                     (!types.is_empty()).then(|| (name.clone(), types))
                 })
                 .collect();
@@ -136,6 +130,31 @@ impl ToolParameterTypes {
         parameter: &str,
     ) -> Option<&[String]> {
         Some(self.0.get(function)?.get(parameter)?.as_slice())
+    }
+}
+
+/// The JSON-Schema types a property schema declares: its `type` keyword, or the
+/// union of its `anyOf`/`oneOf` branches, following local `$ref`s (the shape
+/// pydantic and schemars clients emit for optional and nested objects).
+fn declared_types(
+    property: &serde_json::Value,
+    root: &serde_json::Value,
+) -> Vec<String> {
+    let property = match property.get("$ref").and_then(serde_json::Value::as_str) {
+        Some(reference) => reference.strip_prefix('#').and_then(|pointer| root.pointer(pointer)).unwrap_or(property),
+        None => property,
+    };
+    match property.get("type") {
+        Some(serde_json::Value::String(kind)) => vec![kind.clone()],
+        Some(serde_json::Value::Array(kinds)) => {
+            kinds.iter().filter_map(|kind| kind.as_str().map(str::to_string)).collect()
+        },
+        _ => ["anyOf", "oneOf"]
+            .iter()
+            .filter_map(|key| property.get(*key).and_then(serde_json::Value::as_array))
+            .flatten()
+            .flat_map(|branch| declared_types(branch, root))
+            .collect(),
     }
 }
 
@@ -155,10 +174,12 @@ fn matches_declared_type(
     })
 }
 
-/// Parameter text is strict JSON, plus the Python-style booleans some models
-/// emit in tool markup (qwen3.5 writes `True`/`False`).
-pub fn parse_scalar_text(text: &str) -> Option<serde_json::Value> {
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(text) {
+/// Parameter text read as JSON: strict first, then with the bounded repair of
+/// control characters and bare quotes models leave inside string values, plus
+/// the Python-style booleans some models emit in tool markup (qwen3.5 writes
+/// `True`/`False`).
+pub fn parse_parameter_text(text: &str) -> Option<serde_json::Value> {
+    if let Some(parsed) = parse_lenient_json(text) {
         return Some(parsed);
     }
     match text.trim() {
@@ -179,7 +200,7 @@ fn coerce_parameter_value(
         // a string: the text is already schema-valid and the intended type is
         // unknowable.
         serde_json::Value::String(text) if !declares_string => {
-            let parsed = parse_scalar_text(text)?;
+            let parsed = parse_parameter_text(text)?;
             matches_declared_type(&parsed, declared).then_some(parsed)
         },
         // A JSON-format parser typed a value although the parameter is a
@@ -189,8 +210,8 @@ fn coerce_parameter_value(
     }
 }
 
-/// Restores the declared scalar types the markup could not carry. Applied only
-/// at the OpenAI boundary: the session keeps the parser's values so its stored
+/// Restores the declared types the markup could not carry. Applied only at
+/// the OpenAI boundary: the session keeps the parser's values so its stored
 /// history stays consistent with what the template renders.
 pub fn coerce_tool_call(
     tool_call: &ToolCall,
@@ -400,21 +421,14 @@ fn parse_framed_call(raw: &str) -> FramedCall {
     }
 }
 
-// Mirrors the schema coercion the final call goes through: the text takes a
-// declared non-string type when it parses as it; a string or undeclared
-// parameter is the text verbatim, however JSON-shaped it looks.
+// A completed parameter serializes exactly as coerce_tool_call serializes it in
+// the final call, so the streamed prefix is a prefix of the final text.
 fn serialize_param_value(
     value: &str,
     declared: Option<&[String]>,
 ) -> String {
-    if let Some(declared) = declared
-        && !declared.iter().any(|kind| kind == "string")
-        && let Some(parsed) = parse_scalar_text(value)
-        && matches_declared_type(&parsed, declared)
-    {
-        return parsed.to_string();
-    }
-    serde_json::Value::String(value.to_string()).to_string()
+    let text = serde_json::Value::String(value.to_string());
+    declared.and_then(|declared| coerce_parameter_value(&text, declared)).unwrap_or(text).to_string()
 }
 
 // The longest suffix of `content` that could be the start of the parameter close tag is
@@ -446,18 +460,13 @@ fn open_arguments_text(
         let serialized = match param {
             FramedParam::Complete(value) => serialize_param_value(value, declared),
             FramedParam::Open(content) => {
-                // an empty value has no known type yet, and typed values (JSON
-                // starting with `{`/`[`, or declared non-string so the final
-                // form is a bare literal) can only be serialized once
-                // complete: either way nothing about the parameter may be emitted
+                // an empty value has nothing to emit yet, and a declared non-string
+                // value takes its final form (a bare literal) only once complete:
+                // either way nothing about the parameter may be emitted
                 let streamable = withhold_ambiguous_tail(content);
                 let declared_non_string =
                     declared.is_some_and(|declared| !declared.iter().any(|kind| kind == "string"));
-                if streamable.is_empty()
-                    || streamable.starts_with('{')
-                    || streamable.starts_with('[')
-                    || declared_non_string
-                {
+                if streamable.is_empty() || declared_non_string {
                     break;
                 }
                 let quoted = serde_json::Value::String(streamable.to_string()).to_string();

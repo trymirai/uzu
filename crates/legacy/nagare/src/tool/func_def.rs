@@ -1,6 +1,7 @@
 use std::{error::Error, future::Future, sync::Arc};
 
 pub use shoji::types::basic::Value;
+use shoji::types::basic::parse_lenient_json;
 
 pub type ErrorFuture = Box<dyn Error + Send + Sync>;
 pub type FunctionFuture = dyn Fn(Value) -> Box<dyn Future<Output = Result<Value, ErrorFuture>> + Send> + Send + Sync;
@@ -39,9 +40,10 @@ impl ToolDescriptor {
         Box::into_pin((self.func)(args)).await
     }
 
-    // Small models often mistype scalar tool arguments (e.g. Llama 3.2 1B passes "37" for a number parameter);
-    // coerce argument values to their schema-declared scalar types instead of failing the call — an error result
-    // makes such models retry the same call indefinitely.
+    // Markup parsers keep every argument the text the model wrote, and small models mistype scalars even in JSON
+    // markup (e.g. Llama 3.2 1B passes "37" for a number parameter); coerce argument values to their
+    // schema-declared types instead of failing the call — an error result makes such models retry the same call
+    // indefinitely.
     fn coerce_arguments(
         &self,
         args: Value,
@@ -112,6 +114,22 @@ fn coerce_to_schema_with_root(
     {
         return coerce_to_schema_with_root(value, non_null_schema, root_schema);
     }
+    // a union of shapes: container text goes to the first branch it parses as
+    if let Json::String(text) = &value
+        && let Some(branches) = schema.get("anyOf").or_else(|| schema.get("oneOf")).and_then(Json::as_array)
+    {
+        for branch in branches {
+            let branch = resolve_local_schema(branch, root_schema);
+            let parses = match branch.get("type").and_then(Json::as_str) {
+                Some("object") => parse_lenient_json(text).is_some_and(|parsed| parsed.is_object()),
+                Some("array") => parse_lenient_json(text).is_some_and(|parsed| parsed.is_array()),
+                _ => false,
+            };
+            if parses {
+                return coerce_to_schema_with_root(value, branch, root_schema);
+            }
+        }
+    }
 
     let schema_type = match schema.get("type") {
         Some(Json::String(schema_type)) => Some(schema_type.as_str()),
@@ -124,13 +142,19 @@ fn coerce_to_schema_with_root(
         _ => None,
     };
 
+    // an object or array parameter arrives as text from the markup parsers; read it when it parses as that shape
+    let value = match (schema_type, value) {
+        (Some("object"), Json::String(text)) => {
+            parse_lenient_json(&text).filter(Json::is_object).unwrap_or(Json::String(text))
+        },
+        (Some("array"), Json::String(text)) => {
+            parse_lenient_json(&text).filter(Json::is_array).unwrap_or(Json::String(text))
+        },
+        (_, value) => value,
+    };
+
     match schema_type {
-        // markup parsers keep object and array parameters as the text the model wrote
         Some("object") => match value {
-            Json::String(text) => match serde_json::from_str::<Json>(&text) {
-                Ok(parsed @ Json::Object(_)) => coerce_to_schema_with_root(parsed, schema, root_schema),
-                _ => Json::String(text),
-            },
             Json::Object(map) => Json::Object(
                 map.into_iter()
                     .map(|(key, value)| {
@@ -145,10 +169,6 @@ fn coerce_to_schema_with_root(
             other => other,
         },
         Some("array") => match (value, schema.get("items")) {
-            (Json::String(text), _) => match serde_json::from_str::<Json>(&text) {
-                Ok(parsed @ Json::Array(_)) => coerce_to_schema_with_root(parsed, schema, root_schema),
-                _ => Json::String(text),
-            },
             (Json::Array(items), Some(item_schema)) => Json::Array(
                 items.into_iter().map(|item| coerce_to_schema_with_root(item, item_schema, root_schema)).collect(),
             ),
@@ -250,5 +270,21 @@ mod tests {
 
         let kept = coerce_to_schema(serde_json::json!({"options": "{ broken", "tags": "not a list"}), &schema);
         assert_eq!(kept, serde_json::json!({"options": "{ broken", "tags": "not a list"}));
+    }
+
+    #[test]
+    fn coerce_to_schema_reads_container_text_through_refs_and_unions() {
+        // the shapes schemars emits for Option<Box<T>> and for a data enum
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "child": {"anyOf": [{"$ref": "#/$defs/Child"}, {"type": "null"}]},
+                "shape": {"oneOf": [{"type": "object", "properties": {"r": {"type": "number"}}}, {"type": "string"}]}
+            },
+            "$defs": {"Child": {"type": "object", "properties": {"n": {"type": "integer"}}}}
+        });
+        let coerced =
+            coerce_to_schema(serde_json::json!({"child": "{\"n\": \"2\"}", "shape": "{\"r\": \"1.5\"}"}), &schema);
+        assert_eq!(coerced, serde_json::json!({"child": {"n": 2}, "shape": {"r": 1.5}}));
     }
 }

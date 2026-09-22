@@ -412,22 +412,60 @@ fn framed_string_parameter_streams_json_shaped_text_verbatim() {
 
     let mut streamer = ToolCallStreamer::new();
     let mut streamed = String::new();
+    let mut content_fragments = 0;
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
         for delta in streamer.update(0, &partial, &types) {
+            if streamed.contains("\"content\":") && !delta.function.arguments.is_empty() {
+                content_fragments += 1;
+            }
             streamed.push_str(&delta.function.arguments);
         }
     }
     let closing = streamer.finish(0, &call).function.arguments;
 
+    // the coerced final call, not a hand-written literal: a stream that disagreed with it would fall back
+    // to the streamer's own candidate and still close with "}", so equality with the call is the check
+    let final_arguments: serde_json::Value = serde_json::from_str(&call.arguments.json).expect("final arguments parse");
     let assembled: serde_json::Value =
         serde_json::from_str(&format!("{streamed}{closing}")).expect("assembled arguments parse");
-    assert_eq!(
-        assembled,
-        serde_json::json!({"path": "package.json", "content": content, "edits": [{"oldText": "London", "newText": "Londinium"}]})
+    assert_eq!(assembled, final_arguments);
+    assert_eq!(final_arguments["content"], serde_json::json!(content));
+    assert!(final_arguments["edits"].is_array());
+    assert_eq!(closing, "}", "finish should only close the streamed text");
+    assert!(
+        content_fragments > 3,
+        "a string document must stream before its close tag, got {content_fragments} fragments"
     );
-    assert!(closing.len() < 8, "finish should only close the streamed text, got {closing:?}");
+}
+
+#[test]
+fn declared_types_follow_refs_and_unions() {
+    // pydantic and schemars clients declare nested and optional containers through $ref and anyOf
+    let types = parameter_types(
+        r##"[{"type":"function","function":{"name":"edit","description":"Edit",
+            "parameters":{"type":"object","properties":{
+                "edits":{"$ref":"#/$defs/Edits"},
+                "options":{"anyOf":[{"$ref":"#/$defs/Options"},{"type":"null"}]},
+                "shape":{"oneOf":[{"type":"object"},{"type":"string"}]}
+            },"$defs":{"Edits":{"type":"array"},"Options":{"type":"object"}}}}}]"##,
+    );
+    let call = ToolCall {
+        identifier: None,
+        name: "edit".to_string(),
+        arguments: Value {
+            json: serde_json::json!({"edits": "[{\"a\": 1}]", "options": "{\"dry_run\": true}", "shape": "{\"r\": 1}"})
+                .to_string(),
+        },
+    };
+
+    let coerced: serde_json::Value =
+        serde_json::from_str(&coerce_tool_call(&call, &types).arguments.json).expect("coerced arguments parse");
+    assert_eq!(coerced["edits"], serde_json::json!([{"a": 1}]));
+    assert_eq!(coerced["options"], serde_json::json!({"dry_run": true}));
+    // a union that includes "string" keeps the text
+    assert_eq!(coerced["shape"], serde_json::json!("{\"r\": 1}"));
 }
 
 fn parameter_types(tools_json: &str) -> ToolParameterTypes {

@@ -9,5 +9,9 @@ pub struct ToolCall {
     #[serde(rename = "id")]
     pub identifier: Option<String>,
     pub name: String,
+    /// A JSON object. Markup parsers (Qwen3.5/3.6) deliver every parameter as
+    /// the text the model wrote, and the session stores that; consumers type
+    /// the values from the tool's declared schema at their boundary, as the
+    /// OpenAI server and the tool registry do.
     pub arguments: Value,
 }

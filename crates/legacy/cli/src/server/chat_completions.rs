@@ -32,8 +32,8 @@ use crate::{
         ServerState,
         chat_tool_calls::{
             OaiTool, OaiToolCall, ToolCallStreamer, ToolParameterTypes, backfill_tool_result_names, choose_tools,
-            coerce_tool_call, insert_tools_message, oai_tool_call, parse_scalar_text, reply_tool_calls, to_tool_call,
-            tool_call_result_block, withhold_stream_text,
+            coerce_tool_call, insert_tools_message, oai_tool_call, parse_parameter_text, reply_tool_calls,
+            to_tool_call, tool_call_result_block, withhold_stream_text,
         },
         request_info::RequestInfo,
         request_log::RequestLog,
@@ -638,9 +638,10 @@ fn chunk_json(
     serde_json::to_string(&chunk).unwrap_or_default()
 }
 
-/// Schema coercion retypes scalar arguments on the wire, so a client may echo
-/// `5` where the session stored `"5"` (or a JSON string where the session
-/// stored the value it spells); such pairs must still count as the same prefix.
+/// Schema coercion retypes arguments on the wire, so a client may echo `5` or
+/// `[1,2]` where the session stored the text `"5"` or `"[1, 2]"` (or a JSON
+/// string where the session stored the value it spells); such pairs must still
+/// count as the same prefix.
 fn tool_call_arguments_equivalent(
     stored: &str,
     echoed: &str,
@@ -667,7 +668,7 @@ fn json_values_equivalent(
                     .all(|(key, value)| right.get(key).is_some_and(|other| json_values_equivalent(value, other)))
         },
         (Value::String(text), other) | (other, Value::String(text)) if !other.is_string() => {
-            parse_scalar_text(text).is_some_and(|parsed| parsed == *other)
+            parse_parameter_text(text).is_some_and(|parsed| parsed == *other)
         },
         (left, right) => left == right,
     }
@@ -1208,8 +1209,8 @@ pub async fn handle_chat_completions(
         },
     };
 
-    // The parser cannot type scalar arguments; the declared schemas restore
-    // the types when replies cross back into the OpenAI wire format.
+    // The parser keeps every argument the text the model wrote; the declared
+    // schemas restore the types when replies cross back into the OpenAI wire format.
     let parameter_types = ToolParameterTypes::from_tools(request.tools.as_deref());
 
     let id = request_info.id.as_str().to_owned();

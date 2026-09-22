@@ -72,3 +72,35 @@ fn test_token_stream_parser_qwen35_preserves_ambiguous_string_arguments() {
         },
     );
 }
+
+#[test]
+fn test_token_stream_parser_qwen35_keeps_object_parameter_text_verbatim() {
+    // a parameter's text is delivered as written, spacing included; the schema types it at the boundary
+    let suite = qwen35_suite();
+    let data = TestData {
+        prompt: "<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n".into(),
+        completion: "<tool_call>\n<function=get_weather>\n<parameter=location>\n{\"city\": \"London\", \"country\": \"United Kingdom\"}\n</parameter>\n<parameter=notes>\n[Home](/) and [Games](/games) are the two pages.\n</parameter>\n</function>\n</tool_call><|im_end|>".into(),
+    };
+
+    run_parser_test(
+        &suite,
+        &data,
+        &TestExpectations {
+            framing: None,
+            reduction: None,
+            extraction: suite.expect_extraction(json!([
+                {"role": "user", "content": [{"type": "$text", "value": "\nWeather?"}]},
+                {"role": "assistant", "content": [
+                    {"type": "$text", "value": "\n"},
+                    {"type": "tool_call", "value": {
+                        "name": "get_weather",
+                        "arguments": {
+                            "location": "{\"city\": \"London\", \"country\": \"United Kingdom\"}",
+                            "notes": "[Home](/) and [Games](/games) are the two pages."
+                        }
+                    }}
+                ]}
+            ])),
+        },
+    );
+}
