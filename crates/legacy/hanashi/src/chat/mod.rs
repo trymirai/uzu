@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use tokenizers::Tokenizer;
+
 mod config;
 mod context;
 mod error;
@@ -38,6 +42,21 @@ pub enum Encoding {
 }
 
 impl Encoding {
+    pub fn new(
+        config: EncodingConfig,
+        tokenizer: Arc<Tokenizer>,
+        tokenizer_location: TokenizerLocation,
+    ) -> Result<Self, Error> {
+        match config {
+            EncodingConfig::Hanashi {
+                config,
+            } => Ok(Self::Hanashi(HanashiEncodingImpl::new(config, tokenizer)?)),
+            EncodingConfig::Harmony {
+                config,
+            } => Ok(Self::Harmony(HarmonyEncodingImpl::new(config, tokenizer_location)?)),
+        }
+    }
+
     pub fn tokenize(
         &self,
         text: &str,

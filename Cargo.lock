@@ -944,6 +944,7 @@ dependencies = [
  "shoji",
  "sysinfo",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio",
  "tokio-stream",
  "toml 1.1.2+spec-1.1.0",

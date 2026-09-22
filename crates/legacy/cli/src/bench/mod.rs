@@ -1,3 +1,4 @@
+mod measurement;
 mod model;
 mod runner;
 mod stat;
@@ -13,6 +14,7 @@ pub async fn run_bench(
     model_path: String,
     task_path: String,
     output_path: String,
+    synchronize_measurement: bool,
 ) -> Result<()> {
     let task_content =
         fs::read_to_string(&task_path).await.with_context(|| format!("Failed to read task file: {task_path}"))?;
@@ -23,7 +25,7 @@ pub async fn run_bench(
     let progress_bar = ProgressBar::new(task.number_of_runs);
     progress_bar.set_position(0);
 
-    let runner = BenchRunner::new(task.clone(), model_path);
+    let runner = BenchRunner::new(task.clone(), model_path, synchronize_measurement);
     let results = runner
         .run(Some(|_progress| {
             progress_bar.inc(1);

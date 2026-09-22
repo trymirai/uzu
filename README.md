@@ -1475,6 +1475,25 @@ To run benchmarks, pass a downloaded model path, a benchmark task file, and an o
 cargo run --release -p cli -- bench {MODEL_PATH} {TASK_PATH} {OUTPUT_PATH}
 ```
 
+
+Tasks may set `reasoning` to `true` or `false`; requests that the model cannot satisfy fail.
+`context_size` accepts a positive integer or `"auto"`. Auto uses the rendered prompt token count,
+output limit and `context_padding` (default 64), then configures that capacity before measurement.
+Prompt counting uses the same encoding as inference and runs before model loading or KV-cache allocation.
+The result echoes the numeric capacity; prompts and output limits that exceed it are rejected.
+
+For non-greedy runs, an explicit `generation_config` requires `temperature`, `top_p` and `top_k`.
+`min_p` is optional; `top_k: 0` disables top-k filtering. Requested `stop_token_ids` must match the model.
+Nonneutral repetition, presence and frequency penalties, token bans and suffix repetition windows
+are rejected because this benchmark path cannot apply them consistently under speculation.
+Omitting these task fields preserves native defaults.
+
+An external energy monitor can pass `--synchronize-measurement` with `number_of_runs: 1`.
+After loading, warmup and reset, the CLI flushes `{"benchmark_event":"ready"}` to stdout and waits
+for `run` on stdin. After inference it flushes `{"benchmark_event":"done"}` and waits for `ack`
+before collecting remaining metadata and unloading the model. Commands and events are newline-delimited;
+other stdout lines remain ordinary CLI output. A disconnected controller or unexpected command fails the run.
+
 ## Server
 
 You can also run `uzu` as an OpenAI-compatible HTTP server:

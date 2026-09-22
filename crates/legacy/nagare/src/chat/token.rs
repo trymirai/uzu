@@ -7,7 +7,7 @@ use std::{
 use futures::{Stream, StreamExt, stream};
 use hanashi::{
     Encoding as EncodingTrait,
-    chat::{Encoding, EncodingConfig, TokenizerLocation, hanashi::HanashiEncodingImpl, harmony::HarmonyEncodingImpl},
+    chat::{Encoding, EncodingConfig, TokenizerLocation},
 };
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use keisoku::KeisokuError;
@@ -78,25 +78,14 @@ impl Session {
             name: None,
         };
 
-        let encoding = match encoding_config {
-            Some(EncodingConfig::Hanashi {
-                config,
-            }) => HanashiEncodingImpl::new(config, instance.tokenizer()).map(Encoding::Hanashi).map_err(|err| {
-                ChatSessionError::Loading {
-                    message: format!("can not create harmony encoding: {err}"),
-                }
-            }),
-            Some(EncodingConfig::Harmony {
-                config,
-            }) => HarmonyEncodingImpl::new(config, tokenizer_location).map(Encoding::Harmony).map_err(|err| {
-                ChatSessionError::Loading {
-                    message: format!("can not create harmony encoding: {err}"),
-                }
-            }),
-            None => Err(ChatSessionError::Loading {
-                message: "can not get encoding config".to_string(),
-            }),
-        }?;
+        let encoding_config = encoding_config.ok_or_else(|| ChatSessionError::Loading {
+            message: "can not get encoding config".to_string(),
+        })?;
+        let encoding = Encoding::new(encoding_config, instance.tokenizer(), tokenizer_location).map_err(|error| {
+            ChatSessionError::Loading {
+                message: format!("can not create encoding: {error}"),
+            }
+        })?;
         let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;

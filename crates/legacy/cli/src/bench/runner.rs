@@ -1,39 +1,53 @@
 use std::{
     path::{Path, PathBuf},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail, ensure};
+use hanashi::{
+    Encoding as _,
+    chat::{Encoding, TokenizerLocation},
+};
+use nagare::chat::ChatInstanceKind;
 use shoji::types::model::{ModelFamily, ModelReference};
 use sysinfo::System;
+use tokenizers::Tokenizer;
 use uzu::{
     engine::{Engine, EngineConfig},
     types::{
         basic::SamplingMethod,
         model::ModelAccessibility,
-        session::chat::{ChatConfig, ChatReplyConfig, ChatReplyEnergy},
+        session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyEnergy},
     },
 };
 use uzu_engine::{VERSION, data_type::DataType};
 
-use crate::bench::{
-    model::{BenchDevice, BenchResult, BenchTask},
-    stat::mean,
+use crate::{
+    bench::{
+        measurement,
+        model::{BenchContextSize, BenchDevice, BenchResult, BenchTask},
+        stat::mean,
+    },
+    common::thinking::ThinkingSupport,
 };
 
 pub struct BenchRunner {
     pub task: BenchTask,
     pub model_path: String,
+    synchronize_measurement: bool,
 }
 
 impl BenchRunner {
     pub fn new(
         task: BenchTask,
         model_path: String,
+        synchronize_measurement: bool,
     ) -> Self {
         Self {
             task,
             model_path,
+            synchronize_measurement,
         }
     }
 
@@ -41,7 +55,11 @@ impl BenchRunner {
         &self,
         mut progress: Option<F>,
     ) -> Result<Vec<BenchResult>> {
-        let messages = self.task.to_chat_messages()?;
+        self.task.validate()?;
+        ensure!(
+            !self.synchronize_measurement || self.task.number_of_runs == 1,
+            "Synchronized measurement requires number_of_runs=1"
+        );
         let model_path_string = self.model_path.trim_end_matches('/').to_string();
         let model_path = PathBuf::from(&model_path_string);
         let parent_path = model_path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
@@ -60,23 +78,44 @@ impl BenchRunner {
 
         let device = self.get_device_info();
 
-        let session_config = ChatConfig::default();
-        let session = engine.chat(model, session_config).await?;
-
-        let warmup_config = ChatReplyConfig::default().with_token_limit(Some(1));
-        let _ = session.reply(messages.clone(), warmup_config).await?;
+        let messages = self.task.to_chat_messages(ThinkingSupport::for_model(&model))?;
+        let mut task = self.task.clone();
+        if task.context_size.is_some() {
+            let prompt_tokens = count_input_tokens(&model, &model_path, &messages)?;
+            task.context_size = task.resolve_context_size(prompt_tokens)?.map(BenchContextSize::Tokens);
+        }
+        let session_config = ChatConfig::default().with_context_length(task.context_length()?);
+        let instance = engine.chat_instance(model, session_config).await?;
+        let stop_token_ids = match instance.kind() {
+            ChatInstanceKind::Token(instance) => instance.stop_token_ids(),
+            ChatInstanceKind::Message(_) => bail!("Benchmark requires a local token backend"),
+        };
+        if let Some(config) = &self.task.generation_config {
+            config.validate_stop_tokens(stop_token_ids.as_deref())?;
+        }
+        let session = engine.chat_with_instance(&instance).await?;
+        drop(instance);
+        let mut reply_config = ChatReplyConfig::default().with_token_limit(Some(self.task.tokens_limit as u32));
+        if self.task.greedy {
+            reply_config = reply_config.with_sampling_method(SamplingMethod::Greedy {});
+        } else if let Some(config) = &self.task.generation_config {
+            reply_config = reply_config.with_sampling_method(config.sampling_method());
+        }
+        let warmup_config = reply_config.with_token_limit(Some(1));
+        session.reply(messages.clone(), warmup_config).await?;
 
         let mut results = Vec::<BenchResult>::new();
         for run_idx in 0..self.task.number_of_runs {
             session.reset().await?;
 
-            let mut reply_config = ChatReplyConfig::default().with_token_limit(Some(self.task.tokens_limit as u32));
-            if self.task.greedy {
-                reply_config = reply_config.with_sampling_method(SamplingMethod::Greedy {})
+            if self.synchronize_measurement {
+                measurement::synchronize("ready", "run")?;
             }
-
             let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            let replies = session.reply(messages.clone(), reply_config).await?;
+            let replies = session.reply(messages.clone(), reply_config.clone()).await?;
+            if self.synchronize_measurement {
+                measurement::synchronize("done", "ack")?;
+            }
 
             let mut tokens_count_input = 0u64;
             let mut tokens_count_output = 0u64;
@@ -111,7 +150,7 @@ impl BenchRunner {
                 total_joules.and_then(|joules| (tokens_count > 0).then(|| joules / tokens_count as f64));
 
             let result = BenchResult {
-                task: self.task.clone(),
+                task: task.clone(),
                 device: device.clone(),
                 engine_version: VERSION.to_string(),
                 timestamp,
@@ -194,4 +233,24 @@ impl BenchRunner {
 
 fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ChatReplyEnergy>) -> Option<ChatReplyEnergy> {
     energy.into_iter().cloned().reduce(|total, energy| total + energy)
+}
+
+fn count_input_tokens(
+    model: &shoji::types::model::Model,
+    model_path: &Path,
+    messages: &[ChatMessage],
+) -> Result<u64> {
+    let config = model.encoding.as_ref().context("Model encoding configuration is missing")?;
+    let tokenizer = Tokenizer::from_file(model_path.join("tokenizer.json"))
+        .map_err(|error| anyhow::anyhow!("Failed to load tokenizer: {error}"))?;
+    let mut encoding = Encoding::new(
+        serde_json::from_str(&config.json)?,
+        Arc::new(tokenizer),
+        TokenizerLocation::Directory {
+            path: model_path.to_string_lossy().into_owned(),
+            name: None,
+        },
+    )?;
+    encoding.encode(messages.to_vec())?;
+    Ok(encoding.state().tokens.len() as u64)
 }

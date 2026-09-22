@@ -20,7 +20,7 @@ use shoji::{
         },
     },
     types::{
-        basic::{SamplingParameters, SamplingSeed},
+        basic::{ContextLength, SamplingParameters, SamplingSeed},
         session::chat::{ChatConfig, ChatReplyConfig},
     },
 };
@@ -63,6 +63,12 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
 
+        if let ContextLength::Custom {
+            length,
+        } = config.context_length
+        {
+            validate_context_length(length, model.max_context_length())?;
+        }
         let generation_config = model.generation_config();
         let stop_token_ids = generation_config.stop_token_ids.iter().map(|id| *id as i32).collect();
         let sampling_defaults = SamplingParameters {
@@ -265,5 +271,30 @@ impl<'a, B: Backend> InstanceStream for UzuChatTokenStream<'a, B> {
 
     fn metrics(&self) -> Self::Metrics {
         Some(self.stream.metrics().clone())
+    }
+}
+
+fn validate_context_length(
+    length: i64,
+    maximum: Option<u32>,
+) -> Result<(), BackendError> {
+    let length = u32::try_from(length).map_err(|_| "Context length must fit a positive u32")?;
+    if length == 0 || maximum.is_some_and(|maximum| length > maximum) {
+        return Err("Context length exceeds the model capacity or is zero".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::validate_context_length;
+
+    #[test]
+    fn custom_context_length_cannot_wrap_or_exceed_native_capacity() {
+        for length in [-1, 0, 129, i64::MAX] {
+            assert!(validate_context_length(length, Some(128)).is_err());
+        }
+        assert!(validate_context_length(128, Some(128)).is_ok());
+        assert!(validate_context_length(128, None).is_ok());
     }
 }

@@ -37,6 +37,9 @@ enum Commands {
         model_path: String,
         task_path: String,
         output_path: String,
+        /// Synchronize measured inference with an external energy monitor over stdin/stdout.
+        #[arg(long)]
+        synchronize_measurement: bool,
     },
     ListCheckpoints {
         /// Model ID shown by `list-models`.
@@ -77,7 +80,8 @@ async fn main() -> Result<()> {
             model_path,
             task_path,
             output_path,
-        }) => bench::run_bench(model_path, task_path, output_path).await?,
+            synchronize_measurement,
+        }) => bench::run_bench(model_path, task_path, output_path, synchronize_measurement).await?,
         Some(Commands::ListCheckpoints {
             model_id,
         }) => interactive::run_list_checkpoints(model_id).await?,
