@@ -16,7 +16,6 @@ pub struct BenchTask {
     pub tokens_limit: u64,
     pub messages: Vec<BenchMessage>,
     pub greedy: bool,
-    // Retain the original OpenAI definitions in the echoed task, including schema extensions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -30,8 +29,8 @@ impl BenchTask {
         let tools: Vec<OaiTool> =
             serde_json::from_value(serde_json::to_value(self.tools.as_deref().unwrap_or_default())?)
                 .map_err(|_| anyhow!("Invalid benchmark tools"))?;
-        // Benchmark history must match other engines exactly. The server accepts and repairs
-        // malformed client arguments, but that would silently change the measured workload.
+        // Reject arguments that the server converter would repair or wrap;
+        // replay must preserve the recorded calls.
         for call in messages.iter().flat_map(|message| message.tool_calls.iter().flatten()) {
             ensure!(
                 serde_json::from_str::<serde_json::Value>(&call.function.arguments)
