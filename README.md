@@ -1475,10 +1475,9 @@ To run benchmarks, pass a downloaded model path, a benchmark task file, and an o
 cargo run --release -p cli -- bench {MODEL_PATH} {TASK_PATH} {OUTPUT_PATH}
 ```
 
-
 Tasks may set `reasoning` to `true` or `false`; requests that the model cannot satisfy fail.
 `context_size` accepts a positive integer or `"auto"`. Auto uses the rendered prompt token count,
-output limit and `context_padding` (default 64), then configures that capacity before measurement.
+output limit and `context_padding` (default 0), then configures that capacity before measurement.
 Prompt counting uses the same encoding as inference and runs before model loading or KV-cache allocation.
 The result echoes the numeric capacity; prompts and output limits that exceed it are rejected.
 

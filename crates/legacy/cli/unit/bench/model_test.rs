@@ -223,6 +223,9 @@ fn context_resolution_checks_capacity_and_overflow() {
     let mut input = task(json!([{"role": "user", "content": "Hello"}]));
     input["context_size"] = json!("auto");
     let task: BenchTask = serde_json::from_value(input.clone()).unwrap();
+    assert_eq!(task.resolve_context_size(100).unwrap(), Some(116));
+    input["context_padding"] = json!(64);
+    let task: BenchTask = serde_json::from_value(input.clone()).unwrap();
     assert_eq!(task.resolve_context_size(100).unwrap(), Some(180));
     assert!(task.context_length().is_err());
     assert!(task.resolve_context_size(u64::MAX).is_err());
@@ -252,6 +255,7 @@ fn generation_config_overrides_sampling_and_rejects_unsupported_effects() {
     ));
     for (key, invalid) in [
         ("temperature", json!(0)),
+        ("temperature", json!(1e-40)),
         ("top_p", json!(-0.1)),
         ("min_p", json!(1.1)),
         ("presence_penalty", json!(1.0)),
@@ -287,6 +291,7 @@ fn generation_stop_overrides_cannot_be_silently_ignored() {
     }))
     .unwrap();
     config.validate_stop_tokens(Some(&[1, 2])).unwrap();
+    config.validate_stop_tokens(Some(&[2, 1])).unwrap();
     assert!(config.validate_stop_tokens(Some(&[1])).is_err());
     assert!(config.validate_stop_tokens(None).is_err());
 }
@@ -305,13 +310,10 @@ fn disabled_reasoning_reaches_the_qwen38_prompt_renderer() {
 }
 
 #[test]
-fn invalid_context_types_and_missing_required_sampling_are_rejected() {
+fn invalid_context_types_are_rejected() {
     for context_size in [json!(-1), json!(true), json!("maximum"), json!(4294967296_u64), json!(1.5)] {
         let mut input = task(json!([{"role": "user", "content": "Hello"}]));
         input["context_size"] = context_size;
         assert!(serde_json::from_value::<BenchTask>(input).is_err());
     }
-    let mut input = task(json!([{"role": "user", "content": "Hello"}]));
-    input["requires_generation_config"] = json!(true);
-    assert!(serde_json::from_value::<BenchTask>(input).unwrap().validate().is_err());
 }

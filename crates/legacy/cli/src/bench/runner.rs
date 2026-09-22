@@ -94,7 +94,6 @@ impl BenchRunner {
             config.validate_stop_tokens(stop_token_ids.as_deref())?;
         }
         let session = engine.chat_with_instance(&instance).await?;
-        drop(instance);
         let mut reply_config = ChatReplyConfig::default().with_token_limit(Some(self.task.tokens_limit as u32));
         if self.task.greedy {
             reply_config = reply_config.with_sampling_method(SamplingMethod::Greedy {});

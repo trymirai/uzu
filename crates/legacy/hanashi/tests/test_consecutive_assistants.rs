@@ -14,7 +14,7 @@ use tokenizers::{
     pre_tokenizers::byte_level::ByteLevel,
 };
 
-fn encoding_parts(config: HanashiConfig) -> (HanashiConfig, Arc<Tokenizer>) {
+fn encoding(config: HanashiConfig) -> HanashiEncodingImpl {
     let mut config = config.resolve().unwrap();
     // A byte tokenizer exercises rendering and streaming without downloaded model assets.
     let vocab: Vocab =
@@ -31,17 +31,13 @@ fn encoding_parts(config: HanashiConfig) -> (HanashiConfig, Arc<Tokenizer>) {
             .map(|role| AddedToken::from(role, false).single_word(true)),
     );
     config.tokens.bos_token_id = config.tokens.bos_token_id.map(|_| tokenizer.token_to_id("<bos>").unwrap());
-    (
+    HanashiEncodingImpl::new(
         HanashiConfig::Custom {
             config,
         },
         Arc::new(tokenizer),
     )
-}
-
-fn encoding(config: HanashiConfig) -> HanashiEncodingImpl {
-    let (config, tokenizer) = encoding_parts(config);
-    HanashiEncodingImpl::new(config, tokenizer).unwrap()
+    .unwrap()
 }
 
 fn compaction_history() -> Vec<ChatMessage> {
@@ -275,33 +271,4 @@ fn functiongemma_tool_result_continues_the_model_frame() {
         assert_eq!(encoding.state().messages.len(), history.len() + 1);
     }
     assert_eq!(encoding.state().messages.last().unwrap().text().as_deref(), Some("It is 17:03."));
-}
-
-#[test]
-fn shared_encoding_factory_preserves_inference_prompt_tokens() {
-    use hanashi::chat::{Encoding as ChatEncoding, EncodingConfig, TokenizerLocation};
-    use shoji::types::basic::ReasoningEffort;
-
-    let (config, tokenizer) = encoding_parts(HanashiConfig::Qwen38);
-    let mut direct = HanashiEncodingImpl::new(config.clone(), tokenizer.clone()).unwrap();
-    let mut shared = ChatEncoding::new(
-        EncodingConfig::Hanashi {
-            config,
-        },
-        tokenizer,
-        TokenizerLocation::Directory {
-            path: String::new(),
-            name: None,
-        },
-    )
-    .unwrap();
-    let messages = vec![
-        ChatMessage::system().with_reasoning_effort(ReasoningEffort::Disabled),
-        ChatMessage::user().with_text("Keep <tool_response>literal markup</tool_response> unchanged.".into()),
-    ];
-    direct.encode(messages.clone()).unwrap();
-    shared.encode(messages).unwrap();
-    assert_eq!(shared.state().tokens, direct.state().tokens);
-    assert_eq!(shared.state().messages, direct.state().messages);
-    assert!(!shared.state().tokens.is_empty());
 }

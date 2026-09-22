@@ -26,12 +26,10 @@ pub struct BenchTask {
     pub reasoning: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_size: Option<BenchContextSize>,
-    #[serde(default = "default_context_padding")]
+    #[serde(default)]
     pub context_padding: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<BenchGenerationConfig>,
-    #[serde(default)]
-    pub requires_generation_config: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,7 +43,6 @@ impl BenchTask {
         if let Some(BenchContextSize::Tokens(length)) = self.context_size {
             ensure!(length > 0, "context_size must be positive");
         }
-        ensure!(!self.requires_generation_config || self.generation_config.is_some(), "generation_config is required");
         if let Some(config) = &self.generation_config {
             config.validate()?;
         }
@@ -122,10 +119,6 @@ impl BenchTask {
     }
 }
 
-fn default_context_padding() -> u32 {
-    64
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum BenchContextSize {
@@ -163,19 +156,17 @@ pub struct BenchGenerationConfig {
 
 impl BenchGenerationConfig {
     pub fn validate(&self) -> Result<()> {
+        let temperature = self.temperature as f32;
         ensure!(
-            (self.temperature as f32).is_finite() && (self.temperature as f32) > 0.0,
-            "temperature must be finite and positive"
+            temperature.is_finite() && temperature > 0.0 && temperature.recip().is_finite(),
+            "temperature and its reciprocal must be finite and positive"
         );
         ensure!((self.top_p as f32) > 0.0 && self.top_p <= 1.0, "top_p must be in (0, 1]");
         ensure!(self.min_p.is_none_or(|value| (0.0..=1.0).contains(&value)), "min_p must be in [0, 1]");
-        ensure!(
-            self.repetition_penalty.is_none_or(|value| value == 1.0),
-            "Nonneutral repetition_penalty is unsupported by speculative benchmarks"
-        );
+        ensure!(self.repetition_penalty.is_none_or(|value| value == 1.0), "Only repetition_penalty=1 is supported");
         ensure!(
             self.suffix_repetition_length.is_none_or(|value| value == 0),
-            "suffix_repetition_length is unsupported by speculative benchmarks"
+            "Only suffix_repetition_length=0 is supported"
         );
         ensure!(self.presence_penalty.is_none_or(|value| value == 0.0), "presence_penalty is unsupported");
         ensure!(self.frequency_penalty.is_none_or(|value| value == 0.0), "frequency_penalty is unsupported");
@@ -187,10 +178,14 @@ impl BenchGenerationConfig {
         &self,
         actual: Option<&[u64]>,
     ) -> Result<()> {
-        ensure!(
-            self.stop_token_ids.as_deref().is_none_or(|requested| Some(requested) == actual),
-            "Requested stop_token_ids do not match the model; per-request stop overrides are unsupported"
-        );
+        if let Some(requested) = &self.stop_token_ids {
+            ensure!(
+                actual.is_some_and(|actual| {
+                    requested.iter().all(|id| actual.contains(id)) && actual.iter().all(|id| requested.contains(id))
+                }),
+                "Requested stop_token_ids do not match the model; per-request stop overrides are unsupported"
+            );
+        }
         Ok(())
     }
 
