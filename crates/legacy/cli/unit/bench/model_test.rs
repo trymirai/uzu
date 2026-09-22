@@ -80,6 +80,44 @@ fn tool_replay_preserves_wire_input_and_builds_complete_context() {
 }
 
 #[test]
+fn tool_choice_selects_benchmark_tools_and_is_preserved_in_echo() {
+    for (choice, expected) in
+        [(json!("none"), vec![]), (json!({"type": "function", "function": {"name": "clock"}}), vec!["clock"])]
+    {
+        let mut input = task(json!([{"role": "user", "content": "Hello"}]));
+        input["tools"] = json!([
+            {"type": "function", "function": {"name": "clock"}},
+            {"type": "function", "function": {"name": "weather"}}
+        ]);
+        input["tool_choice"] = choice.clone();
+        let task: BenchTask = serde_json::from_value(input).unwrap();
+        let messages = task.to_chat_messages().unwrap();
+        let names: Vec<_> = messages
+            .iter()
+            .flat_map(|message| message.tool_namespaces())
+            .flat_map(|namespace| namespace.tools)
+            .map(|tool| match tool {
+                ToolDescription::Function {
+                    tool_function,
+                } => tool_function.name,
+            })
+            .collect();
+        assert_eq!(names, expected);
+        assert_eq!(serde_json::to_value(&task).unwrap()["tool_choice"], choice);
+    }
+}
+
+#[test]
+fn invalid_tool_choice_is_rejected_without_exposing_private_values() {
+    let mut input = task(json!([{"role": "user", "content": "Hello"}]));
+    input["tool_choice"] = json!("PRIVATE_SENTINEL");
+    let task: BenchTask = serde_json::from_value(input).unwrap();
+    let error = task.to_chat_messages().unwrap_err();
+    assert!(error.to_string().contains("tool_choice"));
+    assert!(!format!("{error:?}").contains("PRIVATE_SENTINEL"));
+}
+
+#[test]
 fn malformed_tool_definition_returns_contextual_error() {
     let mut input = task(json!([{"role": "user", "content": "Hello"}]));
     input["tools"] = json!([{"type": "function", "function": {"parameters": {}}}]);

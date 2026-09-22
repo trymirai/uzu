@@ -5,7 +5,7 @@ use uzu_engine::data_type::DataType;
 
 use crate::server::{
     chat_completions::{OaiMessage, to_chat_messages},
-    chat_tool_calls::{OaiTool, backfill_tool_result_names, insert_tools_message},
+    chat_tool_calls::{OaiTool, backfill_tool_result_names, choose_tools, insert_tools_message},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +19,8 @@ pub struct BenchTask {
     // Retain the original OpenAI definitions in the echoed task, including schema extensions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 impl BenchTask {
@@ -39,7 +41,9 @@ impl BenchTask {
         }
         let mut messages = to_chat_messages(&messages);
         backfill_tool_result_names(&mut messages);
-        insert_tools_message(&mut messages, &tools.iter().collect::<Vec<_>>());
+        let tools = choose_tools(Some(&tools), self.tool_choice.as_ref())
+            .map_err(|_| anyhow!("Invalid benchmark tool_choice"))?;
+        insert_tools_message(&mut messages, &tools);
         Ok(messages)
     }
 }
