@@ -24,6 +24,21 @@ fn legacy_task_still_converts_without_tools() {
 }
 
 #[test]
+fn assistant_tool_call_accepts_null_content() {
+    let input = task(json!([{"role": "assistant", "content": null, "tool_calls": [
+        {"id": "call_clock", "type": "function", "function": {"name": "clock", "arguments": "{}"}}
+    ]}]));
+    let task: BenchTask = serde_json::from_value(input.clone()).unwrap();
+    let echoed = serde_json::to_value(&task).unwrap();
+    assert_eq!(echoed["messages"][0]["content"], serde_json::Value::Null);
+    assert_eq!(echoed["messages"][0]["tool_calls"], input["messages"][0]["tool_calls"]);
+    let messages = task.to_chat_messages().unwrap();
+    assert_eq!(messages[0].role, ChatRole::Assistant {});
+    assert_eq!(messages[0].text(), None);
+    assert_eq!(messages[0].tool_calls()[0].identifier.as_deref(), Some("call_clock"));
+}
+
+#[test]
 fn tool_replay_preserves_wire_input_and_builds_complete_context() {
     let mut input = task(json!([
         {"role": "system", "content": "Be helpful"},

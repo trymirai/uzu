@@ -47,7 +47,7 @@ impl BenchTask {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BenchMessage {
     pub role: BenchMessageRole,
-    pub content: String,
+    pub content: Option<String>,
     pub reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<serde_json::Value>>,
