@@ -50,7 +50,7 @@ class MlxRunRequest:
     draft_model_path: str | Path | None = None
 
     # Number of tokens proposed per speculative decoding round; ignored without a draft model.
-    draft_tokens: int = 2
+    draft_tokens: int = 3
 
     # Sampling parameters
     sampling: MlxSampling | None = None
