@@ -15,8 +15,6 @@ pub enum MetalError {
     CannotStartGpuCapture(String),
     #[error("Cannot create library: {0}")]
     CannotCreateLibrary(String),
-    #[error("Cannot decompress library: {0}")]
-    CannotDecompressLibrary(#[source] std::io::Error),
     #[error("Cannot create command queue")]
     CannotCreateCommandQueue,
     #[error("Cannot create command Metal 4 queue")]

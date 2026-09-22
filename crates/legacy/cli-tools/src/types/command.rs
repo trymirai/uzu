@@ -407,6 +407,7 @@ impl Command {
             .with_arguments(vec!["--target".to_string(), target])
             .with_argument("--no-default-features")
             .with_arguments(vec!["--features".to_string(), features.join(",")])
+            .with_argument("--skip-toolchains-check")
             .with_argument("-y");
         command = match configuration {
             Configuration::Debug => command,

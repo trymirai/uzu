@@ -2,6 +2,7 @@ mod backend;
 mod buffer;
 mod command_buffer;
 mod context;
+mod decompression;
 mod dense_buffer;
 mod error;
 mod kernel;

@@ -26,16 +26,17 @@ let package = Package(
             path: "crates/legacy/uzu/bindings/swift/Sources/Uzu",
             linkerSettings: [
                 .linkedLibrary("c++"),
-                .linkedFramework("SystemConfiguration"),
+                .linkedLibrary("compression"),
+                .linkedFramework("SystemConfiguration", .when(platforms: [.macOS])),
                 .linkedFramework("Metal"),
-                .linkedFramework("MetalPerformanceShadersGraph"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
+                .linkedFramework("AVFAudio", .when(platforms: [.iOS])),
             ]
         ),
         .target(
             name: "UzuMetalIOSimulatorStubs",
-            path: "Sources/UzuMetalIOSimulatorStubs",
+            path: "crates/legacy/uzu/bindings/swift/Sources/UzuMetalIOSimulatorStubs",
             publicHeadersPath: "include"
         ),
         .executableTarget(

@@ -7,15 +7,13 @@ use uzu::{
     settings::SettingsError,
 };
 
-use crate::interactive::{components::Application, model::ModelResolutionError};
+use crate::interactive::components::Application;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum CliError {
     #[error(transparent)]
     Engine(#[from] EngineError),
-    #[error(transparent)]
-    ModelResolution(#[from] ModelResolutionError),
     #[error(transparent)]
     Settigs(#[from] SettingsError),
     #[error("Rendering error: {message}")]
@@ -45,6 +43,8 @@ impl CliApplication {
         &self,
         model: Option<String>,
         reasoning_effort: Option<ReasoningEffort>,
+        seed: Option<i64>,
+        no_tools: bool,
     ) -> Result<(), CliError> {
         if !std::io::stdout().is_terminal() {
             return Err(CliError::RenderingError {
@@ -60,6 +60,8 @@ impl CliApplication {
                 settings,
                 model,
                 reasoning_effort,
+                seed,
+                no_tools,
             )
         }
         .render_loop()
