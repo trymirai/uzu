@@ -13,11 +13,11 @@ from mach import MemoryCounters, get_memory_counters
 
 @dataclass(frozen=True)
 class MtplxSampling:
-    temperature: float = 0.6
-    top_p: float = 0.95
-    top_k: int = 20
-    presence_penalty: float = 0.0
-    frequency_penalty: float = 0.0
+    temperature: float | None
+    top_p: float | None
+    top_k: int | None
+    presence_penalty: float | None
+    frequency_penalty: float | None
 
 
 @dataclass(frozen=True)
@@ -26,17 +26,10 @@ class MtplxRunRequest:
     #   str for a Hugging Face repository ID,
     #   Path for a local model directory.
     model: str | Path
-
-    # Raw input text or chat messages formatted using the target tokenizer's chat template.
     prompt: str | list[ChatMessage]
-
-    speculative_depth: int = 3
-
-    # Maximum number of tokens to generate, excluding prompt tokens.
-    max_tokens: int = 256
-
-    # Sampling configuration
-    sampling: MtplxSampling = MtplxSampling()
+    max_tokens: int | None = None
+    speculative_depth: int | None = None
+    sampling: MtplxSampling | None = None
 
 
 @dataclass(frozen=True)
@@ -76,13 +69,18 @@ def run(request: MtplxRunRequest) -> MtplxRunResponse:
     time_first_token: float = -1.0
     mem_graphics_max: int = 0
     mem_counters_max: MemoryCounters = get_memory_counters()
-    sampler = SamplerConfig(
-        temperature=request.sampling.temperature,
-        top_p=request.sampling.top_p,
-        top_k=request.sampling.top_k,
-        presence_penalty=request.sampling.presence_penalty,
-        frequency_penalty=request.sampling.frequency_penalty,
-    )
+
+    sampler: SamplerConfig
+    if request.sampling is None:
+        sampler = SamplerConfig()
+    else:
+        sampler = SamplerConfig(
+            temperature=request.sampling.temperature or 0.6,
+            top_p=request.sampling.top_p or 0.95,
+            top_k=request.sampling.top_k or 20,
+            presence_penalty=request.sampling.presence_penalty or 0.0,
+            frequency_penalty=request.sampling.frequency_penalty or 0.0,
+        )
 
     def token_callback(token_ids: list[int]) -> None:
         nonlocal time_first_token, mem_graphics_max, mem_counters_max
@@ -99,9 +97,9 @@ def run(request: MtplxRunRequest) -> MtplxRunResponse:
     output = generate_mtpk(
         runtime,
         prompt_ids,
-        max_tokens=request.max_tokens,
+        max_tokens=request.max_tokens or 256,
         sampler=sampler,
-        speculative_depth=request.speculative_depth,
+        speculative_depth=request.speculative_depth or 3,
         token_callback=token_callback,
     )
 

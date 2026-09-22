@@ -6,6 +6,7 @@ dependencies = [
     "mlx==0.32.2",
     "mlx-lm==0.31.3",
     "mtplx==2.11.3",
+    "pydantic>=2.13.5",
     "typer>=0.27.2",
 ]
 

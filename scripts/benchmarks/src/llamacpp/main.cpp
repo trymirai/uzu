@@ -19,7 +19,7 @@ struct InputConfig {
     std::optional<SamplingConfig> sampling;
 };
 
-struct OutputMetrics {
+struct Output {
     std::string text;
     double time_to_first_token;
     double prompt_tps;
@@ -77,8 +77,8 @@ void validate_request(const RunRequest& request) {
     }
 }
 
-OutputMetrics get_output_metrics(const RunResponse& response) {
-    return OutputMetrics{
+Output get_output_metrics(const RunResponse& response) {
+    return Output{
         .text = response.text,
         .time_to_first_token = response.time_to_first_token,
         .prompt_tps = response.prompt_tps,
