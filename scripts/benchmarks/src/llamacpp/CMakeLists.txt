@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.31)
 include(FetchContent)
 
 # project setup
-project(benchmark_llamacpp LANGUAGES C CXX)
+project(llamacpp_bench LANGUAGES C CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -45,14 +45,14 @@ add_library(mach_memory STATIC ../mach/memory_counters.c)
 target_include_directories(mach_memory PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../mach)
 
 # sources
-add_executable(benchmark_llamacpp 
+add_executable(${PROJECT_NAME} 
     main.cpp 
     common.cpp
     runner.cpp
 )
 
 # libraries
-target_link_libraries(benchmark_llamacpp 
+target_link_libraries(${PROJECT_NAME}  
     PRIVATE 
         llama 
         llama-common 
