@@ -125,7 +125,12 @@ fn coerce_to_schema_with_root(
     };
 
     match schema_type {
+        // markup parsers keep object and array parameters as the text the model wrote
         Some("object") => match value {
+            Json::String(text) => match serde_json::from_str::<Json>(&text) {
+                Ok(parsed @ Json::Object(_)) => coerce_to_schema_with_root(parsed, schema, root_schema),
+                _ => Json::String(text),
+            },
             Json::Object(map) => Json::Object(
                 map.into_iter()
                     .map(|(key, value)| {
@@ -140,6 +145,10 @@ fn coerce_to_schema_with_root(
             other => other,
         },
         Some("array") => match (value, schema.get("items")) {
+            (Json::String(text), _) => match serde_json::from_str::<Json>(&text) {
+                Ok(parsed @ Json::Array(_)) => coerce_to_schema_with_root(parsed, schema, root_schema),
+                _ => Json::String(text),
+            },
             (Json::Array(items), Some(item_schema)) => Json::Array(
                 items.into_iter().map(|item| coerce_to_schema_with_root(item, item_schema, root_schema)).collect(),
             ),
@@ -209,4 +218,37 @@ fn resolve_local_schema<'a>(
         schema = target;
     }
     schema
+}
+
+#[cfg(test)]
+mod tests {
+    use super::coerce_to_schema;
+
+    #[test]
+    fn coerce_to_schema_parses_container_text_and_keeps_string_text() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "content": {"type": "string"},
+                "options": {"type": "object", "properties": {"retries": {"type": "integer"}}},
+                "tags": {"type": ["array", "null"], "items": {"type": "integer"}}
+            }
+        });
+        // markup parsers keep every parameter as text; containers are parsed by the schema, strings never are
+        let coerced = coerce_to_schema(
+            serde_json::json!({
+                "content": "{\"name\": \"arcade\"}",
+                "options": "{\"retries\": \"3\"}",
+                "tags": "[\"1\", 2]"
+            }),
+            &schema,
+        );
+        assert_eq!(
+            coerced,
+            serde_json::json!({"content": "{\"name\": \"arcade\"}", "options": {"retries": 3}, "tags": [1, 2]})
+        );
+
+        let kept = coerce_to_schema(serde_json::json!({"options": "{ broken", "tags": "not a list"}), &schema);
+        assert_eq!(kept, serde_json::json!({"options": "{ broken", "tags": "not a list"}));
+    }
 }

@@ -5,7 +5,7 @@ use uuid::Uuid;
 use uzu::{
     session::chat::normalize_tool_call_arguments,
     types::{
-        basic::{ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value, parse_lenient_json},
+        basic::{ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value},
         session::chat::{ChatContentBlock, ChatMessage, ChatRole},
     },
 };
@@ -93,9 +93,9 @@ pub fn choose_tools<'t>(
 }
 
 /// Declared JSON-Schema types of each tool parameter, keyed by function name.
-/// Tool-call markup cannot carry scalar types — the parser keeps every scalar
-/// parameter a string and types JSON-shaped values by their braces — so the
-/// declared schema is what restores the wire types clients validate against.
+/// Tool-call markup cannot carry types — the parser keeps every parameter the
+/// text the model wrote — so the declared schema is what restores the wire
+/// types clients validate against.
 #[derive(Clone, Default)]
 pub struct ToolParameterTypes(HashMap<String, HashMap<String, Vec<String>>>);
 
@@ -155,7 +155,7 @@ fn matches_declared_type(
     })
 }
 
-/// Bare scalar text is strict JSON, plus the Python-style booleans some models
+/// Parameter text is strict JSON, plus the Python-style booleans some models
 /// emit in tool markup (qwen3.5 writes `True`/`False`).
 pub fn parse_scalar_text(text: &str) -> Option<serde_json::Value> {
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(text) {
@@ -174,16 +174,16 @@ fn coerce_parameter_value(
 ) -> Option<serde_json::Value> {
     let declares_string = declared.iter().any(|kind| kind == "string");
     match value {
-        // The parser kept the bare markup text as a string; restore the
-        // declared type when the text reads as it. A union that includes
-        // "string" stays a string: the text is already schema-valid and the
-        // intended type is unknowable.
+        // The parser kept the markup text as a string; restore the declared
+        // type when the text reads as it. A union that includes "string" stays
+        // a string: the text is already schema-valid and the intended type is
+        // unknowable.
         serde_json::Value::String(text) if !declares_string => {
             let parsed = parse_scalar_text(text)?;
             matches_declared_type(&parsed, declared).then_some(parsed)
         },
-        // JSON-shaped markup text was typed by its braces although the
-        // parameter is a plain string.
+        // A JSON-format parser typed a value although the parameter is a
+        // plain string.
         value if declared == ["string"] && !value.is_string() => Some(serde_json::Value::String(value.to_string())),
         _ => None,
     }
@@ -400,24 +400,14 @@ fn parse_framed_call(raw: &str) -> FramedCall {
     }
 }
 
-// Mirrors the parser's synthesis rule composed with the schema coercion the
-// final call goes through: values starting with `{` or `[` are typed JSON
-// unless the parameter is declared a plain string, bare scalars take a
-// declared non-string type when they parse as it, everything else is a string.
+// Mirrors the schema coercion the final call goes through: the text takes a
+// declared non-string type when it parses as it; a string or undeclared
+// parameter is the text verbatim, however JSON-shaped it looks.
 fn serialize_param_value(
     value: &str,
     declared: Option<&[String]>,
 ) -> String {
-    let trimmed = value.trim_start();
-    let json_shaped = trimmed.starts_with('{') || trimmed.starts_with('[');
-    if json_shaped && let Some(parsed) = parse_lenient_json(value) {
-        if declared.is_some_and(|declared| declared == ["string"]) {
-            return serde_json::Value::String(parsed.to_string()).to_string();
-        }
-        return parsed.to_string();
-    }
-    if !json_shaped
-        && let Some(declared) = declared
+    if let Some(declared) = declared
         && !declared.iter().any(|kind| kind == "string")
         && let Some(parsed) = parse_scalar_text(value)
         && matches_declared_type(&parsed, declared)

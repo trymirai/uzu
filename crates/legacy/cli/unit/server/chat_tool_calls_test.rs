@@ -275,15 +275,17 @@ fn framed_tool_call_streams_arguments_incrementally() {
 
 #[test]
 fn framed_tool_call_withholds_typed_parameter_until_complete() {
+    // a declared object parameter is typed from its text, so nothing of it can stream until it is complete
+    let types = parameter_types(
+        r#"[{"type":"function","function":{"name":"read","description":"Read",
+            "parameters":{"type":"object","properties":{"options":{"type":"object"}}}}}]"#,
+    );
     let mut streamer = ToolCallStreamer::new();
-    let deltas = streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\"", &ToolParameterTypes::default());
+    let deltas = streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\"", &types);
     assert!(deltas.iter().all(|delta| delta.function.arguments.is_empty()));
 
-    let deltas = streamer.update(
-        0,
-        "\n<function=read>\n<parameter=options>\n{\"a\": 1}\n</parameter>\n</function>\n",
-        &ToolParameterTypes::default(),
-    );
+    let deltas =
+        streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\": 1}\n</parameter>\n</function>\n", &types);
     let fragment: String = deltas.iter().map(|delta| delta.function.arguments.as_str()).collect();
     assert_eq!(fragment, r#"{"options":{"a":1}"#);
 
@@ -346,8 +348,12 @@ fn framed_tool_call_uses_valid_candidate_when_final_call_diverges() {
 
 #[test]
 fn framed_tool_call_with_array_parameter_assembles_exactly() {
-    // the edit-call shape: a parameter whose value is a JSON array must never be
-    // string-streamed before its type is known, and the finish must not double it
+    // the edit-call shape: a parameter declared as an array must never be
+    // string-streamed before its text is complete, and the finish must not double it
+    let types = parameter_types(
+        r#"[{"type":"function","function":{"name":"edit","description":"Edit",
+            "parameters":{"type":"object","properties":{"path":{"type":"string"},"edits":{"type":"array"}}}}}]"#,
+    );
     let final_markup = "\n<function=edit>\n<parameter=path>\nlonodn.md\n</parameter>\n<parameter=edits>\n[{\"oldText\": \"London\", \"newText\": \"Londinium\"}]\n</parameter>\n</function>\n";
     let final_arguments = serde_json::json!({
         "path": "lonodn.md",
@@ -367,7 +373,7 @@ fn framed_tool_call_with_array_parameter_assembles_exactly() {
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
-        for delta in streamer.update(0, &partial, &ToolParameterTypes::default()) {
+        for delta in streamer.update(0, &partial, &types) {
             fragment_count += 1;
             fragments.push_str(&delta.function.arguments);
         }
@@ -377,6 +383,51 @@ fn framed_tool_call_with_array_parameter_assembles_exactly() {
     assert!(fragment_count > 2, "fragments: {fragments:?}");
     let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
     assert_eq!(parsed, final_arguments);
+}
+
+#[test]
+fn framed_string_parameter_streams_json_shaped_text_verbatim() {
+    // a write call whose content is a JSON document and whose edits are a declared array: the string
+    // parameter must stream the text the model wrote, not a re-serialization of it, and the streamed
+    // fragments must be the exact prefix of the coerced final call so the finish only closes them
+    let types = parameter_types(
+        r#"[{"type":"function","function":{"name":"write_file","description":"Write",
+            "parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"edits":{"type":"array"}},
+            "required":["path","content"]}}}]"#,
+    );
+    let content = "{\n  \"name\": \"arcade\",\n  \"private\": true\n}";
+    let edits = "[{\"oldText\": \"London\", \"newText\": \"Londinium\"}]";
+    let final_markup = format!(
+        "\n<function=write_file>\n<parameter=path>\npackage.json\n</parameter>\n<parameter=content>\n{content}\n</parameter>\n<parameter=edits>\n{edits}\n</parameter>\n</function>\n"
+    );
+    // the session keeps the parser's text; the server coerces by the schema before finishing the stream
+    let session_call = ToolCall {
+        identifier: Some("c1".to_string()),
+        name: "write_file".to_string(),
+        arguments: Value {
+            json: serde_json::json!({"path": "package.json", "content": content, "edits": edits}).to_string(),
+        },
+    };
+    let call = coerce_tool_call(&session_call, &types);
+
+    let mut streamer = ToolCallStreamer::new();
+    let mut streamed = String::new();
+    let chars = final_markup.chars().collect::<Vec<_>>();
+    for i in 0..=chars.len() {
+        let partial: String = chars[..i].iter().collect();
+        for delta in streamer.update(0, &partial, &types) {
+            streamed.push_str(&delta.function.arguments);
+        }
+    }
+    let closing = streamer.finish(0, &call).function.arguments;
+
+    let assembled: serde_json::Value =
+        serde_json::from_str(&format!("{streamed}{closing}")).expect("assembled arguments parse");
+    assert_eq!(
+        assembled,
+        serde_json::json!({"path": "package.json", "content": content, "edits": [{"oldText": "London", "newText": "Londinium"}]})
+    );
+    assert!(closing.len() < 8, "finish should only close the streamed text, got {closing:?}");
 }
 
 fn parameter_types(tools_json: &str) -> ToolParameterTypes {
@@ -486,7 +537,7 @@ fn declared_string_keeps_json_shaped_text() {
             "parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},
             "required":["path","content"]}}}]"#,
     );
-    // the parser typed the JSON-shaped content by its braces
+    // a JSON-format parser typed the content although the parameter is a string
     let call = ToolCall {
         identifier: None,
         name: "write_file".to_string(),
