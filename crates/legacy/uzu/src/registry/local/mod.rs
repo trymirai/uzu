@@ -83,6 +83,18 @@ impl RegistryTrait for Registry {
 }
 
 impl Registry {
+    /// The model in directory `name`, resolved like the ones `models` lists.
+    pub fn model_at(
+        &self,
+        name: &str,
+    ) -> Result<Model, RegistryError> {
+        let model = self.model(name);
+        match self.config.resolver.as_ref() {
+            Some(resolver) => resolver(model),
+            None => Ok(model),
+        }
+    }
+
     fn model(
         &self,
         name: &str,

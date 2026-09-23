@@ -4,7 +4,7 @@ mod download_manager;
 mod downloader;
 mod error;
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::bridge::UzuLlmBackend;
@@ -411,7 +411,24 @@ impl Engine {
                 return Ok(Some(model));
             }
         }
-        Ok(None)
+        // Any model directory on disk, without LOCAL_PATH (as on main since #847).
+        let Ok(directory) = Path::new(&path).canonicalize() else {
+            return Ok(None);
+        };
+        let (Some(parent), Some(name)) = (directory.parent(), directory.file_name().and_then(|name| name.to_str()))
+        else {
+            return Ok(None);
+        };
+        if !directory.join("config.json").is_file() {
+            return Ok(None);
+        }
+        let backend = UzuLlmBackend::new();
+        let registry = LocalRegistry::new(LocalRegistryConfig::local(
+            backend.identifier(),
+            backend.version(),
+            parent.to_string_lossy().into_owned(),
+        ))?;
+        Ok(Some(registry.model_at(name)?))
     }
 }
 
