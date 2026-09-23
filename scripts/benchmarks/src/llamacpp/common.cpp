@@ -119,7 +119,7 @@ std::vector<llama_token> get_tokens(
         std::vector<llama_chat_message> messages;
         messages.reserve(chat.size());
         for (const auto& message : chat) {
-            messages.push_back({message.role.c_str(), message.message.c_str()});
+            messages.push_back({message.role.c_str(), message.content.c_str()});
         }
 
         const std::string chat_template = llama_model_chat_template(model.get(), nullptr);

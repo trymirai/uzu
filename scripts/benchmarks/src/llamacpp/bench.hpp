@@ -7,8 +7,9 @@
 #include <vector>
 
 struct ChatMessage {
-    std::string message;
     std::string role;
+    std::string content;
+    std::optional<std::string> reasoning_content;
 };
 
 struct BenchSampling {

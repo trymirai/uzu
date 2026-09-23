@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from enum import StrEnum
 
 from pydantic import BaseModel
@@ -12,10 +11,10 @@ class ChatRole(StrEnum):
     USER = "user"
 
 
-@dataclass
-class ChatMessage:
-    message: str
+class ChatMessage(BaseModel):
     role: ChatRole
+    content: str | None = None
+    reasoning_content: str | None = None
 
 
 class BenchSampling(BaseModel):
