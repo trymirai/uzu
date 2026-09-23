@@ -55,11 +55,6 @@ METAL_FUNC constexpr uint symmetric_zero_point() {
   return 1u << (BITS - 1);
 }
 
-template <ushort BITS, typename Int>
-METAL_FUNC constexpr Int zero_point_row_stride(Int groups_per_row) {
-  return (BITS == 4) ? (groups_per_row + Int(1)) / Int(2) : groups_per_row;
-}
-
 template <ushort BITS>
 METAL_FUNC uint decode_zero_point(uint8_t packed, uint group_index) {
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 zero points supported");

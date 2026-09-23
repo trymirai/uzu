@@ -8,7 +8,7 @@ use crate::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::{MatmulShape, QuantParamsLayout},
+            kernel::matmul::{MatmulB, MatmulShape},
         },
         metal::{context::MetalContext, error::MetalError, kernel::GemvMetalKernel},
     },
@@ -33,7 +33,6 @@ pub struct GemvSpecialization {
     gathered: bool,
     signed_codes: bool,
     full_tile: bool,
-    metadata_group_major: bool,
 }
 
 impl GemvSpecialization {
@@ -138,7 +137,6 @@ impl GemvSpecialization {
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
             full_tile: full_tile(shape, tile),
-            metadata_group_major: shape.params_layout == Some(QuantParamsLayout::GroupOutput),
         };
         Some(specialization)
     }
@@ -173,7 +171,6 @@ impl GemvSpecialization {
             self.gathered,
             self.signed_codes,
             self.full_tile,
-            self.metadata_group_major,
         )
     }
 }
@@ -190,7 +187,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use crate::backends::{
     common::{
         BufferArg, Encoder,
-        kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
+        kernel::matmul::{MatmulA, MatmulArguments, MatmulError},
     },
     metal::Metal,
 };
@@ -265,82 +262,76 @@ impl GemvKernel {
             });
         };
 
-        let (scales, biases, zero_points) = match &b {
+        let (weights, scales, biases, zero_points, quant_params, mode) = match b {
             MatmulB::FullPrecision {
-                ..
-            } => (None, None, None),
+                b: weights,
+            } => {
+                let (buffer, offset, _) = weights.into_parts();
+                ((buffer, offset), None, None, None, None, None)
+            },
             MatmulB::ScaleBiasDequant {
+                b: weights,
                 scales,
                 biases,
+                params,
+                mode,
                 ..
-            } => (Some(*scales), Some(*biases), None),
+            } => {
+                let (buffer, offset, _) = weights.into_parts();
+                ((buffer, offset), Some(scales), Some(biases), None, Some(params), Some(mode))
+            },
             MatmulB::ScaleZeroPointDequant {
+                b: weights,
                 scales,
                 zero_points,
+                params,
+                mode,
                 ..
-            } => (Some(*scales), None, Some(*zero_points)),
+            } => {
+                let (buffer, offset, _) = weights.into_parts();
+                ((buffer, offset), Some(scales), None, Some(zero_points), Some(params), Some(mode))
+            },
             MatmulB::ScaleSymmetricDequant {
+                b: weights,
                 scales,
+                params,
+                mode,
                 ..
-            } => (Some(*scales), None, None),
+            } => {
+                let (buffer, offset, _) = weights.into_parts();
+                ((buffer, offset), Some(scales), None, None, Some(params), Some(mode))
+            },
         };
-        let metadata_stride = b.quant_params_stride(self.weights_data_type, k);
+        let scale_strides = quant_params.map(|params| params.strides(self.weights_data_type));
+        let zero_point_strides =
+            quant_params.zip(mode).and_then(|(params, mode)| zero_points.map(|_| params.strides(DataType::from(mode))));
+        let scale_strides = scale_strides.unwrap_or_default();
+        let zero_point_strides = zero_point_strides.unwrap_or_default();
         let output_group_count = n.div_ceil(specialization.output_row_tile());
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;
-        match b {
-            MatmulB::FullPrecision {
-                b: weights,
-            } => pipeline.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                &mut *d,
-                output_bias,
-                rht_factors,
-                gather_indices,
-                k,
-                n,
-                m,
-                ab_scale,
-                output_group_count,
-                metadata_stride,
-                soft_cap,
-                encoder,
-            ),
-            MatmulB::ScaleBiasDequant {
-                b: weights,
-                ..
-            }
-            | MatmulB::ScaleZeroPointDequant {
-                b: weights,
-                ..
-            }
-            | MatmulB::ScaleSymmetricDequant {
-                b: weights,
-                ..
-            } => pipeline.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                &mut *d,
-                output_bias,
-                rht_factors,
-                gather_indices,
-                k,
-                n,
-                m,
-                ab_scale,
-                output_group_count,
-                metadata_stride,
-                soft_cap,
-                encoder,
-            ),
-        }
+        pipeline.encode(
+            weights,
+            scales,
+            zero_points,
+            biases,
+            (a, a_offset),
+            &mut *d,
+            output_bias,
+            rht_factors,
+            gather_indices,
+            k,
+            n,
+            m,
+            ab_scale,
+            output_group_count,
+            scale_strides.output_stride,
+            scale_strides.group_stride,
+            zero_point_strides.output_stride,
+            zero_point_strides.group_stride,
+            soft_cap,
+            encoder,
+        );
 
         Ok(())
     }

@@ -5,7 +5,7 @@ use crate::{
         common::{
             AsBufferRangeRef, BufferArg,
             gpu_types::QuantizationMode,
-            kernel::matmul::{MatmulB, MatmulError, QuantParamsLayout},
+            kernel::matmul::{MatmulB, MatmulError, QuantParams},
         },
         cpu::Cpu,
     },
@@ -24,11 +24,10 @@ pub(super) enum WeightData {
         scales: SendPtr<u8>,
         zero_points: Option<SendPtr<u8>>,
         biases: Option<SendPtr<u8>>,
+        params: QuantParams,
         bits: usize,
         group_size: usize,
         signed_codes: bool,
-        metadata_group_major: bool,
-        metadata_stride: usize,
     },
 }
 
@@ -39,9 +38,7 @@ impl WeightData {
         b_transpose: bool,
         k: usize,
         n: usize,
-        params_data_type: DataType,
     ) -> Result<Self, MatmulError<Cpu>> {
-        let params_stride = b.quant_params_stride(params_data_type, k as u32) as usize;
         let alloc_ptr = |a: &crate::backends::common::Allocation<Cpu>| {
             let r = a.as_buffer_range_ref();
             SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
@@ -50,7 +47,7 @@ impl WeightData {
             QuantizationMode::U4 => 4usize,
             _ => 8usize,
         };
-        let (weights, scales, zero_points, biases, params_layout, mode, group_size, signed_codes) = match b {
+        let (weights, scales, zero_points, biases, params, mode, group_size, signed_codes) = match b {
             MatmulB::FullPrecision {
                 b: weights,
             } => {
@@ -70,39 +67,41 @@ impl WeightData {
                 b: weights,
                 scales,
                 biases,
+                params,
                 mode,
                 group_size,
                 signed_codes,
-                params_layout,
-            } => (weights, scales, None, Some(biases), params_layout, mode, group_size, signed_codes),
+                ..
+            } => (weights, scales, None, Some(biases), params, mode, group_size, signed_codes),
             MatmulB::ScaleZeroPointDequant {
                 b: weights,
                 scales,
                 zero_points,
+                params,
                 mode,
                 group_size,
                 signed_codes,
-                params_layout,
-            } => (weights, scales, Some(zero_points), None, params_layout, mode, group_size, signed_codes),
+                ..
+            } => (weights, scales, Some(zero_points), None, params, mode, group_size, signed_codes),
             MatmulB::ScaleSymmetricDequant {
                 b: weights,
                 scales,
+                params,
                 mode,
                 group_size,
                 signed_codes,
-                params_layout,
-            } => (weights, scales, None, None, params_layout, mode, group_size, signed_codes),
+                ..
+            } => (weights, scales, None, None, params, mode, group_size, signed_codes),
         };
         Ok(WeightData::Quantized {
             weights: alloc_ptr(weights),
             scales: alloc_ptr(scales),
             zero_points: zero_points.map(alloc_ptr),
             biases: biases.map(alloc_ptr),
+            params,
             bits: bits_of(mode),
             group_size: group_size as usize,
             signed_codes,
-            metadata_group_major: params_layout == QuantParamsLayout::GroupOutput,
-            metadata_stride: params_stride,
         })
     }
 }

@@ -1,4 +1,4 @@
-use super::QuantParamsLayout;
+use super::{QuantParams, QuantParamsLayout};
 use crate::{
     backends::common::{
         Allocation, Backend, BufferArg,
@@ -15,7 +15,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
         b: &'a Allocation<B>,
         scales: &'a Allocation<B>,
         biases: &'a Allocation<B>,
-        params_layout: QuantParamsLayout,
+        params: QuantParams,
         mode: QuantizationMode,
         group_size: u32,
         signed_codes: bool,
@@ -24,7 +24,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
         b: &'a Allocation<B>,
         scales: &'a Allocation<B>,
         zero_points: &'a Allocation<B>,
-        params_layout: QuantParamsLayout,
+        params: QuantParams,
         mode: QuantizationMode,
         group_size: u32,
         signed_codes: bool,
@@ -32,7 +32,7 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
     ScaleSymmetricDequant {
         b: &'a Allocation<B>,
         scales: &'a Allocation<B>,
-        params_layout: QuantParamsLayout,
+        params: QuantParams,
         mode: QuantizationMode,
         group_size: u32,
         signed_codes: bool,
@@ -40,32 +40,6 @@ pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
 }
 
 impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
-    fn quant_params(&self) -> Option<(QuantParamsLayout, u32, &Allocation<B>)> {
-        match self {
-            Self::FullPrecision {
-                ..
-            } => None,
-            Self::ScaleBiasDequant {
-                params_layout,
-                group_size,
-                scales,
-                ..
-            }
-            | Self::ScaleZeroPointDequant {
-                params_layout,
-                group_size,
-                scales,
-                ..
-            }
-            | Self::ScaleSymmetricDequant {
-                params_layout,
-                group_size,
-                scales,
-                ..
-            } => Some((*params_layout, *group_size, scales)),
-        }
-    }
-
     pub fn b_prologue(&self) -> GemmBPrologueKind {
         match self {
             Self::FullPrecision {
@@ -144,21 +118,26 @@ impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
     }
 
     pub fn quant_params_layout(&self) -> Option<QuantParamsLayout> {
-        self.quant_params().map(|(layout, _, _)| layout)
+        self.quant_params().map(QuantParams::layout)
     }
 
-    pub fn quant_params_stride(
-        &self,
-        params_data_type: DataType,
-        k: u32,
-    ) -> u32 {
-        let Some((params_layout, group_size, scales)) = self.quant_params() else {
-            return 0;
-        };
-        let groups = k.div_ceil(group_size);
-        let element_size = params_data_type.size_in_bytes();
-        let elements = scales.size() / element_size;
-        let columns = (elements / groups as usize) as u32;
-        params_layout.row_stride(columns, groups)
+    pub fn quant_params(&self) -> Option<QuantParams> {
+        match self {
+            Self::FullPrecision {
+                ..
+            } => None,
+            Self::ScaleBiasDequant {
+                params,
+                ..
+            }
+            | Self::ScaleZeroPointDequant {
+                params,
+                ..
+            }
+            | Self::ScaleSymmetricDequant {
+                params,
+                ..
+            } => Some(*params),
+        }
     }
 }

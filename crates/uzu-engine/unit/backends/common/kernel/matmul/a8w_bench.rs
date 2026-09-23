@@ -15,7 +15,8 @@ use crate::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
-                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParamsLayout,
+                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParams,
+                    QuantParamsLayout,
                 },
             },
         },
@@ -132,7 +133,7 @@ impl BenchmarkData {
             b: MatmulB::ScaleSymmetricDequant {
                 b: &self.unsigned_weights,
                 scales: &self.weight_scales,
-                params_layout: QuantParamsLayout::OutputGroup,
+                params: QuantParams::new(QuantParamsLayout::OutputGroup, self.n, self.k.div_ceil(self.group_size)),
                 mode: self.mode,
                 group_size: self.group_size,
                 signed_codes: false,
@@ -183,7 +184,7 @@ fn encode_step(
                 b: MatmulB::ScaleSymmetricDequant {
                     b: &data.a8_weights,
                     scales: &data.group_major_weight_scales,
-                    params_layout: QuantParamsLayout::GroupOutput,
+                    params: QuantParams::new(QuantParamsLayout::GroupOutput, data.n, data.k.div_ceil(data.group_size)),
                     mode: data.mode,
                     group_size: data.group_size,
                     signed_codes: !matches!(data.mode, QuantizationMode::U4),

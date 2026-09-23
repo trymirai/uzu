@@ -129,14 +129,16 @@ KERNEL(Gemv)(
     const constant uint& batch_size,
     const constant float& ab_scale,
     const constant uint& group_count_x,
-    const constant uint& metadata_stride,
+    const constant uint& scale_output_stride,
+    const constant uint& scale_group_stride,
+    const constant uint& zero_point_output_stride,
+    const constant uint& zero_point_group_stride,
     const constant float& soft_cap
         OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
     const GemmDTransform output_transform SPECIALIZE,
     const bool gathered SPECIALIZE,
     const bool signed_codes SPECIALIZE,
     const bool full_tile SPECIALIZE,
-    const bool metadata_group_major SPECIALIZE,
     threadgroup float shared_results[INPUT_ROW_TILE * OUTPUT_ROW_TILE * K_SPLIT],
     const uint input_tile_idx GROUPS(batch_size.div_ceil(INPUT_ROW_TILE)),
     const uint output_tile_idx GROUPS(group_count_x),
@@ -148,7 +150,10 @@ KERNEL(Gemv)(
   const GemvParams params = {
       in_vec_size,
       out_vec_size,
-      metadata_stride,
+      scale_output_stride,
+      scale_group_stride,
+      zero_point_output_stride,
+      zero_point_group_stride,
       batch_size,
       ab_scale,
       soft_cap,
@@ -170,8 +175,7 @@ KERNEL(Gemv)(
           result,
           ops,
           params,
-          tile,
-          metadata_group_major
+          tile
       );
     }
 

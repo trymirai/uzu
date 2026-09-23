@@ -23,6 +23,10 @@ namespace schedules {
 
 namespace {
 
+static METAL_FUNC uint clamp_group_output_column(const uint column, const uint stride) {
+  return min(column, stride - uzu::matmul::QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT);
+}
+
 template <int COUNT, typename Visitor>
 static METAL_FUNC void for_each_static_index(Visitor visitor) {
   const_for_loop<0, COUNT, 1>([&](auto slot) { visitor(ushort(decltype(slot)::value)); });
@@ -50,7 +54,8 @@ struct MetadataContext {
   short right_column_limit;
   uint left_group_count;
   uint right_group_count;
-  uint right_metadata_group_stride;
+  uint right_scale_group_stride;
+  uint right_zero_point_group_stride;
 };
 
 template <typename LeftOperand, typename RightOperand>
@@ -122,13 +127,12 @@ struct IntegerSchedule {
   struct RightMetadata {
     using Ops = typename Core::FragmentOps;
     using ScaleElement = typename RightOperand::ScaleElement;
-    UZU_CONST uint METADATA_COLUMNS_PER_LOAD = 4;
-    using ScaleVector = vec<ScaleElement, METADATA_COLUMNS_PER_LOAD>;
-    using OffsetVector = vec<ScaleElement, METADATA_COLUMNS_PER_LOAD>;
+    using ScaleVector = vec<ScaleElement, Ops::THREAD_ELEMENT_COLS>;
+    using OffsetVector = vec<ScaleElement, Ops::THREAD_ELEMENT_COLS>;
     using ZeroPointVector = uchar4;
     UZU_CONST ushort THREAD_COLUMNS_PER_FRAGMENT = Ops::THREAD_ELEMENT_COLS;
     static_assert(
-        THREAD_COLUMNS_PER_FRAGMENT == METADATA_COLUMNS_PER_LOAD,
+        THREAD_COLUMNS_PER_FRAGMENT == uzu::matmul::QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT,
         "group-major metadata must use the metadata load width"
     );
 
@@ -143,31 +147,41 @@ struct IntegerSchedule {
     ) thread {
       for_each_static_index<int(Core::TILES_N)>([&](const ushort tile_n) {
         const ushort right_column_offset = tile_n * Ops::FRAGMENT_COLS;
-        uint right_column_start = metadata_context.right_column_base + uint(right_column_offset);
+        uint right_scale_column_start = metadata_context.right_column_base + uint(right_column_offset);
         if constexpr (!ALIGNED_N) {
-          right_column_start =
-              min(right_column_start, metadata_context.right_metadata_group_stride - METADATA_COLUMNS_PER_LOAD);
+          right_scale_column_start =
+              clamp_group_output_column(right_scale_column_start, metadata_context.right_scale_group_stride);
         }
         scales[tile_n] = *reinterpret_cast<const device ScaleVector*>(
-            right.scales + right_group_index * metadata_context.right_metadata_group_stride + right_column_start
+            right.scales + right_group_index * metadata_context.right_scale_group_stride + right_scale_column_start
         );
         if constexpr (HAS_BIAS) {
           bias_offsets[tile_n] = *reinterpret_cast<const device OffsetVector*>(
-              right.bias() + right_group_index * metadata_context.right_metadata_group_stride + right_column_start
+              right.bias() + right_group_index * metadata_context.right_scale_group_stride + right_scale_column_start
           );
           bias_offsets[tile_n] += scales[tile_n] * ScaleElement(RIGHT_CODE_OFFSET);
         }
         if constexpr (HAS_ZERO_POINTS) {
+          constexpr uint ZERO_POINT_PACK_FACTOR = 8u / uint(RightOperand::BITS);
           const device uint8_t* zero_point_row =
-              right.zp() + right_group_index *
-                               zero_point_row_stride<RightOperand::BITS>(metadata_context.right_metadata_group_stride);
+              right.zp() +
+              right_group_index * (metadata_context.right_zero_point_group_stride / ZERO_POINT_PACK_FACTOR);
+          uint right_zero_point_column_start = metadata_context.right_column_base + uint(right_column_offset);
+          if constexpr (!ALIGNED_N) {
+            right_zero_point_column_start = clamp_group_output_column(
+                right_zero_point_column_start,
+                metadata_context.right_zero_point_group_stride
+            );
+          }
           if constexpr (RightOperand::BITS == 4) {
-            const ushort packed = *reinterpret_cast<const device ushort*>(zero_point_row + (right_column_start >> 1));
+            const ushort packed =
+                *reinterpret_cast<const device ushort*>(zero_point_row + (right_zero_point_column_start >> 1));
             uint spread = (uint(packed) | (uint(packed) << 8)) & 0x00FF00FFu;
             spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
             zero_points[tile_n] = as_type<ZeroPointVector>(spread);
           } else {
-            zero_points[tile_n] = *reinterpret_cast<const device ZeroPointVector*>(zero_point_row + right_column_start);
+            zero_points[tile_n] =
+                *reinterpret_cast<const device ZeroPointVector*>(zero_point_row + right_zero_point_column_start);
           }
         }
         if constexpr (!ALIGNED_N) {
@@ -298,7 +312,8 @@ struct IntegerSchedule {
         short(tile.simdgroup_limit_n - position.x),
         uint(params->K) / uint(LeftOperand::GROUP_SIZE),
         uint(params->K) / RIGHT_GROUP_SIZE,
-        params->metadata_group_stride,
+        params->scale_group_stride,
+        params->zero_point_group_stride,
     };
     const uint first_right_group = tile.k_offset / RIGHT_GROUP_SIZE;
 

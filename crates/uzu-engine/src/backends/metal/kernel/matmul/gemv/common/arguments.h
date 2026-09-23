@@ -26,7 +26,10 @@ struct GemvOperands {
 struct GemvParams {
   uint in_vec_size;
   uint out_vec_size;
-  uint metadata_stride;
+  uint scale_output_stride;
+  uint scale_group_stride;
+  uint zero_point_output_stride;
+  uint zero_point_group_stride;
   uint batch_size;
   float ab_scale;
   float soft_cap;

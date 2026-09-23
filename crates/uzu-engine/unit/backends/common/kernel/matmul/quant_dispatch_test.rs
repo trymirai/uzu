@@ -5,6 +5,8 @@ use std::{
     fmt::{Debug, Display},
 };
 
+use QuantParamsLayout::{GroupOutput, OutputGroup};
+use QuantizationMethod::{ScaleBias, ScaleZeroPoint};
 use half::bf16;
 use num_traits::Float;
 use rstest::rstest;
@@ -19,18 +21,19 @@ use crate::{
             kernel::{
                 Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{MatmulDOps, MatmulError, MatmulKernel, QuantParamsLayout},
+                matmul::{MatmulDOps, MatmulError, MatmulKernel, QuantParams, QuantParamsLayout},
             },
         },
         cpu::Cpu,
         metal::{GemmEngine, Metal, MetalContext},
     },
+    data_type::DataType,
     tests::{
         helpers::allocation_to_vec,
         matmul::{
             QuantBuffers, QuantInput,
             harness::TestDispatch,
-            quant::{run_quant_cpu, run_quant_cpu_with_params_layout, run_quant_metal},
+            quant::{run_quant_cpu, run_quant_metal},
             quant_arguments,
         },
     },
@@ -45,6 +48,25 @@ fn check_tolerance(
     let diff = (expected - actual).abs() as f64;
     let tol = abs_tol.max(expected.abs() as f64 * rel_tol);
     diff <= tol
+}
+
+#[uzu_test]
+fn quant_params_layout_table() {
+    let cases = [
+        (QuantParamsLayout::OutputGroup, 5, 3, DataType::U4, [5, 2], [4, 1], DataType::U8),
+        (QuantParamsLayout::OutputGroup, 5, 3, DataType::BF16, [5, 3], [3, 1], DataType::BF16),
+        (QuantParamsLayout::OutputGroup, 5, 3, DataType::F32, [5, 3], [3, 1], DataType::F32),
+        (QuantParamsLayout::GroupOutput, 5, 3, DataType::U4, [3, 4], [1, 8], DataType::U8),
+        (QuantParamsLayout::GroupOutput, 5, 3, DataType::U8, [3, 8], [1, 8], DataType::U8),
+    ];
+    for (params_layout, columns, groups, data_type, shape, strides, storage_type) in cases {
+        let params = QuantParams::new(params_layout, columns, groups);
+        assert_eq!(params.shape(data_type), shape);
+        assert_eq!(params.storage_type(data_type), storage_type);
+        let actual = params.strides(data_type);
+        assert_eq!([actual.output_stride, actual.group_stride], strides);
+        assert_eq!(params.index(data_type, 1, 1), actual.output_stride + actual.group_stride);
+    }
 }
 
 fn assert_parity<T: ArrayElement + Float + Debug + Display>(
@@ -426,7 +448,7 @@ fn cpu_group_major_quantized_gemm_matches_row_major() {
         {
             let input = QuantInput::<bf16>::new(4, 128, 12, 32, bits, method, 0);
             let expected = run_quant_cpu(&input);
-            let actual = run_quant_cpu_with_params_layout(&input, QuantParamsLayout::GroupOutput);
+            let actual = run_quant_cpu(&input.with_group_output());
             assert_parity("CPU GroupOutput", &expected, &actual, 0.05, 0.5);
         }
     }
@@ -467,8 +489,23 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
     );
 }
 
-#[uzu_test]
-fn quant_gemm_parameter_layout_prefix_matches_cpu() {
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::output_group_single_group_gs64(OutputGroup, 64, 64, 64, 4, ScaleZeroPoint, 64)]
+#[case::output_group_single_group_gs128(OutputGroup, 128, 64, 128, 4, ScaleZeroPoint, 64)]
+#[case::output_group_odd_groups(OutputGroup, 192, 64, 64, 4, ScaleZeroPoint, 64)]
+#[case::group_output_padded_n(GroupOutput, 192, 66, 64, 4, ScaleZeroPoint, 66)]
+#[case::output_group_bias_prefix(OutputGroup, 128, 12, 32, 8, ScaleBias, 4)]
+#[case::group_output_bias_prefix(GroupOutput, 128, 12, 32, 8, ScaleBias, 4)]
+fn quant_gemm_parameter_layout_prefix_matches_cpu(
+    #[case] params_layout: QuantParamsLayout,
+    #[case] k: u32,
+    #[case] n: u32,
+    #[case] group_size: u32,
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+    #[case] logical_n: u32,
+) {
     let context = MetalContext::new().expect("Metal context");
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
@@ -478,29 +515,30 @@ fn quant_gemm_parameter_layout_prefix_matches_cpu() {
     )
     .expect("MatmulMetalKernel");
 
-    for params_layout in [QuantParamsLayout::OutputGroup, QuantParamsLayout::GroupOutput] {
-        for (k, logical_n) in [(128, 4), (256, 4)] {
-            let input = QuantInput::<bf16>::new(64, k, 12, 32, 8, QuantizationMethod::ScaleBias, 0);
-            let reference = run_quant_cpu(&input);
-            let mut buffers = QuantBuffers::<Metal, bf16>::allocate_with_params_layout(&context, &input, params_layout);
-
-            let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
-            let mut args = quant_arguments(&mut buffers, &input);
-            args.n = logical_n;
-            matmul.gemm.encode_with_engine(args, GemmEngine::Simdgroup, &mut encoder).unwrap();
-            encoder.end_encoding().submit().wait_until_completed().unwrap();
-            let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
-            let expected: Vec<_> = reference
-                .chunks_exact(input.n as usize)
-                .flat_map(|row| row[..logical_n as usize].iter().copied())
-                .collect();
-            let layout_name = match params_layout {
-                QuantParamsLayout::OutputGroup => "OutputGroup",
-                QuantParamsLayout::GroupOutput => "GroupOutput",
-            };
-
-            assert_parity(&format!("{layout_name} GEMM prefix"), &expected, &actual[..expected.len()], 0.05, 0.5);
+    let input = QuantInput::<bf16>::new(64, k, n, group_size, bits, method, 0);
+    let input = if params_layout == GroupOutput {
+        input.with_group_output()
+    } else {
+        input
+    };
+    let reference = run_quant_cpu(&input);
+    for engine in [GemmEngine::Simdgroup, GemmEngine::Mxu] {
+        if engine == GemmEngine::Mxu && !context.supports_mxu {
+            continue;
         }
+        let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+        let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+        let mut args = quant_arguments(&mut buffers, &input);
+        args.n = logical_n;
+        matmul.gemm.encode_with_engine(args, engine, &mut encoder).unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
+        let expected: Vec<_> = reference
+            .chunks_exact(input.n as usize)
+            .flat_map(|row| row[..logical_n as usize].iter().copied())
+            .collect();
+
+        assert_parity("quant params layout", &expected, &actual[..expected.len()], 0.05, 0.5);
     }
 }
 
@@ -513,6 +551,8 @@ fn quant_gemm_parameter_layout_prefix_matches_cpu() {
 #[case::gs32_4bit_zp(128, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs64_8bit_zp(128, 256, 64, 64, 8, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs128_8bit_zp(128, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs64_4bit_zp_g1(128, 64, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs128_4bit_zp_g1(128, 128, 64, 128, 4, QuantizationMethod::ScaleZeroPoint)]
 fn mxu_quant_parity_bf16(
     #[case] m: u32,
     #[case] k: u32,
@@ -567,7 +607,7 @@ fn a8w_mxu_parity_bf16(
             ACTIVATION_SCALE_GROUP_SIZE,
             (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
         );
-    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
+    let actual = run_quant_metal(&context, &input.with_group_output(), Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&reference_input);
     assert_parity::<bf16>(
         &format!("A8W{bits} MXU m={m} weight_gs={weight_gs} method={method:?}"),
@@ -602,7 +642,7 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
                     (method != QuantizationMethod::ScaleSymmetric)
                         .then_some(activation_group_size.min(weight_group_size)),
                 );
-            let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
+            let actual = run_quant_metal(&context, &input.with_group_output(), Some(GemmEngine::Mxu));
             let reference = run_quant_cpu::<bf16>(&reference_input);
             assert_parity::<bf16>(
                 &format!("A8W{bits} act{activation_group_size} weight{weight_group_size} m={m} method={method:?}"),
@@ -627,8 +667,8 @@ fn a8w8_zero_point_tail_parity(#[case] m: u32) {
     }
     let input = QuantInput::<bf16>::new(m, 256, 72, 32, 8, QuantizationMethod::ScaleZeroPoint, 0)
         .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, Some(32));
-    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
+    let actual = run_quant_metal(&context, &input.with_group_output(), Some(GemmEngine::Mxu));
     assert_parity::<bf16>(&format!("A8W8 ZP N-tail m={m}"), &reference, &actual, 0.08, 0.8);
 }
 
@@ -689,6 +729,7 @@ fn a8w_mxu_output_bias_parity_bf16(
         },
     );
     let (input, reference_input) = QuantInput::<bf16>::new(m, k, n, 32, bits, QuantizationMethod::ScaleSymmetric, 0)
+        .with_group_output()
         .with_prepared_a_and_reference(ACTIVATION_SCALE_GROUP_SIZE, None);
     let output_bias: Vec<bf16> = (0..n).map(|column| bf16::from_f32(0.25 + 0.05 * (column % 7) as f32)).collect();
     let output_hadamard_factors: Option<Vec<i32>> = with_output_hadamard.then(|| {
@@ -730,8 +771,7 @@ fn a8w_mxu_output_bias_parity_bf16(
         }
     }
 
-    let mut metal_buffers =
-        QuantBuffers::<Metal, bf16>::allocate_with_params_layout(&context, &input, QuantParamsLayout::GroupOutput);
+    let mut metal_buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let metal_output_bias = crate::tests::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &output_bias);
     let metal_output_hadamard_factors = output_hadamard_factors
         .as_ref()

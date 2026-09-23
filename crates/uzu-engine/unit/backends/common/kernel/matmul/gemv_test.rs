@@ -13,7 +13,7 @@ use crate::{
             gpu_types::QuantizationMethod,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParamsLayout},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -164,11 +164,10 @@ fn group_major_gemv_bf16(
     #[case] method: QuantizationMethod,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<bf16>::new(1, 256, 72, 32, bits, method, 0);
+    let input = QuantInput::<bf16>::new(1, 256, 72, 32, bits, method, 0).with_group_output();
     let reference = run_quant_cpu::<bf16>(&input);
 
-    let buffers =
-        QuantBuffers::<Metal, bf16>::allocate_with_params_layout(&context, &input, QuantParamsLayout::GroupOutput);
+    let buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let actual = run_gemv::<Metal, bf16>(
         &context,
         &buffers.x,
@@ -263,14 +262,13 @@ fn fp_gather_case<T: ArrayElement + Float + Debug + Display>(
 
 fn quant_gather_case(
     input: QuantInput<bf16>,
-    params_layout: QuantParamsLayout,
     eps: f32,
 ) {
     let (m, k, vocab, ids_per_row) = (input.m as usize, input.k as usize, input.n as usize, 8);
     let ids: Vec<u32> = (0..m * ids_per_row).map(|i| ((i * 37 + 11) % vocab) as u32).collect();
     check_gather!(m, vocab, ids, ids_per_row, eps, |B| {
         let context = <B as Backend>::Context::new().expect("context");
-        let buffers = QuantBuffers::<B, bf16>::allocate_with_params_layout(&context, &input, params_layout);
+        let buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
         let ids_alloc = alloc_allocation_with_data::<B, u32>(&context, &ids);
         let b = || buffers.matmul_b(&input);
         (
@@ -294,11 +292,10 @@ fn gemv_gather() {
         (4, QuantizationMethod::ScaleSymmetric),
         (8, QuantizationMethod::ScaleZeroPoint),
     ] {
-        quant_gather_case(QuantInput::new(8, 128, 64, 32, bits, method, 0x5EED), QuantParamsLayout::OutputGroup, 0.05);
+        quant_gather_case(QuantInput::new(8, 128, 64, 32, bits, method, 0x5EED), 0.05);
     }
     quant_gather_case(
-        QuantInput::new(8, 96, 66, 32, 4, QuantizationMethod::ScaleZeroPoint, 0x5EED),
-        QuantParamsLayout::GroupOutput,
+        QuantInput::new(8, 96, 66, 32, 4, QuantizationMethod::ScaleZeroPoint, 0x5EED).with_group_output(),
         0.5,
     );
 }

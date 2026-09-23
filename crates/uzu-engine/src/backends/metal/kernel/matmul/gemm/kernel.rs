@@ -18,6 +18,7 @@ use crate::{
                 ActivationTransform, TensorAddBiasKernel,
                 matmul::{
                     Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape, QuantParamsLayout,
+                    QuantParamsStrides,
                 },
             },
         },
@@ -186,7 +187,7 @@ impl GemmKernel {
 
         let use_mxu = plan.engine == GemmEngine::Mxu;
 
-        match b {
+        let (weights, scales, biases, zero_points, quant_params, mode) = match b {
             MatmulB::FullPrecision {
                 b: weights,
             } => {
@@ -238,8 +239,8 @@ impl GemmKernel {
                         None,
                         &mut *d,
                         ab_scale,
-                        0,
-                        0,
+                        None,
+                        None,
                         shape,
                         plan,
                         output_transform,
@@ -266,8 +267,10 @@ impl GemmKernel {
                     aligned_inner_iterations: k / tiling.block_k(),
                     use_morton,
                     ab_scale,
-                    metadata_output_stride: 0,
-                    metadata_group_stride: 0,
+                    scale_output_stride: 0,
+                    scale_group_stride: 0,
+                    zero_point_output_stride: 0,
+                    zero_point_group_stride: 0,
                 };
 
                 let specialization = GemmSpecialization::from_plan(
@@ -298,142 +301,130 @@ impl GemmKernel {
                     1,
                     encoder,
                 );
+                return Ok(());
             },
-            quant_b @ (MatmulB::ScaleBiasDequant {
+            MatmulB::ScaleBiasDequant {
+                b: weights,
+                scales,
+                biases,
+                params,
+                mode,
                 ..
-            }
-            | MatmulB::ScaleZeroPointDequant {
+            } => (weights, scales, Some(biases), None, params, mode),
+            MatmulB::ScaleZeroPointDequant {
+                b: weights,
+                scales,
+                zero_points,
+                params,
+                mode,
                 ..
-            }
-            | MatmulB::ScaleSymmetricDequant {
+            } => (weights, scales, None, Some(zero_points), params, mode),
+            MatmulB::ScaleSymmetricDequant {
+                b: weights,
+                scales,
+                params,
+                mode,
                 ..
-            }) => {
-                let metadata_row_stride = quant_b.quant_params_stride(self.weights_data_type, k);
-                let (metadata_output_stride, metadata_group_stride) = match shape.params_layout {
-                    Some(QuantParamsLayout::OutputGroup) => (metadata_row_stride, 1),
-                    Some(QuantParamsLayout::GroupOutput) => (1, metadata_row_stride),
-                    None => unreachable!("quantized GEMM requires quantization parameter layout"),
-                };
-                let (weights, scales, biases, zero_points) = match quant_b {
-                    MatmulB::ScaleBiasDequant {
-                        b: w,
-                        scales,
-                        biases,
-                        ..
-                    } => (w, Some(scales), Some(biases), None),
-                    MatmulB::ScaleZeroPointDequant {
-                        b: w,
-                        scales,
-                        zero_points,
-                        ..
-                    } => (w, Some(scales), None, Some(zero_points)),
-                    MatmulB::ScaleSymmetricDequant {
-                        b: w,
-                        scales,
-                        ..
-                    } => (w, Some(scales), None, None),
-                    _ => unreachable!(),
-                };
-
-                let a_prologue = a.prologue_kind();
-                let (a_full_precision, a_int8, a_scales, a_group_sums, a_group_size) = match &a {
-                    MatmulA::FullPrecision {
-                        values,
-                        offset,
-                    } => (Some((*values, *offset)), None, None, None, None),
-                    MatmulA::Int8Symmetric {
-                        values,
-                        scales: activation_scales,
-                        group_sums: activation_group_sums,
-                        scale_group_size,
-                        code_layout,
-                    } => {
-                        validate_int8_left_operand(
-                            use_mxu,
-                            shape,
-                            *scale_group_size,
-                            *code_layout,
-                            activation_group_sums.is_some(),
-                        )?;
-                        if output_transform.contains(GemmDTransform::SOFT_CAP) {
-                            return Err(MatmulError::UnsupportedDOp {
-                                bit: GemmDTransform::SOFT_CAP,
-                                path: "Gemm int8 left operand",
-                            }
-                            .into());
-                        }
-                        (None, Some(*values), Some(*activation_scales), *activation_group_sums, Some(*scale_group_size))
-                    },
-                };
-
-                let (output_bias, bias_after_rht, output_transform) = if rht_factors.is_some() && output_bias.is_some()
-                {
-                    (None, output_bias, output_transform.difference(GemmDTransform::BIAS))
-                } else {
-                    (output_bias, None, output_transform)
-                };
-
-                let tiling = plan.tiling;
-                let alignment =
-                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-                let params = quant_params(shape, plan, ab_scale, metadata_output_stride, metadata_group_stride);
-                let group_count_x = n.div_ceil(tiling.block_n());
-                let group_count_y = m.div_ceil(tiling.block_m());
-
-                if plan.split_k > 1 {
-                    self.encode_split_k(
-                        a,
-                        weights,
-                        scales,
-                        biases,
-                        zero_points,
-                        &mut *d,
-                        ab_scale,
-                        metadata_output_stride,
-                        metadata_group_stride,
-                        shape,
-                        plan,
-                        output_transform,
-                        output_bias,
-                        rht_factors,
-                        encoder,
-                    )?;
-                } else {
-                    let specialization = GemmSpecialization::from_plan(
-                        plan,
-                        shape,
-                        self.weights_data_type,
-                        output_transform,
-                        alignment,
-                        a_prologue,
-                        a_group_size,
-                    )?;
-                    let kernel = self.get_or_create(encoder.context(), specialization)?;
-                    kernel.encode(
-                        a_full_precision,
-                        weights,
-                        &mut *d,
-                        scales,
-                        biases,
-                        zero_points,
-                        output_bias,
-                        rht_factors,
-                        a_int8,
-                        a_scales,
-                        a_group_sums,
-                        std::slice::from_ref(&params),
-                        group_count_x,
-                        group_count_y,
-                        1,
-                        encoder,
-                    );
+            } => (weights, scales, None, None, params, mode),
+        };
+        let a_prologue = a.prologue_kind();
+        let (a_full_precision, a_int8, a_scales, a_group_sums, a_group_size) = match &a {
+            MatmulA::FullPrecision {
+                values,
+                offset,
+            } => (Some((*values, *offset)), None, None, None, None),
+            MatmulA::Int8Symmetric {
+                values,
+                scales: activation_scales,
+                group_sums: activation_group_sums,
+                scale_group_size,
+                code_layout,
+            } => {
+                validate_int8_left_operand(
+                    use_mxu,
+                    shape,
+                    *scale_group_size,
+                    *code_layout,
+                    activation_group_sums.is_some(),
+                )?;
+                if output_transform.contains(GemmDTransform::SOFT_CAP) {
+                    return Err(MatmulError::UnsupportedDOp {
+                        bit: GemmDTransform::SOFT_CAP,
+                        path: "Gemm int8 left operand",
+                    }
+                    .into());
                 }
-
-                if let Some(bias) = bias_after_rht {
-                    let output_length = m.checked_mul(n).expect("GEMM output length must fit in u32");
-                    self.bias_add.encode(None::<&Allocation<Metal>>, bias, &mut *d, n, output_length, encoder);
-                }
+                (None, Some(*values), Some(*activation_scales), *activation_group_sums, Some(*scale_group_size))
             },
+        };
+
+        let (output_bias, bias_after_rht, output_transform) = if rht_factors.is_some() && output_bias.is_some() {
+            (None, output_bias, output_transform.difference(GemmDTransform::BIAS))
+        } else {
+            (output_bias, None, output_transform)
+        };
+
+        let tiling = plan.tiling;
+        let alignment =
+            GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
+        let scale_strides = quant_params.strides(self.weights_data_type);
+        let zero_point_strides = zero_points.map(|_| quant_params.strides(DataType::from(mode)));
+        let params = gemm_params(shape, plan, ab_scale, scale_strides, zero_point_strides);
+        let group_count_x = n.div_ceil(tiling.block_n());
+        let group_count_y = m.div_ceil(tiling.block_m());
+
+        if plan.split_k > 1 {
+            self.encode_split_k(
+                a,
+                weights,
+                Some(scales),
+                biases,
+                zero_points,
+                &mut *d,
+                ab_scale,
+                Some(scale_strides),
+                zero_point_strides,
+                shape,
+                plan,
+                output_transform,
+                output_bias,
+                rht_factors,
+                encoder,
+            )?;
+        } else {
+            let specialization = GemmSpecialization::from_plan(
+                plan,
+                shape,
+                self.weights_data_type,
+                output_transform,
+                alignment,
+                a_prologue,
+                a_group_size,
+            )?;
+            let kernel = self.get_or_create(encoder.context(), specialization)?;
+            kernel.encode(
+                a_full_precision,
+                weights,
+                &mut *d,
+                Some(scales),
+                biases,
+                zero_points,
+                output_bias,
+                rht_factors,
+                a_int8,
+                a_scales,
+                a_group_sums,
+                std::slice::from_ref(&params),
+                group_count_x,
+                group_count_y,
+                1,
+                encoder,
+            );
+        }
+
+        if let Some(bias) = bias_after_rht {
+            let output_length = m.checked_mul(n).expect("GEMM output length must fit in u32");
+            self.bias_add.encode(None::<&Allocation<Metal>>, bias, &mut *d, n, output_length, encoder);
         }
 
         Ok(())
@@ -449,8 +440,8 @@ impl GemmKernel {
         zero_points: Option<&Allocation<Metal>>,
         d: &mut Allocation<Metal>,
         ab_scale: f32,
-        metadata_output_stride: u32,
-        metadata_group_stride: u32,
+        scale_strides: Option<QuantParamsStrides>,
+        zero_point_strides: Option<QuantParamsStrides>,
         shape: MatmulShape,
         plan: GemmPlan,
         output_transform: GemmDTransform,
@@ -500,6 +491,8 @@ impl GemmKernel {
         let elem = (m as usize) * (n as usize);
         let slice_bytes = elem * self.output_data_type.size_in_bytes();
         let mut temp = encoder.allocate_scratch(split_k as usize * slice_bytes)?;
+        let scale_strides = scale_strides.unwrap_or_default();
+        let zero_point_strides = zero_point_strides.unwrap_or_default();
 
         let params = GemmParams {
             M: m,
@@ -513,8 +506,10 @@ impl GemmKernel {
             aligned_inner_iterations: kp / k_step,
             use_morton: false,
             ab_scale: 1.0,
-            metadata_output_stride,
-            metadata_group_stride,
+            scale_output_stride: scale_strides.output_stride,
+            scale_group_stride: scale_strides.group_stride,
+            zero_point_output_stride: zero_point_strides.output_stride,
+            zero_point_group_stride: zero_point_strides.group_stride,
         };
         let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
         part_kernel.encode(
@@ -609,12 +604,12 @@ fn validate_int8_left_operand(
     Ok(())
 }
 
-fn quant_params(
+fn gemm_params(
     shape: MatmulShape,
     plan: GemmPlan,
     ab_scale: f32,
-    metadata_output_stride: u32,
-    metadata_group_stride: u32,
+    scale_strides: QuantParamsStrides,
+    zero_point_strides: Option<QuantParamsStrides>,
 ) -> GemmParams {
     let MatmulShape {
         m,
@@ -623,6 +618,7 @@ fn quant_params(
         ..
     } = shape;
     let tiling = plan.tiling;
+    let zero_point_strides = zero_point_strides.unwrap_or_default();
     GemmParams {
         M: m,
         N: n,
@@ -635,7 +631,9 @@ fn quant_params(
         aligned_inner_iterations: outer_block_k(shape, plan.engine, plan.tiling).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
-        metadata_output_stride,
-        metadata_group_stride,
+        scale_output_stride: scale_strides.output_stride,
+        scale_group_stride: scale_strides.group_stride,
+        zero_point_output_stride: zero_point_strides.output_stride,
+        zero_point_group_stride: zero_point_strides.group_stride,
     }
 }

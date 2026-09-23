@@ -4,7 +4,7 @@ use crate::{
     backends::common::{
         Allocation, Backend,
         gpu_types::{QuantizationMethod, QuantizationMode},
-        kernel::matmul::{MatmulB, QuantParamsLayout},
+        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
@@ -95,8 +95,8 @@ enum QuantizedCorrection<B: Backend> {
 struct Quantized<B: Backend> {
     scales: Allocation<B>,
     correction: QuantizedCorrection<B>,
+    params: QuantParams,
     info: QuantizationInfo,
-    params_layout: QuantParamsLayout,
     signed_codes: bool,
 }
 
@@ -146,17 +146,19 @@ impl<B: Backend> WeightMatrix<B> {
 
         let values =
             tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_allocation()?;
-        let scales_shape = params_layout.plane_shape(rows, groups, 1);
-        let scales = tree.leaf("scales")?.validate(&scales_shape, data_type)?.read_allocation()?;
+        let params = QuantParams::new(params_layout, rows, groups);
+        let load_plane = |name: &str, plane_type: DataType| -> Result<Allocation<B>, WeightMatrixError<B>> {
+            Ok(tree
+                .leaf(name)?
+                .validate(&params.shape(plane_type), params.storage_type(plane_type))?
+                .read_allocation()?)
+        };
+        let scales = load_plane("scales", data_type)?;
         let correction = match info.method {
-            QuantizationMethod::ScaleBias => {
-                QuantizedCorrection::Biases(tree.leaf("biases")?.validate(&scales_shape, data_type)?.read_allocation()?)
+            QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(load_plane("biases", data_type)?),
+            QuantizationMethod::ScaleZeroPoint => {
+                QuantizedCorrection::ZeroPoints(load_plane("zero_points", DataType::from(info.mode))?)
             },
-            QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(
-                tree.leaf("zero_points")?
-                    .validate(&params_layout.plane_shape(rows, groups, packing_divisor), storage_data_type)?
-                    .read_allocation()?,
-            ),
             QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
         };
 
@@ -165,8 +167,8 @@ impl<B: Backend> WeightMatrix<B> {
             quantized: Some(Quantized {
                 scales,
                 correction,
+                params,
                 info,
-                params_layout,
                 signed_codes: false,
             }),
         })
@@ -212,7 +214,7 @@ impl<B: Backend> WeightMatrix<B> {
                 b: &self.values,
                 scales: &quantized.scales,
                 biases,
-                params_layout: quantized.params_layout,
+                params: quantized.params,
                 mode,
                 group_size,
                 signed_codes,
@@ -221,7 +223,7 @@ impl<B: Backend> WeightMatrix<B> {
                 b: &self.values,
                 scales: &quantized.scales,
                 zero_points,
-                params_layout: quantized.params_layout,
+                params: quantized.params,
                 mode,
                 group_size,
                 signed_codes,
@@ -229,7 +231,7 @@ impl<B: Backend> WeightMatrix<B> {
             QuantizedCorrection::Symmetric => MatmulB::ScaleSymmetricDequant {
                 b: &self.values,
                 scales: &quantized.scales,
-                params_layout: quantized.params_layout,
+                params: quantized.params,
                 mode,
                 group_size,
                 signed_codes,
@@ -250,7 +252,7 @@ impl<B: Backend> Quantized<B> {
         &mut self,
         values: &mut Allocation<B>,
     ) -> bool {
-        if self.params_layout != QuantParamsLayout::GroupOutput {
+        if self.params.layout() != QuantParamsLayout::GroupOutput {
             return false;
         }
         if self.info.mode != QuantizationMode::U4 {
