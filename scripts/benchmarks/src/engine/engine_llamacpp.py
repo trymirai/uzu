@@ -2,6 +2,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from pydantic import TypeAdapter
+
 from bench import BenchResponse
 
 project_dir = Path(__file__).resolve().parents[2]
@@ -86,7 +88,7 @@ def _execute(model: str | Path, input_path: Path) -> str:
     return result.stdout
 
 
-def run(model: str | Path, input_path: Path) -> BenchResponse:
+def run(model: str | Path, input_path: Path) -> list[BenchResponse]:
     _build()
     output_json = _execute(model, input_path)
-    return BenchResponse.model_validate_json(output_json)
+    return TypeAdapter(list[BenchResponse]).validate_json(output_json)

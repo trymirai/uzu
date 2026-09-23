@@ -1,5 +1,6 @@
 import time
 from collections.abc import Callable, Generator
+from functools import partial
 from pathlib import Path
 from typing import cast
 
@@ -14,36 +15,7 @@ from common import get_model_path
 from mach import MemoryCounters, get_memory_counters
 
 
-def run(
-    model: str | Path,
-    config: BenchRequest,
-    *,
-    prefill_step_size: int | None = None,
-    draft_model_path: str | Path | None = None,
-) -> BenchResponse:
-    # load main model
-    model_path: str = get_model_path(model)
-    mlx_model: nn.Module
-    tokenizer: TokenizerWrapper
-    mlx_model, tokenizer = cast(tuple[nn.Module, TokenizerWrapper], mlx_lm.load(model_path))
-
-    # load draft model
-    draft_model: nn.Module | None = None
-    if draft_model_path is not None:
-        draft_path: str = get_model_path(draft_model_path)
-        draft_tokenizer: TokenizerWrapper
-        draft_model, draft_tokenizer = cast(tuple[nn.Module, TokenizerWrapper], mlx_lm.load(draft_path))
-        if draft_tokenizer.vocab_size != tokenizer.vocab_size:
-            raise ValueError("Draft model tokenizer does not match target tokenizer")
-
-    # prepare prompt
-    prompt: str | list[int]
-    if isinstance(config.prompt, str):
-        prompt = config.prompt
-    else:
-        messages = [{"role": message.role.value, "content": message.message} for message in config.prompt]
-        prompt = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
-
+def _run_single(generate: Callable[[], Generator[GenerationResponse]]) -> BenchResponse:
     # prepare variables
     text: str = ""
     time_to_first_token: float = -1.0
@@ -52,33 +24,9 @@ def run(
     mem_graphics_max: int = 0
     mem_counters_max: MemoryCounters = get_memory_counters()
 
-    # sampling
-    sampler: Callable | None = None
-    if config.sampling is not None:
-        sampler = make_sampler(
-            temp=config.sampling.temp or 0.0,
-            top_p=config.sampling.top_p or 0.0,
-            min_p=config.sampling.min_p or 0.0,
-            min_tokens_to_keep=1,
-            top_k=config.sampling.top_k or 0,
-            xtc_probability=0.0,
-            xtc_threshold=0.0,
-            xtc_special_tokens=[],
-        )
-
     # create and run inference loop
     time_start: float = time.perf_counter()
-
-    stream: Generator[GenerationResponse] = mlx_lm.stream_generate(
-        model=mlx_model,
-        tokenizer=tokenizer,
-        prompt=prompt,
-        max_tokens=config.max_tokens or 256,
-        draft_model=draft_model,
-        prefill_step_size=prefill_step_size,
-        num_draft_tokens=config.speculative_depth,
-        sampler=sampler,
-    )
+    stream: Generator[GenerationResponse] = generate()
     for response in stream:
         if time_to_first_token < 0.0:
             time_to_first_token = time.perf_counter() - time_start
@@ -89,7 +37,6 @@ def run(
         if mem_counters.graphics_total > mem_graphics_max:
             mem_graphics_max = mem_counters.graphics_total
             mem_counters_max = mem_counters
-
     time_total: float = time.perf_counter() - time_start
 
     if response is None:
@@ -113,3 +60,70 @@ def run(
         memory_resident_peak=mem_counters_max.resident_size_peak,
         memory_graphics_total=mem_counters_max.graphics_total,
     )
+
+
+def run(
+    model: str | Path,
+    config: BenchRequest,
+    *,
+    prefill_step_size: int | None = None,
+    draft_model_path: str | Path | None = None,
+) -> list[BenchResponse]:
+    num_runs = config.num_runs if config.num_runs is not None else 1
+    if num_runs < 1:
+        raise ValueError("num_runs must be 1 or greater")
+
+    # load main model
+    model_path: str = get_model_path(model)
+    mlx_model: nn.Module
+    tokenizer: TokenizerWrapper
+    mlx_model, tokenizer = cast(tuple[nn.Module, TokenizerWrapper], mlx_lm.load(model_path))
+
+    # load draft model
+    draft_model: nn.Module | None = None
+    if draft_model_path is not None:
+        draft_path: str = get_model_path(draft_model_path)
+        draft_tokenizer: TokenizerWrapper
+        draft_model, draft_tokenizer = cast(tuple[nn.Module, TokenizerWrapper], mlx_lm.load(draft_path))
+        if draft_tokenizer.vocab_size != tokenizer.vocab_size:
+            raise ValueError("Draft model tokenizer does not match target tokenizer")
+
+    # prepare prompt
+    prompt: str | list[int]
+    if isinstance(config.prompt, str):
+        prompt = config.prompt
+    else:
+        messages = [{"role": message.role.value, "content": message.message} for message in config.prompt]
+        prompt = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
+
+    # sampling
+    sampler: Callable | None = None
+    if config.sampling is not None:
+        sampler = make_sampler(
+            temp=config.sampling.temp or 0.0,
+            top_p=config.sampling.top_p or 0.0,
+            min_p=config.sampling.min_p or 0.0,
+            min_tokens_to_keep=1,
+            top_k=config.sampling.top_k or 0,
+            xtc_probability=0.0,
+            xtc_threshold=0.0,
+            xtc_special_tokens=[],
+        )
+
+    generation_options: dict[str, int] = {}
+    if prefill_step_size is not None:
+        generation_options["prefill_step_size"] = prefill_step_size
+    if config.speculative_depth is not None:
+        generation_options["num_draft_tokens"] = config.speculative_depth
+    generate = partial(
+        mlx_lm.stream_generate,
+        model=mlx_model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_tokens=config.max_tokens or 256,
+        draft_model=draft_model,
+        sampler=sampler,
+        **generation_options,
+    )
+
+    return [_run_single(generate) for _ in range(num_runs)]

@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Annotated
 
+from pydantic import TypeAdapter
 from typer import BadParameter, Option, Typer
 
 from bench import BenchRequest, BenchResponse
@@ -25,7 +26,7 @@ def run(
         raise BadParameter(str(error), param_hint="--input") from error
 
     # run inference
-    output: BenchResponse
+    output: list[BenchResponse]
     match engine:
         case Engine.LLAMA_CPP:
             output = engine_llamacpp.run(model, input_path)
@@ -37,7 +38,7 @@ def run(
             raise BadParameter(f"Engine '{engine.value}' is not supported", param_hint="--engine")
 
     # handle output
-    output_json = output.model_dump_json(indent=4)
+    output_json = TypeAdapter(list[BenchResponse]).dump_json(output, indent=2).decode("utf-8")
     if output_path is None:
         print(output_json)
     else:

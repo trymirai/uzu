@@ -2,10 +2,11 @@
 #define __llama_cpp_benchmarks_runner_hpp__
 
 #include <string>
+#include <vector>
 
 #include "bench.hpp"
 
-BenchResponse run(
+std::vector<BenchResponse> run(
     const std::string& input_model_path,
     const BenchRequest& request
 );
