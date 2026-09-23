@@ -142,11 +142,13 @@ mod quantize {
         let kernel = ActivationTransform::quantize(
             context.as_ref(),
             DataType::F32,
-            ActivationQuantization {
+            ActivationQuantization::new(
                 scale_group_size,
-                sum_group_size,
+                sum_group_size.unwrap_or(scale_group_size),
+                emit_group_sums,
                 code_layout,
-            },
+            )
+            .expect("supported activation quantization"),
         )
         .expect("quantize transform");
         let mut encoder = Encoder::<B>::new(context.as_ref()).expect("encoder");

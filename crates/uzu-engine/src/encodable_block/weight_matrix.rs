@@ -119,6 +119,7 @@ impl<B: Backend> WeightMatrix<B> {
                 quantized: None,
             });
         };
+        // Parameters swap the weight axes once K is grouped: output-input stores [G, N], input-output stores [N, G].
         let params_layout = match layout {
             Layout::OutputInput => QuantParamsLayout::GroupOutput,
             Layout::InputOutput => QuantParamsLayout::OutputGroup,
@@ -211,6 +212,10 @@ impl<B: Backend> WeightMatrix<B> {
             return false;
         };
         quantized.prepare_a8_storage(&mut self.values)
+    }
+
+    pub fn a8_signed_codes(&self) -> Option<bool> {
+        self.quantized.as_ref().map(|quantized| quantized.info.mode != QuantizationMode::U4)
     }
 }
 

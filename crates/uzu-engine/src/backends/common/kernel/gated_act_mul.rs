@@ -53,14 +53,6 @@ impl<B: Backend> GatedActMul<B> {
         quantization: ActivationQuantization,
         settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
-        assert!(
-            matches!(quantization.scale_group_size, 32 | 64 | 128),
-            "unsupported activation group size: {}",
-            quantization.scale_group_size
-        );
-        if let Some(group_size) = quantization.sum_group_size {
-            assert!(matches!(group_size, 32 | 64 | 128), "unsupported activation group size: {group_size}");
-        }
         let options = GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD;
         Self::new(context, data_type, options, settings, Some(quantization))
     }
@@ -74,14 +66,14 @@ impl<B: Backend> GatedActMul<B> {
     ) -> Result<Self, B::Error> {
         let (ops, codes_grouped_by_nibble, scale_group_size, sum_group_size) = match quantization {
             Some(quantization) => (
-                if quantization.sum_group_size.is_some() {
+                if quantization.sum_group_size().is_some() {
                     GatedActMulOp::QuantizeWithGroupSums
                 } else {
                     GatedActMulOp::Quantize
                 },
-                quantization.code_layout.is_grouped_by_nibble(),
-                quantization.scale_group_size,
-                quantization.sum_group_size.unwrap_or(quantization.scale_group_size),
+                quantization.code_layout().is_grouped_by_nibble(),
+                quantization.scale_group_size(),
+                quantization.sum_group_size().unwrap_or(quantization.scale_group_size()),
             ),
             None => (GatedActMulOp::FullPrecision, false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE),
         };
@@ -166,9 +158,9 @@ impl<B: Backend> GatedActMul<B> {
         assert!(self.options.contains(GatedActMulOptions::INTERLEAVED));
         assert!(self.options.contains(GatedActMulOptions::HADAMARD));
         assert!(gated_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
-        assert!(gated_dim.is_multiple_of(quantization.scale_group_size));
-        assert_eq!(quantization.sum_group_size.is_some(), group_sums.is_some());
-        if let Some(group_size) = quantization.sum_group_size {
+        assert!(gated_dim.is_multiple_of(quantization.scale_group_size()));
+        assert_eq!(quantization.sum_group_size().is_some(), group_sums.is_some());
+        if let Some(group_size) = quantization.sum_group_size() {
             assert!(gated_dim.is_multiple_of(group_size));
         }
         let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping.into_pair().unzip();

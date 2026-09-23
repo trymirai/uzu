@@ -273,11 +273,13 @@ fn bench_a8w(c: &mut Criterion) {
         let prepare = ActivationTransform::<Metal>::quantize(
             &context,
             DataType::BF16,
-            ActivationQuantization {
-                scale_group_size: 128,
-                sum_group_size: None,
-                code_layout: Int8CodeLayout::for_right_bits(bits).expect("W4/W8 benchmark"),
-            },
+            ActivationQuantization::new(
+                128,
+                128,
+                false,
+                Int8CodeLayout::for_right_bits(bits).expect("W4/W8 benchmark"),
+            )
+            .expect("supported activation quantization"),
         )
         .expect("prepare kernel");
         bench_bits(c, &context, &prepare, &hadamard, bits);

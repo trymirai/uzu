@@ -127,11 +127,8 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> V
     let kernel = GatedActMul::<B>::quantized(
         &context,
         DataType::BF16,
-        ActivationQuantization {
-            scale_group_size: 128,
-            sum_group_size: None,
-            code_layout: Int8CodeLayout::GroupedByNibble,
-        },
+        ActivationQuantization::new(128, 128, false, Int8CodeLayout::GroupedByNibble)
+            .expect("supported activation quantization"),
         GatedActMulSettings::default(),
     )
     .expect("create quantized GatedActMul");

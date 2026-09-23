@@ -238,16 +238,15 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let mut scales = alloc_allocation::<Cpu, f32>(&context, (element_count / activation_scale_group_size) as usize);
         let mut group_sums = sum_group_size
             .map(|group_size| alloc_allocation::<Cpu, i32>(&context, (element_count / group_size) as usize));
-        let transform = ActivationTransform::<Cpu>::quantize(
-            &context,
-            T::data_type(),
-            ActivationQuantization {
-                scale_group_size: activation_scale_group_size,
-                sum_group_size,
-                code_layout,
-            },
+        let quantization = ActivationQuantization::new(
+            activation_scale_group_size,
+            sum_group_size.unwrap_or(activation_scale_group_size),
+            sum_group_size.is_some(),
+            code_layout,
         )
-        .expect("CPU activation quantization transform");
+        .expect("supported activation quantization");
+        let transform = ActivationTransform::<Cpu>::quantize(&context, T::data_type(), quantization)
+            .expect("CPU activation quantization transform");
         let mut encoder = Encoder::<Cpu>::new(&context).expect("CPU encoder");
         transform.encode_quantize(
             &input,
@@ -265,11 +264,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             values: allocation_to_vec(&values),
             scales: allocation_to_vec(&scales),
             group_sums: group_sums.map_or_else(Vec::new, |sums| allocation_to_vec(&sums)),
-            quantization: ActivationQuantization {
-                scale_group_size: activation_scale_group_size,
-                sum_group_size,
-                code_layout,
-            },
+            quantization,
         });
         self
     }
@@ -436,8 +431,8 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             // Symmetric weights carry no correction term, so the GEMM never reads these.
             group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
                 .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
-            scale_group_size: prepared.quantization.scale_group_size,
-            code_layout: prepared.quantization.code_layout,
+            scale_group_size: prepared.quantization.scale_group_size(),
+            code_layout: prepared.quantization.code_layout(),
         },
         None => MatmulA::FullPrecision {
             values: x,

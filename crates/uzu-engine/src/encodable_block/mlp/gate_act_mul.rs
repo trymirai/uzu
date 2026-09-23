@@ -70,11 +70,11 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             let kernel = self.quantized_kernel.as_ref().expect("INT8 input requires a quantized gate kernel");
             let mut values = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(
-                &[batch_dim, self.hidden_dim.div_ceil(quantization.scale_group_size)],
+                &[batch_dim, self.hidden_dim.div_ceil(quantization.scale_group_size())],
                 DataType::F32,
             ))?;
             let mut group_sums = quantization
-                .sum_group_size
+                .sum_group_size()
                 .map(|group_size| {
                     encoder.allocate_scratch(size_for_shape(
                         &[batch_dim, self.hidden_dim.div_ceil(group_size)],
@@ -97,8 +97,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 values,
                 scales,
                 group_sums,
-                scale_group_size: quantization.scale_group_size,
-                code_layout: quantization.code_layout,
+                scale_group_size: quantization.scale_group_size(),
+                code_layout: quantization.code_layout(),
             }
         } else {
             let mut hidden = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;

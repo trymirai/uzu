@@ -139,11 +139,7 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
                     values,
                     scales,
                     group_sums,
-                    if grouped_by_weight_nibble {
-                        Int8CodeLayout::GroupedByNibble
-                    } else {
-                        Int8CodeLayout::Sequential
-                    },
+                    Int8CodeLayout::from_grouped_by_nibble(grouped_by_weight_nibble),
                 );
             } else {
                 let output = fp_out.expect("FP gate activation requires fp_out");

@@ -131,11 +131,7 @@ pub fn activation_transform<T: ArrayElement + Float>(
                 values,
                 scales,
                 sums,
-                if grouped_by_weight_nibble {
-                    Int8CodeLayout::GroupedByNibble
-                } else {
-                    Int8CodeLayout::Sequential
-                },
+                Int8CodeLayout::from_grouped_by_nibble(grouped_by_weight_nibble),
             );
         } else {
             let fp_out = fp_out.expect("FP transform requires fp_out");

@@ -110,7 +110,7 @@ impl<B: Backend> LinearMatmul<B> {
         context: &B::Context,
     ) -> Option<ActivationQuantization> {
         let mut prepared_shape = self.matmul_shape(1, false);
-        prepared_shape.signed_codes = true;
+        prepared_shape.signed_codes = self.matrix.a8_signed_codes()?;
         let quantization = self.kernel.lock().select_activation_quantization(&prepared_shape, context)?;
         self.matrix.try_prepare_a8_storage().then_some(quantization)
     }

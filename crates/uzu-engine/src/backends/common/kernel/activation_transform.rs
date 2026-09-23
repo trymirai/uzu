@@ -18,9 +18,39 @@ pub const ACTIVATION_SCALE_GROUP_SIZE: u32 = 128;
 
 #[derive(Clone, Copy)]
 pub struct ActivationQuantization {
-    pub scale_group_size: u32,
-    pub sum_group_size: Option<u32>,
-    pub code_layout: Int8CodeLayout,
+    scale_group_size: u32,
+    sum_group_size: Option<u32>,
+    code_layout: Int8CodeLayout,
+}
+
+impl ActivationQuantization {
+    pub fn new(
+        scale_group_size: u32,
+        weight_group_size: u32,
+        emit_group_sums: bool,
+        code_layout: Int8CodeLayout,
+    ) -> Option<Self> {
+        (matches!(scale_group_size, 32 | 64 | 128)
+            && matches!(weight_group_size, 32 | 64 | 128)
+            && scale_group_size >= weight_group_size)
+            .then_some(Self {
+                scale_group_size,
+                sum_group_size: emit_group_sums.then_some(weight_group_size),
+                code_layout,
+            })
+    }
+
+    pub const fn scale_group_size(self) -> u32 {
+        self.scale_group_size
+    }
+
+    pub const fn sum_group_size(self) -> Option<u32> {
+        self.sum_group_size
+    }
+
+    pub const fn code_layout(self) -> Int8CodeLayout {
+        self.code_layout
+    }
 }
 
 pub struct ActivationTransform<B: Backend> {
@@ -78,16 +108,8 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         quantization: ActivationQuantization,
     ) -> Result<Self, B::Error> {
-        if let Some(group_size) = quantization.sum_group_size {
-            assert!(matches!(group_size, 32 | 64 | 128), "unsupported correction group ({group_size})");
-        }
-        assert!(
-            matches!(quantization.scale_group_size, 32 | 64 | 128),
-            "unsupported activation group ({})",
-            quantization.scale_group_size
-        );
         let op = quantization
-            .sum_group_size
+            .sum_group_size()
             .map_or(ActivationTransformOp::Quantize, |_| ActivationTransformOp::QuantizeWithGroupSums);
         Self::new(context, data_type, op, false, Some(quantization))
     }
@@ -154,11 +176,11 @@ impl<B: Backend> ActivationTransform<B> {
         let quantization = self.quantization.expect("quantized activation transform required");
         assert_row_width(element_count);
         assert!(
-            element_count.is_multiple_of(quantization.scale_group_size),
+            element_count.is_multiple_of(quantization.scale_group_size()),
             "quantized activation row ({element_count}) must be a multiple of scale group ({})",
-            quantization.scale_group_size
+            quantization.scale_group_size()
         );
-        if let Some(group_size) = quantization.sum_group_size {
+        if let Some(group_size) = quantization.sum_group_size() {
             assert!(element_count.is_multiple_of(group_size));
         }
         self.kernel.encode(

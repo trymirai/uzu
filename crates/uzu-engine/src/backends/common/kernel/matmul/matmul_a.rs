@@ -9,6 +9,13 @@ pub enum Int8CodeLayout {
 }
 
 impl Int8CodeLayout {
+    pub const fn from_grouped_by_nibble(grouped: bool) -> Self {
+        match grouped {
+            true => Self::GroupedByNibble,
+            false => Self::Sequential,
+        }
+    }
+
     pub const fn for_right_bits(bits: u32) -> Option<Self> {
         match bits {
             4 => Some(Self::GroupedByNibble),
@@ -28,6 +35,7 @@ impl Int8CodeLayout {
         match self {
             Self::Sequential => index,
             Self::GroupedByNibble => {
+                // [0, 1, 2, 3, 4, 5, 6, 7] -> [0, 4, 1, 5, 2, 6, 3, 7]
                 const NIBBLES_PER_BYTE: usize = 2;
                 const CODES_PER_WORD: usize = size_of::<u32>() * NIBBLES_PER_BYTE;
                 const NIBBLE_GROUP_SIZE: usize = CODES_PER_WORD / NIBBLES_PER_BYTE;
