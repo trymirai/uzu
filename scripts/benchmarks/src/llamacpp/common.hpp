@@ -26,8 +26,7 @@ std::string decode_token(
 std::filesystem::path get_model_path(const std::string& model);
 
 std::vector<llama_token> get_tokens(
-    const std::optional<std::string>& prompt_text,
-    const std::optional<std::vector<ChatMessage>>& prompt_chat,
+    const BenchRequest& request,
     const llama_model_ptr& model
 );
 
