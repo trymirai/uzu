@@ -362,3 +362,42 @@ jobs:
           name: ${{ env.VERSION }}
           files: ${{ env.UZU_RELEASE_PATH }}/binaries/**/*.tar.gz
           fail_on_unmatched_files: true
+
+      - name: "Send release notification"
+        if: ${{ always() }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_CHANNEL_WEBHOOK_URL }}
+          RELEASE_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          : "${DISCORD_WEBHOOK_URL:?DISCORD_RELEASE_CHANNEL_WEBHOOK_URL secret is required}"
+
+          jq -n \
+            --arg status "${RELEASE_STATUS:-unknown}" \
+            --arg version "$VERSION" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg server "$GITHUB_SERVER_URL" \
+            --arg actor "$GITHUB_ACTOR" \
+            --arg run_url "$RUN_URL" \
+            '
+            ($status == "success") as $success |
+            ({success: "📦", failure: "❌", cancelled: "⏹️"}[$status] // "⚠️") as $icon |
+            "\($server)/\($repository)/releases/tag/\($version | @uri)" as $release_url |
+            {
+              allowed_mentions: {parse: []},
+              content: ([
+                (if $success then "\($icon) **[uzu · \($version)](<\($release_url)>)**"
+                 else "\($icon) **uzu · \($version)**" end),
+                "Release \($status). [Logs](<\($run_url)>)",
+                "-# Version: \($version) · \(if $success then "Released" else "Triggered" end) by: \($actor)"
+              ] | join("\n"))
+            }
+            ' |
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --header "Content-Type: application/json" \
+            --data-binary @- \
+            --url-query "wait=true" \
+            "$DISCORD_WEBHOOK_URL"
