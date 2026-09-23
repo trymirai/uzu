@@ -278,7 +278,7 @@ impl GemvKernel {
                     quantized.biases(),
                     zero_points,
                     quantized.params.scale_strides(),
-                    quantized.zero_point_strides().unwrap_or_default(),
+                    quantized.zero_point_strides(),
                 )
             },
         };

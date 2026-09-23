@@ -82,6 +82,7 @@ inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* 
   if constexpr (bits == 4) {
     U s0 = scale;
     U s1 = scale / static_cast<U>(16.0f);
+    // Keeping literal masks in each arm lets the compiler vectorize the unpack.
     if (signed_codes) {
       for (int i = 0; i < (N / 2); i++) {
         const uint8_t word = w[i] ^ uint8_t(0x88u);

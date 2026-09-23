@@ -61,10 +61,7 @@ impl WeightData {
             MatmulB::Quantized(quantized) => Ok(WeightData::Quantized {
                 weights: alloc_ptr(quantized.codes),
                 scales: alloc_ptr(quantized.scales),
-                zero_points: quantized
-                    .zero_points()
-                    .zip(quantized.zero_point_strides())
-                    .map(|(values, strides)| (alloc_ptr(values), strides)),
+                zero_points: quantized.zero_points().map(|values| (alloc_ptr(values), quantized.zero_point_strides())),
                 biases: quantized.biases().map(alloc_ptr),
                 scale_strides: quantized.params.scale_strides(),
                 bits: quantized.bits() as usize,

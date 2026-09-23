@@ -18,7 +18,9 @@ use crate::backends::common::gpu_types::{QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT, Qu
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum QuantParamsLayout {
+    /// `[N, G]`.
     OutputGroup,
+    /// `[G, round_up_4(N)]`.
     GroupOutput,
 }
 
@@ -31,19 +33,19 @@ pub struct QuantParamsStrides {
 #[derive(Clone, Copy)]
 pub struct QuantParams {
     layout: QuantParamsLayout,
-    output_count: u32,
+    row_count: u32,
     group_count: u32,
 }
 
 impl QuantParams {
     pub const fn new(
         layout: QuantParamsLayout,
-        output_count: u32,
+        row_count: u32,
         group_count: u32,
     ) -> Self {
         Self {
             layout,
-            output_count,
+            row_count,
             group_count,
         }
     }
@@ -80,7 +82,7 @@ impl QuantParams {
     ) -> [u32; 2] {
         let row_values = self.padded_values_per_row(packing_divisor);
         match self.layout {
-            QuantParamsLayout::OutputGroup => [self.output_count, row_values / packing_divisor],
+            QuantParamsLayout::OutputGroup => [self.row_count, row_values / packing_divisor],
             QuantParamsLayout::GroupOutput => [self.group_count, row_values / packing_divisor],
         }
     }
@@ -108,7 +110,7 @@ impl QuantParams {
     ) -> u32 {
         match self.layout {
             QuantParamsLayout::OutputGroup => self.group_count.next_multiple_of(packing_divisor),
-            QuantParamsLayout::GroupOutput => self.output_count.next_multiple_of(QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT),
+            QuantParamsLayout::GroupOutput => self.row_count.next_multiple_of(QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT),
         }
     }
 }

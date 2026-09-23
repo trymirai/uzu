@@ -361,7 +361,7 @@ impl GemmKernel {
                 &mut *d,
                 ab_scale,
                 Some(scale_strides),
-                zero_point_strides,
+                Some(zero_point_strides),
                 shape,
                 plan,
                 output_transform,
@@ -587,7 +587,7 @@ fn gemm_params(
     plan: GemmPlan,
     ab_scale: f32,
     scale_strides: QuantParamsStrides,
-    zero_point_strides: Option<QuantParamsStrides>,
+    zero_point_strides: QuantParamsStrides,
 ) -> GemmParams {
     let MatmulShape {
         m,
@@ -596,7 +596,6 @@ fn gemm_params(
         ..
     } = shape;
     let tiling = plan.tiling;
-    let zero_point_strides = zero_point_strides.unwrap_or_default();
     GemmParams {
         M: m,
         N: n,

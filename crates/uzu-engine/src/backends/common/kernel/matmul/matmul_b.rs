@@ -76,8 +76,8 @@ impl<'a, B: Backend> QuantizedB<'a, B> {
         self.correction.zero_points().copied()
     }
 
-    pub fn zero_point_strides(&self) -> Option<super::QuantParamsStrides> {
-        self.zero_points().map(|_| self.params.zero_point_strides(self.mode))
+    pub fn zero_point_strides(&self) -> super::QuantParamsStrides {
+        self.params.zero_point_strides(self.mode)
     }
 }
 

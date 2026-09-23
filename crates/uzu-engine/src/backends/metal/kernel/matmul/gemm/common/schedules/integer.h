@@ -23,8 +23,8 @@ namespace schedules {
 
 namespace {
 
-static METAL_FUNC uint clamp_group_output_column(const uint column, const uint stride) {
-  return min(column, stride - uzu::matmul::QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT);
+static METAL_FUNC uint clamp_group_output_column(const uint column, const uint padded_output_count) {
+  return min(column, padded_output_count - uzu::matmul::QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT);
 }
 
 template <int COUNT, typename Visitor>

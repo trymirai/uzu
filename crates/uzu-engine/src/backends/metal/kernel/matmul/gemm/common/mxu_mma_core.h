@@ -188,6 +188,7 @@ struct MxuMmaCore {
     );
 
     if (output_transform.contains(GemmDTransform::RHT)) {
+      // Metal rejects a threadgroup barrier when the threadgroup contains one simdgroup.
       if constexpr (SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN == 1) {
         simdgroup_barrier(mem_flags::mem_device);
       } else {

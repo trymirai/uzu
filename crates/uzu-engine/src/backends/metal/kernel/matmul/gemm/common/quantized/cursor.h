@@ -123,6 +123,7 @@ struct W4Cursor {
   bool signed_codes;
 
   METAL_FUNC PackedChunk fetch(const uint chunk_index) const thread {
+    // Padding decodes to zero after the optional sign flip and code-origin adjustment.
     const uint padding_word = (CODE_ORIGIN == 0) == signed_codes ? W4_SIGN_MASK : 0u;
     const device uint8_t* base =
         current + chunk_index * CHUNK_BYTES + int(position.y) * row_stride_bytes + int(position.x);
