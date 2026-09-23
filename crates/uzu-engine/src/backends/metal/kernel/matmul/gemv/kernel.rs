@@ -262,51 +262,26 @@ impl GemvKernel {
             });
         };
 
-        let (weights, scales, biases, zero_points, quant_params, mode) = match b {
+        let (weights, scales, biases, zero_points, scale_strides, zero_point_strides) = match b {
             MatmulB::FullPrecision {
                 b: weights,
             } => {
                 let (buffer, offset, _) = weights.into_parts();
-                ((buffer, offset), None, None, None, None, None)
+                ((buffer, offset), None, None, None, Default::default(), Default::default())
             },
-            MatmulB::ScaleBiasDequant {
-                b: weights,
-                scales,
-                biases,
-                params,
-                mode,
-                ..
-            } => {
-                let (buffer, offset, _) = weights.into_parts();
-                ((buffer, offset), Some(scales), Some(biases), None, Some(params), Some(mode))
-            },
-            MatmulB::ScaleZeroPointDequant {
-                b: weights,
-                scales,
-                zero_points,
-                params,
-                mode,
-                ..
-            } => {
-                let (buffer, offset, _) = weights.into_parts();
-                ((buffer, offset), Some(scales), None, Some(zero_points), Some(params), Some(mode))
-            },
-            MatmulB::ScaleSymmetricDequant {
-                b: weights,
-                scales,
-                params,
-                mode,
-                ..
-            } => {
-                let (buffer, offset, _) = weights.into_parts();
-                ((buffer, offset), Some(scales), None, None, Some(params), Some(mode))
+            MatmulB::Quantized(quantized) => {
+                let (buffer, offset, _) = quantized.codes.into_parts();
+                let zero_points = quantized.zero_points();
+                (
+                    (buffer, offset),
+                    Some(quantized.scales),
+                    quantized.biases(),
+                    zero_points,
+                    quantized.params.scale_strides(),
+                    quantized.zero_point_strides().unwrap_or_default(),
+                )
             },
         };
-        let scale_strides = quant_params.map(|params| params.strides(self.weights_data_type));
-        let zero_point_strides =
-            quant_params.zip(mode).and_then(|(params, mode)| zero_points.map(|_| params.strides(DataType::from(mode))));
-        let scale_strides = scale_strides.unwrap_or_default();
-        let zero_point_strides = zero_point_strides.unwrap_or_default();
         let output_group_count = n.div_ceil(specialization.output_row_tile());
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;

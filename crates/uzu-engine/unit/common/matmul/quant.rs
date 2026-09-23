@@ -17,7 +17,7 @@ use crate::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
                     Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParams,
-                    QuantParamsLayout,
+                    QuantParamsLayout, QuantizedB, QuantizedCorrection,
                 },
             },
         },
@@ -83,16 +83,33 @@ pub fn transpose_metadata(
         32 => DataType::F32,
         _ => unreachable!("unsupported metadata width: {bits}"),
     };
-    let source_layout = QuantParams::new(QuantParamsLayout::OutputGroup, columns, groups);
-    let destination_layout = QuantParams::new(QuantParamsLayout::GroupOutput, columns, groups);
-    let source_len = source_layout.shape(data_type).into_iter().product::<u32>() as usize
-        * source_layout.storage_type(data_type).size_in_bytes();
+    let source_params = QuantParams::new(QuantParamsLayout::OutputGroup, columns, groups);
+    let destination_params = QuantParams::new(QuantParamsLayout::GroupOutput, columns, groups);
+    let plane_layout = |params: QuantParams| match data_type {
+        DataType::U4 => {
+            (params.zero_point_shape(QuantizationMode::U4), params.zero_point_strides(QuantizationMode::U4))
+        },
+        DataType::U8 => {
+            (params.zero_point_shape(QuantizationMode::U8), params.zero_point_strides(QuantizationMode::U8))
+        },
+        _ => (params.scale_shape(), params.scale_strides()),
+    };
+    let (source_shape, source_strides) = plane_layout(source_params);
+    let (_, destination_strides) = plane_layout(destination_params);
+    let source_len = source_shape.into_iter().product::<u32>() as usize
+        * if data_type == DataType::U4 {
+            DataType::U8
+        } else {
+            data_type
+        }
+        .size_in_bytes();
     let source = plane[..source_len].to_vec();
     plane.fill(0);
     for output in 0..columns {
         for group in 0..groups {
-            let source_index = source_layout.index(data_type, output, group) as usize;
-            let destination_index = destination_layout.index(data_type, output, group) as usize;
+            let source_index = (output * source_strides.output_stride + group * source_strides.group_stride) as usize;
+            let destination_index =
+                (output * destination_strides.output_stride + group * destination_strides.group_stride) as usize;
             if bits == 4 {
                 let value = (source[source_index / 2] >> (source_index % 2 * 4)) & 0x0F;
                 plane[destination_index / 2] |= value << (destination_index % 2 * 4);
@@ -296,8 +313,8 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         let groups = input.k.div_ceil(input.group_size);
         let params_layout = input.params_layout;
         let params = QuantParams::new(params_layout, input.n, groups);
-        let metadata_elements = params.shape(T::data_type()).into_iter().product::<u32>() as usize;
-        let zero_point_bytes = params.shape(DataType::from(input.mode)).into_iter().product::<u32>() as usize;
+        let metadata_elements = params.scale_shape().into_iter().product::<u32>() as usize;
+        let zero_point_bytes = params.zero_point_shape(input.mode).into_iter().product::<u32>() as usize;
         let mut buffers = Self {
             w: alloc_allocation_with_data::<B, u32>(context, &input.weights_for_upload()),
             scales: alloc_allocation_with_data::<B, T>(context, &pad(&input.scales, metadata_elements)),
@@ -379,35 +396,20 @@ fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
     input: &QuantInput<T>,
 ) -> MatmulB<'a, B> {
     let params = QuantParams::new(params_layout, input.n, input.k.div_ceil(input.group_size));
-    let signed_codes = input.signed_codes;
-    match input.quant_method {
-        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-            b: w,
-            scales,
-            biases: biases.expect("bias buffer"),
-            params,
-            mode: input.mode,
-            group_size: input.group_size,
-            signed_codes,
-        },
-        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-            b: w,
-            scales,
-            zero_points: zero_points.expect("zp buffer"),
-            params,
-            mode: input.mode,
-            group_size: input.group_size,
-            signed_codes,
-        },
-        QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
-            b: w,
-            scales,
-            params,
-            mode: input.mode,
-            group_size: input.group_size,
-            signed_codes,
-        },
-    }
+    let correction = match input.quant_method {
+        QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(biases.expect("bias buffer")),
+        QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(zero_points.expect("zp buffer")),
+        QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
+    };
+    MatmulB::Quantized(QuantizedB {
+        codes: w,
+        scales,
+        correction,
+        params,
+        mode: input.mode,
+        group_size: input.group_size,
+        signed_codes: input.signed_codes,
+    })
 }
 
 pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(

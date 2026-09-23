@@ -187,7 +187,7 @@ impl GemmKernel {
 
         let use_mxu = plan.engine == GemmEngine::Mxu;
 
-        let (weights, scales, biases, zero_points, quant_params, mode) = match b {
+        let quantized = match b {
             MatmulB::FullPrecision {
                 b: weights,
             } => {
@@ -303,29 +303,7 @@ impl GemmKernel {
                 );
                 return Ok(());
             },
-            MatmulB::ScaleBiasDequant {
-                b: weights,
-                scales,
-                biases,
-                params,
-                mode,
-                ..
-            } => (weights, scales, Some(biases), None, params, mode),
-            MatmulB::ScaleZeroPointDequant {
-                b: weights,
-                scales,
-                zero_points,
-                params,
-                mode,
-                ..
-            } => (weights, scales, None, Some(zero_points), params, mode),
-            MatmulB::ScaleSymmetricDequant {
-                b: weights,
-                scales,
-                params,
-                mode,
-                ..
-            } => (weights, scales, None, None, params, mode),
+            MatmulB::Quantized(quantized) => quantized,
         };
         let a_prologue = a.prologue_kind();
         let (a_full_precision, a_int8, a_scales, a_group_sums, a_group_size) = match &a {
@@ -367,8 +345,8 @@ impl GemmKernel {
         let tiling = plan.tiling;
         let alignment =
             GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-        let scale_strides = quant_params.strides(self.weights_data_type);
-        let zero_point_strides = zero_points.map(|_| quant_params.strides(DataType::from(mode)));
+        let scale_strides = quantized.params.scale_strides();
+        let zero_point_strides = quantized.zero_point_strides();
         let params = gemm_params(shape, plan, ab_scale, scale_strides, zero_point_strides);
         let group_count_x = n.div_ceil(tiling.block_n());
         let group_count_y = m.div_ceil(tiling.block_m());
@@ -376,10 +354,10 @@ impl GemmKernel {
         if plan.split_k > 1 {
             self.encode_split_k(
                 a,
-                weights,
-                Some(scales),
-                biases,
-                zero_points,
+                quantized.codes,
+                Some(quantized.scales),
+                quantized.biases(),
+                quantized.zero_points(),
                 &mut *d,
                 ab_scale,
                 Some(scale_strides),
@@ -404,11 +382,11 @@ impl GemmKernel {
             let kernel = self.get_or_create(encoder.context(), specialization)?;
             kernel.encode(
                 a_full_precision,
-                weights,
+                quantized.codes,
                 &mut *d,
-                Some(scales),
-                biases,
-                zero_points,
+                Some(quantized.scales),
+                quantized.biases(),
+                quantized.zero_points(),
                 output_bias,
                 rht_factors,
                 a_int8,

@@ -6,7 +6,7 @@ use crate::{
             gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulError, MatmulKernel},
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError, kernel::activation_transform::nibble_grouped_index},
@@ -113,19 +113,8 @@ impl MatmulKernel for MatmulCpuKernel {
                 let compatible = matches!(a_group_size, 32 | 64 | 128)
                     && k.is_multiple_of(a_group_size)
                     && matches!(b.group_size(), Some(32 | 64 | 128))
-                    && matches!(
-                        b,
-                        MatmulB::ScaleSymmetricDequant {
-                            mode: QuantizationMode::U4 | QuantizationMode::U8,
-                            ..
-                        } | MatmulB::ScaleBiasDequant {
-                            mode: QuantizationMode::U4 | QuantizationMode::U8,
-                            ..
-                        } | MatmulB::ScaleZeroPointDequant {
-                            mode: QuantizationMode::U4 | QuantizationMode::U8,
-                            ..
-                        }
-                    );
+                    && b.quantized()
+                        .is_some_and(|quantized| matches!(quantized.mode, QuantizationMode::U4 | QuantizationMode::U8));
                 if !compatible {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
@@ -213,7 +202,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                     scales,
                                     zero_points,
                                     biases,
-                                    params,
+                                    scale_strides,
                                     bits,
                                     group_size,
                                     signed_codes,
@@ -232,20 +221,13 @@ impl MatmulKernel for MatmulCpuKernel {
                                     }
                                     let quantized_value = f32::from(weight_code);
                                     let group_index = inner / group_size;
-                                    let metadata_index =
-                                        params.index(weights_data_type, b_col as u32, group_index as u32) as usize;
+                                    let metadata_index = b_col * scale_strides.output_stride as usize
+                                        + group_index * scale_strides.group_stride as usize;
                                     let scale = read_f32(scales.as_ptr(), weights_data_type, metadata_index);
                                     let midpoint = (1u32 << (bits - 1)) as f32;
-                                    let zero_point = zero_points.as_ref().map(|zp| {
-                                        let zero_point_index = params.index(
-                                            if *bits == 4 {
-                                                DataType::U4
-                                            } else {
-                                                DataType::U8
-                                            },
-                                            b_col as u32,
-                                            group_index as u32,
-                                        ) as usize;
+                                    let zero_point = zero_points.as_ref().map(|(zp, strides)| {
+                                        let zero_point_index = b_col * strides.output_stride as usize
+                                            + group_index * strides.group_stride as usize;
                                         if *bits == 4 {
                                             let byte_index = zero_point_index / 2;
                                             let byte_value = *zp.as_ptr().add(byte_index);

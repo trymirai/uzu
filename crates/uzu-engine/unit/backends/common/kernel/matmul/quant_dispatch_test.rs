@@ -17,17 +17,16 @@ use crate::{
     backends::{
         common::{
             Backend, Context, Encoder,
-            gpu_types::{QuantizationMethod, gemm::GemmDTransform},
+            gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
                 Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{MatmulDOps, MatmulError, MatmulKernel, QuantParams, QuantParamsLayout},
+                matmul::{MatmulDOps, MatmulError, MatmulKernel, QuantParams, QuantParamsLayout, QuantParamsStrides},
             },
         },
         cpu::Cpu,
         metal::{GemmEngine, Metal, MetalContext},
     },
-    data_type::DataType,
     tests::{
         helpers::allocation_to_vec,
         matmul::{
@@ -53,19 +52,19 @@ fn check_tolerance(
 #[uzu_test]
 fn quant_params_layout_table() {
     let cases = [
-        (QuantParamsLayout::OutputGroup, 5, 3, DataType::U4, [5, 2], [4, 1], DataType::U8),
-        (QuantParamsLayout::OutputGroup, 5, 3, DataType::BF16, [5, 3], [3, 1], DataType::BF16),
-        (QuantParamsLayout::OutputGroup, 5, 3, DataType::F32, [5, 3], [3, 1], DataType::F32),
-        (QuantParamsLayout::GroupOutput, 5, 3, DataType::U4, [3, 4], [1, 8], DataType::U8),
-        (QuantParamsLayout::GroupOutput, 5, 3, DataType::U8, [3, 8], [1, 8], DataType::U8),
+        (QuantParamsLayout::OutputGroup, [5, 3], [3, 1], [5, 2], [4, 1]),
+        (QuantParamsLayout::GroupOutput, [3, 8], [1, 8], [3, 4], [1, 8]),
     ];
-    for (params_layout, columns, groups, data_type, shape, strides, storage_type) in cases {
-        let params = QuantParams::new(params_layout, columns, groups);
-        assert_eq!(params.shape(data_type), shape);
-        assert_eq!(params.storage_type(data_type), storage_type);
-        let actual = params.strides(data_type);
-        assert_eq!([actual.output_stride, actual.group_stride], strides);
-        assert_eq!(params.index(data_type, 1, 1), actual.output_stride + actual.group_stride);
+    for (layout, scale_shape, scale_strides, u4_shape, u4_strides) in cases {
+        let params = QuantParams::new(layout, 5, 3);
+        let strides = |strides: QuantParamsStrides| [strides.output_stride, strides.group_stride];
+
+        assert_eq!(params.scale_shape(), scale_shape);
+        assert_eq!(strides(params.scale_strides()), scale_strides);
+        assert_eq!(params.zero_point_shape(QuantizationMode::U8), scale_shape);
+        assert_eq!(strides(params.zero_point_strides(QuantizationMode::U8)), scale_strides);
+        assert_eq!(params.zero_point_shape(QuantizationMode::U4), u4_shape);
+        assert_eq!(strides(params.zero_point_strides(QuantizationMode::U4)), u4_strides);
     }
 }
 

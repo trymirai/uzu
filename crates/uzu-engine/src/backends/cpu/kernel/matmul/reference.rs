@@ -4,8 +4,7 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeRef, BufferArg,
-            gpu_types::QuantizationMode,
-            kernel::matmul::{MatmulB, MatmulError, QuantParams},
+            kernel::matmul::{MatmulB, MatmulError, QuantParamsStrides},
         },
         cpu::Cpu,
     },
@@ -22,9 +21,9 @@ pub(super) enum WeightData {
     Quantized {
         weights: SendPtr<u8>,
         scales: SendPtr<u8>,
-        zero_points: Option<SendPtr<u8>>,
+        zero_points: Option<(SendPtr<u8>, QuantParamsStrides)>,
         biases: Option<SendPtr<u8>>,
-        params: QuantParams,
+        scale_strides: QuantParamsStrides,
         bits: usize,
         group_size: usize,
         signed_codes: bool,
@@ -43,11 +42,7 @@ impl WeightData {
             let r = a.as_buffer_range_ref();
             SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
         };
-        let bits_of = |mode| match mode {
-            QuantizationMode::U4 => 4usize,
-            _ => 8usize,
-        };
-        let (weights, scales, zero_points, biases, params, mode, group_size, signed_codes) = match b {
+        match b {
             MatmulB::FullPrecision {
                 b: weights,
             } => {
@@ -57,52 +52,26 @@ impl WeightData {
                     n
                 });
                 let (buffer, byte_off, _) = weights.into_parts();
-                return Ok(WeightData::FullPrecision {
+                Ok(WeightData::FullPrecision {
                     ptr: SendPtr(unsafe { &*buffer.downcast().get() }.as_ptr().wrapping_byte_add(byte_off)),
                     leading_dimension,
                     transpose: b_transpose,
-                });
+                })
             },
-            MatmulB::ScaleBiasDequant {
-                b: weights,
-                scales,
-                biases,
-                params,
-                mode,
-                group_size,
-                signed_codes,
-                ..
-            } => (weights, scales, None, Some(biases), params, mode, group_size, signed_codes),
-            MatmulB::ScaleZeroPointDequant {
-                b: weights,
-                scales,
-                zero_points,
-                params,
-                mode,
-                group_size,
-                signed_codes,
-                ..
-            } => (weights, scales, Some(zero_points), None, params, mode, group_size, signed_codes),
-            MatmulB::ScaleSymmetricDequant {
-                b: weights,
-                scales,
-                params,
-                mode,
-                group_size,
-                signed_codes,
-                ..
-            } => (weights, scales, None, None, params, mode, group_size, signed_codes),
-        };
-        Ok(WeightData::Quantized {
-            weights: alloc_ptr(weights),
-            scales: alloc_ptr(scales),
-            zero_points: zero_points.map(alloc_ptr),
-            biases: biases.map(alloc_ptr),
-            params,
-            bits: bits_of(mode),
-            group_size: group_size as usize,
-            signed_codes,
-        })
+            MatmulB::Quantized(quantized) => Ok(WeightData::Quantized {
+                weights: alloc_ptr(quantized.codes),
+                scales: alloc_ptr(quantized.scales),
+                zero_points: quantized
+                    .zero_points()
+                    .zip(quantized.zero_point_strides())
+                    .map(|(values, strides)| (alloc_ptr(values), strides)),
+                biases: quantized.biases().map(alloc_ptr),
+                scale_strides: quantized.params.scale_strides(),
+                bits: quantized.bits() as usize,
+                group_size: quantized.group_size as usize,
+                signed_codes: quantized.signed_codes,
+            }),
+        }
     }
 }
 

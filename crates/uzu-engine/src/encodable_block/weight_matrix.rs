@@ -4,7 +4,7 @@ use crate::{
     backends::common::{
         Allocation, Backend,
         gpu_types::{QuantizationMethod, QuantizationMode},
-        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout},
+        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
@@ -86,15 +86,9 @@ fn params_layout_for(layout: Layout) -> QuantParamsLayout {
     }
 }
 
-enum QuantizedCorrection<B: Backend> {
-    Symmetric,
-    Biases(Allocation<B>),
-    ZeroPoints(Allocation<B>),
-}
-
 struct Quantized<B: Backend> {
     scales: Allocation<B>,
-    correction: QuantizedCorrection<B>,
+    correction: QuantizedCorrection<Allocation<B>>,
     params: QuantParams,
     info: QuantizationInfo,
     signed_codes: bool,
@@ -147,18 +141,20 @@ impl<B: Backend> WeightMatrix<B> {
         let values =
             tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_allocation()?;
         let params = QuantParams::new(params_layout, rows, groups);
-        let load_plane = |name: &str, plane_type: DataType| -> Result<Allocation<B>, WeightMatrixError<B>> {
-            Ok(tree
-                .leaf(name)?
-                .validate(&params.shape(plane_type), params.storage_type(plane_type))?
-                .read_allocation()?)
-        };
-        let scales = load_plane("scales", data_type)?;
+        let load_plane =
+            |name: &str, shape: [u32; 2], storage_type: DataType| -> Result<Allocation<B>, WeightMatrixError<B>> {
+                Ok(tree.leaf(name)?.validate(&shape, storage_type)?.read_allocation()?)
+            };
+        let scales = load_plane("scales", params.scale_shape(), data_type)?;
         let correction = match info.method {
-            QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(load_plane("biases", data_type)?),
-            QuantizationMethod::ScaleZeroPoint => {
-                QuantizedCorrection::ZeroPoints(load_plane("zero_points", DataType::from(info.mode))?)
+            QuantizationMethod::ScaleBias => {
+                QuantizedCorrection::Biases(load_plane("biases", params.scale_shape(), data_type)?)
             },
+            QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(load_plane(
+                "zero_points",
+                params.zero_point_shape(info.mode),
+                info.mode.storage_type(),
+            )?),
             QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
         };
 
@@ -187,17 +183,11 @@ impl<B: Backend> WeightMatrix<B> {
     }
 
     pub fn zero_points(&self) -> Option<&Allocation<B>> {
-        match &self.quantized.as_ref()?.correction {
-            QuantizedCorrection::ZeroPoints(zero_points) => Some(zero_points),
-            QuantizedCorrection::Biases(_) | QuantizedCorrection::Symmetric => None,
-        }
+        self.quantized.as_ref()?.correction.zero_points()
     }
 
     pub fn biases(&self) -> Option<&Allocation<B>> {
-        match &self.quantized.as_ref()?.correction {
-            QuantizedCorrection::Biases(biases) => Some(biases),
-            QuantizedCorrection::ZeroPoints(_) | QuantizedCorrection::Symmetric => None,
-        }
+        self.quantized.as_ref()?.correction.biases()
     }
 
     pub fn matmul_b(&self) -> MatmulB<'_, B> {
@@ -209,34 +199,15 @@ impl<B: Backend> WeightMatrix<B> {
         let mode = quantized.info.mode;
         let group_size = quantized.info.group_size;
         let signed_codes = quantized.signed_codes;
-        match &quantized.correction {
-            QuantizedCorrection::Biases(biases) => MatmulB::ScaleBiasDequant {
-                b: &self.values,
-                scales: &quantized.scales,
-                biases,
-                params: quantized.params,
-                mode,
-                group_size,
-                signed_codes,
-            },
-            QuantizedCorrection::ZeroPoints(zero_points) => MatmulB::ScaleZeroPointDequant {
-                b: &self.values,
-                scales: &quantized.scales,
-                zero_points,
-                params: quantized.params,
-                mode,
-                group_size,
-                signed_codes,
-            },
-            QuantizedCorrection::Symmetric => MatmulB::ScaleSymmetricDequant {
-                b: &self.values,
-                scales: &quantized.scales,
-                params: quantized.params,
-                mode,
-                group_size,
-                signed_codes,
-            },
-        }
+        MatmulB::Quantized(QuantizedB {
+            codes: &self.values,
+            scales: &quantized.scales,
+            correction: quantized.correction.as_ref(),
+            params: quantized.params,
+            mode,
+            group_size,
+            signed_codes,
+        })
     }
 
     pub fn try_prepare_a8_storage(&mut self) -> bool {
