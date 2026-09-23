@@ -87,6 +87,7 @@ fn history() -> Vec<ChatMessage> {
 fn add_tool_result(
     encoding: &HanashiEncodingImpl,
     history: &mut Vec<ChatMessage>,
+    options: &str,
 ) {
     let mut assistant = encoding.state().messages.last().unwrap().clone();
     let ChatContentBlock::ToolCall {
@@ -97,7 +98,7 @@ fn add_tool_result(
     };
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&value.arguments.json).unwrap(),
-        serde_json::json!({"options": {"a": 1, "b": 2}})
+        serde_json::json!({"options": options})
     );
     // Nagare assigns an ID after parsing; it is absent from the sampled encoding.
     value.identifier = Some(format!("call-{}", history.len()));
@@ -118,14 +119,16 @@ fn formatting_and_sampled_token_ids_survive_repeated_tool_continuations() {
             let mut history = history();
             encoding.encode(history.clone()).unwrap();
             for _ in 0..3 {
-                decode(&mut encoding, &(tool_call(options) + "<|im_end|>"));
+                // Parameter text is preserved verbatim; extra message whitespace
+                // still makes the sampled prefix differ from canonical rendering.
+                decode(&mut encoding, &(tool_call(options) + "  <|im_end|>"));
                 let sampled = encoding.state().tokens.clone();
                 let sampled_text = encoding.state().text();
                 assert_ne!(
                     sampled.iter().map(|token| token.id).collect::<Vec<_>>(),
                     encoding.tokenize(&sampled_text).unwrap()
                 );
-                add_tool_result(&encoding, &mut history);
+                add_tool_result(&encoding, &mut history, options);
                 let canonical = canonical_text(config.clone(), history.clone());
                 assert!(!canonical.starts_with(&sampled_text));
 
@@ -151,8 +154,9 @@ fn edited_history_and_render_context_are_rejected_without_mutation() {
     let mut encoding = encoding(HanashiConfig::Qwen38);
     let mut history = history();
     encoding.encode(history.clone()).unwrap();
-    decode(&mut encoding, &(tool_call(r#"{"a":1, "b": 2}"#) + "<|im_end|>"));
-    add_tool_result(&encoding, &mut history);
+    let options = r#"{"a":1, "b": 2}"#;
+    decode(&mut encoding, &(tool_call(options) + "<|im_end|>"));
+    add_tool_result(&encoding, &mut history, options);
     let original = encoding.state().clone();
     let mut edited = history.clone();
     edited[2] = ChatMessage::user().with_text("Different request.".to_string());
@@ -247,8 +251,9 @@ fn reasoning_mode_change_that_only_affects_suffix_can_reuse_prefix() {
     let mut encoding = encoding(HanashiConfig::Qwen35);
     let mut history = history();
     encoding.encode(history.clone()).unwrap();
-    decode(&mut encoding, &(tool_call(r#"{"a":1, "b": 2}"#) + "<|im_end|>"));
-    add_tool_result(&encoding, &mut history);
+    let options = r#"{"a":1, "b": 2}"#;
+    decode(&mut encoding, &(tool_call(options) + "<|im_end|>"));
+    add_tool_result(&encoding, &mut history, options);
     history[0] = ChatMessage::system().with_reasoning_effort(ReasoningEffort::Default);
     let sampled = encoding.state().tokens.clone();
     assert!(encoding.try_append(&history).unwrap().is_some());
@@ -262,8 +267,9 @@ fn unicode_survives_prefix_boundary_detection() {
     let mut history = history();
     history[2] = ChatMessage::user().with_text("Проверь репозиторий 🦀".to_string());
     encoding.encode(history.clone()).unwrap();
-    decode(&mut encoding, &(tool_call(r#"{"a":1, "b": 2}"#) + "<|im_end|>"));
-    add_tool_result(&encoding, &mut history);
+    let options = r#"{"a":1, "b": 2}"#;
+    decode(&mut encoding, &(tool_call(options) + "<|im_end|>"));
+    add_tool_result(&encoding, &mut history, options);
     let sampled = encoding.state().tokens.clone();
     assert!(encoding.try_append(&history).unwrap().is_some());
     assert_eq!(&encoding.state().tokens[..sampled.len()], sampled);
