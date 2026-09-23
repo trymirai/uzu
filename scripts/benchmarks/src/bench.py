@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, JsonValue
 
 
 class ChatRole(StrEnum):
@@ -15,6 +15,8 @@ class ChatMessage(BaseModel):
     role: ChatRole
     content: str | None = None
     reasoning_content: str | None = None
+    tool_calls: list[JsonValue] | None = Field(default=None, exclude_if=lambda value: value is None)
+    tool_call_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class BenchSampling(BaseModel):
@@ -27,6 +29,9 @@ class BenchSampling(BaseModel):
 class BenchRequest(BaseModel):
     prompt_text: str | None = None
     prompt_chat: list[ChatMessage] | None = None
+    tools: list[JsonValue] | None = Field(default=None, exclude_if=lambda value: value is None)
+    tool_choice: JsonValue | None = Field(default=None, exclude_if=lambda value: value is None)
+
     max_tokens: int | None = None
     speculative_depth: int | None = None
     sampling: BenchSampling | None = None

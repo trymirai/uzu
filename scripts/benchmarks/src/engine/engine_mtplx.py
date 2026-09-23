@@ -75,7 +75,12 @@ def run(model: str | Path, config: BenchRequest) -> list[BenchResponse]:
         prompt_ids = runtime.tokenizer.encode(config.prompt)
     else:
         messages = [message.model_dump(mode="json") for message in config.prompt]
-        prompt_ids = runtime.tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
+        prompt_ids = runtime.tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            **config.model_dump(mode="json", include={"tools", "tool_choice"}),
+        )
 
     sampler: SamplerConfig
     if config.sampling is None:

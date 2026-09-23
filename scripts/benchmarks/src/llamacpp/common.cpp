@@ -1,8 +1,11 @@
 #include "common.hpp"
 
 #include <arg.h>
+#include <chat.h>
 #include <common.h>
 #include <ggml-cpp.h>
+
+#include <glaze/glaze.hpp>
 
 bool has_mtp_weights(
     const std::filesystem::path& model_path,
@@ -95,13 +98,12 @@ std::filesystem::path get_model_path(const std::string& model) {
 }
 
 std::vector<llama_token> get_tokens(
-    const std::optional<std::string>& prompt_text,
-    const std::optional<std::vector<ChatMessage>>& prompt_chat,
+    const BenchRequest& request,
     const llama_model_ptr& model
 ) {
     std::vector<llama_token> prompt_tokens;
-    if (prompt_text.has_value()) {
-        const std::string& text = prompt_text.value();
+    if (request.prompt_text.has_value()) {
+        const std::string& text = request.prompt_text.value();
         const llama_vocab* vocab = llama_model_get_vocab(model.get());
         const int32_t prompt_tokens_count = -llama_tokenize(vocab, text.c_str(), text.size(), nullptr, 0, true, true);
         if (prompt_tokens_count <= 0) {
@@ -114,34 +116,31 @@ std::vector<llama_token> get_tokens(
         if (tokenize_result < 0) {
             throw std::runtime_error("Failed to tokenize prompt");
         }
-    } else if (prompt_chat.has_value()) {
-        const auto& chat = prompt_chat.value();
-        std::vector<llama_chat_message> messages;
-        messages.reserve(chat.size());
-        for (const auto& message : chat) {
-            messages.push_back({message.role.c_str(), message.content.c_str()});
+    } else if (request.prompt_chat.has_value()) {
+        const auto request_json = glz::write_json(request);
+        if (!request_json) {
+            throw std::runtime_error("Failed to serialize request: " + glz::format_error(request_json.error()));
         }
+        const auto json = common_json::parse(request_json.value());
 
-        const std::string chat_template = llama_model_chat_template(model.get(), nullptr);
-        const int32_t prompt_length =
-            llama_chat_apply_template(chat_template.c_str(), messages.data(), messages.size(), true, nullptr, 0);
-        if (prompt_length < 0) {
-            throw std::runtime_error("Failed to determine chat prompt length");
+        const auto chat_templates = common_chat_templates_init(model.get(), "");
+        common_chat_templates_inputs inputs;
+        inputs.messages = common_chat_msgs_parse_oaicompat(json.at("prompt_chat"));
+        if (json.contains("tools")) {
+            const auto& tools = json.at("tools");
+            inputs.tools = common_chat_tools_parse_oaicompat(tools);
+            inputs.chat_template_kwargs["tools"] = tools.dump();
         }
-
-        std::string formatted_prompt(prompt_length, '\0');
-        const int32_t format_result = llama_chat_apply_template(
-            chat_template.c_str(),
-            messages.data(),
-            messages.size(),
-            true,
-            formatted_prompt.data(),
-            prompt_length
-        );
-        if (format_result < 0 || format_result > prompt_length) {
-            throw std::runtime_error("Failed to apply chat template");
+        if (json.contains("tool_choice")) {
+            const auto& tool_choice = json.at("tool_choice");
+            if (tool_choice.is_string()) {
+                inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(tool_choice.get<std::string>());
+            }
+            inputs.chat_template_kwargs["tool_choice"] = tool_choice.dump();
         }
-        formatted_prompt.resize(format_result);
+        inputs.use_jinja = true;
+        inputs.add_generation_prompt = true;
+        const std::string formatted_prompt = common_chat_templates_apply(chat_templates.get(), inputs).prompt;
 
         const llama_vocab* vocab = llama_model_get_vocab(model.get());
         const int32_t prompt_tokens_count =
