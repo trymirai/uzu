@@ -9,8 +9,15 @@
 #include "batch.hpp"
 #include "common.hpp"
 
-RunResponse run(const RunRequest& request) {
-    const std::filesystem::path model_path = get_model_path(request.model);
+BenchResponse run(
+    const std::string& input_model_path,
+    const BenchRequest& request
+) {
+    if (!request.prompt_text.has_value() && !request.prompt_chat.has_value()) {
+        throw std::invalid_argument("prompt_text and prompt_chat are absent");
+    }
+
+    const std::filesystem::path model_path = get_model_path(input_model_path);
     size_t max_tokens = request.max_tokens.value_or(256);
     size_t speculative_depth = request.speculative_depth.value_or(0);
 
@@ -22,7 +29,7 @@ RunResponse run(const RunRequest& request) {
         throw std::runtime_error("Failed to load model: " + model_path.string());
     }
 
-    std::vector<llama_token> tokens = get_tokens(request.input, model);
+    std::vector<llama_token> tokens = get_tokens(request.prompt_text, request.prompt_chat, model);
     const size_t prompt_tokens_count = tokens.size();
     const size_t max_context = std::numeric_limits<llama_pos>::max();
     if (tokens.empty() || tokens.size() > max_context || max_tokens > max_context - tokens.size()) {
@@ -241,13 +248,15 @@ RunResponse run(const RunRequest& request) {
     const double prompt_tps = prefill_duration > 0.0 ? (prompt_tokens_count / prefill_duration) : 0.0;
     const double decode_tps = decode_duration > 0.0 ? (tokens_generated - 1) / decode_duration : 0.0;
     const double tokens_per_fp = forward_passes > 0 ? (double)(tokens_generated) / forward_passes : 1.0;
-    return RunResponse{
+    return BenchResponse{
         output_text,
         time_to_first_token,
         prompt_tps,
         decode_tps,
         tokens_per_fp,
         total_duration,
-        memory_counters_max
+        memory_counters_max.phys_footprint,
+        memory_counters_max.resident_size_peak,
+        memory_counters_max.graphics_total
     };
 };
