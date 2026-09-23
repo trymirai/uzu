@@ -24,6 +24,7 @@ struct BenchRequest {
     std::optional<size_t> max_tokens = std::nullopt;
     std::optional<size_t> speculative_depth = std::nullopt;
     std::optional<BenchSampling> sampling = std::nullopt;
+    std::optional<size_t> num_runs = std::nullopt;
 };
 
 struct BenchResponse {
