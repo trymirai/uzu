@@ -19,18 +19,19 @@ class ChatMessage:
 
 
 class BenchSampling(BaseModel):
-    top_k: int | None
-    top_p: float | None
-    min_p: float | None
-    temp: float | None
+    top_k: int | None = None
+    top_p: float | None = None
+    min_p: float | None = None
+    temp: float | None = None
 
 
 class BenchRequest(BaseModel):
-    prompt_text: str | None
-    prompt_chat: list[ChatMessage] | None
-    max_tokens: int | None
-    speculative_depth: int | None
-    sampling: BenchSampling | None
+    prompt_text: str | None = None
+    prompt_chat: list[ChatMessage] | None = None
+    max_tokens: int | None = None
+    speculative_depth: int | None = None
+    sampling: BenchSampling | None = None
+    num_runs: int | None = None
 
     @property
     def prompt(self) -> str | list[ChatMessage]:

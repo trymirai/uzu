@@ -6,6 +6,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "runner.hpp"
 
@@ -67,9 +68,9 @@ int main(
     // execute request
     llama_backend_init();
     int ret = 0;
-    BenchResponse response;
+    std::vector<BenchResponse> responses;
     try {
-        response = run(model, request);
+        responses = run(model, request);
     } catch (const std::exception& error) {
         std::cerr << "Failed: " << error.what() << std::endl;
         ret = 1;
@@ -81,14 +82,14 @@ int main(
         constexpr auto glz_opts = glz::opts{.prettify = true};
         if (output_json_path.has_value()) {
             std::string json_text;
-            const auto error = glz::write_file_json<glz_opts>(response, output_json_path.value(), json_text);
+            const auto error = glz::write_file_json<glz_opts>(responses, output_json_path.value(), json_text);
             if (error) {
                 std::cerr << "Failed to write " << output_json_path.value() << ": " << glz::format_error(error) << '\n';
                 return 1;
             }
         } else {
             std::string json_text;
-            const auto error = glz::write<glz_opts>(response, json_text);
+            const auto error = glz::write<glz_opts>(responses, json_text);
             if (error) {
                 std::cerr << "Failed to serialize output: " << glz::format_error(error) << '\n';
                 return 1;
