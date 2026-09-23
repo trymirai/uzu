@@ -468,6 +468,72 @@ fn declared_types_follow_refs_and_unions() {
     assert_eq!(coerced["shape"], serde_json::json!("{\"r\": 1}"));
 }
 
+#[test]
+fn declared_types_stop_recursive_union_expansion() {
+    for keyword in ["anyOf", "oneOf"] {
+        let mut branches = vec![serde_json::json!({"type": "object"})];
+        branches.extend(std::iter::repeat_n(serde_json::json!({"$ref": "#"}), 32));
+        let schema = serde_json::json!({keyword: branches});
+
+        assert_eq!(declared_types(&schema, &schema, 8), ["object"]);
+    }
+}
+
+#[test]
+fn declared_types_reuse_shared_union_nodes() {
+    let mut definitions = serde_json::Map::new();
+    definitions.insert("0".to_string(), serde_json::json!({"type": ["object", "object", "null"]}));
+    for level in 1..=6 {
+        let branches = vec![serde_json::json!({"$ref": format!("#/$defs/{}", level - 1)}); 32];
+        definitions.insert(level.to_string(), serde_json::json!({"anyOf": branches}));
+    }
+    let schema = serde_json::json!({"$ref": "#/$defs/6", "$defs": definitions});
+
+    assert_eq!(declared_types(&schema, &schema, 8), ["null", "object"]);
+}
+
+#[test]
+fn declared_types_revisit_shared_nodes_with_more_depth() {
+    let mut nested = serde_json::json!({"$ref": "#/$defs/Shared"});
+    for _ in 0..6 {
+        nested = serde_json::json!({"anyOf": [nested]});
+    }
+    let schema = serde_json::json!({
+        "$defs": {"Shared": {"anyOf": [{"type": "string"}]}},
+        "anyOf": [{"type": "object"}, {"$ref": "#/$defs/Shared"}, nested]
+    });
+
+    assert_eq!(declared_types(&schema, &schema, 8), ["object", "string"]);
+}
+
+#[test]
+fn declared_types_discard_partial_results_when_work_is_exhausted() {
+    let leaves = vec![serde_json::json!({"type": "object"}); 32];
+    let mut branches = vec![serde_json::json!({"type": "string"})];
+    branches.extend(std::iter::repeat_n(serde_json::json!({"anyOf": leaves}), 32));
+    let mut kinds = vec!["object"; MAX_SCHEMA_TRAVERSAL_WORK];
+    kinds.push("string");
+
+    for property in [serde_json::json!({"anyOf": branches}), serde_json::json!({"type": kinds})] {
+        let tools = serde_json::json!([{"function": {
+            "name": "read",
+            "parameters": {"properties": {"options": property}}
+        }}]);
+        let types = parameter_types(&tools.to_string());
+        assert!(types.declared("read", "options").is_none());
+
+        let call = ToolCall {
+            identifier: None,
+            name: "read".to_string(),
+            arguments: Value {
+                json: serde_json::json!({"options": "{\"a\": 1}"}).to_string(),
+            },
+        };
+        assert_eq!(coerce_tool_call(&call, &types).arguments.json, call.arguments.json);
+        assert_eq!(serialize_param_value("{\"a\": 1}", types.declared("read", "options")), r#""{\"a\": 1}""#);
+    }
+}
+
 fn parameter_types(tools_json: &str) -> ToolParameterTypes {
     let tools: Vec<OaiTool> = serde_json::from_str(tools_json).expect("valid tools json");
     ToolParameterTypes::from_tools(Some(&tools))

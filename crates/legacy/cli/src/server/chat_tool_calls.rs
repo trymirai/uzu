@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -133,6 +133,9 @@ impl ToolParameterTypes {
     }
 }
 
+// Per parameter: count each queued schema and each entry in a type array.
+const MAX_SCHEMA_TRAVERSAL_WORK: usize = 1024;
+
 /// The JSON-Schema types a property schema declares: its `type` keyword, or the
 /// union of its `anyOf`/`oneOf` branches, following local `$ref`s (the shape
 /// pydantic and schemars clients emit for optional and nested objects).
@@ -141,26 +144,59 @@ fn declared_types(
     root: &serde_json::Value,
     depth: u32,
 ) -> Vec<String> {
-    // the schema comes from the client, so a `$ref` cycle must end the walk rather than the process
-    if depth == 0 {
-        return Vec::new();
+    let mut pending = vec![(property, depth)];
+    let mut visited = HashMap::new();
+    let mut types = HashSet::new();
+    let mut remaining_work = MAX_SCHEMA_TRAVERSAL_WORK - 1;
+    while let Some((property, depth)) = pending.pop() {
+        if depth == 0 {
+            continue;
+        }
+        let property = match property.get("$ref").and_then(serde_json::Value::as_str) {
+            Some(reference) => {
+                reference.strip_prefix('#').and_then(|pointer| root.pointer(pointer)).unwrap_or(property)
+            },
+            None => property,
+        };
+        // Track identity without hashing the schema's contents. Revisit a shared
+        // node only when a shorter path leaves more depth to discover its types.
+        let identity = std::ptr::from_ref(property);
+        if visited.get(&identity).is_some_and(|seen_depth| *seen_depth >= depth) {
+            continue;
+        }
+        visited.insert(identity, depth);
+        match property.get("type") {
+            Some(serde_json::Value::String(kind)) => {
+                types.insert(kind.as_str());
+            },
+            Some(serde_json::Value::Array(kinds)) => {
+                let Some(remaining) = remaining_work.checked_sub(kinds.len()) else {
+                    return Vec::new();
+                };
+                remaining_work = remaining;
+                types.extend(kinds.iter().filter_map(serde_json::Value::as_str));
+            },
+            _ if depth > 1 => {
+                for branches in
+                    ["anyOf", "oneOf"].iter().filter_map(|key| property.get(*key).and_then(serde_json::Value::as_array))
+                {
+                    // Charge work before enqueueing, bounding both visits and
+                    // pending allocations even for a wide, nonrecursive union.
+                    let Some(remaining) = remaining_work.checked_sub(branches.len()) else {
+                        // Partial types may omit a string branch and cause an
+                        // incorrect coercion, so leave the parameter unchanged.
+                        return Vec::new();
+                    };
+                    remaining_work = remaining;
+                    pending.extend(branches.iter().map(|branch| (branch, depth - 1)));
+                }
+            },
+            _ => {},
+        }
     }
-    let property = match property.get("$ref").and_then(serde_json::Value::as_str) {
-        Some(reference) => reference.strip_prefix('#').and_then(|pointer| root.pointer(pointer)).unwrap_or(property),
-        None => property,
-    };
-    match property.get("type") {
-        Some(serde_json::Value::String(kind)) => vec![kind.clone()],
-        Some(serde_json::Value::Array(kinds)) => {
-            kinds.iter().filter_map(|kind| kind.as_str().map(str::to_string)).collect()
-        },
-        _ => ["anyOf", "oneOf"]
-            .iter()
-            .filter_map(|key| property.get(*key).and_then(serde_json::Value::as_array))
-            .flatten()
-            .flat_map(|branch| declared_types(branch, root, depth - 1))
-            .collect(),
-    }
+    let mut types: Vec<String> = types.into_iter().map(str::to_string).collect();
+    types.sort_unstable();
+    types
 }
 
 fn matches_declared_type(
