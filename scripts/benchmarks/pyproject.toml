@@ -37,6 +37,6 @@ line-length = 120
 extend-select = ["E501"]
 
 [tool.setuptools]
-py-modules = ["main"]
-packages = ["mach"]
+py-modules = ["main", "bench", "common"]
+packages = ["mach", "engine"]
 package-dir = { "" = "src" }

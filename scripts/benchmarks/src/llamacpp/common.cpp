@@ -95,12 +95,13 @@ std::filesystem::path get_model_path(const std::string& model) {
 }
 
 std::vector<llama_token> get_tokens(
-    const Content& content_variant,
+    const std::optional<std::string>& prompt_text,
+    const std::optional<std::vector<ChatMessage>>& prompt_chat,
     const llama_model_ptr& model
 ) {
     std::vector<llama_token> prompt_tokens;
-    if (std::holds_alternative<std::string>(content_variant)) {
-        const std::string text = std::get<std::string>(content_variant);
+    if (prompt_text.has_value()) {
+        const std::string& text = prompt_text.value();
         const llama_vocab* vocab = llama_model_get_vocab(model.get());
         const int32_t prompt_tokens_count = -llama_tokenize(vocab, text.c_str(), text.size(), nullptr, 0, true, true);
         if (prompt_tokens_count <= 0) {
@@ -113,8 +114,8 @@ std::vector<llama_token> get_tokens(
         if (tokenize_result < 0) {
             throw std::runtime_error("Failed to tokenize prompt");
         }
-    } else if (std::holds_alternative<std::vector<ChatMessage>>(content_variant)) {
-        const auto& chat = std::get<std::vector<ChatMessage>>(content_variant);
+    } else if (prompt_chat.has_value()) {
+        const auto& chat = prompt_chat.value();
         std::vector<llama_chat_message> messages;
         messages.reserve(chat.size());
         for (const auto& message : chat) {
@@ -165,7 +166,7 @@ std::vector<llama_token> get_tokens(
 
         prompt_tokens.resize(tokenize_result);
     } else {
-        throw std::runtime_error("Unknown prompt alternative");
+        throw std::invalid_argument("prompt_text and prompt_chat are absent");
     }
 
     return prompt_tokens;
