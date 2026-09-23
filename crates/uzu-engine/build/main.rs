@@ -40,10 +40,10 @@ async fn main() -> anyhow::Result<ExitCode> {
         println!("cargo::rustc-cfg=grammar");
     }
 
-    debug_log!("build script started");
+    let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
+    debug_log!("build script started in {}", out_dir.display());
 
     if envs::build_clean() {
-        let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
         if out_dir.exists() {
             fs::remove_dir_all(&out_dir).with_context(|| format!("cannot clean {}", out_dir.display()))?;
             fs::create_dir_all(&out_dir).with_context(|| format!("cannot recreate {}", out_dir.display()))?;

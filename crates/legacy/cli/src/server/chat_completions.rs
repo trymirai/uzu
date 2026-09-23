@@ -237,7 +237,7 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
     }
 }
 
-fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
+pub(crate) fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
     messages
         .iter()
         .map(|message| {

@@ -11,6 +11,7 @@ use shoji::{
         model::{Model, ModelAccessibility, ModelReference, ModelSpecialization},
     },
 };
+use uzu_engine::engine::{ModelType, resolve_model_type};
 
 use crate::registry::RegistryError;
 
@@ -19,7 +20,24 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn new(config: Config) -> Result<Self, RegistryError> {
+    pub(crate) fn model_at_path(
+        path: &Path,
+        backend_identifier: String,
+        backend_version: String,
+    ) -> Result<Model, RegistryError> {
+        let registry =
+            Self::new(Config::new(backend_identifier, backend_version, path.to_string_lossy().into_owned()))?;
+        registry.model(Path::new(&registry.config.path))
+    }
+
+    pub fn new(mut config: Config) -> Result<Self, RegistryError> {
+        config.path = Path::new(&config.path)
+            .canonicalize()
+            .map_err(|error| RegistryError::UnableToGetModels {
+                message: format!("Unable to open local model path {}: {error}", config.path),
+            })?
+            .to_string_lossy()
+            .into_owned();
         Ok(Self {
             config,
         })
@@ -30,16 +48,14 @@ impl RegistryTrait for Registry {
     type Error = RegistryError;
 
     fn identifier(&self) -> String {
-        self.config.identifier.clone()
+        "local".to_string()
     }
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
         Box::pin(async {
             let path = Path::new(&self.config.path);
-            if !path.exists() {
-                Err(RegistryError::UnableToGetModels {
-                    message: format!("Path not found: {}", path.display()),
-                })?;
+            if path.join("config.json").is_file() {
+                return Ok(vec![self.model(path)?]);
             }
 
             let entries = fs::read_dir(path).map_err(|error| RegistryError::UnableToGetModels {
@@ -58,24 +74,12 @@ impl RegistryTrait for Registry {
                 if !file_type.is_dir() {
                     continue;
                 }
-                let name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
-                    RegistryError::UnableToGetModels {
-                        message: format!("Invalid local model path: {}", path.display()),
-                    }
-                })?;
-
-                let model = self.model(name);
-                let model = match self.config.resolver.as_ref() {
-                    Some(resolver) => match resolver(model) {
-                        Ok(model) => model,
-                        Err(error) => {
-                            tracing::warn!(?error, path = %path.display(), "skipping invalid local model");
-                            continue;
-                        },
+                match self.model(&path) {
+                    Ok(model) => models.push(model),
+                    Err(error) => {
+                        tracing::warn!(?error, path = %path.display(), "skipping invalid local model");
                     },
-                    None => model,
-                };
-                models.push(model);
+                }
             }
 
             Ok(models)
@@ -86,25 +90,34 @@ impl RegistryTrait for Registry {
 impl Registry {
     fn model(
         &self,
-        name: &str,
-    ) -> Model {
-        let path = Path::new(&self.config.path).join(name);
-        let identifier = name.to_string();
-        Model::external(
-            identifier.clone(),
-            self.config.identifier.clone(),
-            self.config.name.clone(),
+        path: &Path,
+    ) -> Result<Model, RegistryError> {
+        let name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| RegistryError::UnableToGetModels {
+            message: format!("Invalid local model path: {}", path.display()),
+        })?;
+        let specialization = resolve_model_type(path)
+            .map(|model_type| match model_type {
+                ModelType::LanguageModel => ModelSpecialization::Chat {},
+                ModelType::Classifier => ModelSpecialization::Classification {},
+            })
+            .map_err(|error| RegistryError::UnableToGetModels {
+                message: format!("Unable to resolve specialization for {}: {error}", path.display()),
+            })?;
+        Ok(Model::external(
+            name.to_string(),
+            self.identifier(),
+            "Local".to_string(),
             self.config.backend_identifier.clone(),
             self.config.backend_identifier.clone(),
             self.config.backend_version.clone(),
-            vec![ModelSpecialization::Chat {}],
+            vec![specialization],
             ModelAccessibility::Local {
                 reference: ModelReference::Local {
                     path: path.to_string_lossy().to_string(),
                 },
             },
-            load_encoding(&path),
-        )
+            load_encoding(path),
+        ))
     }
 }
 

@@ -174,10 +174,7 @@ pub async fn run_server(
     let engine_config = EngineConfig::default().with_application_identifier("com.trymirai.cli".to_string());
     let engine = Engine::new(engine_config).await.context("Failed to create engine")?;
 
-    let resolved = match engine.model(model.clone()).await? {
-        Some(model) => model,
-        None => engine.model_by_path(model.clone()).await?.with_context(|| format!("Model not found: {model}"))?,
-    };
+    let resolved = engine.model(model.clone()).await?.with_context(|| format!("Model not found: {model}"))?;
 
     let spinner = ProgressBar::new_spinner();
     spinner.enable_steady_tick(Duration::from_millis(100));

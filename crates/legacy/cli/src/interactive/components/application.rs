@@ -18,7 +18,6 @@ use crate::{
         components::{CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme},
         flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
-        model::resolve_model_id,
         sessions::{self, SessionState},
     },
 };
@@ -31,6 +30,8 @@ pub struct ApplicationProps {
     pub settings: Option<Settings>,
     pub model: Option<String>,
     pub reasoning_effort: Option<ReasoningEffort>,
+    pub seed: Option<i64>,
+    pub no_tools: bool,
 }
 
 pub struct ModelState {
@@ -48,6 +49,8 @@ pub struct ApplicationState {
     preferences: Preferences,
     /// Session-scoped thinking override from the command line; never persisted.
     thinking_override: Option<ThinkingPreference>,
+    pub seed: Option<i64>,
+    pub no_tools: bool,
     pub engine: Engine,
     pub settings: Option<Settings>,
     pub flow: Option<Box<dyn Flow>>,
@@ -124,6 +127,8 @@ pub fn Application(
             level: effort,
             enabled: effort != ReasoningEffort::Disabled,
         }),
+        seed: props.seed,
+        no_tools: props.no_tools,
         flow: None,
         history: Vec::new(),
         registry: FlowRegistry::default()
@@ -142,21 +147,7 @@ pub fn Application(
         let engine = state.read().engine.clone();
         let mut state = state;
         async move {
-            let initial_model = match requested_model {
-                Some(model) => match resolve_model_id(&engine, model).await {
-                    Ok(model) => model,
-                    Err(error) => {
-                        state.write().history.push(HistoryCellType::CommandResult {
-                            result: format!("Failed to resolve model: {error}"),
-                        });
-                        state.write().flow = Some(Box::new(ModelRegistriesFlow));
-                        return;
-                    },
-                },
-                None => None,
-            };
-
-            let Some(identifier) = initial_model else {
+            let Some(identifier) = requested_model else {
                 state.write().flow = Some(Box::new(ModelRegistriesFlow));
                 return;
             };
