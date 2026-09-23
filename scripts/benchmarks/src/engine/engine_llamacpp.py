@@ -2,9 +2,9 @@ import os
 import subprocess
 from pathlib import Path
 
-from common import BenchOutput
+from bench import BenchResponse
 
-project_dir = Path(__file__).resolve().parent.parent
+project_dir = Path(__file__).resolve().parents[2]
 build_dir = project_dir / "build" / "llamacpp-release"
 
 
@@ -86,7 +86,7 @@ def _execute(model: str | Path, input_path: Path) -> str:
     return result.stdout
 
 
-def run(model: str | Path, input_path: Path) -> BenchOutput:
+def run(model: str | Path, input_path: Path) -> BenchResponse:
     _build()
     output_json = _execute(model, input_path)
-    return BenchOutput.model_validate_json(output_json)
+    return BenchResponse.model_validate_json(output_json)

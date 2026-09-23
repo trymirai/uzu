@@ -4,9 +4,11 @@
 #include <llama-cpp.h>
 
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <vector>
 
-#include "content.hpp"
+#include "bench.hpp"
 #include "memory_counters.h"
 
 bool has_mtp_weights(
@@ -24,7 +26,8 @@ std::string decode_token(
 std::filesystem::path get_model_path(const std::string& model);
 
 std::vector<llama_token> get_tokens(
-    const Content& content_variant,
+    const std::optional<std::string>& prompt_text,
+    const std::optional<std::vector<ChatMessage>>& prompt_chat,
     const llama_model_ptr& model
 );
 
