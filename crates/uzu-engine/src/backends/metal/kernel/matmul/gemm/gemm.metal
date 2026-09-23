@@ -148,7 +148,8 @@ KERNEL(Gemm)(
   (void)thread_y;
   (void)thread_z;
 
-  using LeftOperand = operands::LeftOperandFor<A_PROLOGUE, AT, ushort(A_GROUP_SIZE)>;
+  using LeftOperand = operands::
+      LeftOperandFor<A_PROLOGUE, AT, ushort(A_GROUP_SIZE), A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && BITS == 4>;
   using RightOperand = operands::RightOperandFor<B_PROLOGUE, ushort(BITS), ushort(GROUP_SIZE), BT>;
   static_assert(
       NEEDS_ASYMMETRIC_WEIGHT_CORRECTION == (A_IS_INT8 && RightOperand::NEEDS_CORRECTION),

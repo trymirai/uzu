@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 use crate::backends::common::{Allocation, Backend, gpu_types::gemm::GemmAPrologueKind};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -17,6 +19,22 @@ impl Int8CodeLayout {
 
     pub const fn is_grouped_by_nibble(self) -> bool {
         matches!(self, Self::GroupedByNibble)
+    }
+
+    pub const fn index(
+        self,
+        index: usize,
+    ) -> usize {
+        match self {
+            Self::Sequential => index,
+            Self::GroupedByNibble => {
+                const NIBBLES_PER_BYTE: usize = 2;
+                const CODES_PER_WORD: usize = size_of::<u32>() * NIBBLES_PER_BYTE;
+                const NIBBLE_GROUP_SIZE: usize = CODES_PER_WORD / NIBBLES_PER_BYTE;
+                let offset = index % CODES_PER_WORD;
+                index - offset + (offset % NIBBLES_PER_BYTE) * NIBBLE_GROUP_SIZE + offset / NIBBLES_PER_BYTE
+            },
+        }
     }
 }
 

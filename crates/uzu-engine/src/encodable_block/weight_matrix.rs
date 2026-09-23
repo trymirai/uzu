@@ -79,13 +79,6 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
     })
 }
 
-fn params_layout_for(layout: Layout) -> QuantParamsLayout {
-    match layout {
-        Layout::OutputInput => QuantParamsLayout::GroupOutput,
-        Layout::InputOutput => QuantParamsLayout::OutputGroup,
-    }
-}
-
 struct Quantized<B: Backend> {
     scales: Allocation<B>,
     correction: QuantizedCorrection<Allocation<B>>,
@@ -126,7 +119,10 @@ impl<B: Backend> WeightMatrix<B> {
                 quantized: None,
             });
         };
-        let params_layout = params_layout_for(layout.clone());
+        let params_layout = match layout {
+            Layout::OutputInput => QuantParamsLayout::GroupOutput,
+            Layout::InputOutput => QuantParamsLayout::OutputGroup,
+        };
 
         let group_size = info.group_size;
         let packing_divisor = info.mode.packing_divisor();

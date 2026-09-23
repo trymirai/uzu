@@ -5,7 +5,10 @@ use uzu_engine_macros::kernel;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE, activation_silu_alpha},
+        common::{
+            gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE, activation_silu_alpha},
+            kernel::matmul::Int8CodeLayout,
+        },
         cpu::kernel::activation_transform::{hadamard_transform, quantize_transformed_row},
     },
 };
@@ -136,7 +139,11 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
                     values,
                     scales,
                     group_sums,
-                    grouped_by_weight_nibble,
+                    if grouped_by_weight_nibble {
+                        Int8CodeLayout::GroupedByNibble
+                    } else {
+                        Int8CodeLayout::Sequential
+                    },
                 );
             } else {
                 let output = fp_out.expect("FP gate activation requires fp_out");

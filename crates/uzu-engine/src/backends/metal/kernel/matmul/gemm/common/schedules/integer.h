@@ -128,16 +128,14 @@ struct IntegerSchedule {
     using Ops = typename Core::FragmentOps;
     using ScaleElement = typename RightOperand::ScaleElement;
     using ScaleVector = vec<ScaleElement, Ops::THREAD_ELEMENT_COLS>;
-    using OffsetVector = vec<ScaleElement, Ops::THREAD_ELEMENT_COLS>;
     using ZeroPointVector = uchar4;
-    UZU_CONST ushort THREAD_COLUMNS_PER_FRAGMENT = Ops::THREAD_ELEMENT_COLS;
     static_assert(
-        THREAD_COLUMNS_PER_FRAGMENT == uzu::matmul::QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT,
+        Ops::THREAD_ELEMENT_COLS == uzu::matmul::QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT,
         "group-major metadata must use the metadata load width"
     );
 
     ScaleVector scales[Core::TILES_N];
-    OffsetVector bias_offsets[Core::TILES_N];
+    ScaleVector bias_offsets[Core::TILES_N];
     ZeroPointVector zero_points[Core::TILES_N];
 
     METAL_FUNC void load(
@@ -156,7 +154,7 @@ struct IntegerSchedule {
             right.scales + right_group_index * metadata_context.right_scale_group_stride + right_scale_column_start
         );
         if constexpr (HAS_BIAS) {
-          bias_offsets[tile_n] = *reinterpret_cast<const device OffsetVector*>(
+          bias_offsets[tile_n] = *reinterpret_cast<const device ScaleVector*>(
               right.bias() + right_group_index * metadata_context.right_scale_group_stride + right_scale_column_start
           );
           bias_offsets[tile_n] += scales[tile_n] * ScaleElement(RIGHT_CODE_OFFSET);
@@ -189,7 +187,7 @@ struct IntegerSchedule {
               (short4(right_column_offset) + short4(0, 1, 2, 3)) < short4(metadata_context.right_column_limit);
           scales[tile_n] = select(ScaleVector(0), scales[tile_n], live);
           if constexpr (HAS_BIAS) {
-            bias_offsets[tile_n] = select(OffsetVector(0), bias_offsets[tile_n], live);
+            bias_offsets[tile_n] = select(ScaleVector(0), bias_offsets[tile_n], live);
           }
           if constexpr (HAS_ZERO_POINTS) {
             zero_points[tile_n] = select(ZeroPointVector(RIGHT_CODE_OFFSET), zero_points[tile_n], live);
@@ -291,7 +289,7 @@ struct IntegerSchedule {
         !(RightOperand::SCHEME == GemmBPrologueKind::ScaleSymmetricDequant &&
           Core::TILING == GemmTiling::Tile128x128x256_Simdgroups4x4);
 
-    auto left_codes = quantized::make_left_cursor<HOIST_OPERAND_ADDRESSING, Core, RightOperand, ALIGNED_M>(
+    auto left_codes = quantized::make_left_cursor<HOIST_OPERAND_ADDRESSING, Core, LeftOperand, ALIGNED_M>(
         left_storage,
         params,
         tile,

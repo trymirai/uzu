@@ -32,14 +32,14 @@ static METAL_FUNC void for_each_fragment_row(Visitor visitor) {
 }
 } // namespace
 
-template <typename Fragment, bool ALIGNED, ushort BITS>
+template <typename Fragment, bool ALIGNED, bool CODES_GROUPED_BY_NIBBLE>
 METAL_FUNC Fragment
 load_int8_tile(const device int8_t* src, const int row_stride, const short simdgroup_limit, const ushort simd_lane_id) {
   Fragment tile;
-  if constexpr (BITS == 4) {
+  if constexpr (CODES_GROUPED_BY_NIBBLE) {
     using Ops = typename Fragment::FragmentOpsType;
     const short2 position = Ops::get_position(simd_lane_id);
-    const device int8_t* base = src + int(position.y) * row_stride + int(get_pack_factor<BITS>()) * int(position.x);
+    const device int8_t* base = src + int(position.y) * row_stride + int(get_pack_factor<W4_BITS>()) * int(position.x);
     const short row_limit = simdgroup_limit - position.y;
     for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
       vec<uint, Fragment::COL_FRAGMENTS> packed_chunk(0u);
@@ -63,7 +63,7 @@ load_int8_tile(const device int8_t* src, const int row_stride, const short simdg
   return tile;
 }
 
-template <typename Fragment, bool ALIGNED, ushort BITS, bool HOISTED>
+template <typename Fragment, bool ALIGNED, bool CODES_GROUPED_BY_NIBBLE, bool HOISTED>
 struct Int8Cursor {
   using Ops = typename Fragment::FragmentOpsType;
   UZU_CONST short BLOCK_K = short(Fragment::COL_FRAGMENTS * Ops::FRAGMENT_ROWS);
@@ -79,7 +79,12 @@ struct Int8Cursor {
     if constexpr (!HOISTED) {
       source += chunk_index * uint(BLOCK_K);
     }
-    return load_int8_tile<Fragment, ALIGNED, BITS>(source, row_stride, simdgroup_limit, simd_lane_id);
+    return load_int8_tile<Fragment, ALIGNED, CODES_GROUPED_BY_NIBBLE>(
+        source,
+        row_stride,
+        simdgroup_limit,
+        simd_lane_id
+    );
   }
 
   METAL_FUNC void advance() thread {
@@ -157,7 +162,7 @@ struct W4Cursor {
   METAL_FUNC void begin_k_group(const uint) thread {}
 };
 
-template <bool HOIST_OPERAND_ADDRESSING, typename Core, typename Operand, bool ALIGNED>
+template <bool HOIST_OPERAND_ADDRESSING, typename Core, typename LeftOperand, bool ALIGNED>
 static METAL_FUNC auto make_left_cursor(
     const typename Core::LeftStorage source,
     const constant uzu::matmul::GemmParams* params,
@@ -166,7 +171,7 @@ static METAL_FUNC auto make_left_cursor(
 ) {
   using Fragment = uzu::matmul::Fragment<int8_t, Core::TILES_M, Core::TILES_K, typename Core::FragmentOps>;
   const device int8_t* origin = source.codes + size_t(tile.abs_row_base) * params->leading_dimension_a + tile.k_offset;
-  return Int8Cursor<Fragment, ALIGNED, Operand::BITS, HOIST_OPERAND_ADDRESSING>{
+  return Int8Cursor<Fragment, ALIGNED, LeftOperand::GROUPED_BY_NIBBLE, HOIST_OPERAND_ADDRESSING>{
       origin,
       origin,
       int(params->leading_dimension_a),
@@ -202,7 +207,7 @@ static METAL_FUNC auto make_right_cursor(
   } else {
     static_assert(Operand::BITS == 8, "integer tile cursors support 4-bit and 8-bit codes");
     const device int8_t* origin_int8 = reinterpret_cast<const device int8_t*>(current);
-    return Int8Cursor<Fragment, ALIGNED, Operand::BITS, HOIST_OPERAND_ADDRESSING>{
+    return Int8Cursor<Fragment, ALIGNED, false, HOIST_OPERAND_ADDRESSING>{
         origin_int8,
         origin_int8,
         row_stride_bytes,

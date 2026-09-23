@@ -2,10 +2,13 @@ use half::bf16;
 use num_traits::{Float, NumCast};
 use uzu_engine_macros::kernel;
 
-use super::{hadamard_transform, min_max_symmetric_divisor, nibble_grouped_index, quantize_symmetric_i8};
+use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8};
 use crate::{
     array::ArrayElement,
-    backends::common::gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::{
+        gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+        kernel::matmul::Int8CodeLayout,
+    },
 };
 
 pub fn quantize_transformed_row(
@@ -15,7 +18,7 @@ pub fn quantize_transformed_row(
     values: &mut [i8],
     scales: &mut [f32],
     mut group_sums: Option<&mut [i32]>,
-    grouped_by_weight_nibble: bool,
+    code_layout: Int8CodeLayout,
 ) {
     assert_eq!(transformed.len(), values.len());
     assert_eq!(scales.len(), transformed.len() / activation_scale_group_size);
@@ -33,12 +36,7 @@ pub fn quantize_transformed_row(
         for (index, &value) in source.iter().enumerate() {
             let code = quantize_symmetric_i8(value, scale);
             let absolute_index = scale_group_index * activation_scale_group_size + index;
-            // Weight-nibble grouping maps [0, 1, 2, 3, 4, 5, 6, 7] to [0, 4, 1, 5, 2, 6, 3, 7].
-            let output_index = if grouped_by_weight_nibble {
-                nibble_grouped_index(absolute_index)
-            } else {
-                absolute_index
-            };
+            let output_index = code_layout.index(absolute_index);
             values[output_index] = code;
             if let Some(group_sums) = group_sums.as_deref_mut() {
                 group_sums[absolute_index / sum_group_size.expect("correction group")] += code as i32;
@@ -133,7 +131,11 @@ pub fn activation_transform<T: ArrayElement + Float>(
                 values,
                 scales,
                 sums,
-                grouped_by_weight_nibble,
+                if grouped_by_weight_nibble {
+                    Int8CodeLayout::GroupedByNibble
+                } else {
+                    Int8CodeLayout::Sequential
+                },
             );
         } else {
             let fp_out = fp_out.expect("FP transform requires fp_out");

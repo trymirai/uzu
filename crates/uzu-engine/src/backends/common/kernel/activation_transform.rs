@@ -89,8 +89,7 @@ impl<B: Backend> ActivationTransform<B> {
         let op = quantization
             .sum_group_size
             .map_or(ActivationTransformOp::Quantize, |_| ActivationTransformOp::QuantizeWithGroupSums);
-        let in_place = false;
-        Self::new(context, data_type, op, in_place, Some(quantization))
+        Self::new(context, data_type, op, false, Some(quantization))
     }
 
     /// `input` and `output` must be distinct buffers.

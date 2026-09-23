@@ -10,25 +10,6 @@ use crate::{
     data_type::DataType,
 };
 
-#[repr(u32)]
-#[derive(Clone, Copy)]
-enum GatedActMulGroupSize {
-    Size32 = 32,
-    Size64 = 64,
-    Size128 = 128,
-}
-
-impl GatedActMulGroupSize {
-    fn from_u32(value: u32) -> Self {
-        match value {
-            32 => Self::Size32,
-            64 => Self::Size64,
-            128 => Self::Size128,
-            _ => panic!("unsupported activation group size: {value}"),
-        }
-    }
-}
-
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct GatedActMulOptions: u8 {
@@ -63,17 +44,7 @@ impl<B: Backend> GatedActMul<B> {
         let mut options = GatedActMulOptions::empty();
         options.set(GatedActMulOptions::INTERLEAVED, interleaved);
         options.set(GatedActMulOptions::HADAMARD, use_hadamard);
-        Self::new(
-            context,
-            data_type,
-            GatedActMulOp::FullPrecision,
-            false,
-            options,
-            HADAMARD_TRANSFORM_BLOCK_SIZE,
-            HADAMARD_TRANSFORM_BLOCK_SIZE,
-            settings,
-            None,
-        )
+        Self::new(context, data_type, options, settings, None)
     }
 
     pub fn quantized(
@@ -82,39 +53,38 @@ impl<B: Backend> GatedActMul<B> {
         quantization: ActivationQuantization,
         settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
-        let scale_group_size = GatedActMulGroupSize::from_u32(quantization.scale_group_size);
-        let sum_group_size = quantization.sum_group_size.map(GatedActMulGroupSize::from_u32);
-        let op = if sum_group_size.is_some() {
-            GatedActMulOp::QuantizeWithGroupSums
-        } else {
-            GatedActMulOp::Quantize
-        };
+        assert!(
+            matches!(quantization.scale_group_size, 32 | 64 | 128),
+            "unsupported activation group size: {}",
+            quantization.scale_group_size
+        );
+        if let Some(group_size) = quantization.sum_group_size {
+            assert!(matches!(group_size, 32 | 64 | 128), "unsupported activation group size: {group_size}");
+        }
         let options = GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD;
-        let sum_group_size = sum_group_size.unwrap_or(scale_group_size) as u32;
-        Self::new(
-            context,
-            data_type,
-            op,
-            quantization.code_layout.is_grouped_by_nibble(),
-            options,
-            scale_group_size as u32,
-            sum_group_size,
-            settings,
-            Some(quantization),
-        )
+        Self::new(context, data_type, options, settings, Some(quantization))
     }
 
     fn new(
         context: &B::Context,
         data_type: DataType,
-        ops: GatedActMulOp,
-        codes_grouped_by_nibble: bool,
         options: GatedActMulOptions,
-        scale_group_size: u32,
-        sum_group_size: u32,
         settings: GatedActMulSettings,
         quantization: Option<ActivationQuantization>,
     ) -> Result<Self, B::Error> {
+        let (ops, codes_grouped_by_nibble, scale_group_size, sum_group_size) = match quantization {
+            Some(quantization) => (
+                if quantization.sum_group_size.is_some() {
+                    GatedActMulOp::QuantizeWithGroupSums
+                } else {
+                    GatedActMulOp::Quantize
+                },
+                quantization.code_layout.is_grouped_by_nibble(),
+                quantization.scale_group_size,
+                quantization.sum_group_size.unwrap_or(quantization.scale_group_size),
+            ),
+            None => (GatedActMulOp::FullPrecision, false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE),
+        };
         let kernel = <B::Kernels as Kernels>::GatedActMulKernel::new(
             context,
             data_type,

@@ -1,7 +1,7 @@
 #![cfg(backend = "metal")]
 
 use std::{
-    error::Error as StdError,
+    error::Error,
     fmt::{Debug, Display},
 };
 
@@ -432,13 +432,6 @@ fn parity_bf16_gemv_quant_rht() {
     assert_parity::<bf16>("gemv_quant_rht", &reference, &actual, 0.05, 0.6);
 }
 
-fn refusal(error: &(impl StdError + 'static)) -> &MatmulError<Metal> {
-    error
-        .source()
-        .and_then(|source| source.downcast_ref::<MatmulError<Metal>>())
-        .expect("expected a MatmulError source")
-}
-
 #[uzu_test]
 fn cpu_group_major_quantized_gemm_matches_row_major() {
     for bits in [4, 8] {
@@ -475,7 +468,10 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
     let result = matmul.encode(args, &mut encoder);
 
     let err = result.expect_err("expected error");
-    let matmul = refusal(&err);
+    let matmul = err
+        .source()
+        .and_then(|source| source.downcast_ref::<MatmulError<Metal>>())
+        .expect("expected a MatmulError source");
     assert!(
         matches!(
             matmul,
@@ -815,7 +811,6 @@ fn run_widened_f32<B: Backend>(
     let mut matmul =
         <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(context, DataType::BF16, DataType::BF16, DataType::F32)
             .expect("MatmulKernel widened");
-    // Exercise widened output with explicitly supplied OutputGroup metadata.
     let b = buffers.matmul_b(input);
     let mut encoder = Encoder::<B>::new(context).expect("encoder");
     matmul
