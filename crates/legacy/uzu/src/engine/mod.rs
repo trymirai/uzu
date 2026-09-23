@@ -4,8 +4,9 @@ pub mod config;
 mod downloader;
 mod downloader_stream;
 mod error;
+mod shorthand;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
@@ -28,6 +29,7 @@ use shoji::{
         session::chat::ChatConfig,
     },
 };
+use sysinfo::System;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
@@ -40,6 +42,7 @@ use crate::{
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
         mirai::{Backend as MiraiBackend, Registry as MiraiRegistry, TELEMETRY_URL},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
+        unique_model,
     },
     settings::Settings,
     storage::{Config as StorageConfig, DownloadPhase, DownloadState, Storage},
@@ -76,8 +79,8 @@ impl Engine {
 
         let telemetry = SharedAccess::new({
             let context = TelemetryContext::new(
-                env!("CARGO_PKG_VERSION").to_string(),
-                uzu_engine::TOOLCHAIN_VERSION.to_string(),
+                Self::version(),
+                Self::toolchain_version(),
                 TelemetryDevice {
                     os_name: device.os_name.clone(),
                     cpu_name: device.cpu_name.clone(),
@@ -125,16 +128,8 @@ impl Engine {
             engine.add_backend(Arc::new(uzu_backend) as Arc<dyn Backend>).await;
             engine.add_registry(mirai_registry).await?;
 
-            if let Some(lalamo_path) = config.lalamo_path {
-                let lalamo_registry = LocalRegistry::new(LocalRegistryConfig::lalamo(
-                    uzu_backend_identifier.clone(),
-                    uzu_backend_version.clone(),
-                    lalamo_path,
-                ))?;
-                engine.add_registry(Box::new(lalamo_registry)).await?;
-            }
             if let Some(local_path) = config.local_path {
-                let local_registry = LocalRegistry::new(LocalRegistryConfig::local(
+                let local_registry = LocalRegistry::new(LocalRegistryConfig::new(
                     uzu_backend_identifier.clone(),
                     uzu_backend_version.clone(),
                     local_path,
@@ -182,6 +177,14 @@ impl Engine {
         }
 
         Ok(engine)
+    }
+
+    pub fn toolchain_version() -> String {
+        uzu_engine::TOOLCHAIN_VERSION.to_string()
+    }
+
+    pub fn version() -> String {
+        uzu_engine::VERSION.to_string()
     }
 }
 
@@ -366,13 +369,24 @@ impl Engine {
         &self,
         identifier: String,
     ) -> Result<Option<Model>, EngineError> {
-        if let Some(model) = self.model_by_identifier(identifier.clone()).await? {
+        let registered = self.registry.lock().await.model(&identifier).await?;
+        if registered.is_some() && Path::new(&identifier).is_dir() {
+            return Err(RegistryError::UnableToGetModels {
+                message: format!(
+                    "Ambiguous model reference `{identifier}`: matches both a registered model and a directory"
+                ),
+            }
+            .into());
+        }
+        let by_path = self.model_by_path(identifier.clone()).await?;
+        if let Some(model) = unique_model(&identifier, registered.into_iter().chain(by_path))? {
             return Ok(Some(model));
         }
-        if let Some(model) = self.model_by_repo_id(identifier.clone()).await? {
-            return Ok(Some(model));
-        }
-        self.model_by_path(identifier).await
+
+        let models = self.models().await?;
+        let mut system = System::new();
+        system.refresh_memory();
+        Ok(shorthand::resolve_model_shorthand(&models, &identifier, system.total_memory())?.cloned())
     }
 
     #[bindings::export(Method)]
@@ -397,10 +411,20 @@ impl Engine {
         path: String,
     ) -> Result<Option<Model>, EngineError> {
         let models = self.models().await?;
+        let mut matches = Vec::new();
         for model in models {
             if self.model_path(&model).await.is_some_and(|model_path| model_path == path) {
-                return Ok(Some(model));
+                matches.push(model);
             }
+        }
+        if let Some(model) = unique_model(&path, matches.into_iter())? {
+            return Ok(Some(model));
+        }
+        if Path::new(&path).is_dir() {
+            let backend = UzuLlmBackend::new();
+            return LocalRegistry::model_at_path(Path::new(&path), backend.identifier(), backend.version())
+                .map(Some)
+                .map_err(EngineError::from);
         }
         Ok(None)
     }

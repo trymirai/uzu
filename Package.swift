@@ -17,8 +17,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "uzu",
-            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.5.26.zip",
-            checksum: "a492f1fcc504c6920812b446cc22793b3e308159b7d74bad99a5bd76bd235ff2"
+            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.5.30.zip",
+            checksum: "bef25197b385ab7e898bdfcdc1ec75eb629c6eaae4ec09f4791d87ecd773e20c"
         ),
         .target(
             name: "Uzu",
@@ -26,16 +26,17 @@ let package = Package(
             path: "crates/legacy/uzu/bindings/swift/Sources/Uzu",
             linkerSettings: [
                 .linkedLibrary("c++"),
-                .linkedFramework("SystemConfiguration"),
+                .linkedLibrary("compression"),
+                .linkedFramework("SystemConfiguration", .when(platforms: [.macOS])),
                 .linkedFramework("Metal"),
-                .linkedFramework("MetalPerformanceShadersGraph"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
+                .linkedFramework("AVFAudio", .when(platforms: [.iOS])),
             ]
         ),
         .target(
             name: "UzuMetalIOSimulatorStubs",
-            path: "Sources/UzuMetalIOSimulatorStubs",
+            path: "crates/legacy/uzu/bindings/swift/Sources/UzuMetalIOSimulatorStubs",
             publicHeadersPath: "include"
         ),
         .executableTarget(

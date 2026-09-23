@@ -112,7 +112,7 @@ fn radix_top_k_small_matches_cpu() {
 
 #[cfg(backend = "metal")]
 #[uzu_test]
-#[ignore = "benchmark"]
+#[ignore]
 fn benchmark_radix_top_k_small() {
     const ROWS: usize = 15;
     const SAMPLES: usize = 50;

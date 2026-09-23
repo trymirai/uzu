@@ -426,9 +426,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.17.1"
+version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4342d8937fc7e5dd9b1c60292261c0670c882a2cd1719cfc11b1af41731e32ad"
+checksum = "b281d307588d634de920874890732659e2e7672f72b5e10e81badc1a8a83621e"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -436,9 +436,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.42.0"
+version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d9ceb1da931507a12f4fccea479dccd00da1943e1b4ae72d8e502d707361444"
+checksum = "9bff6c3b54fad79a2e60b8102caf565819711497c1f5f092f49508e2f5c31b27"
 dependencies = [
  "cc",
  "cmake",
@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "backend-remote"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "async-openai",
  "futures",
@@ -511,7 +511,7 @@ checksum = "383d29d513d8764dcdc42ea295d979eb99c3c9f00607b3692cf68a431f7dca72"
 
 [[package]]
 name = "bindings"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -521,7 +521,7 @@ dependencies = [
 
 [[package]]
 name = "bindings-types"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "inventory",
  "napi",
@@ -919,7 +919,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "anyhow",
  "chrono",
@@ -948,6 +948,7 @@ dependencies = [
  "tokio-stream",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
+ "tracing-subscriber",
  "unicode-segmentation",
  "unicode-width 0.2.2",
  "uuid",
@@ -957,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "cli-tools"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "anyhow",
  "clap",
@@ -1763,7 +1764,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download-manager"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1886,6 +1887,12 @@ name = "esaxx-rs"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d817e038c30374a4bcb22f94d0a8a0e216958d4c3dcde369b1439fec4bdda6e6"
+
+[[package]]
+name = "escape8259"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5692dd7b5a1978a5aeb0ce83b7655c58ca8efdcb79d21036ea249da95afec2c6"
 
 [[package]]
 name = "etcetera"
@@ -2420,12 +2427,10 @@ dependencies = [
 
 [[package]]
 name = "hanashi"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
- "fancy-regex 0.17.0",
  "indexmap 2.14.0",
  "libc",
- "llm_json",
  "minijinja",
  "minijinja-contrib",
  "openai-harmony",
@@ -2436,6 +2441,7 @@ dependencies = [
  "thiserror 2.0.18",
  "token-stream-parser",
  "tokenizers",
+ "tracing",
 ]
 
 [[package]]
@@ -3137,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "json-transform"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3191,7 +3197,7 @@ dependencies = [
 
 [[package]]
 name = "kanka"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "libc",
  "obfstr",
@@ -3211,7 +3217,7 @@ dependencies = [
 
 [[package]]
 name = "keisoku"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "bitflags 2.13.0",
  "kanka",
@@ -3236,7 +3242,7 @@ dependencies = [
 
 [[package]]
 name = "kiban"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3310,6 +3316,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c943259e342f1e06ff2da7a83eabdfe7f92ce10262688dbf1895ff0b3e6e4652"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "libtest-mimic"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14e6ba06f0ade6e504aff834d7c34298e5155c6baca353cc6a4aaff2f9fd7f33"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap",
+ "escape8259",
 ]
 
 [[package]]
@@ -3618,7 +3636,7 @@ dependencies = [
 
 [[package]]
 name = "mock-registry"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.0",
@@ -3703,7 +3721,7 @@ dependencies = [
 
 [[package]]
 name = "nagare"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "async-trait",
  "bindings",
@@ -3743,7 +3761,7 @@ dependencies = [
 
 [[package]]
 name = "nagare-macros"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -5628,9 +5646,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.41"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b92b125634d9b795e7beca796cc790df15a7fb38323bf3196fda83292d06b1f"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
@@ -5692,9 +5710,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -6092,7 +6110,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shoji"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "bindings",
  "bindings-types",
@@ -6776,7 +6794,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "token-stream-parser"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "indexmap 2.14.0",
  "json-transform",
@@ -7527,7 +7545,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -7573,6 +7591,7 @@ dependencies = [
  "shoji",
  "sysinfo",
  "tempfile",
+ "test-tag",
  "thiserror 2.0.18",
  "tokenizers",
  "tokio",
@@ -7591,7 +7610,7 @@ dependencies = [
 
 [[package]]
 name = "uzu-engine"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7608,6 +7627,7 @@ dependencies = [
  "itertools 0.14.0",
  "keisoku",
  "libm",
+ "libtest-mimic",
  "monostate",
  "mtl-rs",
  "ndarray",
@@ -7640,12 +7660,11 @@ dependencies = [
  "walkdir",
  "xgrammar-rs",
  "xxhash-rust",
- "zstd",
 ]
 
 [[package]]
 name = "uzu-engine-macros"
-version = "0.5.26"
+version = "0.5.30"
 dependencies = [
  "quote",
  "syn 2.0.118",
@@ -8511,34 +8530,6 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
-
-[[package]]
-name = "zstd"
-version = "0.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
-dependencies = [
- "zstd-safe",
-]
-
-[[package]]
-name = "zstd-safe"
-version = "7.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f49c4d5f0abb602a93fb8736af2a4f4dd9512e36f7f570d66e65ff867ed3b9d"
-dependencies = [
- "zstd-sys",
-]
-
-[[package]]
-name = "zstd-sys"
-version = "2.0.16+zstd.1.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
-dependencies = [
- "cc",
- "pkg-config",
-]
 
 [[package]]
 name = "zune-core"

@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    pin::Pin,
-    str::FromStr,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, pin::Pin, str::FromStr, sync::Arc};
 
 use rocket::{
     Request, State,
@@ -21,7 +15,7 @@ use rocket::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use uuid::Uuid;
+use tracing::Instrument;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStream, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
     types::{
@@ -38,9 +32,10 @@ use crate::{
         ServerState,
         chat_tool_calls::{
             OaiTool, OaiToolCall, ToolCallStreamer, ToolParameterTypes, backfill_tool_result_names, choose_tools,
-            coerce_tool_call, insert_tools_message, oai_tool_call, parse_scalar_text, reply_tool_calls, to_tool_call,
-            tool_call_result_block, withhold_stream_text,
+            coerce_tool_call, insert_tools_message, oai_tool_call, parse_parameter_text, reply_tool_calls,
+            to_tool_call, tool_call_result_block, withhold_stream_text,
         },
+        request_info::RequestInfo,
         request_log::RequestLog,
     },
 };
@@ -242,11 +237,7 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
     }
 }
 
-fn now_unix() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
-}
-
-fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
+pub(crate) fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
     messages
         .iter()
         .map(|message| {
@@ -647,9 +638,10 @@ fn chunk_json(
     serde_json::to_string(&chunk).unwrap_or_default()
 }
 
-/// Schema coercion retypes scalar arguments on the wire, so a client may echo
-/// `5` where the session stored `"5"` (or a JSON string where the session
-/// stored the value it spells); such pairs must still count as the same prefix.
+/// Schema coercion retypes arguments on the wire, so a client may echo `5` or
+/// `[1,2]` where the session stored the text `"5"` or `"[1, 2]"` (or a JSON
+/// string where the session stored the value it spells); such pairs must still
+/// count as the same prefix.
 fn tool_call_arguments_equivalent(
     stored: &str,
     echoed: &str,
@@ -676,7 +668,7 @@ fn json_values_equivalent(
                     .all(|(key, value)| right.get(key).is_some_and(|other| json_values_equivalent(value, other)))
         },
         (Value::String(text), other) | (other, Value::String(text)) if !other.is_string() => {
-            parse_scalar_text(text).is_some_and(|parsed| parsed == *other)
+            parse_parameter_text(text).is_some_and(|parsed| parsed == *other)
         },
         (left, right) => left == right,
     }
@@ -1150,9 +1142,12 @@ async fn run_stream(
 
 #[allow(private_interfaces)]
 #[post("/chat/completions", format = "json", data = "<body>")]
+#[tracing::instrument(skip_all, parent = &request_info.span)]
 pub async fn handle_chat_completions(
     body: Data<'_>,
     state: &State<ServerState>,
+    request_info: &RequestInfo,
+    content_type: &ContentType,
 ) -> ChatCompletionResult {
     let body = match body.open(ByteUnit::Mebibyte(64)).into_string().await {
         Ok(body) if body.is_complete() => body.into_inner(),
@@ -1163,10 +1158,17 @@ pub async fn handle_chat_completions(
             return invalid_request_response("body", "invalid_body", format!("failed to read request body: {error}"));
         },
     };
+    let log_body = if content_type.is_json() {
+        serde_json::from_str::<serde_json::Value>(&body).map(|value| value.to_string()).unwrap_or_else(|_| body.clone())
+    } else {
+        body.clone()
+    };
+    tracing::debug!("--> {} {} body={}", request_info.method, request_info.uri, log_body);
+
     let request = match serde_json::from_str::<ChatCompletionRequest>(&body) {
         Ok(request) => request,
         Err(error) => {
-            RequestLog::rejected(&format!("failed to parse chat completion request: {error}"));
+            tracing::info!("rejected: {error}");
             return invalid_request_response(
                 "body",
                 "invalid_request",
@@ -1174,12 +1176,11 @@ pub async fn handle_chat_completions(
             );
         },
     };
-    let id = format!("chatcmpl-{}", Uuid::new_v4().simple());
-    let created = now_unix();
+
     let model = state.model_name.clone();
+    let created = request_info.created_at;
     let is_stream = request.stream.unwrap_or(false);
     let log = RequestLog::start(
-        &id,
         is_stream,
         request.messages.len(),
         request.tools.as_ref().map_or(0, Vec::len),
@@ -1208,42 +1209,38 @@ pub async fn handle_chat_completions(
         },
     };
 
-    // The parser cannot type scalar arguments; the declared schemas restore
-    // the types when replies cross back into the OpenAI wire format.
+    // The parser keeps every argument the text the model wrote; the declared
+    // schemas restore the types when replies cross back into the OpenAI wire format.
     let parameter_types = ToolParameterTypes::from_tools(request.tools.as_deref());
 
+    let id = request_info.id.as_str().to_owned();
     if is_stream {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Event>();
-        rocket::tokio::spawn(run_stream(
-            session,
-            messages,
-            config,
-            id,
-            model,
-            created,
-            state.prefix_cache,
-            parameter_types,
-            sender,
-            log,
-        ));
+        tokio::spawn(
+            run_stream(session, messages, config, id, model, created, state.prefix_cache, parameter_types, sender, log)
+                .in_current_span(),
+        );
         let body: Pin<Box<dyn Stream<Item = Event> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
         ChatCompletionResult::Stream(EventStream::from(body))
     } else {
         let session = Arc::clone(&state.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Vec<u8>>();
-        rocket::tokio::spawn(run_blocking(
-            session,
-            messages,
-            config,
-            id,
-            model,
-            created,
-            state.prefix_cache,
-            parameter_types,
-            sender,
-            log,
-        ));
+        tokio::spawn(
+            run_blocking(
+                session,
+                messages,
+                config,
+                id,
+                model,
+                created,
+                state.prefix_cache,
+                parameter_types,
+                sender,
+                log,
+            )
+            .in_current_span(),
+        );
         let body: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
         // Hand the body to Rocket immediately so it can write keepalives and
         // drop the receiver when the client disconnects. Any backend error

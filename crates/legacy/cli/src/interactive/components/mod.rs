@@ -16,7 +16,7 @@ mod thinking_support_ext;
 pub use application::{Application, ApplicationState, ModelState};
 pub use command_input::CommandInput;
 pub use gradient::Gradient;
-pub use history_cell::{HistoryCell, HistoryCellType, TranscriptItem};
+pub use history_cell::{HistoryCell, HistoryCellType, TranscriptItem, chat_transcript_component};
 pub use loading::Loading;
 pub use logo::Logo;
 pub use preferences::Preferences;

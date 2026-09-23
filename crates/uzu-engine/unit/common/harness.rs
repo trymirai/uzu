@@ -1,11 +1,17 @@
-pub(crate) extern crate test;
+use libtest_mimic::{Arguments, Trial};
 
 const METAL_CAPTURE_ENABLED: &str = "METAL_CAPTURE_ENABLED";
 const UZU_CAPTURE_BENCH: &str = "UZU_CAPTURE_BENCH";
 
-pub(crate) enum UzuTest {
+pub enum UzuTest {
     Bench(&'static dyn Fn()),
-    Test(&'static test::TestDescAndFn),
+    Test(&'static UzuTestCase),
+}
+
+pub struct UzuTestCase {
+    pub name: &'static str,
+    pub ignore: bool,
+    pub run: fn(),
 }
 
 #[cfg(target_os = "ios")]
@@ -18,7 +24,7 @@ fn ios_set_current_dir() {
     }
 }
 
-pub(crate) fn uzu_harness(tests: &[&UzuTest]) {
+pub fn uzu_harness(tests: &[&UzuTest]) {
     let args = std::env::args().collect::<Vec<String>>();
     let benchmarks = args.contains(&"--bench".to_string());
     if benchmarks {
@@ -34,14 +40,20 @@ pub(crate) fn uzu_harness(tests: &[&UzuTest]) {
             .collect::<Vec<_>>();
         criterion::runner(bench_tests.as_slice());
     } else {
-        let default_tests: Vec<&test::TestDescAndFn> = tests
+        let trials: Vec<Trial> = tests
             .iter()
-            .filter_map(|test| match test {
+            .filter_map(|test| match **test {
                 UzuTest::Bench(_) => None,
-                UzuTest::Test(test) => Some(*test),
+                UzuTest::Test(case) => Some(
+                    Trial::test(case.name, move || {
+                        (case.run)();
+                        Ok(())
+                    })
+                    .with_ignored_flag(case.ignore),
+                ),
             })
-            .collect::<Vec<_>>();
-        test::test_main_static(&default_tests)
+            .collect();
+        libtest_mimic::run(&Arguments::from_args(), trials).exit();
     }
 }
 

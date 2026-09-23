@@ -9,15 +9,24 @@ mod server;
 mod storage;
 
 #[derive(Parser)]
-#[command(name = "cli", bin_name = "cli")]
+#[command(name = "cli", bin_name = "cli", version, args_conflicts_with_subcommands = true)]
 struct Cli {
-    /// Identifier of the model to start with (e.g. "alibaba:qwen3.5:0.8b:mirai:mirai-m:4").
+    /// Model identifier, repository ID, or local model directory.
     #[arg(long, value_name = "MODEL")]
     model: Option<String>,
+    /// Send one chat message, stream the reply, and exit.
+    #[arg(short, long, value_name = "TEXT", requires = "model")]
+    message: Option<String>,
     /// Reasoning effort: disabled, default, low, medium or high.
     /// Overrides the saved preference for this run only; never persisted.
     #[arg(long, value_name = "EFFORT")]
     reasoning_effort: Option<ReasoningEffort>,
+    /// Sampling seed for chat sessions.
+    #[arg(long, value_name = "SEED", allow_negative_numbers = true)]
+    seed: Option<i64>,
+    /// Disable built-in tools in interactive chat sessions.
+    #[arg(long)]
+    no_tools: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -36,6 +45,7 @@ enum Commands {
     },
     ListModels,
     Server {
+        /// Model identifier, repository ID, or local model directory.
         #[arg(long, value_name = "MODEL")]
         model: String,
         #[arg(long, default_value_t = 8000)]
@@ -48,6 +58,9 @@ enum Commands {
         /// Reset the session on every request, disabling prefix cache reuse.
         #[arg(long = "no-prefix-cache", action = clap::ArgAction::SetTrue)]
         no_prefix_cache: bool,
+        /// Print verbose information into the file log
+        #[arg(long)]
+        verbose_file_log: bool,
     },
     Storage {
         #[arg(long, value_enum, default_value_t = storage::DownloadManagerCliType::default())]
@@ -75,11 +88,23 @@ async fn main() -> Result<()> {
             host,
             prefix_cache,
             no_prefix_cache,
-        }) => server::run_server(model, host, port, prefix_cache || !no_prefix_cache).await?,
+            verbose_file_log,
+        }) => server::run_server(model, host, port, prefix_cache || !no_prefix_cache, verbose_file_log).await?,
         Some(Commands::Storage {
             download_manager,
         }) => storage::run(download_manager).await?,
-        None => interactive::run_interactive(cli.model, cli.reasoning_effort).await?,
+        None => match cli.message {
+            Some(message) => {
+                interactive::run_non_interactive(
+                    cli.model.expect("--message requires --model"),
+                    message,
+                    cli.reasoning_effort,
+                    cli.seed,
+                )
+                .await?;
+            },
+            None => interactive::run_interactive(cli.model, cli.reasoning_effort, cli.seed, cli.no_tools).await?,
+        },
     }
 
     Ok(())
