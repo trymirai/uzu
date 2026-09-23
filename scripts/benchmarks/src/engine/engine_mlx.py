@@ -93,7 +93,7 @@ def run(
     if isinstance(config.prompt, str):
         prompt = config.prompt
     else:
-        messages = [{"role": message.role.value, "content": message.message} for message in config.prompt]
+        messages = [message.model_dump(mode="json") for message in config.prompt]
         prompt = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
 
     # sampling
