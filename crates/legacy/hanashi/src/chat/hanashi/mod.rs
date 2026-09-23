@@ -1,4 +1,5 @@
 pub mod config;
+mod continuation;
 mod error;
 pub mod messages;
 mod ordering;
@@ -100,9 +101,7 @@ impl EncodingTrait for HanashiEncodingImpl {
         }
         self.state.messages.extend(messages.clone());
 
-        let bos_token = self.config.tokens.bos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
-        let eos_token = self.config.tokens.eos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
-        let text = self.renderer.render(&messages, true, bos_token, eos_token, None)?;
+        let text = self.render_messages(&messages, true)?;
         let text_encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
         tracing::debug!("Encoded tokens: {:?}", text_encoding.get_ids());
         for token_id in text_encoding.get_ids() {
@@ -110,6 +109,7 @@ impl EncodingTrait for HanashiEncodingImpl {
             self.push_token_to_parser(&token, true)?;
             self.state.tokens.push(token);
         }
+
         if self.state.messages.last().is_some_and(|message| message.role != (ChatRole::Tool {})) {
             // Parse from the generation prompt's open frame. Re-parsing history
             // can reinterpret literal markup as tool results or merge assistant
@@ -136,7 +136,8 @@ impl EncodingTrait for HanashiEncodingImpl {
             self.validator.validate_next(&ChatRole::Assistant {})?;
             self.state.messages.push(ChatMessage::assistant());
         }
-        // Restore tool context after any parser reset, before extracting the reply.
+
+        // Set tool context after any parser reset, before extraction uses it.
         let tools_declared = self
             .state
             .messages
@@ -145,8 +146,10 @@ impl EncodingTrait for HanashiEncodingImpl {
         if tools_declared {
             self.parser.set_variable("tools", serde_json::Value::Bool(true));
         }
+
         self.parser.flush_extraction();
         self.update_messages_from_parser_state()?;
+
         Ok(())
     }
 
@@ -174,6 +177,16 @@ impl EncodingTrait for HanashiEncodingImpl {
 }
 
 impl HanashiEncodingImpl {
+    fn render_messages(
+        &mut self,
+        messages: &[ChatMessage],
+        add_preamble: bool,
+    ) -> Result<String, Error> {
+        let bos_token = self.config.tokens.bos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
+        let eos_token = self.config.tokens.eos_token_id.and_then(|token_id| self.resolve_token(token_id, false).ok());
+        Ok(self.renderer.render(messages, add_preamble, bos_token, eos_token, None)?)
+    }
+
     pub fn tokenize(
         &self,
         text: &str,
