@@ -54,8 +54,12 @@ KERNEL(AttentionGemm)(
     const device TrieNode* trie OPTIONAL(is_trie),
     const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
     const device T* sinks OPTIONAL(has_sinks),
+    device float* partials OPTIONAL(is_split),
+    device float* sums OPTIONAL(is_split),
+    device float* maxs OPTIONAL(is_split),
     const constant uint& num_heads,
     const constant uint& suffix_length,
+    const constant uint& splits,
     const bool align_q SPECIALIZE,
     const bool align_k SPECIALIZE,
     const bool is_kv_cache_ring SPECIALIZE,
@@ -63,16 +67,21 @@ KERNEL(AttentionGemm)(
     const bool is_trie SPECIALIZE,
     const bool is_sliding_window SPECIALIZE,
     const bool has_sinks SPECIALIZE,
+    const bool is_split SPECIALIZE,
     threadgroup T q_smem[AttentionGemmLayout<T, BK, BD, USE_MXU>::Q_SMEM_SIZE],
     threadgroup T kv_smem[AttentionGemmLayout<T, BK, BD, USE_MXU>::KV_SMEM_SIZE],
     const ThreadContext thread_context,
     const uint q_tile_idx GROUPS(suffix_length.div_ceil(if USE_MXU { 64 } else { 32 })),
     const uint head_idx GROUPS(num_heads),
-    const uint batch_idx GROUPS(1),
+    const uint split_idx GROUPS(splits),
     const uint lid THREADS(128)
 ) {
   using AccumType = float;
   using Layout = AttentionGemmLayout<T, BK, BD, USE_MXU>;
+  // One sequence per dispatch. With is_split, the third grid axis splits the key blocks into `splits` ranges, and each
+  // threadgroup writes its unnormalized output with the row max and sum for AttentionTwoPass2 to combine: few query
+  // tiles over a long context (speculative verification) otherwise leave most of the GPU idle.
+  constexpr uint batch_idx = 0;
   using Ops = typename Layout::Ops;
   constexpr short FRAGMENT_ROWS = Layout::FRAGMENT_ROWS;
   constexpr int BLOCK_QUERY_ROWS = Layout::BLOCK_QUERY_ROWS;
@@ -195,7 +204,13 @@ KERNEL(AttentionGemm)(
       typename Ops::BlockStorage>;
   threadgroup T* kv_shared = kv_smem;
 
-  for (int kb = 0; kb < kb_lim; kb++) {
+  int kb_begin = 0;
+  if (is_split) {
+    const int per_split = (kb_lim + int(splits) - 1) / int(splits);
+    kb_begin = min(kb_lim, int(split_idx) * per_split);
+    kb_lim = min(kb_lim, kb_begin + per_split);
+  }
+  for (int kb = kb_begin; kb < kb_lim; kb++) {
     const bool tail_k = (!align_k && kb == int(params.nk_aligned));
     const short valid_k_rows = tail_k ? short(params.k_rem) : short(BK);
     const device T* k_block = k + int64_t(kb) * int(BK) * key_source_stride;
@@ -314,6 +329,31 @@ KERNEL(AttentionGemm)(
       value_source.load(value_chunk, c * OUTPUT_CHUNK_COLS);
       fragment_mma(output_chunks[c], score_fragment, value_chunk);
     }
+  }
+
+  if (is_split) {
+    // Layout of AttentionTwoPass2: partials [query][head][split][BD], sums and maxs [query][head][split]; the max goes
+    // from this kernel's log2 domain to the natural one that pass 2 exponentiates in.
+    const int query_row = int(q_tile_idx) * BLOCK_QUERY_ROWS + simdgroup_row_base;
+    if (ragged_q && int(params.q_rem) <= int(simdgroup_row_base)) {
+      return;
+    }
+    const short valid_rows = ragged_q ? short(params.q_rem - simdgroup_row_base) : short(FRAGMENT_ROWS * QUERY_ROW_FRAGMENTS);
+    const int row_stride = int(num_heads * splits);
+    const int64_t first = int64_t(query_row) * row_stride + head_idx * splits + split_idx;
+    METAL_PRAGMA_UNROLL
+    for (int c = 0; c < OUTPUT_CHUNKS; ++c) {
+      output_chunks[c].store_safe(
+          thread_context.simd_lane_id, partials + first * BD + c * OUTPUT_CHUNK_COLS, row_stride * int(BD),
+          short2(OUTPUT_CHUNK_COLS, valid_rows)
+      );
+    }
+    OutputFragment row_values = output_chunks[0];
+    row_values.map_rows(max_score, [](AccumType, AccumType m) { return m * M_LN2_F; });
+    row_values.store_safe(thread_context.simd_lane_id, maxs + first, row_stride, short2(1, valid_rows));
+    row_values.map_rows(sum_score, [](AccumType, AccumType l) { return l; });
+    row_values.store_safe(thread_context.simd_lane_id, sums + first, row_stride, short2(1, valid_rows));
+    return;
   }
 
   AccumType inv_sum[ROWS_PER_LANE];

@@ -4,15 +4,29 @@ use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
 use crate::{
     backends::{
-        common::{Allocation, BufferArg, Encoder, gpu_types::AttnParams, kernel::attention_gemm::AttentionGemmCore},
-        metal::{Metal, context::MetalContext, error::MetalError, kernel::AttentionGemmMetalKernel},
+        common::{
+            Allocation, BufferArg, Encoder,
+            gpu_types::AttnParams,
+            kernel::{AttentionTwoPass2Kernel, attention_gemm::AttentionGemmCore},
+        },
+        metal::{
+            Metal,
+            context::MetalContext,
+            error::MetalError,
+            kernel::{AttentionGemmMetalKernel, AttentionTwoPass2MetalKernel},
+        },
     },
     data_type::DataType,
     encodable_block::mixer::attention::core::{AttentionCoreEncodeArguments, AttentionCoreNewArguments},
 };
 
+/// Split the keys of a long context this many ways when there are few query tiles, then combine the parts with
+/// AttentionTwoPass2 (whose block count is also 32).
+const SPLITS: u32 = 32;
+
 pub struct AttentionGemmMetalCore {
     kernels: Mutex<HashMap<AttentionGemmKey, AttentionGemmMetalKernel>>,
+    merge: AttentionTwoPass2MetalKernel,
     head_dim: u32,
     num_groups: u32,
     num_q_heads: u32,
@@ -32,6 +46,7 @@ struct AttentionGemmKey {
     use_mxu: bool,
     align_q: bool,
     align_k: bool,
+    split: bool,
 }
 
 fn retile_params(
@@ -73,6 +88,7 @@ impl AttentionGemmMetalCore {
                 self.is_trie,
                 self.is_sliding_window,
                 self.has_sinks,
+                key.split,
             )?;
             entry.insert(kernel);
         }
@@ -89,7 +105,7 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
     }
 
     fn new(
-        _context: &MetalContext,
+        context: &MetalContext,
         arguments: &AttentionCoreNewArguments,
     ) -> Result<Self, MetalError> {
         let simd_bk = if arguments.head_dim < 128 {
@@ -100,6 +116,7 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
 
         Ok(Self {
             kernels: Mutex::new(HashMap::new()),
+            merge: AttentionTwoPass2MetalKernel::new(context, arguments.data_type, arguments.head_dim)?,
             head_dim: arguments.head_dim,
             num_groups: arguments.num_groups,
             num_q_heads: arguments.num_q_heads,
@@ -152,12 +169,22 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
             bq,
             bk,
         );
+        // Speculative verification: a handful of query tiles against a long context. Without the split each
+        // (tile, head) threadgroup walks every key alone.
+        let split = !self.has_sinks && arguments.suffix_length <= 64 && params.k_len > 1024;
         let key = AttentionGemmKey {
             use_mxu,
             align_q: params.q_rem == 0,
             align_k: params.k_rem == 0,
+            split,
         };
         let kernel = self.get_or_create(encoder.context(), key)?;
+        let parts = [arguments.suffix_length, self.num_q_heads, SPLITS];
+        let mut partials = split
+            .then(|| encoder.allocate_scratch_for_shape(&[parts[0], parts[1], parts[2], self.head_dim], DataType::F32))
+            .transpose()?;
+        let mut sums = split.then(|| encoder.allocate_scratch_for_shape(&parts, DataType::F32)).transpose()?;
+        let mut maxs = split.then(|| encoder.allocate_scratch_for_shape(&parts, DataType::F32)).transpose()?;
 
         kernel.encode(
             arguments.queries,
@@ -169,10 +196,17 @@ impl AttentionGemmCore<Metal> for AttentionGemmMetalCore {
             arguments.trie,
             self.sliding_window_size,
             arguments.sinks,
+            partials.as_mut(),
+            sums.as_mut(),
+            maxs.as_mut(),
             self.num_q_heads,
             arguments.suffix_length,
+            if split { SPLITS } else { 1 },
             encoder,
         );
+        if let (Some(partials), Some(sums), Some(maxs)) = (&partials, &sums, &maxs) {
+            self.merge.encode(partials, sums, maxs, &mut output, self.num_q_heads, arguments.suffix_length, encoder);
+        }
         Ok(output)
     }
 }

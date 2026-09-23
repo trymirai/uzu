@@ -282,3 +282,14 @@ fn test_prefill_mxu() {
     let (input, expected) = get_test_data::<bf16>(8, 2, 100, 96, 128, true);
     test_internal(&input, &expected);
 }
+
+#[uzu_test]
+fn test_long_context_split() {
+    // Over 1024 keys with a short suffix: the keys are split across threadgroups and combined by the two-pass merge.
+    let (input, expected) = get_test_data::<f16>(24, 4, 2064, 16, 256, true);
+    test_internal(&input, &expected);
+    let (input, expected) = get_test_data::<bf16>(24, 4, 2064, 16, 256, true);
+    test_internal(&input, &expected);
+    let (input, expected) = get_test_data::<f32>(4, 4, 1100, 5, 64, true);
+    test_internal(&input, &expected);
+}
