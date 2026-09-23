@@ -239,7 +239,7 @@ std::vector<BenchResponse> run(
     }
 
     // get prompt tokens
-    const std::vector<llama_token> tokens = get_tokens(request.prompt_text, request.prompt_chat, model);
+    const std::vector<llama_token> tokens = get_tokens(request, model);
     const size_t max_tokens = request.max_tokens.value_or(256);
     const size_t max_context = std::numeric_limits<llama_pos>::max();
     if (tokens.empty() || tokens.size() > max_context || max_tokens > max_context - tokens.size()) {

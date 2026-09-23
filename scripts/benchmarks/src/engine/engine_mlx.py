@@ -94,7 +94,12 @@ def run(
         prompt = config.prompt
     else:
         messages = [message.model_dump(mode="json") for message in config.prompt]
-        prompt = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            **config.model_dump(mode="json", include={"tools", "tool_choice"}),
+        )
 
     # sampling
     sampler: Callable | None = None
