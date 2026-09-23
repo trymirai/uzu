@@ -1,5 +1,5 @@
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -42,10 +42,13 @@ impl BenchRunner {
         mut progress: Option<F>,
     ) -> Result<Vec<BenchResult>> {
         let messages = self.task.to_chat_messages()?;
-        let model_path_string = self.model_path.trim_end_matches('/').to_string();
-        let model_path = PathBuf::from(&model_path_string);
-        let parent_path = model_path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-        let engine_config = EngineConfig::default().with_local_path(parent_path);
+        let model_path = Path::new(&self.model_path)
+            .canonicalize()
+            .with_context(|| format!("Can not open model path: {}", self.model_path))?;
+        let model_path_string = model_path.to_string_lossy().into_owned();
+        // Path lookup already handles unregistered directories. Registering the
+        // parent would duplicate models that are also in the download cache.
+        let engine_config = EngineConfig::default();
         let engine = Engine::new(engine_config).await.with_context(|| "Can not create engine".to_string())?;
 
         let mut model = engine
