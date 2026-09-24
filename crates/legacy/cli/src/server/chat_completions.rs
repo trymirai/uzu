@@ -136,6 +136,8 @@ struct StreamDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
     role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OaiToolCall>>,
@@ -703,6 +705,7 @@ async fn run_stream(
 
     let stream = session.reply_with_stream(messages, config).await;
     let mut emitted = 0usize;
+    let mut emitted_reasoning = 0usize;
     let mut emitted_tool_calls = 0usize;
     let mut final_text = String::new();
     let mut finish_reason = "stop".to_string();
@@ -717,6 +720,29 @@ async fn run_stream(
                 let Some(reply) = replies.last() else {
                     continue;
                 };
+                // vLLM-style reasoning channel: thinking streams as it is generated, ahead of the answer
+                let reasoning = reply.message.reasoning().unwrap_or_default();
+                let start = (emitted_reasoning..=reasoning.len())
+                    .find(|&index| reasoning.is_char_boundary(index))
+                    .unwrap_or(reasoning.len());
+                if reasoning.len() > start {
+                    let delta = reasoning[start..].to_string();
+                    emitted_reasoning = reasoning.len();
+                    let sent = sender.send(Event::data(chunk_json(
+                        &id,
+                        &model,
+                        created,
+                        StreamDelta {
+                            reasoning_content: Some(delta),
+                            ..StreamDelta::default()
+                        },
+                        None,
+                        None,
+                    )));
+                    if sent.is_err() {
+                        return;
+                    }
+                }
                 let text = reply.message.text().unwrap_or_default();
                 let start = (emitted..=text.len()).find(|&index| text.is_char_boundary(index)).unwrap_or(text.len());
                 if !withhold_stream_text(has_tools, &text) && text.len() > start {
