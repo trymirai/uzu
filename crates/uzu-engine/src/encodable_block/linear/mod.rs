@@ -1,11 +1,15 @@
+use thiserror::Error;
+
+mod input_rht;
 mod matmul;
 mod qlora_wrapper;
 mod rht_wrapper;
+mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
-use thiserror::Error;
+pub use untied_readout::UntiedReadout;
 
 use crate::{
     backends::common::{
@@ -13,7 +17,7 @@ use crate::{
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationQuantization,
-            matmul::{ActivationFormat, Int8CodeLayout},
+            matmul::{ActivationFormat, Int8CodeLayout, MatmulA},
         },
     },
     config::weight_matrix::{
@@ -68,8 +72,37 @@ pub enum LinearInput<B: Backend> {
     },
 }
 
+pub struct Gather<'a, B: Backend> {
+    pub indices: &'a Allocation<B>,
+    pub output_dim: u32,
+}
+
+impl<B: Backend> LinearInput<B> {
+    fn as_matmul_a(&self) -> MatmulA<'_, B> {
+        match self {
+            Self::FullPrecision(values) => MatmulA::FullPrecision {
+                values,
+                offset: 0,
+            },
+            Self::Int8Symmetric {
+                values,
+                scales,
+                group_sums,
+                scale_group_size,
+                code_layout,
+            } => MatmulA::Int8Symmetric {
+                values,
+                scales,
+                group_sums: group_sums.as_ref(),
+                scale_group_size: *scale_group_size,
+                code_layout: *code_layout,
+            },
+        }
+    }
+}
+
 pub struct LinearInputPreparation<B: Backend> {
-    pub input_factors: Allocation<B>,
+    pub rht_signs: Allocation<B>,
     pub activation_quantization: Option<ActivationQuantization>,
 }
 
@@ -206,7 +239,7 @@ impl<B: Backend> dyn Linear<B> {
             false,
             parameter_tree,
         )? {
-            return Ok((linear.0, linear.1.map(|preparation| preparation.input_factors)));
+            return Ok((linear.0, linear.1.map(|preparation| preparation.rht_signs)));
         }
 
         let linear = Self::new_mixed_precision(

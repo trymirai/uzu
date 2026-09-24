@@ -1,21 +1,15 @@
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
-    backends::common::{
-        Allocation, Backend, Encoder,
-        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        kernel::{
-            ActivationQuantization, ActivationTransform,
-            matmul::{ActivationFormat, MatmulA},
-        },
-    },
+    backends::common::{Allocation, Backend, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
     config::weight_matrix::{
         AnyWeightMatrixSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
-    encodable_block::linear::{Linear, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError},
+    encodable_block::linear::{
+        Linear, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
+    },
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -31,20 +25,9 @@ pub enum RHTLinearWrapperError<B: Backend> {
     UnsupportedConfiguration(String),
 }
 
-enum InputRht<B: Backend> {
-    FullPrecision(ActivationTransform<B>),
-    A8 {
-        fallback: ActivationTransform<B>,
-        a8: ActivationTransform<B>,
-        quantization: ActivationQuantization,
-    },
-}
-
 pub struct RHTLinearWrapper<B: Backend> {
     input_rht: InputRht<B>,
-    input_factors: Allocation<B>,
     inner_linear: LinearMatmul<B>,
-    input_dimension: u32,
 }
 
 fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
@@ -76,7 +59,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{spec:?}")));
         }
 
-        let (input_factors, mut inner_linear) = Self::load_inner_with_output_rht(
+        let (rht_signs, mut inner_linear) = Self::load_inner_with_output_rht(
             context,
             input_dimension,
             output_dimension,
@@ -89,11 +72,12 @@ impl<B: Backend> RHTLinearWrapper<B> {
         let activation_quantization = inner_linear.prepare_a8(context);
         Self::build_self_contained(
             context,
-            input_dimension,
             input_data_type,
-            input_factors,
+            LinearInputPreparation {
+                rht_signs,
+                activation_quantization,
+            },
             inner_linear,
-            activation_quantization,
         )
     }
 
@@ -114,7 +98,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             return Ok(None);
         }
 
-        let (input_factors, mut inner_linear) = Self::load_inner_with_output_rht(
+        let (rht_signs, mut inner_linear) = Self::load_inner_with_output_rht(
             context,
             input_dimension,
             output_dimension,
@@ -124,27 +108,15 @@ impl<B: Backend> RHTLinearWrapper<B> {
             weights_data_type,
             parameter_tree,
         )?;
-        let activation_quantization = inner_linear.prepare_a8(context);
-        if let Some(activation_quantization) = activation_quantization
-            && !allow_prequantized_activation
-        {
-            let wrapper = Self::build_self_contained(
-                context,
-                input_dimension,
-                input_data_type,
-                input_factors,
-                inner_linear,
-                Some(activation_quantization),
-            )?;
+        let input_preparation = LinearInputPreparation {
+            rht_signs,
+            activation_quantization: inner_linear.prepare_a8(context),
+        };
+        if input_preparation.activation_quantization.is_some() && !allow_prequantized_activation {
+            let wrapper = Self::build_self_contained(context, input_data_type, input_preparation, inner_linear)?;
             Ok(Some((Box::new(wrapper), None)))
         } else {
-            Ok(Some((
-                Box::new(inner_linear),
-                Some(LinearInputPreparation {
-                    input_factors,
-                    activation_quantization,
-                }),
-            )))
+            Ok(Some((Box::new(inner_linear), Some(input_preparation))))
         }
     }
 
@@ -161,7 +133,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         let weights_tree = parameter_tree.subtree("weights");
         let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        let input_factors = weights_tree
+        let rht_signs = weights_tree
             .leaf("incoherence_signs.input_signs")?
             .validate(&[input_dimension], DataType::I32)?
             .read_allocation()?;
@@ -181,37 +153,21 @@ impl<B: Backend> RHTLinearWrapper<B> {
             has_biases.then_some(parameter_tree),
             Some(output_factors),
         )?;
-        Ok((input_factors, inner_linear))
+        Ok((rht_signs, inner_linear))
     }
 
     fn build_self_contained(
         context: &B::Context,
-        input_dimension: u32,
         input_data_type: DataType,
-        input_factors: Allocation<B>,
+        input_preparation: LinearInputPreparation<B>,
         inner_linear: LinearMatmul<B>,
-        activation_quantization: Option<ActivationQuantization>,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
-        let input_transform = ActivationTransform::input_rht(context, input_data_type, true)
+        let input_rht = InputRht::new(context, input_data_type, input_preparation, true)
             .map_err(RHTLinearWrapperError::BackendError)?;
-        let input_rht = match activation_quantization {
-            Some(quantization) => {
-                let quantized = ActivationTransform::quantize(context, input_data_type, quantization)
-                    .map_err(RHTLinearWrapperError::BackendError)?;
-                InputRht::A8 {
-                    fallback: input_transform,
-                    a8: quantized,
-                    quantization,
-                }
-            },
-            None => InputRht::FullPrecision(input_transform),
-        };
 
         Ok(Self {
             input_rht,
-            input_factors,
             inner_linear,
-            input_dimension,
         })
     }
 }
@@ -242,61 +198,9 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 return output;
             },
         };
-
-        if let InputRht::A8 {
-            a8: quantized,
-            quantization,
-            ..
-        } = &self.input_rht
-            && self.inner_linear.select_activation_format(batch_dim, encoder.context()) == ActivationFormat::Int8
-        {
-            let scale_groups_per_row = self.input_dimension.div_ceil(quantization.scale_group_size());
-            let mut values =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dimension], DataType::I8))?;
-            let mut scales =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, scale_groups_per_row], DataType::F32))?;
-            let mut group_sums = quantization
-                .sum_group_size()
-                .map(|group_size| self.input_dimension.div_ceil(group_size))
-                .map(|groups| encoder.allocate_scratch(size_for_shape(&[batch_dim, groups], DataType::I32)))
-                .transpose()?;
-
-            quantized.encode_quantize(
-                &input,
-                &mut values,
-                &mut scales,
-                group_sums.as_mut(),
-                &self.input_factors,
-                batch_dim,
-                self.input_dimension,
-                encoder,
-            );
-            let output = self.inner_linear.encode_with_a(
-                MatmulA::Int8Symmetric {
-                    values: &values,
-                    scales: &scales,
-                    group_sums: group_sums.as_ref(),
-                    scale_group_size: quantization.scale_group_size(),
-                    code_layout: quantization.code_layout(),
-                },
-                batch_dim,
-                encoder,
-            )?;
-
-            encoder.pop_debug_group();
-            return Ok(output);
-        }
-
-        let mut input = input;
-        let full_precision = match &self.input_rht {
-            InputRht::FullPrecision(transform)
-            | InputRht::A8 {
-                fallback: transform,
-                ..
-            } => transform,
-        };
-        full_precision.encode_fp_in_place(&mut input, &self.input_factors, batch_dim, self.input_dimension, encoder);
-        let output = self.inner_linear.encode(input, batch_dim, encoder)?;
+        let format = self.inner_linear.select_activation_format(batch_dim, encoder.context());
+        let input = self.input_rht.prepare_in_place(input, batch_dim, format, encoder)?;
+        let output = self.inner_linear.encode_with_a(input.as_matmul_a(), batch_dim, None, encoder)?;
 
         encoder.pop_debug_group();
         Ok(output)

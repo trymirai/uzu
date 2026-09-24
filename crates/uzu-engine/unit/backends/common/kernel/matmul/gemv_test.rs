@@ -287,13 +287,18 @@ fn gemv_gather() {
         fp_gather_case::<f32>(soft_cap, 0.01);
     }
     // Quantized (bf16, per bits/method) — inline, since it isn't type-generic.
-    for (bits, method) in [
-        (4, QuantizationMethod::ScaleBias),
-        (4, QuantizationMethod::ScaleZeroPoint),
-        (4, QuantizationMethod::ScaleSymmetric),
-        (8, QuantizationMethod::ScaleZeroPoint),
+    for (bits, method, signed_codes) in [
+        (4, QuantizationMethod::ScaleBias, false),
+        (4, QuantizationMethod::ScaleZeroPoint, false),
+        (4, QuantizationMethod::ScaleZeroPoint, true),
+        (4, QuantizationMethod::ScaleSymmetric, false),
+        (8, QuantizationMethod::ScaleZeroPoint, false),
     ] {
-        quant_gather_case(QuantInput::new(8, 128, 64, 32, bits, method, 0x5EED), 0.05);
+        let mut input = QuantInput::new(8, 128, 64, 32, bits, method, 0x5EED);
+        if signed_codes {
+            input = input.with_signed_weight_codes();
+        }
+        quant_gather_case(input, 0.05);
     }
     quant_gather_case(
         QuantInput::new(8, 96, 66, 32, 4, QuantizationMethod::ScaleZeroPoint, 0x5EED).with_group_output(),

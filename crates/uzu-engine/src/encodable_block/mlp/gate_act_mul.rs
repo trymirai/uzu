@@ -31,7 +31,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         input_preparation: Option<LinearInputPreparation<B>>,
     ) -> Result<Self, B::Error> {
         let (hadamard_factors, activation_quantization) = input_preparation
-            .map_or((None, None), |preparation| (Some(preparation.input_factors), preparation.activation_quantization));
+            .map_or((None, None), |preparation| (Some(preparation.rht_signs), preparation.activation_quantization));
         let settings = GatedActMulSettings {
             activation_alpha: activation.custom_alpha(),
             gate_clipping,

@@ -114,6 +114,18 @@ impl<B: Backend> ActivationTransform<B> {
         Self::new(context, data_type, op, false, Some(quantization))
     }
 
+    pub fn scale_group_size(&self) -> u32 {
+        self.quantization.expect("quantized activation transform required").scale_group_size()
+    }
+
+    pub fn sum_group_size(&self) -> Option<u32> {
+        self.quantization.expect("quantized activation transform required").sum_group_size()
+    }
+
+    pub fn code_layout(&self) -> Int8CodeLayout {
+        self.quantization.expect("quantized activation transform required").code_layout()
+    }
+
     /// `input` and `output` must be distinct buffers.
     pub fn encode_fp(
         &self,
