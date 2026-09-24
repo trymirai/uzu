@@ -18,5 +18,6 @@ pub struct ChatCodecConfig {
     pub bos_token: Option<String>,
     pub end_of_thinking_tag: Option<String>,
     pub default_system_prompt: Option<String>,
+    #[serde(default)] // TODO: ??? inconsistency in converted models in registry workaround, remove when resolved
     pub reasoning_config: Option<ReasoningConfig>,
 }
