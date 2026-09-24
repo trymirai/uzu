@@ -119,7 +119,7 @@ impl<B: Backend> LinearMatmul<B> {
         Some(plan)
     }
 
-    pub(super) fn encode_a(
+    pub(super) fn encode_with_a(
         &self,
         a: MatmulA<'_, B>,
         batch_dim: u32,
@@ -192,7 +192,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
     ) -> Result<Allocation<B>, B::Error> {
         encoder.push_debug_group("matmul");
 
-        let output = self.encode_a(
+        let output = self.encode_with_a(
             MatmulA::FullPrecision {
                 values: &input,
                 offset: 0,
@@ -213,7 +213,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        self.encode_a(input.as_matmul_a(), batch_dim, None, encoder)
+        self.encode_with_a(input.as_matmul_a(), batch_dim, None, encoder)
     }
 
     fn select_activation_format(
