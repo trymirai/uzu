@@ -316,6 +316,9 @@ impl ChatSession {
                         interrupted = true;
                         break;
                     }
+                    // The backend generates inside `next()` without ever returning Pending, so without a yield the
+                    // receiver (woken into this worker's LIFO slot) only runs after the whole reply is done.
+                    tokio::task::yield_now().await;
                     if finish_reason.is_some() {
                         break;
                     }
