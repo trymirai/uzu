@@ -8,7 +8,7 @@ use crate::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::MatmulShape,
+            kernel::matmul::{MatmulB, MatmulShape},
         },
         metal::{context::MetalContext, error::MetalError, kernel::GemvMetalKernel},
     },
@@ -187,7 +187,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use crate::backends::{
     common::{
         BufferArg, Encoder,
-        kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError},
+        kernel::matmul::{MatmulA, MatmulArguments, MatmulError},
     },
     metal::Metal,
 };
@@ -262,81 +262,51 @@ impl GemvKernel {
             });
         };
 
-        // Preserve each weight buffer's residency range.
-        let (scales, zero_points, biases) = match &b {
+        let (weights, scales, biases, zero_points, scale_strides, zero_point_strides) = match b {
             MatmulB::FullPrecision {
-                ..
-            } => (None, None, None),
-            MatmulB::ScaleBiasDequant {
-                scales,
-                biases,
-                ..
-            } => (Some(*scales), None, Some(*biases)),
-            MatmulB::ScaleZeroPointDequant {
-                scales,
-                zero_points,
-                ..
-            } => (Some(*scales), Some(*zero_points), None),
-            MatmulB::ScaleSymmetricDequant {
-                scales,
-                ..
-            } => (Some(*scales), None, None),
+                b: weights,
+            } => {
+                let (buffer, offset, _) = weights.into_parts();
+                ((buffer, offset), None, None, None, Default::default(), Default::default())
+            },
+            MatmulB::Quantized(quantized) => {
+                let (buffer, offset, _) = quantized.codes.into_parts();
+                let zero_points = quantized.zero_points();
+                (
+                    (buffer, offset),
+                    Some(quantized.scales),
+                    quantized.biases(),
+                    zero_points,
+                    quantized.params.scale_strides(),
+                    quantized.zero_point_strides(),
+                )
+            },
         };
-
         let output_group_count = n.div_ceil(specialization.output_row_tile());
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;
-        match b {
-            MatmulB::FullPrecision {
-                b: weights,
-            } => pipeline.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                &mut *d,
-                output_bias,
-                rht_factors,
-                gather_indices,
-                k,
-                n,
-                m,
-                ab_scale,
-                output_group_count,
-                soft_cap,
-                encoder,
-            ),
-            MatmulB::ScaleBiasDequant {
-                b: weights,
-                ..
-            }
-            | MatmulB::ScaleZeroPointDequant {
-                b: weights,
-                ..
-            }
-            | MatmulB::ScaleSymmetricDequant {
-                b: weights,
-                ..
-            } => pipeline.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                &mut *d,
-                output_bias,
-                rht_factors,
-                gather_indices,
-                k,
-                n,
-                m,
-                ab_scale,
-                output_group_count,
-                soft_cap,
-                encoder,
-            ),
-        }
+        pipeline.encode(
+            weights,
+            scales,
+            zero_points,
+            biases,
+            (a, a_offset),
+            &mut *d,
+            output_bias,
+            rht_factors,
+            gather_indices,
+            k,
+            n,
+            m,
+            ab_scale,
+            output_group_count,
+            scale_strides.output_stride,
+            scale_strides.group_stride,
+            zero_point_strides.output_stride,
+            zero_point_strides.group_stride,
+            soft_cap,
+            encoder,
+        );
 
         Ok(())
     }

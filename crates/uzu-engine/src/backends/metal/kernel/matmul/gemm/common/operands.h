@@ -3,7 +3,6 @@
 #include <metal_stdlib>
 
 #include "../../../generated/gemm.h"
-#include "../../common/mxu_fragment/integer_formats.h"
 
 using namespace metal;
 
@@ -11,11 +10,12 @@ namespace uzu {
 namespace gemm {
 namespace operands {
 
-template <GemmAPrologueKind PROLOGUE, typename Element, ushort ACTIVATION_GROUP_SIZE>
+template <GemmAPrologueKind PROLOGUE, typename Element, ushort ACTIVATION_GROUP_SIZE, bool CODES_GROUPED_BY_NIBBLE>
 struct LeftOperand {
   UZU_CONST bool QUANTIZED = PROLOGUE == GemmAPrologueKind::Int8Symmetric;
   UZU_CONST ushort BITS = QUANTIZED ? 8 : 0;
   UZU_CONST ushort GROUP_SIZE = QUANTIZED ? ACTIVATION_GROUP_SIZE : 0;
+  UZU_CONST bool GROUPED_BY_NIBBLE = CODES_GROUPED_BY_NIBBLE;
   static_assert(
       QUANTIZED == (ACTIVATION_GROUP_SIZE != 0),
       "activation group size must be present exactly for int8 activations"
@@ -25,8 +25,6 @@ struct LeftOperand {
   using ScaleElement = float;
   using DenseElement = Element;
   using ElementType = metal::conditional_t<QUANTIZED, CodeElement, DenseElement>;
-  using Format = uzu::matmul::IntegerFormat<8, uzu::matmul::Signedness::Signed>;
-
   template <ushort BLOCK_K>
   static constexpr ushort outer_block_k() {
     if constexpr (QUANTIZED) {
@@ -46,6 +44,10 @@ struct RightOperand {
   UZU_CONST GemmBPrologueKind SCHEME = PROLOGUE;
   UZU_CONST bool NEEDS_CORRECTION = QUANTIZED && PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
 
+  UZU_CONST ushort CODE_ORIGIN = (!QUANTIZED || (BITS_ == 4 && PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant))
+                                     ? 0
+                                     : ushort(1u << (BITS - 1));
+
   static_assert(!QUANTIZED || BITS_ == 4 || BITS_ == 8, "quantized integer weights must use 4 or 8 bits");
   static_assert(!QUANTIZED || PROLOGUE != GemmBPrologueKind::FullPrecision, "quantized weights need a scheme");
 
@@ -53,11 +55,6 @@ struct RightOperand {
   using ScaleElement = Element;
   using DenseElement = Element;
   using ElementType = DenseElement;
-  using Format = metal::conditional_t<
-      QUANTIZED,
-      uzu::matmul::IntegerFormat<BITS_, uzu::matmul::Signedness::Signed>,
-      uzu::matmul::IntegerFormat<8, uzu::matmul::Signedness::Signed>>;
-
   template <ushort BLOCK_K>
   static constexpr ushort outer_block_k() {
     if constexpr (QUANTIZED) {
@@ -142,8 +139,8 @@ METAL_FUNC RightStorage<Right> pack_right(
   }
 }
 
-template <GemmAPrologueKind PROLOGUE, typename Element, ushort ACTIVATION_GROUP_SIZE>
-using LeftOperandFor = LeftOperand<PROLOGUE, Element, ACTIVATION_GROUP_SIZE>;
+template <GemmAPrologueKind PROLOGUE, typename Element, ushort ACTIVATION_GROUP_SIZE, bool CODES_GROUPED_BY_NIBBLE>
+using LeftOperandFor = LeftOperand<PROLOGUE, Element, ACTIVATION_GROUP_SIZE, CODES_GROUPED_BY_NIBBLE>;
 
 template <GemmBPrologueKind PROLOGUE, ushort BITS, ushort GROUP_SIZE, typename Element>
 using RightOperandFor = RightOperand<PROLOGUE, BITS, GROUP_SIZE, Element>;

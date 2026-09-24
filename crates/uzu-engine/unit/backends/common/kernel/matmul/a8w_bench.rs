@@ -12,9 +12,12 @@ use crate::{
             Allocation, Backend, Encoder,
             gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
             kernel::{
-                ActivationTransform, Kernels,
+                ActivationQuantization, ActivationTransform, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{
+                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParams,
+                    QuantParamsLayout, QuantizedB, QuantizedCorrection,
+                },
             },
         },
         metal::{GemmEngine, Metal, MetalContext},
@@ -22,7 +25,7 @@ use crate::{
     data_type::DataType,
     tests::{
         helpers::{alloc_allocation, alloc_allocation_with_data},
-        matmul::{QuantInput, iter_encode_loop_named, qwen3_layer_shapes},
+        matmul::{QuantInput, iter_encode_loop_named, qwen3_layer_shapes, transpose_metadata},
         util::{shared_metal_context, type_short_name},
     },
 };
@@ -48,8 +51,10 @@ impl BenchPath {
 
 struct BenchmarkData {
     unsigned_weights: Allocation<Metal>,
-    signed_weights: Allocation<Metal>,
+    a8_weights: Allocation<Metal>,
     weight_scales: Allocation<Metal>,
+    /// The `[G, N]` scale plane the A8 MXU route reads.
+    group_major_weight_scales: Allocation<Metal>,
     activations: Allocation<Metal>,
     rht_factors: Allocation<Metal>,
     a_working: Allocation<Metal>,
@@ -72,12 +77,15 @@ impl BenchmarkData {
         group_size: u32,
         seed: u64,
     ) -> Self {
-        let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed)
-            .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, None);
+        let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, QuantizationMethod::ScaleSymmetric, seed);
+        let input = input.with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, None);
 
         let unsigned_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
-        let signed_weights = alloc_allocation_with_data::<Metal, u32>(context, &input.weights_for_upload());
+        let a8_weights = input.weights_for_upload();
+        let a8_weights = alloc_allocation_with_data::<Metal, u32>(context, &a8_weights);
         let weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
+        let mut group_major_weight_scales = alloc_allocation_with_data::<Metal, bf16>(context, &input.scales);
+        transpose_metadata(group_major_weight_scales.as_slice_mut(), n, k.div_ceil(group_size), 16);
         let activations = alloc_allocation_with_data::<Metal, bf16>(context, &input.x);
         let rht: Vec<i32> = (0..k)
             .map(|index| {
@@ -93,8 +101,9 @@ impl BenchmarkData {
         let groups = k / group_size;
         Self {
             unsigned_weights,
-            signed_weights,
+            a8_weights,
             weight_scales,
+            group_major_weight_scales,
             activations,
             rht_factors,
             a_working: alloc_allocation::<Metal, bf16>(context, (m * k) as usize),
@@ -121,13 +130,15 @@ impl BenchmarkData {
                 values: &self.a_working,
                 offset: 0,
             },
-            b: MatmulB::ScaleSymmetricDequant {
-                b: &self.unsigned_weights,
+            b: MatmulB::Quantized(QuantizedB {
+                codes: &self.unsigned_weights,
                 scales: &self.weight_scales,
+                correction: QuantizedCorrection::Symmetric,
+                params: QuantParams::new(QuantParamsLayout::OutputGroup, self.n, self.k.div_ceil(self.group_size)),
                 mode: self.mode,
                 group_size: self.group_size,
                 signed_codes: false,
-            },
+            }),
             b_leading_dimension: None,
             b_transpose: true,
             d: output,
@@ -167,15 +178,19 @@ fn encode_step(
                     values: &data.a_int8,
                     scales: &data.a_scales,
                     group_sums: None,
-                    group_size: 128,
+                    scale_group_size: 128,
+                    code_layout: Int8CodeLayout::for_right_bits(DataType::from(data.mode).size_in_bits() as u32)
+                        .expect("W4/W8 benchmark"),
                 },
-                b: MatmulB::ScaleSymmetricDequant {
-                    b: &data.signed_weights,
-                    scales: &data.weight_scales,
+                b: MatmulB::Quantized(QuantizedB {
+                    codes: &data.a8_weights,
+                    scales: &data.group_major_weight_scales,
+                    correction: QuantizedCorrection::Symmetric,
+                    params: QuantParams::new(QuantParamsLayout::GroupOutput, data.n, data.k.div_ceil(data.group_size)),
                     mode: data.mode,
                     group_size: data.group_size,
-                    signed_codes: true,
-                },
+                    signed_codes: !matches!(data.mode, QuantizationMode::U4),
+                }),
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: output,
@@ -252,10 +267,21 @@ fn bench_a8w(c: &mut Criterion) {
     if !context.supports_mxu {
         return;
     }
-    let prepare = ActivationTransform::<Metal>::quantize(&context, DataType::BF16, 128, None).expect("prepare kernel");
     let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, true).expect("hadamard kernel");
 
     for bits in [8u32, 4u32] {
+        let prepare = ActivationTransform::<Metal>::quantize(
+            &context,
+            DataType::BF16,
+            ActivationQuantization::new(
+                128,
+                128,
+                false,
+                Int8CodeLayout::for_right_bits(bits).expect("W4/W8 benchmark"),
+            )
+            .expect("supported activation quantization"),
+        )
+        .expect("prepare kernel");
         bench_bits(c, &context, &prepare, &hadamard, bits);
     }
 }

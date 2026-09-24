@@ -5,7 +5,10 @@ use uzu_engine_macros::kernel;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE, activation_silu_alpha},
+        common::{
+            gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE, activation_silu_alpha},
+            kernel::matmul::Int8CodeLayout,
+        },
         cpu::kernel::activation_transform::{hadamard_transform, quantize_transformed_row},
     },
 };
@@ -16,10 +19,12 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
     act_operand: *const T,
     #[optional(!interleaved)] value_operand: Option<*const T>,
     #[optional(ops == GatedActMulOp::FullPrecision)] fp_out: Option<*mut T>,
-    #[optional(ops == GatedActMulOp::Quantize || ops == GatedActMulOp::QuantizeWithGroupSums)] q_out: Option<*mut i8>,
-    #[optional(ops == GatedActMulOp::Quantize || ops == GatedActMulOp::QuantizeWithGroupSums)] scales_out: Option<
-        *mut f32,
-    >,
+    #[optional(ops == GatedActMulOp::Quantize
+        || ops == GatedActMulOp::QuantizeWithGroupSums)]
+    q_out: Option<*mut i8>,
+    #[optional(ops == GatedActMulOp::Quantize
+        || ops == GatedActMulOp::QuantizeWithGroupSums)]
+    scales_out: Option<*mut f32>,
     #[optional(ops == GatedActMulOp::QuantizeWithGroupSums)] group_sums_out: Option<*mut i32>,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
     gated_dim: u32,
@@ -33,6 +38,7 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
     #[optional(clip_value)] value_clip_min: Option<f32>,
     #[optional(clip_value)] value_clip_max: Option<f32>,
     #[specialize] ops: GatedActMulOp,
+    #[specialize] grouped_by_weight_nibble: bool,
     #[specialize] interleaved: bool,
     #[specialize] use_hadamard: bool,
     #[specialize] activation_scale_group_size: u32,
@@ -133,6 +139,7 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
                     values,
                     scales,
                     group_sums,
+                    Int8CodeLayout::from_grouped_by_nibble(grouped_by_weight_nibble),
                 );
             } else {
                 let output = fp_out.expect("FP gate activation requires fp_out");

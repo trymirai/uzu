@@ -1,9 +1,12 @@
 use crate::{
     backends::common::{
         Backend, BufferArg, Encoder, Kernels,
-        kernel::matmul::{
-            arguments::MatmulArguments,
-            routing::{A8ActivationPlan, ActivationFormat, MatmulShape},
+        kernel::{
+            ActivationQuantization,
+            matmul::{
+                arguments::MatmulArguments,
+                routing::{ActivationFormat, MatmulShape},
+            },
         },
     },
     data_type::DataType,
@@ -25,11 +28,11 @@ pub trait MatmulKernel: Sized + Send + Sync {
         encoder: &mut Encoder<Self::Backend>,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 
-    fn a8_activation_plan(
+    fn select_activation_quantization(
         &self,
         _candidate: &MatmulShape,
         _context: &<Self::Backend as Backend>::Context,
-    ) -> Option<A8ActivationPlan> {
+    ) -> Option<ActivationQuantization> {
         None
     }
 

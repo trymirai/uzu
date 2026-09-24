@@ -64,7 +64,7 @@ impl<B: Backend> UntiedReadout<B> {
             .read_allocation()?;
         let preparation = LinearInputPreparation {
             rht_signs,
-            a8_plan: linear.prepare_a8(context),
+            activation_quantization: linear.prepare_a8(context),
         };
         let input_rht = InputRht::new(context, data_type, preparation, /* in_place */ false)
             .map_err(LinearMatmulError::BackendError)?;
