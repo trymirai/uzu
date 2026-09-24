@@ -22,7 +22,6 @@ public:
 
   METAL_FUNC void load(
       uint group_index,
-      uint group_count,
       const thread uint (&weight_rows)[Tile::ROWS_PER_LANE],
       const thread GemvOperands<AT, BT, DT>& ops,
       const thread GemvParams& params
@@ -31,12 +30,16 @@ public:
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
       const uint row = weight_rows[R];
-      scale[R] = float(ops.scales[row * group_count + group_index]);
+      const uint scale_index = row * params.scale_output_stride + group_index * params.scale_group_stride;
+      scale[R] = float(ops.scales[scale_index]);
       if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
         constexpr uint ZERO_POINTS_PER_BYTE = QuantChunk<BITS>::BITS_PER_BYTE / BITS;
-        const uint byte_index = group_index / ZERO_POINTS_PER_BYTE;
-        const uint8_t packed = ops.zero_points[row * zero_point_row_stride<BITS>(group_count) + byte_index];
-        origin[R] = QuantChunk<BITS>::MANTISSA_BASE + float(decode_zero_point<BITS>(packed, group_index));
+        const uint zero_point_index =
+            row * params.zero_point_output_stride + group_index * params.zero_point_group_stride;
+        const uint zero_point_row = zero_point_index / ZERO_POINTS_PER_BYTE;
+        const uint packed_index = zero_point_index % ZERO_POINTS_PER_BYTE;
+        origin[R] = QuantChunk<BITS>::MANTISSA_BASE +
+                    float(decode_zero_point<BITS>(ops.zero_points + zero_point_row, packed_index));
         bias[R] = 0.0f;
       } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant) {
         origin[R] = QuantChunk<BITS>::MANTISSA_BASE + float(symmetric_zero_point<BITS>());
@@ -44,7 +47,7 @@ public:
       } else {
         static_assert(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant);
         origin[R] = QuantChunk<BITS>::MANTISSA_BASE;
-        bias[R] = float(ops.biases[row * group_count + group_index]);
+        bias[R] = float(ops.biases[scale_index]);
       }
     });
   }

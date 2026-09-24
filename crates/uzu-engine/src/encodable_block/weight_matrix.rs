@@ -4,7 +4,7 @@ use crate::{
     backends::common::{
         Allocation, Backend,
         gpu_types::{QuantizationMethod, QuantizationMode},
-        kernel::matmul::MatmulB,
+        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
@@ -79,15 +79,10 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
     })
 }
 
-enum QuantizedCorrection<B: Backend> {
-    Symmetric,
-    Biases(Allocation<B>),
-    ZeroPoints(Allocation<B>),
-}
-
 struct Quantized<B: Backend> {
     scales: Allocation<B>,
-    correction: QuantizedCorrection<B>,
+    correction: QuantizedCorrection<Allocation<B>>,
+    params: QuantParams,
     info: QuantizationInfo,
     signed_codes: bool,
 }
@@ -108,21 +103,26 @@ impl<B: Backend> WeightMatrix<B> {
     ) -> Result<Self, WeightMatrixError<B>> {
         let ParsedWeightSpec {
             layout,
-            quantization,
+            quantization: quantization_info,
         } = parse_spec(&spec)?;
         if layout != required_layout {
             return Err(WeightMatrixError::UnsupportedConfiguration(format!(
-                "expected {required_layout:?} layout, got {layout:?}"
+                "expected {required_layout:?} weight layout, got {layout:?}"
             )));
         }
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
-        let Some(info) = quantization else {
+        let Some(info) = quantization_info else {
             let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_allocation()?;
             return Ok(Self {
                 values,
                 quantized: None,
             });
+        };
+        // Parameters swap the weight axes once K is grouped: output-input stores [G, N], input-output stores [N, G].
+        let params_layout = match layout {
+            Layout::OutputInput => QuantParamsLayout::GroupOutput,
+            Layout::InputOutput => QuantParamsLayout::OutputGroup,
         };
 
         let group_size = info.group_size;
@@ -137,16 +137,21 @@ impl<B: Backend> WeightMatrix<B> {
 
         let values =
             tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_allocation()?;
-        let scales = tree.leaf("scales")?.validate(&[rows, groups], data_type)?.read_allocation()?;
+        let params = QuantParams::new(params_layout, rows, groups);
+        let load_plane =
+            |name: &str, shape: [u32; 2], storage_type: DataType| -> Result<Allocation<B>, WeightMatrixError<B>> {
+                Ok(tree.leaf(name)?.validate(&shape, storage_type)?.read_allocation()?)
+            };
+        let scales = load_plane("scales", params.scale_shape(), data_type)?;
         let correction = match info.method {
-            QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(
-                tree.leaf("biases")?.validate(&[rows, groups], data_type)?.read_allocation()?,
-            ),
-            QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(
-                tree.leaf("zero_points")?
-                    .validate(&[rows, groups.div_ceil(packing_divisor)], storage_data_type)?
-                    .read_allocation()?,
-            ),
+            QuantizationMethod::ScaleBias => {
+                QuantizedCorrection::Biases(load_plane("biases", params.scale_shape(), data_type)?)
+            },
+            QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(load_plane(
+                "zero_points",
+                params.zero_point_shape(info.mode),
+                info.mode.storage_type(),
+            )?),
             QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
         };
 
@@ -155,6 +160,7 @@ impl<B: Backend> WeightMatrix<B> {
             quantized: Some(Quantized {
                 scales,
                 correction,
+                params,
                 info,
                 signed_codes: false,
             }),
@@ -174,17 +180,11 @@ impl<B: Backend> WeightMatrix<B> {
     }
 
     pub fn zero_points(&self) -> Option<&Allocation<B>> {
-        match &self.quantized.as_ref()?.correction {
-            QuantizedCorrection::ZeroPoints(zero_points) => Some(zero_points),
-            QuantizedCorrection::Biases(_) | QuantizedCorrection::Symmetric => None,
-        }
+        self.quantized.as_ref()?.correction.zero_points()
     }
 
     pub fn biases(&self) -> Option<&Allocation<B>> {
-        match &self.quantized.as_ref()?.correction {
-            QuantizedCorrection::Biases(biases) => Some(biases),
-            QuantizedCorrection::ZeroPoints(_) | QuantizedCorrection::Symmetric => None,
-        }
+        self.quantized.as_ref()?.correction.biases()
     }
 
     pub fn matmul_b(&self) -> MatmulB<'_, B> {
@@ -196,48 +196,49 @@ impl<B: Backend> WeightMatrix<B> {
         let mode = quantized.info.mode;
         let group_size = quantized.info.group_size;
         let signed_codes = quantized.signed_codes;
-        match &quantized.correction {
-            QuantizedCorrection::Biases(biases) => MatmulB::ScaleBiasDequant {
-                b: &self.values,
-                scales: &quantized.scales,
-                biases,
-                mode,
-                group_size,
-                signed_codes,
-            },
-            QuantizedCorrection::ZeroPoints(zero_points) => MatmulB::ScaleZeroPointDequant {
-                b: &self.values,
-                scales: &quantized.scales,
-                zero_points,
-                mode,
-                group_size,
-                signed_codes,
-            },
-            QuantizedCorrection::Symmetric => MatmulB::ScaleSymmetricDequant {
-                b: &self.values,
-                scales: &quantized.scales,
-                mode,
-                group_size,
-                signed_codes,
-            },
-        }
+        MatmulB::Quantized(QuantizedB {
+            codes: &self.values,
+            scales: &quantized.scales,
+            correction: quantized.correction.as_ref(),
+            params: quantized.params,
+            mode,
+            group_size,
+            signed_codes,
+        })
     }
 
-    pub fn make_codes_signed(&mut self) {
+    pub fn try_prepare_a8_storage(&mut self) -> bool {
         let Some(quantized) = self.quantized.as_mut() else {
-            return;
+            return false;
         };
-        if quantized.signed_codes {
-            return;
+        quantized.prepare_a8_storage(&mut self.values)
+    }
+
+    pub fn a8_signed_codes(&self) -> Option<bool> {
+        self.quantized.as_ref().map(|quantized| quantized.info.mode != QuantizationMode::U4)
+    }
+}
+
+impl<B: Backend> Quantized<B> {
+    fn prepare_a8_storage(
+        &mut self,
+        values: &mut Allocation<B>,
+    ) -> bool {
+        if self.params.layout() != QuantParamsLayout::GroupOutput {
+            return false;
         }
-        let Some(sign_flip_mask) = quantized.info.mode.weight_codes_sign_flip_mask() else {
-            return;
-        };
-        let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
-        let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(self.values.as_slice_mut());
-        words.iter_mut().for_each(|word| *word ^= broadcast_mask);
-        prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
-        quantized.signed_codes = true;
+        if self.info.mode != QuantizationMode::U4 {
+            if !self.signed_codes
+                && let Some(sign_flip_mask) = self.info.mode.weight_codes_sign_flip_mask()
+            {
+                let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
+                let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(values.as_slice_mut());
+                words.iter_mut().for_each(|word| *word ^= broadcast_mask);
+                prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
+            }
+            self.signed_codes = true;
+        }
+        true
     }
 }
 

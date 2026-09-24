@@ -15,7 +15,10 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        kernel::matmul::{A8ActivationPlan, ActivationFormat, MatmulA},
+        kernel::{
+            ActivationQuantization,
+            matmul::{ActivationFormat, Int8CodeLayout, MatmulA},
+        },
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -64,7 +67,8 @@ pub enum LinearInput<B: Backend> {
         values: Allocation<B>,
         scales: Allocation<B>,
         group_sums: Option<Allocation<B>>,
-        group_size: u32,
+        scale_group_size: u32,
+        code_layout: Int8CodeLayout,
     },
 }
 
@@ -84,12 +88,14 @@ impl<B: Backend> LinearInput<B> {
                 values,
                 scales,
                 group_sums,
-                group_size,
+                scale_group_size,
+                code_layout,
             } => MatmulA::Int8Symmetric {
                 values,
                 scales,
                 group_sums: group_sums.as_ref(),
-                group_size: *group_size,
+                scale_group_size: *scale_group_size,
+                code_layout: *code_layout,
             },
         }
     }
@@ -97,7 +103,7 @@ impl<B: Backend> LinearInput<B> {
 
 pub struct LinearInputPreparation<B: Backend> {
     pub rht_signs: Allocation<B>,
-    pub a8_plan: Option<A8ActivationPlan>,
+    pub activation_quantization: Option<ActivationQuantization>,
 }
 
 #[derive(Debug, Error)]

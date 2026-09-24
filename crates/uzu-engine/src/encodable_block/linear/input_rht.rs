@@ -25,13 +25,11 @@ impl<B: Backend> InputRht<B> {
     ) -> Result<Self, B::Error> {
         let LinearInputPreparation {
             rht_signs,
-            a8_plan,
+            activation_quantization,
         } = preparation;
         let rht = ActivationTransform::input_rht(context, data_type, in_place)?;
-        let quantizer = a8_plan
-            .map(|plan| {
-                ActivationTransform::quantize(context, data_type, plan.activation_group_size, plan.sum_group_size)
-            })
+        let quantizer = activation_quantization
+            .map(|quantization| ActivationTransform::quantize(context, data_type, quantization))
             .transpose()?;
 
         Ok(Self {
@@ -52,7 +50,7 @@ impl<B: Backend> InputRht<B> {
             && let Some(quantizer) = &self.quantizer
         {
             let input_dim = self.input_dim();
-            let groups_per_row = input_dim.div_ceil(quantizer.activation_group_size());
+            let groups_per_row = input_dim.div_ceil(quantizer.scale_group_size());
             let mut values = encoder.allocate_scratch(size_for_shape(&[batch_dim, input_dim], DataType::I8))?;
             let mut scales = encoder.allocate_scratch(size_for_shape(&[batch_dim, groups_per_row], DataType::F32))?;
             let mut group_sums = quantizer
@@ -77,7 +75,8 @@ impl<B: Backend> InputRht<B> {
                 values,
                 scales,
                 group_sums,
-                group_size: quantizer.activation_group_size(),
+                scale_group_size: quantizer.scale_group_size(),
+                code_layout: quantizer.code_layout(),
             });
         }
 

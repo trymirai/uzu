@@ -69,13 +69,13 @@ impl<B: Backend> RHTLinearWrapper<B> {
             weights_data_type,
             parameter_tree,
         )?;
-        let a8_plan = inner_linear.prepare_a8(context);
+        let activation_quantization = inner_linear.prepare_a8(context);
         Self::build_self_contained(
             context,
             input_data_type,
             LinearInputPreparation {
                 rht_signs,
-                a8_plan,
+                activation_quantization,
             },
             inner_linear,
         )
@@ -110,9 +110,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )?;
         let input_preparation = LinearInputPreparation {
             rht_signs,
-            a8_plan: inner_linear.prepare_a8(context),
+            activation_quantization: inner_linear.prepare_a8(context),
         };
-        if input_preparation.a8_plan.is_some() && !allow_prequantized_activation {
+        if input_preparation.activation_quantization.is_some() && !allow_prequantized_activation {
             let wrapper = Self::build_self_contained(context, input_data_type, input_preparation, inner_linear)?;
             Ok(Some((Box::new(wrapper), None)))
         } else {

@@ -2,7 +2,10 @@ use half::{bf16, f16};
 
 use crate::{
     backends::{
-        common::{AsBufferRangeRef, BufferArg, gpu_types::QuantizationMode, kernel::matmul::MatmulB},
+        common::{
+            AsBufferRangeRef, BufferArg,
+            kernel::matmul::{MatmulB, MatmulError, QuantParamsStrides},
+        },
         cpu::Cpu,
     },
     data_type::DataType,
@@ -18,8 +21,9 @@ pub(super) enum WeightData {
     Quantized {
         weights: SendPtr<u8>,
         scales: SendPtr<u8>,
-        zero_points: Option<SendPtr<u8>>,
+        zero_points: Option<(SendPtr<u8>, QuantParamsStrides)>,
         biases: Option<SendPtr<u8>>,
+        scale_strides: QuantParamsStrides,
         bits: usize,
         group_size: usize,
         signed_codes: bool,
@@ -33,14 +37,10 @@ impl WeightData {
         b_transpose: bool,
         k: usize,
         n: usize,
-    ) -> Self {
+    ) -> Result<Self, MatmulError<Cpu>> {
         let alloc_ptr = |a: &crate::backends::common::Allocation<Cpu>| {
             let r = a.as_buffer_range_ref();
             SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
-        };
-        let bits_of = |mode| match mode {
-            QuantizationMode::U4 => 4usize,
-            _ => 8usize,
         };
         match b {
             MatmulB::FullPrecision {
@@ -52,59 +52,22 @@ impl WeightData {
                     n
                 });
                 let (buffer, byte_off, _) = weights.into_parts();
-                WeightData::FullPrecision {
+                Ok(WeightData::FullPrecision {
                     ptr: SendPtr(unsafe { &*buffer.downcast().get() }.as_ptr().wrapping_byte_add(byte_off)),
                     leading_dimension,
                     transpose: b_transpose,
-                }
+                })
             },
-            MatmulB::ScaleBiasDequant {
-                b: weights,
-                scales,
-                biases,
-                mode,
-                group_size,
-                signed_codes,
-            } => WeightData::Quantized {
-                weights: alloc_ptr(weights),
-                scales: alloc_ptr(scales),
-                zero_points: None,
-                biases: Some(alloc_ptr(biases)),
-                bits: bits_of(mode),
-                group_size: group_size as usize,
-                signed_codes,
-            },
-            MatmulB::ScaleZeroPointDequant {
-                b: weights,
-                scales,
-                zero_points,
-                mode,
-                group_size,
-                signed_codes,
-            } => WeightData::Quantized {
-                weights: alloc_ptr(weights),
-                scales: alloc_ptr(scales),
-                zero_points: Some(alloc_ptr(zero_points)),
-                biases: None,
-                bits: bits_of(mode),
-                group_size: group_size as usize,
-                signed_codes,
-            },
-            MatmulB::ScaleSymmetricDequant {
-                b: weights,
-                scales,
-                mode,
-                group_size,
-                signed_codes,
-            } => WeightData::Quantized {
-                weights: alloc_ptr(weights),
-                scales: alloc_ptr(scales),
-                zero_points: None,
-                biases: None,
-                bits: bits_of(mode),
-                group_size: group_size as usize,
-                signed_codes,
-            },
+            MatmulB::Quantized(quantized) => Ok(WeightData::Quantized {
+                weights: alloc_ptr(quantized.codes),
+                scales: alloc_ptr(quantized.scales),
+                zero_points: quantized.zero_points().map(|values| (alloc_ptr(values), quantized.zero_point_strides())),
+                biases: quantized.biases().map(alloc_ptr),
+                scale_strides: quantized.params.scale_strides(),
+                bits: quantized.bits() as usize,
+                group_size: quantized.group_size as usize,
+                signed_codes: quantized.signed_codes,
+            }),
         }
     }
 }
