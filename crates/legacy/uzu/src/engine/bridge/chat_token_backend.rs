@@ -137,7 +137,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         let grammar = if let Some(grammar_config) = config.grammar {
             let trigger_token_sequence = grammar_trigger_token_sequence_for_prompt(
                 self.grammar_trigger_token_sequence.as_deref(),
-                input,
+                &input.tokens,
                 self.model.tokenizer(),
             );
             match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids, trigger_token_sequence) {
@@ -156,12 +156,13 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         let mut options = self.model.default_stream_options();
         options.sampling_method = get_sampling_method::<B>(&self.model, &config.sampling_policy);
+        options.snapshot_position = input.snapshot_position;
         #[cfg(feature = "capability-grammar")]
         {
             options.grammar = grammar;
         }
 
-        let stream = match self.model.stream(input, &mut state_guard, options) {
+        let stream = match self.model.stream(&input.tokens, &mut state_guard, options) {
             Ok(iter) => iter,
             Err(err) => {
                 return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
@@ -204,6 +205,17 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
 
     fn sampling_defaults(&self) -> SamplingParameters {
         self.sampling_defaults
+    }
+
+    fn rewind(
+        &self,
+        state: &mut dyn State,
+        tokens: &[u64],
+    ) -> Result<Option<usize>, BackendError> {
+        let state =
+            (state as &mut dyn Any).downcast_mut::<UzuChatTokenBackendInstanceState<B>>().unwrap().value.clone();
+        let mut state = state.lock();
+        self.model.rewind(&mut state, tokens).map_err(|err| BackendError::from(err.to_string()))
     }
 }
 

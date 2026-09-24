@@ -197,17 +197,34 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         let mut metrics = TokenStreamMetrics::default();
 
+        let prefill_range = model_state.tokens.len()..model_state.tokens.len() + input.len();
+        assert!(
+            options.snapshot_position.is_none_or(|position| prefill_range.contains(&position)),
+            "snapshot position outside the prefilled input"
+        );
+        let snapshot_position = options.snapshot_position.filter(|_| model.snapshot_supported());
+        if snapshot_position.is_some() {
+            model_state.snapshot_position = None;
+        }
+
         let decoding_state = if !input.is_empty() {
             model_state.last_output_token.take();
 
             // NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
             let max_batch_size = 1024;
-            let number_of_batches = input.len().div_ceil(max_batch_size);
+            // A batch boundary at the snapshot position, so the state can be copied there.
+            let (before_snapshot, after_snapshot) =
+                input.split_at(snapshot_position.map_or(0, |position| position - prefill_range.start));
+            let batches = before_snapshot
+                .chunks(max_batch_size)
+                .chain(after_snapshot.chunks(max_batch_size))
+                .collect::<Box<[&[u64]]>>();
+            let last_batch_start = input.len() - batches.last().unwrap().len();
 
             model_state
                 .transformer_state
                 .prepare(
-                    model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
+                    model_state.transformer_state.context_length() + last_batch_start as u32,
                     usize::min(max_batch_size, input.len()) as u32,
                     &model.engine.context,
                 )
@@ -223,14 +240,25 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             let hidden_feature_layer_indices =
                 model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
 
-            for (input_chunk, sample_last) in input
-                .chunks(max_batch_size)
+            for (input_chunk, sample_last) in batches
+                .iter()
                 .enumerate()
                 .flat_map(|(batch_idx, input_chunk)| {
-                    prefill_chunk_parts(input_chunk, batch_idx == number_of_batches - 1, split_logits_row)
+                    prefill_chunk_parts(input_chunk, batch_idx == batches.len() - 1, split_logits_row)
                 })
                 .flatten()
             {
+                if snapshot_position == Some(model_state.tokens.len()) {
+                    assert_eq!(model_state.tokens.len(), model_state.transformer_state.context_length() as usize);
+                    model_state
+                        .transformer_state
+                        .encode_snapshot(&mut encoder)
+                        .map_err(LanguageModelStreamError::Backend)?;
+                    if let Some(speculator_state) = model_state.speculator_state.as_mut() {
+                        speculator_state.encode_snapshot(&mut encoder).map_err(LanguageModelStreamError::Backend)?;
+                    }
+                }
+
                 let input_trie = TrieNode::flat(model_state.tokens.len(), input_chunk, &model_state.prng);
                 let input_flat_trie = input_trie.linearize();
 
@@ -337,6 +365,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             }
 
             let pending = Box::new([encoder.end_encoding().submit()]);
+            // Only a submitted snapshot can be returned to.
+            if snapshot_position.is_some() {
+                model_state.snapshot_position = snapshot_position;
+            }
 
             metrics.num_prefill_forward_passes += 1;
             metrics.num_tokens_prefilled += input.len();

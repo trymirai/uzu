@@ -49,6 +49,7 @@ impl KVCacheView {
     }
 }
 
+#[derive(Clone, Copy)]
 enum KVCacheState {
     Full {
         length: u32,
@@ -165,6 +166,7 @@ pub struct AttentionState<B: Backend> {
     pub element_dim: u32,
     pub data_type: DataType,
     cache: KVCacheState,
+    cache_snapshot: Option<KVCacheState>,
     pub is_sparse: bool,
     pub keys: Box<dyn Buffer<Backend = B>>,
     pub values: Box<dyn Buffer<Backend = B>>,
@@ -220,6 +222,7 @@ impl<B: Backend> AttentionState<B> {
             element_dim: element_size,
             data_type,
             cache,
+            cache_snapshot: None,
             is_sparse,
             keys,
             values,
@@ -281,6 +284,23 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         }
 
         Ok(())
+    }
+
+    fn encode_snapshot(
+        &mut self,
+        _encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        // A full cache only appends, so its length is enough to return to it.
+        assert!(matches!(self.cache, KVCacheState::Full { .. }), "ring caches cannot snapshot");
+        self.cache_snapshot = Some(self.cache);
+        Ok(())
+    }
+
+    fn encode_restore(
+        &mut self,
+        _encoder: &mut Encoder<B>,
+    ) {
+        self.cache = self.cache_snapshot.expect("restore without a snapshot");
     }
 }
 

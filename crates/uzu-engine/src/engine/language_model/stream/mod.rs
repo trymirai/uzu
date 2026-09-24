@@ -16,6 +16,8 @@ mod stream;
 
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,
+    /// Context position inside the prefilled input at which to snapshot the state, so `rewind` can return there.
+    pub snapshot_position: Option<usize>,
     #[cfg(grammar)]
     pub grammar: Option<Grammar>,
 }
@@ -43,6 +45,7 @@ impl<B: Backend> LanguageModel<B> {
     pub fn default_stream_options(&self) -> LanguageModelStreamOptions {
         LanguageModelStreamOptions {
             sampling_method: self.default_sampling_method(),
+            snapshot_position: None,
             #[cfg(grammar)]
             grammar: None,
         }

@@ -223,6 +223,11 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         true
     }
 
+    fn snapshot_supported(&self) -> bool {
+        // A ring overwrites its oldest entries, so returning to a snapshot would mean copying the whole window.
+        self.ring_capacity.is_none()
+    }
+
     fn max_context_length(&self) -> Option<u32> {
         self.max_rope_length
     }
