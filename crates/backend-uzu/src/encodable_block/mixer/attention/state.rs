@@ -3,16 +3,17 @@ use std::any::Any;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, Context, DeviceCapabilities, Encoder, Kernels, SparseBuffer,
+        Allocation, Backend, Buffer, Context, DeviceCapabilities, Encoder, Kernels, SparseBuffer,
         gpu_types::{Copy, ring::RingParams},
         kernel::KVCacheUpdateKernel,
     },
     data_type::DataType,
-    encodable_block::mixer::{MixerState, attention::Attention},
+    encodable_block::mixer::{MixerState, attention::Attention, encode_save},
 };
 
 pub(crate) const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
 
+#[derive(Clone, Copy)]
 pub enum AttentionStateType {
     Full {
         length: u32,
@@ -56,6 +57,11 @@ impl AttentionStateType {
 
 pub struct AttentionState<B: Backend> {
     pub cur_context_length: u32,
+    pub state_type_snapshot: Option<AttentionStateType>,
+    /// Sliding-window rings overwrite old entries, so a snapshot copies their keys and values. Full attention only
+    /// appends, so restoring it just shortens it.
+    pub keys_snapshot: Option<Allocation<B>>,
+    pub values_snapshot: Option<Allocation<B>>,
     pub elements_prepared: u32,
     pub element_dim: u32,
     pub data_type: DataType,
@@ -125,6 +131,9 @@ impl<B: Backend> AttentionState<B> {
 
         Ok(Self {
             cur_context_length: 0,
+            state_type_snapshot: None,
+            keys_snapshot: None,
+            values_snapshot: None,
             elements_prepared: 0,
             element_dim: element_size,
             data_type,
@@ -233,5 +242,34 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         self.cur_context_length += accepted_indices.len() as u32;
 
         Ok(())
+    }
+
+    fn encode_snapshot(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        if matches!(self.state_type, AttentionStateType::Ring { .. }) {
+            let keys = (self.keys.as_ref() as &dyn Any).downcast_ref::<B::DenseBuffer>().unwrap();
+            let values = (self.values.as_ref() as &dyn Any).downcast_ref::<B::DenseBuffer>().unwrap();
+            encode_save(keys, &mut self.keys_snapshot, encoder)?;
+            encode_save(values, &mut self.values_snapshot, encoder)?;
+        }
+        self.state_type_snapshot = Some(self.state_type);
+        Ok(())
+    }
+
+    fn encode_restore(
+        &mut self,
+        context_length: u32,
+        encoder: &mut Encoder<B>,
+    ) {
+        self.state_type = self.state_type_snapshot.unwrap();
+        if matches!(self.state_type, AttentionStateType::Ring { .. }) {
+            let keys = (self.keys.as_mut() as &mut dyn Any).downcast_mut::<B::DenseBuffer>().unwrap();
+            encoder.encode_copy(self.keys_snapshot.as_ref().unwrap(), .., keys, ..);
+            let values = (self.values.as_mut() as &mut dyn Any).downcast_mut::<B::DenseBuffer>().unwrap();
+            encoder.encode_copy(self.values_snapshot.as_ref().unwrap(), .., values, ..);
+        }
+        self.cur_context_length = context_length;
     }
 }

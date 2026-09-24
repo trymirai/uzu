@@ -35,6 +35,28 @@ impl<B: Backend> DFlashState<B> {
     pub fn context_length(&self) -> u32 {
         self.context_length
     }
+
+    pub fn encode_snapshot(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        for layer_state in &mut self.layer_states {
+            layer_state.encode_snapshot(encoder)?;
+        }
+        Ok(())
+    }
+
+    pub fn encode_restore(
+        &mut self,
+        context_length: u32,
+        encoder: &mut Encoder<B>,
+    ) {
+        assert!(context_length <= self.context_length, "restoring a snapshot ahead of the state");
+        for layer_state in &mut self.layer_states {
+            layer_state.encode_restore(context_length, encoder);
+        }
+        self.context_length = context_length;
+    }
 }
 
 pub struct DFlash<B: Backend> {

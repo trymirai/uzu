@@ -21,6 +21,7 @@ use crate::{
             Mixer, MixerState,
             attention::rope::PrecalculatedRoPE,
             delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
+            encode_save,
         },
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -50,6 +51,8 @@ pub struct DeltaNetState<B: Backend> {
     ssm_state: Allocation<B>,
     suffix_status: Option<DeltaNetSuffixStatus<B>>,
     state_advance: <B::Kernels as Kernels>::StateAdvanceKernel,
+    conv_snapshot: Option<Allocation<B>>,
+    ssm_snapshot: Option<Allocation<B>>,
 }
 
 impl<B: Backend> MixerState<B> for DeltaNetState<B> {
@@ -111,6 +114,23 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
             },
         }
         Ok(())
+    }
+
+    fn encode_snapshot(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        encode_save(&self.conv_state, &mut self.conv_snapshot, encoder)?;
+        encode_save(&self.ssm_state, &mut self.ssm_snapshot, encoder)
+    }
+
+    fn encode_restore(
+        &mut self,
+        _context_length: u32,
+        encoder: &mut Encoder<B>,
+    ) {
+        encoder.encode_copy(self.conv_snapshot.as_ref().unwrap(), .., &mut self.conv_state, ..);
+        encoder.encode_copy(self.ssm_snapshot.as_ref().unwrap(), .., &mut self.ssm_state, ..);
     }
 }
 
@@ -467,6 +487,8 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             ssm_state,
             suffix_status: None,
             state_advance,
+            conv_snapshot: None,
+            ssm_snapshot: None,
         }))
     }
 

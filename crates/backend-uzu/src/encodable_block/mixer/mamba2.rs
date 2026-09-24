@@ -15,7 +15,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
-        mixer::{Mixer, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{Mixer, MixerState, attention::rope::PrecalculatedRoPE, encode_save},
     },
     parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -27,6 +27,8 @@ pub struct Mamba2State<B: Backend> {
     conv_state: Allocation<B>,
     ssm_state: Allocation<B>,
     suffix_length: Option<u32>,
+    conv_snapshot: Option<Allocation<B>>,
+    ssm_snapshot: Option<Allocation<B>>,
 }
 
 impl<B: Backend> MixerState<B> for Mamba2State<B> {
@@ -46,6 +48,23 @@ impl<B: Backend> MixerState<B> for Mamba2State<B> {
     ) -> Result<(), <B as Backend>::Error> {
         assert!(self.suffix_length.take() == Some(*accepted_indices.last().unwrap() + 1));
         Ok(())
+    }
+
+    fn encode_snapshot(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        encode_save(&self.conv_state, &mut self.conv_snapshot, encoder)?;
+        encode_save(&self.ssm_state, &mut self.ssm_snapshot, encoder)
+    }
+
+    fn encode_restore(
+        &mut self,
+        _context_length: u32,
+        encoder: &mut Encoder<B>,
+    ) {
+        encoder.encode_copy(self.conv_snapshot.as_ref().unwrap(), .., &mut self.conv_state, ..);
+        encoder.encode_copy(self.ssm_snapshot.as_ref().unwrap(), .., &mut self.ssm_state, ..);
     }
 }
 
@@ -238,6 +257,8 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
             conv_state,
             ssm_state,
             suffix_length: None,
+            conv_snapshot: None,
+            ssm_snapshot: None,
         }))
     }
 

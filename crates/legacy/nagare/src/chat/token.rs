@@ -41,8 +41,9 @@ pub struct Session {
     instance: Arc<dyn ChatTokenBackendInstance>,
     state: Box<dyn State>,
     encoding: Encoding,
-    input_tokens: Vec<u64>,
+    input: StreamInput,
     stop_token_ids: Box<[u64]>,
+    message_start: Option<u64>,
     power_recorder: Box<dyn PowerRecorder>,
 }
 
@@ -117,12 +118,18 @@ impl Session {
             message: "stop_token_ids is None".to_string(),
         })?;
 
+        let message_start = instance.tokenizer().token_to_id("<|im_start|>").map(u64::from);
+
         Ok(Self {
             instance,
             state,
             encoding,
-            input_tokens: Vec::new(),
+            input: StreamInput {
+                tokens: Vec::new(),
+                snapshot_position: None,
+            },
             stop_token_ids,
+            message_start,
             power_recorder: <dyn PowerRecorder>::create(),
         })
     }
@@ -144,8 +151,7 @@ impl Session {
         let time_start = Instant::now();
         self.power_recorder.begin();
 
-        let curr_all_tokens = self.encoding.state().tokens.clone();
-        let new_all_tokens = match self.build_input(input) {
+        let all_tokens = match self.build_input(input) {
             Ok(input) => input,
             Err(err) => {
                 return error_stream(ChatSessionError::Backend {
@@ -154,37 +160,38 @@ impl Session {
             },
         };
 
-        // if new_all_tokens = curr_all_tokens + suffix, then just encode suffix,
-        // else reset state and encode all tokens
-        let mut reset = new_all_tokens.len() <= curr_all_tokens.len();
-        let mut first_mismatch: Option<usize> = None;
-        if !reset {
-            for i in 0..curr_all_tokens.len() {
-                if new_all_tokens[i] != curr_all_tokens[i].id as u64 {
-                    reset = true;
-                    first_mismatch = Some(i);
-                    break;
+        let reused = match self.instance.rewind(self.state.as_mut(), &all_tokens) {
+            Ok(Some(reused)) => reused,
+            // Nothing reusable, or a failed rewind that may have left the state half restored: start over.
+            result => {
+                if let Err(err) = self.state_reset().await {
+                    return error_stream(err);
                 }
-            }
-        }
+                if let Err(err) = result {
+                    return error_stream(ChatSessionError::Backend {
+                        message: err.to_string(),
+                    });
+                }
+                0
+            },
+        };
+        // Chat templates render a finished turn differently from the prompt that generated it (they drop its
+        // reasoning), so the next request shares this prompt only up to its last ChatML message header. A snapshot
+        // there lets the next request skip everything before it. Models without `<|im_start|>` take no snapshots.
+        let snapshot_position = all_tokens
+            .iter()
+            .rposition(|&token| Some(token) == self.message_start)
+            .filter(|&position| position >= reused);
         if std::env::var("UZU_SESSION_TRACE").is_ok() {
-            let tail = |v: &[u64]| v.iter().rev().take(12).rev().cloned().collect::<Vec<_>>();
-            let curr_ids: Vec<u64> = curr_all_tokens.iter().map(|t| t.id as u64).collect();
-            eprintln!("token session: curr={} new={} reset={} first_mismatch={:?} curr_tail={:?} new_at_mismatch={:?}",
-                curr_all_tokens.len(), new_all_tokens.len(), reset, first_mismatch, tail(&curr_ids),
-                first_mismatch.map(|i| new_all_tokens[i.saturating_sub(6)..(i + 6).min(new_all_tokens.len())].to_vec()));
+            eprintln!("token session: context={} reused={reused} snapshot={snapshot_position:?}", all_tokens.len());
         }
-        self.input_tokens = if reset {
-            if let Err(err) = self.state_reset().await {
-                return error_stream(err);
-            }
-            new_all_tokens
-        } else {
-            new_all_tokens[curr_all_tokens.len()..].to_vec()
+        self.input = StreamInput {
+            tokens: all_tokens[reused..].to_vec(),
+            snapshot_position,
         };
 
         let instance = self.instance.as_ref();
-        let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
+        let stream = instance.stream(&self.input, self.state.as_mut(), config.clone(), cancel_token.clone());
 
         let stream_state = StreamingState {
             config: config.clone(),
@@ -198,7 +205,7 @@ impl Session {
             time_last_token: None,
             time_prefill_start: Instant::now(),
             time_first_token: None,
-            total_tokens_input: self.input_tokens.len(),
+            total_tokens_input: self.input.tokens.len(),
             total_tokens_output: 0,
             memory_usage: None,
             metrics: None,
@@ -247,7 +254,7 @@ impl Session {
     fn build_input(
         &mut self,
         all_messages: &[ChatMessage],
-    ) -> Result<StreamInput, ChatSessionError> {
+    ) -> Result<Vec<u64>, ChatSessionError> {
         self.encoding.reset().map_err(|err| ChatSessionError::Backend {
             message: err.to_string(),
         })?;

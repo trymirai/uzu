@@ -74,6 +74,32 @@ impl<B: Backend> TransformerState<B> {
 
         Ok(())
     }
+
+    pub fn encode_snapshot(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        for layer_state in &mut self.layer_states {
+            if let TransformerLayerStateType::Owned(layer_state) = layer_state {
+                layer_state.encode_snapshot(encoder)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn encode_restore(
+        &mut self,
+        context_length: u32,
+        encoder: &mut Encoder<B>,
+    ) {
+        assert!(context_length <= self.context_length, "restoring a snapshot ahead of the state");
+        for layer_state in &mut self.layer_states {
+            if let TransformerLayerStateType::Owned(layer_state) = layer_state {
+                layer_state.encode_restore(context_length, encoder);
+            }
+        }
+        self.context_length = context_length;
+    }
 }
 
 #[derive(Debug, Error)]

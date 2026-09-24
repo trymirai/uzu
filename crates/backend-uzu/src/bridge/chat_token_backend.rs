@@ -127,11 +127,12 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         let options = LanguageModelStreamOptions {
             sampling_method: get_sampling_method::<B>(&self.model, &config.sampling_policy),
+            snapshot_position: input.snapshot_position,
             #[cfg(grammar)]
             grammar,
         };
 
-        let stream = match self.model.stream(input, &mut state_guard, options) {
+        let stream = match self.model.stream(&input.tokens, &mut state_guard, options) {
             Ok(iter) => iter,
             Err(err) => {
                 return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
@@ -170,6 +171,17 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
 
     fn stop_token_ids(&self) -> Option<Box<[u64]>> {
         Some(self.stop_token_ids.iter().map(|id| *id as u64).collect())
+    }
+
+    fn rewind(
+        &self,
+        state: &mut dyn State,
+        tokens: &[u64],
+    ) -> Result<Option<usize>, BackendError> {
+        let state =
+            (state as &mut dyn Any).downcast_mut::<UzuChatTokenBackendInstanceState<B>>().unwrap().value.clone();
+        let mut state = state.lock();
+        self.model.rewind(&mut state, tokens).map_err(|err| BackendError::from(err.to_string()))
     }
 }
 

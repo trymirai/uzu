@@ -11,7 +11,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
-        mixer::{Mixer, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{Mixer, MixerState, attention::rope::PrecalculatedRoPE, encode_save},
     },
     parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -29,6 +29,7 @@ enum ShortConvStateSuffixStatus<B: Backend> {
 pub struct ShortConvState<B: Backend> {
     conv_state: Allocation<B>,
     suffix_state: Option<ShortConvStateSuffixStatus<B>>,
+    conv_snapshot: Option<Allocation<B>>,
 }
 
 impl<B: Backend> MixerState<B> for ShortConvState<B> {
@@ -72,6 +73,21 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
                 Ok(())
             },
         }
+    }
+
+    fn encode_snapshot(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        encode_save(&self.conv_state, &mut self.conv_snapshot, encoder)
+    }
+
+    fn encode_restore(
+        &mut self,
+        _context_length: u32,
+        encoder: &mut Encoder<B>,
+    ) {
+        encoder.encode_copy(self.conv_snapshot.as_ref().unwrap(), .., &mut self.conv_state, ..);
     }
 }
 
@@ -305,6 +321,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         Ok(Box::new(ShortConvState {
             conv_state,
             suffix_state: None,
+            conv_snapshot: None,
         }))
     }
 

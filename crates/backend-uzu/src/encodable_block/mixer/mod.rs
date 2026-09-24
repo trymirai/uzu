@@ -3,7 +3,7 @@ use std::any::Any;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Buffer, Context, Encoder},
     config::{rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
     data_type::DataType,
     encodable_block::{
@@ -37,6 +37,33 @@ pub trait MixerState<B: Backend>: Any + Send {
         accepted_indices: &[u32],
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error>;
+
+    /// Saves the state at the current context length, so that `encode_restore` can return to it.
+    fn encode_snapshot(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error>;
+
+    /// Returns to the last snapshot, which was taken at `context_length`.
+    fn encode_restore(
+        &mut self,
+        context_length: u32,
+        encoder: &mut Encoder<B>,
+    );
+}
+
+/// Copies `source` into `snapshot`, allocating the snapshot on first use.
+fn encode_save<B: Backend, S: AsBufferRangeRef<Buffer: Buffer<Backend = B>>>(
+    source: &S,
+    snapshot: &mut Option<Allocation<B>>,
+    encoder: &mut Encoder<B>,
+) -> Result<(), B::Error> {
+    if snapshot.is_none() {
+        let size = source.as_buffer_range_ref().range().len();
+        *snapshot = Some(encoder.context().create_allocation(size, AllocationType::Global)?);
+    }
+    encoder.encode_copy(source, .., snapshot.as_mut().unwrap(), ..);
+    Ok(())
 }
 
 impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {
