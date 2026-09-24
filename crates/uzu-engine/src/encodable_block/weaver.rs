@@ -474,11 +474,12 @@ impl<B: Backend> Weaver<B> {
             .readout_query_projection
             .encode(normalized_output, batch_node_count, encoder)
             .map_err(WeaverEncodeError::Backend)?;
-        let logit_residuals = target_embedding.encode_readout_sparse(
-            &query,
-            batch_candidate_ids,
+        let logit_residuals = target_embedding.encode_readout(
             batch_node_count,
+            &query,
             self.candidate_pool_size,
+            Some(batch_candidate_ids),
+            false,
             encoder,
         )?;
         let mut child_token_ids = encoder
@@ -556,7 +557,7 @@ impl<B: Backend> Weaver<B> {
         // lookahead row form the candidate pool node expansions draw from.
         let vocab_size = target_embedding.vocab_size();
         assert!(
-            logits.size() >= size_for_shape(&[pool_depth_count, vocab_size], DataType::F32),
+            logits.size() >= size_for_shape(&[pool_depth_count, vocab_size], DATA_TYPE),
             "draft logits do not cover the lookahead rows"
         );
         let mut candidate_ids = encoder
