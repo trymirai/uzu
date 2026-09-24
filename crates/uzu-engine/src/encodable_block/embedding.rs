@@ -405,17 +405,15 @@ impl<B: Backend> Embedding<B> {
         };
         readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
 
-        if apply_logit_transform {
-            if let Some(logit_transform) = &self.logit_transform {
-                let length = batch_dim * output_dim;
-                logit_transform.kernel.encode(
-                    &mut output,
-                    length,
-                    logit_transform.scale,
-                    logit_transform.soft_cap.unwrap_or(0.0),
-                    encoder,
-                );
-            }
+        if apply_logit_transform && let Some(logit_transform) = &self.logit_transform {
+            let length = batch_dim * output_dim;
+            logit_transform.kernel.encode(
+                &mut output,
+                length,
+                logit_transform.scale,
+                logit_transform.soft_cap.unwrap_or(0.0),
+                encoder,
+            );
         }
 
         encoder.pop_debug_group();
