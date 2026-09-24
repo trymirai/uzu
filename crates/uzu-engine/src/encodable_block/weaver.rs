@@ -556,7 +556,7 @@ impl<B: Backend> Weaver<B> {
         // lookahead row form the candidate pool node expansions draw from.
         let vocab_size = target_embedding.vocab_size();
         assert!(
-            logits.size() >= size_for_shape(&[pool_depth_count, vocab_size], DataType::F32),
+            logits.size() >= size_for_shape(&[pool_depth_count, vocab_size], DATA_TYPE),
             "draft logits do not cover the lookahead rows"
         );
         let mut candidate_ids = encoder

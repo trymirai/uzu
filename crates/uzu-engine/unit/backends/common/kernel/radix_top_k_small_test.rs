@@ -1,6 +1,7 @@
 #[cfg(backend = "metal")]
 use std::time::Instant;
 
+use half::bf16;
 use uzu_engine_macros::uzu_test;
 
 #[cfg(backend = "metal")]
@@ -26,13 +27,13 @@ fn values(
 }
 
 fn radix_top_k_small<B: Backend>(
-    input: &[f32],
+    input: &[bf16],
     rows: usize,
     columns: usize,
     k: usize,
 ) -> (Vec<u32>, Vec<f32>) {
     let context = create_context::<B>();
-    let input = alloc_allocation_with_data::<B, f32>(&context, input);
+    let input = alloc_allocation_with_data::<B, bf16>(&context, input);
     let mut ids = alloc_allocation::<B, u32>(&context, rows * k);
     let mut scores = alloc_allocation::<B, f32>(&context, rows * k);
     let kernel = <B::Kernels as Kernels>::RadixTopKSmall::new(&context, columns as u32).unwrap();
@@ -83,20 +84,20 @@ fn radix_top_k_small_matches_cpu() {
         (3, 1025, TARGET_K),
         (15, TARGET_COLUMNS, TARGET_K),
     ] {
-        let mut input = values(rows, columns);
+        let mut input = values(rows, columns).into_iter().map(bf16::from_f32).collect::<Vec<_>>();
         let special = [
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            -0.0,
-            0.0,
-            1.0,
-            1.0,
-            f32::from_bits(0x7fc0_0001),
-            f32::from_bits(0xffc0_0001),
+            bf16::INFINITY,
+            bf16::NEG_INFINITY,
+            bf16::NEG_ZERO,
+            bf16::ZERO,
+            bf16::ONE,
+            bf16::ONE,
+            bf16::from_bits(0x7fc1),
+            bf16::from_bits(0xffc1),
         ];
         let special_count = special.len().min(input.len());
         input[..special_count].copy_from_slice(&special[..special_count]);
-        let expected = reference(&input, rows, columns, k);
+        let expected = reference(&input.iter().map(|value| value.to_f32()).collect::<Vec<_>>(), rows, columns, k);
         assert_output(&radix_top_k_small::<Cpu>(&input, rows, columns, k), &expected, shape);
         for_each_non_cpu_backend!(|B| {
             let actual = radix_top_k_small::<B>(&input, rows, columns, k);
@@ -119,7 +120,10 @@ fn benchmark_radix_top_k_small() {
     const BATCH: u32 = 16;
 
     let context = create_context::<Metal>();
-    let input = alloc_allocation_with_data::<Metal, f32>(&context, &values(ROWS, TARGET_COLUMNS));
+    let input = alloc_allocation_with_data::<Metal, bf16>(
+        &context,
+        &values(ROWS, TARGET_COLUMNS).into_iter().map(bf16::from_f32).collect::<Vec<_>>(),
+    );
     let mut ids = alloc_allocation::<Metal, u32>(&context, ROWS * TARGET_K);
     let mut scores = alloc_allocation::<Metal, f32>(&context, ROWS * TARGET_K);
     let kernel =

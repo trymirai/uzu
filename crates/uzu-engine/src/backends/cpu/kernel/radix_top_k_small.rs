@@ -1,3 +1,5 @@
+use half::bf16;
+
 use crate::{
     backends::{
         common::{
@@ -40,7 +42,7 @@ impl RadixTopKSmall for CpuRadixTopKSmall {
         let k = k as usize;
         assert!(rows > 0 && k > 0 && k <= MAX_K as usize && k <= columns);
         let input = input.as_buffer_range_ref();
-        let input = SendPtr(unsafe { (&*input.buffer().get()).as_ptr().add(input.range().start).cast::<f32>() });
+        let input = SendPtr(unsafe { (&*input.buffer().get()).as_ptr().add(input.range().start).cast::<bf16>() });
         let output_ids = output_ids.as_buffer_range_mut();
         let output_ids = SendPtrMut(unsafe {
             (&mut *output_ids.buffer().get()).as_mut_ptr().add(output_ids.range().start).cast::<u32>()
@@ -50,9 +52,12 @@ impl RadixTopKSmall for CpuRadixTopKSmall {
             (&mut *output_scores.buffer().get()).as_mut_ptr().add(output_scores.range().start).cast::<f32>()
         });
         encoder.as_command_buffer_mut().push_command(move || {
-            let values = unsafe { std::slice::from_raw_parts(input.as_ptr(), rows * columns) };
             let output_ids = unsafe { std::slice::from_raw_parts_mut(output_ids.as_ptr(), rows * k) };
             let output_scores = unsafe { std::slice::from_raw_parts_mut(output_scores.as_ptr(), rows * k) };
+            let values = unsafe { std::slice::from_raw_parts(input.as_ptr(), rows * columns) }
+                .iter()
+                .map(|value| value.to_f32())
+                .collect::<Vec<_>>();
             for (row, values) in values.chunks_exact(columns).enumerate() {
                 let mut indices = (0..columns).collect::<Vec<_>>();
                 let compare = |&left: &usize, &right: &usize| {
