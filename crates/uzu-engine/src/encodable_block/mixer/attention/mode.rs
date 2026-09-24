@@ -27,11 +27,11 @@ impl<B: Backend> LinearProjection<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut qkvg = self.lin.encode(hidden, batch_dim, encoder)?;
+        let mut projected = self.lin.encode(hidden, batch_dim, encoder)?;
         if let Some(norm) = &self.norm {
-            norm.encode(&mut qkvg, batch_dim, encoder)?;
+            norm.encode(&mut projected, batch_dim, encoder)?;
         }
-        Ok(qkvg)
+        Ok(projected)
     }
 }
 
@@ -68,7 +68,7 @@ impl<B: Backend> Attention<B> {
             },
             None => {
                 let Some(num_kv_heads) = self.num_kv_heads else {
-                    panic!("stateless attention doesn't support query-only QKVG");
+                    panic!("stateless attention doesn't support query-only projection");
                 };
                 assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
 

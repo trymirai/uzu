@@ -23,7 +23,6 @@ pub struct AttentionConfig {
     pub has_sinks: bool,
     pub has_qkvg_biases: bool,
     pub has_out_biases: bool,
-    /// Query-width sigmoid gate appended as the final fused projection segment.
     pub has_gate: bool,
     pub normalize_values: bool,
     pub is_kv_sharing: bool,
