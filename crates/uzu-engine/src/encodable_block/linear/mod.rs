@@ -1,17 +1,21 @@
+use thiserror::Error;
+
+mod input_rht;
 mod matmul;
 mod qlora_wrapper;
 mod rht_wrapper;
+mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
-use thiserror::Error;
+pub use untied_readout::UntiedReadout;
 
 use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        kernel::matmul::{A8ActivationPlan, ActivationFormat},
+        kernel::matmul::{A8ActivationPlan, ActivationFormat, MatmulA},
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -64,8 +68,35 @@ pub enum LinearInput<B: Backend> {
     },
 }
 
+pub struct Gather<'a, B: Backend> {
+    pub indices: &'a Allocation<B>,
+    pub output_dim: u32,
+}
+
+impl<B: Backend> LinearInput<B> {
+    fn as_matmul_a(&self) -> MatmulA<'_, B> {
+        match self {
+            Self::FullPrecision(values) => MatmulA::FullPrecision {
+                values,
+                offset: 0,
+            },
+            Self::Int8Symmetric {
+                values,
+                scales,
+                group_sums,
+                group_size,
+            } => MatmulA::Int8Symmetric {
+                values,
+                scales,
+                group_sums: group_sums.as_ref(),
+                group_size: *group_size,
+            },
+        }
+    }
+}
+
 pub struct LinearInputPreparation<B: Backend> {
-    pub input_factors: Allocation<B>,
+    pub rht_signs: Allocation<B>,
     pub a8_plan: Option<A8ActivationPlan>,
 }
 
@@ -202,7 +233,7 @@ impl<B: Backend> dyn Linear<B> {
             false,
             parameter_tree,
         )? {
-            return Ok((linear.0, linear.1.map(|preparation| preparation.input_factors)));
+            return Ok((linear.0, linear.1.map(|preparation| preparation.rht_signs)));
         }
 
         let linear = Self::new_mixed_precision(
