@@ -14,6 +14,9 @@ pub struct QtipGaussianArguments<'a, B: Backend> {
     /// 0 = plain table, 1 = antipodal L=16 table stored as its first half (kernels negate on state bit 15)
     pub table_mode: u32,
     pub codebook_scale: f32,
+    /// Set when the codebook is `scale * level(state) + offsets[column % 4]` with levels from the state hash
+    /// (`qtip_race_levels` in qtip_race.metal): kernels compute levels instead of reading the Q8 table.
+    pub computed: Option<ComputedCodebook<'a, B>>,
     pub scales: &'a Allocation<B>,
     pub gains: &'a Allocation<B>,
     pub signs: &'a Allocation<B>,
@@ -24,6 +27,12 @@ pub struct QtipGaussianArguments<'a, B: Backend> {
     pub vector_width: u32,
     pub transition_bits: u32,
     pub restart_columns: u32,
+}
+
+pub struct ComputedCodebook<'a, B: Backend> {
+    pub scale: f32,
+    /// float4 of per-column-class offsets (V2: d0, d1, d0, d1)
+    pub offsets: &'a Allocation<B>,
 }
 
 pub struct D4S4EmbeddingArguments<'a, B: Backend> {

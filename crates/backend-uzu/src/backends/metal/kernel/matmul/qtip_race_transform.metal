@@ -36,6 +36,7 @@ static inline void qtip_race_full_incoherence_a8(
     device const float* small_q,
     device int8_t* output,
     device float* scales,
+    device float4* token_sums,
     uint active_batch,
     uint dimension,
     threadgroup float* values,       // POWER floats
@@ -55,6 +56,7 @@ static inline void qtip_race_full_incoherence_a8(
     }
     if (thread_index == 0u) {
       scales[token] = 1.0f;
+      token_sums[token] = float4(0.0f);
     }
     return;
   }
@@ -175,6 +177,10 @@ static inline void qtip_race_full_incoherence_a8(
   maximum = simd_max(maximum);
   const float scale = isfinite(maximum) && maximum > 0.0f ? maximum / 127.0f : 1.0f;
 
+  // token_sums[token][j] = sum of this token's int8 outputs over columns k = j (mod 4); computed-codebook kernels
+  // turn them into the codebook offsets' contribution
+  int class_sums[4] = {0, 0, 0, 0};
+
   // phase-2 element h for (i): POWER 1024: h = 32 * lane + simdgroup + 16 * i
   //                            POWER 2048: h = 32 * (lane + 32 * (i & 1)) + simdgroup + 16 * (i >> 1)
   METAL_PRAGMA_UNROLL
@@ -188,12 +194,31 @@ static inline void qtip_race_full_incoherence_a8(
         h = 32u * (uint(lane) + 32u * (i & 1u)) + uint(simdgroup) + 16u * (i >> 1u);
       }
       const float value = transformed[q_out * PER_THREAD + i];
-      output[token * dimension + h * ORDER + q_out] =
-          int8_t(clamp(round(value / scale), -127.0f, 127.0f));
+      const int8_t quantized = int8_t(clamp(round(value / scale), -127.0f, 127.0f));
+      output[token * dimension + h * ORDER + q_out] = quantized;
+      const uint column_class = (h * ORDER + q_out) & 3u;
+      METAL_PRAGMA_UNROLL
+      for (uint j = 0; j < 4; ++j) {
+        class_sums[j] += column_class == j ? int(quantized) : 0;
+      }
     }
   }
+  // values[] is free after the last WHT barrier: one float4 of partial sums per SIMDgroup
+  METAL_PRAGMA_UNROLL
+  for (uint j = 0; j < 4; ++j) {
+    const int simdgroup_sum = simd_sum(class_sums[j]);
+    if (lane == 0) {
+      values[4u * uint(simdgroup) + j] = float(simdgroup_sum);
+    }
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
   if (thread_index == 0u) {
     scales[token] = scale;
+    float4 sums = float4(0.0f);
+    for (uint group = 0; group < 16u; ++group) {
+      sums += float4(values[4u * group], values[4u * group + 1u], values[4u * group + 2u], values[4u * group + 3u]);
+    }
+    token_sums[token] = sums;
   }
 }
 
@@ -204,6 +229,7 @@ KERNEL(NAME)( \
     device const float* small_q, \
     device int8_t* output, \
     device float* scales, \
+    device float4* token_sums, \
     const constant uint& active_batch, \
     const constant uint& padded_batch, \
     const constant uint& dimension, \
@@ -215,7 +241,7 @@ KERNEL(NAME)( \
     const ThreadContext thread_context \
 ) { \
   qtip_race_full_incoherence_a8<POWER, ORDER>( \
-      input, signs, small_q, output, scales, active_batch, dimension, \
+      input, signs, small_q, output, scales, token_sums, active_batch, dimension, \
       values, partial_max, q_matrix, token, thread_index, thread_context); \
 }
 

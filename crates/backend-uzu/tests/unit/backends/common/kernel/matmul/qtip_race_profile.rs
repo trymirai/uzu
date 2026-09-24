@@ -644,6 +644,7 @@ fn qtip_race_profile() {
     let k2_as_pf1_sg8_b32 = kernel!(QtipRaceK2AsPf1Sg8B32MetalKernel);
     let k2_as_pf1_sg8_b64 = kernel!(QtipRaceK2AsPf1Sg8B64MetalKernel);
 
+
     let variants = |geometry: Geometry, batch: u32| -> Vec<(&'static str, Runner<'_>)> {
         match (geometry, batch) {
             (Geometry::V4, 8 | 16) => vec![
@@ -1153,4 +1154,178 @@ fn qtip_tiered_head_repack_matches_reference() {
     let b = repack_tiered_to_symmetric_gemm(0, vocab, &[], &all3, &[], &row_scales, &ladder_indices, &ladder, vocab, dim, false);
     assert_eq!(a.0, b.0);
     assert_eq!(a.1, b.1);
+}
+
+/// Levels of fmix32(state * A + B), one per byte: the computed codebook's generator (qtip_race_levels).
+fn computed_levels(state: u32) -> [i32; 4] {
+    let mut x = state.wrapping_mul(0xCFCC_B83F).wrapping_add(0x584B_4AA3);
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x85EB_CA6B);
+    x ^= x >> 16;
+    std::array::from_fn(|byte| {
+        let b = (x >> (8 * byte)) & 0xFF;
+        (8 * (0..4).map(|field| (b >> (2 * field)) & 3).sum::<u32>() + ((3 * (b & 15)) & 15)) as i32 - 54
+    })
+}
+
+/// Computed-codebook kernels against an f64 reference with the exact weights c * level + offsets[k % 4]: random
+/// codes and activations on the package's V4 / V2 codebook constants, every output within two bf16 ulps.
+#[uzu_test]
+fn qtip_computed_codebook_matches_reference() {
+    let context = crate::tests::util::shared_metal_context();
+    assert!(context.supports_mxu());
+    let v4_sg4_b32 = QtipRaceV4CmpSg4B32MetalKernel::new(&context).expect("kernel");
+    let v4_sg2_b64 = QtipRaceV4CmpSg2B64MetalKernel::new(&context).expect("kernel");
+    let k3_sg4_b64 = QtipRaceK3CmpSg4B64MetalKernel::new(&context).expect("kernel");
+    let k2_sg4_b64 = QtipRaceK2CmpSg4B64MetalKernel::new(&context).expect("kernel");
+    // the Qwen3.8 S package's codebooks
+    let v4 = (0.052037482f32, [-0.08205986f32, -0.07758855, -0.07814354, -0.0810989]);
+    let v2 = (0.052127664f32, [-0.082201894f32, -0.077723003, -0.082201894, -0.077723003]);
+
+    for (geometry, padded_batch, active_batch) in
+        [(Geometry::V4, 32u32, 13u32), (Geometry::V4, 64, 64), (Geometry::V2K3, 64, 50), (Geometry::V2K2, 64, 64)]
+    {
+        let (rows, columns) = (160u32, 5120u32);
+        let family = Family { name: "test", geometry, rows, columns, leaves: 1 };
+        let case = build_case(&context, &family, active_batch, padded_batch, 7);
+        let host = &case.host;
+        let (scale, offsets) = if geometry == Geometry::V4 { v4 } else { v2 };
+        let row_scales: Vec<f32> = host.scales.iter().map(|value| value.to_f32()).collect();
+        let token_sums: Vec<f32> = (0..padded_batch as usize)
+            .flat_map(|token| {
+                let row = &host.activations[token * columns as usize..(token + 1) * columns as usize];
+                (0..4).map(move |class| row.iter().skip(class).step_by(4).map(|&a| a as f32).sum::<f32>())
+            })
+            .collect();
+        let row_scales_buffer = alloc_allocation_with_data::<Metal, f32>(&context, &row_scales);
+        let token_sums_buffer = alloc_allocation_with_data::<Metal, f32>(&context, &token_sums);
+        let offsets_buffer = alloc_allocation_with_data::<Metal, f32>(&context, &offsets);
+        let mut output = alloc_allocation::<Metal, bf16>(&context, (active_batch * rows) as usize);
+        let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+        macro_rules! run {
+            ($kernel:expr) => {
+                $kernel.encode(
+                    &case.codes,
+                    &case.activations,
+                    &case.activation_scales,
+                    &token_sums_buffer,
+                    &row_scales_buffer,
+                    &case.gains,
+                    &mut output,
+                    &offsets_buffer,
+                    scale,
+                    rows,
+                    case.groups,
+                    case.bytes_per_row,
+                    active_batch,
+                    &mut encoder,
+                )
+            };
+        }
+        match (geometry, padded_batch) {
+            (Geometry::V4, 32) => run!(v4_sg4_b32),
+            (Geometry::V4, 64) => run!(v4_sg2_b64),
+            (Geometry::V2K3, 64) => run!(k3_sg4_b64),
+            (Geometry::V2K2, 64) => run!(k2_sg4_b64),
+            _ => unreachable!(),
+        }
+        encoder.end_encoding().submit().wait_until_completed().expect("execution");
+        let gpu = allocation_to_vec::<Metal, bf16>(&output);
+
+        let bytes_per_row = case.bytes_per_row as usize;
+        let mut worst_ulps = 0.0f64;
+        for row in 0..rows as usize {
+            let codes = &host.codes[row * bytes_per_row..(row + 1) * bytes_per_row];
+            let weights: Vec<f64> = (0..columns as usize)
+                .map(|column| {
+                    let (state, component) = match geometry {
+                        Geometry::V4 => {
+                            let seq = &codes[column / 64 * 17..column / 64 * 17 + 17];
+                            let gib = (column % 64) / 4;
+                            let state = match gib {
+                                0 => seq[0] as u32 | (seq[1] as u32) << 8,
+                                1 => (seq[0] as u32) << 8 | seq[2] as u32,
+                                _ => (seq[gib] as u32) << 8 | seq[gib + 1] as u32,
+                            };
+                            (state, column % 4)
+                        },
+                        Geometry::V2K2 => {
+                            let byte = column / 4;
+                            let (b0, b1, b2) = (codes[byte] as u32, codes[byte + 1] as u32, codes[byte + 2] as u32);
+                            let state = if column % 4 < 2 { b0 << 8 | b1 } else { (b0 << 12 | b1 << 4 | b2 >> 4) & 0xFFFF };
+                            (state, column % 2)
+                        },
+                        Geometry::V2K3 => {
+                            let bit = column / 2 * 6;
+                            let at = |offset: usize| codes.get(bit / 8 + offset).copied().unwrap_or(0) as u32;
+                            let window = at(0) << 24 | at(1) << 16 | at(2) << 8 | at(3);
+                            ((window >> (16 - bit % 8)) & 0xFFFF, column % 2)
+                        },
+                        _ => unreachable!(),
+                    };
+                    scale as f64 * computed_levels(state)[component] as f64 + offsets[component] as f64
+                })
+                .collect();
+            let row_factor = row_scales[row] as f64 * host.gains[row].to_f32() as f64;
+            for token in 0..active_batch as usize {
+                let activations = &host.activations[token * columns as usize..(token + 1) * columns as usize];
+                let dot: f64 = weights.iter().zip(activations).map(|(w, &a)| w * a as f64).sum();
+                let reference = dot * row_factor * host.activation_scales[token] as f64;
+                let got = gpu[token * rows as usize + row].to_f32() as f64;
+                // one bf16 ulp at the reference's magnitude
+                let ulp = 2f64.powi(reference.abs().max(1e-30).log2().floor() as i32 - 7);
+                worst_ulps = worst_ulps.max((got - reference).abs() / ulp);
+            }
+        }
+        eprintln!("computed codebook {geometry:?} B{padded_batch} ({active_batch} tokens): worst {worst_ulps:.2} bf16 ulps");
+        assert!(worst_ulps <= 2.0, "computed-codebook output off by {worst_ulps} bf16 ulps");
+    }
+}
+
+/// The race transform's token sums are the per-class (column % 4) sums of the int8 activations it writes.
+#[uzu_test]
+fn qtip_race_transform_token_sums() {
+    let context = crate::tests::util::shared_metal_context();
+    let mut rng = SmallRng::seed_from_u64(11);
+    for columns in [5120u32, 6144, 17408] {
+        let (active_batch, padded_batch) = (5u32, 32u32);
+        let order = match columns {
+            5120 => 5,
+            6144 => 3,
+            _ => 17,
+        };
+        let input: Vec<bf16> =
+            (0..active_batch * columns).map(|_| bf16::from_f32(rng.random_range(-2.0f32..2.0))).collect();
+        let signs: Vec<f32> = (0..columns).map(|_| if rng.random::<bool>() { 1.0 } else { -1.0 }).collect();
+        let small_q: Vec<f32> = (0..order * order).map(|_| rng.random_range(-0.5f32..0.5)).collect();
+        let input = alloc_allocation_with_data::<Metal, bf16>(&context, &input);
+        let signs = alloc_allocation_with_data::<Metal, f32>(&context, &signs);
+        let small_q = alloc_allocation_with_data::<Metal, f32>(&context, &small_q);
+        let mut output = alloc_allocation::<Metal, i8>(&context, (padded_batch * columns) as usize);
+        let mut scales = alloc_allocation::<Metal, f32>(&context, padded_batch as usize);
+        let mut sums = alloc_allocation::<Metal, f32>(&context, (padded_batch * 4) as usize);
+        let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+        macro_rules! run {
+            ($kernel:ident) => {
+                $kernel::new(&context).expect("kernel").encode(
+                    &input, &signs, &small_q, &mut output, &mut scales, &mut sums, active_batch, padded_batch, columns,
+                    &mut encoder,
+                )
+            };
+        }
+        match columns {
+            5120 => run!(QtipRaceTransform5120MetalKernel),
+            6144 => run!(QtipRaceTransform6144MetalKernel),
+            _ => run!(QtipRaceTransform17408MetalKernel),
+        }
+        encoder.end_encoding().submit().wait_until_completed().expect("execution");
+        let (output, sums) = (allocation_to_vec::<Metal, i8>(&output), allocation_to_vec::<Metal, f32>(&sums));
+        for token in 0..padded_batch as usize {
+            let row = &output[token * columns as usize..(token + 1) * columns as usize];
+            for class in 0..4 {
+                let expected: i64 = row.iter().skip(class).step_by(4).map(|&value| value as i64).sum();
+                assert_eq!(sums[token * 4 + class] as i64, expected, "columns {columns} token {token} class {class}");
+            }
+        }
+    }
 }

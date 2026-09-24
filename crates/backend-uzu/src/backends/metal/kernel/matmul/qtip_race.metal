@@ -106,6 +106,19 @@ static inline char2 qtip_race_v2_two_sign(char2 v, ushort state) {
   return as_type<char2>(x);
 }
 
+// Computed codebook: the package's tables are c * level(fmix32(state)) + d per byte of the hash, so a state's
+// exact levels (signed bytes in [-54, 57], V2 uses bytes 0-1) come from arithmetic instead of a table read.
+static inline uint qtip_race_levels(uint state) {
+  uint x = state * 0xCFCCB83Fu + 0x584B4AA3u;
+  x ^= x >> 16u;
+  x *= 0x85EBCA6Bu;
+  x ^= x >> 16u;
+  const uint nibble_pairs = (x & 0x33333333u) + ((x >> 2u) & 0x33333333u);
+  const uint pairs = (nibble_pairs + (nibble_pairs >> 4u)) & 0x0F0F0F0Fu;
+  const uint plus54 = (pairs << 3u) + (((x & 0x0F0F0F0Fu) * 3u) & 0x0F0F0F0Fu);
+  return (plus54 + 0x4A4A4A4Au) ^ 0x80808080u;  // level + 54 in [0, 111] -> level as a signed byte
+}
+
 // Restarted V4 (17 bytes per 64 columns = 16 groups): branch-free.
 //   group_in_block 0 : seq[0] | seq[1] << 8
 //   group_in_block 1 : seq[0] << 8 | seq[2]
@@ -128,7 +141,7 @@ static inline ushort qtip_race_v4_state(
 template <uint VECTOR_WIDTH, uint TRANSITION_BITS, uint DIAG>
 struct QtipRaceLaneGather {
   // DIAG: 0 = exact, 1 = MXU only (no table reads), 2 = footprint 14-bit mask,
-  //       3 = footprint 15-bit mask
+  //       3 = footprint 15-bit mask, 20 = computed codebook (exact levels, no table reads)
   device const uchar* codes0;
   device const uchar* codes1;
   device const int8_t* codebook;
@@ -247,6 +260,13 @@ struct QtipRaceLaneGather {
         v01 = qtip_race_flip_bits(v01, h01); v11 = qtip_race_flip_bits(v11, h11);
         v00 = valid0 ? v00 : char4(0); v01 = valid0 ? v01 : char4(0);
         v10 = valid1 ? v10 : char4(0); v11 = valid1 ? v11 : char4(0);
+      } else if constexpr (DIAG == 20u) {
+        v00 = as_type<char4>(qtip_race_levels(s00));
+        v10 = as_type<char4>(qtip_race_levels(s10));
+        v01 = as_type<char4>(qtip_race_levels(s01));
+        v11 = as_type<char4>(qtip_race_levels(s11));
+        v00 = valid0 ? v00 : char4(0); v01 = valid0 ? v01 : char4(0);
+        v10 = valid1 ? v10 : char4(0); v11 = valid1 ? v11 : char4(0);
       } else if constexpr (DIAG == 4u || DIAG == 5u) {
         // half-table pass: only states in this half are gathered (predicated loads)
         constexpr ushort half_bit = 0x8000u;
@@ -284,14 +304,21 @@ struct QtipRaceLaneGather {
       } else if constexpr (DIAG == 14u) {
         s0a &= 0x3FFFu; s1a &= 0x3FFFu; s0b &= 0x3FFFu; s1b &= 0x3FFFu;
       }
-      char2 p0a0 = codebook_pairs[s0a.x];
-      char2 p0a1 = codebook_pairs[s0a.y];
-      char2 p1a0 = codebook_pairs[s1a.x];
-      char2 p1a1 = codebook_pairs[s1a.y];
-      char2 p0b0 = codebook_pairs[s0b.x];
-      char2 p0b1 = codebook_pairs[s0b.y];
-      char2 p1b0 = codebook_pairs[s1b.x];
-      char2 p1b1 = codebook_pairs[s1b.y];
+      auto pair = [&](ushort state) {
+        if constexpr (DIAG == 20u) {
+          return as_type<char2>(ushort(qtip_race_levels(state)));
+        } else {
+          return codebook_pairs[state];
+        }
+      };
+      char2 p0a0 = pair(s0a.x);
+      char2 p0a1 = pair(s0a.y);
+      char2 p1a0 = pair(s1a.x);
+      char2 p1a1 = pair(s1a.y);
+      char2 p0b0 = pair(s0b.x);
+      char2 p0b1 = pair(s0b.y);
+      char2 p1b0 = pair(s1b.x);
+      char2 p1b1 = pair(s1b.y);
       if constexpr (DIAG == 14u) {
         p0a0 = qtip_race_v2_two_sign(p0a0, f0a.x); p0a1 = qtip_race_v2_two_sign(p0a1, f0a.y);
         p1a0 = qtip_race_v2_two_sign(p1a0, f1a.x); p1a1 = qtip_race_v2_two_sign(p1a1, f1a.y);
@@ -332,6 +359,8 @@ static inline void qtip_race_dt(
     device const ushort* gains_bf16,
     device bfloat* output,
     device int32_t* partials,
+    device const float4* token_sums,  // DIAG 20 only
+    float4 offsets,                   // DIAG 20 only
     float codebook_scale,
     uint rows,
     uint groups,
@@ -517,8 +546,14 @@ static inline void qtip_race_dt(
           total += partials[index];
         }
         const float gain = as_type<float>(uint(gains_bf16[absolute_row]) << 16u);
-        const float weight_scale = float(scales[absolute_row]) * gain * codebook_scale;
-        output[index] = bfloat(float(total) * weight_scale * activation_scales[uint(col)]);
+        if constexpr (DIAG == 20u) {
+          // weights are c * level + offsets[k % 4]: the MXU summed level * a, token_sums carry sum a per class
+          const float dot = float(total) * codebook_scale + metal::dot(token_sums[uint(col)], offsets);
+          output[index] = bfloat(dot * float(scales[absolute_row]) * gain * activation_scales[uint(col)]);
+        } else {
+          const float weight_scale = float(scales[absolute_row]) * gain * codebook_scale;
+          output[index] = bfloat(float(total) * weight_scale * activation_scales[uint(col)]);
+        }
       }
     }
     return value;
@@ -1528,7 +1563,7 @@ KERNEL(NAME)( \
 ) { \
   (void)thread_index; \
   qtip_race_dt<COLS, VECTOR_WIDTH, TRANSITION_BITS, ROW_SIMDGROUPS, PREFETCH, DIAG, GATHER_ONLY, ROW_FRAGMENTS>( \
-      codes, codebook, activations, activation_scales, scales, gains_bf16, output, partials, \
+      codes, codebook, activations, activation_scales, scales, gains_bf16, output, partials, nullptr, float4(0.0f), \
       codebook_scale, rows, groups, bytes_per_row, active_batch, row_tile, thread_context); \
 }
 
@@ -1568,7 +1603,7 @@ KERNEL(NAME)( \
 ) { \
   (void)thread_index; \
   qtip_race_dt<COLS, VECTOR_WIDTH, TRANSITION_BITS, ROW_SIMDGROUPS, PREFETCH, DIAG, GATHER_ONLY>( \
-      codes, codebook, activations, activation_scales, scales, gains_bf16, output, partials, \
+      codes, codebook, activations, activation_scales, scales, gains_bf16, output, partials, nullptr, float4(0.0f), \
       codebook_scale, rows, groups, bytes_per_row, active_batch, row_tile, thread_context); \
 }
 
@@ -1623,6 +1658,40 @@ QTIP_RACE_DT_KERNEL(QtipRaceK3Pf2Sg2B64, 64, 2, 6, 2, 2, 0, false)
 
 #undef QTIP_RACE_DT_KERNEL
 
+
+// Computed codebook (DIAG 20): levels from the state hash instead of a table read, exact c * level + offsets weights.
+#define QTIP_RACE_CMP_KERNEL(NAME, COLS, VECTOR_WIDTH, TRANSITION_BITS, ROW_SIMDGROUPS) \
+KERNEL(NAME)( \
+    device const uchar* codes, \
+    device const int8_t* activations, \
+    device const float* activation_scales, \
+    device const float4* token_sums, \
+    device const float* scales, \
+    device const ushort* gains_bf16, \
+    device bfloat* output, \
+    device const float4* offsets, \
+    const constant float& codebook_scale, \
+    const constant uint& rows, \
+    const constant uint& groups, \
+    const constant uint& bytes_per_row, \
+    const constant uint& active_batch, \
+    const uint row_tile GROUPS(rows.div_ceil(ROW_SIMDGROUPS * 16u)), \
+    const uint thread_index THREADS(ROW_SIMDGROUPS * 32u), \
+    const ThreadContext thread_context \
+) { \
+  (void)thread_index; \
+  qtip_race_dt<COLS, VECTOR_WIDTH, TRANSITION_BITS, ROW_SIMDGROUPS, 0, 20, false>( \
+      codes, nullptr, activations, activation_scales, scales, gains_bf16, output, nullptr, token_sums, offsets[0], \
+      codebook_scale, rows, groups, bytes_per_row, active_batch, row_tile, thread_context); \
+}
+
+QTIP_RACE_CMP_KERNEL(QtipRaceV4CmpSg4B32, 32, 4, 8, 4)
+QTIP_RACE_CMP_KERNEL(QtipRaceV4CmpSg2B32, 32, 4, 8, 2)
+QTIP_RACE_CMP_KERNEL(QtipRaceV4CmpSg2B64, 64, 4, 8, 2)
+QTIP_RACE_CMP_KERNEL(QtipRaceK3CmpSg4B64, 64, 2, 6, 4)
+QTIP_RACE_CMP_KERNEL(QtipRaceK2CmpSg4B64, 64, 2, 4, 4)
+
+#undef QTIP_RACE_CMP_KERNEL
 
 #define QTIP_RACE_B16T_KERNEL(NAME, VECTOR_WIDTH, TRANSITION_BITS, ROW_FRAGMENTS, ROW_SIMDGROUPS, PREFETCH, HALF) \
 KERNEL(NAME)( \

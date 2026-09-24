@@ -24,6 +24,8 @@ use crate::{
                 QtipRaceK2R2Pf2Sg2B32MetalKernel, QtipRaceK3Pf0Sg4B32MetalKernel, QtipRaceK3Pf2Sg2B32MetalKernel,
                 QtipRaceK3Pf2Sg2B64MetalKernel, QtipRaceK3Pf2Sg4B32MetalKernel, QtipRaceK3Pf2Sg4B64MetalKernel,
                 QtipRaceK3R2Pf0Sg2B32MetalKernel, QtipRaceK3R2Pf2Sg2B32MetalKernel, QtipRaceTransform5120MetalKernel,
+                QtipRaceV4CmpSg4B32MetalKernel, QtipRaceV4CmpSg2B32MetalKernel, QtipRaceV4CmpSg2B64MetalKernel,
+                QtipRaceK3CmpSg4B64MetalKernel, QtipRaceK2CmpSg4B64MetalKernel,
                 QtipRaceTransform6144MetalKernel, QtipRaceTransform17408MetalKernel, QtipRaceV4Pf2Sg2B32MetalKernel,
                 QtipRaceV4Pf2Sg2B64MetalKernel, QtipRaceV4Pf2Sg4B32MetalKernel, QtipRaceV4Pf2Sg4B64MetalKernel,
                 QtipRaceV4Pf2Sg8B64MetalKernel, QtipRaceV4R2Pf2Sg2B32MetalKernel, QtipRaceV4R2Pf2Sg4B32MetalKernel,
@@ -59,6 +61,7 @@ use crate::{
 /// Race configuration (env overrides for A/B benchmarking):
 ///   QTIP_RACE_TRANSFORM=0  use the original full-incoherence transform kernel
 ///   QTIP_RACE_PROJ=0       use the original physical projection kernels
+///   QTIP_COMPUTED_CODEBOOK=0  read hash-generated codebooks from their Q8 table instead of computing them
 ///
 /// The race projection path always runs 32- or 64-token MXU tiles (the
 /// 16-token row-paired MXU path of the physical B16 kernels is numerically
@@ -68,6 +71,12 @@ use crate::{
 pub struct QtipSExactMetalKernel {
     race_transform: bool,
     race_projection: bool,
+    computed_codebook: bool,
+    v4_cmp_sg4_b32: QtipRaceV4CmpSg4B32MetalKernel,
+    v4_cmp_sg2_b32: QtipRaceV4CmpSg2B32MetalKernel,
+    v4_cmp_sg2_b64: QtipRaceV4CmpSg2B64MetalKernel,
+    k3_cmp_sg4_b64: QtipRaceK3CmpSg4B64MetalKernel,
+    k2_cmp_sg4_b64: QtipRaceK2CmpSg4B64MetalKernel,
     /// timing probes: skip the projection / transform kernels (outputs are garbage)
     null_projection: bool,
     null_transform: bool,
@@ -483,6 +492,12 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
         Ok(Self {
             race_transform: env_flag("QTIP_RACE_TRANSFORM", true),
             race_projection: env_flag("QTIP_RACE_PROJ", true),
+            computed_codebook: env_flag("QTIP_COMPUTED_CODEBOOK", true),
+            v4_cmp_sg4_b32: QtipRaceV4CmpSg4B32MetalKernel::new(context)?,
+            v4_cmp_sg2_b32: QtipRaceV4CmpSg2B32MetalKernel::new(context)?,
+            v4_cmp_sg2_b64: QtipRaceV4CmpSg2B64MetalKernel::new(context)?,
+            k3_cmp_sg4_b64: QtipRaceK3CmpSg4B64MetalKernel::new(context)?,
+            k2_cmp_sg4_b64: QtipRaceK2CmpSg4B64MetalKernel::new(context)?,
             null_projection: env_flag("QTIP_RACE_NULL_PROJ", false),
             null_transform: env_flag("QTIP_RACE_NULL_TRANSFORM", false),
             full_incoherence_a8: QtipFullIncoherenceA8MetalKernel::new(context)?,
@@ -614,6 +629,7 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
             state_bits,
             table_mode,
             codebook_scale,
+            computed,
             scales,
             gains,
             signs,
@@ -647,6 +663,7 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
         };
         let mut transformed_q8 = encoder.allocate_scratch(size_for_shape(&[padded_batch, columns], DataType::I8))?;
         let mut activation_scales = encoder.allocate_scratch(size_for_shape(&[padded_batch], DataType::F32))?;
+        let mut token_sums = encoder.allocate_scratch(size_for_shape(&[padded_batch, 4], DataType::F32))?;
         if self.null_transform {
             // probe: leave the A8 buffers uninitialised
         } else if self.race_transform {
@@ -658,6 +675,7 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
                         small_q,
                         &mut transformed_q8,
                         &mut activation_scales,
+                        &mut token_sums,
                         batch,
                         padded_batch,
                         columns,
@@ -715,6 +733,45 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
 
         if self.null_projection {
             return encoder.allocate_scratch(size_for_shape(&[batch, rows], DataType::BF16));
+        }
+        // computed codebooks: every V4 leaf, and V2 leaves at 64-token tiles (smaller V2 tiles gain nothing over
+        // their 128 KiB table); the token sums come from the race transform
+        if let Some(computed) = computed
+            && self.computed_codebook
+            && self.race_transform
+            && self.race_projection
+            && (vector_width == 4 || padded_batch == 64)
+        {
+            let mut output = encoder.allocate_scratch(size_for_shape(&[batch, rows], DataType::BF16))?;
+            macro_rules! run_computed {
+                ($kernel:expr) => {
+                    $kernel.encode(
+                        codes,
+                        &transformed_q8,
+                        &activation_scales,
+                        &token_sums,
+                        scales,
+                        gains,
+                        &mut output,
+                        computed.offsets,
+                        computed.scale,
+                        rows,
+                        groups,
+                        bytes_per_row,
+                        batch,
+                        encoder,
+                    )
+                };
+            }
+            match (vector_width, transition_bits, padded_batch) {
+                (4, _, 32) if rows == 34816 => run_computed!(self.v4_cmp_sg2_b32),
+                (4, _, 32) => run_computed!(self.v4_cmp_sg4_b32),
+                (4, _, 64) => run_computed!(self.v4_cmp_sg2_b64),
+                (2, 6, 64) => run_computed!(self.k3_cmp_sg4_b64),
+                (2, 4, 64) => run_computed!(self.k2_cmp_sg4_b64),
+                _ => unreachable!("no computed-codebook kernel for {vector_width}/{transition_bits}/{padded_batch}"),
+            }
+            return Ok(output);
         }
         if self.race_projection {
             let mut output = encoder.allocate_scratch(size_for_shape(&[batch, rows], DataType::BF16))?;
