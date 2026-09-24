@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-            kernel::matmul::MatmulShape,
+            kernel::matmul::{MatmulBKind, MatmulShape},
         },
         metal::kernel::matmul::{MatmulDispatch, MatmulMetalKernel, gemv::GemvSpecialization},
     },
@@ -56,6 +56,7 @@ fn problem(
         k,
         b_transpose: true,
         b_leading_dimension: None,
+        b_kind: MatmulBKind::Integer,
         b_prologue: prologue,
         b_bits: Some(bits),
         b_group_size: Some(group),
