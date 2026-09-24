@@ -235,14 +235,18 @@ fn gemv_gather() {
         fp_gather_case::<f32>(soft_cap, 0.01);
     }
     // Quantized (bf16, per bits/method) — inline, since it isn't type-generic.
-    for (bits, method) in [
-        (4, QuantizationMethod::ScaleBias),
-        (4, QuantizationMethod::ScaleZeroPoint),
-        (4, QuantizationMethod::ScaleSymmetric),
-        (8, QuantizationMethod::ScaleZeroPoint),
+    for (bits, method, signed_codes) in [
+        (4, QuantizationMethod::ScaleBias, false),
+        (4, QuantizationMethod::ScaleZeroPoint, false),
+        (4, QuantizationMethod::ScaleZeroPoint, true),
+        (4, QuantizationMethod::ScaleSymmetric, false),
+        (8, QuantizationMethod::ScaleZeroPoint, false),
     ] {
         let (m, k, vocab, ids_per_row, group_size) = (8usize, 128usize, 64usize, 8usize, 32u32);
-        let input = QuantInput::<bf16>::new(m as u32, k as u32, vocab as u32, group_size, bits, method, 0x5EED);
+        let mut input = QuantInput::<bf16>::new(m as u32, k as u32, vocab as u32, group_size, bits, method, 0x5EED);
+        if signed_codes {
+            input = input.with_signed_weight_codes();
+        }
         let ids: Vec<u32> = (0..m * ids_per_row).map(|i| ((i * 37 + 11) % vocab) as u32).collect();
         // K_SPLIT == 1 keeps k in one reduction, so gather and dense share the exact accumulation.
         check_gather!(m, vocab, ids, ids_per_row, 0.05, |B| {

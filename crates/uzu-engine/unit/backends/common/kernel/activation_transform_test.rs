@@ -22,7 +22,7 @@ enum TransformOrder {
     Output,
 }
 
-fn run<T: ArrayElement + Float, B: Backend>(
+fn run<T: ArrayElement + Float + Debug, B: Backend>(
     data: &[T],
     factors: &[i32],
     channel_count: usize,
@@ -47,6 +47,9 @@ fn run<T: ArrayElement + Float, B: Backend>(
         kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut encoder);
     }
     encoder.end_encoding().submit().wait_until_completed().unwrap();
+    if !in_place {
+        assert_eq!(allocation_to_vec::<B, T>(&input), data);
+    }
     allocation_to_vec(if in_place {
         &input
     } else {

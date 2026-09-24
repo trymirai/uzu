@@ -33,8 +33,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         hidden_dim: u32,
         input_preparation: Option<LinearInputPreparation<B>>,
     ) -> Result<Self, B::Error> {
-        let (hadamard_factors, a8_plan) = input_preparation
-            .map_or((None, None), |preparation| (Some(preparation.input_factors), preparation.a8_plan));
+        let (hadamard_factors, a8_plan) =
+            input_preparation.map_or((None, None), |preparation| (Some(preparation.rht_signs), preparation.a8_plan));
         let settings = GatedActMulSettings {
             activation_alpha: activation.custom_alpha(),
             gate_clipping,
