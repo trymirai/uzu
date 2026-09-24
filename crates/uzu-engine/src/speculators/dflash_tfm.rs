@@ -65,6 +65,7 @@ pub enum DFlashTfmTreeConstructionMethod {
         rounds: u32,
         expand_per_round: u32,
         expand_width: u32,
+        prune_sigma: Option<f32>,
     },
 }
 
@@ -164,6 +165,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
     pub fn make_shape(
         &self,
         max_depth: Option<u32>,
+        sampling_method: &SamplingMethod,
     ) -> Option<DFlashTfmTreeShape> {
         if max_depth.is_some_and(|max_depth| max_depth < 2) {
             return None;
@@ -181,6 +183,16 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             {
                 *rounds = u32::min(*rounds, max_depth);
             }
+        }
+
+        // Greedy verification adds no Gumbel noise to the target logits, so pruning has none to anticipate.
+        if matches!(sampling_method, SamplingMethod::Greedy)
+            && let DFlashTfmTreeConstructionMethod::Weaver {
+                prune_sigma,
+                ..
+            } = &mut shape.construction_method
+        {
+            *prune_sigma = None;
         }
 
         Some(shape)
@@ -279,6 +291,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 rounds,
                 expand_per_round,
                 expand_width,
+                prune_sigma,
             } => {
                 let weaver =
                     self.weaver.as_ref().expect("weaver tree construction requires a speculator with weaver weights");
@@ -296,6 +309,13 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         shape.max_tree_depth,
                         shape.max_tree_depth - 1,
                         dflash_depth
+                    )));
+                }
+                if let Some(prune_sigma) = prune_sigma
+                    && !(prune_sigma > 0.0 && prune_sigma.is_finite() && prune_sigma.recip().is_finite())
+                {
+                    return Err(DFlashTreeError::InvalidTreeShape(format!(
+                        "prune sigma {prune_sigma} is not positive and finite"
                     )));
                 }
                 let dflash_output = self.dflash.encode_draft(
@@ -322,6 +342,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         rounds,
                         expand_per_round,
                         expand_width,
+                        prune_noise_scale: prune_sigma.map(f32::recip),
                     },
                     &mut encoder,
                 )?;
@@ -387,3 +408,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         Ok(trie)
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/speculators/dflash_tfm_test.rs"]
+mod tests;

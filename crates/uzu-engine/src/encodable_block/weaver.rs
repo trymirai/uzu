@@ -36,6 +36,7 @@ pub struct WeaverTreeShape {
     pub rounds: u32,
     pub expand_per_round: u32,
     pub expand_width: u32,
+    pub prune_noise_scale: Option<f32>,
 }
 
 impl WeaverTreeShape {
@@ -121,6 +122,7 @@ pub struct Weaver<B: Backend> {
     rope_config: AnyRoPEConfig,
     top_k: <B::Kernels as Kernels>::RadixTopKSmall,
     top_children: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
+    top_children_with_prune_noise: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
     frontier_select: <B::Kernels as Kernels>::WeaverFrontierSelectKernel,
     frontier_insert_children: <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel,
     model_dim: u32,
@@ -257,7 +259,9 @@ impl<B: Backend> Weaver<B> {
         let top_k =
             <B::Kernels as Kernels>::RadixTopKSmall::new(context, vocab_size).map_err(WeaverNewError::Backend)?;
         let top_children =
-            <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context).map_err(WeaverNewError::Backend)?;
+            <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context, false).map_err(WeaverNewError::Backend)?;
+        let top_children_with_prune_noise =
+            <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context, true).map_err(WeaverNewError::Backend)?;
         let frontier_select =
             <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(context).map_err(WeaverNewError::Backend)?;
         let frontier_insert_children = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(context)
@@ -273,6 +277,7 @@ impl<B: Backend> Weaver<B> {
             rope_config: config.rope_config.clone(),
             top_k,
             top_children,
+            top_children_with_prune_noise,
             frontier_select,
             frontier_insert_children,
             model_dim: config.model_dim,
@@ -488,7 +493,17 @@ impl<B: Backend> Weaver<B> {
         let mut child_logprobs = encoder
             .allocate_scratch(size_for_shape(&[batch_node_count, shape.expand_width], DataType::F32))
             .map_err(WeaverEncodeError::Backend)?;
-        self.top_children.encode(
+        let mut child_prune_logprobs = shape
+            .prune_noise_scale
+            .map(|_| encoder.allocate_scratch(size_for_shape(&[batch_node_count, shape.expand_width], DataType::F32)))
+            .transpose()
+            .map_err(WeaverEncodeError::Backend)?;
+        let top_children = if shape.prune_noise_scale.is_some() {
+            &self.top_children_with_prune_noise
+        } else {
+            &self.top_children
+        };
+        top_children.encode(
             &logit_residuals,
             batch_candidate_logits,
             batch_candidate_ids,
@@ -496,19 +511,23 @@ impl<B: Backend> Weaver<B> {
             &*node_metadata,
             &mut child_token_ids,
             &mut child_logprobs,
+            child_prune_logprobs.as_mut(),
             batch_node_count,
             self.candidate_pool_size,
             shape.expand_width,
             target_embedding.vocab_size(),
+            shape.prune_noise_scale,
             encoder,
         );
 
+        // The edge lane feeds only final pruning; without prune noise it keeps the model logprobs.
         self.frontier_insert_children.encode(
             &*packed_tree,
             &*node_metadata,
             &*node_valid,
             &child_token_ids,
             &child_logprobs,
+            child_prune_logprobs.as_ref().unwrap_or(&child_logprobs),
             frontier,
             frontier_capacity,
             tree_slot_count,
@@ -547,6 +566,7 @@ impl<B: Backend> Weaver<B> {
             || shape.expand_width > self.candidate_pool_size
             || tree_slot_count > FRONTIER_MAX_SLOTS / shape.expand_width
             || depth_seeds.len() as u32 != self.max_depth
+            || shape.prune_noise_scale.is_some_and(|scale| !(scale > 0.0 && scale.is_finite()))
         {
             return Err(WeaverEncodeError::InvalidTreeInput);
         }
