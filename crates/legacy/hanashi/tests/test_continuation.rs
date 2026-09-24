@@ -274,3 +274,23 @@ fn unicode_survives_prefix_boundary_detection() {
     assert!(encoding.try_append(&history).unwrap().is_some());
     assert_eq!(&encoding.state().tokens[..sampled.len()], sampled);
 }
+
+#[test]
+fn generation_prompt_start_is_the_reply_frame_of_a_user_turn() {
+    for config in [HanashiConfig::Qwen35, HanashiConfig::Qwen36, HanashiConfig::Qwen38] {
+        let mut encoding = encoding(config);
+        let mut history = history();
+        encoding.encode(history.clone()).unwrap();
+        let start = encoding.generation_prompt_start().unwrap();
+        let reply: String = encoding.state().tokens[start..].iter().map(|token| token.value.as_str()).collect();
+        assert!(reply.starts_with("<|im_start|>assistant\n"), "{reply:?}");
+
+        // A tool result continues the same reply, so it names no new position.
+        let options = r#"{"a":1}"#;
+        decode(&mut encoding, &(tool_call(options) + "<|im_end|>"));
+        add_tool_result(&encoding, &mut history, options);
+        encoding.reset().unwrap();
+        encoding.encode(history).unwrap();
+        assert_eq!(encoding.generation_prompt_start(), None);
+    }
+}

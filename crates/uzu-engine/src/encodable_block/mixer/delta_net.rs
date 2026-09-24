@@ -21,6 +21,7 @@ use crate::{
             Mixer, MixerState,
             attention::rope::PrecalculatedRoPE,
             delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
+            encode_load, encode_save,
         },
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -50,6 +51,8 @@ pub struct DeltaNetState<B: Backend> {
     ssm_state: Allocation<B>,
     suffix_status: Option<DeltaNetSuffixStatus<B>>,
     state_advance: <B::Kernels as Kernels>::StateAdvanceKernel,
+    conv_snapshot: Option<Allocation<B>>,
+    ssm_snapshot: Option<Allocation<B>>,
 }
 
 impl<B: Backend> MixerState<B> for DeltaNetState<B> {
@@ -111,6 +114,22 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
             },
         }
         Ok(())
+    }
+
+    fn encode_snapshot(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        encode_save(&self.conv_state, &mut self.conv_snapshot, encoder)?;
+        encode_save(&self.ssm_state, &mut self.ssm_snapshot, encoder)
+    }
+
+    fn encode_restore(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) {
+        encode_load(&self.conv_snapshot, &mut self.conv_state, encoder);
+        encode_load(&self.ssm_snapshot, &mut self.ssm_state, encoder);
     }
 }
 
@@ -430,6 +449,10 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         self.tree_verify.is_some()
     }
 
+    fn snapshot_supported(&self) -> bool {
+        true
+    }
+
     fn max_context_length(&self) -> Option<u32> {
         None
     }
@@ -467,6 +490,8 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             ssm_state,
             suffix_status: None,
             state_advance,
+            conv_snapshot: None,
+            ssm_snapshot: None,
         }))
     }
 

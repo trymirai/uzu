@@ -140,6 +140,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         }))
     }
 
+    pub fn snapshot_supported(&self) -> bool {
+        self.dflash.snapshot_supported()
+    }
+
     pub fn hidden_feature_layer_indices(&self) -> &[u32] {
         &self.config.draft_config.target_layer_ids
     }
