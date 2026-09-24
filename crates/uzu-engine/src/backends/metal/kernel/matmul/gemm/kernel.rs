@@ -191,6 +191,12 @@ impl GemmKernel {
         let use_mxu = plan.engine == GemmEngine::Mxu;
 
         match b {
+            MatmulB::Microfloat {
+                metadata,
+                ..
+            } => {
+                return Err(MatmulError::UnsupportedMicrofloat(metadata.encoding.format).into());
+            },
             MatmulB::FullPrecision {
                 b: weights,
             } => {

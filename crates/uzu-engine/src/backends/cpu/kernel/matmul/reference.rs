@@ -2,12 +2,30 @@ use half::{bf16, f16};
 
 use crate::{
     backends::{
-        common::{AsBufferRangeRef, BufferArg, gpu_types::QuantizationMode, kernel::matmul::MatmulB},
+        common::{
+            AsBufferRangeRef, BufferArg, gpu_types::QuantizationMode, kernel::matmul::MatmulB,
+            microfloat::MicrofloatMetadata,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     utils::pointers::SendPtr,
 };
+
+#[inline]
+pub(super) fn decode_e2m1(code: u8) -> f32 {
+    const VALUES: [f32; 16] = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0];
+    VALUES[usize::from(code & 0x0f)]
+}
+
+#[inline]
+pub(super) fn decode_e8m0(exponent: u8) -> f32 {
+    match exponent {
+        0 => f32::from_bits(0x0040_0000),
+        255 => f32::NAN,
+        exponent => f32::from_bits(u32::from(exponent) << 23),
+    }
+}
 
 pub(super) enum WeightData {
     FullPrecision {
@@ -23,6 +41,12 @@ pub(super) enum WeightData {
         bits: usize,
         group_size: usize,
         signed_codes: bool,
+    },
+    Microfloat {
+        codes: SendPtr<u8>,
+        scales: SendPtr<u8>,
+        outer_scales: SendPtr<u8>,
+        metadata: MicrofloatMetadata,
     },
 }
 
@@ -57,6 +81,17 @@ impl WeightData {
                     leading_dimension,
                     transpose: b_transpose,
                 }
+            },
+            MatmulB::Microfloat {
+                codes,
+                scales,
+                outer_scales,
+                metadata,
+            } => WeightData::Microfloat {
+                codes: alloc_ptr(codes),
+                scales: alloc_ptr(scales),
+                outer_scales: alloc_ptr(outer_scales),
+                metadata,
             },
             MatmulB::ScaleBiasDequant {
                 b: weights,
@@ -141,3 +176,7 @@ pub(super) unsafe fn write_f32(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../../unit/backends/cpu/kernel/matmul/reference_test.rs"]
+mod tests;
