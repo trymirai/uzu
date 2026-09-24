@@ -113,7 +113,8 @@ static inline uint qtip_race_levels(uint state) {
   x ^= x >> 16u;
   x *= 0x85EBCA6Bu;
   x ^= x >> 16u;
-  const uint nibble_pairs = (x & 0x33333333u) + ((x >> 2u) & 0x33333333u);
+  // each nibble is a + 4b with 2-bit fields a, b: minus 3b leaves a + b in [0, 6], so no borrow crosses nibbles
+  const uint nibble_pairs = x - 3u * ((x >> 2u) & 0x33333333u);
   const uint pairs = (nibble_pairs + (nibble_pairs >> 4u)) & 0x0F0F0F0Fu;
   const uint plus54 = (pairs << 3u) + (((x & 0x0F0F0F0Fu) * 3u) & 0x0F0F0F0Fu);
   return (plus54 + 0x4A4A4A4Au) ^ 0x80808080u;  // level + 54 in [0, 111] -> level as a signed byte
