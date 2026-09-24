@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use crate::{
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend,
         gpu_types::{QuantizationMethod, QuantizationMode},
@@ -165,6 +166,35 @@ impl<B: Backend> WeightMatrix<B> {
                 signed_codes: false,
             }),
         })
+    }
+
+    /// Symmetric U4 matrix `[rows, columns]` from codes `level + 8` (two per byte, low nibble first) and
+    /// group-major bf16 scales `[columns / group_size, rows]`.
+    pub fn symmetric_u4(
+        codes: Allocation<B>,
+        scales: Allocation<B>,
+        rows: u32,
+        columns: u32,
+        group_size: u32,
+    ) -> Self {
+        assert!(columns.is_multiple_of(group_size));
+        let params = QuantParams::new(QuantParamsLayout::GroupOutput, rows, columns / group_size);
+        assert_eq!(codes.size(), rows as usize * columns as usize / 2);
+        assert_eq!(scales.size(), size_for_shape(&params.scale_shape(), DataType::BF16));
+        Self {
+            values: codes,
+            quantized: Some(Quantized {
+                scales,
+                correction: QuantizedCorrection::Symmetric,
+                params,
+                info: QuantizationInfo {
+                    mode: QuantizationMode::U4,
+                    method: QuantizationMethod::ScaleSymmetric,
+                    group_size,
+                },
+                signed_codes: false,
+            }),
+        }
     }
 
     pub fn values(&self) -> &Allocation<B> {

@@ -6,6 +6,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     fs::File,
+    sync::Arc,
 };
 
 use thiserror::Error;
@@ -61,6 +62,7 @@ pub struct ParameterLoader<'a, B: Backend> {
     index: HashMap<String, ParameterMetadata>,
     metadata: HashMap<String, String>,
     validated_tensors: RefCell<HashSet<String>>,
+    shared_allocations: RefCell<HashMap<String, Arc<Allocation<B>>>>,
     file: &'a File,
 }
 
@@ -102,6 +104,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
             index,
             metadata,
             validated_tensors: RefCell::new(HashSet::new()),
+            shared_allocations: RefCell::new(HashMap::new()),
             file,
         })
     }
@@ -203,6 +206,28 @@ impl<'loader, B: Backend> ParameterTree<'loader, B> {
             loader: self.loader,
             prefix: Some(self.join_prefix(name)),
         }
+    }
+
+    pub fn root(&self) -> Self {
+        Self {
+            loader: self.loader,
+            prefix: None,
+        }
+    }
+
+    /// Reads tensor `name` through `read` on first use; later calls for the same tensor share that allocation.
+    pub fn shared_allocation<E: From<ParameterLoaderError<B>>>(
+        &self,
+        name: &str,
+        read: impl FnOnce(ParameterLeaf<'loader, '_, B, false>) -> Result<Allocation<B>, E>,
+    ) -> Result<Arc<Allocation<B>>, E> {
+        let key = self.join_prefix(name);
+        if let Some(allocation) = self.loader.shared_allocations.borrow().get(&key) {
+            return Ok(allocation.clone());
+        }
+        let allocation = Arc::new(read(self.leaf(name)?)?);
+        self.loader.shared_allocations.borrow_mut().insert(key, allocation.clone());
+        Ok(allocation)
     }
 
     pub fn leaf<'leaf>(

@@ -38,5 +38,7 @@ impl Kernels for CpuKernels {
     type DeltaNetChunkedPrefill = Unsupported<Cpu>;
     type DeltaNetTreeVerify = Unsupported<Cpu>;
     type MatmulKernel = matmul::MatmulCpuKernel;
+    type MiraiSProjection = Unsupported<Cpu>;
+    type MiraiSTransform = Unsupported<Cpu>;
     type RadixTopKSmall = radix_top_k_small::CpuRadixTopKSmall;
 }
