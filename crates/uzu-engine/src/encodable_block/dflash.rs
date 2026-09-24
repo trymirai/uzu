@@ -334,7 +334,14 @@ impl<B: Backend> DFlash<B> {
         let mut lookahead_hidden =
             encoder.allocate_scratch(lookahead_rows.len()).map_err(DFlashEncodeError::Backend)?;
         encoder.encode_copy(&draft_hidden, lookahead_rows, &mut lookahead_hidden, ..);
-        let logits = target_embedding.encode_readout(batch_size - 1, &lookahead_hidden, encoder)?;
+        let logits = target_embedding.encode_readout(
+            batch_size - 1,
+            &lookahead_hidden,
+            target_embedding.vocab_size(),
+            None,
+            false,
+            encoder,
+        )?;
 
         encoder.pop_debug_group();
 

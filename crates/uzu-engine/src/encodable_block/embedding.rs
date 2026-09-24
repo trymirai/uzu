@@ -357,14 +357,17 @@ impl<B: Backend> Embedding<B> {
         &self,
         batch_dim: u32,
         input_allocation: &Allocation<B>,
+        output_dim: u32,
+        gather_indices: Option<&Allocation<B>>,
+        apply_logit_transform: bool,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
         encoder.push_debug_group("embedding readout");
 
-        assert!(batch_dim > 0, "Embedding readout requires at least one row");
+        assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
         let input_hadamard = self.readout_input_hadamard();
-        let mut output_allocation = encoder
-            .allocate_scratch_for_shape(&[batch_dim, self.vocab_size], self.data_type)
+        let mut output = encoder
+            .allocate_scratch_for_shape(&[batch_dim, output_dim], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
 
         let (matrix, readout) = self.readout_operands();
@@ -393,95 +396,33 @@ impl<B: Backend> Embedding<B> {
             b: matrix.matmul_b(),
             b_leading_dimension: None,
             b_transpose: true,
-            d: &mut output_allocation,
+            d: &mut output,
             d_transform: MatmulDOps::none(),
-            gather_indices: None,
+            gather_indices,
             m: batch_dim,
-            n: self.vocab_size,
+            n: output_dim,
             k: self.model_dim,
         };
         readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
 
-        if let Some(logit_transform) = &self.logit_transform {
-            let length = batch_dim * self.vocab_size;
-            logit_transform.kernel.encode(
-                &mut output_allocation,
-                length,
-                logit_transform.scale,
-                logit_transform.soft_cap.unwrap_or(0.0),
-                encoder,
-            );
-        }
-
-        encoder.pop_debug_group();
-
-        Ok(output_allocation)
-    }
-
-    pub fn encode_readout_sparse_raw(
-        &self,
-        input: &Allocation<B>,
-        token_ids: &Allocation<B>,
-        rows: u32,
-        ids_per_row: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, EmbeddingError<B>> {
-        encoder.push_debug_group("embedding readout (sparse)");
-
-        assert!(rows > 0 && ids_per_row > 0);
-        let input_hadamard = self.readout_input_hadamard();
-        let (matrix, readout) = self.readout_operands();
-        let b = matrix.matmul_b();
-
-        let mut output = encoder
-            .allocate_scratch_for_shape(&[rows, ids_per_row], self.data_type)
-            .map_err(EmbeddingError::BackendError)?;
-
-        let mut rht_input: Option<Allocation<B>> = None;
-        let a = match input_hadamard {
-            Some(input_hadamard) => {
-                let mut transformed = encoder.allocate_scratch(input.size()).map_err(EmbeddingError::BackendError)?;
-                input_hadamard.kernel.encode_fp(
-                    input,
-                    &mut transformed,
-                    &input_hadamard.factors,
-                    rows,
-                    self.model_dim,
+        if apply_logit_transform {
+            if let Some(logit_transform) = &self.logit_transform {
+                let length = batch_dim * output_dim;
+                logit_transform.kernel.encode(
+                    &mut output,
+                    length,
+                    logit_transform.scale,
+                    logit_transform.soft_cap.unwrap_or(0.0),
                     encoder,
                 );
-                rht_input.insert(transformed)
-            },
-            None => input,
-        };
-
-        readout
-            .lock()
-            .encode(
-                MatmulArguments {
-                    a: MatmulA::FullPrecision {
-                        values: a,
-                        offset: 0,
-                    },
-                    b,
-                    b_leading_dimension: None,
-                    b_transpose: true,
-                    d: &mut output,
-                    d_transform: MatmulDOps::none(),
-                    gather_indices: Some(token_ids),
-                    m: rows,
-                    n: ids_per_row,
-                    k: self.model_dim,
-                },
-                encoder,
-            )
-            .map_err(EmbeddingError::BackendError)?;
+            }
+        }
 
         encoder.pop_debug_group();
 
         Ok(output)
     }
 }
-
 fn readout_kernel<B: Backend>(
     context: &B::Context,
     data_type: DataType,
