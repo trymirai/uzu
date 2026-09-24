@@ -6,21 +6,22 @@ use crate::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
-            ActivationTransform, LogitTransformKernel,
+            LogitTransformKernel,
             matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel},
         },
     },
     config::{
         embedding::AnyEmbeddingConfig,
         weight_matrix::{
-            AnyWeightMatrixSpec, Layout,
+            AnyWeightMatrixSpec,
             hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
         },
     },
     data_type::DataType,
     encodable_block::{
         embedding_table::{EmbeddingTable, EmbeddingTableError},
-        weight_matrix::{WeightMatrix, WeightMatrixError},
+        linear::{Gather, LinearMatmulError, UntiedReadout},
+        weight_matrix::WeightMatrixError,
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -37,17 +38,8 @@ pub enum EmbeddingError<B: Backend> {
     EmbeddingTable(#[from] EmbeddingTableError<B>),
     #[error("Weight matrix error: {0}")]
     WeightMatrix(#[from] WeightMatrixError<B>),
-}
-
-struct UntiedReadout<B: Backend> {
-    matrix: WeightMatrix<B>,
-    readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
-    input_hadamard: Option<InputHadamard<B>>,
-}
-
-struct InputHadamard<B: Backend> {
-    factors: Allocation<B>,
-    kernel: ActivationTransform<B>,
+    #[error(transparent)]
+    LinearMatmul(#[from] LinearMatmulError<B>),
 }
 
 enum EmbeddingTying<B: Backend> {
@@ -83,31 +75,6 @@ impl<B: Backend> Embedding<B> {
 
     pub fn model_dim(&self) -> u32 {
         self.model_dim
-    }
-
-    fn readout_input_hadamard(&self) -> Option<&InputHadamard<B>> {
-        match &self.tying {
-            EmbeddingTying::Untied {
-                output,
-                ..
-            } => output.input_hadamard.as_ref(),
-            EmbeddingTying::Tied {
-                ..
-            } => None,
-        }
-    }
-
-    fn readout_operands(&self) -> (&WeightMatrix<B>, &Mutex<<B::Kernels as Kernels>::MatmulKernel>) {
-        match &self.tying {
-            EmbeddingTying::Tied {
-                table,
-                readout,
-            } => (table.matrix(), readout),
-            EmbeddingTying::Untied {
-                output,
-                ..
-            } => (&output.matrix, &output.readout),
-        }
     }
 
     pub fn new(
@@ -231,59 +198,14 @@ impl<B: Backend> Embedding<B> {
                 let output_embedding_tree = parameter_tree.subtree("output_embedding");
                 let output_embedding_spec = output_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
-                let output = match output_embedding_spec {
-                    AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                        quantization_spec,
-                        adapter_spec: None,
-                        incoherence_block_size: Some(block_size),
-                        incoherence_processing_mode: IncoherenceProcessingMode::Input,
-                        ..
-                    }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => {
-                        let matrix = WeightMatrix::load(
-                            &output_embedding_tree.subtree("quantized"),
-                            *quantization_spec,
-                            Layout::OutputInput,
-                            vocab_size,
-                            model_dim,
-                            data_type,
-                        )?;
-
-                        // Input-side incoherence is applied privately to the readout
-                        // input: the shared hidden state must stay untransformed
-                        // (e.g. for the speculator).
-                        let factors = output_embedding_tree
-                            .subtree("incoherence_signs")
-                            .leaf("input_signs")?
-                            .validate(&[model_dim], DataType::I32)?
-                            .read_allocation()?;
-                        let kernel = ActivationTransform::input_rht(context, data_type, false)
-                            .map_err(EmbeddingError::BackendError)?;
-
-                        UntiedReadout {
-                            matrix,
-                            readout: readout_kernel(context, data_type)?,
-                            input_hadamard: Some(InputHadamard {
-                                factors,
-                                kernel,
-                            }),
-                        }
-                    },
-                    spec => {
-                        let matrix = WeightMatrix::load(
-                            &output_embedding_tree,
-                            spec,
-                            Layout::OutputInput,
-                            vocab_size,
-                            model_dim,
-                            data_type,
-                        )?;
-                        UntiedReadout {
-                            matrix,
-                            readout: readout_kernel(context, data_type)?,
-                            input_hadamard: None,
-                        }
-                    },
-                };
+                let output = UntiedReadout::load(
+                    context,
+                    &output_embedding_tree,
+                    output_embedding_spec,
+                    vocab_size,
+                    model_dim,
+                    data_type,
+                )?;
 
                 (
                     EmbeddingTying::Untied {
@@ -365,50 +287,48 @@ impl<B: Backend> Embedding<B> {
         encoder.push_debug_group("embedding readout");
 
         assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
-        let input_hadamard = self.readout_input_hadamard();
-        let mut output = encoder
-            .allocate_scratch_for_shape(&[batch_dim, output_dim], self.data_type)
-            .map_err(EmbeddingError::BackendError)?;
-
-        let (matrix, readout) = self.readout_operands();
-        let mut rht_input: Option<Allocation<B>> = None;
-        let a = match input_hadamard {
-            Some(input_hadamard) => {
-                let mut transformed =
-                    encoder.allocate_scratch(input_allocation.size()).map_err(EmbeddingError::BackendError)?;
-                input_hadamard.kernel.encode_fp(
-                    input_allocation,
-                    &mut transformed,
-                    &input_hadamard.factors,
-                    batch_dim,
-                    self.model_dim,
-                    encoder,
-                );
-                rht_input.insert(transformed)
+        let mut output_allocation = match &self.tying {
+            EmbeddingTying::Untied {
+                output,
+                ..
+            } => {
+                let gather = gather_indices.map(|indices| Gather {
+                    indices,
+                    output_dim,
+                });
+                output.encode(input_allocation, batch_dim, gather, encoder).map_err(EmbeddingError::BackendError)?
             },
-            None => input_allocation,
-        };
-        let arguments = MatmulArguments {
-            a: MatmulA::FullPrecision {
-                values: a,
-                offset: 0,
+            EmbeddingTying::Tied {
+                table,
+                readout,
+            } => {
+                let mut output = encoder
+                    .allocate_scratch_for_shape(&[batch_dim, output_dim], self.data_type)
+                    .map_err(EmbeddingError::BackendError)?;
+                let arguments = MatmulArguments {
+                    a: MatmulA::FullPrecision {
+                        values: input_allocation,
+                        offset: 0,
+                    },
+                    b: table.matrix().matmul_b(),
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut output,
+                    d_transform: MatmulDOps::none(),
+                    gather_indices,
+                    m: batch_dim,
+                    n: output_dim,
+                    k: self.model_dim,
+                };
+                readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+                output
             },
-            b: matrix.matmul_b(),
-            b_leading_dimension: None,
-            b_transpose: true,
-            d: &mut output,
-            d_transform: MatmulDOps::none(),
-            gather_indices,
-            m: batch_dim,
-            n: output_dim,
-            k: self.model_dim,
         };
-        readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
 
         if apply_logit_transform && let Some(logit_transform) = &self.logit_transform {
             let length = batch_dim * output_dim;
             logit_transform.kernel.encode(
-                &mut output,
+                &mut output_allocation,
                 length,
                 logit_transform.scale,
                 logit_transform.soft_cap.unwrap_or(0.0),
@@ -418,7 +338,7 @@ impl<B: Backend> Embedding<B> {
 
         encoder.pop_debug_group();
 
-        Ok(output)
+        Ok(output_allocation)
     }
 }
 fn readout_kernel<B: Backend>(

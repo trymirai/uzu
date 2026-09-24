@@ -16,7 +16,7 @@ use crate::{
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     encodable_block::{
-        linear::{Linear, LinearInput},
+        linear::{Gather, Linear, LinearInput},
         weight_matrix::{WeightMatrix, WeightMatrixError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -123,11 +123,12 @@ impl<B: Backend> LinearMatmul<B> {
         &self,
         a: MatmulA<'_, B>,
         batch_dim: u32,
+        gather: Option<Gather<'_, B>>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut output =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
-
+        let (output_dim, gather_indices) =
+            gather.map_or((self.output_dim, None), |gather| (gather.output_dim, Some(gather.indices)));
+        let mut output = encoder.allocate_scratch(size_for_shape(&[batch_dim, output_dim], self.output_data_type))?;
         self.kernel.lock().encode(
             MatmulArguments {
                 a,
@@ -136,9 +137,9 @@ impl<B: Backend> LinearMatmul<B> {
                 b_transpose: true,
                 d: &mut output,
                 d_transform: self.d_ops(),
-                gather_indices: None,
+                gather_indices,
                 m: batch_dim,
-                n: self.output_dim,
+                n: output_dim,
                 k: self.input_dim,
             },
             encoder,
@@ -169,18 +170,6 @@ impl<B: Backend> LinearMatmul<B> {
         }
     }
 
-    pub(super) fn select_activation_format(
-        &self,
-        batch_dim: u32,
-        context: &B::Context,
-    ) -> ActivationFormat {
-        if !self.matmul_b().signed_codes() {
-            return ActivationFormat::Bf16;
-        }
-        let bf16_shape = self.matmul_shape(batch_dim, true);
-        self.kernel.lock().select_activation_format(&bf16_shape, context)
-    }
-
     fn matmul_b(&self) -> MatmulB<'_, B> {
         self.matrix.matmul_b()
     }
@@ -209,6 +198,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 offset: 0,
             },
             batch_dim,
+            None,
             encoder,
         )?;
 
@@ -223,24 +213,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        match input {
-            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, encoder),
-            LinearInput::Int8Symmetric {
-                values,
-                scales,
-                group_sums,
-                group_size,
-            } => self.encode_with_a(
-                MatmulA::Int8Symmetric {
-                    values: &values,
-                    scales: &scales,
-                    group_sums: group_sums.as_ref(),
-                    group_size,
-                },
-                batch_dim,
-                encoder,
-            ),
-        }
+        self.encode_with_a(input.as_matmul_a(), batch_dim, None, encoder)
     }
 
     fn select_activation_format(
@@ -248,6 +221,10 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        Self::select_activation_format(self, batch_dim, context)
+        if !self.matmul_b().signed_codes() {
+            return ActivationFormat::Bf16;
+        }
+        let bf16_shape = self.matmul_shape(batch_dim, true);
+        self.kernel.lock().select_activation_format(&bf16_shape, context)
     }
 }
