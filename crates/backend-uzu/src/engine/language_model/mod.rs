@@ -93,7 +93,11 @@ impl<B: Backend> Engine<B> {
 
         // TODO
         let speculator_path = model_path.join("speculator");
-        let speculator_path = speculator_path.exists().then_some(speculator_path);
+        // without MXU (Macs before M5) verifying a drafted block costs about as much per token as decoding it, so
+        // the speculator slows prose down more than it speeds code up
+        let speculator_path = (speculator_path.exists()
+            && self.context.device_capabilities().contains(DeviceCapabilities::MXU))
+        .then_some(speculator_path);
 
         let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
 

@@ -274,6 +274,9 @@ impl Context for MetalContext {
         if self.device.supports_placement_sparse_resources() {
             capabilities |= DeviceCapabilities::SPARSE_BUFFERS;
         }
+        if self.supports_mxu() {
+            capabilities |= DeviceCapabilities::MXU;
+        }
         capabilities
     }
 }

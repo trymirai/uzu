@@ -498,9 +498,18 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
     fn new(context: &MetalContext) -> Result<Self, MetalError> {
         Ok(Self {
             mxu: context.supports_mxu(),
-            simdgroup_v4: (QtipRaceV4SimdgroupT1MetalKernel::new(context)?, QtipRaceV4SimdgroupT8MetalKernel::new(context)?),
-            simdgroup_k3: (QtipRaceK3SimdgroupT1MetalKernel::new(context)?, QtipRaceK3SimdgroupT8MetalKernel::new(context)?),
-            simdgroup_k2: (QtipRaceK2SimdgroupT1MetalKernel::new(context)?, QtipRaceK2SimdgroupT8MetalKernel::new(context)?),
+            simdgroup_v4: (
+                QtipRaceV4SimdgroupT1MetalKernel::new(context)?,
+                QtipRaceV4SimdgroupT8MetalKernel::new(context)?,
+            ),
+            simdgroup_k3: (
+                QtipRaceK3SimdgroupT1MetalKernel::new(context)?,
+                QtipRaceK3SimdgroupT8MetalKernel::new(context)?,
+            ),
+            simdgroup_k2: (
+                QtipRaceK2SimdgroupT1MetalKernel::new(context)?,
+                QtipRaceK2SimdgroupT8MetalKernel::new(context)?,
+            ),
             race_transform: env_flag("QTIP_RACE_TRANSFORM", true),
             race_projection: env_flag("QTIP_RACE_PROJ", true),
             computed_codebook: env_flag("QTIP_COMPUTED_CODEBOOK", true),
