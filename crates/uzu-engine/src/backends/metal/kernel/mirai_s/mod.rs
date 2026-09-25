@@ -1,4 +1,7 @@
-use super::{MiraiSNarrowProjectionMetalKernel, MiraiSProjectionMetalKernel, MiraiSTransformMetalKernel};
+use super::{
+    MiraiSNarrowProjectionMetalKernel, MiraiSProjectionMetalKernel, MiraiSSimdgroupProjectionMetalKernel,
+    MiraiSTransformMetalKernel,
+};
 use crate::{
     backends::{
         common::{
@@ -24,7 +27,7 @@ impl MiraiSTransform for MetalMiraiSTransform {
         context: &MetalContext,
         columns: u32,
     ) -> Result<Option<Self>, MetalError> {
-        if !context.supports_mxu || ![5120, 6144, 17408].contains(&columns) {
+        if ![5120, 6144, 17408].contains(&columns) {
             return Ok(None);
         }
         Ok(Some(Self {
@@ -41,7 +44,8 @@ impl MiraiSTransform for MetalMiraiSTransform {
         batch: u32,
         encoder: &mut Encoder<Metal>,
     ) -> Result<RotatedInput<Metal>, MetalError> {
-        // the projection's MXU reads whole token tiles; rows past `batch` are never written and never stored
+        // the projections read whole token tiles (64 for the MXU kernels); rows past `batch` are never written and
+        // never stored
         let padded_batch = batch.next_multiple_of(MAX_TOKEN_TILE);
         let mut activations = encoder.allocate_scratch_for_shape(&[padded_batch, self.columns], DataType::I8)?;
         let mut token_statistics = encoder.allocate_scratch_for_shape(&[batch, 8], DataType::F32)?;
@@ -55,13 +59,19 @@ impl MiraiSTransform for MetalMiraiSTransform {
     }
 }
 
-/// The projection kernels of one codec.
-pub struct MetalMiraiSProjection {
-    wide_32: MiraiSProjectionMetalKernel,
-    wide_64: MiraiSProjectionMetalKernel,
-    narrow_2: MiraiSNarrowProjectionMetalKernel,
-    narrow_4: MiraiSNarrowProjectionMetalKernel,
-    busy_simdgroups: u32,
+/// The projection kernels of one codec: MXU int8 tensor ops on M5 and later, plain SIMDgroup arithmetic before.
+pub enum MetalMiraiSProjection {
+    Mxu {
+        wide_32: MiraiSProjectionMetalKernel,
+        wide_64: MiraiSProjectionMetalKernel,
+        narrow_2: MiraiSNarrowProjectionMetalKernel,
+        narrow_4: MiraiSNarrowProjectionMetalKernel,
+        busy_simdgroups: u32,
+    },
+    Simdgroup {
+        tokens_1: MiraiSSimdgroupProjectionMetalKernel,
+        tokens_8: MiraiSSimdgroupProjectionMetalKernel,
+    },
 }
 
 impl MiraiSProjection for MetalMiraiSProjection {
@@ -71,11 +81,14 @@ impl MiraiSProjection for MetalMiraiSProjection {
         context: &MetalContext,
         codec: TrellisCodec,
     ) -> Result<Option<Self>, MetalError> {
-        if !context.supports_mxu {
-            return Ok(None);
-        }
         let (vector_width, transition_bits) = (codec.vector_width(), codec.transition_bits());
-        Ok(Some(Self {
+        if !context.supports_mxu {
+            return Ok(Some(Self::Simdgroup {
+                tokens_1: MiraiSSimdgroupProjectionMetalKernel::new(context, 1, vector_width, transition_bits)?,
+                tokens_8: MiraiSSimdgroupProjectionMetalKernel::new(context, 8, vector_width, transition_bits)?,
+            }));
+        }
+        Ok(Some(Self::Mxu {
             wide_32: MiraiSProjectionMetalKernel::new(context, 32, vector_width, transition_bits)?,
             wide_64: MiraiSProjectionMetalKernel::new(context, 64, vector_width, transition_bits)?,
             narrow_2: MiraiSNarrowProjectionMetalKernel::new(context, 2, vector_width, transition_bits)?,
@@ -121,19 +134,39 @@ impl MiraiSProjection for MetalMiraiSProjection {
                 )
             };
         }
-        // The narrow kernels (16 tokens per MXU tile) win at batch <= 16 once their larger row tiles still leave
-        // enough SIMDgroups to fill the GPU: 256 for V2, which reads its levels from a table, 512 for V4, which hashes
-        // them. Measured on an M5 Pro per projection with codes streamed from DRAM, narrow vs wide: V2 34816 x 5120
-        // 426 vs 534 us, 16480 x 5120 215 vs 277, 8192 x 5120 124 vs 148, 5120 x 17408 308 vs 256; V4 34816 x 5120
-        // 371 vs 455, 16480 x 5120 177 vs 260, 6144 x 5120 132 vs 92.
-        if input.batch <= 16 && rows / 64 >= self.busy_simdgroups {
-            encode!(self.narrow_4)
-        } else if input.batch <= 16 && rows / 32 >= self.busy_simdgroups {
-            encode!(self.narrow_2)
-        } else if input.batch <= 32 {
-            encode!(self.wide_32)
-        } else {
-            encode!(self.wide_64)
+        match self {
+            Self::Simdgroup {
+                tokens_1,
+                tokens_8,
+            } => {
+                if input.batch == 1 {
+                    encode!(tokens_1)
+                } else {
+                    encode!(tokens_8)
+                }
+            },
+            // The narrow kernels (16 tokens per MXU tile) win at batch <= 16 once their larger row tiles still leave
+            // enough SIMDgroups to fill the GPU: 256 for V2, which reads its levels from a table, 512 for V4, which
+            // hashes them. Measured on an M5 Pro per projection with codes streamed from DRAM, narrow vs wide: V2
+            // 34816 x 5120 426 vs 534 us, 16480 x 5120 215 vs 277, 8192 x 5120 124 vs 148, 5120 x 17408 308 vs 256;
+            // V4 34816 x 5120 371 vs 455, 16480 x 5120 177 vs 260, 6144 x 5120 132 vs 92.
+            Self::Mxu {
+                wide_32,
+                wide_64,
+                narrow_2,
+                narrow_4,
+                busy_simdgroups,
+            } => {
+                if input.batch <= 16 && rows / 64 >= *busy_simdgroups {
+                    encode!(narrow_4)
+                } else if input.batch <= 16 && rows / 32 >= *busy_simdgroups {
+                    encode!(narrow_2)
+                } else if input.batch <= 32 {
+                    encode!(wide_32)
+                } else {
+                    encode!(wide_64)
+                }
+            },
         }
     }
 }

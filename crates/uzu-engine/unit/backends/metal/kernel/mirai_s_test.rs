@@ -107,9 +107,6 @@ fn transform_reference(
 #[test_attr(uzu_test)]
 fn transform_matches_reference(#[values(5120, 6144, 17408)] columns: u32) {
     let context = shared_metal_context();
-    if !context.supports_mxu {
-        return;
-    }
     let transform = MetalMiraiSTransform::new(&context, columns).unwrap().unwrap();
     let mut rng = SmallRng::seed_from_u64(u64::from(columns));
     let order = mixing_order(columns);
@@ -188,15 +185,23 @@ fn projection_matches_reference(
     #[values(5120, 6144, 17408)] columns: u32,
 ) {
     let context = shared_metal_context();
-    if !context.supports_mxu {
-        return;
-    }
     let mut rng = SmallRng::seed_from_u64(u64::from(columns) + codec.transition_bits() as u64);
     let (vector_width, transition_bits) = (codec.vector_width(), codec.transition_bits());
-    let wide_32 = MiraiSProjectionMetalKernel::new(&context, 32, vector_width, transition_bits).unwrap();
-    let wide_64 = MiraiSProjectionMetalKernel::new(&context, 64, vector_width, transition_bits).unwrap();
-    let narrow_2 = MiraiSNarrowProjectionMetalKernel::new(&context, 2, vector_width, transition_bits).unwrap();
-    let narrow_4 = MiraiSNarrowProjectionMetalKernel::new(&context, 4, vector_width, transition_bits).unwrap();
+    let simdgroup_1 = MiraiSSimdgroupProjectionMetalKernel::new(&context, 1, vector_width, transition_bits).unwrap();
+    let simdgroup_8 = MiraiSSimdgroupProjectionMetalKernel::new(&context, 8, vector_width, transition_bits).unwrap();
+    // the MXU kernels need M5 or later; the SIMDgroup kernels run on every Apple GPU
+    let mxu = context.supports_mxu.then(|| {
+        (
+            MiraiSProjectionMetalKernel::new(&context, 32, vector_width, transition_bits).unwrap(),
+            MiraiSProjectionMetalKernel::new(&context, 64, vector_width, transition_bits).unwrap(),
+            MiraiSNarrowProjectionMetalKernel::new(&context, 2, vector_width, transition_bits).unwrap(),
+            MiraiSNarrowProjectionMetalKernel::new(&context, 4, vector_width, transition_bits).unwrap(),
+        )
+    });
+    let kernels: &[&str] = match mxu {
+        Some(_) => &["simdgroup 1", "simdgroup 8", "wide 32", "wide 64", "narrow 2", "narrow 4"],
+        None => &["simdgroup 1", "simdgroup 8"],
+    };
     // not a multiple of the narrow kernels' 32- and 64-row SIMDgroup tiles
     let rows = 48u32;
     let codebook = match codec {
@@ -235,7 +240,8 @@ fn projection_matches_reference(
             .collect();
         let activations_allocation = alloc_allocation_with_data::<Metal, i8>(&context, &activations);
         let token_statistics_allocation = alloc_allocation_with_data::<Metal, f32>(&context, &token_statistics);
-        for kernel in ["wide 32", "wide 64", "narrow 2", "narrow 4"] {
+        let mut simdgroup_1_output: Option<Vec<bf16>> = None;
+        for &kernel in kernels {
             let mut output = alloc_allocation::<Metal, bf16>(&context, (batch * rows) as usize);
             let mut encoder = Encoder::<Metal>::new(&context).unwrap();
             macro_rules! encode {
@@ -255,11 +261,14 @@ fn projection_matches_reference(
                     )
                 };
             }
-            match kernel {
-                "wide 32" => encode!(wide_32),
-                "wide 64" => encode!(wide_64),
-                "narrow 2" => encode!(narrow_2),
-                _ => encode!(narrow_4),
+            match (kernel, &mxu) {
+                ("simdgroup 1", _) => encode!(simdgroup_1),
+                ("simdgroup 8", _) => encode!(simdgroup_8),
+                ("wide 32", Some((wide_32, ..))) => encode!(wide_32),
+                ("wide 64", Some((_, wide_64, ..))) => encode!(wide_64),
+                ("narrow 2", Some((.., narrow_2, _))) => encode!(narrow_2),
+                ("narrow 4", Some((.., narrow_4))) => encode!(narrow_4),
+                _ => unreachable!(),
             }
             encoder.end_encoding().submit().wait_until_completed().unwrap();
             let output = allocation_to_vec::<Metal, bf16>(&output);
@@ -280,6 +289,14 @@ fn projection_matches_reference(
                         "{kernel} batch {batch} token {token} row {row}: {actual} vs {expected}"
                     );
                 }
+            }
+            // every kernel computes the same exact int32 dot and the same epilogue as the SIMDgroup kernel
+            match &simdgroup_1_output {
+                None => simdgroup_1_output = Some(output),
+                Some(expected) => assert!(
+                    expected.iter().zip(&output).all(|(expected, value)| expected.to_bits() == value.to_bits()),
+                    "{kernel} batch {batch} differs from simdgroup 1"
+                ),
             }
         }
     }

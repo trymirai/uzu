@@ -280,3 +280,84 @@ KERNEL(MiraiSNarrowProjection)(
     return value;
   });
 }
+
+#define SIMDGROUP_KERNEL_SIMDGROUPS 4
+#define SIMDGROUP_KERNEL_ROWS 4
+
+static METAL_FUNC int level_dot(char4 levels, char4 activations) {
+  const int4 products = int4(levels) * int4(activations);
+  return products.x + products.y + products.z + products.w;
+}
+
+// Without MXU (Apple GPUs before M5), plain SIMD arithmetic: each SIMDgroup computes SIMDGROUP_KERNEL_ROWS rows x
+// TOKENS tokens, a lane decodes 4 columns of every row per 128-column step, and simd_sum adds up the lanes. The int32
+// dots are exact, so the output matches the MXU kernels bit for bit. V2 levels are hashed too: on M1 and M2 reading
+// them from the level table is 2.5-3x slower at batch 1. `rows` is a multiple of 16.
+template <uint TOKENS, uint VECTOR_WIDTH, uint TRANSITION_BITS>
+VARIANTS(TOKENS, 1, 8)
+VARIANTS(VECTOR_WIDTH, 2, 4)
+VARIANTS(TRANSITION_BITS, 4, 6, 8)
+CONSTRAINT((VECTOR_WIDTH == 4) == (TRANSITION_BITS == 8))
+KERNEL(MiraiSSimdgroupProjection)(
+    device const uchar* codes,
+    device const int8_t* activations,
+    device const float4* token_statistics,
+    device const float* row_scales,
+    device const float* codebook,
+    device bfloat* output,
+    constant uint& rows,
+    constant uint& columns,
+    constant uint& batch,
+    constant uint& output_stride,
+    const uint row_tile GROUPS(rows.div_ceil(SIMDGROUP_KERNEL_SIMDGROUPS * SIMDGROUP_KERNEL_ROWS)),
+    const uint token_tile GROUPS(batch.div_ceil(TOKENS)),
+    const uint thread_index THREADS(SIMDGROUP_KERNEL_SIMDGROUPS * 32),
+    const ThreadContext thread_context
+) {
+  (void)thread_index;
+  static_assert(SIMDGROUP_KERNEL_ROWS * TOKENS <= 32, "each lane stores one output");
+  const uint row_base =
+      (row_tile * SIMDGROUP_KERNEL_SIMDGROUPS + thread_context.simdgroup_index) * SIMDGROUP_KERNEL_ROWS;
+  const Codebook trellis_codebook{codebook};
+  const uint stride = row_bytes(VECTOR_WIDTH, TRANSITION_BITS, columns);
+  device const int8_t* tile_activations = activations + token_tile * TOKENS * columns;
+
+  int dots[SIMDGROUP_KERNEL_ROWS][TOKENS] = {};
+  for (uint column = thread_context.simd_lane_id * 4; column < columns; column += 128) {
+    char4 token_activations[TOKENS];
+    METAL_PRAGMA_UNROLL
+    for (uint token = 0; token < TOKENS; ++token) {
+      token_activations[token] = *reinterpret_cast<device const char4*>(tile_activations + token * columns + column);
+    }
+    METAL_PRAGMA_UNROLL
+    for (uint row = 0; row < SIMDGROUP_KERNEL_ROWS; ++row) {
+      device const uchar* row_codes = codes + (row_base + row) * stride;
+      const char4 levels = decode_columns<VECTOR_WIDTH, TRANSITION_BITS, false>(row_codes, column, trellis_codebook);
+      METAL_PRAGMA_UNROLL
+      for (uint token = 0; token < TOKENS; ++token) {
+        dots[row][token] += level_dot(levels, token_activations[token]);
+      }
+    }
+  }
+
+  METAL_PRAGMA_UNROLL
+  for (uint row = 0; row < SIMDGROUP_KERNEL_ROWS; ++row) {
+    METAL_PRAGMA_UNROLL
+    for (uint token = 0; token < TOKENS; ++token) {
+      const int dot = simd_sum(dots[row][token]);
+      const uint output_token = token_tile * TOKENS + token;
+      if (thread_context.simd_lane_id == row * TOKENS + token && output_token < batch) {
+        store_output(
+            dot,
+            output_token,
+            row_base + row,
+            trellis_codebook,
+            token_statistics,
+            row_scales,
+            output,
+            output_stride
+        );
+      }
+    }
+  }
+}

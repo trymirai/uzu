@@ -221,7 +221,7 @@ fn fit_codebook(
 }
 
 /// The package codebook as the projection kernels read it: f32 `[scale, offset of column class 0..4, 0, 0, 0]`,
-/// then for V2 the int8 level pair of every state, which small-batch projections read instead of hashing.
+/// then for V2 the int8 level pair of every state, which the narrow MXU projections read instead of hashing.
 fn codebook_table(
     values: &[f32],
     vector_width: usize,

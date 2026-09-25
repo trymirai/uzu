@@ -198,9 +198,6 @@ mod row_stack {
     #[uzu_test]
     fn row_stack_matches_its_parts() {
         let context = shared_metal_context();
-        if !context.supports_mxu {
-            return;
-        }
         let mut rng = SmallRng::seed_from_u64(3);
         let first = Leaf::random(TrellisCodec::Vector2Transition6, 32, &mut rng);
         let second = Leaf::random(TrellisCodec::Vector4Restart64, 48, &mut rng);
