@@ -4,7 +4,10 @@ use uzu_engine_macros::kernel;
 
 use crate::{
     array::ArrayElement,
-    backends::common::gpu_types::{QuantizationMethod, QuantizationMode},
+    backends::{
+        common::gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
+        cpu::kernel::activation_transform::hadamard_transform,
+    },
     data_type::DataType,
 };
 
@@ -17,9 +20,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
     #[optional(quantization_method == QuantizationMethod::ScaleZeroPoint)] zero_points: Option<*const u8>,
     #[optional(quantization_method == QuantizationMethod::ScaleBias)] biases: Option<*const T>,
     output: *mut T,
-    #[allow(unused)]
-    #[optional(use_hadamard)]
-    output_hadamard_factors: Option<*const i32>,
+    #[optional(use_hadamard)] output_hadamard_factors: Option<*const i32>,
     batch_size: u32,
     vocab_size: u32,
     model_dim: u32,
@@ -29,9 +30,8 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
     #[specialize] quantization_method: QuantizationMethod,
     #[specialize] use_hadamard: bool,
 ) {
-    if use_hadamard {
-        unimplemented!("not supported yet");
-    }
+    assert_eq!(output_hadamard_factors.is_some(), use_hadamard);
+    assert!(!use_hadamard || model_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
 
     let packing_divisor = quantization_mode.packing_divisor();
     let weights_stride = model_dim / packing_divisor;
@@ -111,6 +111,20 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                 let out_f = scale.to_f32().unwrap() * quantized_value as f32 + bias;
                 let out_f = out_f * input_scale;
                 *output.add(out_idx) = T::from(out_f).unwrap();
+            }
+
+            // Output RHT like the Metal kernel: round to T, transform each block, then apply the factors
+            if let Some(factors) = output_hadamard_factors {
+                let row =
+                    std::slice::from_raw_parts_mut(output.add((batch_idx * model_dim) as usize), model_dim as usize);
+                for block_start in (0..model_dim as usize).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
+                    let mut block = std::array::from_fn(|lane| row[block_start + lane].to_f32().unwrap());
+                    hadamard_transform(&mut block);
+                    for (lane, value) in block.into_iter().enumerate() {
+                        let factor = *factors.add(block_start + lane) as f32;
+                        row[block_start + lane] = T::from(value * factor).unwrap();
+                    }
+                }
             }
         }
     }

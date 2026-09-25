@@ -2,7 +2,12 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::{
+    array::ArrayElement,
+    backends::{
+        common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE, cpu::kernel::activation_transform::hadamard_transform,
+    },
+};
 
 #[kernel(Normalization)]
 #[variants(InputT, f32, f16, bf16)]
@@ -42,10 +47,7 @@ pub fn normalization<
     assert_eq!(biases.is_some(), has_biases);
     assert_eq!(scales.is_some(), has_scales);
     assert!(copy_to_shortcut || !residual_add);
-
-    if use_hadamard {
-        unimplemented!("not supported yet");
-    }
+    assert!(!use_hadamard || element_count.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
 
     let input = match in_place {
         true => output as *const InputT,
@@ -56,6 +58,7 @@ pub fn normalization<
     let epsilon = AccumT::from(epsilon).unwrap();
     let scale_offset = AccumT::from(scale_offset).unwrap();
     let element_count_accum = AccumT::from(element_count).unwrap();
+    let mut row = vec![OutputT::zero(); element_count];
 
     for batch in 0..(batch_size as usize) {
         let batch_offset = batch * element_count;
@@ -117,6 +120,25 @@ pub fn normalization<
                 let bias = unsafe { AccumT::from(*biases.unwrap().add(i)).unwrap() };
                 result = OutputT::from(AccumT::from(result).unwrap() + bias).unwrap();
             }
+            row[i] = result;
+        }
+
+        // Input RHT like the Metal kernel: apply the factors, then transform each block, before output scaling
+        if let Some(factors) = hadamard_factors {
+            for block_start in (0..element_count).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
+                let mut block = std::array::from_fn(|lane| {
+                    let factor = unsafe { *factors.add(block_start + lane) } as f32;
+                    row[block_start + lane].to_f32().unwrap() * factor
+                });
+                hadamard_transform(&mut block);
+                for (lane, value) in block.into_iter().enumerate() {
+                    row[block_start + lane] = OutputT::from(value).unwrap();
+                }
+            }
+        }
+
+        for (i, &value) in row.iter().enumerate() {
+            let mut result = value;
             if scale_output {
                 result = result * OutputT::from(post_layer_scalar).unwrap();
             }
