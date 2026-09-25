@@ -10,7 +10,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Gather, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
+        Gather, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht, mirai_s,
     },
     parameters::ParameterTree,
 };
@@ -29,6 +29,10 @@ impl<B: Backend> UntiedReadout<B> {
         model_dim: u32,
         data_type: DataType,
     ) -> Result<Self, LinearMatmulError<B>> {
+        if let AnyWeightMatrixSpec::I3S4Spec(spec) = spec {
+            let (linear, rht_signs) = mirai_s::load_readout(context, tree, spec, vocab_size, model_dim, data_type)?;
+            return Self::with_input_rht(context, linear, rht_signs, data_type);
+        }
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
             adapter_spec: None,
@@ -45,7 +49,7 @@ impl<B: Backend> UntiedReadout<B> {
             });
         };
 
-        let mut linear = LinearMatmul::load(
+        let linear = LinearMatmul::load(
             context,
             *quantization_spec,
             model_dim,
@@ -62,6 +66,15 @@ impl<B: Backend> UntiedReadout<B> {
             .leaf("input_signs")?
             .validate(&[model_dim], DataType::I32)?
             .read_allocation()?;
+        Self::with_input_rht(context, linear, rht_signs, data_type)
+    }
+
+    fn with_input_rht(
+        context: &B::Context,
+        mut linear: LinearMatmul<B>,
+        rht_signs: Allocation<B>,
+        data_type: DataType,
+    ) -> Result<Self, LinearMatmulError<B>> {
         let preparation = LinearInputPreparation {
             rht_signs,
             activation_quantization: linear.prepare_a8(context),

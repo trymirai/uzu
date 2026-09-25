@@ -2,11 +2,13 @@ use thiserror::Error;
 
 mod input_rht;
 mod matmul;
+pub(crate) mod mirai_s;
 mod qlora_wrapper;
 mod rht_wrapper;
 mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
+pub use mirai_s::MiraiSLinear;
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 pub use untied_readout::UntiedReadout;
@@ -135,6 +137,12 @@ impl<B: Backend> dyn Linear<B> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
+            spec @ (AnyWeightMatrixSpec::QtipGaussianSpec(_) | AnyWeightMatrixSpec::RowStackSpec(_))
+                if !has_biases && input_data_type == DataType::BF16 && output_data_type == DataType::BF16 =>
+            {
+                let linear = MiraiSLinear::load(context, spec, &weights_tree, input_dimension, output_dimension_sum)?;
+                Ok(Box::new(linear))
+            },
             spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
             | AnyWeightMatrixSpec::MLXSpec(_)
             | AnyWeightMatrixSpec::IntSpec(_)) => {
