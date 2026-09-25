@@ -1169,11 +1169,14 @@ fn computed_levels(state: u32) -> [i32; 4] {
 }
 
 /// Computed-codebook kernels against an f64 reference with the exact weights c * level + offsets[k % 4]: random
-/// codes and activations on the package's V4 / V2 codebook constants, every output within two bf16 ulps.
+/// codes and activations on the package's V4 / V2 codebook constants, every output within two bf16 ulps. The
+/// SIMDgroup kernels (devices without MXU) run everywhere and equal the MXU kernels bit for bit.
 #[uzu_test]
 fn qtip_computed_codebook_matches_reference() {
     let context = crate::tests::util::shared_metal_context();
-    assert!(context.supports_mxu());
+    let simdgroup_v4 = (QtipRaceV4SimdgroupT1MetalKernel::new(&context).expect("kernel"), QtipRaceV4SimdgroupT8MetalKernel::new(&context).expect("kernel"));
+    let simdgroup_k3 = (QtipRaceK3SimdgroupT1MetalKernel::new(&context).expect("kernel"), QtipRaceK3SimdgroupT8MetalKernel::new(&context).expect("kernel"));
+    let simdgroup_k2 = (QtipRaceK2SimdgroupT1MetalKernel::new(&context).expect("kernel"), QtipRaceK2SimdgroupT8MetalKernel::new(&context).expect("kernel"));
     let v4_sg4_b32 = QtipRaceV4CmpSg4B32MetalKernel::new(&context).expect("kernel");
     let v4_sg2_b64 = QtipRaceV4CmpSg2B64MetalKernel::new(&context).expect("kernel");
     let k3_sg4_b64 = QtipRaceK3CmpSg4B64MetalKernel::new(&context).expect("kernel");
@@ -1182,9 +1185,15 @@ fn qtip_computed_codebook_matches_reference() {
     let v4 = (0.052037482f32, [-0.08205986f32, -0.07758855, -0.07814354, -0.0810989]);
     let v2 = (0.052127664f32, [-0.082201894f32, -0.077723003, -0.082201894, -0.077723003]);
 
-    for (geometry, padded_batch, active_batch) in
-        [(Geometry::V4, 32u32, 13u32), (Geometry::V4, 64, 64), (Geometry::V2K3, 64, 50), (Geometry::V2K2, 64, 64)]
-    {
+    for (geometry, padded_batch, active_batch) in [
+        (Geometry::V4, 32u32, 13u32),
+        (Geometry::V4, 64, 64),
+        (Geometry::V4, 32, 1),
+        (Geometry::V2K3, 64, 50),
+        (Geometry::V2K3, 32, 1),
+        (Geometry::V2K2, 64, 64),
+        (Geometry::V2K2, 32, 1),
+    ] {
         let (rows, columns) = (160u32, 5120u32);
         let family = Family { name: "test", geometry, rows, columns, leaves: 1 };
         let case = build_case(&context, &family, active_batch, padded_batch, 7);
@@ -1200,37 +1209,59 @@ fn qtip_computed_codebook_matches_reference() {
         let row_scales_buffer = alloc_allocation_with_data::<Metal, f32>(&context, &row_scales);
         let token_sums_buffer = alloc_allocation_with_data::<Metal, f32>(&context, &token_sums);
         let offsets_buffer = alloc_allocation_with_data::<Metal, f32>(&context, &offsets);
-        let mut output = alloc_allocation::<Metal, bf16>(&context, (active_batch * rows) as usize);
-        let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
-        macro_rules! run {
-            ($kernel:expr) => {
-                $kernel.encode(
-                    &case.codes,
-                    &case.activations,
-                    &case.activation_scales,
-                    &token_sums_buffer,
-                    &row_scales_buffer,
-                    &case.gains,
-                    &mut output,
-                    &offsets_buffer,
-                    scale,
-                    rows,
-                    case.groups,
-                    case.bytes_per_row,
-                    active_batch,
-                    &mut encoder,
-                )
-            };
+        let mut outputs: Vec<(&str, Vec<bf16>)> = Vec::new();
+        for kernel in ["mxu", "simdgroup"] {
+            if kernel == "mxu" && (!context.supports_mxu() || active_batch == 1) {
+                continue;
+            }
+            let mut output = alloc_allocation::<Metal, bf16>(&context, (active_batch * rows) as usize);
+            let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+            macro_rules! run {
+                ($kernel:expr, $width:expr) => {
+                    $kernel.encode(
+                        &case.codes,
+                        &case.activations,
+                        &case.activation_scales,
+                        &token_sums_buffer,
+                        &row_scales_buffer,
+                        &case.gains,
+                        &mut output,
+                        &offsets_buffer,
+                        scale,
+                        rows,
+                        $width,
+                        case.bytes_per_row,
+                        active_batch,
+                        &mut encoder,
+                    )
+                };
+            }
+            macro_rules! run_simdgroup {
+                ($kernels:expr) => {
+                    if active_batch == 1 { run!($kernels.0, columns) } else { run!($kernels.1, columns) }
+                };
+            }
+            match (kernel, geometry, padded_batch) {
+                ("mxu", Geometry::V4, 32) => run!(v4_sg4_b32, case.groups),
+                ("mxu", Geometry::V4, 64) => run!(v4_sg2_b64, case.groups),
+                ("mxu", Geometry::V2K3, 64) => run!(k3_sg4_b64, case.groups),
+                ("mxu", Geometry::V2K2, 64) => run!(k2_sg4_b64, case.groups),
+                ("simdgroup", Geometry::V4, _) => run_simdgroup!(simdgroup_v4),
+                ("simdgroup", Geometry::V2K3, _) => run_simdgroup!(simdgroup_k3),
+                ("simdgroup", Geometry::V2K2, _) => run_simdgroup!(simdgroup_k2),
+                _ => unreachable!(),
+            }
+            encoder.end_encoding().submit().wait_until_completed().expect("execution");
+            outputs.push((kernel, allocation_to_vec::<Metal, bf16>(&output)));
         }
-        match (geometry, padded_batch) {
-            (Geometry::V4, 32) => run!(v4_sg4_b32),
-            (Geometry::V4, 64) => run!(v4_sg2_b64),
-            (Geometry::V2K3, 64) => run!(k3_sg4_b64),
-            (Geometry::V2K2, 64) => run!(k2_sg4_b64),
-            _ => unreachable!(),
+        for (kernel, output) in &outputs[1..] {
+            assert!(
+                output.iter().zip(&outputs[0].1).all(|(a, b)| a.to_bits() == b.to_bits()),
+                "{kernel} differs from {} for {geometry:?} ({active_batch} tokens)",
+                outputs[0].0
+            );
         }
-        encoder.end_encoding().submit().wait_until_completed().expect("execution");
-        let gpu = allocation_to_vec::<Metal, bf16>(&output);
+        let gpu = &outputs[0].1;
 
         let bytes_per_row = case.bytes_per_row as usize;
         let mut worst_ulps = 0.0f64;
@@ -1277,7 +1308,7 @@ fn qtip_computed_codebook_matches_reference() {
                 worst_ulps = worst_ulps.max((got - reference).abs() / ulp);
             }
         }
-        eprintln!("computed codebook {geometry:?} B{padded_batch} ({active_batch} tokens): worst {worst_ulps:.2} bf16 ulps");
+        eprintln!("computed codebook {geometry:?} B{padded_batch} ({active_batch} tokens, {} kernels): worst {worst_ulps:.2} bf16 ulps", outputs.len());
         assert!(worst_ulps <= 2.0, "computed-codebook output off by {worst_ulps} bf16 ulps");
     }
 }

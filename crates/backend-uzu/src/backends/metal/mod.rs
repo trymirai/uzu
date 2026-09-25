@@ -166,6 +166,12 @@ pub(crate) use kernel::{
     QtipRaceV4CmpSg2B64MetalKernel,
     QtipRaceK3CmpSg4B64MetalKernel,
     QtipRaceK2CmpSg4B64MetalKernel,
+    QtipRaceV4SimdgroupT1MetalKernel,
+    QtipRaceV4SimdgroupT8MetalKernel,
+    QtipRaceK3SimdgroupT1MetalKernel,
+    QtipRaceK3SimdgroupT8MetalKernel,
+    QtipRaceK2SimdgroupT1MetalKernel,
+    QtipRaceK2SimdgroupT8MetalKernel,
     };
 
 // race four-row-fragment kernels

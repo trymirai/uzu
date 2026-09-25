@@ -26,7 +26,9 @@ use crate::{
                 QtipRaceK3R2Pf0Sg2B32MetalKernel, QtipRaceK3R2Pf2Sg2B32MetalKernel, QtipRaceTransform5120MetalKernel,
                 QtipRaceV4CmpSg4B32MetalKernel, QtipRaceV4CmpSg2B32MetalKernel, QtipRaceV4CmpSg2B64MetalKernel,
                 QtipRaceK3CmpSg4B64MetalKernel, QtipRaceK2CmpSg4B64MetalKernel,
-                QtipRaceTransform6144MetalKernel, QtipRaceTransform17408MetalKernel, QtipRaceV4Pf2Sg2B32MetalKernel,
+                QtipRaceTransform6144MetalKernel, QtipRaceTransform17408MetalKernel,
+                QtipRaceK2SimdgroupT1MetalKernel, QtipRaceK2SimdgroupT8MetalKernel, QtipRaceK3SimdgroupT1MetalKernel,
+                QtipRaceK3SimdgroupT8MetalKernel, QtipRaceV4SimdgroupT1MetalKernel, QtipRaceV4SimdgroupT8MetalKernel, QtipRaceV4Pf2Sg2B32MetalKernel,
                 QtipRaceV4Pf2Sg2B64MetalKernel, QtipRaceV4Pf2Sg4B32MetalKernel, QtipRaceV4Pf2Sg4B64MetalKernel,
                 QtipRaceV4Pf2Sg8B64MetalKernel, QtipRaceV4R2Pf2Sg2B32MetalKernel, QtipRaceV4R2Pf2Sg4B32MetalKernel,
                 QtipRaceV4T2Pf2Sg2B16MetalKernel, QtipRaceK3T4Pf0Sg2B16MetalKernel, QtipRaceK3T2Pf0Sg2B16MetalKernel,
@@ -69,6 +71,11 @@ use crate::{
 /// `batch` tokens, so no transpose pass runs at any batch size. Kernel choices
 /// per (codec, shape, batch) come from the CPU-oracle-validated race profile.
 pub struct QtipSExactMetalKernel {
+    /// Without MXU (before M5) every projection runs the SIMDgroup kernels with the computed codebook.
+    mxu: bool,
+    simdgroup_v4: (QtipRaceV4SimdgroupT1MetalKernel, QtipRaceV4SimdgroupT8MetalKernel),
+    simdgroup_k3: (QtipRaceK3SimdgroupT1MetalKernel, QtipRaceK3SimdgroupT8MetalKernel),
+    simdgroup_k2: (QtipRaceK2SimdgroupT1MetalKernel, QtipRaceK2SimdgroupT8MetalKernel),
     race_transform: bool,
     race_projection: bool,
     computed_codebook: bool,
@@ -490,6 +497,10 @@ fn select_race_kernel(
 impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
     fn new(context: &MetalContext) -> Result<Self, MetalError> {
         Ok(Self {
+            mxu: context.supports_mxu(),
+            simdgroup_v4: (QtipRaceV4SimdgroupT1MetalKernel::new(context)?, QtipRaceV4SimdgroupT8MetalKernel::new(context)?),
+            simdgroup_k3: (QtipRaceK3SimdgroupT1MetalKernel::new(context)?, QtipRaceK3SimdgroupT8MetalKernel::new(context)?),
+            simdgroup_k2: (QtipRaceK2SimdgroupT1MetalKernel::new(context)?, QtipRaceK2SimdgroupT8MetalKernel::new(context)?),
             race_transform: env_flag("QTIP_RACE_TRANSFORM", true),
             race_projection: env_flag("QTIP_RACE_PROJ", true),
             computed_codebook: env_flag("QTIP_COMPUTED_CODEBOOK", true),
@@ -733,6 +744,48 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
 
         if self.null_projection {
             return encoder.allocate_scratch(size_for_shape(&[batch, rows], DataType::BF16));
+        }
+        if !self.mxu {
+            let computed = computed.expect("without MXU, Mirai S projections need the computed codebook");
+            assert!(self.race_transform && rows.is_multiple_of(16));
+            let mut output = encoder.allocate_scratch(size_for_shape(&[batch, rows], DataType::BF16))?;
+            macro_rules! run_simdgroup {
+                ($kernels:expr) => {{
+                    let (tokens_1, tokens_8) = &$kernels;
+                    macro_rules! run {
+                        ($kernel:expr) => {
+                            $kernel.encode(
+                                codes,
+                                &transformed_q8,
+                                &activation_scales,
+                                &token_sums,
+                                scales,
+                                gains,
+                                &mut output,
+                                computed.offsets,
+                                computed.scale,
+                                rows,
+                                columns,
+                                bytes_per_row,
+                                batch,
+                                encoder,
+                            )
+                        };
+                    }
+                    if batch == 1 {
+                        run!(tokens_1)
+                    } else {
+                        run!(tokens_8)
+                    }
+                }};
+            }
+            match (vector_width, transition_bits) {
+                (4, 8) => run_simdgroup!(self.simdgroup_v4),
+                (2, 6) => run_simdgroup!(self.simdgroup_k3),
+                (2, 4) => run_simdgroup!(self.simdgroup_k2),
+                _ => unreachable!(),
+            }
+            return Ok(output);
         }
         // computed codebooks: every V4 leaf, and V2 leaves at 64-token tiles (smaller V2 tiles gain nothing over
         // their 128 KiB table); the token sums come from the race transform

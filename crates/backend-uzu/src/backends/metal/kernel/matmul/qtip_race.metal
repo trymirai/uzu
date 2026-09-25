@@ -2686,3 +2686,105 @@ KERNEL(QtipRacePermuteHalves)(
   *reinterpret_cast<device char2*>(lo + token * half_columns + group * 2u) = char2(values.x, values.y);
   *reinterpret_cast<device char2*>(hi + token * half_columns + group * 2u) = char2(values.z, values.w);
 }
+
+// ---------------------------------------------------------------------------
+// Without MXU (Apple GPUs before M5), plain SIMD arithmetic with the computed codebook: each SIMDgroup computes
+// 4 rows x TOKENS tokens, a lane decodes 4 columns of every row per 128-column step, and simd_sum adds up the
+// lanes. The int32 dots are exact, so the output equals the computed-codebook MXU kernels' bit for bit.
+// `rows` is a multiple of 16 and the activations hold whole 8-token tiles.
+// ---------------------------------------------------------------------------
+template <uint TOKENS, uint VECTOR_WIDTH, uint TRANSITION_BITS>
+static inline void qtip_race_simdgroup(
+    device const uchar* codes,
+    device const int8_t* activations,
+    device const float* activation_scales,
+    device const float4* token_sums,
+    device const float* scales,
+    device const ushort* gains_bf16,
+    device bfloat* output,
+    float4 offsets,
+    float codebook_scale,
+    uint rows,
+    uint columns,
+    uint bytes_per_row,
+    uint active_batch,
+    uint row_tile,
+    uint token_tile,
+    const thread ThreadContext& thread_context) {
+  constexpr uint ROWS = 4u;
+  static_assert(ROWS * TOKENS <= 32u, "each lane stores one output");
+  const uint row_base = (row_tile * 4u + thread_context.simdgroup_index) * ROWS;
+  device const int8_t* tile_activations = activations + token_tile * TOKENS * columns;
+
+  int dots[ROWS][TOKENS] = {};
+  for (uint column = thread_context.simd_lane_id * 4u; column < columns; column += 128u) {
+    char4 token_activations[TOKENS];
+    for (uint token = 0; token < TOKENS; ++token) {
+      token_activations[token] = *reinterpret_cast<device const char4*>(tile_activations + token * columns + column);
+    }
+    for (uint row = 0; row < ROWS; ++row) {
+      device const uchar* row_codes = codes + (row_base + row) * bytes_per_row;
+      char4 levels;
+      if constexpr (VECTOR_WIDTH == 4u) {
+        levels = as_type<char4>(qtip_race_levels(qtip_race_v4_state(row_codes + column / 64u * 17u, column % 64u / 4u)));
+      } else {
+        const ushort2 states = qtip_race_state_pair_v2<TRANSITION_BITS>(row_codes, column);
+        levels = char4(as_type<char2>(ushort(qtip_race_levels(states.x))), as_type<char2>(ushort(qtip_race_levels(states.y))));
+      }
+      for (uint token = 0; token < TOKENS; ++token) {
+        const int4 products = int4(levels) * int4(token_activations[token]);
+        dots[row][token] += products.x + products.y + products.z + products.w;
+      }
+    }
+  }
+
+  for (uint row = 0; row < ROWS; ++row) {
+    for (uint token = 0; token < TOKENS; ++token) {
+      const int total = simd_sum(dots[row][token]);
+      const uint absolute_row = row_base + row;
+      const uint output_token = token_tile * TOKENS + token;
+      if (thread_context.simd_lane_id == row * TOKENS + token && output_token < active_batch) {
+        // the epilogue of the computed-codebook MXU kernels (qtip_race_dt, DIAG 20)
+        const float gain = as_type<float>(uint(gains_bf16[absolute_row]) << 16u);
+        const float dot = float(total) * codebook_scale + metal::dot(token_sums[output_token], offsets);
+        output[output_token * rows + absolute_row] =
+            bfloat(dot * float(scales[absolute_row]) * gain * activation_scales[output_token]);
+      }
+    }
+  }
+}
+
+#define QTIP_RACE_SIMDGROUP_KERNEL(NAME, TOKENS, VECTOR_WIDTH, TRANSITION_BITS) \
+KERNEL(NAME)( \
+    device const uchar* codes, \
+    device const int8_t* activations, \
+    device const float* activation_scales, \
+    device const float4* token_sums, \
+    device const float* scales, \
+    device const ushort* gains_bf16, \
+    device bfloat* output, \
+    device const float4* offsets, \
+    const constant float& codebook_scale, \
+    const constant uint& rows, \
+    const constant uint& columns, \
+    const constant uint& bytes_per_row, \
+    const constant uint& active_batch, \
+    const uint row_tile GROUPS(rows.div_ceil(16u)), \
+    const uint token_tile GROUPS(active_batch.div_ceil(TOKENS)), \
+    const uint thread_index THREADS(128u), \
+    const ThreadContext thread_context \
+) { \
+  (void)thread_index; \
+  qtip_race_simdgroup<TOKENS, VECTOR_WIDTH, TRANSITION_BITS>( \
+      codes, activations, activation_scales, token_sums, scales, gains_bf16, output, offsets[0], codebook_scale, \
+      rows, columns, bytes_per_row, active_batch, row_tile, token_tile, thread_context); \
+}
+
+QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceV4SimdgroupT1, 1, 4, 8)
+QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceV4SimdgroupT8, 8, 4, 8)
+QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceK3SimdgroupT1, 1, 2, 6)
+QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceK3SimdgroupT8, 8, 2, 6)
+QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceK2SimdgroupT1, 1, 2, 4)
+QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceK2SimdgroupT8, 8, 2, 4)
+
+#undef QTIP_RACE_SIMDGROUP_KERNEL
