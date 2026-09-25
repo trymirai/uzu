@@ -1,0 +1,25 @@
+[project]
+name = "benchmarks-common"
+version = "0.0.1"
+requires-python = ">=3.13.7"
+dependencies = [
+    "pydantic>=2.13.5",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["bench"]
+packages = ["mach"]
+package-dir = { "" = "src" }
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "setup.py" },
+    { file = "src/mach/*.c" },
+    { file = "../common-cpp/src/*.c" },
+    { file = "../common-cpp/src/*.h" },
+]

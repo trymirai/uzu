@@ -1,0 +1,22 @@
+[project]
+name = "benchmarks-mlx"
+version = "0.0.1"
+requires-python = ">=3.13.7"
+dependencies = [
+    "benchmarks-common",
+    "mlx==0.32.2",
+    "mlx-lm==0.31.3",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+mlx = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.uv.sources]
+benchmarks-common = { workspace = true }
