@@ -36,12 +36,8 @@ pub fn mirai_s_embedding_lookup(
                 let mut block: [f32; BLOCK_SIZE] = std::array::from_fn(|lane| {
                     let column = block_start + lane;
                     let group = column / 64;
-                    let packed_index = *ladder_indices.add(token * (model_dim / 128) + group / 2);
-                    let ladder_index = if group % 2 == 0 {
-                        packed_index & 15
-                    } else {
-                        packed_index >> 4
-                    };
+                    let ladder_index =
+                        (*ladder_indices.add(token * (model_dim / 128) + group / 2) >> (4 * (group % 2))) & 15;
                     let code = *codes.add(token * (model_dim / 4) + column / 4) as usize;
                     let point = *table.add(4 * code + column % 4);
                     let value = row_scale * (*ladder.add(ladder_index as usize)).to_f32() * point as f32 * input_scale;

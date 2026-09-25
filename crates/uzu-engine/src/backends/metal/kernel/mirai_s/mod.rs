@@ -44,8 +44,7 @@ impl MiraiSTransform for MetalMiraiSTransform {
         batch: u32,
         encoder: &mut Encoder<Metal>,
     ) -> Result<RotatedInput<Metal>, MetalError> {
-        // the projections read whole token tiles (64 for the MXU kernels); rows past `batch` are never written and
-        // never stored
+        // the projections read whole token tiles; rows past `batch` are never written and never stored
         let padded_batch = batch.next_multiple_of(MAX_TOKEN_TILE);
         let mut activations = encoder.allocate_scratch_for_shape(&[padded_batch, self.columns], DataType::I8)?;
         let mut token_statistics = encoder.allocate_scratch_for_shape(&[batch, 8], DataType::F32)?;
@@ -145,11 +144,7 @@ impl MiraiSProjection for MetalMiraiSProjection {
                     encode!(tokens_8)
                 }
             },
-            // The narrow kernels (16 tokens per MXU tile) win at batch <= 16 once their larger row tiles still leave
-            // enough SIMDgroups to fill the GPU: 256 for V2, which reads its levels from a table, 512 for V4, which
-            // hashes them. Measured on an M5 Pro per projection with codes streamed from DRAM, narrow vs wide: V2
-            // 34816 x 5120 426 vs 534 us, 16480 x 5120 215 vs 277, 8192 x 5120 124 vs 148, 5120 x 17408 308 vs 256;
-            // V4 34816 x 5120 371 vs 455, 16480 x 5120 177 vs 260, 6144 x 5120 132 vs 92.
+            // at batch <= 16 the narrow kernels win once their larger row tiles still fill the GPU (M5 Pro)
             Self::Mxu {
                 wide_32,
                 wide_64,

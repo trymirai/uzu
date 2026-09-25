@@ -24,12 +24,10 @@ static METAL_FUNC uint transposed_index(ushort lane, ushort simdgroup, uint i) {
 }
 
 // Input rotation of a Mirai S linear, one threadgroup per token. Column k = h * ORDER + q:
-//   x * signs -> mixing[ORDER x ORDER] over q -> Walsh-Hadamard over h (strides ascending) -> / sqrt(POWER)
-//   -> bf16 -> int8 with scale max|x| / 127.
-// token_statistics[2 * token] sums the int8 values of the columns k = j (mod 4) for j = 0..3 and
-// token_statistics[2 * token + 1] is (scale, 0, 0, 0); the projection folds the codebook offsets in with the sums.
-// The WHT runs strides 1..16 as lane shuffles, transposes through threadgroup memory, and runs the remaining
-// strides the same way (stride 1024 in registers).
+//   x * signs -> mixing[ORDER x ORDER] over q -> Walsh-Hadamard transform over h / sqrt(POWER) -> bf16 -> int8
+// with scale max|x| / 127. token_statistics[2 * token] sums the int8 values of the columns k = j (mod 4),
+// [2 * token + 1] is (scale, 0, 0, 0). The WHT runs strides 1..16 as lane shuffles, transposes through
+// threadgroup memory, then the rest the same way.
 template <uint DIMENSION>
 VARIANTS(DIMENSION, 5120, 6144, 17408)
 KERNEL(MiraiSTransform)(

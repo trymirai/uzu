@@ -3,7 +3,10 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::MiraiSEmbeddingLookupKernel},
+    backends::{
+        common::{Backend, Context, Encoder, Kernels, kernel::MiraiSEmbeddingLookupKernel},
+        cpu::kernel::activation_transform::hadamard_transform,
+    },
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend},
 };
 
@@ -59,15 +62,7 @@ fn mirai_s_embedding_lookup_matches_reference() {
         ladder_indices: (0..VOCAB_SIZE * MODEL_DIM / 128).map(|_| rng.random()).collect(),
         ladder: (0..16).map(|index| f16::from_f32(2.0f32.powf(index as f32 / 2.0 - 5.5))).collect(),
         table: (0..256 * 4).map(|_| rng.random_range(-4i8..=4)).collect(),
-        factors: (0..MODEL_DIM)
-            .map(|_| {
-                if rng.random::<bool>() {
-                    1
-                } else {
-                    -1
-                }
-            })
-            .collect(),
+        factors: (0..MODEL_DIM).map(|_| [1, -1][rng.random_range(0..2)]).collect(),
     };
     let token_ids = [3u32, 0, 39, VOCAB_SIZE, 17];
     let model_dim = MODEL_DIM as usize;
@@ -81,15 +76,11 @@ fn mirai_s_embedding_lookup_matches_reference() {
                 assert!(row.iter().all(|value| value.to_f32() == 0.0));
                 continue;
             }
-            let decoded: Vec<f32> = (0..model_dim)
+            let mut decoded: Vec<f32> = (0..model_dim)
                 .map(|column| {
                     let group = column / 64;
-                    let packed = table.ladder_indices[token * model_dim / 128 + group / 2];
-                    let ladder_index = if group % 2 == 0 {
-                        packed & 15
-                    } else {
-                        packed >> 4
-                    };
+                    let ladder_index =
+                        (table.ladder_indices[token * model_dim / 128 + group / 2] >> (4 * (group % 2))) & 15;
                     let point = table.table[table.codes[token * model_dim / 4 + column / 4] as usize * 4 + column % 4];
                     let value = table.row_scales[token].to_f32()
                         * table.ladder[ladder_index as usize].to_f32()
@@ -98,23 +89,13 @@ fn mirai_s_embedding_lookup_matches_reference() {
                     bf16::from_f32(value).to_f32()
                 })
                 .collect();
-            for (block, (actual_block, decoded_block)) in
-                row.as_chunks::<32>().0.iter().zip(decoded.as_chunks::<32>().0).enumerate()
+            for (block, (actual, decoded)) in
+                row.as_chunks::<32>().0.iter().zip(decoded.as_chunks_mut::<32>().0).enumerate()
             {
-                let magnitude: f32 = decoded_block.iter().map(|value| value.abs()).sum();
-                for (lane, actual) in actual_block.iter().enumerate() {
-                    let hadamard: f32 = decoded_block
-                        .iter()
-                        .enumerate()
-                        .map(|(source, &value)| {
-                            if (source & lane).count_ones() % 2 == 0 {
-                                value
-                            } else {
-                                -value
-                            }
-                        })
-                        .sum();
-                    let expected = hadamard / 32f32.sqrt() * table.factors[32 * block + lane] as f32;
+                let magnitude: f32 = decoded.iter().map(|value| value.abs()).sum();
+                hadamard_transform(decoded);
+                for (lane, (actual, value)) in actual.iter().zip(decoded.iter()).enumerate() {
+                    let expected = value * table.factors[32 * block + lane] as f32;
                     let tolerance = expected.abs() / 256.0 + magnitude * 1e-6;
                     assert!(
                         (actual.to_f32() - expected).abs() <= tolerance,

@@ -99,21 +99,20 @@ static METAL_FUNC void decode_rows(
 //                      * row_scales[row] * activation_scale[token]
 // for weights scale * level + offsets[k % 4] and the int8 activations a and token statistics
 // (class_sums, (activation_scale, 0, 0, 0)) of MiraiSTransform.
-static METAL_FUNC void store_output(
-    int32_t level_dot,
-    uint token,
-    uint row,
-    Codebook codebook,
-    device const float4* token_statistics,
-    device const float* row_scales,
-    device bfloat* output,
-    uint output_stride
-) {
-  const float4 class_sums = token_statistics[2 * token];
-  const float activation_scale = token_statistics[2 * token + 1].x;
-  const float dot = float(level_dot) * codebook.scale() + metal::dot(class_sums, codebook.offsets());
-  output[token * output_stride + row] = bfloat(dot * row_scales[row] * activation_scale);
-}
+struct Epilogue {
+  Codebook codebook;
+  device const float4* token_statistics;
+  device const float* row_scales;
+  device bfloat* output;
+  uint output_stride;
+
+  METAL_FUNC void store(int32_t level_dot, uint token, uint row) const {
+    const float4 class_sums = token_statistics[2 * token];
+    const float activation_scale = token_statistics[2 * token + 1].x;
+    const float dot = float(level_dot) * codebook.scale() + metal::dot(class_sums, codebook.offsets());
+    output[token * output_stride + row] = bfloat(dot * row_scales[row] * activation_scale);
+  }
+};
 
 static METAL_FUNC uint row_bytes(uint vector_width, uint transition_bits, uint columns) {
   return vector_width == 4 ? columns / 64 * 17 : (16 + (columns / 2 - 1) * transition_bits + 7) / 8;
@@ -151,7 +150,7 @@ KERNEL(MiraiSProjection)(
   if (row_base >= rows) {
     return;
   }
-  const Codebook trellis_codebook{codebook};
+  const Epilogue epilogue{Codebook{codebook}, token_statistics, row_scales, output, output_stride};
   const short2 position = Ops::get_position(thread_context.simd_lane_id);
   const uint stride = row_bytes(VECTOR_WIDTH, TRANSITION_BITS, columns);
   device const uchar* upper_codes = codes + (row_base + position.y) * stride;
@@ -178,7 +177,7 @@ KERNEL(MiraiSProjection)(
         upper_codes + 8 * stride,
         chunk,
         position,
-        trellis_codebook
+        epilogue.codebook
     );
     auto left = matmul.template get_left_input_cooperative_tensor<int8_t, int8_t, int>();
     Ops::load_paired_vectors(left, weights.fragment_at(0, 0), weights.fragment_at(0, 1));
@@ -202,7 +201,7 @@ KERNEL(MiraiSProjection)(
   accumulator.map_coords(thread_context.simd_lane_id, [&](short row, short token_index, int32_t value) {
     const uint token = token_tile * TOKENS + token_index;
     if (token < batch) {
-      store_output(value, token, row_base + row, trellis_codebook, token_statistics, row_scales, output, output_stride);
+      epilogue.store(value, token, row_base + row);
     }
     return value;
   });
@@ -241,7 +240,7 @@ KERNEL(MiraiSNarrowProjection)(
   if (row_base >= rows) {
     return;
   }
-  const Codebook trellis_codebook{codebook};
+  const Epilogue epilogue{Codebook{codebook}, token_statistics, row_scales, output, output_stride};
   const short2 position = Ops::get_position(thread_context.simd_lane_id);
   const uint stride = row_bytes(VECTOR_WIDTH, TRANSITION_BITS, columns);
   device const int8_t* tile_activations = activations + token_tile * 16 * columns;
@@ -261,7 +260,7 @@ KERNEL(MiraiSNarrowProjection)(
           codes + min(row + 8, rows - 1) * stride,
           chunk,
           position,
-          trellis_codebook
+          epilogue.codebook
       );
     }
     ActivationTile activation_tile;
@@ -275,7 +274,7 @@ KERNEL(MiraiSNarrowProjection)(
   accumulator.map_coords(thread_context.simd_lane_id, [&](short token_index, short row, int32_t value) {
     const uint token = token_tile * 16 + token_index;
     if (token < batch && row_base + row < rows) {
-      store_output(value, token, row_base + row, trellis_codebook, token_statistics, row_scales, output, output_stride);
+      epilogue.store(value, token, row_base + row);
     }
     return value;
   });
@@ -318,7 +317,7 @@ KERNEL(MiraiSSimdgroupProjection)(
   static_assert(SIMDGROUP_KERNEL_ROWS * TOKENS <= 32, "each lane stores one output");
   const uint row_base =
       (row_tile * SIMDGROUP_KERNEL_SIMDGROUPS + thread_context.simdgroup_index) * SIMDGROUP_KERNEL_ROWS;
-  const Codebook trellis_codebook{codebook};
+  const Epilogue epilogue{Codebook{codebook}, token_statistics, row_scales, output, output_stride};
   const uint stride = row_bytes(VECTOR_WIDTH, TRANSITION_BITS, columns);
   device const int8_t* tile_activations = activations + token_tile * TOKENS * columns;
 
@@ -332,7 +331,7 @@ KERNEL(MiraiSSimdgroupProjection)(
     METAL_PRAGMA_UNROLL
     for (uint row = 0; row < SIMDGROUP_KERNEL_ROWS; ++row) {
       device const uchar* row_codes = codes + (row_base + row) * stride;
-      const char4 levels = decode_columns<VECTOR_WIDTH, TRANSITION_BITS, false>(row_codes, column, trellis_codebook);
+      const char4 levels = decode_columns<VECTOR_WIDTH, TRANSITION_BITS, false>(row_codes, column, epilogue.codebook);
       METAL_PRAGMA_UNROLL
       for (uint token = 0; token < TOKENS; ++token) {
         dots[row][token] += level_dot(levels, token_activations[token]);
@@ -347,16 +346,7 @@ KERNEL(MiraiSSimdgroupProjection)(
       const int dot = simd_sum(dots[row][token]);
       const uint output_token = token_tile * TOKENS + token;
       if (thread_context.simd_lane_id == row * TOKENS + token && output_token < batch) {
-        store_output(
-            dot,
-            output_token,
-            row_base + row,
-            trellis_codebook,
-            token_statistics,
-            row_scales,
-            output,
-            output_stride
-        );
+        epilogue.store(dot, output_token, row_base + row);
       }
     }
   }

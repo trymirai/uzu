@@ -1,13 +1,6 @@
 use uzu_engine_macros::uzu_config;
 
-use crate::config::weight_matrix::Layout;
-
-#[uzu_config]
-#[serde(rename_all = "snake_case")]
-pub enum ScaleDataType {
-    Float16,
-    Float32,
-}
+use crate::{config::weight_matrix::Layout, data_type::DataType};
 
 #[uzu_config]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +16,6 @@ pub struct QtipGaussianSpec {
     pub vector_width: u32,
     pub transition_bits: u32,
     pub restart_columns: u32,
-    pub scale_dtype: ScaleDataType,
+    pub scale_dtype: DataType,
     pub post_gain_axes: Box<[PostGainAxis]>,
 }

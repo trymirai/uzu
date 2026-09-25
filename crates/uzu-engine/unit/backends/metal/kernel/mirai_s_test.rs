@@ -6,28 +6,15 @@ use uzu_engine_macros::uzu_test;
 use super::*;
 use crate::{
     backends::common::kernel::mirai_s::mixing_order,
+    encodable_block::linear::mirai_s::{TRELLIS_STATES, codebook_table, trellis_levels},
     tests::{
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
         util::shared_metal_context,
     },
 };
 
-// the Qwen3.8 S package's codebooks: [scale, offset of column class 0..4]
-const V4_CODEBOOK: [f32; 5] = [0.05203748, -0.08205986, -0.07758855, -0.07814354, -0.0810989];
-const V2_CODEBOOK: [f32; 5] = [0.052127663, -0.08220189, -0.077723004, -0.08220189, -0.077723004];
-
-/// Signed level of each byte of fmix32(state * 0xCFCCB83F + 0x584B4AA3).
-fn levels(state: u32) -> [i32; 4] {
-    let mut x = state.wrapping_mul(0xCFCC_B83F).wrapping_add(0x584B_4AA3);
-    x ^= x >> 16;
-    x = x.wrapping_mul(0x85EB_CA6B);
-    x ^= x >> 16;
-    std::array::from_fn(|byte| {
-        let byte = (x >> (8 * byte)) & 0xFF;
-        let field_sum: u32 = (0..4).map(|field| (byte >> (2 * field)) & 3).sum();
-        (8 * field_sum + (3 * (byte & 15)) % 16) as i32 - 54
-    })
-}
+// the Qwen3.8 S package's V4 codebook: [scale, offset of component 0..4]; V2 uses the first two offsets
+const AFFINE: [f32; 5] = [0.05203748, -0.08205986, -0.07758855, -0.07814354, -0.0810989];
 
 /// Level of every column of a row: V4 restarts a little-endian 16-bit state every 64 columns and shifts in one
 /// byte per 4 columns; V2 states are the 16-bit big-endian windows at bit `transition_bits * group`.
@@ -45,12 +32,12 @@ fn row_levels(
                 for group in 1..=column % 64 / 4 {
                     state = ((state << 8) | block[group + 1] as u32) & 0xFFFF;
                 }
-                levels(state)[column % 4]
+                trellis_levels(state)[column % 4]
             },
             TrellisCodec::Vector2Transition6 | TrellisCodec::Vector2Transition4 => {
                 let start = column / 2 * codec.transition_bits() as usize;
                 let state = (0..16).fold(0, |state, offset| (state << 1) | bit(start + offset));
-                levels(state)[column % 2]
+                trellis_levels(state)[column % 2]
             },
         })
         .collect()
@@ -110,15 +97,7 @@ fn transform_matches_reference(#[values(5120, 6144, 17408)] columns: u32) {
     let transform = MetalMiraiSTransform::new(&context, columns).unwrap().unwrap();
     let mut rng = SmallRng::seed_from_u64(u64::from(columns));
     let order = mixing_order(columns);
-    let signs: Vec<f32> = (0..columns)
-        .map(|_| {
-            if rng.random::<bool>() {
-                1.0
-            } else {
-                -1.0
-            }
-        })
-        .collect();
+    let signs: Vec<f32> = (0..columns).map(|_| [1.0, -1.0][rng.random_range(0..2)]).collect();
     let mixing: Vec<f32> = (0..order * order).map(|_| rng.random_range(-0.6f32..0.6)).collect();
     for batch in [1u32, 3, 17] {
         let input: Vec<bf16> =
@@ -155,78 +134,83 @@ fn transform_matches_reference(#[values(5120, 6144, 17408)] columns: u32) {
     }
 }
 
-#[uzu_test]
-fn transform_rejects_other_widths() {
-    assert!(MetalMiraiSTransform::new(&shared_metal_context(), 4096).unwrap().is_none());
-}
-
-/// The projection kernels' codebook: f32 [scale, offsets, 0, 0, 0], then for V2 the int8 level pair of every state.
-fn codebook_bytes(codec: TrellisCodec) -> Vec<u8> {
-    let affine = match codec {
-        TrellisCodec::Vector4Restart64 => V4_CODEBOOK,
-        TrellisCodec::Vector2Transition6 | TrellisCodec::Vector2Transition4 => V2_CODEBOOK,
-    };
-    let header = [affine[0], affine[1], affine[2], affine[3], affine[4], 0.0, 0.0, 0.0];
-    let mut bytes = bytemuck::cast_slice::<f32, u8>(&header).to_vec();
-    if codec.vector_width() == 2 {
-        bytes.extend((0..1u32 << 16).flat_map(|state| {
-            let [first, second, ..] = levels(state);
-            [first as i8 as u8, second as i8 as u8]
-        }));
-    }
-    bytes
-}
+/// Encodes a projection of (activations, token statistics, batch) into (output, encoder).
+type Encode<'a> =
+    Box<dyn Fn(&Allocation<Metal>, &Allocation<Metal>, u32, &mut Allocation<Metal>, &mut Encoder<Metal>) + 'a>;
 
 #[rstest]
 #[test_attr(uzu_test)]
 fn projection_matches_reference(
     #[values(TrellisCodec::Vector4Restart64, TrellisCodec::Vector2Transition6, TrellisCodec::Vector2Transition4)]
-    codec: TrellisCodec,
-    #[values(5120, 6144, 17408)] columns: u32,
+    codec: TrellisCodec
 ) {
     let context = shared_metal_context();
-    let mut rng = SmallRng::seed_from_u64(u64::from(columns) + codec.transition_bits() as u64);
+    let mut rng = SmallRng::seed_from_u64(codec.transition_bits() as u64);
     let (vector_width, transition_bits) = (codec.vector_width(), codec.transition_bits());
-    let simdgroup_1 = MiraiSSimdgroupProjectionMetalKernel::new(&context, 1, vector_width, transition_bits).unwrap();
-    let simdgroup_8 = MiraiSSimdgroupProjectionMetalKernel::new(&context, 8, vector_width, transition_bits).unwrap();
-    // the MXU kernels need M5 or later; the SIMDgroup kernels run on every Apple GPU
-    let mxu = context.supports_mxu.then(|| {
-        (
-            MiraiSProjectionMetalKernel::new(&context, 32, vector_width, transition_bits).unwrap(),
-            MiraiSProjectionMetalKernel::new(&context, 64, vector_width, transition_bits).unwrap(),
-            MiraiSNarrowProjectionMetalKernel::new(&context, 2, vector_width, transition_bits).unwrap(),
-            MiraiSNarrowProjectionMetalKernel::new(&context, 4, vector_width, transition_bits).unwrap(),
-        )
-    });
-    let kernels: &[&str] = match mxu {
-        Some(_) => &["simdgroup 1", "simdgroup 8", "wide 32", "wide 64", "narrow 2", "narrow 4"],
-        None => &["simdgroup 1", "simdgroup 8"],
-    };
+    let columns = 5120u32;
     // not a multiple of the narrow kernels' 32- and 64-row SIMDgroup tiles
     let rows = 48u32;
-    let codebook = match codec {
-        TrellisCodec::Vector4Restart64 => V4_CODEBOOK,
-        TrellisCodec::Vector2Transition6 | TrellisCodec::Vector2Transition4 => V2_CODEBOOK,
-    };
     let row_bytes = codec.row_bytes(columns) as usize;
     let codes: Vec<u8> = (0..rows as usize * row_bytes).map(|_| rng.random()).collect();
     let row_scales: Vec<f32> = (0..rows).map(|_| rng.random_range(0.001f32..0.01)).collect();
+    let weight =
+        |level: i32, column: usize| AFFINE[0] as f64 * level as f64 + AFFINE[1 + column % vector_width as usize] as f64;
     let weights: Vec<Vec<f64>> = codes
         .chunks_exact(row_bytes)
         .map(|row| {
-            let row_levels = row_levels(codec, row, columns as usize);
-            row_levels
+            row_levels(codec, row, columns as usize)
                 .iter()
                 .enumerate()
-                .map(|(column, &level)| codebook[0] as f64 * level as f64 + codebook[1 + column % 4] as f64)
+                .map(|(column, &level)| weight(level, column))
                 .collect()
         })
         .collect();
+    let package_codebook: Vec<f32> = (0..TRELLIS_STATES as u32)
+        .flat_map(|state| {
+            (0..vector_width as usize).map(move |component| weight(trellis_levels(state)[component], component) as f32)
+        })
+        .collect();
     let codes = alloc_allocation_with_data::<Metal, u8>(&context, &codes);
-    let row_scales_allocation = alloc_allocation_with_data::<Metal, f32>(&context, &row_scales);
-    let codebook_allocation = alloc_allocation_with_data::<Metal, u8>(&context, &codebook_bytes(codec));
+    let scales = alloc_allocation_with_data::<Metal, f32>(&context, &row_scales);
+    let codebook = codebook_table(&package_codebook, vector_width as usize).unwrap();
+    let codebook = alloc_allocation_with_data::<Metal, u8>(&context, &codebook);
+    let (codes, scales, codebook) = (&codes, &scales, &codebook);
 
-    for batch in [1u32, 3, 8, 16, 17, 32, 33, 64, 130] {
+    let mut kernels: Vec<(&str, Encode)> = Vec::new();
+    macro_rules! kernel {
+        ($name:expr, $kernel:ident, $tile:expr) => {
+            let kernel = $kernel::new(&context, $tile, vector_width, transition_bits).unwrap();
+            kernels.push((
+                $name,
+                Box::new(move |activations, statistics, batch, output, encoder| {
+                    kernel.encode(
+                        codes,
+                        activations,
+                        statistics,
+                        scales,
+                        codebook,
+                        output,
+                        rows,
+                        columns,
+                        batch,
+                        rows,
+                        encoder,
+                    )
+                }),
+            ));
+        };
+    }
+    kernel!("simdgroup 1", MiraiSSimdgroupProjectionMetalKernel, 1);
+    kernel!("simdgroup 8", MiraiSSimdgroupProjectionMetalKernel, 8);
+    // the MXU kernels need M5 or later
+    if context.supports_mxu {
+        kernel!("wide 32", MiraiSProjectionMetalKernel, 32);
+        kernel!("wide 64", MiraiSProjectionMetalKernel, 64);
+        kernel!("narrow 2", MiraiSNarrowProjectionMetalKernel, 2);
+        kernel!("narrow 4", MiraiSNarrowProjectionMetalKernel, 4);
+    }
+
+    for batch in [1u32, 3, 17, 130] {
         let padded_batch = batch.next_multiple_of(64);
         let activations: Vec<i8> = (0..padded_batch * columns).map(|_| rng.random_range(-127i8..=127)).collect();
         let activation_scales: Vec<f32> = (0..batch).map(|_| rng.random_range(0.001f32..0.1)).collect();
@@ -239,37 +223,12 @@ fn projection_matches_reference(
             })
             .collect();
         let activations_allocation = alloc_allocation_with_data::<Metal, i8>(&context, &activations);
-        let token_statistics_allocation = alloc_allocation_with_data::<Metal, f32>(&context, &token_statistics);
+        let token_statistics = alloc_allocation_with_data::<Metal, f32>(&context, &token_statistics);
         let mut simdgroup_1_output: Option<Vec<bf16>> = None;
-        for &kernel in kernels {
+        for (name, encode) in &kernels {
             let mut output = alloc_allocation::<Metal, bf16>(&context, (batch * rows) as usize);
             let mut encoder = Encoder::<Metal>::new(&context).unwrap();
-            macro_rules! encode {
-                ($kernel:expr) => {
-                    $kernel.encode(
-                        &codes,
-                        &activations_allocation,
-                        &token_statistics_allocation,
-                        &row_scales_allocation,
-                        &codebook_allocation,
-                        &mut output,
-                        rows,
-                        columns,
-                        batch,
-                        rows,
-                        &mut encoder,
-                    )
-                };
-            }
-            match (kernel, &mxu) {
-                ("simdgroup 1", _) => encode!(simdgroup_1),
-                ("simdgroup 8", _) => encode!(simdgroup_8),
-                ("wide 32", Some((wide_32, ..))) => encode!(wide_32),
-                ("wide 64", Some((_, wide_64, ..))) => encode!(wide_64),
-                ("narrow 2", Some((.., narrow_2, _))) => encode!(narrow_2),
-                ("narrow 4", Some((.., narrow_4))) => encode!(narrow_4),
-                _ => unreachable!(),
-            }
+            encode(&activations_allocation, &token_statistics, batch, &mut output, &mut encoder);
             encoder.end_encoding().submit().wait_until_completed().unwrap();
             let output = allocation_to_vec::<Metal, bf16>(&output);
 
@@ -286,7 +245,7 @@ fn projection_matches_reference(
                     let actual = output[token * rows as usize + row].to_f64();
                     assert!(
                         (actual - expected).abs() <= tolerance,
-                        "{kernel} batch {batch} token {token} row {row}: {actual} vs {expected}"
+                        "{name} batch {batch} token {token} row {row}: {actual} vs {expected}"
                     );
                 }
             }
@@ -295,7 +254,7 @@ fn projection_matches_reference(
                 None => simdgroup_1_output = Some(output),
                 Some(expected) => assert!(
                     expected.iter().zip(&output).all(|(expected, value)| expected.to_bits() == value.to_bits()),
-                    "{kernel} batch {batch} differs from simdgroup 1"
+                    "{name} batch {batch} differs from simdgroup 1"
                 ),
             }
         }

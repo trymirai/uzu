@@ -40,8 +40,7 @@ impl TrellisCodec {
     }
 }
 
-/// Order of the block matrix the input rotation of a `columns`-wide linear mixes with: the odd part of
-/// `columns`. The power-of-two part is the size of the Walsh-Hadamard transform.
+/// Order of the mixing block matrix of a `columns`-wide input rotation (its odd part; the rest is Walsh-Hadamard).
 pub fn mixing_order(columns: u32) -> u32 {
     columns >> columns.trailing_zeros()
 }
@@ -50,8 +49,7 @@ pub fn mixing_order(columns: u32) -> u32 {
 pub struct RotatedInput<B: Backend> {
     /// i8 `[batch, columns]`, rows past `batch` padded up to the projection's token tile.
     pub activations: Allocation<B>,
-    /// f32 `[batch, 8]`: the sums of the int8 values over the columns k = j (mod 4) for j in 0..4, then the
-    /// token's activation scale and three zeros.
+    /// f32 `[batch, 8]`: the int8 sums over the columns k = j (mod 4) for j in 0..4, the activation scale, 0, 0, 0.
     pub token_statistics: Allocation<B>,
     pub batch: u32,
     pub columns: u32,
@@ -84,7 +82,7 @@ pub struct ProjectionArguments<'a, B: Backend> {
     pub row_scales: &'a Allocation<B>,
     pub codebook: &'a Allocation<B>,
     pub rows: u32,
-    /// Writes rows `output_row_offset..output_row_offset + rows` of a `[batch, output_stride]` output.
+    /// Rows `output_row_offset..` of the `[batch, output_stride]` output.
     pub output: &'a mut Allocation<B>,
     pub output_row_offset: u32,
     pub output_stride: u32,

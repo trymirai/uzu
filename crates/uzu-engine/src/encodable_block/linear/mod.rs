@@ -2,13 +2,13 @@ use thiserror::Error;
 
 mod input_rht;
 mod matmul;
-mod mirai_s;
+pub(crate) mod mirai_s;
 mod qlora_wrapper;
 mod rht_wrapper;
 mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
-pub use mirai_s::{MiraiSLinear, MiraiSLinearError};
+pub use mirai_s::MiraiSLinear;
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 pub use untied_readout::UntiedReadout;
@@ -23,9 +23,8 @@ use crate::{
         },
     },
     config::weight_matrix::{
-        AnyWeightMatrixSpec, Layout,
+        AnyWeightMatrixSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
-        row_stack_spec::RowStackSpec,
     },
     data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
@@ -117,8 +116,6 @@ pub enum LinearBlockError<B: Backend> {
     QLoRALinearWrapperError(#[from] QLoRALinearWrapperError<B>),
     #[error("RHTLinearWrapper error: {0}")]
     RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
-    #[error("MiraiSLinear error: {0}")]
-    MiraiSLinearError(#[from] MiraiSLinearError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported linear configuration: {0}")]
@@ -139,29 +136,12 @@ impl<B: Backend> dyn Linear<B> {
         let output_dimension_sum: u32 = output_dimensions.iter().sum();
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        let bf16_without_biases =
-            !has_biases && input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
         match spec {
-            AnyWeightMatrixSpec::QtipGaussianSpec(spec) if bf16_without_biases => {
-                let shared = weights_tree.root().subtree("qtip_shared");
-                let parts = vec![(output_dimension_sum, spec, weights_tree)];
-                Ok(Box::new(MiraiSLinear::load(context, parts, &shared, input_dimension)?))
-            },
-            AnyWeightMatrixSpec::RowStackSpec(RowStackSpec {
-                parts,
-                layout: Layout::OutputInput,
-                ..
-            }) if bf16_without_biases
-                && !parts.is_empty()
-                && parts.iter().map(|(rows, _)| rows).sum::<u32>() == output_dimension_sum =>
+            spec @ (AnyWeightMatrixSpec::QtipGaussianSpec(_) | AnyWeightMatrixSpec::RowStackSpec(_))
+                if !has_biases && input_data_type == DataType::BF16 && output_data_type == DataType::BF16 =>
             {
-                let shared = weights_tree.root().subtree("qtip_shared");
-                let parts = parts
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (rows, spec))| (rows, spec, weights_tree.subtree(&format!("parts.{index}"))))
-                    .collect();
-                Ok(Box::new(MiraiSLinear::load(context, parts, &shared, input_dimension)?))
+                let linear = MiraiSLinear::load(context, spec, &weights_tree, input_dimension, output_dimension_sum)?;
+                Ok(Box::new(linear))
             },
             spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
             | AnyWeightMatrixSpec::MLXSpec(_)

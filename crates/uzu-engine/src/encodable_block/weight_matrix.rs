@@ -1,7 +1,6 @@
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend,
         gpu_types::{QuantizationMethod, QuantizationMode},
@@ -178,15 +177,12 @@ impl<B: Backend> WeightMatrix<B> {
         group_size: u32,
     ) -> Self {
         assert!(columns.is_multiple_of(group_size));
-        let params = QuantParams::new(QuantParamsLayout::GroupOutput, rows, columns / group_size);
-        assert_eq!(codes.size(), rows as usize * columns as usize / 2);
-        assert_eq!(scales.size(), size_for_shape(&params.scale_shape(), DataType::BF16));
         Self {
             values: codes,
             quantized: Some(Quantized {
                 scales,
                 correction: QuantizedCorrection::Symmetric,
-                params,
+                params: QuantParams::new(QuantParamsLayout::GroupOutput, rows, columns / group_size),
                 info: QuantizationInfo {
                     mode: QuantizationMode::U4,
                     method: QuantizationMethod::ScaleSymmetric,

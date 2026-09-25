@@ -185,6 +185,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
     }
 }
 
+#[derive(Clone)]
 pub struct ParameterTree<'loader, B: Backend> {
     loader: &'loader ParameterLoader<'loader, B>,
     prefix: Option<String>,

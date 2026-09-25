@@ -1,42 +1,31 @@
 use std::sync::Arc;
 
 use half::{bf16, f16};
-use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+        Allocation, Backend, Context, Encoder, Kernels,
         kernel::{
             matmul::{QuantParams, QuantParamsLayout},
             mirai_s::{MiraiSProjection, MiraiSTransform, ProjectionArguments, TrellisCodec, mixing_order},
         },
     },
     config::weight_matrix::{
-        Layout,
+        AnyWeightMatrixSpec, Layout,
         i3_s4_spec::I3S4Spec,
-        qtip_gaussian_spec::{PostGainAxis, QtipGaussianSpec, ScaleDataType},
+        qtip_gaussian_spec::{PostGainAxis, QtipGaussianSpec},
+        row_stack_spec::RowStackSpec,
     },
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearMatmul, LinearMatmulError},
         weight_matrix::WeightMatrix,
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
-const TRELLIS_STATES: usize = 1 << 16;
+pub(crate) const TRELLIS_STATES: usize = 1 << 16;
 const READOUT_GROUP_SIZE: u32 = 64;
-
-#[derive(Debug, Error)]
-pub enum MiraiSLinearError<B: Backend> {
-    #[error("Backend error: {0}")]
-    BackendError(#[source] B::Error),
-    #[error("Parameter loading error: {0}")]
-    ParameterError(#[from] ParameterLoaderError<B>),
-    #[error("Unsupported Mirai S linear configuration: {0}")]
-    UnsupportedConfiguration(String),
-}
 
 struct Part<B: Backend> {
     projection: <B::Kernels as Kernels>::MiraiSProjection,
@@ -59,20 +48,41 @@ pub struct MiraiSLinear<B: Backend> {
 }
 
 impl<B: Backend> MiraiSLinear<B> {
-    /// `parts` are `(rows, spec, tensors)` stacked top to bottom; `shared` holds the package's `qtip_shared` tensors.
+    /// Loads a `QtipGaussianSpec` leaf or a `RowStackSpec` of them (`parts.<index>`) from `tree`; the package's
+    /// `qtip_shared` tensors live at the root.
     pub fn load(
         context: &B::Context,
-        parts: Vec<(u32, QtipGaussianSpec, ParameterTree<B>)>,
-        shared: &ParameterTree<B>,
+        spec: AnyWeightMatrixSpec,
+        tree: &ParameterTree<B>,
         input_dimension: u32,
-    ) -> Result<Self, MiraiSLinearError<B>> {
+        output_dimension: u32,
+    ) -> Result<Self, LinearMatmulError<B>> {
+        let parts = match spec {
+            AnyWeightMatrixSpec::QtipGaussianSpec(spec) => vec![(output_dimension, spec, tree.clone())],
+            AnyWeightMatrixSpec::RowStackSpec(RowStackSpec {
+                parts,
+                layout: Layout::OutputInput,
+                ..
+            }) => parts
+                .into_iter()
+                .enumerate()
+                .map(|(index, (rows, spec))| (rows, spec, tree.subtree(&format!("parts.{index}"))))
+                .collect(),
+            spec => return Err(LinearMatmulError::UnsupportedConfiguration(format!("{spec:?}"))),
+        };
+        if parts.iter().map(|(rows, ..)| rows).sum::<u32>() != output_dimension {
+            return Err(LinearMatmulError::UnsupportedConfiguration(format!(
+                "row stack parts do not add up to {output_dimension} rows"
+            )));
+        }
         let Some(transform) = <B::Kernels as Kernels>::MiraiSTransform::new(context, input_dimension)
-            .map_err(MiraiSLinearError::BackendError)?
+            .map_err(LinearMatmulError::BackendError)?
         else {
-            return Err(MiraiSLinearError::UnsupportedConfiguration(format!(
+            return Err(LinearMatmulError::UnsupportedConfiguration(format!(
                 "no Mirai S transform for input dimension {input_dimension} on this device"
             )));
         };
+        let shared = tree.root().subtree("qtip_shared");
         let order = mixing_order(input_dimension);
         let signs = shared.shared_allocation(&format!("signs_{input_dimension}"), |leaf| {
             leaf.validate(&[input_dimension], DataType::F32)?.read_allocation()
@@ -80,10 +90,9 @@ impl<B: Backend> MiraiSLinear<B> {
         let mixing = shared.shared_allocation(&format!("q_{input_dimension}"), |leaf| {
             leaf.validate(&[order, order], DataType::F32)?.read_allocation()
         })?;
-        let output_dimension = parts.iter().map(|(rows, ..)| rows).sum();
         let parts = parts
             .into_iter()
-            .map(|(rows, spec, tree)| load_part(context, &spec, rows, input_dimension, &tree, shared))
+            .map(|(rows, spec, tree)| load_part(context, &spec, rows, input_dimension, &tree, &shared))
             .collect::<Result<_, _>>()?;
         Ok(Self {
             transform,
@@ -102,65 +111,53 @@ fn load_part<B: Backend>(
     columns: u32,
     tree: &ParameterTree<B>,
     shared: &ParameterTree<B>,
-) -> Result<Part<B>, MiraiSLinearError<B>> {
+) -> Result<Part<B>, LinearMatmulError<B>> {
     if spec.layout != Layout::OutputInput || !rows.is_multiple_of(16) {
-        return Err(MiraiSLinearError::UnsupportedConfiguration(format!("{rows} rows of {spec:?}")));
+        return Err(LinearMatmulError::UnsupportedConfiguration(format!("{rows} rows of {spec:?}")));
     }
     let codec = match (spec.vector_width, spec.transition_bits, spec.restart_columns) {
         (4, 8, 64) => TrellisCodec::Vector4Restart64,
         (2, 6, 0) => TrellisCodec::Vector2Transition6,
         (2, 4, 0) => TrellisCodec::Vector2Transition4,
-        _ => return Err(MiraiSLinearError::UnsupportedConfiguration(format!("{spec:?}"))),
+        _ => return Err(LinearMatmulError::UnsupportedConfiguration(format!("{spec:?}"))),
     };
     let Some(projection) =
-        <B::Kernels as Kernels>::MiraiSProjection::new(context, codec).map_err(MiraiSLinearError::BackendError)?
+        <B::Kernels as Kernels>::MiraiSProjection::new(context, codec).map_err(LinearMatmulError::BackendError)?
     else {
-        return Err(MiraiSLinearError::UnsupportedConfiguration("no Mirai S projection on this device".into()));
+        return Err(LinearMatmulError::UnsupportedConfiguration("no Mirai S projection on this device".into()));
     };
     let mut codes = tree.leaf("codes")?.validate(&[rows, codec.row_bytes(columns)], DataType::U8)?.read_allocation()?;
-    match codec {
-        TrellisCodec::Vector4Restart64 => {},
-        TrellisCodec::Vector2Transition6 | TrellisCodec::Vector2Transition4 => {
-            repack_msb_first(codes.as_slice_mut(), codec, columns)
-        },
+    if codec.vector_width() == 2 {
+        repack_msb_first(codes.as_slice_mut(), codec, columns);
     }
 
+    let scales = tree.leaf("scales")?.validate(&[rows], spec.scale_dtype)?;
     let mut row_scales: Vec<f32> = match spec.scale_dtype {
-        ScaleDataType::Float16 => tree
-            .leaf("scales")?
-            .validate(&[rows], DataType::F16)?
-            .read_slice::<f16>()?
-            .iter()
-            .map(|s| s.to_f32())
-            .collect(),
-        ScaleDataType::Float32 => tree.leaf("scales")?.validate(&[rows], DataType::F32)?.read_slice::<f32>()?.into(),
+        DataType::F16 => scales.read_slice::<f16>()?.iter().map(|scale| scale.to_f32()).collect(),
+        DataType::F32 => scales.read_slice::<f32>()?.into(),
+        dtype => return Err(LinearMatmulError::UnsupportedDataType(dtype)),
     };
     let gains = tree.leaf("gains")?.validate(&[rows], DataType::BF16)?.read_slice::<bf16>()?;
     row_scales.iter_mut().zip(&gains).for_each(|(scale, gain)| *scale *= gain.to_f32());
     // a per-row gain after the rotation folds into the row scale
-    for (index, axis) in spec.post_gain_axes.iter().enumerate() {
-        match axis {
-            PostGainAxis::Row => {
-                let gains =
-                    tree.leaf(&format!("post_gains.{index}"))?.validate(&[rows], DataType::F32)?.read_slice::<f32>()?;
-                row_scales.iter_mut().zip(&gains).for_each(|(scale, gain)| *scale *= gain);
-            },
-        }
+    for (index, PostGainAxis::Row) in spec.post_gain_axes.iter().enumerate() {
+        let gains = tree.leaf(&format!("post_gains.{index}"))?.validate(&[rows], DataType::F32)?.read_slice::<f32>()?;
+        row_scales.iter_mut().zip(&gains).for_each(|(scale, gain)| *scale *= gain);
     }
 
     let vector_width = codec.vector_width();
     let codebook = shared.shared_allocation(&format!("codebook_v{vector_width}"), |leaf| {
         let values = leaf.validate(&[TRELLIS_STATES as u32, vector_width], DataType::F32)?.read_slice::<f32>()?;
         let table = codebook_table(&values, vector_width as usize).map_err(|error| {
-            MiraiSLinearError::UnsupportedConfiguration(format!("codebook_v{vector_width}: {error}"))
+            LinearMatmulError::UnsupportedConfiguration(format!("codebook_v{vector_width}: {error}"))
         })?;
-        context.create_allocation_from_slice(&table).map_err(MiraiSLinearError::BackendError)
+        context.create_allocation_from_slice(&table).map_err(LinearMatmulError::BackendError)
     })?;
 
     Ok(Part {
         projection,
         codes,
-        row_scales: context.create_allocation_from_slice(&row_scales).map_err(MiraiSLinearError::BackendError)?,
+        row_scales: context.create_allocation_from_slice(&row_scales).map_err(LinearMatmulError::BackendError)?,
         codebook,
         rows,
     })
@@ -168,7 +165,7 @@ fn load_part<B: Backend>(
 
 /// Codebook levels of the four bytes of fmix32(state * 0xCFCCB83F + 0x584B4AA3) (`trellis_levels` in
 /// projection.metal).
-fn trellis_levels(state: u32) -> [i32; 4] {
+pub(crate) fn trellis_levels(state: u32) -> [i32; 4] {
     let mut x = state.wrapping_mul(0xCFCC_B83F).wrapping_add(0x584B_4AA3);
     x ^= x >> 16;
     x = x.wrapping_mul(0x85EB_CA6B);
@@ -180,60 +177,34 @@ fn trellis_levels(state: u32) -> [i32; 4] {
     })
 }
 
-/// Fits the package codebook (`TRELLIS_STATES` x `vector_width`) as scale * level + offset[component], failing
-/// unless the fit is exact since the kernels only know the hashed levels. Returns `[scale, offset of class 0..4]`
-/// for the column classes k mod 4.
-fn fit_codebook(
+/// The package codebook (`TRELLIS_STATES` x `vector_width`) as the projection kernels read it: f32 `[scale, offset
+/// of column class 0..4, 0, 0, 0]`, then for V2 the int8 level pair of every state. Fails unless every entry is
+/// scale * level + offset[component], since the kernels only know the hashed levels.
+pub(crate) fn codebook_table(
     values: &[f32],
     vector_width: usize,
-) -> Result<[f32; 5], String> {
+) -> Result<Vec<u8>, String> {
     assert_eq!(values.len(), TRELLIS_STATES * vector_width);
     let levels: Vec<[i32; 4]> = (0..TRELLIS_STATES as u32).map(trellis_levels).collect();
     let value = |state: usize, component: usize| values[state * vector_width + component] as f64;
-    let level = |state: usize, component: usize| levels[state][component] as f64;
-    let mean = |f: &dyn Fn(usize, usize) -> f64, component| {
-        (0..TRELLIS_STATES).map(|state| f(state, component)).sum::<f64>() / TRELLIS_STATES as f64
-    };
-    let level_means: Vec<f64> = (0..vector_width).map(|component| mean(&level, component)).collect();
-    let value_means: Vec<f64> = (0..vector_width).map(|component| mean(&value, component)).collect();
-    // least squares with one scale and one offset per component
-    let (mut covariance, mut variance) = (0.0, 0.0);
-    for state in 0..TRELLIS_STATES {
-        for component in 0..vector_width {
-            let centered_level = level(state, component) - level_means[component];
-            covariance += centered_level * (value(state, component) - value_means[component]);
-            variance += centered_level * centered_level;
-        }
-    }
-    let scale = covariance / variance;
+    // the state farthest from state 0 in component 0 pins the scale, state 0 then pins the offsets
+    let far = (0..TRELLIS_STATES).max_by_key(|&state| (levels[state][0] - levels[0][0]).abs()).unwrap();
+    let scale = (value(far, 0) - value(0, 0)) / (levels[far][0] - levels[0][0]) as f64;
     let offsets: Vec<f64> =
-        (0..vector_width).map(|component| value_means[component] - scale * level_means[component]).collect();
+        (0..vector_width).map(|component| value(0, component) - scale * levels[0][component] as f64).collect();
     for state in 0..TRELLIS_STATES {
         for component in 0..vector_width {
-            let error = value(state, component) - (scale * level(state, component) + offsets[component]);
+            let error = value(state, component) - (scale * levels[state][component] as f64 + offsets[component]);
             if error.abs() > 1e-5 {
                 return Err(format!("entry ({state}, {component}) is not a computed level (error {error})"));
             }
         }
     }
     let class_offset = |class: usize| offsets[class % vector_width] as f32;
-    Ok([scale as f32, class_offset(0), class_offset(1), class_offset(2), class_offset(3)])
-}
-
-/// The package codebook as the projection kernels read it: f32 `[scale, offset of column class 0..4, 0, 0, 0]`,
-/// then for V2 the int8 level pair of every state, which the narrow MXU projections read instead of hashing.
-fn codebook_table(
-    values: &[f32],
-    vector_width: usize,
-) -> Result<Vec<u8>, String> {
-    let [scale, offsets @ ..] = fit_codebook(values, vector_width)?;
-    let header = [scale, offsets[0], offsets[1], offsets[2], offsets[3], 0.0, 0.0, 0.0];
+    let header = [scale as f32, class_offset(0), class_offset(1), class_offset(2), class_offset(3), 0.0, 0.0, 0.0];
     let mut table = bytemuck::cast_slice::<f32, u8>(&header).to_vec();
     if vector_width == 2 {
-        table.extend((0..TRELLIS_STATES as u32).flat_map(|state| {
-            let [first, second, ..] = trellis_levels(state);
-            [first as i8 as u8, second as i8 as u8]
-        }));
+        table.extend(levels.iter().flat_map(|&[first, second, ..]| [first as i8 as u8, second as i8 as u8]));
     }
     Ok(table)
 }
@@ -302,16 +273,15 @@ pub(super) fn load_readout<B: Backend>(
     let ladder_indices =
         tree.leaf("ladder_indices")?.validate(&[rows, groups / 2], DataType::U8)?.read_slice::<u8>()?;
     let ladder = tree.leaf("ladder")?.validate(&[16], DataType::F16)?.read_slice::<f16>()?;
-    let allocate = |shape: &[u32], data_type| {
-        context
-            .create_allocation(size_for_shape(shape, data_type), AllocationType::Global)
-            .map_err(LinearMatmulError::BackendError)
-    };
-    let mut u4_codes = allocate(&[rows, columns / 2], DataType::U8)?;
-    let mut scales =
-        allocate(&QuantParams::new(QuantParamsLayout::GroupOutput, rows, groups).scale_shape(), DataType::BF16)?;
-    repack_readout(&codes, &row_scales, &ladder_indices, &ladder, u4_codes.as_slice_mut(), scales.as_slice_mut());
-    let matrix = WeightMatrix::symmetric_u4(u4_codes, scales, rows, columns, READOUT_GROUP_SIZE);
+    let padded_rows = QuantParams::new(QuantParamsLayout::GroupOutput, rows, groups).scale_shape()[1];
+    let (u4_codes, scales) = repack_readout(&codes, &row_scales, &ladder_indices, &ladder, padded_rows as usize);
+    let matrix = WeightMatrix::symmetric_u4(
+        context.create_allocation_from_slice(&u4_codes).map_err(LinearMatmulError::BackendError)?,
+        context.create_allocation_from_slice(&scales).map_err(LinearMatmulError::BackendError)?,
+        rows,
+        columns,
+        READOUT_GROUP_SIZE,
+    );
     let linear =
         LinearMatmul::from_matrix(context, matrix, None, None, columns, rows, data_type, data_type, data_type)?;
     let input_hadamard_factors =
@@ -319,42 +289,41 @@ pub(super) fn load_readout<B: Backend>(
     Ok((linear, input_hadamard_factors))
 }
 
-/// Writes the readout's 3-bit codes c (packed LSB first) as U4 codes `level + 8` `[rows, columns / 2]` of the odd
-/// levels 2c - 7, and its group-major scales `[columns / 64, round_up_4(rows)]` row_scale * ladder[index] (4-bit
-/// index, low nibble first; the padding rows are zero).
+/// The readout's 3-bit codes c (packed LSB first) as U4 codes `level + 8` `[rows, columns / 2]` of the odd levels
+/// 2c - 7, and its group-major scales `[columns / 64, padded_rows]` row_scale * ladder[index] (4-bit index, low
+/// nibble first; the padding rows are zero).
 fn repack_readout(
     codes: &[u8],
     row_scales: &[bf16],
     ladder_indices: &[u8],
     ladder: &[f16],
-    u4_codes: &mut [u8],
-    scales: &mut [bf16],
-) {
+    padded_rows: usize,
+) -> (Vec<u8>, Vec<bf16>) {
     // 8 columns = 3 packed bytes = 4 output bytes
-    let ((triples, []), (quads, [])) = (codes.as_chunks::<3>(), u4_codes.as_chunks_mut::<4>()) else {
-        panic!("readout codes are not whole 8-column groups");
-    };
-    assert_eq!(triples.len(), quads.len());
-    for (&[b0, b1, b2], quad) in triples.iter().zip(quads) {
-        let packed = u32::from_le_bytes([b0, b1, b2, 0]);
-        let nibble = |column: u32| (2 * ((packed >> (3 * column)) & 7) + 1) as u8;
-        *quad = [0, 1, 2, 3].map(|pair| nibble(2 * pair) | (nibble(2 * pair + 1) << 4));
-    }
+    let u4_codes = codes
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .flat_map(|&[b0, b1, b2]| {
+            let packed = u32::from_le_bytes([b0, b1, b2, 0]);
+            let nibble = |column: u32| (2 * ((packed >> (3 * column)) & 7) + 1) as u8;
+            [0, 1, 2, 3].map(|pair| nibble(2 * pair) | (nibble(2 * pair + 1) << 4))
+        })
+        .collect();
     let rows = row_scales.len();
     let groups = 2 * ladder_indices.len() / rows;
-    for (group, group_scales) in scales.chunks_exact_mut(scales.len() / groups).enumerate() {
-        let (group_scales, padding) = group_scales.split_at_mut(rows);
-        padding.fill(bf16::ZERO);
-        for (row, scale) in group_scales.iter_mut().enumerate() {
-            let packed_index = ladder_indices[row * groups / 2 + group / 2];
-            let index = if group % 2 == 0 {
-                packed_index & 15
-            } else {
-                packed_index >> 4
-            };
-            *scale = bf16::from_f32(row_scales[row].to_f32() * ladder[index as usize].to_f32());
-        }
-    }
+    let scales = (0..groups)
+        .flat_map(|group| {
+            (0..padded_rows).map(move |row| {
+                if row >= rows {
+                    return bf16::ZERO;
+                }
+                let index = (ladder_indices[row * groups / 2 + group / 2] >> (4 * (group % 2))) & 15;
+                bf16::from_f32(row_scales[row].to_f32() * ladder[index as usize].to_f32())
+            })
+        })
+        .collect();
+    (u4_codes, scales)
 }
 
 impl<B: Backend> Linear<B> for MiraiSLinear<B> {

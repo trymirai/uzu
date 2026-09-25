@@ -29,8 +29,7 @@ PUBLIC KERNEL(MiraiSEmbeddingLookup)(
     return;
   }
   const uint group = column / 64;
-  const uchar packed_index = ladder_indices[token * (model_dim / 128) + group / 2];
-  const uint ladder_index = group % 2 == 0 ? packed_index & 15 : packed_index >> 4;
+  const uint ladder_index = (ladder_indices[token * (model_dim / 128) + group / 2] >> (4 * (group % 2))) & 15;
   const char4 point = table[codes[token * (model_dim / 4) + column / 4]];
   const float value = float(row_scales[token]) * float(ladder[ladder_index]) * float(point[column % 4]) * input_scale;
   output[batch_index * model_dim + column] = simdgroup_output_random_hadamard_transform(
