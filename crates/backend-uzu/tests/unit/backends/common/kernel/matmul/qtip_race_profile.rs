@@ -38,6 +38,9 @@ use crate::{
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Geometry {
     V4,
+    /// V4 with 7- or 6-bit transitions: bit-contiguous restart-64 blocks of 16 + 15 * T bits, MSB-first.
+    V4T7,
+    V4T6,
     V2K2,
     V2K3,
     V4K3,
@@ -190,6 +193,7 @@ fn cpu_reference(
                         TableMode::Plain => raw,
                     }
                 },
+                Geometry::V4T7 | Geometry::V4T6 => unreachable!("bit-contiguous V4 runs only the computed codebook"),
                 Geometry::V8 => {
                     let group = column / 8;
                     let start = (group / 8) * 17 + (group % 8) * 2;
@@ -286,6 +290,8 @@ fn build_case(
         Geometry::V4 => (family.columns / 4, family.columns / 64 * 17, 4u32),
         Geometry::V4K3 => (family.columns / 4, family.columns / 64 * 25, 4u32),
         Geometry::V8 => (family.columns / 8, family.columns / 64 * 17, 8u32),
+        Geometry::V4T7 => (family.columns / 4, (family.columns / 64 * (16 + 15 * 7)).div_ceil(8), 4u32),
+        Geometry::V4T6 => (family.columns / 4, (family.columns / 64 * (16 + 15 * 6)).div_ceil(8), 4u32),
         Geometry::V2K2 => {
             let groups = family.columns / 2;
             (groups, (16 + (groups - 1) * 4).div_ceil(8), 2)
@@ -295,7 +301,10 @@ fn build_case(
             (groups, (16 + (groups - 1) * 6).div_ceil(8), 2)
         },
     };
-    let codes: Vec<u8> = (0..(family.rows as usize * bytes_per_row as usize)).map(|_| rng.random::<u8>()).collect();
+    let mut codes: Vec<u8> = (0..(family.rows as usize * bytes_per_row as usize)).map(|_| rng.random::<u8>()).collect();
+    if matches!(family.geometry, Geometry::V4T7 | Geometry::V4T6) {
+        codes.extend([0u8; 4]);   // the kernels' 3-byte window reads, as the loader pads
+    }
     let codebook: Vec<i8> =
         (0..(65_536 * vector_width as usize)).map(|_| rng.random_range(-127i16..=127) as i8).collect();
     let mut codebook_split = vec![0i8; codebook.len()];
@@ -1177,6 +1186,10 @@ fn qtip_computed_codebook_matches_reference() {
     let simdgroup_v4 = (QtipRaceV4SimdgroupT1MetalKernel::new(&context).expect("kernel"), QtipRaceV4SimdgroupT8MetalKernel::new(&context).expect("kernel"));
     let simdgroup_k3 = (QtipRaceK3SimdgroupT1MetalKernel::new(&context).expect("kernel"), QtipRaceK3SimdgroupT8MetalKernel::new(&context).expect("kernel"));
     let simdgroup_k2 = (QtipRaceK2SimdgroupT1MetalKernel::new(&context).expect("kernel"), QtipRaceK2SimdgroupT8MetalKernel::new(&context).expect("kernel"));
+    let simdgroup_v4t7 = (QtipRaceV4T7SimdgroupT1MetalKernel::new(&context).expect("kernel"), QtipRaceV4T7SimdgroupT8MetalKernel::new(&context).expect("kernel"));
+    let simdgroup_v4t6 = (QtipRaceV4T6SimdgroupT1MetalKernel::new(&context).expect("kernel"), QtipRaceV4T6SimdgroupT8MetalKernel::new(&context).expect("kernel"));
+    let (v4t7_sg4_b32, v4t7_sg2_b64) = (QtipRaceV4T7CmpSg4B32MetalKernel::new(&context).expect("kernel"), QtipRaceV4T7CmpSg2B64MetalKernel::new(&context).expect("kernel"));
+    let (v4t6_sg4_b32, v4t6_sg2_b64) = (QtipRaceV4T6CmpSg4B32MetalKernel::new(&context).expect("kernel"), QtipRaceV4T6CmpSg2B64MetalKernel::new(&context).expect("kernel"));
     let v4_sg4_b32 = QtipRaceV4CmpSg4B32MetalKernel::new(&context).expect("kernel");
     let v4_sg2_b64 = QtipRaceV4CmpSg2B64MetalKernel::new(&context).expect("kernel");
     let k3_sg4_b64 = QtipRaceK3CmpSg4B64MetalKernel::new(&context).expect("kernel");
@@ -1193,12 +1206,18 @@ fn qtip_computed_codebook_matches_reference() {
         (Geometry::V2K3, 32, 1),
         (Geometry::V2K2, 64, 64),
         (Geometry::V2K2, 32, 1),
+        (Geometry::V4T7, 32, 13),
+        (Geometry::V4T7, 64, 64),
+        (Geometry::V4T7, 32, 1),
+        (Geometry::V4T6, 32, 13),
+        (Geometry::V4T6, 64, 50),
+        (Geometry::V4T6, 32, 1),
     ] {
         let (rows, columns) = (160u32, 5120u32);
         let family = Family { name: "test", geometry, rows, columns, leaves: 1 };
         let case = build_case(&context, &family, active_batch, padded_batch, 7);
         let host = &case.host;
-        let (scale, offsets) = if geometry == Geometry::V4 { v4 } else { v2 };
+        let (scale, offsets) = if matches!(geometry, Geometry::V4 | Geometry::V4T7 | Geometry::V4T6) { v4 } else { v2 };
         let row_scales: Vec<f32> = host.scales.iter().map(|value| value.to_f32()).collect();
         let token_sums: Vec<f32> = (0..padded_batch as usize)
             .flat_map(|token| {
@@ -1246,9 +1265,15 @@ fn qtip_computed_codebook_matches_reference() {
                 ("mxu", Geometry::V4, 64) => run!(v4_sg2_b64, case.groups),
                 ("mxu", Geometry::V2K3, 64) => run!(k3_sg4_b64, case.groups),
                 ("mxu", Geometry::V2K2, 64) => run!(k2_sg4_b64, case.groups),
+                ("mxu", Geometry::V4T7, 32) => run!(v4t7_sg4_b32, case.groups),
+                ("mxu", Geometry::V4T7, 64) => run!(v4t7_sg2_b64, case.groups),
+                ("mxu", Geometry::V4T6, 32) => run!(v4t6_sg4_b32, case.groups),
+                ("mxu", Geometry::V4T6, 64) => run!(v4t6_sg2_b64, case.groups),
                 ("simdgroup", Geometry::V4, _) => run_simdgroup!(simdgroup_v4),
                 ("simdgroup", Geometry::V2K3, _) => run_simdgroup!(simdgroup_k3),
                 ("simdgroup", Geometry::V2K2, _) => run_simdgroup!(simdgroup_k2),
+                ("simdgroup", Geometry::V4T7, _) => run_simdgroup!(simdgroup_v4t7),
+                ("simdgroup", Geometry::V4T6, _) => run_simdgroup!(simdgroup_v4t6),
                 _ => unreachable!(),
             }
             encoder.end_encoding().submit().wait_until_completed().expect("execution");
@@ -1285,6 +1310,14 @@ fn qtip_computed_codebook_matches_reference() {
                             let (b0, b1, b2) = (codes[byte] as u32, codes[byte + 1] as u32, codes[byte + 2] as u32);
                             let state = if column % 4 < 2 { b0 << 8 | b1 } else { (b0 << 12 | b1 << 4 | b2 >> 4) & 0xFFFF };
                             (state, column % 2)
+                        },
+                        Geometry::V4T7 | Geometry::V4T6 => {
+                            let bits = if geometry == Geometry::V4T7 { 7 } else { 6 };
+                            let bit = column / 64 * (16 + 15 * bits) + column % 64 / 4 * bits;
+                            // bytes past the row only feed bits the shift drops
+                            let at = |offset: usize| codes.get(bit / 8 + offset).copied().unwrap_or(0) as u32;
+                            let window = at(0) << 16 | at(1) << 8 | at(2);
+                            ((window >> (8 - bit % 8)) & 0xFFFF, column % 4)
                         },
                         Geometry::V2K3 => {
                             let bit = column / 2 * 6;

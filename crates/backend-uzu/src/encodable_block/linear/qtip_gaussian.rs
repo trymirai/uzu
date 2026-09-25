@@ -145,11 +145,13 @@ impl<B: Backend> QtipGaussianLinear<B> {
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, QtipGaussianLinearError<B>> {
         assert_eq!(spec.layout, Layout::OutputInput);
-        assert!(matches!((spec.vector_width, spec.transition_bits, spec.restart_columns), (2, 4 | 6, 0) | (4, 8, 64)));
+        assert!(matches!((spec.vector_width, spec.transition_bits, spec.restart_columns), (2, 4 | 6, 0) | (4, 6 | 7 | 8, 64)));
         let groups = input_dimension / spec.vector_width;
         let bytes_per_row = match spec.vector_width {
             2 => (16 + (groups - 1) * spec.transition_bits).div_ceil(8),
-            4 => input_dimension / 64 * 17,
+            // 8-bit transitions: 17-byte blocks; 6 and 7 bits: bit-contiguous blocks of 16 + 15 * T bits
+            4 if spec.transition_bits == 8 => input_dimension / 64 * 17,
+            4 => (input_dimension / 64 * (16 + 15 * spec.transition_bits)).div_ceil(8),
             _ => unreachable!(),
         };
         let shared = parameter_tree.root().subtree("qtip_shared");
@@ -293,6 +295,19 @@ impl<B: Backend> QtipGaussianLinear<B> {
                 .create_allocation(repacked.len(), AllocationType::Global)
                 .map_err(QtipGaussianLinearError::BackendError)?;
             allocation.copyin(&repacked);
+            allocation
+        } else if spec.transition_bits < 8 {
+            // 4 zero bytes past the last row for the kernels' 3-byte window reads
+            let physical = parameter_tree
+                .leaf("codes")?
+                .validate(&[output_dimension, bytes_per_row], DataType::U8)?
+                .read_slice::<u8>()?;
+            let mut padded = physical.to_vec();
+            padded.extend([0u8; 4]);
+            let mut allocation = context
+                .create_allocation(padded.len(), AllocationType::Global)
+                .map_err(QtipGaussianLinearError::BackendError)?;
+            allocation.copyin(&padded);
             allocation
         } else {
             parameter_tree

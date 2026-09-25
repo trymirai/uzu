@@ -199,6 +199,27 @@ struct QtipRaceLaneGather {
       fragment_values0[4] = v10.x; fragment_values0[5] = v10.y; fragment_values0[6] = v10.z; fragment_values0[7] = v10.w;
       fragment_values1[0] = v01.x; fragment_values1[1] = v01.y; fragment_values1[2] = v01.z; fragment_values1[3] = v01.w;
       fragment_values1[4] = v11.x; fragment_values1[5] = v11.y; fragment_values1[6] = v11.z; fragment_values1[7] = v11.w;
+    } else if constexpr (VECTOR_WIDTH == 4u && TRANSITION_BITS < 8u) {
+      // V4 with 6- or 7-bit transitions: restart-64 blocks of [16-bit seed][15 x T-bit symbols], MSB-first and
+      // bit-contiguous across the row; the state of group g is the 16-bit window at bit 106 or 121 per block plus T * g
+      static_assert(DIAG == 20u, "only the computed codebook reads bit-contiguous V4 rows");
+      auto levels_at = [&](device const uchar* row, uint group) {
+        const uint bit = (group >> 4u) * (16u + 15u * TRANSITION_BITS) + (group & 15u) * TRANSITION_BITS;
+        device const uchar* bytes = row + (bit >> 3u);
+        const uint window = (uint(bytes[0]) << 16u) | (uint(bytes[1]) << 8u) | uint(bytes[2]);
+        return as_type<char4>(qtip_race_levels((window >> (8u - (bit & 7u))) & 0xFFFFu));
+      };
+      const uint g0 = chunk * 8u + (lane_col >> 2u);
+      char4 v00 = levels_at(codes0, g0);
+      char4 v10 = levels_at(codes1, g0);
+      char4 v01 = levels_at(codes0, g0 + 4u);
+      char4 v11 = levels_at(codes1, g0 + 4u);
+      v00 = valid0 ? v00 : char4(0); v01 = valid0 ? v01 : char4(0);
+      v10 = valid1 ? v10 : char4(0); v11 = valid1 ? v11 : char4(0);
+      fragment_values0[0] = v00.x; fragment_values0[1] = v00.y; fragment_values0[2] = v00.z; fragment_values0[3] = v00.w;
+      fragment_values0[4] = v10.x; fragment_values0[5] = v10.y; fragment_values0[6] = v10.z; fragment_values0[7] = v10.w;
+      fragment_values1[0] = v01.x; fragment_values1[1] = v01.y; fragment_values1[2] = v01.z; fragment_values1[3] = v01.w;
+      fragment_values1[4] = v11.x; fragment_values1[5] = v11.y; fragment_values1[6] = v11.z; fragment_values1[7] = v11.w;
     } else if constexpr (VECTOR_WIDTH == 4u) {
       device const char4* codebook_vectors = reinterpret_cast<device const char4*>(codebook);
       const uint block = chunk >> 1u;
@@ -1691,6 +1712,12 @@ QTIP_RACE_CMP_KERNEL(QtipRaceV4CmpSg2B32, 32, 4, 8, 2)
 QTIP_RACE_CMP_KERNEL(QtipRaceV4CmpSg2B64, 64, 4, 8, 2)
 QTIP_RACE_CMP_KERNEL(QtipRaceK3CmpSg4B64, 64, 2, 6, 4)
 QTIP_RACE_CMP_KERNEL(QtipRaceK2CmpSg4B64, 64, 2, 4, 4)
+QTIP_RACE_CMP_KERNEL(QtipRaceV4T7CmpSg4B32, 32, 4, 7, 4)
+QTIP_RACE_CMP_KERNEL(QtipRaceV4T7CmpSg2B32, 32, 4, 7, 2)
+QTIP_RACE_CMP_KERNEL(QtipRaceV4T7CmpSg2B64, 64, 4, 7, 2)
+QTIP_RACE_CMP_KERNEL(QtipRaceV4T6CmpSg4B32, 32, 4, 6, 4)
+QTIP_RACE_CMP_KERNEL(QtipRaceV4T6CmpSg2B32, 32, 4, 6, 2)
+QTIP_RACE_CMP_KERNEL(QtipRaceV4T6CmpSg2B64, 64, 4, 6, 2)
 
 #undef QTIP_RACE_CMP_KERNEL
 
@@ -2725,8 +2752,14 @@ static inline void qtip_race_simdgroup(
     for (uint row = 0; row < ROWS; ++row) {
       device const uchar* row_codes = codes + (row_base + row) * bytes_per_row;
       char4 levels;
-      if constexpr (VECTOR_WIDTH == 4u) {
+      if constexpr (VECTOR_WIDTH == 4u && TRANSITION_BITS == 8u) {
         levels = as_type<char4>(qtip_race_levels(qtip_race_v4_state(row_codes + column / 64u * 17u, column % 64u / 4u)));
+      } else if constexpr (VECTOR_WIDTH == 4u) {
+        // bit-contiguous restart-64 blocks, see QtipRaceLaneGather
+        const uint bit = column / 64u * (16u + 15u * TRANSITION_BITS) + column % 64u / 4u * TRANSITION_BITS;
+        device const uchar* bytes = row_codes + (bit >> 3u);
+        const uint window = (uint(bytes[0]) << 16u) | (uint(bytes[1]) << 8u) | uint(bytes[2]);
+        levels = as_type<char4>(qtip_race_levels((window >> (8u - (bit & 7u))) & 0xFFFFu));
       } else {
         const ushort2 states = qtip_race_state_pair_v2<TRANSITION_BITS>(row_codes, column);
         levels = char4(as_type<char2>(ushort(qtip_race_levels(states.x))), as_type<char2>(ushort(qtip_race_levels(states.y))));
@@ -2782,6 +2815,10 @@ KERNEL(NAME)( \
 
 QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceV4SimdgroupT1, 1, 4, 8)
 QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceV4SimdgroupT8, 8, 4, 8)
+QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceV4T7SimdgroupT1, 1, 4, 7)
+QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceV4T7SimdgroupT8, 8, 4, 7)
+QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceV4T6SimdgroupT1, 1, 4, 6)
+QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceV4T6SimdgroupT8, 8, 4, 6)
 QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceK3SimdgroupT1, 1, 2, 6)
 QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceK3SimdgroupT8, 8, 2, 6)
 QTIP_RACE_SIMDGROUP_KERNEL(QtipRaceK2SimdgroupT1, 1, 2, 4)

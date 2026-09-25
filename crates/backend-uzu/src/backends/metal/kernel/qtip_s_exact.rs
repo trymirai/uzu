@@ -28,7 +28,11 @@ use crate::{
                 QtipRaceK3CmpSg4B64MetalKernel, QtipRaceK2CmpSg4B64MetalKernel,
                 QtipRaceTransform6144MetalKernel, QtipRaceTransform17408MetalKernel,
                 QtipRaceK2SimdgroupT1MetalKernel, QtipRaceK2SimdgroupT8MetalKernel, QtipRaceK3SimdgroupT1MetalKernel,
-                QtipRaceK3SimdgroupT8MetalKernel, QtipRaceV4SimdgroupT1MetalKernel, QtipRaceV4SimdgroupT8MetalKernel, QtipRaceV4Pf2Sg2B32MetalKernel,
+                QtipRaceK3SimdgroupT8MetalKernel, QtipRaceV4SimdgroupT1MetalKernel, QtipRaceV4SimdgroupT8MetalKernel,
+                QtipRaceV4T6CmpSg2B32MetalKernel, QtipRaceV4T6CmpSg2B64MetalKernel, QtipRaceV4T6CmpSg4B32MetalKernel,
+                QtipRaceV4T6SimdgroupT1MetalKernel, QtipRaceV4T6SimdgroupT8MetalKernel, QtipRaceV4T7CmpSg2B32MetalKernel,
+                QtipRaceV4T7CmpSg2B64MetalKernel, QtipRaceV4T7CmpSg4B32MetalKernel, QtipRaceV4T7SimdgroupT1MetalKernel,
+                QtipRaceV4T7SimdgroupT8MetalKernel, QtipRaceV4Pf2Sg2B32MetalKernel,
                 QtipRaceV4Pf2Sg2B64MetalKernel, QtipRaceV4Pf2Sg4B32MetalKernel, QtipRaceV4Pf2Sg4B64MetalKernel,
                 QtipRaceV4Pf2Sg8B64MetalKernel, QtipRaceV4R2Pf2Sg2B32MetalKernel, QtipRaceV4R2Pf2Sg4B32MetalKernel,
                 QtipRaceV4T2Pf2Sg2B16MetalKernel, QtipRaceK3T4Pf0Sg2B16MetalKernel, QtipRaceK3T2Pf0Sg2B16MetalKernel,
@@ -74,6 +78,11 @@ pub struct QtipSExactMetalKernel {
     /// Without MXU (before M5) every projection runs the SIMDgroup kernels with the computed codebook.
     mxu: bool,
     simdgroup_v4: (QtipRaceV4SimdgroupT1MetalKernel, QtipRaceV4SimdgroupT8MetalKernel),
+    simdgroup_v4t7: (QtipRaceV4T7SimdgroupT1MetalKernel, QtipRaceV4T7SimdgroupT8MetalKernel),
+    simdgroup_v4t6: (QtipRaceV4T6SimdgroupT1MetalKernel, QtipRaceV4T6SimdgroupT8MetalKernel),
+    /// V4 with 7- and 6-bit transitions (bit-contiguous restart-64 rows): 32 rows x (Sg4, Sg2), then 64 tokens.
+    v4t7_cmp: (QtipRaceV4T7CmpSg4B32MetalKernel, QtipRaceV4T7CmpSg2B32MetalKernel, QtipRaceV4T7CmpSg2B64MetalKernel),
+    v4t6_cmp: (QtipRaceV4T6CmpSg4B32MetalKernel, QtipRaceV4T6CmpSg2B32MetalKernel, QtipRaceV4T6CmpSg2B64MetalKernel),
     simdgroup_k3: (QtipRaceK3SimdgroupT1MetalKernel, QtipRaceK3SimdgroupT8MetalKernel),
     simdgroup_k2: (QtipRaceK2SimdgroupT1MetalKernel, QtipRaceK2SimdgroupT8MetalKernel),
     race_transform: bool,
@@ -502,6 +511,24 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
                 QtipRaceV4SimdgroupT1MetalKernel::new(context)?,
                 QtipRaceV4SimdgroupT8MetalKernel::new(context)?,
             ),
+            simdgroup_v4t7: (
+                QtipRaceV4T7SimdgroupT1MetalKernel::new(context)?,
+                QtipRaceV4T7SimdgroupT8MetalKernel::new(context)?,
+            ),
+            simdgroup_v4t6: (
+                QtipRaceV4T6SimdgroupT1MetalKernel::new(context)?,
+                QtipRaceV4T6SimdgroupT8MetalKernel::new(context)?,
+            ),
+            v4t7_cmp: (
+                QtipRaceV4T7CmpSg4B32MetalKernel::new(context)?,
+                QtipRaceV4T7CmpSg2B32MetalKernel::new(context)?,
+                QtipRaceV4T7CmpSg2B64MetalKernel::new(context)?,
+            ),
+            v4t6_cmp: (
+                QtipRaceV4T6CmpSg4B32MetalKernel::new(context)?,
+                QtipRaceV4T6CmpSg2B32MetalKernel::new(context)?,
+                QtipRaceV4T6CmpSg2B64MetalKernel::new(context)?,
+            ),
             simdgroup_k3: (
                 QtipRaceK3SimdgroupT1MetalKernel::new(context)?,
                 QtipRaceK3SimdgroupT8MetalKernel::new(context)?,
@@ -735,7 +762,7 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
                 (groups, (16 + (groups - 1) * transition_bits).div_ceil(8))
             },
             4 => {
-                assert_eq!(transition_bits, 8);
+                assert!(matches!(transition_bits, 6 | 7 | 8));
                 assert_eq!(restart_columns, 64);
                 assert!(matches!(state_bits, 15 | 16));
                 let stored_states = match table_mode {
@@ -745,11 +772,21 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
                     _ => 1u32 << state_bits,
                 };
                 assert_eq!(codebook.size(), size_for_shape(&[stored_states, 4], DataType::I8));
-                (columns / 4, columns / restart_columns * 17)
+                // 8-bit transitions: 17-byte blocks; 6 and 7 bits: bit-contiguous blocks of 16 + 15 * T bits
+                let bytes_per_row = match transition_bits {
+                    8 => columns / 64 * 17,
+                    bits => (columns / 64 * (16 + 15 * bits)).div_ceil(8),
+                };
+                (columns / 4, bytes_per_row)
             },
             _ => panic!("unsupported QTIP vector width {vector_width}"),
         };
-        assert_eq!(codes.size(), rows as usize * bytes_per_row as usize);
+        // bit-contiguous rows carry 4 zero bytes after the last row for the kernels' 3-byte window reads
+        let padding = if vector_width == 4 && transition_bits < 8 { 4 } else { 0 };
+        assert_eq!(codes.size(), rows as usize * bytes_per_row as usize + padding);
+        if padding > 0 {
+            assert!(computed.is_some() && self.computed_codebook && self.race_transform && self.race_projection);
+        }
 
         if self.null_projection {
             return encoder.allocate_scratch(size_for_shape(&[batch, rows], DataType::BF16));
@@ -790,6 +827,8 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
             }
             match (vector_width, transition_bits) {
                 (4, 8) => run_simdgroup!(self.simdgroup_v4),
+                (4, 7) => run_simdgroup!(self.simdgroup_v4t7),
+                (4, 6) => run_simdgroup!(self.simdgroup_v4t6),
                 (2, 6) => run_simdgroup!(self.simdgroup_k3),
                 (2, 4) => run_simdgroup!(self.simdgroup_k2),
                 _ => unreachable!(),
@@ -826,9 +865,15 @@ impl QtipSExactKernel<Metal> for QtipSExactMetalKernel {
                 };
             }
             match (vector_width, transition_bits, padded_batch) {
-                (4, _, 32) if rows == 34816 => run_computed!(self.v4_cmp_sg2_b32),
-                (4, _, 32) => run_computed!(self.v4_cmp_sg4_b32),
-                (4, _, 64) => run_computed!(self.v4_cmp_sg2_b64),
+                (4, 8, 32) if rows == 34816 => run_computed!(self.v4_cmp_sg2_b32),
+                (4, 8, 32) => run_computed!(self.v4_cmp_sg4_b32),
+                (4, 8, 64) => run_computed!(self.v4_cmp_sg2_b64),
+                (4, 7, 32) if rows == 34816 => run_computed!(self.v4t7_cmp.1),
+                (4, 7, 32) => run_computed!(self.v4t7_cmp.0),
+                (4, 7, 64) => run_computed!(self.v4t7_cmp.2),
+                (4, 6, 32) if rows == 34816 => run_computed!(self.v4t6_cmp.1),
+                (4, 6, 32) => run_computed!(self.v4t6_cmp.0),
+                (4, 6, 64) => run_computed!(self.v4t6_cmp.2),
                 (2, 6, 64) => run_computed!(self.k3_cmp_sg4_b64),
                 (2, 4, 64) => run_computed!(self.k2_cmp_sg4_b64),
                 _ => unreachable!("no computed-codebook kernel for {vector_width}/{transition_bits}/{padded_batch}"),
