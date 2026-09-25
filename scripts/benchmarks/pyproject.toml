@@ -1,0 +1,30 @@
+[project]
+name = "benchmarks"
+version = "0.0.1"
+readme = "README.md"
+requires-python = ">=3.13.7"
+
+dependencies = [
+    "benchmarks-common",
+    "benchmarks-mlx",
+    "benchmarks-mtplx",
+    "typer>=0.27.2",
+]
+
+[tool.uv.sources]
+benchmarks-common = { workspace = true }
+benchmarks-mlx = { workspace = true }
+benchmarks-mtplx = { workspace = true }
+
+[tool.uv.workspace]
+members = ["common-py", "engine-mlx", "engine-mtplx"]
+
+[dependency-groups]
+dev = ["pytest>=9.0.3", "ruff>=0.16.8", "ty>=0.0.84"]
+
+# ruff
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+extend-select = ["E501"]
