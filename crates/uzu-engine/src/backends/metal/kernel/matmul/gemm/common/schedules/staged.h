@@ -28,32 +28,33 @@ static METAL_FUNC auto make_staged_loader(
     const thread ThreadContext& thread_context
 ) {
   using Element = typename Core::RightElementType;
-  using Format = typename RightOperand::Format;
   const uint row_stride =
       uint(params->K) * uint(get_bytes_per_pack<RightOperand::BITS>()) / uint(get_pack_factor<RightOperand::BITS>());
-  const uint groups_per_row = (uint(params->K) + uint(RightOperand::GROUP_SIZE) - 1) / uint(RightOperand::GROUP_SIZE);
   const uint first_group = k_offset / uint(RightOperand::GROUP_SIZE);
+  const int params_offset =
+      int(block_col) * int(params->scale_output_stride) + int(first_group) * int(params->scale_group_stride);
+  const device Element* scales = right.scales + params_offset;
   const device uint8_t* values = right.codes + size_t(block_col) * row_stride +
                                  size_t(k_offset) * size_t(get_bytes_per_pack<RightOperand::BITS>()) /
                                      size_t(get_pack_factor<RightOperand::BITS>());
-  const device Element* scales = right.scales + block_col * groups_per_row + first_group;
-
   if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant) {
+    const device Element* biases = right.bias() + params_offset;
     using Loader = QuantizedBlockLoaderScaleBias<
         Element,
         Core::THREADGROUP_BLOCK_N,
         Core::THREADGROUP_BLOCK_K,
         Core::SHARED_STRIDE_B,
-        1,
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
-        Format::BITS>;
+        RightOperand::BITS>;
     return Loader(
         values,
         scales,
-        right.bias() + block_col * groups_per_row + first_group,
+        biases,
         right.signed_codes,
         int(params->K),
+        int(params->scale_group_stride),
+        int(params->scale_output_stride),
         staging,
         thread_context.simdgroup_index,
         thread_context.simd_lane_id
@@ -64,19 +65,21 @@ static METAL_FUNC auto make_staged_loader(
         Core::THREADGROUP_BLOCK_N,
         Core::THREADGROUP_BLOCK_K,
         Core::SHARED_STRIDE_B,
-        1,
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
-        Format::BITS>;
-    const device uint8_t* zero_points = right.zp() + block_col * zero_point_row_stride<Format::BITS>(groups_per_row) +
-                                        ((Format::BITS == 4) ? first_group / 2 : first_group);
+        RightOperand::BITS,
+        false>;
     return Loader(
         values,
         scales,
-        zero_points,
+        right.zp(),
         right.signed_codes,
         int(params->K),
-        int(groups_per_row),
+        int(params->scale_group_stride),
+        int(params->scale_output_stride),
+        params->zero_point_output_stride,
+        params->zero_point_group_stride,
+        uint(block_col) * params->zero_point_output_stride + first_group * params->zero_point_group_stride,
         staging,
         thread_context.simdgroup_index,
         thread_context.simd_lane_id
@@ -91,17 +94,17 @@ static METAL_FUNC auto make_staged_loader(
         Core::THREADGROUP_BLOCK_N,
         Core::THREADGROUP_BLOCK_K,
         Core::SHARED_STRIDE_B,
-        1,
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
-        Format::BITS,
+        RightOperand::BITS,
         true>;
     return Loader(
         values,
         scales,
         right.signed_codes,
         int(params->K),
-        int(groups_per_row),
+        int(params->scale_group_stride),
+        int(params->scale_output_stride),
         staging,
         thread_context.simdgroup_index,
         thread_context.simd_lane_id
@@ -137,7 +140,7 @@ static METAL_FUNC auto make_full_precision_loader(
 }
 
 struct StagedSchedule {
-  template <typename Core, bool ALIGNED_M, bool ALIGNED_N, bool, bool>
+  template <typename Core, bool ALIGNED_M, bool ALIGNED_N>
   static METAL_FUNC typename Core::AccumFragment launch(
       typename Core::LeftStorage left,
       typename Core::RightStorage right,
@@ -148,6 +151,7 @@ struct StagedSchedule {
       const thread ThreadContext& thread_context
   ) {
     static_assert(!Core::Left::QUANTIZED && Core::Right::QUANTIZED, "staged schedule requires dense A and quantized W");
+    static_assert(Core::TRANSPOSE_RIGHT, "quantized staged GEMM requires transposed B");
     using LeftTile =
         uzu::matmul::Fragment<typename Core::LeftElementType, Core::TILES_M, Core::TILES_K, typename Core::FragmentOps>;
     using RightTile = uzu::matmul::Fragment<

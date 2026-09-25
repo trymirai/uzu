@@ -10,6 +10,15 @@ UZU_CONST uint ACTIVATION_QUANT_TILE_SIZE = 128;
 UZU_CONST float ACTIVATION_QUANT_INT8_MAX = 127.0f;
 #define ACTIVATION_QUANT_SIMDGROUPS 4
 
+static METAL_FUNC uint nibble_grouped_index(const uint index) {
+  constexpr uint NIBBLES_PER_BYTE = 2;
+  constexpr uint CODES_PER_WORD = sizeof(uint) * NIBBLES_PER_BYTE;
+  constexpr uint NIBBLE_GROUP_SIZE = CODES_PER_WORD / NIBBLES_PER_BYTE;
+  // [0, 1, 2, 3, 4, 5, 6, 7] -> [0, 4, 1, 5, 2, 6, 3, 7]
+  const uint offset = index % CODES_PER_WORD;
+  return index - offset + (offset % NIBBLES_PER_BYTE) * NIBBLE_GROUP_SIZE + offset / NIBBLES_PER_BYTE;
+}
+
 template <typename T, typename SimdReduce, typename Combine>
 METAL_FUNC T reduce_activation_quantization_group(
     const T value,

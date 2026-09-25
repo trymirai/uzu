@@ -66,9 +66,8 @@ fn valid_shorthand_returns_insufficient_memory_when_no_checkpoint_fits() {
 
     assert_eq!(
         result,
-        Err(ModelResolutionError::InsufficientMemory {
-            model: "qwen3.5:4b".to_string(),
-            memory_total: GB as u64,
+        Err(RegistryError::UnableToGetModels {
+            message: format!("model `qwen3.5:4b` has checkpoints, but none fit in {GB} bytes of total memory"),
         })
     );
 }

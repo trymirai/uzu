@@ -37,6 +37,7 @@ PUBLIC KERNEL(GatedActMul) (
     const constant float& value_clip_min OPTIONAL(clip_value),
     const constant float& value_clip_max OPTIONAL(clip_value),
     const GatedActMulOp ops SPECIALIZE,
+    const bool grouped_by_weight_nibble SPECIALIZE,
     const bool interleaved SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
@@ -128,7 +129,8 @@ PUBLIC KERNEL(GatedActMul) (
   const int8_t code =
       static_cast<int8_t>(clamp(round(result / scale), -ACTIVATION_QUANT_INT8_MAX, ACTIVATION_QUANT_INT8_MAX));
   if (element_in_bounds) {
-    q_out[batch_idx * gated_dim + gated_idx] = code;
+    const uint output_gated_index = grouped_by_weight_nibble ? nibble_grouped_index(gated_idx) : gated_idx;
+    q_out[batch_idx * gated_dim + output_gated_index] = code;
   }
 
   write_activation_quantization_group(

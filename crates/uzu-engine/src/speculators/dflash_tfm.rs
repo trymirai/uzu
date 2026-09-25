@@ -128,7 +128,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
-        let sampling = Sampling::new(DataType::F32, config.draft_config.vocab_size);
+        let sampling = Sampling::new(data_type, config.draft_config.vocab_size);
 
         Ok(Some(Self {
             context,

@@ -55,11 +55,6 @@ METAL_FUNC constexpr uint symmetric_zero_point() {
   return 1u << (BITS - 1);
 }
 
-template <ushort BITS, typename Int>
-METAL_FUNC constexpr Int zero_point_row_stride(Int groups_per_row) {
-  return (BITS == 4) ? (groups_per_row + Int(1)) / Int(2) : groups_per_row;
-}
-
 template <ushort BITS>
 METAL_FUNC uint decode_zero_point(uint8_t packed, uint group_index) {
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 zero points supported");
@@ -76,12 +71,9 @@ METAL_FUNC uint decode_zero_point(const device uint8_t* zero_points_row, uint gr
   return decode_zero_point<BITS>(zero_points_row[byte_index], group_index);
 }
 
-METAL_FUNC char4 unpack_signed_nibbles_to_int8(uint packed) {
-  uint spread = (packed | (packed << 8)) & 0x00FF00FFu;
-  spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
-  constexpr uint sign_bits = symmetric_zero_point<4>() * 0x01010101u;
-  return as_type<char4>(spread ^ sign_bits) - char4(char(symmetric_zero_point<4>()));
-}
+UZU_CONST ushort W4_BITS = 4;
+UZU_CONST uint W4_SIGN_MASK = symmetric_zero_point<W4_BITS>() * 0x11111111u;
+UZU_CONST uint W4_NIBBLE_MASK = 0x0F0F0F0Fu;
 
 template <typename U, int N, int bits>
 inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local, const bool signed_codes) {
@@ -90,8 +82,7 @@ inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* 
   if constexpr (bits == 4) {
     U s0 = scale;
     U s1 = scale / static_cast<U>(16.0f);
-    // Keep the mask a literal in each arm; a value derived from the function
-    // constant inside the loop defeats vectorization of the unpack.
+    // Keeping literal masks in each arm lets the compiler vectorize the unpack.
     if (signed_codes) {
       for (int i = 0; i < (N / 2); i++) {
         const uint8_t word = w[i] ^ uint8_t(0x88u);

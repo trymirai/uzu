@@ -22,7 +22,7 @@ enum TransformOrder {
     Output,
 }
 
-fn run<T: ArrayElement + Float, B: Backend>(
+fn run<T: ArrayElement + Float + Debug, B: Backend>(
     data: &[T],
     factors: &[i32],
     channel_count: usize,
@@ -47,6 +47,9 @@ fn run<T: ArrayElement + Float, B: Backend>(
         kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut encoder);
     }
     encoder.end_encoding().submit().wait_until_completed().unwrap();
+    if !in_place {
+        assert_eq!(allocation_to_vec::<B, T>(&input), data);
+    }
     allocation_to_vec(if in_place {
         &input
     } else {
@@ -110,7 +113,10 @@ mod quantize {
     use super::BLOCK_SIZE;
     use crate::{
         backends::{
-            common::{Backend, Context, Encoder, kernel::ActivationTransform},
+            common::{
+                Backend, Context, Encoder,
+                kernel::{ActivationQuantization, ActivationTransform, matmul::Int8CodeLayout},
+            },
             cpu::Cpu,
         },
         data_type::DataType,
@@ -122,11 +128,12 @@ mod quantize {
         factors_data: &[i32],
         rows: u32,
         columns: u32,
-        activation_group_size: u32,
+        scale_group_size: u32,
         emit_group_sums: bool,
         sum_group_size: Option<u32>,
+        code_layout: Int8CodeLayout,
     ) -> (Vec<i8>, Vec<f32>, Option<Vec<i32>>) {
-        let scale_groups = columns / activation_group_size;
+        let scale_groups = columns / scale_group_size;
         let sum_groups = sum_group_size.map_or(0, |group_size| columns / group_size);
         let context = B::Context::new().expect("context");
         let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), input_data);
@@ -135,9 +142,18 @@ mod quantize {
         let mut scales = alloc_allocation::<B, f32>(context.as_ref(), (rows * scale_groups) as usize);
         let mut group_sums =
             emit_group_sums.then(|| alloc_allocation::<B, i32>(context.as_ref(), (rows * sum_groups) as usize));
-        let kernel =
-            ActivationTransform::quantize(context.as_ref(), DataType::F32, activation_group_size, sum_group_size)
-                .expect("quantize transform");
+        let kernel = ActivationTransform::quantize(
+            context.as_ref(),
+            DataType::F32,
+            ActivationQuantization::new(
+                scale_group_size,
+                sum_group_size.unwrap_or(scale_group_size),
+                emit_group_sums,
+                code_layout,
+            )
+            .expect("supported activation quantization"),
+        )
+        .expect("quantize transform");
         let mut encoder = Encoder::<B>::new(context.as_ref()).expect("encoder");
         kernel.encode_quantize(
             &input,
@@ -155,9 +171,10 @@ mod quantize {
     }
 
     fn check_quantize(
-        activation_group_size: u32,
+        scale_group_size: u32,
         emit_group_sums: bool,
         sum_group_size: Option<u32>,
+        code_layout: Int8CodeLayout,
     ) {
         let rows = 3;
         let columns = 256;
@@ -177,9 +194,10 @@ mod quantize {
             &factors_data,
             rows,
             columns,
-            activation_group_size,
+            scale_group_size,
             emit_group_sums,
             sum_group_size,
+            code_layout,
         );
 
         for_each_backend!(|B| {
@@ -188,9 +206,10 @@ mod quantize {
                 &factors_data,
                 rows,
                 columns,
-                activation_group_size,
+                scale_group_size,
                 emit_group_sums,
                 sum_group_size,
+                code_layout,
             );
 
             for (index, (&actual, &expected)) in actual_scales.iter().zip(&expected_scales).enumerate() {
@@ -224,22 +243,23 @@ mod quantize {
 
     #[uzu_test]
     fn quantize_with_group_sums_matches_cpu() {
-        check_quantize(128, true, Some(BLOCK_SIZE));
+        check_quantize(128, true, Some(BLOCK_SIZE), Int8CodeLayout::Sequential);
     }
 
     #[uzu_test]
     fn quantize_without_group_sums_matches_cpu() {
-        check_quantize(128, false, None);
+        check_quantize(128, false, None, Int8CodeLayout::Sequential);
     }
 
     #[uzu_test]
     fn quantize_compact_scale_g128_sum_g64_matches_cpu() {
-        check_quantize(128, true, Some(64));
+        check_quantize(128, true, Some(64), Int8CodeLayout::Sequential);
     }
 
     #[uzu_test]
     fn quantize_scale_g32_and_g64_match_cpu() {
-        check_quantize(32, false, None);
-        check_quantize(64, false, None);
+        check_quantize(32, false, None, Int8CodeLayout::Sequential);
+        check_quantize(64, false, None, Int8CodeLayout::Sequential);
+        check_quantize(128, false, None, Int8CodeLayout::GroupedByNibble);
     }
 }

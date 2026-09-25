@@ -17,7 +17,6 @@ template <
     short THREADGROUP_TILE_ROWS,
     short THREADGROUP_TILE_COLS,
     short DESTINATION_LEADING_DIMENSION,
-    short REDUCTION_DIMENSION,
     short THREADGROUP_SIZE,
     short GROUP_SIZE,
     short BITS,
@@ -37,11 +36,10 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   UZU_CONST bool TILE_HAS_IDLE_THREADS = THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
 
   const int src_leading_dim;
-  const int groups_per_row;
   const int tile_stride;
   short group_step_counter;
-  int k_base;
   const int group_stride;
+  const uint zero_point_group_stride;
 
   const short thread_index;
   const short tile_row_index;
@@ -50,8 +48,8 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   threadgroup T* dst;
   const device uint8_t* src;
   const device T* scales;
-  const device T* scales_row_start;
   const device uint8_t* zero_points_row_start;
+  uint zero_point_index;
   const bool signed_codes;
 
   QuantizedBlockLoaderScaleZeroPoint(
@@ -60,31 +58,25 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       const device uint8_t* zero_points_row_start_,
       const bool signed_codes_,
       const int src_leading_dim_,
-      const int groups_per_row_,
+      const int params_group_stride_,
+      const int params_output_stride_,
+      const uint zero_point_output_stride_,
+      const uint zero_point_group_stride_,
+      const uint zero_point_index_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
       ushort simd_lane_id [[thread_index_in_simdgroup]]
   )
-      : src_leading_dim(src_leading_dim_), groups_per_row(groups_per_row_),
-        tile_stride(
-            REDUCTION_DIMENSION ? THREADGROUP_TILE_COLS_PACKED * BYTES_PER_PACK
-                                : THREADGROUP_TILE_ROWS * src_leading_dim_ * BYTES_PER_PACK / PACK_FACTOR
-        ),
-        group_step_counter(0), k_base(0), group_stride(THREADGROUP_TILE_ROWS * groups_per_row_),
+      : src_leading_dim(src_leading_dim_), tile_stride(THREADGROUP_TILE_COLS_PACKED * BYTES_PER_PACK),
+        group_step_counter(0), group_stride(params_group_stride_), zero_point_group_stride(zero_point_group_stride_),
         thread_index(simd_group_id * 32 + simd_lane_id),
         tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
         tile_col_index((READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED),
         dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * PACK_FACTOR),
         src(src_ + tile_row_index * src_leading_dim_ * BYTES_PER_PACK / PACK_FACTOR + tile_col_index * BYTES_PER_PACK),
-        scales(REDUCTION_DIMENSION == 1 ? (scales_ + tile_row_index * groups_per_row_) : scales_),
-        scales_row_start(REDUCTION_DIMENSION == 1 ? (scales_ + tile_row_index * groups_per_row_) : scales_),
-        zero_points_row_start(
-            SCALE_SYMMETRIC
-                ? nullptr
-                : (REDUCTION_DIMENSION == 1 ? (zero_points_row_start_ +
-                                               tile_row_index * zero_point_row_stride<ushort(BITS)>(groups_per_row_))
-                                            : zero_points_row_start_)
-        ),
+        scales(scales_ + tile_row_index * params_output_stride_),
+        zero_points_row_start(SCALE_SYMMETRIC ? nullptr : zero_points_row_start_),
+        zero_point_index(zero_point_index_ + uint(tile_row_index) * zero_point_output_stride_),
         signed_codes(signed_codes_) {}
 
   QuantizedBlockLoaderScaleZeroPoint(
@@ -92,7 +84,8 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       const device T* scales_,
       const bool signed_codes_,
       const int src_leading_dim_,
-      const int groups_per_row_,
+      const int params_group_stride_,
+      const int params_output_stride_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
       ushort simd_lane_id [[thread_index_in_simdgroup]]
@@ -103,7 +96,11 @@ struct QuantizedBlockLoaderScaleZeroPoint {
             static_cast<const device uint8_t*>(nullptr),
             signed_codes_,
             src_leading_dim_,
-            groups_per_row_,
+            params_group_stride_,
+            params_output_stride_,
+            0,
+            0,
+            0,
             dst_,
             simd_group_id,
             simd_lane_id
@@ -114,18 +111,13 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   inline void current_scale_bias(thread T& out_scale, thread T& out_bias) const {
     uint zero_point_value;
     T scale_value;
-    int group_index;
-    if constexpr (REDUCTION_DIMENSION == 0) {
-      group_index = k_base / GROUP_SIZE;
-      scale_value = scales_row_start[group_index];
-    } else {
-      group_index = static_cast<int>(scales - scales_row_start);
-      scale_value = *scales;
-    }
+    scale_value = *scales;
     if constexpr (SCALE_SYMMETRIC) {
       zero_point_value = symmetric_zero_point<ushort(BITS)>();
     } else {
-      zero_point_value = decode_zero_point<ushort(BITS)>(zero_points_row_start, uint(group_index));
+      const uint byte_index = zero_point_index / uint(PACK_FACTOR);
+      const uint packed_index = zero_point_index % uint(PACK_FACTOR);
+      zero_point_value = decode_zero_point<ushort(BITS)>(zero_points_row_start[byte_index], packed_index);
     }
     out_scale = scale_value;
     out_bias = static_cast<T>(-scale_value * static_cast<T>(zero_point_value));
@@ -185,18 +177,16 @@ struct QuantizedBlockLoaderScaleZeroPoint {
 
   void next() {
     src += tile_stride;
-    if constexpr (REDUCTION_DIMENSION == 1) {
-      if constexpr (GROUP_STEPS_PER_BLOCK > 1) {
-        group_step_counter++;
-        if (group_step_counter == GROUP_STEPS_PER_BLOCK) {
-          group_step_counter = 0;
-          scales++;
-        }
-      } else {
-        scales++;
+    if constexpr (GROUP_STEPS_PER_BLOCK > 1) {
+      group_step_counter++;
+      if (group_step_counter != GROUP_STEPS_PER_BLOCK) {
+        return;
       }
-    } else {
-      k_base += THREADGROUP_TILE_ROWS;
+      group_step_counter = 0;
+    }
+    scales += group_stride;
+    if constexpr (!SCALE_SYMMETRIC) {
+      zero_point_index += zero_point_group_stride;
     }
   }
 };

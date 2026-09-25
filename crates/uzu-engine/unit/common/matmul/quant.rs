@@ -1,4 +1,4 @@
-use std::mem::size_of_val;
+use std::mem::{size_of, size_of_val};
 
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
@@ -14,22 +14,28 @@ use crate::{
             Allocation, Backend, Context, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
-                ActivationTransform, Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                ActivationQuantization, ActivationTransform, Kernels,
+                matmul::{
+                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParams,
+                    QuantParamsLayout, QuantizedB, QuantizedCorrection,
+                },
             },
         },
         cpu::Cpu,
     },
+    data_type::DataType,
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
+#[derive(Clone)]
 pub struct PreparedInt8A {
     pub values: Vec<i8>,
     pub scales: Vec<f32>,
     pub group_sums: Vec<i32>,
-    pub activation_scale_group_size: u32,
+    pub quantization: ActivationQuantization,
 }
 
+#[derive(Clone)]
 pub struct QuantInput<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,
     pub scales: Vec<T>,
@@ -42,6 +48,7 @@ pub struct QuantInput<T: ArrayElement + Float> {
     pub group_size: u32,
     pub quant_method: QuantizationMethod,
     pub mode: QuantizationMode,
+    pub params_layout: QuantParamsLayout,
     pub signed_codes: bool,
     pub prepared_a: Option<PreparedInt8A>,
 }
@@ -51,6 +58,69 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
         4 => QuantizationMode::U4,
         8 => QuantizationMode::U8,
         _ => unreachable!("unsupported bits: {bits}"),
+    }
+}
+
+fn pad<T: ArrayElement>(
+    values: &[T],
+    minimum_len: usize,
+) -> Vec<T> {
+    let mut padded = values.to_vec();
+    padded.resize(values.len().max(minimum_len), T::zeroed());
+    padded
+}
+
+pub fn transpose_metadata(
+    plane: &mut [u8],
+    columns: u32,
+    groups: u32,
+    bits: u32,
+) {
+    let data_type = match bits {
+        4 => DataType::U4,
+        8 => DataType::U8,
+        16 => DataType::BF16,
+        32 => DataType::F32,
+        _ => unreachable!("unsupported metadata width: {bits}"),
+    };
+    let source_params = QuantParams::new(QuantParamsLayout::OutputGroup, columns, groups);
+    let destination_params = QuantParams::new(QuantParamsLayout::GroupOutput, columns, groups);
+    let plane_layout = |params: QuantParams| match data_type {
+        DataType::U4 => {
+            (params.zero_point_shape(QuantizationMode::U4), params.zero_point_strides(QuantizationMode::U4))
+        },
+        DataType::U8 => {
+            (params.zero_point_shape(QuantizationMode::U8), params.zero_point_strides(QuantizationMode::U8))
+        },
+        _ => (params.scale_shape(), params.scale_strides()),
+    };
+    let (source_shape, source_strides) = plane_layout(source_params);
+    let (_, destination_strides) = plane_layout(destination_params);
+    let source_len = source_shape.into_iter().product::<u32>() as usize
+        * if data_type == DataType::U4 {
+            DataType::U8
+        } else {
+            data_type
+        }
+        .size_in_bytes();
+    let source = plane[..source_len].to_vec();
+    plane.fill(0);
+    for output in 0..columns {
+        for group in 0..groups {
+            let source_index = (output * source_strides.output_stride + group * source_strides.group_stride) as usize;
+            let destination_index =
+                (output * destination_strides.output_stride + group * destination_strides.group_stride) as usize;
+            if bits == 4 {
+                let value = (source[source_index / 2] >> (source_index % 2 * 4)) & 0x0F;
+                plane[destination_index / 2] |= value << (destination_index % 2 * 4);
+            } else {
+                let width = bits as usize / u8::BITS as usize;
+                let source_offset = source_index * width;
+                let destination_offset = destination_index * width;
+                plane[destination_offset..destination_offset + width]
+                    .copy_from_slice(&source[source_offset..source_offset + width]);
+            }
+        }
     }
 }
 
@@ -105,6 +175,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             group_size,
             quant_method,
             mode: mode_for_bits(bits),
+            params_layout: QuantParamsLayout::OutputGroup,
             signed_codes: false,
             prepared_a: None,
         }
@@ -115,15 +186,47 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         self
     }
 
+    pub fn with_group_output(mut self) -> Self {
+        self.params_layout = QuantParamsLayout::GroupOutput;
+        self
+    }
+
     pub fn with_prepared_a(
-        mut self,
-        activation_group_size: u32,
+        self,
+        activation_scale_group_size: u32,
         sum_group_size: Option<u32>,
     ) -> Self {
-        self.signed_codes = true;
+        let code_layout = Int8CodeLayout::for_right_bits(DataType::from(self.mode).size_in_bits() as u32)
+            .expect("W4/W8 quantization");
+        self.with_prepared_a_layout(activation_scale_group_size, sum_group_size, code_layout)
+    }
+
+    pub fn with_prepared_a_and_reference(
+        self,
+        activation_scale_group_size: u32,
+        sum_group_size: Option<u32>,
+    ) -> (Self, Self) {
+        let code_layout = Int8CodeLayout::for_right_bits(DataType::from(self.mode).size_in_bits() as u32)
+            .expect("W4/W8 quantization");
+        let reference = self.clone().with_prepared_a_layout(
+            activation_scale_group_size,
+            sum_group_size,
+            Int8CodeLayout::Sequential,
+        );
+        let actual = self.with_prepared_a_layout(activation_scale_group_size, sum_group_size, code_layout);
+        (actual, reference)
+    }
+
+    fn with_prepared_a_layout(
+        mut self,
+        activation_scale_group_size: u32,
+        sum_group_size: Option<u32>,
+        code_layout: Int8CodeLayout,
+    ) -> Self {
+        self.signed_codes = self.mode != QuantizationMode::U4;
         let rows = self.m;
         let columns = self.k;
-        assert!(columns.is_multiple_of(activation_group_size));
+        assert!(columns.is_multiple_of(activation_scale_group_size));
         if let Some(group_size) = sum_group_size {
             assert!(columns.is_multiple_of(group_size));
         }
@@ -132,12 +235,18 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let factors = alloc_allocation_with_data::<Cpu, i32>(&context, &vec![1; columns as usize]);
         let element_count = rows * columns;
         let mut values = alloc_allocation::<Cpu, i8>(&context, element_count as usize);
-        let mut scales = alloc_allocation::<Cpu, f32>(&context, (element_count / activation_group_size) as usize);
+        let mut scales = alloc_allocation::<Cpu, f32>(&context, (element_count / activation_scale_group_size) as usize);
         let mut group_sums = sum_group_size
             .map(|group_size| alloc_allocation::<Cpu, i32>(&context, (element_count / group_size) as usize));
-        let transform =
-            ActivationTransform::<Cpu>::quantize(&context, T::data_type(), activation_group_size, sum_group_size)
-                .expect("CPU activation quantization transform");
+        let quantization = ActivationQuantization::new(
+            activation_scale_group_size,
+            sum_group_size.unwrap_or(activation_scale_group_size),
+            sum_group_size.is_some(),
+            code_layout,
+        )
+        .expect("supported activation quantization");
+        let transform = ActivationTransform::<Cpu>::quantize(&context, T::data_type(), quantization)
+            .expect("CPU activation quantization transform");
         let mut encoder = Encoder::<Cpu>::new(&context).expect("CPU encoder");
         transform.encode_quantize(
             &input,
@@ -155,7 +264,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             values: allocation_to_vec(&values),
             scales: allocation_to_vec(&scales),
             group_sums: group_sums.map_or_else(Vec::new, |sums| allocation_to_vec(&sums)),
-            activation_scale_group_size: activation_group_size,
+            quantization,
         });
         self
     }
@@ -196,11 +305,22 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         context: &B::Context,
         input: &QuantInput<T>,
     ) -> Self {
-        Self {
+        let groups = input.k.div_ceil(input.group_size);
+        let params_layout = input.params_layout;
+        let params = QuantParams::new(params_layout, input.n, groups);
+        let metadata_elements = params.scale_shape().into_iter().product::<u32>() as usize;
+        let zero_point_bytes = params.zero_point_shape(input.mode).into_iter().product::<u32>() as usize;
+        let mut buffers = Self {
             w: alloc_allocation_with_data::<B, u32>(context, &input.weights_for_upload()),
-            scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
-            zp: input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(context, zp)),
-            bias: input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(context, b)),
+            scales: alloc_allocation_with_data::<B, T>(context, &pad(&input.scales, metadata_elements)),
+            zp: input
+                .zero_points
+                .as_ref()
+                .map(|zero_points| alloc_allocation_with_data::<B, u8>(context, &pad(zero_points, zero_point_bytes))),
+            bias: input
+                .biases
+                .as_ref()
+                .map(|biases| alloc_allocation_with_data::<B, T>(context, &pad(biases, metadata_elements))),
             x: alloc_allocation_with_data::<B, T>(context, &input.x),
             prepared_a: input
                 .prepared_a
@@ -217,43 +337,74 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
                 .map(|prepared| alloc_allocation_with_data::<B, i32>(context, &prepared.group_sums)),
             y: alloc_allocation::<B, T>(context, (input.m as usize) * (input.n as usize)),
             _t: std::marker::PhantomData,
+        };
+        if params_layout == QuantParamsLayout::GroupOutput {
+            buffers.transpose_quant_params(input);
+        }
+        buffers
+    }
+
+    pub fn matmul_b<'a>(
+        &'a self,
+        input: &QuantInput<T>,
+    ) -> MatmulB<'a, B> {
+        quant_b_variant(&self.w, &self.scales, self.zp.as_ref(), self.bias.as_ref(), input.params_layout, input)
+    }
+
+    fn transpose_quant_params(
+        &mut self,
+        input: &QuantInput<T>,
+    ) {
+        let columns = input.n;
+        let groups = input.k.div_ceil(input.group_size);
+        let value_bits = size_of::<T>() as u32 * u8::BITS;
+        transpose_metadata(self.scales.as_slice_mut(), columns, groups, value_bits);
+        match input.quant_method {
+            QuantizationMethod::ScaleBias => {
+                transpose_metadata(
+                    self.bias.as_mut().expect("bias buffer").as_slice_mut(),
+                    columns,
+                    groups,
+                    value_bits,
+                );
+            },
+            QuantizationMethod::ScaleZeroPoint => {
+                let correction_bits = DataType::from(input.mode).size_in_bits() as u32;
+                transpose_metadata(
+                    self.zp.as_mut().expect("zp buffer").as_slice_mut(),
+                    columns,
+                    groups,
+                    correction_bits,
+                );
+            },
+            QuantizationMethod::ScaleSymmetric => {},
         }
     }
 }
 
-pub fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
+fn quant_b_variant<'a, B: Backend, T: ArrayElement + Float>(
     w: &'a Allocation<B>,
     scales: &'a Allocation<B>,
     zero_points: Option<&'a Allocation<B>>,
     biases: Option<&'a Allocation<B>>,
+    params_layout: QuantParamsLayout,
     input: &QuantInput<T>,
 ) -> MatmulB<'a, B> {
-    let signed_codes = input.signed_codes;
-    match input.quant_method {
-        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-            b: w,
-            scales,
-            biases: biases.expect("bias buffer"),
-            mode: input.mode,
-            group_size: input.group_size,
-            signed_codes,
-        },
-        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-            b: w,
-            scales,
-            zero_points: zero_points.expect("zp buffer"),
-            mode: input.mode,
-            group_size: input.group_size,
-            signed_codes,
-        },
-        QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
-            b: w,
-            scales,
-            mode: input.mode,
-            group_size: input.group_size,
-            signed_codes,
-        },
-    }
+    let params = QuantParams::new(params_layout, input.n, input.k.div_ceil(input.group_size));
+    let correction = match input.quant_method {
+        QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(biases.expect("bias buffer")),
+        QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(zero_points.expect("zp buffer")),
+        QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
+    };
+    MatmulB::Quantized(QuantizedB {
+        codes: w,
+        scales,
+        correction,
+        params,
+        mode: input.mode,
+        group_size: input.group_size,
+        signed_codes: input.signed_codes,
+    })
 }
 
 pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
@@ -272,15 +423,16 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         y,
         ..
     } = buffers;
-    let b = quant_b_variant(w, scales, zp.as_ref(), bias.as_ref(), input);
+    let b = quant_b_variant(&*w, &*scales, zp.as_ref(), bias.as_ref(), input.params_layout, input);
     let a = match &input.prepared_a {
-        Some(_) => MatmulA::Int8Symmetric {
+        Some(prepared) => MatmulA::Int8Symmetric {
             values: prepared_a.as_ref().expect("prepared activation buffer"),
             scales: prepared_a_scales.as_ref().expect("prepared activation scales"),
             // Symmetric weights carry no correction term, so the GEMM never reads these.
             group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
                 .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
-            group_size: input.prepared_a.as_ref().expect("prepared activation metadata").activation_scale_group_size,
+            scale_group_size: prepared.quantization.scale_group_size(),
+            code_layout: prepared.quantization.code_layout(),
         },
         None => MatmulA::FullPrecision {
             values: x,

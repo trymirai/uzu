@@ -10,7 +10,7 @@ use crate::{
         common::{
             Allocation, Backend, Context, Encoder,
             gpu_types::ActivationType,
-            kernel::{GatedActMul, GatedActMulSettings},
+            kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::Int8CodeLayout},
         },
         cpu::Cpu,
     },
@@ -33,7 +33,7 @@ struct InterleavedInput<T: ArrayElement + Float> {
 }
 
 fn interleaved_input<T: ArrayElement + Float>(act_type: ActivationType) -> InterleavedInput<T> {
-    let gated_dim = 64u32;
+    let gated_dim = 128u32;
     let batch_dim = 4u32;
     let fused_length = (batch_dim * 2 * gated_dim) as usize;
     let mut fused_up: Vec<T> = vec![T::zero(); fused_length];
@@ -116,6 +116,45 @@ fn test_gated_act_mul_interleaved_silu_f32() {
 #[uzu_test]
 fn test_gated_act_mul_interleaved_silu_bf16() {
     interleaved_test::<bf16>(ActivationType::SILU);
+}
+
+fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> Vec<i8> {
+    let context = B::Context::new().expect("create context");
+    let act_operand = alloc_allocation_with_data::<B, bf16>(&context, &input.fused_up);
+    let factors = alloc_allocation_with_data::<B, i32>(&context, &input.hadamard_factors);
+    let mut values = alloc_allocation::<B, i8>(&context, (input.batch_dim * input.gated_dim) as usize);
+    let mut scales = alloc_allocation::<B, f32>(&context, (input.batch_dim * input.gated_dim / 128) as usize);
+    let kernel = GatedActMul::<B>::quantized(
+        &context,
+        DataType::BF16,
+        ActivationQuantization::new(128, 128, false, Int8CodeLayout::GroupedByNibble)
+            .expect("supported activation quantization"),
+        GatedActMulSettings::default(),
+    )
+    .expect("create quantized GatedActMul");
+    let mut encoder = Encoder::<B>::new(&context).expect("create encoder");
+    kernel.encode_quantized(
+        &act_operand,
+        &mut values,
+        &mut scales,
+        None,
+        &factors,
+        input.gated_dim,
+        input.batch_dim,
+        input.act_type,
+        &mut encoder,
+    );
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    allocation_to_vec(&values)
+}
+
+#[uzu_test]
+fn test_gated_act_mul_nibble_grouped_quantization_matches_cpu() {
+    let input = interleaved_input::<bf16>(ActivationType::SILU);
+    let expected_values = run_nibble_grouped_quantized::<Cpu>(&input);
+    for_each_non_cpu_backend!(|B| {
+        assert_eq!(run_nibble_grouped_quantized::<B>(&input), expected_values, "gated activation bytes differ");
+    });
 }
 
 #[uzu_test]

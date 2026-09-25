@@ -1,40 +1,12 @@
 use shoji::types::model::{Model, ModelAccessibility, ModelSource};
-use sysinfo::System;
-use uzu::engine::{Engine, EngineError};
 
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
-pub enum ModelResolutionError {
-    #[error(transparent)]
-    Engine(#[from] EngineError),
-    #[error("model `{model}` has checkpoints, but none fit in {memory_total} bytes of total memory")]
-    InsufficientMemory {
-        model: String,
-        memory_total: u64,
-    },
-}
+use crate::registry::RegistryError;
 
-pub async fn resolve_model_id(
-    engine: &Engine,
-    model: String,
-) -> Result<Option<String>, ModelResolutionError> {
-    let models = engine.models().await?;
-    let mut system = System::new();
-    system.refresh_memory();
-    let resolved = if let Some(model) = models.iter().find(|candidate| candidate.identifier == model) {
-        model.identifier.clone()
-    } else if let Some(model) = resolve_model_shorthand(&models, &model, system.total_memory())? {
-        model.identifier.clone()
-    } else {
-        model
-    };
-    Ok(Some(resolved))
-}
-
-fn resolve_model_shorthand<'a>(
+pub(super) fn resolve_model_shorthand<'a>(
     models: &'a [Model],
     requested: &str,
     memory_total: u64,
-) -> Result<Option<&'a Model>, ModelResolutionError> {
+) -> Result<Option<&'a Model>, RegistryError> {
     let mut candidates = models.iter().filter(|model| model_shorthand_matches(model, requested)).collect::<Vec<_>>();
     if candidates.is_empty() {
         return Ok(None);
@@ -42,9 +14,10 @@ fn resolve_model_shorthand<'a>(
 
     candidates.retain(|model| checkpoint_size_bytes(model).is_some_and(|size| size <= memory_total));
     if candidates.is_empty() {
-        return Err(ModelResolutionError::InsufficientMemory {
-            model: requested.to_string(),
-            memory_total,
+        return Err(RegistryError::UnableToGetModels {
+            message: format!(
+                "model `{requested}` has checkpoints, but none fit in {memory_total} bytes of total memory"
+            ),
         });
     }
 
@@ -152,5 +125,5 @@ fn quantization_bits(model: &Model) -> u32 {
 }
 
 #[cfg(test)]
-#[path = "../../unit/interactive/model_test.rs"]
+#[path = "../../tests/engine/shorthand.rs"]
 mod tests;

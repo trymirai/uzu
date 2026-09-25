@@ -7,8 +7,6 @@ use crate::{
     data_type::DataType,
 };
 
-const STAGE_WEIGHT_SCALE_MIN_GROUPS: u32 = 6;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct GemmSpecialization {
     pub(super) weights_data_type: DataType,
@@ -23,8 +21,6 @@ pub(super) struct GemmSpecialization {
     pub(super) b_group_size: Option<u32>,
     pub(super) signed_codes: bool,
     pub(super) a_group_size: Option<u32>,
-    pub(super) stage_weight_scales: bool,
-    pub(super) hoist_operand_addressing: bool,
 }
 
 impl GemmSpecialization {
@@ -37,7 +33,6 @@ impl GemmSpecialization {
         a_prologue: GemmAPrologueKind,
         a_group_size: Option<u32>,
     ) -> Result<Self, GemmSpecializationError> {
-        let use_tuned_addressing = shape.is_quant() || plan.split_k > 1;
         let specialization = Self {
             weights_data_type,
             tiling: plan.tiling,
@@ -51,12 +46,6 @@ impl GemmSpecialization {
             b_group_size: shape.b_group_size,
             signed_codes: shape.signed_codes,
             a_group_size,
-            stage_weight_scales: if use_tuned_addressing {
-                plan.should_stage_weight_scales(shape)
-            } else {
-                true
-            },
-            hoist_operand_addressing: use_tuned_addressing && plan.should_hoist_operand_addressing(shape),
         };
         specialization.validate()?;
         Ok(specialization)
@@ -103,32 +92,5 @@ impl GemmSpecialization {
             return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
         }
         Ok(())
-    }
-}
-
-impl GemmPlan {
-    pub(super) fn should_stage_weight_scales(
-        self,
-        shape: MatmulShape,
-    ) -> bool {
-        if shape.b_bits == Some(4) && shape.b_group_size == Some(32) && self.tiling.block_m() <= 32 {
-            return false;
-        }
-        if self.tiling == GemmTiling::Tile32x64x256_Simdgroups2x2 {
-            return shape
-                .b_group_size
-                .is_none_or(|group_size| shape.k / self.split_k / group_size >= STAGE_WEIGHT_SCALE_MIN_GROUPS);
-        }
-        true
-    }
-
-    pub(super) fn should_hoist_operand_addressing(
-        self,
-        shape: MatmulShape,
-    ) -> bool {
-        if matches!(shape.b_prologue, GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant) {
-            return true;
-        }
-        self.tiling != GemmTiling::Tile128x128x256_Simdgroups4x4
     }
 }

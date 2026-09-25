@@ -129,7 +129,12 @@ async fn run_tool_calls_test(
 
         let mut messages = Vec::new();
         if with_system_message {
-            messages.push(ChatMessage::system().with_text("You are a helpful assistant".to_string()));
+            // Make tool use and dependency resolution explicit for small models.
+            messages.push(
+                ChatMessage::system().with_text(
+                    "You are a helpful assistant. Use the available tools to answer the user's request. If a tool needs information provided by another tool, call that tool first.".to_string(),
+                ),
+            );
         }
         messages.push(ChatMessage::user().with_text(case.prompt.to_string()));
 
@@ -192,6 +197,7 @@ async fn run_tool_calls_test(
     }
 }
 
+#[test_tag::tag(heavy)]
 #[tokio::test]
 async fn lfm2_5_350m() {
     run_tool_calls_test("trymirai/LFM2.5-350M-L", true, false, &TEST_CASES[..1]).await;
@@ -203,6 +209,7 @@ async fn muse_glimmer_30b_m() {
     run_tool_calls_test("trymirai/Muse-Glimmer-30B-M", true, false, TEST_CASES).await;
 }
 
+#[test_tag::tag(heavy)]
 #[tokio::test]
 async fn qwen3_5_0_8b() {
     run_tool_calls_test("trymirai/Qwen3.5-0.8B-M", true, false, TEST_CASES).await;

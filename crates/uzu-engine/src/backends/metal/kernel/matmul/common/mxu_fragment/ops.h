@@ -7,7 +7,6 @@
 
 #include "../defines.h"
 #include "../loader.h"
-#include "tensor_operand.h"
 
 #include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
 
@@ -27,7 +26,6 @@ struct MxuFragmentOps {
 #include "layout.h"
 #include "cooperative_vectors.h"
 #include "fragment_matmul.h"
-#include "tensor_matmul.h"
 };
 
 using MxuStrictFragmentOps = MxuFragmentOps<false>;

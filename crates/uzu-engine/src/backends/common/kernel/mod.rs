@@ -10,7 +10,7 @@ pub mod gated_act_mul;
 pub mod matmul;
 pub mod radix_top_k_small;
 
-pub use activation_transform::ActivationTransform;
+pub use activation_transform::{ActivationQuantization, ActivationTransform};
 pub use attention::{AttentionArguments, AttentionKernel, AttentionKernelConfig};
 pub use gated_act_mul::{GatedActMul, GatedActMulSettings};
 
