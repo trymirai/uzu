@@ -104,31 +104,23 @@ impl MiraiSProjection for MetalMiraiSProjection {
         arguments: ProjectionArguments<'_, Metal>,
         encoder: &mut Encoder<Metal>,
     ) {
-        let ProjectionArguments {
-            input,
-            codes,
-            row_scales,
-            codebook,
-            rows,
-            output,
-            output_row_offset,
-            output_stride,
-        } = arguments;
-        assert!(output_row_offset + rows <= output_stride);
-        let output = (output, output_row_offset as usize * DataType::BF16.size_in_bytes());
+        let args = arguments;
+        assert!(args.output_row_offset + args.rows <= args.output_stride);
+        let output = (args.output, args.output_row_offset as usize * DataType::BF16.size_in_bytes());
+        let (rows, batch) = (args.rows, args.input.batch);
         macro_rules! encode {
             ($kernel:expr) => {
                 $kernel.encode(
-                    codes,
-                    &input.activations,
-                    &input.token_statistics,
-                    row_scales,
-                    codebook,
+                    args.codes,
+                    &args.input.activations,
+                    &args.input.token_statistics,
+                    args.row_scales,
+                    args.codebook,
                     output,
                     rows,
-                    input.columns,
-                    input.batch,
-                    output_stride,
+                    args.input.columns,
+                    batch,
+                    args.output_stride,
                     encoder,
                 )
             };
@@ -138,7 +130,7 @@ impl MiraiSProjection for MetalMiraiSProjection {
                 tokens_1,
                 tokens_8,
             } => {
-                if input.batch == 1 {
+                if batch == 1 {
                     encode!(tokens_1)
                 } else {
                     encode!(tokens_8)
@@ -152,11 +144,11 @@ impl MiraiSProjection for MetalMiraiSProjection {
                 narrow_4,
                 busy_simdgroups,
             } => {
-                if input.batch <= 16 && rows / 64 >= *busy_simdgroups {
+                if batch <= 16 && rows / 64 >= *busy_simdgroups {
                     encode!(narrow_4)
-                } else if input.batch <= 16 && rows / 32 >= *busy_simdgroups {
+                } else if batch <= 16 && rows / 32 >= *busy_simdgroups {
                     encode!(narrow_2)
-                } else if input.batch <= 32 {
+                } else if batch <= 32 {
                     encode!(wide_32)
                 } else {
                     encode!(wide_64)

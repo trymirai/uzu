@@ -6,15 +6,16 @@ use uzu_engine_macros::uzu_test;
 use super::*;
 use crate::{
     backends::common::kernel::mirai_s::mixing_order,
-    encodable_block::linear::mirai_s::{TRELLIS_STATES, codebook_table, trellis_levels},
+    encodable_block::linear::mirai_s::{
+        codebook_table,
+        tests::{AFFINE, package_codebook},
+        trellis_levels,
+    },
     tests::{
         helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
         util::shared_metal_context,
     },
 };
-
-// the Qwen3.8 S package's V4 codebook: [scale, offset of component 0..4]; V2 uses the first two offsets
-const AFFINE: [f32; 5] = [0.05203748, -0.08205986, -0.07758855, -0.07814354, -0.0810989];
 
 /// Level of every column of a row: V4 restarts a little-endian 16-bit state every 64 columns and shifts in one
 /// byte per 4 columns; V2 states are the 16-bit big-endian windows at bit `transition_bits * group`.
@@ -134,10 +135,13 @@ fn transform_matches_reference(#[values(5120, 6144, 17408)] columns: u32) {
     }
 }
 
-/// Encodes a projection of (activations, token statistics, batch) into (output, encoder).
-type Encode<'a> =
-    Box<dyn Fn(&Allocation<Metal>, &Allocation<Metal>, u32, &mut Allocation<Metal>, &mut Encoder<Metal>) + 'a>;
+/// Encodes one projection kernel: (activations, token statistics, batch, (output, byte offset), output stride).
+type Encode<'a> = Box<
+    dyn Fn(&Allocation<Metal>, &Allocation<Metal>, u32, (&mut Allocation<Metal>, usize), u32, &mut Encoder<Metal>) + 'a,
+>;
 
+/// The SIMDgroup kernel matches an f64 reference, every other kernel matches it bit for bit, and each writes its
+/// rows at an output row offset and stride without touching the rest.
 #[rstest]
 #[test_attr(uzu_test)]
 fn projection_matches_reference(
@@ -147,32 +151,25 @@ fn projection_matches_reference(
     let context = shared_metal_context();
     let mut rng = SmallRng::seed_from_u64(codec.transition_bits() as u64);
     let (vector_width, transition_bits) = (codec.vector_width(), codec.transition_bits());
-    let columns = 5120u32;
-    // not a multiple of the narrow kernels' 32- and 64-row SIMDgroup tiles
-    let rows = 48u32;
-    let row_bytes = codec.row_bytes(columns) as usize;
-    let codes: Vec<u8> = (0..rows as usize * row_bytes).map(|_| rng.random()).collect();
+    // rows: not a multiple of the narrow kernels' 32- and 64-row SIMDgroup tiles
+    let (rows, columns, wide_stride) = (48usize, 5120usize, 80usize);
+    let row_bytes = codec.row_bytes(columns as u32) as usize;
+    let codes: Vec<u8> = (0..rows * row_bytes).map(|_| rng.random()).collect();
     let row_scales: Vec<f32> = (0..rows).map(|_| rng.random_range(0.001f32..0.01)).collect();
-    let weight =
-        |level: i32, column: usize| AFFINE[0] as f64 * level as f64 + AFFINE[1 + column % vector_width as usize] as f64;
     let weights: Vec<Vec<f64>> = codes
         .chunks_exact(row_bytes)
         .map(|row| {
-            row_levels(codec, row, columns as usize)
-                .iter()
-                .enumerate()
-                .map(|(column, &level)| weight(level, column))
+            let levels = row_levels(codec, row, columns);
+            (0..columns)
+                .map(|column| {
+                    AFFINE[0] as f64 * levels[column] as f64 + AFFINE[1 + column % vector_width as usize] as f64
+                })
                 .collect()
         })
         .collect();
-    let package_codebook: Vec<f32> = (0..TRELLIS_STATES as u32)
-        .flat_map(|state| {
-            (0..vector_width as usize).map(move |component| weight(trellis_levels(state)[component], component) as f32)
-        })
-        .collect();
+    let codebook = codebook_table(&package_codebook(vector_width as usize), vector_width as usize).unwrap();
     let codes = alloc_allocation_with_data::<Metal, u8>(&context, &codes);
     let scales = alloc_allocation_with_data::<Metal, f32>(&context, &row_scales);
-    let codebook = codebook_table(&package_codebook, vector_width as usize).unwrap();
     let codebook = alloc_allocation_with_data::<Metal, u8>(&context, &codebook);
     let (codes, scales, codebook) = (&codes, &scales, &codebook);
 
@@ -182,7 +179,8 @@ fn projection_matches_reference(
             let kernel = $kernel::new(&context, $tile, vector_width, transition_bits).unwrap();
             kernels.push((
                 $name,
-                Box::new(move |activations, statistics, batch, output, encoder| {
+                Box::new(move |activations, statistics, batch, output, stride, encoder| {
+                    let (rows, columns) = (rows as u32, columns as u32);
                     kernel.encode(
                         codes,
                         activations,
@@ -193,7 +191,7 @@ fn projection_matches_reference(
                         rows,
                         columns,
                         batch,
-                        rows,
+                        stride,
                         encoder,
                     )
                 }),
@@ -209,54 +207,74 @@ fn projection_matches_reference(
         kernel!("narrow 2", MiraiSNarrowProjectionMetalKernel, 2);
         kernel!("narrow 4", MiraiSNarrowProjectionMetalKernel, 4);
     }
+    let bits = |allocation: &Allocation<Metal>| -> Vec<u16> {
+        allocation_to_vec::<Metal, bf16>(allocation).into_iter().map(bf16::to_bits).collect()
+    };
 
-    for batch in [1u32, 3, 17, 130] {
-        let padded_batch = batch.next_multiple_of(64);
-        let activations: Vec<i8> = (0..padded_batch * columns).map(|_| rng.random_range(-127i8..=127)).collect();
+    for batch in [1usize, 3, 17, 130] {
+        let activations: Vec<i8> =
+            (0..batch.next_multiple_of(64) * columns).map(|_| rng.random_range(-127i8..=127)).collect();
         let activation_scales: Vec<f32> = (0..batch).map(|_| rng.random_range(0.001f32..0.1)).collect();
-        let token_statistics: Vec<f32> = (0..batch as usize)
+        let token_statistics: Vec<f32> = (0..batch)
             .flat_map(|token| {
-                let row = &activations[token * columns as usize..][..columns as usize];
+                let row = &activations[token * columns..][..columns];
                 let sums: [f32; 4] =
                     std::array::from_fn(|class| row.iter().skip(class).step_by(4).map(|&value| value as f32).sum());
                 [sums[0], sums[1], sums[2], sums[3], activation_scales[token], 0.0, 0.0, 0.0]
             })
             .collect();
         let activations_allocation = alloc_allocation_with_data::<Metal, i8>(&context, &activations);
-        let token_statistics = alloc_allocation_with_data::<Metal, f32>(&context, &token_statistics);
-        let mut simdgroup_1_output: Option<Vec<bf16>> = None;
-        for (name, encode) in &kernels {
-            let mut output = alloc_allocation::<Metal, bf16>(&context, (batch * rows) as usize);
-            let mut encoder = Encoder::<Metal>::new(&context).unwrap();
-            encode(&activations_allocation, &token_statistics, batch, &mut output, &mut encoder);
-            encoder.end_encoding().submit().wait_until_completed().unwrap();
-            let output = allocation_to_vec::<Metal, bf16>(&output);
-
-            for token in 0..batch as usize {
-                let token_activations = &activations[token * columns as usize..][..columns as usize];
-                for row in 0..rows as usize {
-                    let products = weights[row].iter().zip(token_activations).map(|(w, &a)| w * a as f64);
-                    let (dot, magnitude) =
-                        products.fold((0.0, 0.0), |(dot, magnitude), p| (dot + p, magnitude + p.abs()));
-                    let factor = row_scales[row] as f64 * activation_scales[token] as f64;
-                    let expected = dot * factor;
-                    // bf16 output rounding plus the f32 epilogue on the (possibly cancelling) level and offset terms
-                    let tolerance = expected.abs() / 256.0 + magnitude * factor * 1e-6;
-                    let actual = output[token * rows as usize + row].to_f64();
+        let statistics = alloc_allocation_with_data::<Metal, f32>(&context, &token_statistics);
+        let outputs: Vec<Vec<u16>> = kernels
+            .iter()
+            .map(|(name, encode)| {
+                let mut output = alloc_allocation::<Metal, bf16>(&context, batch * rows);
+                let mut wide =
+                    alloc_allocation_with_data::<Metal, bf16>(&context, &vec![bf16::ZERO; batch * wide_stride]);
+                let mut encoder = Encoder::<Metal>::new(&context).unwrap();
+                encode(&activations_allocation, &statistics, batch as u32, (&mut output, 0), rows as u32, &mut encoder);
+                encode(
+                    &activations_allocation,
+                    &statistics,
+                    batch as u32,
+                    (&mut wide, 32),
+                    wide_stride as u32,
+                    &mut encoder,
+                );
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
+                let (output, wide) = (bits(&output), bits(&wide));
+                for (token, wide) in wide.chunks_exact(wide_stride).enumerate() {
                     assert!(
-                        (actual - expected).abs() <= tolerance,
-                        "{name} batch {batch} token {token} row {row}: {actual} vs {expected}"
+                        wide[16..][..rows] == output[token * rows..][..rows],
+                        "{name} batch {batch} token {token} at row 16"
+                    );
+                    assert!(
+                        wide[..16].iter().chain(&wide[16 + rows..]).all(|&bits| bits == 0),
+                        "{name} batch {batch} token {token}"
                     );
                 }
+                output
+            })
+            .collect();
+
+        for token in 0..batch {
+            let token_activations = &activations[token * columns..][..columns];
+            for row in 0..rows {
+                let products = weights[row].iter().zip(token_activations).map(|(w, &a)| w * a as f64);
+                let (dot, magnitude) = products.fold((0.0, 0.0), |(dot, magnitude), p| (dot + p, magnitude + p.abs()));
+                let factor = row_scales[row] as f64 * activation_scales[token] as f64;
+                let expected = dot * factor;
+                // bf16 output rounding plus the f32 epilogue on the (possibly cancelling) level and offset terms
+                let tolerance = expected.abs() / 256.0 + magnitude * factor * 1e-6;
+                let actual = bf16::from_bits(outputs[0][token * rows + row]).to_f64();
+                assert!(
+                    (actual - expected).abs() <= tolerance,
+                    "batch {batch} token {token} row {row}: {actual} vs {expected}"
+                );
             }
-            // every kernel computes the same exact int32 dot and the same epilogue as the SIMDgroup kernel
-            match &simdgroup_1_output {
-                None => simdgroup_1_output = Some(output),
-                Some(expected) => assert!(
-                    expected.iter().zip(&output).all(|(expected, value)| expected.to_bits() == value.to_bits()),
-                    "{name} batch {batch} differs from simdgroup 1"
-                ),
-            }
+        }
+        for ((name, _), output) in kernels.iter().zip(&outputs) {
+            assert!(*output == outputs[0], "{name} batch {batch} differs from simdgroup 1");
         }
     }
 }

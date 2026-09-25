@@ -75,13 +75,13 @@ impl<B: Backend> MiraiSLinear<B> {
                 "row stack parts do not add up to {output_dimension} rows"
             )));
         }
-        let Some(transform) = <B::Kernels as Kernels>::MiraiSTransform::new(context, input_dimension)
+        let transform = <B::Kernels as Kernels>::MiraiSTransform::new(context, input_dimension)
             .map_err(LinearMatmulError::BackendError)?
-        else {
-            return Err(LinearMatmulError::UnsupportedConfiguration(format!(
-                "no Mirai S transform for input dimension {input_dimension} on this device"
-            )));
-        };
+            .ok_or_else(|| {
+                LinearMatmulError::UnsupportedConfiguration(format!(
+                    "no Mirai S transform for {input_dimension} columns on this device"
+                ))
+            })?;
         let shared = tree.root().subtree("qtip_shared");
         let order = mixing_order(input_dimension);
         let signs = shared.shared_allocation(&format!("signs_{input_dimension}"), |leaf| {
@@ -121,11 +121,9 @@ fn load_part<B: Backend>(
         (2, 4, 0) => TrellisCodec::Vector2Transition4,
         _ => return Err(LinearMatmulError::UnsupportedConfiguration(format!("{spec:?}"))),
     };
-    let Some(projection) =
-        <B::Kernels as Kernels>::MiraiSProjection::new(context, codec).map_err(LinearMatmulError::BackendError)?
-    else {
-        return Err(LinearMatmulError::UnsupportedConfiguration("no Mirai S projection on this device".into()));
-    };
+    let projection = <B::Kernels as Kernels>::MiraiSProjection::new(context, codec)
+        .map_err(LinearMatmulError::BackendError)?
+        .ok_or_else(|| LinearMatmulError::UnsupportedConfiguration("no Mirai S projection on this device".into()))?;
     let mut codes = tree.leaf("codes")?.validate(&[rows, codec.row_bytes(columns)], DataType::U8)?.read_allocation()?;
     if codec.vector_width() == 2 {
         repack_msb_first(codes.as_slice_mut(), codec, columns);
@@ -177,9 +175,8 @@ pub(crate) fn trellis_levels(state: u32) -> [i32; 4] {
     })
 }
 
-/// The package codebook (`TRELLIS_STATES` x `vector_width`) as the projection kernels read it: f32 `[scale, offset
-/// of column class 0..4, 0, 0, 0]`, then for V2 the int8 level pair of every state. Fails unless every entry is
-/// scale * level + offset[component], since the kernels only know the hashed levels.
+/// The package codebook as the projection kernels read it: f32 `[scale, offset of column class 0..4, 0, 0, 0]`, then
+/// for V2 the int8 level pair of every state. Errors unless every entry is scale * level + offset (the kernels hash levels).
 pub(crate) fn codebook_table(
     values: &[f32],
     vector_width: usize,
@@ -289,9 +286,8 @@ pub(super) fn load_readout<B: Backend>(
     Ok((linear, input_hadamard_factors))
 }
 
-/// The readout's 3-bit codes c (packed LSB first) as U4 codes `level + 8` `[rows, columns / 2]` of the odd levels
-/// 2c - 7, and its group-major scales `[columns / 64, padded_rows]` row_scale * ladder[index] (4-bit index, low
-/// nibble first; the padding rows are zero).
+/// The readout's 3-bit codes c (packed LSB first) as U4 codes `level + 8` of the odd levels 2c - 7, and its group-major
+/// bf16 scales `[columns / 64, padded_rows]` row_scale * ladder[index] (4-bit index, low nibble first; padding rows zero).
 fn repack_readout(
     codes: &[u8],
     row_scales: &[bf16],
@@ -360,4 +356,4 @@ impl<B: Backend> Linear<B> for MiraiSLinear<B> {
 
 #[cfg(test)]
 #[path = "../../../unit/encodable_block/linear/mirai_s_test.rs"]
-mod tests;
+pub(crate) mod tests;
