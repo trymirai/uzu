@@ -484,7 +484,6 @@ export declare class File {
   hashes: Array<Hash>
   constructor(url: string, name: string, size: number, hashes: Array<Hash>)
   get crc32C(): string | null
-  get md5(): string | null
 }
 
 export declare class GrammarJsonAny {
@@ -541,14 +540,13 @@ export declare class Model {
   encoding?: any
   constructor(identifier: ModelIdentifier, registry: ModelRegistry, backends: Array<ModelBackend>, family?: ModelFamily, properties?: ModelProperties, quantization?: ModelQuantization, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encoding?: any)
   get name(): string
-  get isLocal(): boolean
+  get isOnDevice(): boolean
   get isRemote(): boolean
   get isDownloadable(): boolean
   get isQuantized(): boolean
   get cacheIdentifier(): string
   get repoIds(): Array<string>
-  get localExternalPath(): string | null
-  get referenceName(): string | null
+  get filesystemPath(): string | null
   get checkpointVersion(): string | null
 
   static external(identifier: ModelIdentifier, registryIdentifier: string, registryName: string, backendIdentifier: string, backendName: string, backendVersion: string, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encoding?: any | undefined | null): Model
@@ -559,9 +557,9 @@ export declare class Model {
   get isSpeculationCapable(): boolean
 }
 
-export declare class ModelAccessibilityLocal {
-  reference: ModelReference
-  constructor(reference: ModelReference)
+export declare class ModelAccessibilityOnDevice {
+  source: ModelSource
+  constructor(source: ModelSource)
 }
 
 export declare class ModelAccessibilityRemote {
@@ -604,29 +602,24 @@ export declare class ModelQuantization {
   get name(): string
 }
 
-export declare class ModelReferenceHuggingFace {
-  repository: Repository
-  constructor(repository: Repository)
-}
-
-export declare class ModelReferenceLocal {
-  path: string
-  constructor(path: string)
-}
-
-export declare class ModelReferenceMirai {
-  toolchainVersion: string
-  repository?: Repository
-  sourceRepository?: Repository
-  files: Array<File>
-  constructor(toolchainVersion: string, repository?: Repository, sourceRepository?: Repository, files: Array<File>)
-}
-
 export declare class ModelRegistry {
   identifier: string
   metadata: Metadata
   constructor(identifier: string, metadata: Metadata)
   get name(): string
+}
+
+export declare class ModelSourceFilesystem {
+  path: string
+  constructor(path: string)
+}
+
+export declare class ModelSourceRegistry {
+  toolchainVersion: string
+  repository?: Repository
+  sourceRepository?: Repository
+  files: Array<File>
+  constructor(toolchainVersion: string, repository?: Repository, sourceRepository?: Repository, files: Array<File>)
 }
 
 export declare class ModelSpecializationChat {
@@ -850,7 +843,8 @@ export type Grammar =
 
 export declare const enum HashMethod {
   CRC32C = 'CRC32C',
-  MD5 = 'MD5'
+  Sha256 = 'Sha256',
+  GitBlobSha1 = 'GitBlobSha1'
 }
 
 export declare const enum ImageFormat {
@@ -865,13 +859,13 @@ export declare const enum ImageTheme {
 }
 
 export type ModelAccessibility =
-  ModelAccessibilityLocal | ModelAccessibilityRemote
+  ModelAccessibilityOnDevice | ModelAccessibilityRemote
 
 export type ModelIdentifier =
   string
 
-export type ModelReference =
-  ModelReferenceMirai | ModelReferenceHuggingFace | ModelReferenceLocal
+export type ModelSource =
+  ModelSourceRegistry | ModelSourceFilesystem
 
 export type ModelSpecialization =
   ModelSpecializationChat | ModelSpecializationClassification | ModelSpecializationTextToSpeech | ModelSpecializationTranslation | ModelSpecializationSpeculation
@@ -943,7 +937,7 @@ export declare class Engine {
   removeRegistry(registryIdentifier: string): Promise<void>
   removeBackend(identifier: string): Promise<void>
   get models(): Promise<Array<Model>>
-  get modelsLocal(): Promise<Array<Model>>
+  get modelsOnDevice(): Promise<Array<Model>>
   get modelsRemote(): Promise<Array<Model>>
   get modelsDownloadable(): Promise<Array<Model>>
   get modelsForChat(): Promise<Array<Model>>

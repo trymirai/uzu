@@ -8,6 +8,7 @@ use crate::backends::{BackendEventSender, DownloadGeneration};
 pub struct AppleEventSink {
     pub generation: DownloadGeneration,
     pub destination: PathBuf,
+    pub expected_bytes: Option<u64>,
     pub events: BackendEventSender,
     pub runtime_handle: RuntimeHandle,
 }

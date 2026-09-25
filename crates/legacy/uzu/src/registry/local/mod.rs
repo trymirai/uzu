@@ -8,7 +8,7 @@ use shoji::{
     traits::Registry as RegistryTrait,
     types::{
         basic::Value,
-        model::{Model, ModelAccessibility, ModelReference, ModelSpecialization},
+        model::{Model, ModelAccessibility, ModelSource, ModelSpecialization},
     },
 };
 use uzu_engine::engine::{ModelType, resolve_model_type};
@@ -111,8 +111,8 @@ impl Registry {
             self.config.backend_identifier.clone(),
             self.config.backend_version.clone(),
             vec![specialization],
-            ModelAccessibility::Local {
-                reference: ModelReference::Local {
+            ModelAccessibility::OnDevice {
+                source: ModelSource::Filesystem {
                     path: path.to_string_lossy().to_string(),
                 },
             },

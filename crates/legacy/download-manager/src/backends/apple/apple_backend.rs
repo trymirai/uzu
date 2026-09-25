@@ -8,8 +8,9 @@ use block2::RcBlock;
 use kiban::{fs, rt::RuntimeHandle};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{
-    NSArray, NSBundle, NSData, NSString, NSURL, NSURLSession, NSURLSessionConfiguration, NSURLSessionDataTask,
-    NSURLSessionDelegate, NSURLSessionDownloadTask, NSURLSessionTaskState, NSURLSessionUploadTask,
+    NSArray, NSBundle, NSData, NSMutableURLRequest, NSString, NSURL, NSURLSession, NSURLSessionConfiguration,
+    NSURLSessionDataTask, NSURLSessionDelegate, NSURLSessionDownloadTask, NSURLSessionTaskState,
+    NSURLSessionUploadTask,
 };
 use tokio::sync::{OnceCell as TokioOnceCell, oneshot::channel as tokio_oneshot_channel};
 
@@ -112,12 +113,13 @@ impl AppleBackend {
             AppleEventSink {
                 generation,
                 destination: config.destination.clone(),
+                expected_bytes: config.expected_bytes,
                 events,
                 runtime_handle: self.runtime_handle.clone(),
             },
         );
         task.resume();
-        Box::new(AppleActiveTask::new(task, Arc::clone(&self.event_registry)))
+        Box::new(AppleActiveTask::new(task, Arc::clone(&self.event_registry), config.bearer_token.is_some()))
     }
 
     fn is_live(task: &NSURLSessionDownloadTask) -> bool {
@@ -145,7 +147,18 @@ impl Backend for AppleBackend {
         let task = if resume_data.is_empty() {
             let url = NSURL::URLWithString(&NSString::from_str(&config.source_url))
                 .ok_or_else(|| AppleBackendError::InvalidUrl(config.source_url.clone()))?;
-            self.session.downloadTaskWithURL(&url)
+            let request = NSMutableURLRequest::requestWithURL(&url);
+            request.setValue_forHTTPHeaderField(
+                Some(&NSString::from_str("identity")),
+                &NSString::from_str("Accept-Encoding"),
+            );
+            if let Some(token) = &config.bearer_token {
+                request.setValue_forHTTPHeaderField(
+                    Some(&NSString::from_str(&token.header_value())),
+                    &NSString::from_str("Authorization"),
+                );
+            }
+            self.session.downloadTaskWithRequest(&request)
         } else {
             self.session.downloadTaskWithResumeData(&NSData::with_bytes(&resume_data))
         };
@@ -194,7 +207,7 @@ impl Backend for AppleBackend {
                 && AppleTaskDescription::of(&task).is_some_and(|description| {
                     description.download_id == config.download_id
                         && description.source_url == config.source_url
-                        && description.crc32c == config.expected_crc32c
+                        && description.checksum == config.expected_checksum
                 })
             {
                 attached = Some(self.activate(task, &config, generation, events.clone()));

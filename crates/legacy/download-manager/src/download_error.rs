@@ -10,4 +10,6 @@ pub enum DownloadError {
     FileDownload(#[from] FileDownloadError),
     #[error("conflicting download config for destination: {0}")]
     ConflictingConfig(String),
+    #[error("bearer token requires https: {0}")]
+    InsecureRequest(String),
 }

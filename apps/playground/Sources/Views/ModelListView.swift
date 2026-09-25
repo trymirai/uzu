@@ -130,7 +130,7 @@ struct ModelListView: View {
                 guard
                     let selectedIdentifier,
                     let model = group.modelByIdentifier[selectedIdentifier],
-                    model.isLocal(),
+                    model.isOnDevice(),
                     let state = engineWrapper.downloadStates[model.identifier]
                 else { return }
 
@@ -349,7 +349,7 @@ struct ModelListView: View {
     private var selectedModelState: DownloadState? {
         guard let selectedIdentifier else { return nil }
         guard let model = models()
-            .filter({ $0.isLocal() })
+            .filter({ $0.isOnDevice() })
             .first(where: { $0.identifier == selectedIdentifier }) else {
             return nil
         }
@@ -360,7 +360,7 @@ struct ModelListView: View {
     private func select(identifier: String) {
         selectedIdentifier = identifier
         if let model = models()
-            .filter({ $0.isLocal() })
+            .filter({ $0.isOnDevice() })
             .first(where: { $0.identifier == selectedIdentifier }),
            let state = engineWrapper.downloadStates[model.identifier] {
             selectedModelSection = section(for: state)
@@ -490,7 +490,7 @@ struct ModelListView: View {
             }
         }
         let cloud = all.filter { $0.isRemote() }.sorted { $0.name() < $1.name() }
-        let local = all.filter { $0.isLocal() }
+        let local = all.filter { $0.isOnDevice() }
         let modelByIdentifier = Dictionary(uniqueKeysWithValues: all.map { ($0.identifier, $0) })
 
         var bySection: [ModelSection: [String]] = [:]
