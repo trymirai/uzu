@@ -1,0 +1,15 @@
+{
+    "cmake.sourceDirectory": "${workspaceFolder}/engine-llamacpp",
+    "cmake.useCMakePresets": "always",
+    "ruff.path": [
+        "${workspaceFolder}/.venv/bin/ruff"
+    ],
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        }
+    }
+}

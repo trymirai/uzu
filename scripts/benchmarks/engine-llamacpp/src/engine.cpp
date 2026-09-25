@@ -1,41 +1,144 @@
-#include "runner.hpp"
+#include "engine.hpp"
 
 #include <common.h>
+#include <ggml-cpp.h>
 #include <speculative.h>
 
 #include <algorithm>
+#include <glaze/glaze.hpp>
 #include <limits>
+#include <stdexcept>
 
-#include "batch.hpp"
-#include "common.hpp"
+#include "util.hpp"
 
-struct RunConfig {
+struct llama_batch_deleter {
+    void operator()(llama_batch* batch) {
+        llama_batch_free(*batch);
+    }
+};
+
+typedef std::unique_ptr<llama_batch, llama_batch_deleter> llama_batch_ptr;
+
+struct LlamaEngine::RunConfig {
     size_t max_tokens;
-    const llama_vocab* vocab;
     llama_context_params ctx_params;
     std::optional<llama_context_params> mtp_params;
     common_params_speculative spec_params;
 };
 
-static BenchResponse run_single(
-    const llama_model_ptr& model,
+LlamaEngine::LlamaEngine(const std::string& model) {
+    const std::filesystem::path model_path = get_model_path(model);
+    llama_model_params params = llama_model_default_params();
+    params.load_mtp = has_mtp_weights(model_path);
+    this->model.reset(llama_model_load_from_file(model_path.c_str(), params));
+    if (!this->model) {
+        throw std::runtime_error("Failed to load model: " + model_path.string());
+    }
+
+    this->tokenizer = llama_model_get_vocab(this->model.get());
+    if (!this->tokenizer) {
+        throw std::runtime_error("Failed to load tokenizer: " + model_path.string());
+    }
+
+    this->chat_templates = common_chat_templates_init(this->model.get(), "");
+    if (!this->chat_templates) {
+        throw std::runtime_error("Failed to load chat templates: " + model_path.string());
+    }
+
+    this->has_mtp = llama_model_n_layer_nextn(this->model.get()) > 0;
+}
+
+std::vector<llama_token> LlamaEngine::tokenize(const BenchRequest& request) const {
+    std::vector<llama_token> prompt_tokens;
+    if (request.prompt_text.has_value()) {
+        const std::string& text = request.prompt_text.value();
+        const int32_t prompt_tokens_count =
+            -llama_tokenize(this->tokenizer, text.c_str(), text.size(), nullptr, 0, true, true);
+        if (prompt_tokens_count <= 0) {
+            throw std::runtime_error("Failed to determine prompt token count");
+        }
+
+        prompt_tokens.resize(prompt_tokens_count);
+        const int tokenize_result = llama_tokenize(
+            this->tokenizer,
+            text.c_str(),
+            text.size(),
+            prompt_tokens.data(),
+            prompt_tokens.size(),
+            true,
+            true
+        );
+        if (tokenize_result < 0) {
+            throw std::runtime_error("Failed to tokenize prompt");
+        }
+    } else if (request.prompt_chat.has_value()) {
+        const auto request_json = glz::write_json(request);
+        if (!request_json) {
+            throw std::runtime_error("Failed to serialize request: " + glz::format_error(request_json.error()));
+        }
+
+        const auto json = common_json::parse(request_json.value());
+        common_chat_templates_inputs inputs;
+        inputs.messages = common_chat_msgs_parse_oaicompat(json.at("prompt_chat"));
+        if (json.contains("tools")) {
+            const auto& tools = json.at("tools");
+            inputs.tools = common_chat_tools_parse_oaicompat(tools);
+            inputs.chat_template_kwargs["tools"] = tools.dump();
+        }
+        if (json.contains("tool_choice")) {
+            const auto& tool_choice = json.at("tool_choice");
+            if (tool_choice.is_string()) {
+                inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(tool_choice.get<std::string>());
+            }
+            inputs.chat_template_kwargs["tool_choice"] = tool_choice.dump();
+        }
+        inputs.use_jinja = true;
+        inputs.add_generation_prompt = true;
+
+        const std::string formatted_prompt = common_chat_templates_apply(this->chat_templates.get(), inputs).prompt;
+        const int32_t prompt_tokens_count =
+            -llama_tokenize(this->tokenizer, formatted_prompt.c_str(), formatted_prompt.size(), nullptr, 0, true, true);
+        if (prompt_tokens_count <= 0) {
+            throw std::runtime_error("Failed to determine prompt token count");
+        }
+
+        prompt_tokens.resize(prompt_tokens_count);
+        const int32_t tokenize_result = llama_tokenize(
+            this->tokenizer,
+            formatted_prompt.c_str(),
+            formatted_prompt.size(),
+            prompt_tokens.data(),
+            prompt_tokens.size(),
+            true,
+            true
+        );
+        if (tokenize_result < 0) {
+            throw std::runtime_error("Failed to tokenize prompt");
+        }
+
+        prompt_tokens.resize(tokenize_result);
+    } else {
+        throw std::invalid_argument("prompt_text and prompt_chat are absent");
+    }
+
+    return prompt_tokens;
+}
+
+BenchResponse LlamaEngine::run_single(
     std::vector<llama_token> tokens,
     const RunConfig& config,
     const llama_sampler_ptr& sampler_chain
-) {
+) const {
     const size_t max_tokens = config.max_tokens;
     const size_t prompt_tokens_count = tokens.size();
     const bool use_mtp = config.mtp_params.has_value();
 
-    // Reuse the sampling pipeline with fresh state and a new random seed for this run.
     llama_sampler_reset(sampler_chain.get());
-
     llama_context_ptr ctx{llama_init_from_model(model.get(), config.ctx_params)};
     if (!ctx) {
         throw std::runtime_error("Failed to create context");
     }
 
-    // The MTP context uses the same model weights and the upstream hidden-state transfer/acceptance driver.
     llama_context_ptr ctx_mtp;
     common_speculative_ptr spec;
     bool checkpoint_target = false;
@@ -65,7 +168,6 @@ static BenchResponse run_single(
 
     size_t forward_passes = 0;
     size_t tokens_generated = 0;
-    const llama_vocab* vocab = config.vocab;
     std::string output_text;
 
     memory_counters_t memory_counters_max = collect_memory_counters();
@@ -101,11 +203,13 @@ static BenchResponse run_single(
             throw std::runtime_error("MTP prefill failed");
         }
     }
+
     llama_synchronize(ctx.get());
     if (ctx_mtp) {
         llama_synchronize(ctx_mtp.get());
         common_speculative_begin(spec.get(), 0, tokens);
     }
+
     const int64_t time_prefill_end = llama_time_us();
 
     update_memory();
@@ -114,9 +218,9 @@ static BenchResponse run_single(
     llama_token token = llama_sampler_sample(sampler_chain.get(), ctx.get(), -1);
     const int64_t time_first_token = llama_time_us();
     tokens_generated++;
-    bool stop = llama_vocab_is_eog(vocab, token);
+    bool stop = llama_vocab_is_eog(this->tokenizer, token);
     if (!stop) {
-        output_text.append(decode_token(vocab, token));
+        output_text.append(decode_token(this->tokenizer, token));
     }
 
     // decoding loop
@@ -156,11 +260,11 @@ static BenchResponse run_single(
             tokens.push_back(token);
             token = llama_sampler_sample(sampler_chain.get(), ctx.get(), i);
             tokens_generated++;
-            stop = llama_vocab_is_eog(vocab, token);
+            stop = llama_vocab_is_eog(this->tokenizer, token);
             if (stop) {
                 break;
             }
-            output_text.append(decode_token(vocab, token));
+            output_text.append(decode_token(this->tokenizer, token));
             if (i == draft.size() || token != draft[i] || tokens_generated == max_tokens) {
                 break;
             }
@@ -214,10 +318,7 @@ static BenchResponse run_single(
     };
 }
 
-std::vector<BenchResponse> run(
-    const std::string& input_model_path,
-    const BenchRequest& request
-) {
+std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) const {
     if (!request.prompt_text.has_value() && !request.prompt_chat.has_value()) {
         throw std::invalid_argument("prompt_text and prompt_chat are absent");
     }
@@ -227,19 +328,9 @@ std::vector<BenchResponse> run(
         throw std::invalid_argument("num_runs must be 1 or greater");
     }
 
-    const std::filesystem::path model_path = get_model_path(input_model_path);
     const size_t speculative_depth = request.speculative_depth.value_or(0);
 
-    // load model weights and tokenize the prompt once for all runs
-    llama_model_params params = llama_model_default_params();
-    params.load_mtp = speculative_depth > 0;
-    llama_model_ptr model{llama_model_load_from_file(model_path.c_str(), params)};
-    if (!model) {
-        throw std::runtime_error("Failed to load model: " + model_path.string());
-    }
-
-    // get prompt tokens
-    const std::vector<llama_token> tokens = get_tokens(request, model);
+    const std::vector<llama_token> tokens = tokenize(request);
     const size_t max_tokens = request.max_tokens.value_or(256);
     const size_t max_context = std::numeric_limits<llama_pos>::max();
     if (tokens.empty() || tokens.size() > max_context || max_tokens > max_context - tokens.size()) {
@@ -249,15 +340,14 @@ std::vector<BenchResponse> run(
     // prepare config to run
     RunConfig config{
         .max_tokens = max_tokens,
-        .vocab = llama_model_get_vocab(model.get()),
         .ctx_params = llama_context_default_params(),
     };
     config.ctx_params.n_ctx = std::max<size_t>(config.ctx_params.n_ctx, tokens.size() + max_tokens);
 
-    const bool use_mtp = speculative_depth > 0 && has_mtp_weights(model_path, model.get());
+    const bool use_mtp = speculative_depth > 0 && this->has_mtp;
     if (use_mtp) {
         config.spec_params.types = {COMMON_SPECULATIVE_TYPE_DRAFT_MTP};
-        // Keep verification in one physical batch so recurrent snapshots cover every draft token.
+        // keep verification in one physical batch so recurrent snapshots cover every draft token.
         config.spec_params.draft.n_max =
             std::min<int32_t>(speculative_depth, std::min(config.ctx_params.n_batch, config.ctx_params.n_ubatch) - 1);
         config.ctx_params.n_rs_seq = config.spec_params.need_n_rs_seq();
@@ -271,7 +361,8 @@ std::vector<BenchResponse> run(
         config.mtp_params->n_outputs_max_per_seq = 1;
     }
 
-    // build the sampling pipeline once; run_single resets its mutable state before each run.
+    // build the sampling pipeline once.
+    // run_single resets its mutable state before each run.
     llama_sampler_chain_params sampler_chain_params = llama_sampler_chain_default_params();
     llama_sampler_ptr sampler_chain{llama_sampler_chain_init(sampler_chain_params)};
     if (request.sampling.has_value()) {
@@ -295,8 +386,75 @@ std::vector<BenchResponse> run(
 
     std::vector<BenchResponse> responses;
     for (size_t i = 0; i < num_runs; ++i) {
-        BenchResponse response = run_single(model, tokens, config, sampler_chain);
+        BenchResponse response = run_single(tokens, config, sampler_chain);
         responses.push_back(response);
     }
     return responses;
+}
+
+std::string decode_token(
+    const llama_vocab* vocab,
+    llama_token token
+) {
+    std::vector<char> piece(128);
+    int32_t piece_len = llama_token_to_piece(vocab, token, piece.data(), piece.size(), 0, true);
+    if (piece_len < 0) {
+        piece_len = -piece_len;
+        piece.resize(piece_len);
+        piece_len = llama_token_to_piece(vocab, token, piece.data(), piece.size(), 0, true);
+    }
+    if (piece_len < 0) {
+        throw std::runtime_error("Can not convert token to piece");
+    }
+
+    return std::string(piece.data(), piece_len);
+}
+
+bool has_mtp_weights(const std::filesystem::path& model_path) {
+    // Some GGUFs retain NextN metadata after removing the heads, and Granite-Switch uses it for a router.
+    // Check for actual MTP tensors, including in later shards of a split GGUF.
+    const auto contains_mtp_weights = [](const gguf_context* header) {
+        for (int64_t i = 0; i < gguf_get_n_tensors(header); ++i) {
+            const std::string_view name = gguf_get_tensor_name(header, i);
+            if (name.starts_with("blk.") && name.ends_with(".nextn.eh_proj.weight")) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const auto read_header = [](const char* path) {
+        gguf_context_ptr header{gguf_init_from_file(path, {true, nullptr})};
+        if (!header) {
+            throw std::runtime_error(std::string{"Failed to read GGUF metadata: "} + path);
+        }
+        return header;
+    };
+
+    auto header = read_header(model_path.c_str());
+    if (contains_mtp_weights(header.get())) {
+        return true;
+    }
+
+    const int64_t split_key = gguf_find_key(header.get(), "split.count");
+    const uint16_t split_count = split_key < 0 ? 1 : gguf_get_val_u16(header.get(), split_key);
+    if (split_count <= 1) {
+        return false;
+    }
+
+    std::vector<char> prefix(model_path.string().size() + 1);
+    if (llama_split_prefix(prefix.data(), prefix.size(), model_path.c_str(), 0, split_count) <= 0) {
+        throw std::runtime_error("Invalid split GGUF path: " + model_path.string());
+    }
+
+    std::vector<char> split_path(prefix.size());
+    for (uint16_t i = 1; i < split_count; ++i) {
+        llama_split_path(split_path.data(), split_path.size(), prefix.data(), i, split_count);
+        header = read_header(split_path.data());
+        if (contains_mtp_weights(header.get())) {
+            return true;
+        }
+    }
+
+    return false;
 }

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.31)
 include(FetchContent)
 
 # project setup
-project(llamacpp_bench LANGUAGES C CXX)
+project(engine-llamacpp LANGUAGES C CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,7 +18,7 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "Build upstream application")
 FetchContent_Declare(
     llama_cpp
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
-    GIT_TAG v0.4.1
+    GIT_TAG v0.5.0
 )
 FetchContent_MakeAvailable(llama_cpp)
 
@@ -31,32 +31,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(cli11)
 
-# Glaze
-FetchContent_Declare(
-    glaze
-    GIT_REPOSITORY https://github.com/stephenberry/glaze.git
-    GIT_TAG v8.4.0
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(glaze)
-
-# memory counters
-add_library(mach_memory STATIC ../mach/memory_counters.c)
-target_include_directories(mach_memory PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../mach)
+# common sources
+add_subdirectory(../common-cpp common-cpp)
 
 # sources
-add_executable(${PROJECT_NAME} 
-    main.cpp 
-    common.cpp
-    runner.cpp
+add_executable(${PROJECT_NAME}
+    src/engine.cpp
+    src/main.cpp
+    src/util.cpp
 )
 
 # libraries
-target_link_libraries(${PROJECT_NAME}  
-    PRIVATE 
-        llama 
-        llama-common 
+target_link_libraries(${PROJECT_NAME}
+    PRIVATE
+        llama
+        llama-common
         CLI11::CLI11
-        glaze::glaze
-        mach_memory
+        benchmarks_common
 )

@@ -1,6 +1,5 @@
 .ruff_cache/
 .venv/
-.vscode/
 
 __pycache__/
 *.egg-info/

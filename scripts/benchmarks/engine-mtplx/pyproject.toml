@@ -1,0 +1,18 @@
+[project]
+name = "benchmarks-mtplx"
+version = "0.0.1"
+requires-python = ">=3.13.7"
+dependencies = ["benchmarks-common", "mtplx==2.11.3"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+mtplx = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.uv.sources]
+benchmarks-common = { workspace = true }

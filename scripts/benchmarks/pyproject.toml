@@ -1,42 +1,30 @@
 [project]
 name = "benchmarks"
-version = "0.1.0"
+version = "0.0.1"
+readme = "README.md"
 requires-python = ">=3.13.7"
+
 dependencies = [
-    "mlx==0.32.2",
-    "mlx-lm==0.31.3",
-    "mtplx==2.11.3",
-    "pydantic>=2.13.5",
+    "benchmarks-common",
+    "benchmarks-mlx",
+    "benchmarks-mtplx",
     "typer>=0.27.2",
 ]
 
-[project.scripts]
-benchmarks = "main:app"
+[tool.uv.sources]
+benchmarks-common = { workspace = true }
+benchmarks-mlx = { workspace = true }
+benchmarks-mtplx = { workspace = true }
 
-[build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
+[tool.uv.workspace]
+members = ["common-py", "engine-mlx", "engine-mtplx"]
 
 [dependency-groups]
-dev = ["ruff>=0.16.8", "ty>=0.0.81"]
+dev = ["pytest>=9.0.3", "ruff>=0.16.8", "ty>=0.0.84"]
 
-[tool.uv]
-cache-keys = [
-    { file = "pyproject.toml" },
-    { file = "setup.py" },
-    { file = "setup.cfg" },
-    { dir = "src" },
-    { file = "src/mach/**/*.c" },
-    { file = "src/mach/**/*.h" },
-]
-
+# ruff
 [tool.ruff]
 line-length = 120
 
 [tool.ruff.lint]
 extend-select = ["E501"]
-
-[tool.setuptools]
-py-modules = ["main", "bench", "common"]
-packages = ["mach", "engine"]
-package-dir = { "" = "src" }
