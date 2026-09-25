@@ -29,46 +29,52 @@ impl<B: Backend> UntiedReadout<B> {
         model_dim: u32,
         data_type: DataType,
     ) -> Result<Self, LinearMatmulError<B>> {
-        let (mut linear, rht_signs) = match spec {
-            AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                quantization_spec,
-                adapter_spec: None,
-                incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
-                incoherence_processing_mode: IncoherenceProcessingMode::Input,
-                ..
-            }) => {
-                let linear = LinearMatmul::load(
-                    context,
-                    *quantization_spec,
-                    model_dim,
-                    vocab_size,
-                    data_type,
-                    data_type,
-                    data_type,
-                    &tree.subtree("quantized"),
-                    None,
-                    None,
-                )?;
-                let rht_signs = tree
-                    .subtree("incoherence_signs")
-                    .leaf("input_signs")?
-                    .validate(&[model_dim], DataType::I32)?
-                    .read_allocation()?;
-                (linear, rht_signs)
-            },
-            AnyWeightMatrixSpec::I3S4Spec(spec) => {
-                mirai_s::load_readout(context, tree, spec, vocab_size, model_dim, data_type)?
-            },
-            spec => {
-                return Ok(Self {
-                    linear: LinearMatmul::load(
-                        context, spec, model_dim, vocab_size, data_type, data_type, data_type, tree, None, None,
-                    )?,
-                    input_rht: None,
-                });
-            },
+        if let AnyWeightMatrixSpec::I3S4Spec(spec) = spec {
+            let (linear, rht_signs) = mirai_s::load_readout(context, tree, spec, vocab_size, model_dim, data_type)?;
+            return Self::with_input_rht(context, linear, rht_signs, data_type);
+        }
+        let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+            quantization_spec,
+            adapter_spec: None,
+            incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+            incoherence_processing_mode: IncoherenceProcessingMode::Input,
+            ..
+        }) = spec
+        else {
+            return Ok(Self {
+                linear: LinearMatmul::load(
+                    context, spec, model_dim, vocab_size, data_type, data_type, data_type, tree, None, None,
+                )?,
+                input_rht: None,
+            });
         };
 
+        let linear = LinearMatmul::load(
+            context,
+            *quantization_spec,
+            model_dim,
+            vocab_size,
+            data_type,
+            data_type,
+            data_type,
+            &tree.subtree("quantized"),
+            None,
+            None,
+        )?;
+        let rht_signs = tree
+            .subtree("incoherence_signs")
+            .leaf("input_signs")?
+            .validate(&[model_dim], DataType::I32)?
+            .read_allocation()?;
+        Self::with_input_rht(context, linear, rht_signs, data_type)
+    }
+
+    fn with_input_rht(
+        context: &B::Context,
+        mut linear: LinearMatmul<B>,
+        rht_signs: Allocation<B>,
+        data_type: DataType,
+    ) -> Result<Self, LinearMatmulError<B>> {
         let preparation = LinearInputPreparation {
             rht_signs,
             activation_quantization: linear.prepare_a8(context),

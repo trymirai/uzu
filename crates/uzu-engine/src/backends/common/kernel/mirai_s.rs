@@ -1,29 +1,21 @@
 use crate::backends::common::{Allocation, Backend, Encoder, Kernels, kernel::Unsupported};
 
-/// Trellis code layouts of Mirai S linear weights.
-#[derive(Clone, Copy, Debug)]
+/// Trellis code layouts of Mirai S linear weights: V4 restarts its state every 64 columns, V2 runs one trellis over
+/// the whole row.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TrellisCodec {
-    /// 4-column groups, 8-bit transitions, state restarted every 64 columns.
-    Vector4Restart64,
-    /// 2-column groups, 6-bit transitions over the whole row.
-    Vector2Transition6,
-    /// 2-column groups, 4-bit transitions over the whole row.
-    Vector2Transition4,
+    V4,
+    V2T6,
+    V2T4,
 }
 
 impl TrellisCodec {
-    pub fn vector_width(self) -> u32 {
+    /// (columns per 16-bit state, bits per transition)
+    pub fn shape(self) -> (u32, u32) {
         match self {
-            Self::Vector4Restart64 => 4,
-            Self::Vector2Transition6 | Self::Vector2Transition4 => 2,
-        }
-    }
-
-    pub fn transition_bits(self) -> u32 {
-        match self {
-            Self::Vector4Restart64 => 8,
-            Self::Vector2Transition6 => 6,
-            Self::Vector2Transition4 => 4,
+            Self::V4 => (4, 8),
+            Self::V2T6 => (2, 6),
+            Self::V2T4 => (2, 4),
         }
     }
 
@@ -32,10 +24,8 @@ impl TrellisCodec {
         columns: u32,
     ) -> u32 {
         match self {
-            Self::Vector4Restart64 => columns / 64 * 17,
-            Self::Vector2Transition6 | Self::Vector2Transition4 => {
-                (16 + (columns / 2 - 1) * self.transition_bits()).div_ceil(8)
-            },
+            Self::V4 => columns / 64 * 17,
+            Self::V2T6 | Self::V2T4 => (16 + (columns / 2 - 1) * self.shape().1).div_ceil(8),
         }
     }
 }

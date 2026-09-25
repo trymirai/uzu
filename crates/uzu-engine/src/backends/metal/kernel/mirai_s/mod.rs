@@ -80,7 +80,7 @@ impl MiraiSProjection for MetalMiraiSProjection {
         context: &MetalContext,
         codec: TrellisCodec,
     ) -> Result<Option<Self>, MetalError> {
-        let (vector_width, transition_bits) = (codec.vector_width(), codec.transition_bits());
+        let (vector_width, transition_bits) = codec.shape();
         if !context.supports_mxu {
             return Ok(Some(Self::Simdgroup {
                 tokens_1: MiraiSSimdgroupProjectionMetalKernel::new(context, 1, vector_width, transition_bits)?,
@@ -92,9 +92,9 @@ impl MiraiSProjection for MetalMiraiSProjection {
             wide_64: MiraiSProjectionMetalKernel::new(context, 64, vector_width, transition_bits)?,
             narrow_2: MiraiSNarrowProjectionMetalKernel::new(context, 2, vector_width, transition_bits)?,
             narrow_4: MiraiSNarrowProjectionMetalKernel::new(context, 4, vector_width, transition_bits)?,
-            busy_simdgroups: match codec {
-                TrellisCodec::Vector4Restart64 => 512,
-                TrellisCodec::Vector2Transition6 | TrellisCodec::Vector2Transition4 => 256,
+            busy_simdgroups: match vector_width {
+                4 => 512,
+                _ => 256,
             },
         }))
     }

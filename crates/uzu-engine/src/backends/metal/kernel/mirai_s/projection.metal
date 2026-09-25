@@ -9,9 +9,9 @@ using namespace metal;
 
 using Ops = uzu::matmul::MxuFragmentOps<>;
 
-// Codebook levels of a trellis state. Byte j of fmix32(state * 0xCFCCB83F + 0x584B4AA3) gives level
-// 8 * (sum of its four 2-bit fields) + (3 * low nibble mod 16) - 54 in [-54, 57], returned as signed bytes.
-// The weight of component j is scale * level + offset[j] (the loader checks the package codebook against this).
+// Codebook levels of a trellis state as signed bytes: byte j of fmix32(state * 0xCFCCB83F + 0x584B4AA3) gives
+// 8 * (sum of its four 2-bit fields) + (3 * low nibble mod 16) - 54; the weight of component j is
+// scale * level + offset[j] (the loader checks the package codebook against this).
 static METAL_FUNC uint trellis_levels(uint state) {
   uint x = state * 0xCFCCB83Fu + 0x584B4AA3u;
   x ^= x >> 16;
@@ -55,8 +55,8 @@ struct Codebook {
   METAL_FUNC char2 pair_levels(uint state) const { return reinterpret_cast<device const char2*>(values + 8)[state]; }
 };
 
-// Levels of columns column..column + 3 of one row. A V2 state carries two levels, so the hash costs twice as
-// much per weight as for V4; READ_V2_LEVELS reads them from the codebook's level table instead.
+// Levels of columns column..column + 3 of one row; READ_V2_LEVELS reads V2 pairs from the codebook's level table
+// instead of hashing two states per four weights.
 template <uint VECTOR_WIDTH, uint TRANSITION_BITS, bool READ_V2_LEVELS>
 static METAL_FUNC char4 decode_columns(device const uchar* row, uint column, Codebook codebook) {
   if (VECTOR_WIDTH == 4) {
@@ -288,10 +288,9 @@ static METAL_FUNC int level_dot(char4 levels, char4 activations) {
   return products.x + products.y + products.z + products.w;
 }
 
-// Without MXU (Apple GPUs before M5), plain SIMD arithmetic: each SIMDgroup computes SIMDGROUP_KERNEL_ROWS rows x
-// TOKENS tokens, a lane decodes 4 columns of every row per 128-column step, and simd_sum adds up the lanes. The int32
-// dots are exact, so the output matches the MXU kernels bit for bit. V2 levels are hashed too: on M1 and M2 reading
-// them from the level table is 2.5-3x slower at batch 1. `rows` is a multiple of 16.
+// Without MXU (before M5): each SIMDgroup computes SIMDGROUP_KERNEL_ROWS rows x TOKENS tokens, a lane decodes 4
+// columns of every row per 128-column step, and simd_sum adds the exact int32 dots up, so the output matches the
+// MXU kernels bit for bit. V2 levels are hashed: on M1 and M2 the level table is 2.5-3x slower at batch 1.
 template <uint TOKENS, uint VECTOR_WIDTH, uint TRANSITION_BITS>
 VARIANTS(TOKENS, 1, 8)
 VARIANTS(VECTOR_WIDTH, 2, 4)

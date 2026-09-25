@@ -48,8 +48,7 @@ pub struct MiraiSLinear<B: Backend> {
 }
 
 impl<B: Backend> MiraiSLinear<B> {
-    /// Loads a `QtipGaussianSpec` leaf or a `RowStackSpec` of them (`parts.<index>`) from `tree`; the package's
-    /// `qtip_shared` tensors live at the root.
+    /// Loads a `QtipGaussianSpec` leaf or a `RowStackSpec` of them (`parts.<index>`); `qtip_shared` is at the root.
     pub fn load(
         context: &B::Context,
         spec: AnyWeightMatrixSpec,
@@ -116,16 +115,16 @@ fn load_part<B: Backend>(
         return Err(LinearMatmulError::UnsupportedConfiguration(format!("{rows} rows of {spec:?}")));
     }
     let codec = match (spec.vector_width, spec.transition_bits, spec.restart_columns) {
-        (4, 8, 64) => TrellisCodec::Vector4Restart64,
-        (2, 6, 0) => TrellisCodec::Vector2Transition6,
-        (2, 4, 0) => TrellisCodec::Vector2Transition4,
+        (4, 8, 64) => TrellisCodec::V4,
+        (2, 6, 0) => TrellisCodec::V2T6,
+        (2, 4, 0) => TrellisCodec::V2T4,
         _ => return Err(LinearMatmulError::UnsupportedConfiguration(format!("{spec:?}"))),
     };
     let projection = <B::Kernels as Kernels>::MiraiSProjection::new(context, codec)
         .map_err(LinearMatmulError::BackendError)?
         .ok_or_else(|| LinearMatmulError::UnsupportedConfiguration("no Mirai S projection on this device".into()))?;
     let mut codes = tree.leaf("codes")?.validate(&[rows, codec.row_bytes(columns)], DataType::U8)?.read_allocation()?;
-    if codec.vector_width() == 2 {
+    if codec != TrellisCodec::V4 {
         repack_msb_first(codes.as_slice_mut(), codec, columns);
     }
 
@@ -143,7 +142,7 @@ fn load_part<B: Backend>(
         row_scales.iter_mut().zip(&gains).for_each(|(scale, gain)| *scale *= gain);
     }
 
-    let vector_width = codec.vector_width();
+    let (vector_width, _) = codec.shape();
     let codebook = shared.shared_allocation(&format!("codebook_v{vector_width}"), |leaf| {
         let values = leaf.validate(&[TRELLIS_STATES as u32, vector_width], DataType::F32)?.read_slice::<f32>()?;
         let table = codebook_table(&values, vector_width as usize).map_err(|error| {
@@ -161,8 +160,7 @@ fn load_part<B: Backend>(
     })
 }
 
-/// Codebook levels of the four bytes of fmix32(state * 0xCFCCB83F + 0x584B4AA3) (`trellis_levels` in
-/// projection.metal).
+/// Codebook levels of the four bytes of fmix32(state * 0xCFCCB83F + 0x584B4AA3), as projection.metal hashes them.
 pub(crate) fn trellis_levels(state: u32) -> [i32; 4] {
     let mut x = state.wrapping_mul(0xCFCC_B83F).wrapping_add(0x584B_4AA3);
     x ^= x >> 16;
@@ -213,35 +211,21 @@ fn repack_msb_first(
     codec: TrellisCodec,
     columns: u32,
 ) {
-    let transitions = (columns / 2 - 1) as usize;
     for row in codes.chunks_exact_mut(codec.row_bytes(columns) as usize) {
         row.swap(0, 1);
         match codec {
-            TrellisCodec::Vector2Transition4 => {
-                // two transitions per byte: swap the nibbles
-                for byte in &mut row[2..] {
-                    *byte = byte.rotate_left(4);
+            // two transitions per byte
+            TrellisCodec::V2T4 => row[2..].iter_mut().for_each(|byte| *byte = byte.rotate_left(4)),
+            // four transitions per three bytes (whole blocks for the supported widths)
+            TrellisCodec::V2T6 => {
+                for bytes in row[2..].as_chunks_mut::<3>().0 {
+                    let block = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], 0]);
+                    let transition = |index: u32| (block >> (6 * index)) & 0x3F;
+                    let flipped = (transition(0) << 18) | (transition(1) << 12) | (transition(2) << 6) | transition(3);
+                    *bytes = [(flipped >> 16) as u8, (flipped >> 8) as u8, flipped as u8];
                 }
             },
-            TrellisCodec::Vector2Transition6 => {
-                // four transitions per three bytes; the last block is padded with zero bits
-                let (blocks, []) = row[2..].as_chunks_mut::<3>() else {
-                    panic!("V2 rows of {columns} columns are not whole 3-byte blocks");
-                };
-                for (block, bytes) in blocks.iter_mut().enumerate() {
-                    let [b0, b1, b2] = *bytes;
-                    let t0 = b0 & 0x3F;
-                    let t1 = (b0 >> 6) | ((b1 & 0x0F) << 2);
-                    let t2 = (b1 >> 4) | ((b2 & 0x03) << 4);
-                    let t3 = if 4 * block + 3 < transitions {
-                        b2 >> 2
-                    } else {
-                        0
-                    };
-                    *bytes = [(t0 << 2) | (t1 >> 4), (t1 << 4) | (t2 >> 2), (t2 << 6) | t3];
-                }
-            },
-            TrellisCodec::Vector4Restart64 => panic!("V4 rows are read in the package layout"),
+            TrellisCodec::V4 => unreachable!("V4 rows are read in the package layout"),
         }
     }
 }
@@ -308,15 +292,14 @@ fn repack_readout(
         .collect();
     let rows = row_scales.len();
     let groups = 2 * ladder_indices.len() / rows;
-    let scales = (0..groups)
-        .flat_map(|group| {
-            (0..padded_rows).map(move |row| {
-                if row >= rows {
-                    return bf16::ZERO;
-                }
-                let index = (ladder_indices[row * groups / 2 + group / 2] >> (4 * (group % 2))) & 15;
-                bf16::from_f32(row_scales[row].to_f32() * ladder[index as usize].to_f32())
-            })
+    let scales = (0..groups * padded_rows)
+        .map(|index| {
+            let (group, row) = (index / padded_rows, index % padded_rows);
+            if row >= rows {
+                return bf16::ZERO;
+            }
+            let ladder_index = (ladder_indices[row * groups / 2 + group / 2] >> (4 * (group % 2))) & 15;
+            bf16::from_f32(row_scales[row].to_f32() * ladder[ladder_index as usize].to_f32())
         })
         .collect();
     (u4_codes, scales)

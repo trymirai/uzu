@@ -46,11 +46,11 @@ fn codebook_table_fits_computed_levels() {
 #[rstest]
 #[test_attr(uzu_test)]
 fn repack_windows_follow_the_trellis(
-    #[values(TrellisCodec::Vector2Transition6, TrellisCodec::Vector2Transition4)] codec: TrellisCodec,
+    #[values(TrellisCodec::V2T6, TrellisCodec::V2T4)] codec: TrellisCodec,
     #[values(128, 5120)] columns: u32,
 ) {
     let mut rng = SmallRng::seed_from_u64(u64::from(columns));
-    let (row_bytes, transition_bits) = (codec.row_bytes(columns) as usize, codec.transition_bits() as usize);
+    let (row_bytes, transition_bits) = (codec.row_bytes(columns) as usize, codec.shape().1 as usize);
     let physical: Vec<u8> = (0..3 * row_bytes).map(|_| rng.random()).collect();
     let mut repacked = physical.clone();
     repack_msb_first(&mut repacked, codec, columns);

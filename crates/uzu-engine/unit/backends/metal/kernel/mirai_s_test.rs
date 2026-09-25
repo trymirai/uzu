@@ -26,20 +26,18 @@ fn row_levels(
 ) -> Vec<i32> {
     let bit = |index: usize| ((row[index / 8] >> (7 - index % 8)) & 1) as u32;
     (0..columns)
-        .map(|column| match codec {
-            TrellisCodec::Vector4Restart64 => {
+        .map(|column| {
+            if codec == TrellisCodec::V4 {
                 let block = &row[column / 64 * 17..][..17];
                 let mut state = block[0] as u32 | (block[1] as u32) << 8;
                 for group in 1..=column % 64 / 4 {
                     state = ((state << 8) | block[group + 1] as u32) & 0xFFFF;
                 }
-                trellis_levels(state)[column % 4]
-            },
-            TrellisCodec::Vector2Transition6 | TrellisCodec::Vector2Transition4 => {
-                let start = column / 2 * codec.transition_bits() as usize;
-                let state = (0..16).fold(0, |state, offset| (state << 1) | bit(start + offset));
-                trellis_levels(state)[column % 2]
-            },
+                return trellis_levels(state)[column % 4];
+            }
+            let start = column / 2 * codec.shape().1 as usize;
+            let state = (0..16).fold(0, |state, offset| (state << 1) | bit(start + offset));
+            trellis_levels(state)[column % 2]
         })
         .collect()
 }
@@ -52,39 +50,27 @@ fn transform_reference(
     let columns = input.len();
     let order = mixing_order(columns as u32) as usize;
     let power = columns / order;
-    let normalization = if power == 2048 {
-        std::f32::consts::FRAC_1_SQRT_2
-    } else {
-        1.0
-    } / 32.0;
+    let normalization = [1.0, std::f32::consts::FRAC_1_SQRT_2][(power == 2048) as usize] / 32.0;
     let mut transformed = vec![0.0f32; columns];
     for q_out in 0..order {
-        let mut values: Vec<f32> = (0..power)
-            .map(|h| {
-                (0..order).fold(0.0f32, |value, q| {
-                    (input[h * order + q] * signs[h * order + q]).mul_add(mixing[q_out * order + q], value)
-                })
+        let mixed = |h: usize| {
+            (0..order).fold(0.0f32, |value, q| {
+                (input[h * order + q] * signs[h * order + q]).mul_add(mixing[q_out * order + q], value)
             })
-            .collect();
-        let mut stride = 1;
-        while stride < power {
+        };
+        let mut values: Vec<f32> = (0..power).map(mixed).collect();
+        for stride in (0..).map(|step| 1 << step).take_while(|&stride| stride < power) {
             for low in (0..power).filter(|h| h & stride == 0) {
                 let (a, b) = (values[low], values[low + stride]);
-                values[low] = a + b;
-                values[low + stride] = a - b;
+                (values[low], values[low + stride]) = (a + b, a - b);
             }
-            stride *= 2;
         }
         for h in 0..power {
             transformed[h * order + q_out] = bf16::from_f32(values[h] * normalization).to_f32();
         }
     }
     let maximum = transformed.iter().fold(0.0f32, |maximum, value| maximum.max(value.abs()));
-    let scale = if maximum > 0.0 {
-        maximum / 127.0
-    } else {
-        1.0
-    };
+    let scale = [1.0, maximum / 127.0][(maximum > 0.0) as usize];
     let quantized: Vec<i8> =
         transformed.iter().map(|value| (value / scale).round().clamp(-127.0, 127.0) as i8).collect();
     let sums = std::array::from_fn(|class| quantized.iter().skip(class).step_by(4).map(|&value| value as f32).sum());
@@ -145,28 +131,19 @@ type Encode<'a> = Box<
 #[rstest]
 #[test_attr(uzu_test)]
 fn projection_matches_reference(
-    #[values(TrellisCodec::Vector4Restart64, TrellisCodec::Vector2Transition6, TrellisCodec::Vector2Transition4)]
-    codec: TrellisCodec
+    #[values(TrellisCodec::V4, TrellisCodec::V2T6, TrellisCodec::V2T4)] codec: TrellisCodec
 ) {
     let context = shared_metal_context();
-    let mut rng = SmallRng::seed_from_u64(codec.transition_bits() as u64);
-    let (vector_width, transition_bits) = (codec.vector_width(), codec.transition_bits());
+    let mut rng = SmallRng::seed_from_u64(codec.shape().1 as u64);
+    let (vector_width, transition_bits) = codec.shape();
     // rows: not a multiple of the narrow kernels' 32- and 64-row SIMDgroup tiles
     let (rows, columns, wide_stride) = (48usize, 5120usize, 80usize);
     let row_bytes = codec.row_bytes(columns as u32) as usize;
     let codes: Vec<u8> = (0..rows * row_bytes).map(|_| rng.random()).collect();
     let row_scales: Vec<f32> = (0..rows).map(|_| rng.random_range(0.001f32..0.01)).collect();
-    let weights: Vec<Vec<f64>> = codes
-        .chunks_exact(row_bytes)
-        .map(|row| {
-            let levels = row_levels(codec, row, columns);
-            (0..columns)
-                .map(|column| {
-                    AFFINE[0] as f64 * levels[column] as f64 + AFFINE[1 + column % vector_width as usize] as f64
-                })
-                .collect()
-        })
-        .collect();
+    let levels: Vec<Vec<i32>> = codes.chunks_exact(row_bytes).map(|row| row_levels(codec, row, columns)).collect();
+    let weight =
+        |level: i32, column: usize| AFFINE[0] as f64 * level as f64 + AFFINE[1 + column % vector_width as usize] as f64;
     let codebook = codebook_table(&package_codebook(vector_width as usize), vector_width as usize).unwrap();
     let codes = alloc_allocation_with_data::<Metal, u8>(&context, &codes);
     let scales = alloc_allocation_with_data::<Metal, f32>(&context, &row_scales);
@@ -260,7 +237,8 @@ fn projection_matches_reference(
         for token in 0..batch {
             let token_activations = &activations[token * columns..][..columns];
             for row in 0..rows {
-                let products = weights[row].iter().zip(token_activations).map(|(w, &a)| w * a as f64);
+                let products = levels[row].iter().zip(token_activations).enumerate();
+                let products = products.map(|(column, (&level, &a))| weight(level, column) * a as f64);
                 let (dot, magnitude) = products.fold((0.0, 0.0), |(dot, magnitude), p| (dot + p, magnitude + p.abs()));
                 let factor = row_scales[row] as f64 * activation_scales[token] as f64;
                 let expected = dot * factor;

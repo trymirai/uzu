@@ -23,16 +23,9 @@ pub enum EmbeddingTableError<B: Backend> {
     UnsupportedConfiguration(String),
 }
 
-enum Lookup<B: Backend> {
-    FullPrecision {
-        kernel: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
-        matrix: WeightMatrix<B>,
-    },
-    Quantized {
-        kernel: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
-        matrix: WeightMatrix<B>,
-        output_hadamard_factors: Option<Allocation<B>>,
-    },
+enum LookupKernel<B: Backend> {
+    FullPrecision(<B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel),
+    Quantized(<B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel),
     /// Lookup-only D4 lattice table (`D4S4Spec`).
     MiraiS {
         kernel: <B::Kernels as Kernels>::MiraiSEmbeddingLookupKernel,
@@ -46,7 +39,10 @@ enum Lookup<B: Backend> {
 }
 
 pub struct EmbeddingTable<B: Backend> {
-    lookup: Lookup<B>,
+    /// `None` for the lookup-only Mirai S table.
+    matrix: Option<WeightMatrix<B>>,
+    lookup: LookupKernel<B>,
+    output_hadamard_factors: Option<Allocation<B>>,
     vocab_size: u32,
     embedding_dim: u32,
 }
@@ -82,7 +78,7 @@ impl<B: Backend> EmbeddingTable<B> {
             let read = |name: &str, shape: &[u32], data_type: DataType| {
                 tree.leaf(name)?.validate(shape, data_type)?.read_allocation()
             };
-            let lookup = Lookup::MiraiS {
+            let lookup = LookupKernel::MiraiS {
                 kernel: <B::Kernels as Kernels>::MiraiSEmbeddingLookupKernel::new(context)
                     .map_err(EmbeddingTableError::BackendError)?,
                 codes: read("codes", &[vocab_size, embedding_dim / 4], DataType::U8)?,
@@ -93,12 +89,13 @@ impl<B: Backend> EmbeddingTable<B> {
                 output_hadamard_factors: read("output_hadamard_factors", &[embedding_dim], DataType::I32)?,
             };
             return Ok(Self {
+                matrix: None,
                 lookup,
+                output_hadamard_factors: None,
                 vocab_size,
                 embedding_dim,
             });
         }
-
         let matrix = WeightMatrix::load(tree, spec, Layout::InputOutput, embedding_dim, vocab_size, data_type)?;
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
             return Err(EmbeddingTableError::UnsupportedConfiguration(
@@ -107,13 +104,12 @@ impl<B: Backend> EmbeddingTable<B> {
         }
 
         let lookup = match matrix.quantization() {
-            None => Lookup::FullPrecision {
-                kernel: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
+            None => LookupKernel::FullPrecision(
+                <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingTableError::BackendError)?,
-                matrix,
-            },
-            Some(info) => Lookup::Quantized {
-                kernel: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
+            ),
+            Some(info) => LookupKernel::Quantized(
+                <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                     context,
                     data_type,
                     info.group_size,
@@ -122,32 +118,20 @@ impl<B: Backend> EmbeddingTable<B> {
                     output_hadamard_factors.is_some(),
                 )
                 .map_err(EmbeddingTableError::BackendError)?,
-                matrix,
-                output_hadamard_factors,
-            },
+            ),
         };
 
         Ok(Self {
+            matrix: Some(matrix),
             lookup,
+            output_hadamard_factors,
             vocab_size,
             embedding_dim,
         })
     }
 
     pub fn matrix(&self) -> &WeightMatrix<B> {
-        match &self.lookup {
-            Lookup::FullPrecision {
-                matrix,
-                ..
-            }
-            | Lookup::Quantized {
-                matrix,
-                ..
-            } => matrix,
-            Lookup::MiraiS {
-                ..
-            } => panic!("Mirai S embedding tables are lookup-only"),
-        }
+        self.matrix.as_ref().expect("Mirai S embedding tables are lookup-only")
     }
 
     /// Gathers one row per token id into `output`, scaling by `scale`.
@@ -160,12 +144,9 @@ impl<B: Backend> EmbeddingTable<B> {
         encoder: &mut Encoder<B>,
     ) {
         match &self.lookup {
-            Lookup::FullPrecision {
-                kernel,
-                matrix,
-            } => kernel.encode(
+            LookupKernel::FullPrecision(kernel) => kernel.encode(
                 token_ids,
-                matrix.values(),
+                self.matrix().values(),
                 output,
                 batch_dim,
                 self.vocab_size,
@@ -173,25 +154,21 @@ impl<B: Backend> EmbeddingTable<B> {
                 scale,
                 encoder,
             ),
-            Lookup::Quantized {
-                kernel,
-                matrix,
-                output_hadamard_factors,
-            } => kernel.encode(
+            LookupKernel::Quantized(kernel) => kernel.encode(
                 token_ids,
-                matrix.values(),
-                matrix.scales().expect("quantized lookup requires scales"),
-                matrix.zero_points(),
-                matrix.biases(),
+                self.matrix().values(),
+                self.matrix().scales().expect("quantized lookup requires scales"),
+                self.matrix().zero_points(),
+                self.matrix().biases(),
                 output,
-                output_hadamard_factors.as_ref(),
+                self.output_hadamard_factors.as_ref(),
                 batch_dim,
                 self.vocab_size,
                 self.embedding_dim,
                 scale,
                 encoder,
             ),
-            Lookup::MiraiS {
+            LookupKernel::MiraiS {
                 kernel,
                 codes,
                 row_scales,
