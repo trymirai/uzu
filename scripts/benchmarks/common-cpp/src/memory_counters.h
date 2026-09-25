@@ -1,5 +1,5 @@
-#ifndef __mac_memory_counters_h__
-#define __mac_memory_counters_h__
+#ifndef __benchmarks_memory_counters_h__
+#define __benchmarks_memory_counters_h__
 
 #include <mach/mach.h>
 #include <stdbool.h>
@@ -31,7 +31,10 @@ typedef struct {
     uint64_t malloc_max_in_use;
 } memory_counters_t;
 
-kern_return_t get_memory_counters(memory_counters_t* counters, bool with_malloc_zone_stats);
+kern_return_t get_memory_counters(
+    memory_counters_t* counters,
+    bool with_malloc_zone_stats
+);
 
 const char* memory_counters_error_string(kern_return_t result);
 
@@ -39,4 +42,4 @@ const char* memory_counters_error_string(kern_return_t result);
 }
 #endif
 
-#endif  // __mac_memory_counters_h__
+#endif  // __benchmarks_memory_counters_h__

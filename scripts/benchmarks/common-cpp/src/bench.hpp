@@ -1,5 +1,5 @@
-#ifndef __llama_cpp_benchmarks_bench_hpp__
-#define __llama_cpp_benchmarks_bench_hpp__
+#ifndef __benchmarks_bench_hpp__
+#define __benchmarks_bench_hpp__
 
 #include <cstdint>
 #include <glaze/json/generic.hpp>
@@ -46,4 +46,4 @@ struct BenchResponse {
     uint64_t memory_graphics_total;
 };
 
-#endif  // __llama_cpp_benchmarks_bench_hpp__
+#endif  // __benchmarks_bench_hpp__
