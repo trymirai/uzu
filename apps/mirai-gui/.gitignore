@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+client/dist-web/
+client/dist-tauri/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/resources/cli/
+
+# Python (dmgbuild settings)
+__pycache__/
+*.pyc
+
+# Environment files
+.env
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+
+.tanstack/

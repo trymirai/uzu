@@ -1,0 +1,82 @@
+:root {
+  --ui-color-background: #fcfcfc;
+  --ui-color-error: #ff2020;
+  --ui-color-primary: var(--ui-color-gray-1200);
+  --ui-color-primary-hover: var(--ui-color-gray-1100);
+  --ui-color-primary-active: var(--ui-color-gray-1000);
+  --ui-color-primary-contrast: var(--ui-color-gray-50);
+
+  --ui-color-secondary: var(--ui-color-gray-50);
+  --ui-color-secondary-hover: var(--ui-color-gray-200);
+  --ui-color-secondary-active: var(--ui-color-gray-300);
+  --ui-color-secondary-contrast: var(--ui-color-gray-1200);
+
+  --ui-color-tertiary-hover: var(--ui-color-gray-200);
+  --ui-color-control-surface-hover: var(--ui-color-gray-500);
+  --ui-color-control-surface-active: var(--ui-color-gray-500);
+
+  --ui-color-danger: var(--ui-color-red-500);
+  --ui-color-danger-hover: var(--ui-color-red-600);
+  --ui-color-danger-active: #c70010;
+  --ui-color-danger-contrast: #ffffff;
+  --ui-color-danger-bg: rgb(from var(--ui-color-red-500) r g b / 0.08);
+
+  --ui-color-success: var(--ui-color-green-500);
+  --ui-color-success-bg: rgb(from var(--ui-color-green-500) r g b / 0.08);
+  --ui-color-success-border: rgb(from var(--ui-color-green-500) r g b / 0.4);
+
+  --ui-color-text-primary: var(--ui-color-gray-1200);
+  --ui-color-text-secondary: var(--ui-color-gray-1100);
+  --ui-color-text-muted: var(--ui-color-gray-1000);
+  --ui-color-text-disabled: var(--ui-color-gray-700);
+
+  --ui-color-border-default: rgb(from var(--ui-color-black) r g b / 0.1);
+  --ui-color-border-strong: rgb(from var(--ui-color-black) r g b / 0.2);
+  --ui-color-slider-track: var(--ui-color-gray-500);
+
+  --ui-color-surface-secondary: var(--ui-color-gray-100);
+  --ui-color-surface-tertiary: var(--ui-color-gray-300);
+  --ui-color-surface-elevated: var(--ui-color-gray-50);
+  --ui-color-overlay: rgba(0, 0, 0, 0.4);
+
+  --ui-shadow-sm:
+    0px 0px 0px 1px rgb(from var(--ui-color-black) r g b / 0.06),
+    0px 1px 2px -1px rgb(from var(--ui-color-black) r g b / 0.06),
+    0px 2px 4px 0px rgb(from var(--ui-color-black) r g b / 0.04);
+  --ui-shadow-md:
+    0px 0px 0px 1px rgb(from var(--ui-color-black) r g b / 0.06),
+    0px 2px 4px -1px rgb(from var(--ui-color-black) r g b / 0.06),
+    0px 4px 8px -1px rgb(from var(--ui-color-black) r g b / 0.06);
+  --ui-shadow-lg:
+    0px 0px 0px 1px rgb(from var(--ui-color-black) r g b / 0.04),
+    0px 4px 8px -2px rgb(from var(--ui-color-black) r g b / 0.06),
+    0px 8px 16px -4px rgb(from var(--ui-color-black) r g b / 0.08);
+  --ui-shadow-xl:
+    0px 0px 0px 1px rgb(from var(--ui-color-black) r g b / 0.04),
+    0px 8px 16px -4px rgb(from var(--ui-color-black) r g b / 0.08),
+    0px 16px 32px -8px rgb(from var(--ui-color-black) r g b / 0.1);
+  --ui-shadow-custom: var(--ui-shadow-sm);
+  --ui-shadow-custom-hover: var(--ui-shadow-md);
+  --ui-shadow-focus: 0 0 0 2px #fff, 0 0 0 4px #0969da;
+  --ui-color-border-outlined: rgb(from var(--ui-color-black) r g b / 0.15);
+  --ui-color-border-outlined-hover: rgb(from var(--ui-color-black) r g b / 0.22);
+}
+
+.dark {
+  --ui-color-background: #0a0a0a;
+
+  --ui-color-border-default: rgb(from var(--ui-color-white) r g b / 0.07);
+  --ui-color-border-strong: rgb(from var(--ui-color-white) r g b / 0.2);
+
+  --ui-color-surface-tertiary: var(--ui-color-gray-200);
+  --ui-color-surface-elevated: var(--ui-color-gray-100);
+  --ui-color-overlay: rgba(0, 0, 0, 0.7);
+
+  --ui-shadow-sm: 0 0 0 1px rgb(from var(--ui-color-white) r g b / 0.1);
+  --ui-shadow-md: 0 0 0 1px rgb(from var(--ui-color-white) r g b / 0.15);
+  --ui-shadow-lg: 0 0 0 1px rgb(from var(--ui-color-white) r g b / 0.1);
+  --ui-shadow-xl: 0 0 0 1px rgb(from var(--ui-color-white) r g b / 0.1);
+  --ui-shadow-focus: 0 0 0 2px #0b0b0b, 0 0 0 4px #58a6ff;
+  --ui-color-border-outlined: rgb(from var(--ui-color-white) r g b / 0.12);
+  --ui-color-border-outlined-hover: rgb(from var(--ui-color-white) r g b / 0.2);
+}

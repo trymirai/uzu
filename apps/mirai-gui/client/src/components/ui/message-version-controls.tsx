@@ -1,0 +1,79 @@
+import React from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { twMerge } from "tailwind-merge";
+
+type MessageVersionControlsProps = {
+  currentVersion: number;
+  totalVersions: number;
+  onVersionChange: (versionIndex: number) => void;
+  className?: string;
+  disabledPrevious?: boolean;
+  currentModelName?: string;
+};
+
+export const MessageVersionControls: React.FC<MessageVersionControlsProps> = ({
+  currentVersion,
+  totalVersions,
+  onVersionChange,
+  className,
+  disabledPrevious,
+  currentModelName,
+}) => {
+  const canGoPrevious = currentVersion > 0 && !disabledPrevious;
+  const canGoNext = currentVersion < totalVersions - 1;
+
+  const handlePrevious = () => {
+    if (canGoPrevious) {
+      onVersionChange(currentVersion - 1);
+    }
+  };
+
+  const handleNext = () => {
+    if (canGoNext) {
+      onVersionChange(currentVersion + 1);
+    }
+  };
+
+  if (totalVersions <= 1) {
+    return null;
+  }
+
+  return (
+    <div className={twMerge("flex items-center gap-1.5", className)}>
+      <button
+        onClick={handlePrevious}
+        disabled={!canGoPrevious}
+        className={twMerge(
+          "p-1 rounded transition-colors",
+          canGoPrevious
+            ? "text-label-muted dark:text-label-muted-dark hover:text-label-title dark:hover:text-label-title-dark"
+            : "text-label-muted/50 dark:text-label-muted-dark/50 cursor-not-allowed",
+        )}
+      >
+        <ChevronLeft className="w-4 h-4" />
+      </button>
+
+      <span className="text-sm text-label-muted dark:text-label-muted-dark">
+        {currentVersion + 1}/{totalVersions}
+      </span>
+      {currentModelName && (
+        <span className="text-[13px] leading-[130%] text-label-muted dark:text-label-muted-dark truncate max-w-[220px]">
+          {currentModelName}
+        </span>
+      )}
+
+      <button
+        onClick={handleNext}
+        disabled={!canGoNext}
+        className={twMerge(
+          "p-1 rounded transition-colors",
+          canGoNext
+            ? "text-label-muted dark:text-label-muted-dark hover:text-label-title dark:hover:text-label-title-dark"
+            : "text-label-muted/50 dark:text-label-muted-dark/50 cursor-not-allowed",
+        )}
+      >
+        <ChevronRight className="w-4 h-4" />
+      </button>
+    </div>
+  );
+};

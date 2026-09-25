@@ -1,0 +1,159 @@
+@font-face {
+  font-family: InterVariable;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/InterVariable.woff2") format("woff2");
+}
+@font-face {
+  font-family: InterVariable;
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/InterVariable-Italic.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/GeistMono-VariableFont_wght.ttf") format("truetype");
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Native scrollbars and form controls must follow the app theme; without
+     this WebKit draws them for the light scheme (black bar on dark lists). */
+  :root {
+    color-scheme: light;
+  }
+  :root.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-bg dark:bg-bg-dark text-label-title dark:text-label-title-dark font-sans;
+    font-family: InterVariable, Inter, system-ui, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  }
+  code,
+  kbd,
+  samp,
+  pre {
+    @apply font-mono;
+  }
+
+  .shiki {
+    --shiki-font-family: theme("fontFamily.mono");
+    font-family: theme("fontFamily.mono");
+    font-variant-ligatures: none;
+  }
+  .shiki code {
+    font-family: inherit;
+  }
+
+  a[data-streamdown="link"] {
+    @apply font-[350] text-blue no-underline hover:underline;
+    font-feature-settings:
+      "liga" 0,
+      "clig" 0;
+  }
+
+  [data-streamdown="code-block"] {
+    @apply my-2 w-full overflow-hidden rounded-[10px] border border-cell-border dark:border-cell-border-dark bg-bg-modal dark:bg-bg-modal-dark;
+  }
+
+  [data-streamdown="code-block-header"] {
+    @apply relative border-b border-cell-border bg-bg-modal px-4 py-2 text-xs text-label-muted dark:border-cell-border-dark dark:bg-bg-modal-dark dark:text-label-muted-dark;
+    padding-right: 2.5rem;
+  }
+
+  [data-streamdown="code-block-header"] > div {
+    @apply absolute right-2 top-2 flex items-center gap-2;
+  }
+
+  [data-streamdown="code-block-header"] [data-streamdown="code-block-copy-button"] {
+    @apply min-w-6 min-h-6;
+  }
+
+  [data-streamdown="code-block-body"] {
+    @apply p-4 text-xs;
+    border-top-width: 0 !important;
+    font-size: 12px !important;
+    line-height: 1rem !important;
+    font-weight: 400;
+    font-variant-ligatures: none;
+    scrollbar-width: thin;
+  }
+
+  [data-streamdown="code-block-body"] code {
+    font-size: inherit;
+    line-height: inherit;
+    font-variant-ligatures: none;
+  }
+
+  [data-streamdown="code-block-body"]::-webkit-scrollbar {
+    @apply w-[6px];
+    height: 6px;
+  }
+
+  [data-streamdown="code-block-body"]::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  [data-streamdown="code-block-body"]::-webkit-scrollbar-thumb {
+    @apply bg-button-border rounded-full;
+  }
+
+  .dark [data-streamdown="code-block-body"]::-webkit-scrollbar-thumb {
+    @apply bg-cell-border-dark;
+  }
+
+  [data-streamdown="code-block-body"] span::before {
+    content: none !important;
+    display: none !important;
+  }
+}
+
+@layer components {
+  .scrollbar-hide {
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .thin-scrollbar {
+    scrollbar-width: thin;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar {
+    @apply w-1.5 h-1.5;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-button-border rounded-full;
+  }
+
+  .dark .thin-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-cell-border-dark;
+  }
+
+  .drag-layer {
+    /* Dragging is handled by data-tauri-drag-region on real containers, so this
+       overlay only needs to stay click-transparent. */
+    pointer-events: none;
+    z-index: 50;
+  }
+  .overlay-button {
+    pointer-events: auto;
+    z-index: 60;
+  }
+}

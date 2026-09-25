@@ -1,0 +1,20 @@
+import type { ReactNode, HTMLAttributes } from "react";
+import { twMerge } from "tailwind-merge";
+
+type CardContainerProps = {
+  children: ReactNode;
+} & HTMLAttributes<HTMLDivElement>;
+
+export function CardContainer({ children, className, ...props }: CardContainerProps) {
+  return (
+    <div
+      className={twMerge(
+        "bg-bg-modal dark:bg-bg-modal-dark border border-cell-border dark:border-cell-border-dark rounded-lg overflow-hidden",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
