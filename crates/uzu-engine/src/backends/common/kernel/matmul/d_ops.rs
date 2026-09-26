@@ -1,10 +1,10 @@
-use crate::backends::common::{Allocation, Backend, gpu_types::gemm::GemmDTransform};
+use crate::backends::common::{Backend, gpu_types::gemm::GemmDTransform};
 
 pub struct MatmulDOps<'a, B: Backend> {
     pub ab_scale: f32,
     pub accumulate: bool,
-    pub bias: Option<&'a Allocation<B>>,
-    pub rht_factors: Option<&'a Allocation<B>>,
+    pub bias: Option<&'a B::GlobalBuffer>,
+    pub rht_factors: Option<&'a B::GlobalBuffer>,
     pub soft_cap: Option<f32>,
 }
 

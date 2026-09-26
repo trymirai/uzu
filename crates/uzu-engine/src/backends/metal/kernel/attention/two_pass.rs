@@ -5,11 +5,12 @@ use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use crate::{
     backends::{
         common::{
-            Allocation, BufferArg, Encoder,
+            Backend, BufferRef, CommandBufferEncoding,
             kernel::{AttentionArguments, AttentionKernelConfig},
         },
         metal::{
             Metal,
+            command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
             kernel::{AttentionTwoPass1MetalKernel, AttentionTwoPass2MetalKernel},
@@ -68,25 +69,32 @@ impl AttentionTwoPass {
         Ok(MutexGuard::map(second, |second| second.as_mut().expect("pass was just initialized")))
     }
 
-    pub fn encode<'a, KT: BufferArg<'a, Metal>, VT: BufferArg<'a, Metal>>(
+    pub fn encode(
         &self,
-        arguments: AttentionArguments<'a, Metal, KT, VT>,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<Allocation<Metal>, MetalError> {
+        arguments: AttentionArguments<
+            '_,
+            Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+        >,
+        command_buffer: &mut MetalCommandBufferEncoding,
+    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let config = self.config;
-        let mut partials = encoder.allocate_scratch_for_shape(
+        let mut partials = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, PARTIAL_BLOCKS, config.head_dim],
             PARTIAL_DATA_TYPE,
         )?;
-        let mut sums = encoder.allocate_scratch_for_shape(
+        let mut sums = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, PARTIAL_BLOCKS],
             PARTIAL_DATA_TYPE,
         )?;
-        let mut maxs = encoder.allocate_scratch_for_shape(
+        let mut maxs = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, PARTIAL_BLOCKS],
             PARTIAL_DATA_TYPE,
         )?;
-        let first = self.get_or_create(encoder.context(), arguments.trie.is_some())?;
+        let first = self.get_or_create(command_buffer.context(), arguments.trie.is_some())?;
         first.encode(
             arguments.queries,
             arguments.keys,
@@ -107,14 +115,22 @@ impl AttentionTwoPass {
             arguments.trie,
             config.sliding_window_size,
             arguments.sinks,
-            encoder,
+            command_buffer,
         );
-        let mut output = encoder.allocate_constant_for_shape(
+        let mut output = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, config.head_dim],
             config.data_type,
         )?;
-        let second = self.get_or_create_second(encoder.context())?;
-        second.encode(&partials, &sums, &maxs, &mut output, config.num_q_heads, arguments.suffix_length, encoder);
+        let second = self.get_or_create_second(command_buffer.context())?;
+        second.encode(
+            &partials,
+            &sums,
+            &maxs,
+            &mut output,
+            config.num_q_heads,
+            arguments.suffix_length,
+            command_buffer,
+        );
         Ok(output)
     }
 }

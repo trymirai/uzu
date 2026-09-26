@@ -8,13 +8,13 @@ use uzu_engine_macros::uzu_bench;
 
 use crate::{
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::TreeUpdateSolveKernel},
+        common::{Backend, CommandBuffer, Context, Kernels, kernel::TreeUpdateSolveKernel},
         metal::Metal,
     },
     data_type::DataType,
     tests::{
         cold_pool::ColdPool,
-        helpers::{alloc_allocation, alloc_allocation_with_data},
+        helpers::{create_buffer, create_buffer_with_data},
         matmul::iter_encode_loop_named,
     },
 };
@@ -53,14 +53,14 @@ const BENCH_SHAPES: &[(usize, usize)] = &[
 ];
 
 struct TreeUpdateSolveBuffers {
-    kh0: Allocation<Metal>,
-    v: Allocation<Metal>,
-    prefix: Allocation<Metal>,
-    beta: Allocation<Metal>,
-    a: Allocation<Metal>,
-    a_inv: Allocation<Metal>,
-    h0_idx: Allocation<Metal>,
-    u: Allocation<Metal>,
+    kh0: <Metal as Backend>::GlobalBuffer,
+    v: <Metal as Backend>::GlobalBuffer,
+    prefix: <Metal as Backend>::GlobalBuffer,
+    beta: <Metal as Backend>::GlobalBuffer,
+    a: <Metal as Backend>::GlobalBuffer,
+    a_inv: <Metal as Backend>::GlobalBuffer,
+    h0_idx: <Metal as Backend>::GlobalBuffer,
+    u: <Metal as Backend>::GlobalBuffer,
 }
 
 fn matrix_value(
@@ -128,7 +128,7 @@ fn make_buffers(
             }
         })
         .collect::<Vec<_>>();
-    let a = alloc_allocation_with_data::<Metal, f32>(context, &a_f32);
+    let a = create_buffer_with_data::<Metal, f32>(context, &a_f32);
     let inv_len = batch_size * NUM_V_HEADS * tree_size.div_ceil(BT) * BT * BT;
     let a_inv = (0..inv_len)
         .map(|i| {
@@ -142,14 +142,14 @@ fn make_buffers(
     let h0_idx = (0..batch_size).map(|i| i as i32).collect::<Vec<_>>();
 
     TreeUpdateSolveBuffers {
-        kh0: alloc_allocation_with_data::<Metal, f32>(context, &kh0),
-        v: alloc_allocation_with_data::<Metal, bf16>(context, &v),
-        prefix: alloc_allocation_with_data::<Metal, f32>(context, &prefix),
-        beta: alloc_allocation_with_data::<Metal, f32>(context, &beta),
+        kh0: create_buffer_with_data::<Metal, f32>(context, &kh0),
+        v: create_buffer_with_data::<Metal, bf16>(context, &v),
+        prefix: create_buffer_with_data::<Metal, f32>(context, &prefix),
+        beta: create_buffer_with_data::<Metal, f32>(context, &beta),
         a,
-        a_inv: alloc_allocation_with_data::<Metal, f32>(context, &a_inv),
-        h0_idx: alloc_allocation_with_data::<Metal, i32>(context, &h0_idx),
-        u: alloc_allocation::<Metal, f32>(context, u_len),
+        a_inv: create_buffer_with_data::<Metal, f32>(context, &a_inv),
+        h0_idx: create_buffer_with_data::<Metal, i32>(context, &h0_idx),
+        u: create_buffer::<Metal, f32>(context, u_len),
     }
 }
 
@@ -196,9 +196,9 @@ fn bench_tree_update_solve(c: &mut Criterion) {
 
             group.throughput(Throughput::Elements((batch_size * tree_size * NUM_V_HEADS * HEAD_V_DIM) as u64));
             group.bench_function(benchmark_id, |bencher| {
-                iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
+                iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |command_buffer| {
                     let buffers = buffers.next_mut();
-                    encode(&kernel, buffers, batch_size, tree_size, encoder);
+                    encode(&kernel, buffers, batch_size, tree_size, command_buffer);
                 });
             });
         }
@@ -212,7 +212,7 @@ fn encode(
     buffers: &mut TreeUpdateSolveBuffers,
     batch_size: usize,
     tree_size: usize,
-    encoder: &mut Encoder<Metal>,
+    command_buffer: &mut <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding,
 ) {
     kernel.encode(
         Some(&buffers.kh0),
@@ -227,6 +227,6 @@ fn encode(
         tree_size as u32,
         NUM_V_HEADS as u32,
         HEAD_V_DIM as u32,
-        encoder,
+        command_buffer,
     );
 }

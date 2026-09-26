@@ -7,13 +7,16 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::ShortConvDecodeKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::ShortConvDecodeKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -45,27 +48,27 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     )
     .expect("Failed to create ShortConvDecodeKernel");
 
-    let in_proj = alloc_allocation_with_data::<B, T>(&context, &input.in_proj);
-    let w = alloc_allocation_with_data::<B, f32>(&context, &input.w);
-    let b = input.b.as_ref().map(|b| alloc_allocation_with_data::<B, f32>(&context, b));
+    let in_proj = create_buffer_with_data::<B, T>(&context, &input.in_proj);
+    let w = create_buffer_with_data::<B, f32>(&context, &input.w);
+    let b = input.b.as_ref().map(|b| create_buffer_with_data::<B, f32>(&context, b));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let mut out = alloc_allocation::<B, T>(&context, out_size);
+    let mut out = create_buffer::<B, T>(&context, out_size);
 
     let state_size = input.model_dim as usize * input.state_stride as usize;
-    let state_allocation_size = state_size.max(1);
+    let state_buffer_size = state_size.max(1);
     let state_data: Vec<T> =
-        input.state.iter().copied().chain(std::iter::repeat(T::zero())).take(state_allocation_size).collect();
+        input.state.iter().copied().chain(std::iter::repeat(T::zero())).take(state_buffer_size).collect();
 
     let mut next_state = if state_in_place {
-        alloc_allocation_with_data::<B, T>(&context, &state_data)
+        create_buffer_with_data::<B, T>(&context, &state_data)
     } else {
-        alloc_allocation::<B, T>(&context, state_allocation_size)
+        create_buffer::<B, T>(&context, state_buffer_size)
     };
 
-    let state = (!state_in_place).then(|| alloc_allocation_with_data::<B, T>(&context, &state_data));
+    let state = (!state_in_place).then(|| create_buffer_with_data::<B, T>(&context, &state_data));
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &in_proj,
         &w,
@@ -78,11 +81,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         input.in_proj_stride,
         input.state_stride,
         input.model_dim,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    (allocation_to_vec(&out), allocation_to_vec(&next_state))
+    (buffer_to_vec(&out), buffer_to_vec(&next_state))
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>(

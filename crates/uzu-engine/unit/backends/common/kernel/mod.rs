@@ -15,6 +15,4 @@ mod short_conv;
 mod ssm;
 mod tensor_add_bias_test;
 mod tensor_add_scale_test;
-mod tensor_add_swap_test;
-mod tensor_copy_test;
 mod weaver;

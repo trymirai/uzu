@@ -13,7 +13,7 @@ use self::{
 use crate::{
     backends::{
         common::{
-            BufferArg, Encoder,
+            BufferMut, BufferRef, CommandBufferEncoding,
             gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
             kernel::{
                 ActivationQuantization,
@@ -24,7 +24,7 @@ use crate::{
                 },
             },
         },
-        metal::{Metal, context::MetalContext, error::MetalError},
+        metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError},
     },
     data_type::DataType,
 };
@@ -218,15 +218,22 @@ impl MatmulKernel for MatmulMetalKernel {
         }
     }
 
-    fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+    fn encode(
         &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
-        encoder: &mut Encoder<Metal>,
+        arguments: MatmulArguments<
+            '_,
+            Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferMut<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+        >,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = match self.select_dispatch(&shape, encoder.context()) {
+        let plan = match self.select_dispatch(&shape, command_buffer.context()) {
             MatmulDispatch::Gemv(gemv) => {
-                return self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from);
+                return self.gemv.encode(arguments, gemv, command_buffer).map_err(MetalError::from);
             },
             MatmulDispatch::Gemm(plan) => plan,
         };
@@ -241,6 +248,6 @@ impl MatmulKernel for MatmulMetalKernel {
                 .into(),
             ));
         }
-        self.gemm.encode_plan(arguments, plan, encoder)
+        self.gemm.encode_plan(arguments, plan, command_buffer)
     }
 }

@@ -2,12 +2,12 @@ use uzu_engine_macros::uzu_test;
 
 use super::QKVNorm;
 use crate::{
-    backends::common::{Backend, Encoder},
+    backends::common::{Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context},
     config::normalization::{NormalizationConfig, UpcastMode},
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation_with_data, allocation_to_vec, create_context, for_each_backend},
+        helpers::{buffer_to_vec, create_buffer_with_data, create_context, for_each_backend},
     },
 };
 
@@ -55,12 +55,12 @@ fn run_key_value_row_stride_test<B: Backend>() {
         }
     }
 
-    let mut key_value = alloc_allocation_with_data::<B, f32>(&context, &input);
-    let mut encoder = Encoder::new(context.as_ref()).expect("failed to create encoder");
-    norm.encode_key_value(&mut key_value, BATCH_SIZE, &mut encoder).expect("failed to encode key/value norm");
-    encoder.end_encoding().submit().wait_until_completed().expect("failed to execute key/value norm");
+    let mut key_value = create_buffer_with_data::<B, f32>(&context, &input);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("failed to create command buffer");
+    norm.encode_key_value(&mut key_value, BATCH_SIZE, &mut command_buffer).expect("failed to encode key/value norm");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("failed to execute key/value norm");
 
-    let output = allocation_to_vec::<B, f32>(&key_value);
+    let output = buffer_to_vec::<B, f32>(&key_value);
     assert_eq_float(&expected, &output, 1e-5, "key/value norm row stride mismatch");
 }
 

@@ -1,5 +1,5 @@
 use crate::{
-    backends::common::{Allocation, Backend, BufferArg, Encoder, Kernels},
+    backends::common::{Backend, BufferRef, CommandBuffer, Kernels},
     data_type::DataType,
     encodable_block::mixer::attention::KVCacheView,
 };
@@ -12,14 +12,18 @@ pub trait AttentionKernel: Sized + Send + Sync {
         config: AttentionKernelConfig,
     ) -> Result<Self, <Self::Backend as Backend>::Error>;
 
-    fn encode<'a, KT, VT>(
+    fn encode(
         &self,
-        arguments: AttentionArguments<'a, Self::Backend, KT, VT>,
-        encoder: &mut Encoder<Self::Backend>,
-    ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error>
-    where
-        KT: BufferArg<'a, Self::Backend>,
-        VT: BufferArg<'a, Self::Backend>;
+        arguments: AttentionArguments<
+            '_,
+            Self::Backend,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+        >,
+        command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<<Self::Backend as Backend>::ScratchBuffer, <Self::Backend as Backend>::Error>;
 }
 
 #[derive(Clone, Copy)]
@@ -35,12 +39,19 @@ pub struct AttentionKernelConfig {
     pub data_type: DataType,
 }
 
-pub struct AttentionArguments<'a, B: Backend, KT: BufferArg<'a, B>, VT: BufferArg<'a, B>> {
-    pub queries: &'a Allocation<B>,
+pub struct AttentionArguments<
+    'a,
+    B: Backend,
+    QT: BufferRef<Backend = B>,
+    TT: BufferRef<Backend = B>,
+    KT: BufferRef<Backend = B>,
+    VT: BufferRef<Backend = B>,
+> {
+    pub queries: QT,
     pub keys: KT,
     pub values: VT,
     pub suffix_length: u32,
-    pub trie: Option<&'a Allocation<B>>,
-    pub sinks: Option<&'a Allocation<B>>,
+    pub trie: Option<TT>,
+    pub sinks: Option<&'a B::GlobalBuffer>,
     pub cache: KVCacheView,
 }

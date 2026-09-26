@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, NormalizationKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
@@ -38,10 +38,10 @@ pub enum NormalizationNewError<B: Backend> {
 pub struct Normalization<B: Backend> {
     epsilon: f32,
     scale_offset: Option<f32>,
-    scales: Option<Allocation<B>>,
-    biases: Option<Allocation<B>>,
+    scales: Option<B::GlobalBuffer>,
+    biases: Option<B::GlobalBuffer>,
     element_count: u32,
-    hadamard_factors: Option<Allocation<B>>,
+    hadamard_factors: Option<B::GlobalBuffer>,
     post_layer_scalar_value: f32,
     data_type: DataType,
     kernel: <B::Kernels as Kernels>::NormalizationKernel,
@@ -50,7 +50,7 @@ pub struct Normalization<B: Backend> {
 impl<B: Backend> Normalization<B> {
     pub fn new(
         element_count: u32,
-        hadamard_factors: Option<Allocation<B>>,
+        hadamard_factors: Option<B::GlobalBuffer>,
         shortcut_mode: ShortcutMode,
         post_layer_scalar: PostLayerScalar,
         data_type: DataType,
@@ -66,11 +66,11 @@ impl<B: Backend> Normalization<B> {
 
         let scales = config
             .has_scale
-            .then(|| parameter_tree.leaf("scales")?.validate(&[element_count], DataType::F32)?.read_allocation())
+            .then(|| parameter_tree.leaf("scales")?.validate(&[element_count], DataType::F32)?.read_buffer())
             .transpose()?;
         let biases = config
             .has_biases
-            .then(|| parameter_tree.leaf("biases")?.validate(&[element_count], DataType::F32)?.read_allocation())
+            .then(|| parameter_tree.leaf("biases")?.validate(&[element_count], DataType::F32)?.read_buffer())
             .transpose()?;
 
         let (scale_residual_sum, scale_output, post_layer_scalar_value) = match post_layer_scalar {
@@ -113,20 +113,20 @@ impl<B: Backend> Normalization<B> {
 
     pub fn encode(
         &self,
-        input: &Allocation<B>,
+        input: impl BufferRef<Backend = B>,
         row_offset: u32,
         row_count: u32,
-        shortcut: Option<&mut Allocation<B>>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("normalization");
+        shortcut: Option<impl BufferMut<Backend = B>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        command_buffer.push_debug_group("normalization");
 
         let row_size = size_for_shape(&[self.element_count], self.data_type);
         let row_offset_bytes = row_offset as usize * row_size;
-        let shortcut = shortcut.map(|shortcut| (shortcut, row_offset_bytes));
-        let mut output = encoder.allocate_scratch_for_shape(&[row_count, self.element_count], self.data_type)?;
+        let shortcut = shortcut.map(|shortcut| shortcut.subrange_mut(row_offset_bytes..));
+        let mut output = command_buffer.allocate_scratch_for_shape(&[row_count, self.element_count], self.data_type)?;
         self.kernel.encode(
-            Some((input, row_offset_bytes)),
+            Some(input.subrange(row_offset_bytes..)),
             self.scales.as_ref(),
             self.biases.as_ref(),
             &mut output,
@@ -137,10 +137,10 @@ impl<B: Backend> Normalization<B> {
             self.epsilon,
             self.scale_offset.unwrap_or(0.0),
             self.post_layer_scalar_value,
-            encoder,
+            command_buffer,
         );
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

@@ -4,10 +4,13 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::SeparableCausalConvKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::SeparableCausalConvKernel,
+        },
         cpu::Cpu,
     },
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
 };
 
 fn run_kernel<B: Backend>() -> Vec<bf16> {
@@ -40,25 +43,25 @@ fn run_kernel<B: Backend>() -> Vec<bf16> {
     )
     .expect("create separable causal convolution kernel");
 
-    let input = alloc_allocation_with_data::<B, bf16>(&context, &input);
-    let coefficient_deltas = alloc_allocation_with_data::<B, bf16>(&context, &coefficient_deltas);
-    let weights = alloc_allocation_with_data::<B, bf16>(&context, &weights);
-    let mut output = alloc_allocation::<B, bf16>(&context, (SEQUENCE_LENGTH * MODEL_DIM) as usize);
+    let input = create_buffer_with_data::<B, bf16>(&context, &input);
+    let coefficient_deltas = create_buffer_with_data::<B, bf16>(&context, &coefficient_deltas);
+    let weights = create_buffer_with_data::<B, bf16>(&context, &weights);
+    let mut output = create_buffer::<B, bf16>(&context, (SEQUENCE_LENGTH * MODEL_DIM) as usize);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     kernel.encode(
         &input,
         &coefficient_deltas,
         &weights,
-        None::<&Allocation<B>>,
+        None::<&B::GlobalBuffer>,
         &mut output,
         SEQUENCE_LENGTH,
         COEFFICIENT_ROW_STRIDE,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec::<B, bf16>(&output)
+    buffer_to_vec::<B, bf16>(&output)
 }
 
 #[uzu_test]

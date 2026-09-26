@@ -7,13 +7,16 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::PoolingMeanKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::PoolingMeanKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -51,14 +54,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let output_len = (input.batch_size * input.hidden_dim) as usize;
 
-    let input_allocation = alloc_allocation_with_data::<B, T>(&context, &input.input);
-    let mut output = alloc_allocation::<B, T>(&context, output_len);
+    let input_buffer = create_buffer_with_data::<B, T>(&context, &input.input);
+    let mut output = create_buffer::<B, T>(&context, output_len);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(&input_allocation, &mut output, input.seq_len, input.hidden_dim, input.batch_size, &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    kernel.encode(&input_buffer, &mut output, input.seq_len, input.hidden_dim, input.batch_size, &mut command_buffer);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec(&output)
+    buffer_to_vec(&output)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(

@@ -8,7 +8,10 @@ use std::{
 use criterion::Bencher;
 
 use super::super::env_vars;
-use crate::backends::common::{Backend, Context, Encoder};
+use crate::backends::common::{
+    Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+    CommandBufferPending, Context,
+};
 
 static CAPTURE_TAKEN: AtomicBool = AtomicBool::new(false);
 
@@ -46,9 +49,9 @@ pub fn iter_encode_loop<B: Backend, F>(
     bencher: &mut Bencher,
     mut encode: F,
 ) where
-    F: FnMut(&mut Encoder<B>),
+    F: FnMut(&mut <B::CommandBuffer as CommandBuffer>::Encoding),
 {
-    iter_encode_loop_named(context, bencher, "unnamed_benchmark", |encoder| encode(encoder));
+    iter_encode_loop_named::<B, _>(context, bencher, "unnamed_benchmark", |command_buffer| encode(command_buffer));
 }
 
 pub fn iter_encode_loop_named<B: Backend, F>(
@@ -57,15 +60,15 @@ pub fn iter_encode_loop_named<B: Backend, F>(
     benchmark_path: &str,
     mut encode: F,
 ) where
-    F: FnMut(&mut Encoder<B>),
+    F: FnMut(&mut <B::CommandBuffer as CommandBuffer>::Encoding),
 {
     bencher.iter_custom(|n_iters| {
         let capture = start_benchmark_capture::<B>(context, benchmark_path);
-        let mut encoder = Encoder::<B>::new(context).unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None).unwrap();
         for _ in 0..n_iters {
-            encode(&mut encoder);
+            encode(&mut command_buffer);
         }
-        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         if capture {
             context.stop_capture().expect("failed to stop benchmark GPU capture");
         }

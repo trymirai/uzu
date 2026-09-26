@@ -32,8 +32,6 @@ pub struct LanguageModel<B: Backend> {
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
-    /// The literal text the model emits between its reasoning and its final
-    /// answer (e.g. "</think>"); None when the model does not separate them.
     end_of_thinking_tag: Option<String>,
     tokenizer: Arc<Tokenizer>,
     #[cfg(grammar)]

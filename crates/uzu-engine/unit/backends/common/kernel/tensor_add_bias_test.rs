@@ -6,8 +6,11 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddBiasKernel},
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+        kernel::TensorAddBiasKernel,
+    },
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -67,25 +70,25 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     .expect("Failed to create TensorAddBiasKernel");
 
     let size = input.length as usize;
-    let input_allocation = (!in_place).then(|| alloc_allocation_with_data::<B, T>(&context, &input.input));
-    let bias_allocation = alloc_allocation_with_data::<B, T>(&context, &input.bias);
-    let mut output_allocation = match in_place {
-        true => alloc_allocation_with_data::<B, T>(&context, &input.output),
-        false => alloc_allocation::<B, T>(&context, size),
+    let input_buffer = (!in_place).then(|| create_buffer_with_data::<B, T>(&context, &input.input));
+    let bias_buffer = create_buffer_with_data::<B, T>(&context, &input.bias);
+    let mut output_buffer = match in_place {
+        true => create_buffer_with_data::<B, T>(&context, &input.output),
+        false => create_buffer::<B, T>(&context, size),
     };
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
-        input_allocation.as_ref(),
-        &bias_allocation,
-        &mut output_allocation,
+        input_buffer.as_ref(),
+        &bias_buffer,
+        &mut output_buffer,
         input.num_cols,
         input.length,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec::<B, T>(&output_allocation)
+    buffer_to_vec::<B, T>(&output_buffer)
 }
 
 fn test<T: ArrayElement + Float + Debug>(in_place: bool) {

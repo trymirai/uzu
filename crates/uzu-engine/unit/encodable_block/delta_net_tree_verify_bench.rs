@@ -13,7 +13,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
-    tests::{helpers::alloc_allocation_with_data, matmul::iter_encode_loop_named},
+    tests::{helpers::create_buffer_with_data, matmul::iter_encode_loop_named},
 };
 
 #[uzu_bench]
@@ -33,32 +33,32 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
     let tree_verify =
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetTreeVerify::new(context.as_ref(), &arguments).unwrap();
     eprintln!("GDN tree verification PSO construction: {:.2} ms", started.elapsed().as_secs_f64() * 1e3);
-    let h0 = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.001; V_HEADS * HEAD_DIM * HEAD_DIM]);
+    let h0 = create_buffer_with_data::<Metal, f32>(&context, &vec![0.001; V_HEADS * HEAD_DIM * HEAD_DIM]);
     let mut group = c.benchmark_group("Metal/Kernel/GDNTreeVerify");
     group.sample_size(20).warm_up_time(Duration::from_millis(300)).measurement_time(Duration::from_secs(1));
 
     for tree_size in [32usize, 49, 64, 128] {
-        let q = alloc_allocation_with_data::<Metal, bf16>(
+        let q = create_buffer_with_data::<Metal, bf16>(
             &context,
             &vec![bf16::from_f32(0.01); tree_size * K_HEADS * HEAD_DIM],
         );
-        let k = alloc_allocation_with_data::<Metal, bf16>(
+        let k = create_buffer_with_data::<Metal, bf16>(
             &context,
             &vec![bf16::from_f32(0.02); tree_size * K_HEADS * HEAD_DIM],
         );
-        let v = alloc_allocation_with_data::<Metal, bf16>(
+        let v = create_buffer_with_data::<Metal, bf16>(
             &context,
             &vec![bf16::from_f32(0.03); tree_size * V_HEADS * HEAD_DIM],
         );
-        let trie = alloc_allocation_with_data::<Metal, u32>(
+        let trie = create_buffer_with_data::<Metal, u32>(
             &context,
             &(0..tree_size as u32).flat_map(|node| [node, tree_size as u32 - 1, node]).collect::<Vec<_>>(),
         );
-        let log_decay = alloc_allocation_with_data::<Metal, f32>(&context, &vec![-0.01; tree_size * V_HEADS]);
-        let beta = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.2; tree_size * V_HEADS]);
+        let log_decay = create_buffer_with_data::<Metal, f32>(&context, &vec![-0.01; tree_size * V_HEADS]);
+        let beta = create_buffer_with_data::<Metal, f32>(&context, &vec![0.2; tree_size * V_HEADS]);
         let benchmark_path = format!("Metal/Kernel/GDNTreeVerify/T{tree_size}");
         group.bench_function(format!("T{tree_size}"), |bencher| {
-            iter_encode_loop_named(context.as_ref(), bencher, &benchmark_path, |encoder| {
+            iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |command_buffer| {
                 tree_verify
                     .encode(
                         TreeVerifyEncodeArguments {
@@ -71,7 +71,7 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
                             h0: &h0,
                             tree_size: tree_size as u32,
                         },
-                        encoder,
+                        command_buffer,
                     )
                     .unwrap();
             })

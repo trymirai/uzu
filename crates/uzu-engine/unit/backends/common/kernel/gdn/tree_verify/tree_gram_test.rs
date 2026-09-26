@@ -7,14 +7,17 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::BuildTreeGramKernel,
+        },
         cpu::Cpu,
         metal::Metal,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -75,23 +78,23 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     let a_len = BATCH_SIZE * VALUE_HEADS * num_blocks * num_blocks.div_ceil(2) * 16 * 32;
     let a_inv_len = BATCH_SIZE * VALUE_HEADS * num_blocks * 16 * 16;
     let kh0_len = BATCH_SIZE * tree_size * VALUE_HEADS * HEAD_V_DIM;
-    let q = alloc_allocation_with_data::<B, T>(&context, q);
-    let k = alloc_allocation_with_data::<B, T>(&context, k);
-    let trie = alloc_allocation_with_data::<B, u32>(&context, trie);
-    let prefix = alloc_allocation_with_data::<B, f32>(&context, prefix);
-    let beta = alloc_allocation_with_data::<B, f32>(&context, beta);
-    let h0 = alloc_allocation_with_data::<B, f32>(&context, h0);
-    let h0_idx = alloc_allocation_with_data::<B, i32>(&context, h0_idx);
+    let q = create_buffer_with_data::<B, T>(&context, q);
+    let k = create_buffer_with_data::<B, T>(&context, k);
+    let trie = create_buffer_with_data::<B, u32>(&context, trie);
+    let prefix = create_buffer_with_data::<B, f32>(&context, prefix);
+    let beta = create_buffer_with_data::<B, f32>(&context, beta);
+    let h0 = create_buffer_with_data::<B, f32>(&context, h0);
+    let h0_idx = create_buffer_with_data::<B, i32>(&context, h0_idx);
     // The GPU only writes packed-A tiles touching the block lower triangle;
     // zero-init so CPU and GPU buffers stay comparable elsewhere.
-    let mut a_packed = alloc_allocation_with_data::<B, f32>(&context, &vec![0.0f32; a_len]);
-    let mut qkd = alloc_allocation::<B, f32>(&context, output_len);
-    let mut a_inv = alloc_allocation::<B, f32>(&context, a_inv_len);
+    let mut a_packed = create_buffer_with_data::<B, f32>(&context, &vec![0.0f32; a_len]);
+    let mut qkd = create_buffer::<B, f32>(&context, output_len);
+    let mut a_inv = create_buffer::<B, f32>(&context, a_inv_len);
     // kh0 is only written for batches with h0_idx >= 0; zero-init so CPU and GPU
     // outputs stay comparable on the skipped batch.
-    let mut kh0 = alloc_allocation_with_data::<B, f32>(&context, &vec![0.0f32; kh0_len]);
+    let mut kh0 = create_buffer_with_data::<B, f32>(&context, &vec![0.0f32; kh0_len]);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &q,
         &k,
@@ -111,11 +114,11 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         VALUE_HEADS as u32,
         HEAD_K_DIM as u32,
         HEAD_V_DIM as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    (allocation_to_vec(&a_packed), allocation_to_vec(&qkd), allocation_to_vec(&a_inv), allocation_to_vec(&kh0))
+    (buffer_to_vec(&a_packed), buffer_to_vec(&qkd), buffer_to_vec(&a_inv), buffer_to_vec(&kh0))
 }
 
 fn check_type<T: ArrayElement + Float>(

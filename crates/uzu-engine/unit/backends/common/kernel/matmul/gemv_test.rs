@@ -9,7 +9,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder,
+            Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::QuantizationMethod,
             kernel::{
                 Kernels,
@@ -20,7 +20,7 @@ use crate::{
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
         matmul::{QuantBuffers, QuantInput},
     },
 };
@@ -63,21 +63,21 @@ fn get_test_data<T: ArrayElement + Float>(
 }
 
 // Encode one GEMV (dense, or a per-row B-row gather when `gather_indices` is set) and copy out.
-fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
+fn run_gemv<B: Backend, T: ArrayElement + Float>(
     context: &B::Context,
-    a: &'a Allocation<B>,
-    b: MatmulB<'a, B>,
-    gather_indices: Option<&'a Allocation<B>>,
+    a: impl BufferRef<Backend = B>,
+    b: MatmulB<impl BufferRef<Backend = B>>,
+    gather_indices: Option<impl BufferRef<Backend = B>>,
     m: usize,
     n_out: usize,
     k: usize,
     soft_cap: Option<f32>,
 ) -> Vec<T> {
-    let mut d = alloc_allocation::<B, T>(context, m * n_out);
+    let mut d = create_buffer::<B, T>(context, m * n_out);
     let mut kernel =
         <B::Kernels as Kernels>::MatmulKernel::new(context, T::data_type(), T::data_type(), T::data_type())
             .expect("MatmulKernel");
-    let mut encoder = Encoder::new(context).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     kernel
         .encode(
             MatmulArguments {
@@ -98,18 +98,18 @@ fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
                 n: n_out as u32,
                 k: k as u32,
             },
-            &mut encoder,
+            &mut command_buffer,
         )
         .expect("encode failed");
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec::<B, T>(&d)
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec::<B, T>(&d)
 }
 
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
-    let a = alloc_allocation_with_data::<B, T>(&context, &input.a);
-    let weights = alloc_allocation_with_data::<B, T>(&context, &input.b);
-    let ids = input.ids.as_ref().map(|ids| alloc_allocation_with_data::<B, u32>(&context, ids));
+    let a = create_buffer_with_data::<B, T>(&context, &input.a);
+    let weights = create_buffer_with_data::<B, T>(&context, &input.b);
+    let ids = input.ids.as_ref().map(|ids| create_buffer_with_data::<B, u32>(&context, ids));
     run_gemv::<B, T>(
         &context,
         &a,
@@ -172,7 +172,7 @@ fn group_major_gemv_bf16(
         &context,
         &buffers.x,
         buffers.matmul_b(&input),
-        None,
+        None::<&<Metal as Backend>::GlobalBuffer>,
         1,
         input.n as usize,
         input.k as usize,
@@ -270,10 +270,10 @@ fn quant_gather_case(
     check_gather!(m, vocab, ids, ids_per_row, eps, |B| {
         let context = <B as Backend>::Context::new().expect("context");
         let buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
-        let ids_alloc = alloc_allocation_with_data::<B, u32>(&context, &ids);
+        let ids_alloc = create_buffer_with_data::<B, u32>(&context, &ids);
         let b = || buffers.matmul_b(&input);
         (
-            run_gemv::<B, bf16>(&context, &buffers.x, b(), None, m, vocab, k, None),
+            run_gemv::<B, bf16>(&context, &buffers.x, b(), None::<&<B as Backend>::GlobalBuffer>, m, vocab, k, None),
             run_gemv::<B, bf16>(&context, &buffers.x, b(), Some(&ids_alloc), m, ids_per_row, k, None),
         )
     });

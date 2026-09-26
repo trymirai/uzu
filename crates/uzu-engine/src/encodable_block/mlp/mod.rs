@@ -8,7 +8,7 @@ pub use moe::{MoeBlock, MoeBlockError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Backend, CommandBuffer},
     config::mlp::AnyMLPConfig,
     data_type::DataType,
     encodable_block::linear::{Linear, LinearBlockError},
@@ -18,10 +18,10 @@ use crate::{
 pub trait Mlp<B: Backend>: Send + Sync {
     fn encode(
         &self,
-        input: Allocation<B>,
+        input: B::ScratchBuffer,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error>;
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error>;
 }
 
 #[derive(Debug, Error)]
@@ -42,7 +42,7 @@ impl<B: Backend> dyn Mlp<B> {
         context: &B::Context,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
-    ) -> Result<(Box<dyn Mlp<B>>, Option<Allocation<B>>), MlpBlockError<B>> {
+    ) -> Result<(Box<dyn Mlp<B>>, Option<B::GlobalBuffer>), MlpBlockError<B>> {
         match config {
             AnyMLPConfig::DenseMLPConfig(dense_config) => {
                 let (up_projection, up_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(

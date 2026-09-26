@@ -9,7 +9,7 @@ use super::{
 use crate::{
     backends::{
         common::{
-            Allocation, BufferArg, Encoder,
+            Backend, BufferMut, BufferRef, CommandBufferEncoding,
             gpu_types::{
                 GemmParams,
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform},
@@ -24,6 +24,7 @@ use crate::{
         },
         metal::{
             Metal,
+            command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
             kernel::{GemmMetalKernel, GemmSplitKReduceMetalKernel, TensorAddBiasMetalKernel},
@@ -134,25 +135,39 @@ impl GemmKernel {
     }
 
     #[cfg(test)]
-    pub fn encode_with_engine<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+    pub fn encode_with_engine(
         &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
+        arguments: MatmulArguments<
+            '_,
+            Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferMut<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+        >,
         engine: GemmEngine,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = self.select_plan_for_engine(&shape, engine, encoder.context())?;
-        self.encode_plan(arguments, plan, encoder)
+        let plan = self.select_plan_for_engine(&shape, engine, command_buffer.context())?;
+        self.encode_plan(arguments, plan, command_buffer)
     }
 
-    pub fn encode_plan<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+    pub fn encode_plan(
         &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
+        arguments: MatmulArguments<
+            '_,
+            Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferMut<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+        >,
         plan: GemmPlan,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        self.problem(shape, encoder.context())
+        self.problem(shape, command_buffer.context())
             .validate_engine(plan.engine)
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))?;
 
@@ -178,7 +193,7 @@ impl GemmKernel {
             b,
             b_leading_dimension,
             b_transpose,
-            d,
+            mut d,
             m,
             n,
             k,
@@ -234,10 +249,10 @@ impl GemmKernel {
                             offset: a_offset,
                         },
                         weights,
-                        None,
-                        None,
-                        None,
-                        &mut *d,
+                        None::<&<Metal as Backend>::GlobalBuffer>,
+                        None::<&<Metal as Backend>::GlobalBuffer>,
+                        None::<&<Metal as Backend>::GlobalBuffer>,
+                        d,
                         ab_scale,
                         None,
                         None,
@@ -246,7 +261,7 @@ impl GemmKernel {
                         output_transform,
                         output_bias,
                         rht_factors,
-                        encoder,
+                        command_buffer,
                     );
                 }
 
@@ -282,24 +297,24 @@ impl GemmKernel {
                     GemmAPrologueKind::FullPrecision,
                     None,
                 )?;
-                let kernel = self.get_or_create(encoder.context(), specialization)?;
+                let kernel = self.get_or_create(command_buffer.context(), specialization)?;
                 kernel.encode(
-                    Some((a, a_offset)),
+                    Some(a.subrange(a_offset..)),
                     weights,
-                    &mut *d,
-                    None::<&Allocation<Metal>>,
-                    None::<&Allocation<Metal>>,
-                    None::<&Allocation<Metal>>,
+                    d,
+                    None::<&<Metal as Backend>::GlobalBuffer>,
+                    None::<&<Metal as Backend>::GlobalBuffer>,
+                    None::<&<Metal as Backend>::GlobalBuffer>,
                     output_bias,
                     rht_factors,
-                    None::<&Allocation<Metal>>,
-                    None::<&Allocation<Metal>>,
-                    None::<&Allocation<Metal>>,
+                    None::<&<Metal as Backend>::ScratchBuffer>,
+                    None::<&<Metal as Backend>::ScratchBuffer>,
+                    None::<&<Metal as Backend>::ScratchBuffer>,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
                     1,
-                    encoder,
+                    command_buffer,
                 );
                 return Ok(());
             },
@@ -310,7 +325,7 @@ impl GemmKernel {
             MatmulA::FullPrecision {
                 values,
                 offset,
-            } => (Some((*values, *offset)), None, None, None, None),
+            } => (Some(values.subrange(*offset..)), None, None, None, None),
             MatmulA::Int8Symmetric {
                 values,
                 scales: activation_scales,
@@ -358,7 +373,7 @@ impl GemmKernel {
                 Some(quantized.scales),
                 quantized.biases(),
                 quantized.zero_points(),
-                &mut *d,
+                d.reborrow(),
                 ab_scale,
                 Some(scale_strides),
                 Some(zero_point_strides),
@@ -367,7 +382,7 @@ impl GemmKernel {
                 output_transform,
                 output_bias,
                 rht_factors,
-                encoder,
+                command_buffer,
             )?;
         } else {
             let specialization = GemmSpecialization::from_plan(
@@ -379,11 +394,11 @@ impl GemmKernel {
                 a_prologue,
                 a_group_size,
             )?;
-            let kernel = self.get_or_create(encoder.context(), specialization)?;
+            let kernel = self.get_or_create(command_buffer.context(), specialization)?;
             kernel.encode(
                 a_full_precision,
                 quantized.codes,
-                &mut *d,
+                d.reborrow(),
                 Some(quantized.scales),
                 quantized.biases(),
                 quantized.zero_points(),
@@ -396,36 +411,35 @@ impl GemmKernel {
                 group_count_x,
                 group_count_y,
                 1,
-                encoder,
+                command_buffer,
             );
         }
 
         if let Some(bias) = bias_after_rht {
             let output_length = m.checked_mul(n).expect("GEMM output length must fit in u32");
-            self.bias_add.encode(None::<&Allocation<Metal>>, bias, &mut *d, n, output_length, encoder);
+            self.bias_add.encode(None::<&<Metal as Backend>::ScratchBuffer>, bias, d, n, output_length, command_buffer);
         }
 
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn encode_split_k<'a, 'b, WB: BufferArg<'b, Metal>>(
+    fn encode_split_k(
         &mut self,
-        a: MatmulA<'a, Metal>,
-        weights: WB,
-        scales: Option<&Allocation<Metal>>,
-        biases: Option<&Allocation<Metal>>,
-        zero_points: Option<&Allocation<Metal>>,
-        d: &mut Allocation<Metal>,
+        a: MatmulA<impl BufferRef<Backend = Metal>>,
+        weights: impl BufferRef<Backend = Metal>,
+        scales: Option<impl BufferRef<Backend = Metal>>,
+        biases: Option<impl BufferRef<Backend = Metal>>,
+        zero_points: Option<impl BufferRef<Backend = Metal>>,
+        mut d: impl BufferMut<Backend = Metal>,
         ab_scale: f32,
         scale_strides: Option<QuantParamsStrides>,
         zero_point_strides: Option<QuantParamsStrides>,
         shape: MatmulShape,
         plan: GemmPlan,
         output_transform: GemmDTransform,
-        output_bias: Option<&Allocation<Metal>>,
-        rht_factors: Option<&Allocation<Metal>>,
-        encoder: &mut Encoder<Metal>,
+        output_bias: Option<impl BufferRef<Backend = Metal>>,
+        rht_factors: Option<impl BufferRef<Backend = Metal>>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let MatmulShape {
             m,
@@ -437,7 +451,7 @@ impl GemmKernel {
             MatmulA::FullPrecision {
                 values,
                 offset,
-            } => (Some((values, offset)), None, None, None, GemmAPrologueKind::FullPrecision, None),
+            } => (Some(values.subrange(offset..)), None, None, None, GemmAPrologueKind::FullPrecision, None),
             MatmulA::Int8Symmetric {
                 values,
                 scales,
@@ -468,7 +482,7 @@ impl GemmKernel {
 
         let elem = (m as usize) * (n as usize);
         let slice_bytes = elem * self.output_data_type.size_in_bytes();
-        let mut temp = encoder.allocate_scratch(split_k as usize * slice_bytes)?;
+        let mut temp = command_buffer.allocate_scratch(split_k as usize * slice_bytes)?;
         let scale_strides = scale_strides.unwrap_or_default();
         let zero_point_strides = zero_point_strides.unwrap_or_default();
 
@@ -489,7 +503,7 @@ impl GemmKernel {
             zero_point_output_stride: zero_point_strides.output_stride,
             zero_point_group_stride: zero_point_strides.group_stride,
         };
-        let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
+        let part_kernel = self.get_or_create(command_buffer.context(), part_spec)?;
         part_kernel.encode(
             a_full_precision,
             weights,
@@ -497,8 +511,8 @@ impl GemmKernel {
             scales,
             biases,
             zero_points,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
+            None::<&<Metal as Backend>::GlobalBuffer>,
+            None::<&<Metal as Backend>::GlobalBuffer>,
             a_int8,
             a_scales,
             a_group_sums,
@@ -506,7 +520,7 @@ impl GemmKernel {
             base_gx,
             base_gy,
             split_k,
-            encoder,
+            command_buffer,
         );
 
         debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
@@ -523,13 +537,13 @@ impl GemmKernel {
         } else {
             None
         };
-        let reduce = self.get_or_create_split_k_reduce(encoder.context(), reduce_transform)?;
-        reduce.encode((&temp, 0usize), &mut *d, bias_arg, elem as u32, split_k, group_count, n, scale_arg, encoder);
+        let reduce = self.get_or_create_split_k_reduce(command_buffer.context(), reduce_transform)?;
+        reduce.encode(&temp, d.reborrow(), bias_arg, elem as u32, split_k, group_count, n, scale_arg, command_buffer);
 
         if output_transform.contains(GemmDTransform::RHT)
             && let Some(factors) = rht_factors
         {
-            self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, encoder);
+            self.output_rht.encode_fp_in_place(d, factors, m, n, command_buffer);
         }
         Ok(())
     }

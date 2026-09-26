@@ -3,13 +3,13 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::{
         common::{
-            Backend, Encoder, Kernels,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
             gpu_types::weaver::{FrontierIdx, MetadataIdx, TreeIdx},
             kernel::{WeaverFrontierInsertChildrenKernel, WeaverFrontierSelectKernel},
         },
         cpu::Cpu,
     },
-    tests::helpers::{alloc_allocation_with_data, allocation_to_vec, create_context, for_each_non_cpu_backend},
+    tests::helpers::{buffer_to_vec, create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
 
 fn select<B: Backend>() -> Vec<u32> {
@@ -32,20 +32,20 @@ fn select<B: Backend>() -> Vec<u32> {
             frontier[lane * 8 + slot] = value;
         }
     }
-    let mut frontier = alloc_allocation_with_data::<B, u32>(&context, &frontier);
-    let mut tree = alloc_allocation_with_data::<B, u32>(&context, &[55; TreeIdx::COUNT * 7]);
-    let mut slot_ancestors = alloc_allocation_with_data::<B, u32>(&context, &(0u32..7 * 3).collect::<Vec<_>>());
-    let mut token = alloc_allocation_with_data::<B, u32>(&context, &[66; 4]);
-    let mut metadata = alloc_allocation_with_data::<B, u32>(&context, &[77; 3 * 4]);
-    let mut ancestors = alloc_allocation_with_data::<B, u32>(&context, &[88; 4 * 3]);
-    let mut valid = alloc_allocation_with_data::<B, u32>(&context, &[99; 4]);
-    let candidate_pool_ids = alloc_allocation_with_data::<B, u32>(&context, &(0..12).collect::<Vec<_>>());
+    let mut frontier = create_buffer_with_data::<B, u32>(&context, &frontier);
+    let mut tree = create_buffer_with_data::<B, u32>(&context, &[55; TreeIdx::COUNT * 7]);
+    let mut slot_ancestors = create_buffer_with_data::<B, u32>(&context, &(0u32..7 * 3).collect::<Vec<_>>());
+    let mut token = create_buffer_with_data::<B, u32>(&context, &[66; 4]);
+    let mut metadata = create_buffer_with_data::<B, u32>(&context, &[77; 3 * 4]);
+    let mut ancestors = create_buffer_with_data::<B, u32>(&context, &[88; 4 * 3]);
+    let mut valid = create_buffer_with_data::<B, u32>(&context, &[99; 4]);
+    let candidate_pool_ids = create_buffer_with_data::<B, u32>(&context, &(0..12).collect::<Vec<_>>());
     let candidate_pool_scores =
-        alloc_allocation_with_data::<B, f32>(&context, &(0..12).map(|value| value as f32).collect::<Vec<_>>());
-    let mut candidate_ids = alloc_allocation_with_data::<B, u32>(&context, &[0; 4 * 3]);
-    let mut candidate_scores = alloc_allocation_with_data::<B, f32>(&context, &[0.0; 4 * 3]);
+        create_buffer_with_data::<B, f32>(&context, &(0..12).map(|value| value as f32).collect::<Vec<_>>());
+    let mut candidate_ids = create_buffer_with_data::<B, u32>(&context, &[0; 4 * 3]);
+    let mut candidate_scores = create_buffer_with_data::<B, f32>(&context, &[0.0; 4 * 3]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(&context).unwrap();
-    let mut encoder = Encoder::new(context.as_ref()).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &mut frontier,
         &mut tree,
@@ -67,13 +67,13 @@ fn select<B: Backend>() -> Vec<u32> {
         3,
         4,
         3,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     [frontier, tree, slot_ancestors, token, metadata, ancestors, valid, candidate_ids]
         .iter()
-        .flat_map(allocation_to_vec)
-        .chain(allocation_to_vec::<B, f32>(&candidate_scores).into_iter().map(f32::to_bits))
+        .flat_map(buffer_to_vec)
+        .chain(buffer_to_vec::<B, f32>(&candidate_scores).into_iter().map(f32::to_bits))
         .collect()
 }
 
@@ -83,19 +83,19 @@ fn insert_children<B: Backend>() -> Vec<u32> {
     tree[TreeIdx::PathLogprobBits as usize * 4..(TreeIdx::PathLogprobBits as usize + 1) * 4]
         .copy_from_slice(&[0.5, -1.0, 2.0, 4.0].map(f32::to_bits));
     tree[TreeIdx::Depth as usize * 4..(TreeIdx::Depth as usize + 1) * 4].copy_from_slice(&[0, 2, 4, 6]);
-    let tree = alloc_allocation_with_data::<B, u32>(&context, &tree);
+    let tree = create_buffer_with_data::<B, u32>(&context, &tree);
     let mut metadata = vec![0; MetadataIdx::COUNT * 3];
     metadata[MetadataIdx::TreeSlot as usize * 3..(MetadataIdx::TreeSlot as usize + 1) * 3].copy_from_slice(&[1, 3, 0]);
-    let metadata = alloc_allocation_with_data::<B, u32>(&context, &metadata);
-    let valid = alloc_allocation_with_data::<B, u32>(&context, &[1, 0, 1]);
-    let ids = alloc_allocation_with_data::<B, u32>(&context, &(10..19).collect::<Vec<_>>());
-    let scores = alloc_allocation_with_data::<B, f32>(&context, &[-0.1, -0.2, -0.3, 8.0, 8.0, 8.0, 0.1, 0.2, 0.3]);
-    let mut frontier = alloc_allocation_with_data::<B, u32>(&context, &[42; FrontierIdx::COUNT * 16]);
+    let metadata = create_buffer_with_data::<B, u32>(&context, &metadata);
+    let valid = create_buffer_with_data::<B, u32>(&context, &[1, 0, 1]);
+    let ids = create_buffer_with_data::<B, u32>(&context, &(10..19).collect::<Vec<_>>());
+    let scores = create_buffer_with_data::<B, f32>(&context, &[-0.1, -0.2, -0.3, 8.0, 8.0, 8.0, 0.1, 0.2, 0.3]);
+    let mut frontier = create_buffer_with_data::<B, u32>(&context, &[42; FrontierIdx::COUNT * 16]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(&context).unwrap();
-    let mut encoder = Encoder::new(context.as_ref()).unwrap();
-    kernel.encode(&tree, &metadata, &valid, &ids, &scores, &mut frontier, 16, 4, 3, 3, &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec(&frontier)
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    kernel.encode(&tree, &metadata, &valid, &ids, &scores, &mut frontier, 16, 4, 3, 3, &mut command_buffer);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec(&frontier)
 }
 
 #[uzu_test]

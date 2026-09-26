@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    ops::Range,
+    range::Range,
 };
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -9,7 +9,6 @@ pub enum AllocationType {
     Pooled {
         pool: usize,
         can_alias_before: bool,
-        can_alias_after: bool,
     },
 }
 
@@ -22,23 +21,13 @@ struct AvailableRanges {
 
 #[derive(Clone, Copy)]
 struct AvailableRangeFit {
-    available_start: usize,
-    available_end: usize,
-    allocated_start: usize,
-    allocated_end: usize,
+    available: Range<usize>,
+    allocated: Range<usize>,
 }
 
 impl AvailableRangeFit {
     fn available_key(self) -> (usize, usize) {
-        (self.available_end - self.available_start, self.available_start)
-    }
-
-    fn allocated_range(self) -> Range<usize> {
-        self.allocated_start..self.allocated_end
-    }
-
-    fn allocated_len(self) -> usize {
-        self.allocated_end - self.allocated_start
+        (self.available.iter().len(), self.available.start)
     }
 }
 
@@ -85,17 +74,17 @@ impl AvailableRanges {
         &mut self,
         fit: AvailableRangeFit,
     ) -> Range<usize> {
-        self.remove_entry(fit.available_start, fit.available_end);
+        self.remove_entry(fit.available.start, fit.available.end);
 
-        if fit.available_start < fit.allocated_start {
-            self.insert_entry(fit.available_start, fit.allocated_start);
+        if fit.available.start < fit.allocated.start {
+            self.insert_entry(fit.available.start, fit.allocated.start);
         }
 
-        if fit.allocated_end < fit.available_end {
-            self.insert_entry(fit.allocated_end, fit.available_end);
+        if fit.allocated.end < fit.available.end {
+            self.insert_entry(fit.allocated.end, fit.available.end);
         }
 
-        fit.allocated_range()
+        fit.allocated
     }
 
     fn best_fit(
@@ -110,10 +99,8 @@ impl AvailableRanges {
                 debug_assert_eq!(range_end - range_start, range_len);
 
                 return Some(AvailableRangeFit {
-                    available_start: range_start,
-                    available_end: range_end,
-                    allocated_start,
-                    allocated_end: allocated_start + size,
+                    available: (range_start..range_end).into(),
+                    allocated: (allocated_start..allocated_start + size).into(),
                 });
             }
         }
@@ -122,7 +109,7 @@ impl AvailableRanges {
     }
 
     fn into_ranges(self) -> impl Iterator<Item = Range<usize>> {
-        self.by_start.into_iter().map(|(start, end)| start..end)
+        self.by_start.into_iter().map(|(start, end)| (start..end).into())
     }
 
     fn insert_entry(
@@ -164,7 +151,7 @@ pub struct RangeAllocator {
 
 impl RangeAllocator {
     pub fn new(full_range: Range<usize>) -> Self {
-        let full_len = full_range.len();
+        let full_len = full_range.iter().len();
 
         Self {
             full_len,
@@ -186,7 +173,6 @@ impl RangeAllocator {
             AllocationType::Pooled {
                 pool,
                 can_alias_before: true,
-                can_alias_after: _,
             } => Some(pool),
             _ => None,
         };
@@ -211,20 +197,19 @@ impl RangeAllocator {
         } else {
             self.free_ranges.remove_fit(fit)
         };
-        self.total_available -= fit.allocated_len();
+        self.total_available -= fit.allocated.iter().len();
 
         match allocation_type {
             AllocationType::Global => {},
             AllocationType::Pooled {
                 pool,
                 can_alias_before: _,
-                can_alias_after: _,
             } => {
                 self.ensure_pool(pool);
                 self.pool_live_allocations[pool] += 1;
 
                 if selected_aliasable_pool.is_none() {
-                    self.pool_ranges_by_pool[pool].insert(allocated_range.clone());
+                    self.pool_ranges_by_pool[pool].insert(allocated_range);
                 }
             },
         };
@@ -239,20 +224,17 @@ impl RangeAllocator {
     ) {
         match allocation_type {
             AllocationType::Global => {
-                self.free_ranges.insert(range.clone());
-                self.total_available += range.len();
+                self.free_ranges.insert(range);
+                self.total_available += range.iter().len();
             },
             AllocationType::Pooled {
                 pool,
                 can_alias_before: _,
-                can_alias_after,
             } => {
                 self.pool_live_allocations[pool] -= 1;
 
-                if can_alias_after {
-                    self.aliasable_ranges_by_pool[pool].insert(range.clone());
-                    self.total_available += range.len();
-                }
+                self.aliasable_ranges_by_pool[pool].insert(range);
+                self.total_available += range.iter().len();
             },
         };
     }
@@ -276,8 +258,8 @@ impl RangeAllocator {
         let pool_ranges = std::mem::take(pool_ranges);
 
         for pool_range in pool_ranges.into_ranges() {
-            self.free_ranges.insert(pool_range.clone());
-            self.total_available += pool_range.len();
+            self.free_ranges.insert(pool_range);
+            self.total_available += pool_range.iter().len();
         }
     }
 

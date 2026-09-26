@@ -2,14 +2,16 @@ use super::reference::{WeightData, read_f32, write_f32};
 use crate::{
     backends::{
         common::{
-            Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
+            Backend, BufferCpuAccessible, BufferMut, BufferRef, Kernels,
             gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
                 matmul::{Int8CodeLayout, MatmulA, MatmulArguments, MatmulError, MatmulKernel},
             },
         },
-        cpu::{Cpu, context::CpuContext, error::CpuError},
+        cpu::{
+            Cpu, buffer::CpuBufferExt, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError,
+        },
     },
     data_type::DataType,
     utils::pointers::{SendPtr, SendPtrMut},
@@ -53,14 +55,21 @@ impl MatmulKernel for MatmulCpuKernel {
         })
     }
 
-    fn encode<'a, 'b, 'd, TB: BufferArg<'b, Cpu>>(
+    fn encode(
         &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Cpu, TB>,
-        encoder: &mut Encoder<Cpu>,
+        arguments: MatmulArguments<
+            '_,
+            Cpu,
+            impl BufferRef<Backend = Cpu>,
+            impl BufferRef<Backend = Cpu>,
+            impl BufferMut<Backend = Cpu>,
+            impl BufferRef<Backend = Cpu>,
+        >,
+        command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<(), CpuError> {
         let output_scale = arguments.d_transform.ab_scale;
         let accumulate = arguments.d_transform.accumulate;
-        let bias_alloc = arguments.d_transform.bias;
+        let bias_buffer = arguments.d_transform.bias;
         let post_rht = arguments.d_transform.rht_factors;
         let soft_cap = arguments.d_transform.soft_cap;
 
@@ -69,7 +78,7 @@ impl MatmulKernel for MatmulCpuKernel {
             b,
             b_leading_dimension,
             b_transpose,
-            d,
+            mut d,
             m,
             n,
             k,
@@ -99,9 +108,11 @@ impl MatmulKernel for MatmulCpuKernel {
                 values,
                 offset,
             } => {
-                let range = values.as_buffer_range_ref();
-                let byte_offset = range.range().start + offset * input_data_type.size_in_bytes();
-                AData::FullPrecision(SendPtr(unsafe { &*range.buffer().get() }.as_ptr().wrapping_byte_add(byte_offset)))
+                let (values, range) = values.parts();
+                let byte_offset = range.start + offset * input_data_type.size_in_bytes();
+                AData::FullPrecision(SendPtr(
+                    values.downcast().cpu_ptr().as_ptr().cast::<u8>().cast_const().wrapping_byte_add(byte_offset),
+                ))
             },
             MatmulA::Int8Symmetric {
                 values,
@@ -122,37 +133,43 @@ impl MatmulKernel for MatmulCpuKernel {
                     }
                     .into());
                 }
-                let values_range = values.as_buffer_range_ref();
-                let scales_range = scales.as_buffer_range_ref();
+                let (values, values_range) = values.parts();
+                let (scales, scales_range) = scales.parts();
                 AData::Int8 {
                     values: SendPtr(
-                        unsafe { &*values_range.buffer().get() }.as_ptr().wrapping_byte_add(values_range.range().start),
+                        values
+                            .downcast()
+                            .cpu_ptr()
+                            .as_ptr()
+                            .cast::<u8>()
+                            .cast_const()
+                            .wrapping_byte_add(values_range.start),
                     ),
                     scales: SendPtr(
-                        unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
+                        scales
+                            .downcast()
+                            .cpu_ptr()
+                            .as_ptr()
+                            .cast::<u8>()
+                            .cast_const()
+                            .wrapping_byte_add(scales_range.start),
                     ),
                     group_size: a_group_size as usize,
                     code_layout,
                 }
             },
         };
-        let bias_ptr = bias_alloc.map(|bias| {
-            let r = bias.as_buffer_range_ref();
-            SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
-        });
+        let bias_ptr = bias_buffer.map(|bias| SendPtr(bias.cpu_ptr().as_ptr().cast::<u8>().cast_const()));
         let gather_ptr = gather_indices.map(|indices| {
-            let r = indices.as_buffer_range_ref();
-            SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start) as *const u32)
+            let (indices, range) = indices.parts();
+            SendPtr(indices.downcast().cpu_ptr().as_ptr().cast::<u32>().cast_const().wrapping_byte_add(range.start))
         });
-        let d_buffer_range = d.as_buffer_range_mut();
-        let d_ptr = SendPtrMut(unsafe {
-            (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_buffer_range.range().start) as *mut u8
-        });
+        let (d_buffer, d_range) = d.reborrow().parts();
+        let d_ptr = SendPtrMut(d_buffer.downcast().cpu_ptr().as_ptr().cast::<u8>().wrapping_byte_add(d_range.start));
 
         let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u)?;
 
         let bias_after_rht = post_rht.is_some();
-        let command_buffer = encoder.as_command_buffer_mut();
         command_buffer.push_command(move || {
             unsafe {
                 for row in 0..m_u {
@@ -267,10 +284,17 @@ impl MatmulKernel for MatmulCpuKernel {
         });
 
         if let Some(factors) = post_rht {
-            self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, encoder);
-            if let Some(bias) = bias_alloc {
+            self.output_rht.encode_fp_in_place(d.reborrow(), factors, m, n, command_buffer);
+            if let Some(bias) = bias_buffer {
                 let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
-                self.bias_add.encode(None::<&Allocation<Cpu>>, bias, &mut *d, n, output_length, encoder);
+                self.bias_add.encode(
+                    None::<&<Cpu as Backend>::ScratchBuffer>,
+                    bias,
+                    d,
+                    n,
+                    output_length,
+                    command_buffer,
+                );
             }
         }
 

@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder,
+        Backend, CommandBuffer, CommandBufferEncoding,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationTransform, Kernels,
@@ -35,12 +35,12 @@ pub enum QLoRALinearWrapperError<B: Backend> {
 
 pub struct QLoRALinearWrapper<B: Backend> {
     base_linear: LinearMatmul<B>,
-    input_hadamard: Option<(ActivationTransform<B>, Allocation<B>)>,
-    output_hadamard: Option<(ActivationTransform<B>, Allocation<B>)>,
+    input_hadamard: Option<(ActivationTransform<B>, B::GlobalBuffer)>,
+    output_hadamard: Option<(ActivationTransform<B>, B::GlobalBuffer)>,
     adapter_down_kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     adapter_up_kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
-    adapter_down: Allocation<B>,
-    adapter_up: Allocation<B>,
+    adapter_down: B::GlobalBuffer,
+    adapter_up: B::GlobalBuffer,
     input_dim: u32,
     output_dim: u32,
     lora_rank: u32,
@@ -100,11 +100,11 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             let input_factors = weights_tree
                 .leaf("incoherence_signs.input_signs")?
                 .validate(&[input_dim], DataType::I32)?
-                .read_allocation()?;
+                .read_buffer()?;
             let output_factors = weights_tree
                 .leaf("incoherence_signs.output_signs")?
                 .validate(&[output_dim], DataType::I32)?
-                .read_allocation()?;
+                .read_buffer()?;
             (
                 Some((
                     ActivationTransform::input_rht(context, input_data_type, false)
@@ -143,12 +143,12 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         let adapter_down = weights_tree
             .leaf("adapter.down_projection")?
             .validate(&[adapter_spec.rank, input_dim], weights_data_type)?
-            .read_allocation()?;
+            .read_buffer()?;
 
         let adapter_up = weights_tree
             .leaf("adapter.up_projection")?
             .validate(&[output_dim, adapter_spec.rank], weights_data_type)?
-            .read_allocation()?;
+            .read_buffer()?;
 
         Ok(Self {
             base_linear,
@@ -170,14 +170,14 @@ impl<B: Backend> QLoRALinearWrapper<B> {
 impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
     fn encode(
         &self,
-        input: Allocation<B>,
+        input: B::ScratchBuffer,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("linear (qlora)");
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        command_buffer.push_debug_group("linear (qlora)");
 
         let mut intermediate =
-            encoder.allocate_scratch_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type)?;
+            command_buffer.allocate_scratch_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type)?;
 
         {
             let mut adapter_kernel = self.adapter_down_kernel.lock();
@@ -194,25 +194,32 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                     b_transpose: true,
                     d: &mut intermediate,
                     d_transform: MatmulDOps::none(),
-                    gather_indices: None,
+                    gather_indices: None::<&B::ScratchBuffer>,
                     m: batch_dim,
                     n: self.lora_rank,
                     k: self.input_dim,
                 },
-                encoder,
+                command_buffer,
             )?;
         }
 
         let base_input = if let Some((input_hadamard_kernel, input_factors)) = &self.input_hadamard {
             let mut base_input =
-                encoder.allocate_scratch_for_shape(&[batch_dim, self.input_dim], self.input_data_type)?;
-            input_hadamard_kernel.encode_fp(&input, &mut base_input, input_factors, batch_dim, self.input_dim, encoder);
+                command_buffer.allocate_scratch_for_shape(&[batch_dim, self.input_dim], self.input_data_type)?;
+            input_hadamard_kernel.encode_fp(
+                &input,
+                &mut base_input,
+                input_factors,
+                batch_dim,
+                self.input_dim,
+                command_buffer,
+            );
             base_input
         } else {
             input
         };
 
-        let mut output = self.base_linear.encode(base_input, batch_dim, encoder)?;
+        let mut output = self.base_linear.encode(base_input, batch_dim, command_buffer)?;
 
         {
             let mut adapter_kernel = self.adapter_up_kernel.lock();
@@ -232,20 +239,26 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                         accumulate: true,
                         ..MatmulDOps::none()
                     },
-                    gather_indices: None,
+                    gather_indices: None::<&B::ScratchBuffer>,
                     m: batch_dim,
                     n: self.output_dim,
                     k: self.lora_rank,
                 },
-                encoder,
+                command_buffer,
             )?;
         }
 
         if let Some((output_hadamard_kernel, output_factors)) = &self.output_hadamard {
-            output_hadamard_kernel.encode_fp_in_place(&mut output, output_factors, batch_dim, self.output_dim, encoder);
+            output_hadamard_kernel.encode_fp_in_place(
+                &mut output,
+                output_factors,
+                batch_dim,
+                self.output_dim,
+                command_buffer,
+            );
         }
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

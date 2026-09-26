@@ -7,7 +7,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            AllocationType, Backend, Context, Encoder,
+            Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             kernel::{
                 Kernels,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -15,7 +15,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
+    tests::helpers::{buffer_to_vec, create_buffer_with_data},
 };
 
 #[cfg(backend = "metal")]
@@ -128,58 +128,59 @@ fn run<B: Backend, T: ArrayElement + Float>(
     context: &B::Context,
     kernel: &mut <B::Kernels as Kernels>::MatmulKernel,
     input: &Input<T>,
-    encode: impl for<'a> FnOnce(&mut <B::Kernels as Kernels>::MatmulKernel, MatmulArguments<'a, 'a, 'a, B>, &mut Encoder<B>),
+    encode: impl for<'a> FnOnce(
+        &mut <B::Kernels as Kernels>::MatmulKernel,
+        MatmulArguments<'a, B, &'a B::GlobalBuffer, &'a B::GlobalBuffer, &'a mut B::GlobalBuffer, &'a B::GlobalBuffer>,
+        &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ),
 ) -> Vec<T> {
     let Shape {
         m,
         k,
         n,
     } = input.case.shape;
-    let b_allocation = alloc_allocation_with_data::<B, T>(context, &input.b);
-    let a_allocation = alloc_allocation_with_data::<B, T>(context, &input.a);
-    let mut d_allocation = if let Some(ref prefill) = input.d_prefill {
-        alloc_allocation_with_data::<B, T>(context, prefill)
+    let b_buffer = create_buffer_with_data::<B, T>(context, &input.b);
+    let a_buffer = create_buffer_with_data::<B, T>(context, &input.a);
+    let mut d_buffer = if let Some(ref prefill) = input.d_prefill {
+        create_buffer_with_data::<B, T>(context, prefill)
     } else {
-        context
-            .create_allocation(m as usize * n as usize * std::mem::size_of::<T>(), AllocationType::Global)
-            .expect("create d allocation")
+        context.create_buffer(m as usize * n as usize * std::mem::size_of::<T>()).expect("create d buffer")
     };
-    let rht_allocation =
-        input.rht_factors.as_ref().map(|factors| alloc_allocation_with_data::<B, i32>(context, factors));
-    let bias_allocation = input.bias.as_ref().map(|bias| alloc_allocation_with_data::<B, T>(context, bias));
+    let rht_buffer = input.rht_factors.as_ref().map(|factors| create_buffer_with_data::<B, i32>(context, factors));
+    let bias_buffer = input.bias.as_ref().map(|bias| create_buffer_with_data::<B, T>(context, bias));
 
     let d_transform = MatmulDOps::<'_, B> {
         ab_scale: input.case.ab_scale,
         accumulate: input.case.accumulate,
-        bias: bias_allocation.as_ref(),
-        rht_factors: rht_allocation.as_ref(),
+        bias: bias_buffer.as_ref(),
+        rht_factors: rht_buffer.as_ref(),
         soft_cap: None,
     };
 
-    let mut encoder = Encoder::new(context).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     encode(
         kernel,
         MatmulArguments {
             a: MatmulA::FullPrecision {
-                values: &a_allocation,
+                values: &a_buffer,
                 offset: 0,
             },
             b: MatmulB::FullPrecision {
-                b: &b_allocation,
+                b: &b_buffer,
             },
             b_leading_dimension: None,
             b_transpose: input.case.b_transpose,
-            d: &mut d_allocation,
+            d: &mut d_buffer,
             d_transform,
             gather_indices: None,
             m,
             n,
             k,
         },
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec::<B, T>(&d_allocation)
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec::<B, T>(&d_buffer)
 }
 
 pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
@@ -191,8 +192,8 @@ pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         T::data_type(),
     )
     .expect("CPU MatmulKernel");
-    run::<Cpu, T>(&context, &mut kernel, input, |kernel, args, encoder| {
-        kernel.encode(args, encoder).expect("encode failed");
+    run::<Cpu, T>(&context, &mut kernel, input, |kernel, args, command_buffer| {
+        kernel.encode(args, command_buffer).expect("encode failed");
     })
 }
 
@@ -203,11 +204,11 @@ pub fn run_metal<T: ArrayElement + Float>(
     input: &Input<T>,
     dispatch: TestDispatch,
 ) -> Vec<T> {
-    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
+    run::<Metal, T>(context, kernel, input, |kernel, args, command_buffer| {
         if let Some(engine) = dispatch {
-            kernel.gemm.encode_with_engine(args, engine, encoder).expect("forced GEMM engine encode failed");
+            kernel.gemm.encode_with_engine(args, engine, command_buffer).expect("forced GEMM engine encode failed");
         } else {
-            kernel.encode(args, encoder).expect("matmul encode failed");
+            kernel.encode(args, command_buffer).expect("matmul encode failed");
         }
     })
 }

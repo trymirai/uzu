@@ -3,11 +3,11 @@ use std::{collections::HashMap, env, fs, path::PathBuf};
 use anyhow::{Context, bail};
 use async_trait::async_trait;
 use itertools::Itertools;
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Expr, FnArg, GenericArgument, GenericParam, Ident, Item, ItemFn, Lifetime, PathArguments, Type,
-    punctuated::Punctuated, token::Comma,
+    Expr, FnArg, GenericArgument, GenericParam, Ident, Item, ItemFn, PathArguments, Type, punctuated::Punctuated,
+    token::Comma,
 };
 use walkdir::WalkDir;
 
@@ -363,29 +363,23 @@ impl CpuCompiler {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let (encode_lifetimes, mut encode_args_defs): (Vec<_>, Vec<_>) = kernel_arguments
+        let mut encode_args_defs: Vec<_> = kernel_arguments
             .iter()
             .map(|argument| {
                 let argument_ident: Ident = syn::parse_str(argument.name.as_ref()).context("cannot parse ident")?;
 
-                let (lifetime, mut ty) = match &argument.ty {
-                    KernelArgumentType::Buffer(access) => {
-                        let buffer_lifetime = Lifetime::new(&format!("'{}", argument.name.as_ref()), Span::call_site());
-                        (
-                            Some(quote! { #buffer_lifetime }),
-                            match access {
-                                KernelBufferAccess::Read => {
-                                    quote! { impl crate::backends::common::BufferArg<#buffer_lifetime, crate::backends::cpu::Cpu> }
-                                },
-                                KernelBufferAccess::ReadWrite => {
-                                    quote! { impl crate::backends::common::BufferArgMut<#buffer_lifetime, crate::backends::cpu::Cpu> }
-                                },
-                            },
-                        )
+                let mut ty = match &argument.ty {
+                    KernelArgumentType::Buffer(access) => match access {
+                        KernelBufferAccess::Read => {
+                            quote! { impl crate::backends::common::BufferRef<Backend = crate::backends::cpu::Cpu> }
+                        },
+                        KernelBufferAccess::ReadWrite => {
+                            quote! { impl crate::backends::common::BufferMut<Backend = crate::backends::cpu::Cpu> }
+                        },
                     },
                     KernelArgumentType::Constant(ty) => {
                         let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
-                        (None, quote! { #ty })
+                        quote! { #ty }
                     },
                 };
 
@@ -393,10 +387,9 @@ impl CpuCompiler {
                     ty = quote! { Option<#ty> };
                 }
 
-                Ok((lifetime, quote! { #argument_ident: #ty }))
+                Ok(quote! { #argument_ident: #ty })
             })
             .collect::<anyhow::Result<_>>()?;
-        let mut encode_lifetimes = encode_lifetimes.into_iter().flatten().collect::<Vec<_>>();
 
         let argument_copies = function_arguments
             .iter()
@@ -406,11 +399,11 @@ impl CpuCompiler {
                     FunctionArgumentType::Buffer(access) => {
                         let (buffer_ptr, buffer_ptr_wrapper) = match access {
                             KernelBufferAccess::Read => (
-                                quote! { (&*__dsl_buffer.downcast().get()).as_ptr() },
+                                quote! { crate::backends::common::BufferCpuAccessible::cpu_ptr(crate::backends::cpu::buffer::CpuBufferExt::downcast(__dsl_buffer)).as_ptr().cast::<u8>().cast_const() },
                                 quote! { crate::utils::pointers::SendPtr },
                             ),
                             KernelBufferAccess::ReadWrite => (
-                                quote! { (&mut *__dsl_buffer.downcast().get()).as_mut_ptr() },
+                                quote! { crate::backends::common::BufferCpuAccessible::cpu_ptr(crate::backends::cpu::buffer::CpuBufferExt::downcast(__dsl_buffer)).as_ptr().cast::<u8>() },
                                 quote! { crate::utils::pointers::SendPtrMut },
                             ),
                         };
@@ -418,17 +411,17 @@ impl CpuCompiler {
                         if argument.conditional.is_some() {
                             Some(quote! {
                                 let #argument_ident = #argument_ident.map(|__dsl_buffer_impl| unsafe {
-                                    let (__dsl_buffer, __dsl_offset, _) = __dsl_buffer_impl.into_parts();
+                                    let (__dsl_buffer, __dsl_range) = __dsl_buffer_impl.parts();
 
-                                    #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_offset))
+                                    #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_range.start))
                                 });
                             })
                         } else {
                             Some(quote! {
                                 let #argument_ident = unsafe {
-                                    let (__dsl_buffer, __dsl_offset, _) = #argument_ident.into_parts();
+                                    let (__dsl_buffer, __dsl_range) = #argument_ident.parts();
 
-                                    #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_offset))
+                                    #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_range.start))
                                 };
                             })
                         }
@@ -481,7 +474,7 @@ impl CpuCompiler {
             });
 
             quote! {
-                encoder.as_command_buffer_mut().push_command(move || #monomorphized_function(#function_call_args_joined));
+                command_buffer.push_command(move || #monomorphized_function(#function_call_args_joined));
             }
         };
 
@@ -579,9 +572,8 @@ impl CpuCompiler {
             make_encode(quote! {})
         };
 
-        encode_lifetimes.push(quote! { 'encoder });
         encode_args_defs
-            .push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu> });
+            .push(quote! { command_buffer: &mut <<crate::backends::cpu::Cpu as crate::backends::common::Backend>::CommandBuffer as crate::backends::common::CommandBuffer>::Encoding });
 
         let tokens = quote! {
             #[allow(non_snake_case)]
@@ -599,7 +591,7 @@ impl CpuCompiler {
                     })
                 }
 
-                fn encode<#(#encode_lifetimes),*>(&self, #(#encode_args_defs),*) {
+                fn encode(&self, #(#encode_args_defs),*) {
                     #(#argument_copies)*
                     #encode_body
                 }

@@ -7,21 +7,21 @@ use uzu_engine_macros::uzu_bench;
 
 use crate::{
     backends::{
-        common::{Allocation, Backend, Kernels, kernel::BuildTreePrefixKernel},
+        common::{Backend, Kernels, kernel::BuildTreePrefixKernel},
         metal::Metal,
     },
     tests::{
         cold_pool::ColdPool,
-        helpers::{alloc_allocation, alloc_allocation_with_data},
+        helpers::{create_buffer, create_buffer_with_data},
         matmul::iter_encode_loop_named,
         util::type_short_name,
     },
 };
 
 struct TreePrefixBuffers {
-    trie: Allocation<Metal>,
-    log_decay: Allocation<Metal>,
-    prefix: Allocation<Metal>,
+    trie: <Metal as Backend>::GlobalBuffer,
+    log_decay: <Metal as Backend>::GlobalBuffer,
+    prefix: <Metal as Backend>::GlobalBuffer,
 }
 
 #[uzu_bench]
@@ -39,9 +39,9 @@ fn bench_build_tree_prefix(c: &mut Criterion) {
         let log_decay = (0..len).map(|i| -0.001 - (i as f32 * 0.017).sin().abs() * 0.1).collect::<Vec<_>>();
         let bytes_per_copy = trie.len() * size_of::<u32>() + len * size_of::<f32>() * 2;
         let mut buffers = ColdPool::new(bytes_per_copy, || TreePrefixBuffers {
-            trie: alloc_allocation_with_data::<Metal, u32>(&context, &trie),
-            log_decay: alloc_allocation_with_data::<Metal, f32>(&context, &log_decay),
-            prefix: alloc_allocation::<Metal, f32>(&context, len),
+            trie: create_buffer_with_data::<Metal, u32>(&context, &trie),
+            log_decay: create_buffer_with_data::<Metal, f32>(&context, &log_decay),
+            prefix: create_buffer::<Metal, f32>(&context, len),
         });
 
         group.throughput(Throughput::Elements((len * tree_size) as u64));
@@ -50,7 +50,7 @@ fn bench_build_tree_prefix(c: &mut Criterion) {
                 "{}/Kernel/GDNTreeVerify/BuildTreePrefix/B1_T{tree_size}_HV{value_heads}",
                 type_short_name::<Metal>()
             );
-            iter_encode_loop_named::<Metal, _>(&context, bencher, &benchmark_path, |encoder| {
+            iter_encode_loop_named::<Metal, _>(&context, bencher, &benchmark_path, |command_buffer| {
                 let buffers = buffers.next_mut();
                 kernel.encode(
                     &buffers.trie,
@@ -59,7 +59,7 @@ fn bench_build_tree_prefix(c: &mut Criterion) {
                     batch_size as u32,
                     tree_size as u32,
                     value_heads as u32,
-                    encoder,
+                    command_buffer,
                 );
             });
         });

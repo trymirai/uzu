@@ -1,3 +1,5 @@
+use std::range::Range;
+
 use uzu_engine_macros::kernel;
 
 use crate::backends::common::gpu_types::weaver::{
@@ -135,9 +137,10 @@ pub fn weaver_frontier_select(
         node_valid[node] = u32::from(real && expandable);
 
         if (depth as usize) < candidate_depth_count {
-            let source = depth as usize * candidates_per_depth..(depth as usize + 1) * candidates_per_depth;
-            let destination = node * candidates_per_depth..(node + 1) * candidates_per_depth;
-            node_candidate_ids[destination.clone()].copy_from_slice(&candidate_pool_ids[source.clone()]);
+            let source =
+                Range::from(depth as usize * candidates_per_depth..(depth as usize + 1) * candidates_per_depth);
+            let destination = Range::from(node * candidates_per_depth..(node + 1) * candidates_per_depth);
+            node_candidate_ids[destination].copy_from_slice(&candidate_pool_ids[source]);
             node_candidate_logits[destination].copy_from_slice(&candidate_pool_logits[source]);
         }
     }
