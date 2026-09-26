@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use anyhow::Context;
 use itertools::Itertools;
@@ -31,20 +31,19 @@ fn rust_to_metal(ty: &str) -> anyhow::Result<&'static str> {
     }
 }
 
-pub async fn gpu_type_gen(
+pub fn gpu_type_gen(
     gpu_types_dir: &Path,
     gpu_types: &GpuTypes,
 ) -> anyhow::Result<()> {
     for gpu_type_file in &gpu_types.files {
         gpu_type_gen_file(&gpu_types_dir.join(gpu_type_file.name.as_ref()).with_extension("h"), gpu_type_file)
-            .await
             .with_context(|| format!("Cannot generate gpu types for {}", gpu_type_file.name.as_ref()))?;
     }
 
     Ok(())
 }
 
-async fn gpu_type_gen_file(
+fn gpu_type_gen_file(
     file_path: &Path,
     gpu_types_file: &GpuTypeFile,
 ) -> anyhow::Result<()> {
@@ -68,8 +67,8 @@ async fn gpu_type_gen_file(
     let new_contents = format!(include_str!("template.ht"), module_name = module_name, generated = generated);
 
     // Avoid advancing mtime if the contents are the same
-    if !tokio::fs::read(&file_path).await.is_ok_and(|old_contents| old_contents == new_contents.as_bytes()) {
-        tokio::fs::write(&file_path, new_contents).await.context("cannot write output")?;
+    if !fs::read(file_path).is_ok_and(|old_contents| old_contents == new_contents.as_bytes()) {
+        fs::write(file_path, new_contents).context("cannot write output")?;
     }
 
     Ok(())

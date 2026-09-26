@@ -7613,7 +7613,6 @@ name = "uzu-engine"
 version = "0.5.30"
 dependencies = [
  "anyhow",
- "async-trait",
  "bitflags 2.13.0",
  "blake3",
  "bytemuck",
@@ -7621,7 +7620,6 @@ dependencies = [
  "criterion",
  "depfile",
  "derive_more",
- "futures",
  "half",
  "is_close",
  "itertools 0.14.0",
@@ -7643,6 +7641,7 @@ dependencies = [
  "rand 0.10.2",
  "rand_distr",
  "rangemap",
+ "rayon",
  "rhai",
  "rstest",
  "schemars 1.2.1",

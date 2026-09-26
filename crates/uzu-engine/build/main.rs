@@ -1,7 +1,6 @@
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
 use anyhow::Context;
-use futures::future::try_join_all;
 
 mod common;
 use common::{compiler::Compiler, enum_paths::EnumPaths, envs, gpu_types::GpuTypes, traitgen::traitgen_all};
@@ -11,8 +10,7 @@ mod cpu;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<ExitCode> {
+fn main() -> anyhow::Result<ExitCode> {
     println!("cargo::rerun-if-changed=build");
 
     if envs::build_always() {
@@ -64,7 +62,7 @@ async fn main() -> anyhow::Result<ExitCode> {
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
     if backend_metal {
-        compilers.push(Box::new(metal::MetalCompiler::new().await?));
+        compilers.push(Box::new(metal::MetalCompiler::new()?));
     }
 
     if compilers.is_empty() {
@@ -72,7 +70,8 @@ async fn main() -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     }
 
-    let backends_kernels = try_join_all(compilers.iter().map(|c| c.build(&gpu_types, &enum_paths))).await?;
+    let backends_kernels =
+        compilers.iter().map(|c| c.build(&gpu_types, &enum_paths)).collect::<anyhow::Result<Vec<_>>>()?;
 
     debug_log!("backend build end");
 
