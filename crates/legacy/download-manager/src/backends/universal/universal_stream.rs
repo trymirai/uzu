@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use kiban::{fs, fs::PartFile, time::Instant};
 use reqwest::{
     Client, StatusCode,
-    header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE},
+    header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_RANGE, RANGE},
 };
 use tokio::sync::{oneshot::Sender as TokioOneshotSender, watch::Receiver as TokioWatchReceiver};
 
@@ -85,6 +85,9 @@ impl UniversalStream {
         let artifact = config.resume_artifact_path.as_path();
         let mut resume_from = fs::asyn::file_length(artifact).await.unwrap_or(0);
         let mut request = self.client.get(&config.source_url);
+        if let Some(token) = &config.bearer_token {
+            request = request.header(AUTHORIZATION, token.header_value());
+        }
         if resume_from > 0 {
             request = request.header(RANGE, format!("bytes={resume_from}-"));
         }
@@ -151,8 +154,15 @@ impl UniversalStream {
                 break;
             };
             let chunk = chunk?;
-            file.write_all(&chunk).await?;
             downloaded_bytes += chunk.len() as u64;
+            if let Some(expected_bytes) = config.expected_bytes
+                && downloaded_bytes > expected_bytes
+            {
+                return Err(UniversalBackendError::Protocol(format!(
+                    "response exceeded the declared size of {expected_bytes} bytes"
+                )));
+            }
+            file.write_all(&chunk).await?;
             if last_progress.elapsed() >= PROGRESS_INTERVAL {
                 self.events.send_progress(self.generation, downloaded_bytes, total_bytes);
                 last_progress = Instant::now();

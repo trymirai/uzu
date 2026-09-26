@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use download_manager::{DestinationLock, DownloadState, DownloadTask, DownloadTaskRequest, LockOwner};
+use download_manager::{Checksum, DestinationLock, DownloadState, DownloadTask, DownloadTaskRequest, LockOwner};
 use kiban::stream::BoxStream;
 use mock_registry::MockRegistry;
 use tokio::time::timeout;
@@ -16,7 +16,7 @@ pub fn file_request(
     DownloadTaskRequest::file()
         .destination(destination)
         .source_url(source_url)
-        .maybe_expected_crc32c(expected_crc32c)
+        .maybe_expected_checksum(expected_crc32c.map(Checksum::Crc32c))
         .maybe_expected_bytes(expected_bytes)
         .build()
 }
@@ -31,7 +31,7 @@ pub fn model_request(
             DownloadTaskRequest::file()
                 .destination(&served.file.name)
                 .source_url(&served.file.url)
-                .expected_crc32c(served.crc32c()?)
+                .expected_checksum(Checksum::Crc32c(served.crc32c()?))
                 .expected_bytes(served.file.size as u64)
                 .build(),
         );
