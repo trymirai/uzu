@@ -13,7 +13,7 @@ pub fn delta_net_prefill<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     beta_buf: *const f32,
     decay_buf: *const f32,
     in_proj: *const T,
-    state: *mut T,
+    state: *mut f32,
     out: *mut T,
     num_v_heads: u32,
     num_k_heads: u32,
@@ -23,7 +23,6 @@ pub fn delta_net_prefill<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     suffix_len: u32,
     #[allow(unused)] num_dv_groups: u32,
 ) {
-    let state_ptr = state as *const T;
     let num_v_heads = num_v_heads as usize;
     let num_k_heads = num_k_heads as usize;
     let head_k_dim = HEAD_K_DIM as usize;
@@ -49,7 +48,7 @@ pub fn delta_net_prefill<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
 
                 let mut kv_mem = 0.0f32;
                 for j in 0..head_k_dim {
-                    let s = unsafe { (*state_ptr.add(state_off + j)).to_f32().unwrap() };
+                    let s = unsafe { *state.add(state_off + j) };
                     kv_mem += (decay * s) * unsafe { *k_norm.add(qk_off + j) };
                 }
 
@@ -60,10 +59,10 @@ pub fn delta_net_prefill<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
 
                 let mut o_val = 0.0f32;
                 for j in 0..head_k_dim {
-                    let s = unsafe { (*state_ptr.add(state_off + j)).to_f32().unwrap() };
+                    let s = unsafe { *state.add(state_off + j) };
                     let k_j = unsafe { *k_norm.add(qk_off + j) };
                     let new_s = decay * s + k_j * delta;
-                    unsafe { *state.add(state_off + j) = T::from(new_s).unwrap() };
+                    unsafe { *state.add(state_off + j) = new_s };
                     o_val += new_s * unsafe { *q_norm.add(qk_off + j) };
                 }
 
