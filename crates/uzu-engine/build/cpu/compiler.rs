@@ -1,7 +1,6 @@
 use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use anyhow::{Context, bail};
-use async_trait::async_trait;
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, format_ident, quote};
@@ -662,9 +661,8 @@ impl CpuCompiler {
     }
 }
 
-#[async_trait]
 impl Compiler for CpuCompiler {
-    async fn build(
+    fn build(
         &self,
         _gpu_types: &GpuTypes,
         enum_paths: &EnumPaths,

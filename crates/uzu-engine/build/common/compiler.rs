@@ -1,12 +1,9 @@
 use std::collections::HashMap;
 
-use async_trait::async_trait;
-
 use super::{enum_paths::EnumPaths, gpu_types::GpuTypes, identifiers::KernelPath, kernel::Kernel};
 
-#[async_trait]
 pub trait Compiler {
-    async fn build(
+    fn build(
         &self,
         gpu_types: &GpuTypes,
         enum_paths: &EnumPaths,
