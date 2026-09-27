@@ -15,10 +15,10 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 #[variants(HEAD_K_DIM, 128)]
 pub fn delta_net_update<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     in_proj: *const T,
-    a_log: *const T,
-    dt_bias: *const T,
-    norm_weight: *const T,
-    state: *mut T,
+    a_log: *const f32,
+    dt_bias: *const f32,
+    norm_weight: *const f32,
+    state: *mut f32,
     out: *mut T,
     num_v_heads: u32,
     num_k_heads: u32,
@@ -27,8 +27,6 @@ pub fn delta_net_update<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     value_dim: u32,
     norm_epsilon: f32,
 ) {
-    let state_ptr = state as *const T;
-
     let num_v_heads = num_v_heads as usize;
     let num_k_heads = num_k_heads as usize;
     debug_assert!(num_v_heads.is_multiple_of(num_k_heads), "num_v_heads must be a multiple of num_k_heads");
@@ -81,8 +79,8 @@ pub fn delta_net_update<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
         let beta = 1.0 / (1.0 + (-beta_raw).exp()); // sigmoid
 
         let a_raw = unsafe { (*in_proj.add(conv_dim + value_dim + num_v_heads + hv)).to_f32().unwrap() };
-        let a_log_val = unsafe { (*a_log.add(hv)).to_f32().unwrap() };
-        let dt_bias_val = unsafe { (*dt_bias.add(hv)).to_f32().unwrap() };
+        let a_log_val = unsafe { *a_log.add(hv) };
+        let dt_bias_val = unsafe { *dt_bias.add(hv) };
 
         // softplus(a_raw + dt_bias)
         let sp_input = a_raw + dt_bias_val;
@@ -108,7 +106,7 @@ pub fn delta_net_update<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
             let mut sq_acc = 0.0f32;
             let mut sk_acc = 0.0f32;
             for j in 0..head_k_dim {
-                let s = unsafe { (*state_ptr.add(state_row + j)).to_f32().unwrap() };
+                let s = unsafe { *state.add(state_row + j) };
                 sq_acc += s * q[j];
                 sk_acc += s * k[j];
             }
@@ -119,9 +117,9 @@ pub fn delta_net_update<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
 
             // Pass 2: update state row S[i,:]
             for j in 0..head_k_dim {
-                let s = unsafe { (*state_ptr.add(state_row + j)).to_f32().unwrap() };
                 unsafe {
-                    *state.add(state_row + j) = T::from(decay * s + k[j] * delta_i).unwrap();
+                    let s = state.add(state_row + j);
+                    *s = decay * *s + k[j] * delta_i;
                 }
             }
         }
@@ -132,7 +130,7 @@ pub fn delta_net_update<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
 
         // Apply RMSNorm + SiLU gate and write output
         for i in 0..head_v_dim {
-            let norm_w = unsafe { (*norm_weight.add(i)).to_f32().unwrap() };
+            let norm_w = unsafe { *norm_weight.add(i) };
             let z_i = unsafe { (*in_proj.add(conv_dim + hv * head_v_dim + i)).to_f32().unwrap() };
             let z_silu = ActivationType::SILU.activate(z_i);
             let final_val = o[i] * inv_rms * norm_w * z_silu;

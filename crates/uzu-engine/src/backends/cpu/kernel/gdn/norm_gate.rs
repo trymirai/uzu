@@ -18,7 +18,7 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 pub fn delta_net_norm_gate<T: ArrayElement + Float>(
     in_out: *mut T,
     in_proj: *const T,
-    norm_weight: *const T,
+    norm_weight: *const f32,
     num_v_heads: u32,
     head_v_dim: u32,
     value_dim: u32,
@@ -48,7 +48,7 @@ pub fn delta_net_norm_gate<T: ArrayElement + Float>(
 
             for i in 0..head_v_dim {
                 let o_i = unsafe { (*in_out_ptr.add(base + i)).to_f32().unwrap() };
-                let norm_w = unsafe { (*norm_weight.add(i)).to_f32().unwrap() };
+                let norm_w = unsafe { *norm_weight.add(i) };
                 let z_idx = token * total_proj_dim + conv_dim + hv * head_v_dim + i;
                 let z_i = unsafe { (*in_proj.add(z_idx)).to_f32().unwrap() };
                 let final_val = o_i * inv_rms * norm_w * ActivationType::SILU.activate(z_i);
