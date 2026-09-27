@@ -55,5 +55,5 @@ class BenchResponse(BaseModel):
     tokens_per_forward_pass: float
     duration: float
     memory_phys_footprint: int
-    memory_resident_peak: int
+    memory_resident: int
     memory_graphics_total: int

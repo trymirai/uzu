@@ -85,19 +85,24 @@ impl UzuEngine {
         let mut memory = MemoryCounters::collect()?;
         let mut output = Vec::new();
         let mut tokens_generated = 0;
+        let mut forward_passes = 0;
         let mut first_token = None;
 
         let started = Instant::now();
         let mut stream = self.instance.stream(tokens, state.as_mut(), config, CancellationToken::new());
         while tokens_generated < max_tokens {
+            let metrics = stream.metrics();
             let Some(event) = stream.next().await else {
                 break;
             };
             let TokenStreamOutput::Token(token) = event.map_err(anyhow::Error::msg)? else {
                 break;
             };
+
             first_token.get_or_insert_with(Instant::now);
             tokens_generated += 1;
+            let metrics = metrics.context("Generation did not return metrics")?;
+            forward_passes = metrics.num_prefill_forward_passes + metrics.num_decode_forward_passes;
 
             let current = MemoryCounters::collect()?;
             if current.graphics_total > memory.graphics_total {
@@ -106,11 +111,10 @@ impl UzuEngine {
             if self.stop_tokens.contains(&token) {
                 break;
             }
+
             output.push(u32::try_from(token).context("Token ID exceeds u32")?);
         }
         let first_token = first_token.context("Generation did not return a token")?;
-        let metrics = stream.metrics().context("Generation did not return metrics")?;
-        let forward_passes = metrics.num_prefill_forward_passes + metrics.num_decode_forward_passes;
         drop(stream);
 
         let text = self.instance.tokenizer().decode(&output, false).map_err(anyhow::Error::msg)?;
@@ -125,7 +129,7 @@ impl UzuEngine {
             tokens_per_forward_pass: rate(tokens_generated, forward_passes as f64),
             duration: finished.duration_since(started).as_secs_f64(),
             memory_phys_footprint: memory.phys_footprint,
-            memory_resident_peak: memory.resident_size_peak,
+            memory_resident: memory.resident_size,
             memory_graphics_total: memory.graphics_total,
         })
     }

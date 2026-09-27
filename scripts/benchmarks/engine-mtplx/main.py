@@ -96,7 +96,7 @@ class MTPLXEngine(InferenceEngine):
             tokens_per_forward_pass=tokens_per_forward_pass,
             duration=time_total,
             memory_phys_footprint=mem_counters_max.phys_footprint,
-            memory_resident_peak=mem_counters_max.resident_size_peak,
+            memory_resident=mem_counters_max.resident_size,
             memory_graphics_total=mem_counters_max.graphics_total,
         )
 
