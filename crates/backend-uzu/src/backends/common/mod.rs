@@ -9,7 +9,7 @@ pub mod gpu_types;
 mod hazard_tracker;
 pub mod kernel;
 
-pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
+pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator, MappedFile};
 pub use backend::Backend;
 pub use buffer::{
     Buffer, BufferGpuAddressRangeExt,

@@ -72,7 +72,7 @@ num-traits.workspace = true
 libm.workspace = true
 rand.workspace = true
 itertools.workspace = true
-rustix.workspace = true
+rustix = { workspace = true, features = ["param"] }
 futures.workspace = true
 parking_lot = { workspace = true, features = ["send_guard"] }
 tokio-util.workspace = true

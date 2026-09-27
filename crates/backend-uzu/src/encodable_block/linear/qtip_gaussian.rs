@@ -297,18 +297,11 @@ impl<B: Backend> QtipGaussianLinear<B> {
             allocation.copyin(&repacked);
             allocation
         } else if spec.transition_bits < 8 {
-            // 4 zero bytes past the last row for the kernels' 3-byte window reads
-            let physical = parameter_tree
+            // 4 readable bytes past the last row for the kernels' 3-byte window reads (their bits are never used)
+            parameter_tree
                 .leaf("codes")?
                 .validate(&[output_dimension, bytes_per_row], DataType::U8)?
-                .read_slice::<u8>()?;
-            let mut padded = physical.to_vec();
-            padded.extend([0u8; 4]);
-            let mut allocation = context
-                .create_allocation(padded.len(), AllocationType::Global)
-                .map_err(QtipGaussianLinearError::BackendError)?;
-            allocation.copyin(&padded);
-            allocation
+                .read_padded_allocation(4)?
         } else {
             parameter_tree
                 .leaf("codes")?

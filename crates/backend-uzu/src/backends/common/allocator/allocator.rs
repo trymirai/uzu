@@ -1,5 +1,7 @@
 use std::{
+    ffi::c_void,
     ops::Range,
+    ptr::NonNull,
     sync::{
         Arc, Weak,
         atomic::{AtomicUsize, Ordering},
@@ -7,6 +9,7 @@ use std::{
 };
 
 use bytemuck::{AnyBitPattern, NoUninit};
+use memmap2::MmapMut;
 use parking_lot::Mutex;
 
 use crate::backends::common::{
@@ -18,7 +21,18 @@ pub struct Allocation<B: Backend> {
     allocator: Arc<Allocator<B>>,
     buffer: Arc<B::DenseBuffer>,
     range: Range<usize>,
-    allocation_type: RangeAllocationType,
+    kind: AllocationKind,
+}
+
+/// Where an allocation's bytes live.
+enum AllocationKind {
+    /// A range of one of the allocator's buffers, returned to it on drop.
+    Ranged(RangeAllocationType),
+    /// A range of a file mapping, used in place. Held only to keep the mapping alive as long as its allocations; the
+    /// field drops after `buffer`, so no buffer outlives the memory under it.
+    Mapped {
+        _mapping: Arc<MmapMut>,
+    },
 }
 
 impl<B: Backend> Allocation<B> {
@@ -73,7 +87,63 @@ impl<B: Backend> AsBufferRangeMut for Allocation<B> {
 
 impl<B: Backend> Drop for Allocation<B> {
     fn drop(&mut self) {
-        self.allocator.free(self)
+        if let AllocationKind::Ranged(allocation_type) = self.kind {
+            self.allocator.free(&self.buffer, self.range.clone(), allocation_type)
+        }
+    }
+}
+
+/// A file mapped copy-on-write and used in place: its tensors become allocations of its byte ranges, wrapped without
+/// copying into buffers of at most the backend's maximum buffer length, each created the first time a range needs it.
+/// Clean mapped pages are file-backed, so they do not count as the process's own memory.
+pub struct MappedFile<B: Backend> {
+    allocator: Arc<Allocator<B>>,
+    // declared before the map so the buffers over it are released before it can be unmapped
+    windows: Mutex<Vec<(Range<usize>, Arc<B::DenseBuffer>)>>,
+    map: Arc<MmapMut>,
+}
+
+impl<B: Backend> MappedFile<B> {
+    pub fn file_len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// The mapped length: the file rounded up to whole pages (the tail of the last page reads as zeros).
+    pub fn mapped_len(&self) -> usize {
+        self.map.len().div_ceil(rustix::param::page_size()) * rustix::param::page_size()
+    }
+
+    /// The file's bytes `range`, in place.
+    pub fn allocation(
+        &self,
+        range: Range<usize>,
+    ) -> Result<Allocation<B>, B::Error> {
+        assert!(range.end <= self.mapped_len());
+        let mut windows = self.windows.lock();
+        let found = windows.iter().find(|(window, _)| window.start <= range.start && range.end <= window.end);
+        let (start, buffer) = match found {
+            Some((window, buffer)) => (window.start, buffer.clone()),
+            None => {
+                let context = self.allocator.context.upgrade().unwrap(); // the allocator never outlives its context
+                let page = rustix::param::page_size();
+                let start = range.start / page * page;
+                let end = start + usize::min(context.max_buffer_length() / page * page, self.mapped_len() - start);
+                assert!(range.end <= end, "a {} byte range does not fit one buffer", range.len());
+                // SAFETY: page-aligned, inside the mapping, and the mapping outlives the buffer (see AllocationKind::Mapped)
+                let pointer = NonNull::new(unsafe { self.map.as_ptr().add(start) } as *mut c_void).unwrap();
+                let buffer = Arc::new(unsafe { context.create_buffer_over_host_memory(pointer, end - start)? });
+                windows.push((start..end, buffer.clone()));
+                (start, buffer)
+            },
+        };
+        Ok(Allocation {
+            allocator: self.allocator.clone(),
+            buffer,
+            range: range.start - start..range.end - start,
+            kind: AllocationKind::Mapped {
+                _mapping: self.map.clone(),
+            },
+        })
     }
 }
 
@@ -179,7 +249,7 @@ impl<B: Backend> Allocator<B> {
             allocator: self.clone(),
             buffer,
             range,
-            allocation_type,
+            kind: AllocationKind::Ranged(allocation_type),
         })
     }
 
@@ -202,20 +272,31 @@ impl<B: Backend> Allocator<B> {
 
     // TODO: Maybe hysteresis in free/free_pool?
 
+    pub fn map_file(
+        self: &Arc<Self>,
+        map: MmapMut,
+    ) -> MappedFile<B> {
+        MappedFile {
+            allocator: self.clone(),
+            map: Arc::new(map),
+            windows: Mutex::new(Vec::new()),
+        }
+    }
+
     fn free(
         self: &Arc<Self>,
-        allocation: &Allocation<B>,
+        buffer: &Arc<B::DenseBuffer>,
+        range: Range<usize>,
+        allocation_type: RangeAllocationType,
     ) {
         let mut allocator_buffers = self.allocator_buffers.lock();
 
         let allocator_buffer_index = allocator_buffers
             .iter()
-            .position(|allocator_buffer| Arc::ptr_eq(&allocator_buffer.buffer, &allocation.buffer))
+            .position(|allocator_buffer| Arc::ptr_eq(&allocator_buffer.buffer, buffer))
             .unwrap(); // Can never fail
 
-        allocator_buffers[allocator_buffer_index]
-            .range_allocator
-            .free_range(allocation.range.clone(), allocation.allocation_type);
+        allocator_buffers[allocator_buffer_index].range_allocator.free_range(range, allocation_type);
 
         if allocator_buffers[allocator_buffer_index].range_allocator.is_empty() {
             allocator_buffers.remove(allocator_buffer_index);

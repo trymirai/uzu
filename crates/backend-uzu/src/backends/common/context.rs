@@ -1,6 +1,10 @@
-use std::{path::Path, sync::Arc};
+use std::{ffi::c_void, path::Path, ptr::NonNull, sync::Arc};
 
-use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer, DeviceCapabilities};
+use memmap2::MmapMut;
+
+use crate::backends::common::{
+    Allocation, AllocationPool, AllocationType, Backend, CommandBuffer, DeviceCapabilities, MappedFile,
+};
 
 pub trait Context: Sized + Send + Sync {
     type Backend: Backend<Context = Self>;
@@ -17,11 +21,29 @@ pub trait Context: Sized + Send + Sync {
         size: usize,
     ) -> Result<<Self::Backend as Backend>::DenseBuffer, <Self::Backend as Backend>::Error>;
 
+    /// A buffer over `size` bytes of host memory at the page-aligned `pointer`, without copying.
+    ///
+    /// # Safety
+    /// The memory must stay valid, and mapped, for the buffer's whole lifetime.
+    unsafe fn create_buffer_over_host_memory(
+        &self,
+        pointer: NonNull<c_void>,
+        size: usize,
+    ) -> Result<<Self::Backend as Backend>::DenseBuffer, <Self::Backend as Backend>::Error>;
+
+    fn max_buffer_length(&self) -> usize;
+
     fn create_allocation(
         &self,
         size: usize,
         allocation_type: AllocationType<Self::Backend>,
     ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error>;
+
+    /// A mapped file whose ranges become allocations used in place.
+    fn map_file(
+        &self,
+        map: MmapMut,
+    ) -> MappedFile<Self::Backend>;
 
     fn create_allocation_pool(
         &self,

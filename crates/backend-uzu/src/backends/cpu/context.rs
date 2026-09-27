@@ -1,11 +1,15 @@
 use std::{
+    ffi::c_void,
     path::Path,
+    ptr::NonNull,
     sync::{Arc, mpsc},
     thread,
 };
 
+use memmap2::MmapMut;
+
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DenseBuffer, DeviceCapabilities, MappedFile},
     cpu::{Cpu, command_buffer::CpuCommandBufferInitial, dense_buffer::CpuBuffer, error::CpuError},
 };
 
@@ -37,6 +41,28 @@ impl Context for CpuContext {
         size: usize,
     ) -> Result<CpuBuffer, CpuError> {
         Ok(CpuBuffer::new(size))
+    }
+
+    /// The CPU backend owns its buffers, so it copies the host memory.
+    unsafe fn create_buffer_over_host_memory(
+        &self,
+        pointer: NonNull<c_void>,
+        size: usize,
+    ) -> Result<CpuBuffer, CpuError> {
+        let buffer = CpuBuffer::new(size);
+        unsafe { std::ptr::copy_nonoverlapping(pointer.as_ptr() as *const u8, buffer.cpu_ptr().as_ptr() as *mut u8, size) };
+        Ok(buffer)
+    }
+
+    fn max_buffer_length(&self) -> usize {
+        usize::MAX
+    }
+
+    fn map_file(
+        &self,
+        map: MmapMut,
+    ) -> MappedFile<Cpu> {
+        self.allocator.map_file(map)
     }
 
     fn create_allocation(

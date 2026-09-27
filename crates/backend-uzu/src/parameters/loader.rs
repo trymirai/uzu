@@ -9,7 +9,7 @@ use thiserror::Error;
 use super::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata};
 use crate::{
     array::{ArrayElement, size_for_shape},
-    backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
+    backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer, MappedFile},
     data_type::DataType,
     utils::{fs::file_read_exact_at, strict_serde::DeserializeStrictOwned},
 };
@@ -27,7 +27,7 @@ pub enum ParameterLoaderError<B: Backend> {
     KeyNotFound(String),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
-    #[error("Failed to read data")]
+    #[error("Failed to read data: {0}")]
     ArrayLoadingError(#[from] std::io::Error),
     #[error("Failed to deserialize metadata")]
     MetadataDeserializationError(#[from] serde_json::Error),
@@ -58,6 +58,7 @@ pub struct ParameterLoader<'a, B: Backend> {
     metadata: HashMap<String, String>,
     validated_tensors: RefCell<HashSet<String>>,
     file: &'a File,
+    mapped: MappedFile<B>,
 }
 
 impl<'a, B: Backend> ParameterLoader<'a, B> {
@@ -93,12 +94,15 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
             })
             .collect::<Result<HashMap<_, _>, HeaderLoadingError>>()?;
         let metadata = st_metadata.metadata.unwrap_or_default();
+        // copy-on-write, so nothing that writes into a loaded tensor can reach the file
+        let map = unsafe { memmap2::MmapOptions::new().map_copy(file) }.map_err(HeaderLoadingError::UnableToMapFile)?;
         Ok(ParameterLoader {
             context,
             index,
             metadata,
             validated_tensors: RefCell::new(HashSet::new()),
             file,
+            mapped: context.map_file(map),
         })
     }
 
@@ -160,20 +164,38 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
     }
 
     pub fn read_allocation(&self) -> Result<Allocation<B>, ParameterLoaderError<B>> {
+        self.read_padded_allocation(0)
+    }
+
+    /// The tensor's bytes followed by `padding` readable bytes. A tensor on a 16-byte boundary is used in place in the
+    /// file mapping (the padding is then the file's next bytes, or zeros past its end), so its memory is file-backed and
+    /// not the process's own; any other tensor is read into a new allocation with zero padding.
+    pub fn read_padded_allocation(
+        &self,
+        padding: usize,
+    ) -> Result<Allocation<B>, ParameterLoaderError<B>> {
+        let (offset, size) = (self.metadata.offset, self.metadata.size);
+        let mapped = &self.loader.mapped;
+        if offset % 16 == 0 && offset + size <= mapped.file_len() && offset + size + padding <= mapped.mapped_len() {
+            return mapped.allocation(offset..offset + size + padding).map_err(ParameterLoaderError::BackendError);
+        }
         let allocation = self
             .loader
             .context
-            .create_allocation(self.metadata.size, AllocationType::Global)
+            .create_allocation(size + padding, AllocationType::Global)
             .map_err(ParameterLoaderError::BackendError)?;
         let buffer_range = allocation.as_buffer_range_ref();
         let range = buffer_range.range();
+        assert_eq!(range.len(), size + padding);
         let destination = unsafe {
             std::slice::from_raw_parts_mut(
                 (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
                 range.len(),
             )
         };
-        file_read_exact_at(self.loader.file, destination, self.metadata.offset as u64)?;
+        let (data, pad) = destination.split_at_mut(size);
+        file_read_exact_at(self.loader.file, data, self.metadata.offset as u64)?;
+        pad.fill(0);
         Ok(allocation)
     }
 

@@ -11,6 +11,8 @@ use crate::{data_type::DataType, utils::fs::file_read_exact_at};
 pub enum HeaderLoadingError {
     #[error("Unable to read safetensors header bytes: {0}")]
     UnableToReadHeader(#[source] std::io::Error),
+    #[error("Unable to memory-map the weights file: {0}")]
+    UnableToMapFile(#[source] std::io::Error),
     #[error("Unable to read safetensors header JSON: {0}")]
     UnableToReadHeaderJson(#[source] std::io::Error),
     #[error("The header is an invalid UTF-8 string and cannot be read: {0}")]

@@ -1,6 +1,8 @@
 use std::{
     collections::HashMap,
+    ffi::c_void,
     path::Path,
+    ptr::NonNull,
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -14,6 +16,7 @@ use metal::{
     MTLCommandBufferExt, MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
     MTLEvent, MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
 };
+use memmap2::MmapMut;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::{Mutex, MutexGuard};
 
@@ -24,7 +27,7 @@ use super::{
     metal_extensions::{DeviceExt, LibraryPipelineExtensions},
 };
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context, DeviceCapabilities, MappedFile},
     metal::{
         command_buffer::MetalCommandBufferInitial,
         sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
@@ -200,12 +203,33 @@ impl Context for MetalContext {
         Ok(buffer)
     }
 
+    unsafe fn create_buffer_over_host_memory(
+        &self,
+        pointer: NonNull<c_void>,
+        size: usize,
+    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
+        self.device
+            .new_buffer_with_bytes_no_copy(pointer, size, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .ok_or(MetalError::CannotCreateBuffer)
+    }
+
+    fn max_buffer_length(&self) -> usize {
+        self.device.max_buffer_length()
+    }
+
     fn create_allocation(
         &self,
         size: usize,
         allocation_type: AllocationType<Metal>,
     ) -> Result<Allocation<Metal>, MetalError> {
         self.allocator.allocate(size, allocation_type)
+    }
+
+    fn map_file(
+        &self,
+        map: MmapMut,
+    ) -> MappedFile<Metal> {
+        self.allocator.map_file(map)
     }
 
     fn create_allocation_pool(
