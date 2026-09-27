@@ -1,4 +1,4 @@
-use proc_macros::taps;
+use uzu_engine_macros::taps;
 
 taps! {
     pub DecoderTap {

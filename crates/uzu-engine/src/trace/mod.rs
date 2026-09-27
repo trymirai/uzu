@@ -3,6 +3,7 @@ mod data_type;
 mod error;
 mod record;
 mod tap;
+mod trace_selection;
 
 pub use array::Array;
 pub use error::Error;

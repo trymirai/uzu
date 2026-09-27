@@ -208,7 +208,8 @@ impl<B: Backend> ClassifierModel<B> {
             return Err(ClassifierModelClassifyError::EmptyInput);
         }
 
-        if self.classifier.max_context_length().is_some_and(|max_context_length| input.len() > max_context_length) {
+        let token_count = input.len() as u32;
+        if self.classifier.max_context_length().is_some_and(|max_context_length| token_count > max_context_length) {
             return Err(ClassifierModelClassifyError::ContextOverflow);
         }
 
@@ -219,11 +220,11 @@ impl<B: Backend> ClassifierModel<B> {
             .map_err(ClassifierModelClassifyError::Backend)?;
         token_ids.copyin(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>());
 
-        let output = self.classifier.encode(&token_ids, input.len(), Some(request), &mut encoder)?;
+        let output = self.classifier.encode(&token_ids, token_count, Some(request), &mut encoder)?;
         let mut tap = output.tap;
 
         if let Some(transformer_tap) = tap.activations.as_mut().and_then(|a| a.transformer.as_mut()) {
-            let shape = [1, input.len()];
+            let shape = [1, token_count];
             let host_token_ids = input.iter().map(|token_id| *token_id as i32).collect::<Box<[i32]>>();
             let host_token_positions = (0..input.len() as i32).collect::<Box<[i32]>>();
             transformer_tap.token_ids = Some(

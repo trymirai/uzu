@@ -1,7 +1,7 @@
 use std::{error::Error, path::PathBuf, process::ExitCode};
 
-use backend_uzu::trace::record_trace;
 use clap::Parser;
+use uzu_engine::trace::record_trace;
 
 #[derive(Parser)]
 #[command(name = "trace", bin_name = "trace")]

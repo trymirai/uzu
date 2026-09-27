@@ -1,11 +1,11 @@
 use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{Context, Result, bail};
-use backend_uzu::{ChatCodecConfig, trace::record_trace};
 use hanashi::chat::hanashi::renderer::{TEMPLATE_NAME, chat_template_environment};
 use minijinja::context;
 use serde_json::{Value, json};
 use tokenizers::Tokenizer;
+use uzu_engine::{ChatCodecConfig, trace::record_trace};
 
 struct Prompt {
     template: String,

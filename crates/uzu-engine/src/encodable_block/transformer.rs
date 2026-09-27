@@ -260,7 +260,7 @@ impl<B: Backend> Transformer<B> {
 
         if let Some(rope_request) = &request.rope_embeddings {
             for rope in precalculated_ropes.iter() {
-                let shape = [1, token_positions.len(), rope.dim];
+                let shape = [1, token_positions.len() as u32, rope.dim];
                 tap.rope_embeddings.push(RopeTap {
                     cosines: rope_request
                         .cosines
@@ -352,15 +352,11 @@ impl<B: Backend> Transformer<B> {
             });
         };
 
-        let output_normalized = self.output_norm.encode(
-            &hidden,
-            output_range.start,
-            output_range.end - output_range.start,
-            Some(&mut shortcut),
-            encoder,
-        )?;
+        let row_count = output_range.end - output_range.start;
+        let output_normalized =
+            self.output_norm.encode(&hidden, output_range.start, row_count, Some(&mut shortcut), encoder)?;
         if request.output_norm {
-            let shape = [1, output_range.len(), self.model_dim];
+            let shape = [1, row_count, self.model_dim];
             tap.output_norm = Some(Array::capture(&output_normalized, &shape, self.data_type, encoder)?);
         }
 
