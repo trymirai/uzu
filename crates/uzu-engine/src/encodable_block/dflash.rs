@@ -29,11 +29,33 @@ pub struct DFlashState<B: Backend> {
     layer_states: Box<[Box<dyn MixerState<B>>]>,
     context_length: u32,
     context_capacity: u32,
+    snapshot_length: Option<u32>,
 }
 
 impl<B: Backend> DFlashState<B> {
     pub fn context_length(&self) -> u32 {
         self.context_length
+    }
+
+    pub fn encode_snapshot(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        for layer_state in &mut self.layer_states {
+            layer_state.encode_snapshot(encoder)?;
+        }
+        self.snapshot_length = Some(self.context_length);
+        Ok(())
+    }
+
+    pub fn encode_restore(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) {
+        for layer_state in &mut self.layer_states {
+            layer_state.encode_restore(encoder);
+        }
+        self.context_length = self.snapshot_length.expect("restore without a snapshot");
     }
 }
 
@@ -85,6 +107,10 @@ pub enum DFlashEncodeError<B: Backend> {
 }
 
 impl<B: Backend> DFlash<B> {
+    pub fn snapshot_supported(&self) -> bool {
+        self.layers.iter().all(|layer| layer.mixer.snapshot_supported())
+    }
+
     pub fn new(
         context: &B::Context,
         config: &DFlashDraftConfig,
@@ -190,6 +216,7 @@ impl<B: Backend> DFlash<B> {
             layer_states,
             context_length: 0,
             context_capacity,
+            snapshot_length: None,
         })
     }
 

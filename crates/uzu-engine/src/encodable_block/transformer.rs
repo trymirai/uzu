@@ -24,6 +24,7 @@ enum TransformerLayerStateType<B: Backend> {
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
+    snapshot_length: Option<u32>,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -73,6 +74,31 @@ impl<B: Backend> TransformerState<B> {
         encoder.pop_debug_group();
 
         Ok(())
+    }
+
+    pub fn encode_snapshot(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
+        for layer_state in &mut self.layer_states {
+            if let TransformerLayerStateType::Owned(layer_state) = layer_state {
+                layer_state.encode_snapshot(encoder)?;
+            }
+        }
+        self.snapshot_length = Some(self.context_length);
+        Ok(())
+    }
+
+    pub fn encode_restore(
+        &mut self,
+        encoder: &mut Encoder<B>,
+    ) {
+        for layer_state in &mut self.layer_states {
+            if let TransformerLayerStateType::Owned(layer_state) = layer_state {
+                layer_state.encode_restore(encoder);
+            }
+        }
+        self.context_length = self.snapshot_length.expect("restore without a snapshot");
     }
 }
 
@@ -174,6 +200,10 @@ impl<B: Backend> Transformer<B> {
         self.layers.iter().all(|(layer, _rope)| layer.mixer.speculation_supported())
     }
 
+    pub fn snapshot_supported(&self) -> bool {
+        self.layers.iter().all(|(layer, _rope)| layer.mixer.snapshot_supported())
+    }
+
     pub fn max_context_length(&self) -> Option<u32> {
         self.layers.iter().map(|(layer, _rope_index)| layer.mixer.max_context_length()).fold(None, |acc, el| {
             match (acc, el) {
@@ -220,6 +250,7 @@ impl<B: Backend> Transformer<B> {
         Ok(TransformerState {
             layer_states,
             context_length,
+            snapshot_length: None,
         })
     }
 

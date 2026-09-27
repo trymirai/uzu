@@ -164,6 +164,12 @@ impl<B: Backend> LanguageModel<B> {
         self.decoder.speculation_supported()
     }
 
+    /// Whether `rewind` can return to a snapshot: states with sliding-window attention take none.
+    pub fn snapshot_supported(&self) -> bool {
+        self.decoder.snapshot_supported()
+            && self.speculator.as_ref().is_none_or(|speculator| speculator.snapshot_supported())
+    }
+
     pub fn default_sampling_method(&self) -> SamplingMethod {
         SamplingMethod::Stochastic {
             temperature: self.generation_config.temperature,

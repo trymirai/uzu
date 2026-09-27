@@ -705,21 +705,27 @@ fn messages_have_prefix(
 }
 
 /// Returns only the messages the session has not seen yet when the request
-/// extends the session's current history; otherwise resets the session and
-/// returns the full list. Token-level reuse itself is decided inside the
-/// session, which falls back to a full prefill if the rendered tokens diverge.
+/// extends the session's current history; otherwise returns the full list
+/// with the history cleared, and without the prefix cache the whole session.
+/// Token-level reuse itself is decided inside the session, which falls back
+/// to a full prefill if the rendered tokens diverge.
 async fn prepare_input(
     session: &ChatSession,
     mut messages: Vec<ChatMessage>,
     prefix_cache: bool,
 ) -> Result<Vec<ChatMessage>, uzu::session::chat::ChatSessionError> {
-    if prefix_cache {
-        let current = session.messages().await;
-        if !current.is_empty() && messages.len() > current.len() && messages_have_prefix(&messages, &current) {
-            return Ok(messages.split_off(current.len()));
-        }
+    if !prefix_cache {
+        session.reset().await?;
+        return Ok(messages);
     }
-    session.reset().await?;
+    let current = session.messages().await;
+    if !current.is_empty() && messages.len() > current.len() && messages_have_prefix(&messages, &current) {
+        return Ok(messages.split_off(current.len()));
+    }
+    // Clients send finished assistant turns back without their reasoning, so
+    // such a request rewrites the history while its prompt still shares most
+    // of the session's state.
+    session.reset_messages().await?;
     Ok(messages)
 }
 

@@ -42,6 +42,7 @@ pub struct HanashiEncodingImpl {
     tokenizer_decode_ids: Vec<u32>,
     tokenizer_decode_prefix: String,
     tokenizer_decode_prefix_index: usize,
+    generation_prompt_start: Option<usize>,
 }
 
 impl HanashiEncodingImpl {
@@ -66,7 +67,15 @@ impl HanashiEncodingImpl {
             tokenizer_decode_ids: vec![],
             tokenizer_decode_prefix: "".to_string(),
             tokenizer_decode_prefix_index: 0,
+            generation_prompt_start: None,
         })
+    }
+
+    /// Token index of the generation prompt's open frame after the last `encode` of a user turn: the next turn renders
+    /// this turn's reply differently from the sampled tokens (templates drop its reasoning), so only the tokens before
+    /// it are certain to be shared.
+    pub fn generation_prompt_start(&self) -> Option<usize> {
+        self.generation_prompt_start
     }
 }
 
@@ -88,6 +97,7 @@ impl EncodingTrait for HanashiEncodingImpl {
         self.tokenizer_decode_ids = vec![];
         self.tokenizer_decode_prefix = "".to_string();
         self.tokenizer_decode_prefix_index = 0;
+        self.generation_prompt_start = None;
         Ok(())
     }
 
@@ -100,6 +110,7 @@ impl EncodingTrait for HanashiEncodingImpl {
             self.validator.validate_next(&message.role)?;
         }
         self.state.messages.extend(messages.clone());
+        self.generation_prompt_start = None;
 
         let text = self.render_messages(&messages, true)?;
         let text_encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
@@ -127,6 +138,8 @@ impl EncodingTrait for HanashiEncodingImpl {
                 .into_iter()
                 .cloned()
                 .collect();
+            self.generation_prompt_start =
+                prompt_tokens.first().and_then(|open| self.state.tokens.iter().rposition(|token| token.id == open.id));
             self.parser.reset();
             for token in &prompt_tokens {
                 self.parser.push_bulk(token)?;

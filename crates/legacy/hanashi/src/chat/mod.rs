@@ -38,6 +38,13 @@ pub enum Encoding {
 }
 
 impl Encoding {
+    pub fn generation_prompt_start(&self) -> Option<usize> {
+        match self {
+            Self::Hanashi(inner) => inner.generation_prompt_start(),
+            Self::Harmony(_) => None,
+        }
+    }
+
     pub fn try_append(
         &mut self,
         messages: &[ChatMessage],

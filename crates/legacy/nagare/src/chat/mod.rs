@@ -188,6 +188,40 @@ impl ChatSession {
         self.instance.lock().await.peak_memory_usage()
     }
 
+    /// Clears the message history but keeps the model's state (for token sessions; a message session resets fully),
+    /// so the next reply can reuse the part of it that its prompt still shares.
+    pub async fn reset_messages(&self) -> Result<(), ChatSessionError> {
+        self.clear(false).await
+    }
+
+    async fn clear(
+        &self,
+        reset_token_state: bool,
+    ) -> Result<(), ChatSessionError> {
+        {
+            let mut state = self.state.lock().await;
+            match *state {
+                ChatSessionState::Idle | ChatSessionState::ToolCalling => {
+                    *state = ChatSessionState::Resetting;
+                },
+                ChatSessionState::Generation | ChatSessionState::Resetting => {
+                    return Err(ChatSessionError::UnableToPerformOperationInCurrentState {});
+                },
+            }
+        }
+
+        let result = match &mut *self.instance.lock().await {
+            Instance::Token(session) if reset_token_state => session.reset().await,
+            Instance::Token(_) => Ok(()),
+            Instance::Message(session) => session.reset().await,
+        };
+
+        self.messages.lock().await.clear();
+        *self.state.lock().await = ChatSessionState::Idle;
+
+        result
+    }
+
     pub async fn add_tool(
         &mut self,
         descriptor: impl Into<ToolDescriptor>,
@@ -582,30 +616,7 @@ impl ChatSession {
 
     #[bindings::export(Method)]
     pub async fn reset(&self) -> Result<(), ChatSessionError> {
-        {
-            let mut state = self.state.lock().await;
-            match *state {
-                ChatSessionState::Idle | ChatSessionState::ToolCalling => {
-                    *state = ChatSessionState::Resetting;
-                },
-                ChatSessionState::Generation | ChatSessionState::Resetting => {
-                    return Err(ChatSessionError::UnableToPerformOperationInCurrentState {});
-                },
-            }
-        }
-
-        let result = {
-            let mut guard = self.instance.lock().await;
-            match &mut *guard {
-                Instance::Token(session) => session.reset().await,
-                Instance::Message(session) => session.reset().await,
-            }
-        };
-
-        self.messages.lock().await.clear();
-        *self.state.lock().await = ChatSessionState::Idle;
-
-        result
+        self.clear(true).await
     }
 
     #[bindings::export(Method)]

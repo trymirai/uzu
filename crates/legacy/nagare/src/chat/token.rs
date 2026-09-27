@@ -41,7 +41,7 @@ pub struct Session {
     instance: Arc<dyn ChatTokenBackendInstance>,
     state: Box<dyn State>,
     encoding: Encoding,
-    input_tokens: Vec<u64>,
+    input: StreamInput,
     stop_token_ids: Box<[u64]>,
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     energy_recorder: EnergyRecorder,
@@ -108,7 +108,10 @@ impl Session {
             instance,
             state,
             encoding,
-            input_tokens: Vec::new(),
+            input: StreamInput {
+                tokens: Vec::new(),
+                snapshot_position: None,
+            },
             stop_token_ids,
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             energy_recorder: EnergyRecorder::new(),
@@ -144,7 +147,7 @@ impl Session {
             }
         }
         let time_prefill_start = Instant::now();
-        let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
+        let stream = instance.stream(&self.input, self.state.as_mut(), config.clone(), cancel_token.clone());
         let output_tokens_start = self.encoding.state().tokens.len();
 
         let stream_state = StreamingState {
@@ -162,7 +165,7 @@ impl Session {
             time_prefill_start,
             time_first_token: None,
             input_energy: None,
-            total_tokens_input: self.input_tokens.len(),
+            total_tokens_input: self.input.tokens.len(),
             cached_tokens_input,
             total_tokens_output: 0,
             memory_usage: None,
@@ -217,34 +220,48 @@ impl Session {
         if let Some(suffix) = self.encoding.try_append(messages).map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })? {
-            self.input_tokens = suffix.into_iter().map(u64::from).collect();
+            self.input = StreamInput {
+                tokens: suffix.into_iter().map(u64::from).collect(),
+                snapshot_position: None,
+            };
             return Ok(cached.len());
         }
 
         let rendered_ids = self.build_input(messages)?;
-        let cached_ids: Vec<_> = cached.iter().map(|token| u64::from(token.id)).collect();
-        // Without an append operation preserving the sampled encoding, the newly
-        // built encoding can describe the live backend only if token IDs match.
-        if rendered_ids.starts_with(&cached_ids) {
-            self.input_tokens = rendered_ids[cached_ids.len()..].to_vec();
-            return Ok(cached_ids.len());
-        }
-
-        self.state_reset().await?;
-        let cached_text: String = cached.iter().map(|token| token.value.as_str()).collect();
-        let rendered_text = self.encoding.state().text();
-        tracing::warn!(
-            "Reprefill: {}",
-            describe_reprefill(&cached, &self.encoding.state().tokens, &cached_text, &rendered_text)
-        );
-        self.input_tokens = rendered_ids;
-        Ok(0)
+        // The backend keeps the part of its state the new prompt shares: all of it, or everything before the last
+        // prompt's generation prompt when the template rendered that reply differently from the sampled tokens.
+        let reused = match self.instance.rewind(self.state.as_mut(), &rendered_ids) {
+            Ok(Some(reused)) => reused,
+            Ok(None) => {
+                self.state_reset().await?;
+                let cached_text: String = cached.iter().map(|token| token.value.as_str()).collect();
+                let rendered_text = self.encoding.state().text();
+                // Expected whenever a client switches conversations, now that the server keeps the state for them.
+                tracing::info!(
+                    "Reprefill: {}",
+                    describe_reprefill(&cached, &self.encoding.state().tokens, &cached_text, &rendered_text)
+                );
+                0
+            },
+            // The state may be half restored.
+            Err(error) => {
+                self.reset().await?;
+                return Err(ChatSessionError::Backend {
+                    message: error.to_string(),
+                });
+            },
+        };
+        self.input = StreamInput {
+            tokens: rendered_ids[reused..].to_vec(),
+            snapshot_position: self.encoding.generation_prompt_start().filter(|&position| position >= reused),
+        };
+        Ok(reused)
     }
 
     fn build_input(
         &mut self,
         all_messages: &[ChatMessage],
-    ) -> Result<StreamInput, ChatSessionError> {
+    ) -> Result<Vec<u64>, ChatSessionError> {
         self.encoding.reset().map_err(|err| ChatSessionError::Backend {
             message: err.to_string(),
         })?;

@@ -119,6 +119,10 @@ impl<B: Backend> Decoder<B> {
         self.transformer.speculation_supported()
     }
 
+    pub fn snapshot_supported(&self) -> bool {
+        self.transformer.snapshot_supported()
+    }
+
     pub fn max_context_length(&self) -> Option<u32> {
         self.transformer.max_context_length()
     }
