@@ -5,8 +5,8 @@ use objc2::{
     rc::{Allocated, Retained},
 };
 use objc2_foundation::{
-    NSError, NSObject, NSObjectProtocol, NSURL, NSURLSession, NSURLSessionDelegate, NSURLSessionDownloadDelegate,
-    NSURLSessionDownloadTask, NSURLSessionTask, NSURLSessionTaskDelegate,
+    NSError, NSHTTPURLResponse, NSObject, NSObjectProtocol, NSURL, NSURLSession, NSURLSessionDelegate,
+    NSURLSessionDownloadDelegate, NSURLSessionDownloadTask, NSURLSessionTask, NSURLSessionTaskDelegate,
 };
 
 use crate::backends::{
@@ -71,6 +71,23 @@ define_class!(
             else {
                 return;
             };
+            let status = download_task
+                .response()
+                .and_then(|response| response.downcast::<NSHTTPURLResponse>().ok())
+                .map(|response| response.statusCode());
+            if let Some(status) = status
+                && !(200..300).contains(&status)
+            {
+                sink.runtime_handle.clone().spawn(async move {
+                    sink.events
+                        .send_terminal(BackendEvent::Error {
+                            generation: sink.generation,
+                            message: format!("download failed with HTTP status {status}"),
+                        })
+                        .await;
+                });
+                return;
+            }
             let Some(temporary_path) = location.path().map(|path| PathBuf::from(path.to_string())) else {
                 return;
             };
@@ -115,6 +132,25 @@ define_class!(
                 return;
             };
             let downloaded_bytes = cumulative_bytes_written.max(0) as u64;
+            if let Some(expected_bytes) = sink.expected_bytes
+                && downloaded_bytes > expected_bytes
+            {
+                download_task.cancel();
+                Self::ivars(self)
+                    .event_registry
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&download_task.taskIdentifier());
+                sink.runtime_handle.clone().spawn(async move {
+                    sink.events
+                        .send_terminal(BackendEvent::Error {
+                            generation: sink.generation,
+                            message: format!("response exceeded the declared size of {expected_bytes} bytes"),
+                        })
+                        .await;
+                });
+                return;
+            }
             let total_bytes = (total_expected_bytes_to_write > 0).then_some(total_expected_bytes_to_write as u64);
             sink.events.send_progress(sink.generation, downloaded_bytes, total_bytes);
         }

@@ -886,7 +886,7 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     func modelsForTranslation() async throws  -> [Model]
     
-    func modelsLocal() async throws  -> [Model]
+    func modelsOnDevice() async throws  -> [Model]
     
     func modelsRemote() async throws  -> [Model]
     
@@ -1374,11 +1374,11 @@ open func modelsForTranslation()async throws  -> [Model]  {
         )
 }
     
-open func modelsLocal()async throws  -> [Model]  {
+open func modelsOnDevice()async throws  -> [Model]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_uzu_fn_method_engine_models_local(
+                uniffi_uzu_fn_method_engine_models_on_device(
                     self.uniffiCloneHandle()
                     
                 )
@@ -3373,7 +3373,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_uzu_checksum_method_engine_models_for_translation() != 56970) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uzu_checksum_method_engine_models_local() != 2150) {
+    if (uniffi_uzu_checksum_method_engine_models_on_device() != 11803) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_models_remote() != 36115) {

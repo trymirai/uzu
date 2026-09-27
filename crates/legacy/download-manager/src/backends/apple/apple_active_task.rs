@@ -17,16 +17,19 @@ use crate::backends::{
 pub struct AppleActiveTask {
     task: Retained<NSURLSessionDownloadTask>,
     event_registry: AppleEventRegistry,
+    authenticated: bool,
 }
 
 impl AppleActiveTask {
     pub fn new(
         task: Retained<NSURLSessionDownloadTask>,
         event_registry: AppleEventRegistry,
+        authenticated: bool,
     ) -> Self {
         Self {
             task,
             event_registry,
+            authenticated,
         }
     }
 
@@ -41,6 +44,14 @@ impl ActiveTask for AppleActiveTask {
         self: Box<Self>,
         resume_artifact_path: &Path,
     ) -> Result<(), BackendError> {
+        // The resume blob archives the original and current requests with all their headers, so producing one
+        // for an authenticated task would write the bearer token to disk and freeze it into the resumed request.
+        // Authenticated downloads therefore start over after a pause or a relaunch on this backend; the universal
+        // backend resumes them from the partial file and re-sends the token from memory instead.
+        if self.authenticated {
+            self.cancel().await;
+            return Ok(());
+        }
         self.unregister();
         let (sender, receiver) = tokio_oneshot_channel::<Vec<u8>>();
         {

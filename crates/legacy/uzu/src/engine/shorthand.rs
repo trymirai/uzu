@@ -1,4 +1,4 @@
-use shoji::types::model::{Model, ModelAccessibility, ModelReference};
+use shoji::types::model::{Model, ModelAccessibility, ModelSource};
 
 use crate::registry::RegistryError;
 
@@ -89,8 +89,8 @@ fn model_shorthand_matches(
 }
 
 fn checkpoint_size_bytes(model: &Model) -> Option<u64> {
-    if let ModelAccessibility::Local {
-        reference: ModelReference::Mirai {
+    if let ModelAccessibility::OnDevice {
+        source: ModelSource::Registry {
             files,
             ..
         },

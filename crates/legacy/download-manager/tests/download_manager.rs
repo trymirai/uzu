@@ -3,8 +3,8 @@ mod common;
 use std::{path::Path, sync::Arc, time::Duration};
 
 use download_manager::{
-    DestinationLock, DownloadError, DownloadManager, DownloadManagerType, DownloadPhase, DownloadState, DownloadTask,
-    DownloadTaskRequest, LockError, LockOwner,
+    Checksum, DestinationLock, DownloadError, DownloadManager, DownloadManagerType, DownloadPhase, DownloadState,
+    DownloadTask, DownloadTaskRequest, LockError, LockOwner,
 };
 use kiban::rt::RuntimeHandle;
 use rstest::rstest;
@@ -12,10 +12,14 @@ use tokio::time::timeout;
 use uuid::Uuid;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    matchers::{header, method, path},
 };
 
 use crate::common::{Behavior, MockRegistry, artifact_path, file_request, foreign_lock, model_request, wait_for_state};
+
+const HELLO: &[u8] = b"hello\n";
+const HELLO_SHA256: &str = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
+const HELLO_GIT_BLOB_SHA1: &str = "ce013625030ba8dba906f756967f9e9ca394464a";
 
 fn manager(kind: DownloadManagerType) -> DownloadManager {
     DownloadManager::new(kind, RuntimeHandle::current())
@@ -89,7 +93,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     for served in registry.files.iter() {
         let destination = directory.path().join(&served.file.name);
         assert_eq!(tokio::fs::read(&destination).await?, served.bytes.to_vec());
-        assert!(artifact_path(&destination, "crc").is_file());
+        assert!(artifact_path(&destination, "checksum").is_file());
     }
 
     model.delete().await?;
@@ -98,7 +102,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     for served in registry.files.iter() {
         let destination = directory.path().join(&served.file.name);
         assert!(!destination.exists());
-        assert!(!artifact_path(&destination, "crc").exists());
+        assert!(!artifact_path(&destination, "checksum").exists());
         assert!(!artifact_path(&destination, "lock").exists());
     }
 
@@ -141,16 +145,16 @@ async fn startup_reconciliation(
     assert_eq!(task.state().phase, DownloadPhase::Downloaded {});
     assert!(!artifact.exists());
     let receipt: serde_json::Value =
-        serde_json::from_str(&tokio::fs::read_to_string(artifact_path(&destination, "crc")).await?)?;
-    assert_eq!(receipt["version"].as_u64(), Some(1));
-    assert_eq!(receipt["crc"].as_str(), Some(crc.as_str()));
+        serde_json::from_str(&tokio::fs::read_to_string(artifact_path(&destination, "checksum")).await?)?;
+    assert_eq!(receipt["version"].as_u64(), Some(2));
+    assert_eq!(receipt["checksum"]["Crc32c"].as_str(), Some(crc.as_str()));
     assert_eq!(receipt["file_size"].as_u64(), size);
 
     let mut changed_bytes = served.bytes.to_vec();
     changed_bytes[0] = changed_bytes[0].wrapping_add(1);
     let stale_receipt = serde_json::to_vec(&serde_json::json!({
-        "version": 1,
-        "crc": crc.clone(),
+        "version": 2,
+        "checksum": { "Crc32c": crc.clone() },
         "file_size": served.file.size,
         "modified_unix_seconds": 0,
         "modified_nanos": 0,
@@ -159,7 +163,7 @@ async fn startup_reconciliation(
         let stale = tempfile::tempdir()?;
         let destination = stale.path().join(&served.file.name);
         tokio::fs::write(&destination, &changed_bytes).await?;
-        tokio::fs::write(artifact_path(&destination, "crc"), cache).await?;
+        tokio::fs::write(artifact_path(&destination, "checksum"), cache).await?;
         let task = manager.download_task(request(&destination)).await?;
         assert_eq!(task.state().phase, DownloadPhase::NotDownloaded {});
         assert!(!destination.exists());
@@ -175,7 +179,7 @@ async fn startup_reconciliation(
     let destination = locked.path().join(&served.file.name);
     let artifact = artifact_path(&destination, resume_artifact_extension);
     tokio::fs::write(&destination, b"corrupt").await?;
-    tokio::fs::write(artifact_path(&destination, "crc"), &crc).await?;
+    tokio::fs::write(artifact_path(&destination, "checksum"), &crc).await?;
     tokio::fs::write(&artifact, b"partial").await?;
     let lock = foreign_lock(&destination).await;
     let group = manager
@@ -194,7 +198,7 @@ async fn startup_reconciliation(
     assert!(matches!(group.state().phase, DownloadPhase::Locked { .. }));
     assert!(matches!(group.delete().await, Err(DownloadError::Lock(LockError::LockedByOther { .. }))));
     assert!(destination.exists());
-    assert!(artifact_path(&destination, "crc").exists());
+    assert!(artifact_path(&destination, "checksum").exists());
     assert!(artifact.exists());
     let mut progress = group.progress();
     if kind == DownloadManagerType::Universal {
@@ -434,5 +438,106 @@ async fn ancestor_destination_rejected(#[case] kind: DownloadManagerType) -> Res
         .build();
     let result = timeout(Duration::from_secs(5), manager(kind).download_task(request)).await?;
     assert!(matches!(result, Err(DownloadError::ConflictingConfig(_))));
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(DownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::native(DownloadManagerType::Native))]
+#[tokio::test(flavor = "multi_thread")]
+async fn checksums(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
+    let manager = manager(kind);
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/hello"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(HELLO))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/jello"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"jello\n".as_slice()))
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir()?;
+    for (checksum, algorithm) in [
+        (Checksum::Sha256(HELLO_SHA256.to_string()), "SHA-256"),
+        (Checksum::GitBlobSha1(HELLO_GIT_BLOB_SHA1.to_string()), "Git blob SHA-1"),
+    ] {
+        let request = |name: &str| {
+            DownloadTaskRequest::file()
+                .destination(directory.path().join(format!("{algorithm} {name}")))
+                .source_url(format!("{}/{name}", server.uri()))
+                .expected_checksum(checksum.clone())
+                .expected_bytes(HELLO.len() as u64)
+                .build()
+        };
+        let task = manager.download_task(request("hello")).await?;
+        let mut progress = task.progress();
+        task.download().await?;
+        wait_for_state(&task, &mut progress, |state| matches!(state.phase, DownloadPhase::Downloaded {})).await;
+        assert!(artifact_path(&task.request().destination, "checksum").is_file());
+
+        let corrupt = manager.download_task(request("jello")).await?;
+        let mut progress = corrupt.progress();
+        corrupt.download().await?;
+        let state =
+            wait_for_state(&corrupt, &mut progress, |state| matches!(state.phase, DownloadPhase::Error { .. })).await;
+        let DownloadPhase::Error {
+            message,
+        } = state.phase
+        else {
+            panic!("expected an error phase, got {:?}", state.phase)
+        };
+        assert!(message.contains(algorithm), "unexpected error: {message}");
+    }
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(DownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::native(DownloadManagerType::Native))]
+#[tokio::test(flavor = "multi_thread")]
+async fn bearer_token(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
+    let manager = manager(kind);
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/private"))
+        .and(header("authorization", "Bearer secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(HELLO))
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir()?;
+    let request = |name: &str, token: Option<&str>| {
+        DownloadTaskRequest::file()
+            .destination(directory.path().join(name))
+            .source_url(format!("{}/private", server.uri()))
+            .maybe_bearer_token(token.map(str::to_string))
+            .expected_bytes(HELLO.len() as u64)
+            .build()
+    };
+
+    let authenticated = manager.download_task(request("authenticated", Some("secret"))).await?;
+    assert!(!format!("{:?}", authenticated.request()).contains("secret"));
+    let mut progress = authenticated.progress();
+    authenticated.download().await?;
+    wait_for_state(&authenticated, &mut progress, |state| matches!(state.phase, DownloadPhase::Downloaded {})).await;
+    assert_eq!(tokio::fs::read(directory.path().join("authenticated")).await?, HELLO);
+
+    let anonymous = manager.download_task(request("anonymous", None)).await?;
+    let mut progress = anonymous.progress();
+    anonymous.download().await?;
+    wait_for_state(&anonymous, &mut progress, |state| matches!(state.phase, DownloadPhase::Error { .. })).await;
+    assert!(!directory.path().join("anonymous").exists());
+
+    let insecure = manager
+        .download_task(
+            DownloadTaskRequest::file()
+                .destination(directory.path().join("insecure"))
+                .source_url("http://example.invalid/private")
+                .bearer_token("secret".to_string())
+                .build(),
+        )
+        .await;
+    assert!(matches!(insecure, Err(DownloadError::InsecureRequest(_))));
     Ok(())
 }

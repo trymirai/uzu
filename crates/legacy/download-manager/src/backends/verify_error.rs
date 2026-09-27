@@ -7,6 +7,6 @@ pub enum VerifyError {
         expected: u64,
         actual: u64,
     },
-    #[error("CRC verification failed")]
-    Crc,
+    #[error("{0} verification failed")]
+    Checksum(&'static str),
 }
