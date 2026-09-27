@@ -40,6 +40,6 @@ pub struct BenchResponse {
     pub tokens_per_forward_pass: f64,
     pub duration: f64,
     pub memory_phys_footprint: u64,
-    pub memory_resident_peak: u64,
+    pub memory_resident: u64,
     pub memory_graphics_total: u64,
 }

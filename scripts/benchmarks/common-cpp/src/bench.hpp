@@ -42,7 +42,7 @@ struct BenchResponse {
     double tokens_per_forward_pass;
     double duration;
     uint64_t memory_phys_footprint;
-    uint64_t memory_resident_peak;
+    uint64_t memory_resident;
     uint64_t memory_graphics_total;
 };
 

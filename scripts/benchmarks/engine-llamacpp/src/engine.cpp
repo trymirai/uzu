@@ -313,7 +313,7 @@ BenchResponse LlamaEngine::run_single(
         tokens_per_fp,
         total_duration,
         memory_counters_max.phys_footprint,
-        memory_counters_max.resident_size_peak,
+        memory_counters_max.resident_size,
         memory_counters_max.graphics_total
     };
 }
