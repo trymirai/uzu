@@ -44,7 +44,14 @@ struct HomeView: View {
                 icon: .mic,
                 title: "Text To Speech",
                 destination: .modelSelection(next: .textToSpeech)
-            ),
+            )
+        ] + Self.localModelPaths().map { path in
+            Feature(
+                icon: .folder,
+                title: "Chat: \(URL(filePath: path).lastPathComponent)",
+                destination: .chat(identifier: path)
+            )
+        } + [
             // Disabled features – coming soon
             Feature(
                 icon: .camera,
@@ -55,6 +62,16 @@ struct HomeView: View {
     }
 
     init() {}
+
+    /// Every folder in the app's Documents that holds a model (config.json); copy one in with Finder or devicectl.
+    static func localModelPaths() -> [String] {
+        let documents = URL.documentsDirectory
+        let folders = (try? FileManager.default.contentsOfDirectory(at: documents, includingPropertiesForKeys: nil)) ?? []
+        return folders
+            .filter { FileManager.default.fileExists(atPath: $0.appending(path: "config.json").path) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .map(\.path)
+    }
 
     var body: some View {
         VStack(spacing: 0) {

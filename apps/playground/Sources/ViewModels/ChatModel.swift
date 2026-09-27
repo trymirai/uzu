@@ -35,10 +35,12 @@ final class ChatModel {
 
     @MainActor
     func loadSession(using engineWrapper: EngineObservableWrapper) {
+        // An identifier starting with "/" is a model folder on disk (see HomeView.localModelPaths).
+        let catalogModel = engineWrapper.models.first(where: { $0.identifier == identifier })
         guard
             case .idle = viewState,
             let engine = engineWrapper.engine,
-            let model = engineWrapper.models.first(where: { $0.identifier == identifier }) else {
+            catalogModel != nil || identifier.hasPrefix("/") else {
             return
         }
 
@@ -55,6 +57,10 @@ final class ChatModel {
             let newState: ViewState
             do {
                 let config = ChatConfig.create()
+                let diskModel = try await (catalogModel == nil ? engine.modelByPath(path: identifier) : nil)
+                guard let model = catalogModel ?? diskModel else {
+                    throw CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: identifier])
+                }
                 session = try await engine.chat(model: model, config: config)
                 newState = .idle
             } catch {
@@ -90,7 +96,9 @@ final class ChatModel {
             guard let self else { return }
             let inputMessages: [ChatMessage] = self.messages.dropLast().map { msg in
                 let role: ChatRole = (msg.role == .user) ? .user : .assistant
-                return ChatMessage.forRole(role: role).withText(text: msg.content)
+                let message = ChatMessage.forRole(role: role).withText(text: msg.content)
+                // thinking off: on a phone every reasoning token costs a third of a second before the answer starts
+                return role == .user ? message.withReasoningEffort(reasoningEffort: .disabled) : message
             }
 
             do {

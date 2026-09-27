@@ -76,6 +76,8 @@ let appTarget: Target = .target(
         "ITSAppUsesNonExemptEncryption": false,
         "LSApplicationCategoryType": "public.app-category.utilities",
         "LSRequiresIPhoneOS": true,
+        "LSSupportsOpeningDocumentsInPlace": true,
+        "UIFileSharingEnabled": true,
         "NSSupportsLiveActivities": true,
         "UIApplicationSupportsIndirectInputEvents": true,
         "UILaunchStoryboardName": "LaunchScreen",
