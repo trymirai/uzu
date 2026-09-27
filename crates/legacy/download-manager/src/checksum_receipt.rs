@@ -6,33 +6,33 @@ use std::{
 use kiban::{fs, time::SystemTime};
 use serde::{Deserialize, Serialize};
 
-use crate::Crc32c;
+use crate::Checksum;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CrcReceipt {
+pub struct ChecksumReceipt {
     version: u8,
-    crc: Crc32c,
+    checksum: Checksum,
     file_size: u64,
     modified_unix_seconds: u64,
     modified_nanos: u32,
 }
 
-impl CrcReceipt {
+impl ChecksumReceipt {
     pub async fn matches(
         destination: &Path,
-        crc: &Crc32c,
+        checksum: &Checksum,
     ) -> bool {
         matches!(
-            (Self::load(destination).await, Self::for_file(destination, crc).await),
+            (Self::load(destination).await, Self::for_file(destination, checksum).await),
             (Some(saved), Some(current)) if saved == current
         )
     }
 
     pub async fn save(
         destination: &Path,
-        crc: &Crc32c,
+        checksum: &Checksum,
     ) -> Result<(), io::Error> {
-        let Some(receipt) = Self::for_file(destination, crc).await else {
+        let Some(receipt) = Self::for_file(destination, checksum).await else {
             return Ok(());
         };
         fs::asyn::write(Self::path_for(destination), serde_json::to_vec(&receipt).map_err(io::Error::other)?).await
@@ -52,13 +52,13 @@ impl CrcReceipt {
 
     async fn for_file(
         destination: &Path,
-        crc: &Crc32c,
+        checksum: &Checksum,
     ) -> Option<Self> {
         let file_size = fs::asyn::file_length(destination).await.ok()?;
         let modified = fs::asyn::file_modified(destination).await.ok()?.duration_since(SystemTime::UNIX_EPOCH).ok()?;
         Some(Self {
-            version: 1,
-            crc: crc.clone(),
+            version: 2,
+            checksum: checksum.clone(),
             file_size,
             modified_unix_seconds: modified.as_secs(),
             modified_nanos: modified.subsec_nanos(),
@@ -66,6 +66,6 @@ impl CrcReceipt {
     }
 
     fn path_for(destination: &Path) -> PathBuf {
-        PathBuf::from(format!("{}.crc", destination.display()))
+        PathBuf::from(format!("{}.checksum", destination.display()))
     }
 }

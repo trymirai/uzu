@@ -142,6 +142,8 @@ reqwest = { version = "0.13.2", features = [
     "query",
 ] }
 crc32c = "0.6.8"
+sha1 = "0.10.6"
+sha2 = "0.10.9"
 base64 = "0.22.1"
 bitflags = "2.11.1"
 bon = "3.10.0"

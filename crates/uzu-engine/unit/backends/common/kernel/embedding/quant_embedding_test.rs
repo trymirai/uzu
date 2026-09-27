@@ -8,16 +8,18 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder, Kernels,
+            Backend, Context, Encoder, Kernels,
             gpu_types::{QuantizationMethod, QuantizationMode},
-            kernel::QuantizedEmbeddingLookupKernel,
+            kernel::{ActivationTransform, QuantizedEmbeddingLookupKernel},
         },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{
+            alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend, for_each_non_cpu_backend,
+        },
     },
 };
 
@@ -197,6 +199,13 @@ fn get_test_data_oob<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
 }
 
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
+    get_output_with_hadamard::<T, B>(input, None)
+}
+
+fn get_output_with_hadamard<T: ArrayElement + Float, B: Backend>(
+    input: &Input<T>,
+    hadamard_factors: Option<&[i32]>,
+) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
     let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
@@ -205,7 +214,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         input.group_size,
         input.quant_mode,
         input.quant_method,
-        false,
+        hadamard_factors.is_some(),
     )
     .expect("Failed to create QuantizedEmbeddingLookupKernel");
 
@@ -215,6 +224,8 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let zero_points_allocation =
         input.zero_points.as_ref().map(|zero_points| alloc_allocation_with_data::<B, u8>(&context, zero_points));
     let biases_allocation = input.biases.as_ref().map(|biases| alloc_allocation_with_data::<B, T>(&context, biases));
+    let hadamard_factors_allocation =
+        hadamard_factors.map(|hadamard_factors| alloc_allocation_with_data::<B, i32>(&context, hadamard_factors));
     let mut output = alloc_allocation::<B, T>(&context, input.batch_size as usize * input.model_dim as usize);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -225,7 +236,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         zero_points_allocation.as_ref(),
         biases_allocation.as_ref(),
         &mut output,
-        None::<&Allocation<B>>,
+        hadamard_factors_allocation.as_ref(),
         input.batch_size,
         input.vocab_size,
         input.model_dim,
@@ -292,6 +303,56 @@ fn test_zero_point_group16_hadamard_constructor<T: ArrayElement + Float + Debug 
     .expect("QuantizedEmbeddingLookupKernel group16 zero-point hadamard");
 }
 
+// The fused transform has to match the plain lookup followed by the standalone output RHT
+fn test_zero_point_group16_hadamard<T: ArrayElement + Float + Debug + Display>() {
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
+        0.5f32
+    } else {
+        1e-4
+    };
+    let (input, plain) = get_test_data_zero_point_group16::<T>();
+    let hadamard_factors: Vec<i32> = (0..input.model_dim)
+        .map(|index| {
+            if index % 3 == 0 {
+                -1
+            } else {
+                1
+            }
+        })
+        .collect();
+
+    let context = <Cpu as Backend>::Context::new().expect("Failed to create Context");
+    let output_rht = ActivationTransform::<Cpu>::output_rht(context.as_ref(), T::data_type(), false)
+        .expect("Failed to create ActivationTransform");
+    let plain_allocation = alloc_allocation_with_data::<Cpu, T>(&context, &plain);
+    let hadamard_factors_allocation = alloc_allocation_with_data::<Cpu, i32>(&context, &hadamard_factors);
+    let mut expected_allocation = alloc_allocation::<Cpu, T>(&context, plain.len());
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    output_rht.encode_fp(
+        &plain_allocation,
+        &mut expected_allocation,
+        &hadamard_factors_allocation,
+        input.batch_size,
+        input.model_dim,
+        &mut encoder,
+    );
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let expected = allocation_to_vec::<Cpu, T>(&expected_allocation);
+
+    for_each_backend!(|B| {
+        let output = get_output_with_hadamard::<T, B>(&input, Some(&hadamard_factors));
+        assert_eq_float::<T>(
+            &expected,
+            &output,
+            eps,
+            &format!(
+                "QuantizedEmbeddingLookup ScaleZeroPoint group16 hadamard test failed for backend {}",
+                std::any::type_name::<B>()
+            ),
+        );
+    });
+}
+
 fn test_quant_mode<T: ArrayElement + Float + Debug + Display>(quant_mode: QuantizationMode) {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         0.5f32
@@ -353,6 +414,16 @@ fn test_uint4_zero_point_group16_bf16() {
 #[uzu_test]
 fn test_uint4_zero_point_group16_hadamard_bf16_constructor() {
     test_zero_point_group16_hadamard_constructor::<bf16>();
+}
+
+#[uzu_test]
+fn test_uint4_zero_point_group16_hadamard_f32() {
+    test_zero_point_group16_hadamard::<f32>();
+}
+
+#[uzu_test]
+fn test_uint4_zero_point_group16_hadamard_bf16() {
+    test_zero_point_group16_hadamard::<bf16>();
 }
 
 // INT8 tests
