@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use thiserror::Error;
 
 use crate::{
@@ -8,8 +10,9 @@ use crate::{
     config::classifier::{ClassifierConfig, PoolingType},
     data_type::DataType,
     encodable_block::{
+        EncodableBlock,
         batch_topology::BatchTopology,
-        embedding::{Embedding, EmbeddingError},
+        embedding::{EmbeddingError, EmbeddingLookup, EmbeddingLookupInput, EmbeddingResource},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         prediction_head::{PredictionHead, PredictionHeadError},
         transformer::{Transformer, TransformerNewError},
@@ -36,7 +39,7 @@ pub enum ClassifierError<B: Backend> {
 pub struct Classifier<B: Backend> {
     hidden_dim: u32,
     data_type: DataType,
-    embedding: Embedding<B>,
+    embedding_lookup: EmbeddingLookup<B>,
     embedding_norm: Normalization<B>,
     transformer: Transformer<B>,
     pooling: <B::Kernels as Kernels>::PoolingMeanKernel,
@@ -50,14 +53,16 @@ impl<B: Backend> Classifier<B> {
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, ClassifierError<B>> {
-        let (embedding, _) = Embedding::new(
-            context,
-            config.vocab_size,
-            config.transformer_config.model_dim,
+        let embedding = EmbeddingResource::load_input(
             &config.embedding_config,
             &parameter_tree.subtree("embedding"),
+            config.vocab_size,
+            config.transformer_config.model_dim,
             data_type,
         )?;
+        let embedding_lookup =
+            EmbeddingLookup::new(context, Arc::new(embedding), config.embedding_config.input_scale().unwrap_or(1.0))
+                .map_err(ClassifierError::Backend)?;
 
         let embedding_norm = Normalization::new(
             config.transformer_config.model_dim,
@@ -99,7 +104,7 @@ impl<B: Backend> Classifier<B> {
         Ok(Self {
             hidden_dim: config.hidden_dim,
             data_type,
-            embedding,
+            embedding_lookup,
             embedding_norm,
             transformer,
             pooling,
@@ -119,7 +124,16 @@ impl<B: Backend> Classifier<B> {
     ) -> Result<B::ScratchBuffer, ClassifierError<B>> {
         command_buffer.push_debug_group("classifier");
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim, command_buffer)?;
+        let embedded = self
+            .embedding_lookup
+            .encode(
+                EmbeddingLookupInput {
+                    token_ids,
+                    batch_dim,
+                },
+                command_buffer,
+            )
+            .map_err(ClassifierError::Backend)?;
 
         let hidden = self
             .embedding_norm

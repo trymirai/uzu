@@ -10,9 +10,10 @@ use crate::{
     config::{dflash::DFlashDraftConfig, rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
     data_type::DataType,
     encodable_block::{
+        EncodableBlock,
         batch_topology::BatchTopology,
-        embedding::{Embedding, EmbeddingError},
-        linear::{Linear, LinearBlockError},
+        embedding::{EmbeddingLookup, EmbeddingLookupInput, EmbeddingReadout, EmbeddingReadoutInput},
+        linear::{Gather, Linear, LinearBlockError},
         mixer::{
             MixerState,
             attention::{
@@ -82,8 +83,6 @@ pub enum DFlashNewError<B: Backend> {
 pub enum DFlashEncodeError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("Embedding error: {0}")]
-    Embedding(#[from] EmbeddingError<B>),
 }
 
 impl<B: Backend> DFlash<B> {
@@ -282,7 +281,8 @@ impl<B: Backend> DFlash<B> {
         &self,
         state: &mut DFlashState<B>,
         target_output_token: u32,
-        target_embedding: &Embedding<B>,
+        target_lookup: &EmbeddingLookup<B>,
+        target_readout: &EmbeddingReadout<B>,
         batch_size: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DFlashOutput<B>, DFlashEncodeError<B>> {
@@ -298,7 +298,15 @@ impl<B: Backend> DFlash<B> {
         tokens[0] = target_output_token;
         let token_ids = command_buffer.allocate_constant_from_slice(&tokens).map_err(DFlashEncodeError::Backend)?;
 
-        let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, command_buffer)?;
+        let token_embeddings = target_lookup
+            .encode(
+                EmbeddingLookupInput {
+                    token_ids: &token_ids,
+                    batch_dim: batch_size,
+                },
+                command_buffer,
+            )
+            .map_err(DFlashEncodeError::Backend)?;
 
         let nodes = (0..batch_size)
             .map(|index| TrieNode {
@@ -335,19 +343,21 @@ impl<B: Backend> DFlash<B> {
             .encode(&hidden, 0, batch_size, Some(&mut residual), command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
 
-        let row_bytes = size_for_shape(&[target_embedding.model_dim()], DataType::BF16);
+        let row_bytes = size_for_shape(&[target_lookup.model_dim()], DataType::BF16);
         let lookahead_rows = Range::from(row_bytes..batch_size as usize * row_bytes);
         let mut lookahead_hidden =
             command_buffer.allocate_scratch(lookahead_rows.iter().len()).map_err(DFlashEncodeError::Backend)?;
         command_buffer.encode_copy(draft_hidden.subrange(lookahead_rows), &mut lookahead_hidden);
-        let logits = target_embedding.encode_readout(
-            batch_size - 1,
-            &lookahead_hidden,
-            target_embedding.vocab_size(),
-            None::<&B::ScratchBuffer>,
-            false,
-            command_buffer,
-        )?;
+        let logits = target_readout
+            .encode(
+                EmbeddingReadoutInput {
+                    hidden: &lookahead_hidden,
+                    batch_dim: batch_size - 1,
+                    gather: None::<Gather<&B::ScratchBuffer>>,
+                },
+                command_buffer,
+            )
+            .map_err(DFlashEncodeError::Backend)?;
 
         command_buffer.pop_debug_group();
 

@@ -1,4 +1,4 @@
-use std::range::Range;
+use std::{range::Range, sync::Arc};
 
 use thiserror::Error;
 
@@ -7,8 +7,14 @@ use crate::{
     config::decoder::DecoderConfig,
     data_type::DataType,
     encodable_block::{
+        EncodableBlock,
         batch_topology::BatchTopology,
-        embedding::{Embedding, EmbeddingError},
+        embedding::{
+            EmbeddingError, EmbeddingLookup, EmbeddingLookupInput, EmbeddingReadout, EmbeddingReadoutInput,
+            EmbeddingResource,
+        },
+        linear::Gather,
+        logit_transform::{LogitTransform, LogitTransformInput},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
         transformer::{Transformer, TransformerNewError, TransformerState},
@@ -31,7 +37,9 @@ pub enum DecoderError<B: Backend> {
 }
 
 pub struct Decoder<B: Backend> {
-    embedding: Embedding<B>,
+    embedding_lookup: EmbeddingLookup<B>,
+    embedding_readout: EmbeddingReadout<B>,
+    logit_transform: Option<LogitTransform<B>>,
     embedding_norm: Option<Normalization<B>>,
     per_layer_embedding: Option<PerLayerEmbedding<B>>,
     transformer: Transformer<B>,
@@ -44,8 +52,12 @@ pub struct DecoderEncodeOutput<B: Backend> {
 }
 
 impl<B: Backend> Decoder<B> {
-    pub(crate) fn embedding(&self) -> &Embedding<B> {
-        &self.embedding
+    pub fn embedding_lookup(&self) -> &EmbeddingLookup<B> {
+        &self.embedding_lookup
+    }
+
+    pub fn embedding_readout(&self) -> &EmbeddingReadout<B> {
+        &self.embedding_readout
     }
 
     pub fn new(
@@ -54,14 +66,21 @@ impl<B: Backend> Decoder<B> {
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, DecoderError<B>> {
-        let (embedding, readout_input_hadamard_factors) = Embedding::new(
-            context,
+        let embedding_tree = parameter_tree.subtree("embedding");
+        let embedding = Arc::new(EmbeddingResource::load_input(
+            &config.embedding_config,
+            &embedding_tree,
             config.vocab_size,
             config.transformer_config.model_dim,
-            &config.embedding_config,
-            &parameter_tree.subtree("embedding"),
             data_type,
-        )?;
+        )?);
+        let (embedding_readout, readout_input_hadamard_factors) =
+            EmbeddingReadout::new(context, &config.embedding_config, &embedding_tree, &embedding)?;
+        let logit_transform =
+            LogitTransform::new(context, &config.embedding_config, data_type).map_err(DecoderError::Backend)?;
+        let embedding_lookup =
+            EmbeddingLookup::new(context, embedding, config.embedding_config.input_scale().unwrap_or(1.0))
+                .map_err(DecoderError::Backend)?;
 
         let embedding_norm = config
             .embedding_norm_config
@@ -106,7 +125,9 @@ impl<B: Backend> Decoder<B> {
         )?;
 
         Ok(Self {
-            embedding,
+            embedding_lookup,
+            embedding_readout,
+            logit_transform,
             embedding_norm,
             per_layer_embedding,
             transformer,
@@ -144,7 +165,16 @@ impl<B: Backend> Decoder<B> {
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         command_buffer.push_debug_group("decoder");
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
+        let embedded = self
+            .embedding_lookup
+            .encode(
+                EmbeddingLookupInput {
+                    token_ids,
+                    batch_dim: batch_dim.size(),
+                },
+                command_buffer,
+            )
+            .map_err(DecoderError::Backend)?;
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
             embedding_norm
                 .encode(&embedded, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)
@@ -178,14 +208,28 @@ impl<B: Backend> Decoder<B> {
 
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
-            Some(self.embedding.encode_readout(
-                output_range.end - output_range.start,
-                output,
-                self.embedding.vocab_size(),
-                None::<&B::ScratchBuffer>,
-                true,
-                command_buffer,
-            )?)
+            let output_rows = output_range.end - output_range.start;
+            let mut logits = self
+                .embedding_readout
+                .encode(
+                    EmbeddingReadoutInput {
+                        hidden: output,
+                        batch_dim: output_rows,
+                        gather: None::<Gather<&B::ScratchBuffer>>,
+                    },
+                    command_buffer,
+                )
+                .map_err(DecoderError::Backend)?;
+            if let Some(logit_transform) = &self.logit_transform {
+                let Ok(()) = logit_transform.encode(
+                    LogitTransformInput {
+                        logits: &mut logits,
+                        length: output_rows * self.embedding_readout.vocab_size(),
+                    },
+                    command_buffer,
+                );
+            }
+            Some(logits)
         } else {
             None
         };
