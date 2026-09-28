@@ -15,7 +15,7 @@ use crate::{
         sampling::{Sampling, SamplingMethod},
     },
     engine::Engine,
-    parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
+    parameters::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
 };
 
@@ -46,8 +46,6 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     IO(#[from] io::Error),
     #[error("Serde error: {0}")]
     Serde(#[from] serde_json::Error),
-    #[error("HeaderLoading error: {0}")]
-    HeaderLoading(#[from] HeaderLoadingError),
     #[error("ParameterLoader error: {0}")]
     ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Backend error: {0}")]
