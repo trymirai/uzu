@@ -6,7 +6,7 @@ from typing import Annotated
 
 import typer
 from bench import BenchRequest, BenchResponse
-from common import InferenceEngine, get_model_path, run_loop
+from common import InferenceEngine, get_model_path, get_tokenized_prompt, run_loop
 from mach import MemoryCounters, get_memory_counters
 from mtplx.generation import GenerationOutput, generate_mtpk
 from mtplx.runtime import MTPLXRuntime, load
@@ -26,18 +26,7 @@ class MTPLXEngine(InferenceEngine):
         if num_runs < 1:
             raise ValueError("num_runs must be 1 or greater")
 
-        # prepare prompt
-        prompt_ids: list[int]
-        if isinstance(request.prompt, str):
-            prompt_ids = self.runtime.tokenizer.encode(request.prompt)
-        else:
-            messages = [message.model_dump(mode="json") for message in request.prompt]
-            prompt_ids = self.runtime.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                **request.model_dump(mode="json", include={"tools", "tool_choice"}),
-            )
+        prompt: list[int] = get_tokenized_prompt(request, self.runtime.tokenizer)
 
         sampler: SamplerConfig
         if request.sampling is None:
@@ -54,7 +43,7 @@ class MTPLXEngine(InferenceEngine):
         generate = partial(
             generate_mtpk,
             self.runtime,
-            prompt_ids,
+            prompt,
             max_tokens=request.max_tokens or 256,
             sampler=sampler,
             speculative_depth=request.speculative_depth or 3,
@@ -64,17 +53,15 @@ class MTPLXEngine(InferenceEngine):
     def _run(self, generate: Callable[..., GenerationOutput]) -> BenchResponse:
         # prepare variables
         time_first_token: float = -1.0
-        mem_graphics_max: int = 0
         mem_counters_max: MemoryCounters = get_memory_counters()
 
         def token_callback(token_ids: list[int]) -> None:
-            nonlocal time_first_token, mem_graphics_max, mem_counters_max
+            nonlocal time_first_token, mem_counters_max
             if token_ids and time_first_token < 0.0:
                 time_first_token = time.perf_counter()
 
             mem_counters = get_memory_counters()
-            if mem_counters.graphics_total > mem_graphics_max:
-                mem_graphics_max = mem_counters.graphics_total
+            if mem_counters.graphics_total > mem_counters_max.graphics_total:
                 mem_counters_max = mem_counters
 
         # create and run inference

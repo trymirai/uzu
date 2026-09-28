@@ -8,21 +8,30 @@ dependencies = [
     "benchmarks-common",
     "benchmarks-mlx",
     "benchmarks-mtplx",
+    "benchmarks-omlx",
+    "benchmarks-splash",
     "typer>=0.27.2",
 ]
+
+[dependency-groups]
+dev = ["pytest>=9.0.3", "ruff>=0.16.8", "ty>=0.0.84"]
 
 [tool.uv.sources]
 benchmarks-common = { workspace = true }
 benchmarks-mlx = { workspace = true }
 benchmarks-mtplx = { workspace = true }
+benchmarks-omlx = { workspace = true }
+benchmarks-splash = { workspace = true }
 
 [tool.uv.workspace]
-members = ["common-py", "engine-mlx", "engine-mtplx"]
+members = [
+    "common-py",
+    "engine-mlx",
+    "engine-mtplx",
+    "engine-omlx",
+    "engine-splash",
+]
 
-[dependency-groups]
-dev = ["pytest>=9.0.3", "ruff>=0.16.8", "ty>=0.0.84"]
-
-# ruff
 [tool.ruff]
 line-length = 120
 

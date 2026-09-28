@@ -9,10 +9,10 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-mtplx = "main:main"
+mtplx = "bench_mtplx:main"
 
 [tool.setuptools]
-py-modules = ["main"]
+py-modules = ["bench_mtplx"]
 
 [tool.uv.sources]
 benchmarks-common = { workspace = true }

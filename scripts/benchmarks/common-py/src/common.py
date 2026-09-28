@@ -2,6 +2,7 @@ import sys
 from abc import ABC, abstractmethod
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import Any
 
 import huggingface_hub
 from bench import BenchRequest, BenchResponse
@@ -33,6 +34,21 @@ def get_model_path(model: str | Path) -> str:
             cache_dir=cache_dir,
             local_files_only=False,
         )
+
+
+def get_tokenized_prompt(request: BenchRequest, tokenizer: Any) -> list[int]:
+    prompt: list[int]
+    if isinstance(request.prompt, str):
+        prompt = tokenizer.encode(request.prompt)
+    else:
+        messages = [message.model_dump(mode="json") for message in request.prompt]
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            **request.model_dump(mode="json", include={"tools", "tool_choice"}),
+        )
+    return prompt
 
 
 def run_loop(engine: InferenceEngine) -> None:

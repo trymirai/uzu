@@ -1,6 +1,12 @@
 {
-    "cmake.sourceDirectory": "${workspaceFolder}/engine-llamacpp",
+    "cmake.sourceDirectory": [
+        "${workspaceFolder}/engine-llamacpp",
+        "${workspaceFolder}/engine-splash"
+    ],
     "cmake.useCMakePresets": "always",
+    "cmake.debugConfig": {
+        "type": "lldb"
+    },
     "ruff.path": [
         "${workspaceFolder}/.venv/bin/ruff"
     ],

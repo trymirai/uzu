@@ -9,7 +9,7 @@ from typing import Annotated, cast
 import mlx_lm
 import typer
 from bench import BenchRequest, BenchResponse
-from common import InferenceEngine, get_model_path, run_loop
+from common import InferenceEngine, get_model_path, get_tokenized_prompt, run_loop
 from mach import MemoryCounters, get_memory_counters
 from mlx import nn
 from mlx_lm.generate import GenerationResponse
@@ -31,20 +31,8 @@ class MLXEngine(InferenceEngine):
         if num_runs < 1:
             raise ValueError("num_runs must be 1 or greater")
 
-        # prepare prompt
-        prompt: str | list[int]
-        if isinstance(request.prompt, str):
-            prompt = request.prompt
-        else:
-            messages = [message.model_dump(mode="json") for message in request.prompt]
-            prompt = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                **request.model_dump(mode="json", include={"tools", "tool_choice"}),
-            )
+        prompt: list[int] = get_tokenized_prompt(request, self.tokenizer)
 
-        # sampling
         sampler: Callable | None = None
         if request.sampling is not None:
             sampler = make_sampler(
@@ -79,7 +67,6 @@ class MLXEngine(InferenceEngine):
         time_to_first_token: float = -1.0
         draft_flags: list[bool] = []
         response: GenerationResponse | None = None
-        mem_graphics_max: int = 0
         mem_counters_max: MemoryCounters = get_memory_counters()
 
         # create and run inference loop
@@ -92,8 +79,7 @@ class MLXEngine(InferenceEngine):
             draft_flags.append(response.from_draft)
 
             mem_counters = get_memory_counters()
-            if mem_counters.graphics_total > mem_graphics_max:
-                mem_graphics_max = mem_counters.graphics_total
+            if mem_counters.graphics_total > mem_counters_max.graphics_total:
                 mem_counters_max = mem_counters
         time_total: float = time.perf_counter() - time_start
 
