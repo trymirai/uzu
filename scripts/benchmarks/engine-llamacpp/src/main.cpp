@@ -34,7 +34,7 @@ int main(
     int ret = 0;
     llama_backend_init();
     try {
-        const LlamaEngine engine(model);
+        const auto engine = LlamaEngine(model);
         run_loop(engine, output.get());
     } catch (const std::exception& error) {
         std::cerr << "Failed: " << error.what() << std::endl;

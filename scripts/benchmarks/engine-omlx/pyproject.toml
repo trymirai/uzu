@@ -1,0 +1,20 @@
+[project]
+name = "benchmarks-omlx"
+version = "0.0.1"
+requires-python = ">=3.13.7,<3.14"
+dependencies = ["benchmarks-common", "omlx"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+omlx = "bench_omlx:main"
+
+[tool.setuptools]
+py-modules = ["bench_omlx"]
+
+[tool.uv.sources]
+benchmarks-common = { workspace = true }
+# Newer oMLX tags require mlx-lm 0.32, which conflicts with the MLX and MTPLX engines.
+omlx = { git = "https://github.com/jundot/omlx", tag = "v0.7.0.dev2" }
