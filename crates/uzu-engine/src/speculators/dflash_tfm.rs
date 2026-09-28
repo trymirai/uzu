@@ -65,8 +65,17 @@ pub enum DFlashTfmTreeConstructionMethod {
         rounds: u32,
         expand_per_round: u32,
         expand_width: u32,
+        /// A shape without it prunes with `DEFAULT_PRUNE_SIGMA`; `null` prunes on the model logprobs.
+        #[serde(default = "default_prune_sigma")]
         prune_sigma: Option<f32>,
     },
+}
+
+/// The final pruning noise scale calibrated for DFlash + Weaver trees.
+pub const DEFAULT_PRUNE_SIGMA: f32 = 1.5;
+
+fn default_prune_sigma() -> Option<f32> {
+    Some(DEFAULT_PRUNE_SIGMA)
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
