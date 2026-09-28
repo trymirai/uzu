@@ -150,10 +150,114 @@ jobs:
           cargo tools test swift
           cargo tools test typescript
 
+  linters-mirai-gui:
+    name: linters-mirai-gui
+    runs-on: [self-hosted, macos, arm64]
+
+    defaults:
+      run:
+        working-directory: apps/mirai-gui
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          linters: true
+          metal: true
+          bindings: true
+
+      - id: install
+        name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        if: ${{ always() && steps.install.outcome == 'success' }}
+        run: pnpm typecheck
+
+      - name: Lint
+        if: ${{ always() && steps.install.outcome == 'success' }}
+        run: pnpm lint
+
+      - name: Check formatting
+        if: ${{ always() && steps.install.outcome == 'success' }}
+        run: pnpm format:check
+
+      - name: Check Rust formatting
+        if: ${{ always() && steps.install.outcome == 'success' }}
+        working-directory: apps/mirai-gui/src-tauri
+        run: cargo +nightly fmt --check
+
+      - name: Lint with clippy
+        if: ${{ always() && steps.install.outcome == 'success' }}
+        working-directory: apps/mirai-gui/src-tauri
+        run: cargo +nightly clippy --workspace --all-targets -- -D warnings
+
+      - name: Check that Cargo.lock is consistent with Cargo.toml
+        if: ${{ always() && steps.install.outcome == 'success' }}
+        working-directory: apps/mirai-gui/src-tauri
+        run: |
+          cargo metadata --locked --format-version=1 > /dev/null
+          git diff --exit-code -- Cargo.lock
+
+  tests-mirai-gui:
+    name: tests-mirai-gui
+    runs-on: [self-hosted, macos, arm64]
+
+    defaults:
+      run:
+        working-directory: apps/mirai-gui
+
+    env:
+      CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          metal: true
+          bindings: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run client tests
+        run: pnpm test
+
+      - name: Run Rust tests
+        run: pnpm test:rust
+
+  build-mirai-gui:
+    name: build-mirai-gui
+    runs-on: [self-hosted, macos, arm64]
+
+    defaults:
+      run:
+        working-directory: apps/mirai-gui
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          metal: true
+          bindings: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app bundle
+        run: pnpm build
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirai-gui-macos-arm64
+          path: apps/mirai-gui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
   completed:
     name: completed
     runs-on: ubuntu-latest
-    needs: [linters, tests, validate-bindings]
+    needs: [linters, tests, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui]
     if: ${{ always() }}
 
     steps:
@@ -161,3 +265,6 @@ jobs:
           [ "${{ needs.linters.result }}" = success ]
           [ "${{ needs.tests.result }}" = success ]
           [ "${{ needs.validate-bindings.result }}" = success ]
+          [ "${{ needs.linters-mirai-gui.result }}" = success ]
+          [ "${{ needs.tests-mirai-gui.result }}" = success ]
+          [ "${{ needs.build-mirai-gui.result }}" = success ]
