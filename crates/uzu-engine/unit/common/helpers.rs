@@ -2,10 +2,7 @@ use std::{mem::size_of, sync::Arc};
 
 use crate::{
     array::ArrayElement,
-    backends::common::{
-        Allocation, AllocationType, AsBufferRangeMut, Backend, Context, DenseBuffer, Encoder, SparseBuffer,
-        SparseBufferExt,
-    },
+    backends::common::{Allocation, AllocationType, Backend, Context, Encoder, SparseBuffer, SparseBufferExt},
 };
 
 /// Invokes `$body` once per available backend, with `$B` bound to each backend type.
@@ -61,7 +58,7 @@ pub fn alloc_allocation_with_data<B: Backend, T: ArrayElement>(
     let mut allocation = context
         .create_allocation(allocation_size_bytes::<T>(data.len()), AllocationType::Global)
         .expect("Failed to create allocation");
-    write_allocation(&mut allocation, data);
+    allocation.copyin(data);
     allocation
 }
 
@@ -76,23 +73,6 @@ pub fn allocation_prefix_to_vec<B: Backend, T: ArrayElement>(
     let mut values = allocation_to_vec::<B, T>(allocation);
     values.truncate(elements_count);
     values
-}
-
-pub fn write_allocation<B: Backend, T: ArrayElement>(
-    allocation: &mut Allocation<B>,
-    data: &[T],
-) {
-    let bytes = bytemuck::cast_slice(data);
-    let buffer_range = allocation.as_buffer_range_mut();
-    let range = buffer_range.range();
-    assert!(bytes.len() <= range.len(), "source data is larger than destination allocation");
-    let destination = unsafe {
-        std::slice::from_raw_parts_mut(
-            (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
-            range.len(),
-        )
-    };
-    destination[..bytes.len()].copy_from_slice(bytes);
 }
 
 pub fn create_context<B: Backend>() -> Arc<<B as Backend>::Context> {

@@ -27,11 +27,8 @@ impl<B: Backend> Allocation<B> {
     }
 
     pub fn as_slice_mut<T: NoUninit + AnyBitPattern>(&mut self) -> &mut [T] {
-        let buffer_range = self.as_buffer_range_mut();
-        let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
-        let bytes = unsafe {
-            std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len())
-        };
+        let base = self.buffer.cpu_ptr().cast::<u8>().as_ptr();
+        let bytes = unsafe { std::slice::from_raw_parts_mut(base.add(self.range.start), self.range.len()) };
         bytemuck::cast_slice_mut(bytes)
     }
 
@@ -43,11 +40,8 @@ impl<B: Backend> Allocation<B> {
     }
 
     pub fn as_slice<T: AnyBitPattern>(&self) -> &[T] {
-        let buffer_range = self.as_buffer_range_ref();
-        let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
-        let bytes = unsafe {
-            std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
-        };
+        let base = self.buffer.cpu_ptr().cast::<u8>().as_ptr();
+        let bytes = unsafe { std::slice::from_raw_parts(base.add(self.range.start), self.range.len()) };
         bytemuck::cast_slice(bytes)
     }
 
