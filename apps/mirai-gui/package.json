@@ -6,10 +6,10 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build --target aarch64-apple-darwin",
-    "client:dev": "vite --config vite.desktop.config.ts",
-    "client:build": "vite build --config vite.desktop.config.ts",
-    "web:dev": "vite --config vite.web.config.ts",
-    "web:build": "vite build --config vite.web.config.ts",
+    "client:dev": "vite",
+    "client:build": "vite build",
+    "web:dev": "vite --mode web",
+    "web:build": "vite build --mode web",
     "typecheck": "tsc -p client/tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
@@ -22,7 +22,12 @@
   "author": "Mirai Team",
   "license": "MIT",
   "engines": {
-    "node": ">=20 <21"
+    "node": ">=20.19"
+  },
+  "prettier": {
+    "singleQuote": false,
+    "trailingComma": "all",
+    "printWidth": 120
   },
   "pnpm": {
     "onlyBuiltDependencies": [

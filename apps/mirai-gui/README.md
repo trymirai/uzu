@@ -7,14 +7,15 @@ Tauri v2, React, Rust.
 
 - macOS 26 or newer, Apple silicon
 - Xcode 26 with the Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`)
-- Rust nightly, pinned by `rust-toolchain.toml` at the repository root
-- Node 20, pnpm 10
+- rustup; the first `cargo` run installs the nightly toolchain pinned by
+  `rust-toolchain.toml` at the repository root
+- Node 20.19 or newer and pnpm (`corepack enable` picks the version from `package.json`)
 
 ## Run
 
 ```bash
 pnpm install
-pnpm dev      # desktop app; the first build also compiles the engine from crates/
+pnpm dev      # desktop app; the first build also compiles the engine and its Metal shaders, later builds are incremental
 pnpm build    # .app and .dmg in src-tauri/target/aarch64-apple-darwin/release/bundle/, ad-hoc signed
 pnpm web:dev  # frontend in a browser without the engine: no models, no chats
 ```

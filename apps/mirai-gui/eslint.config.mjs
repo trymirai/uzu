@@ -1,13 +1,14 @@
 import js from "@eslint/js";
+import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 
-export default [
+export default defineConfig([
   // eslint does not read .gitignore.
   { ignores: ["client/dist-*/**", "src-tauri/target/**", "src-tauri/gen/**", "client/src/route-tree.gen.ts"] },
   js.configs.recommended,
   {
-    files: ["vite*.config.ts", "vite.shared.ts"],
+    files: ["vite.config.ts"],
     languageOptions: {
       parser: tseslint.parser,
       globals: {
@@ -17,7 +18,7 @@ export default [
     },
   },
   {
-    files: ["tailwind.config.js", "postcss.config.js"],
+    files: ["tailwind.config.js"],
     languageOptions: {
       sourceType: "commonjs",
       globals: {
@@ -29,7 +30,7 @@ export default [
       },
     },
   },
-  ...tseslint.config({
+  {
     files: ["client/src/**/*.{ts,tsx}"],
     extends: [tseslint.configs.recommended],
     plugins: { "react-hooks": reactHooks },
@@ -38,14 +39,12 @@ export default [
       "react-hooks/rules-of-hooks": "error",
       "@typescript-eslint/consistent-type-definitions": ["error", "type"],
     },
-  }),
+  },
   // Module augmentation only merges into an interface.
   {
     files: ["client/src/router.ts"],
     rules: { "@typescript-eslint/consistent-type-definitions": "off" },
   },
-  // Platform bridges (Tauri invoke, web fetch) belong to platform/services/*;
-  // everything else goes through getPlatform().
   {
     files: ["client/src/**/*.{ts,tsx}"],
     ignores: ["client/src/platform/**"],
@@ -63,4 +62,4 @@ export default [
       ],
     },
   },
-];
+]);
