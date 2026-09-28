@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use super::resource::EmbeddingStorage;
 use crate::{
     backends::common::{
@@ -11,7 +9,8 @@ use crate::{
 
 type LookupKernel<B> = <<B as Backend>::Kernels as Kernels>::InputEmbeddingLookupKernel;
 
-pub struct EmbeddingLookupInput<T: BufferRef> {
+pub struct EmbeddingLookupInput<'a, B: Backend, T: BufferRef<Backend = B>> {
+    pub resource: &'a EmbeddingResource<B>,
     pub token_ids: T,
     pub batch_dim: u32,
 }
@@ -52,7 +51,6 @@ impl<'a, B: Backend> LookupBindings<'a, B> {
 }
 
 pub struct EmbeddingLookup<B: Backend> {
-    resource: Arc<EmbeddingResource<B>>,
     kernel: LookupKernel<B>,
     scale: f32,
 }
@@ -60,7 +58,7 @@ pub struct EmbeddingLookup<B: Backend> {
 impl<B: Backend> EmbeddingLookup<B> {
     pub fn new(
         context: &B::Context,
-        resource: Arc<EmbeddingResource<B>>,
+        resource: &EmbeddingResource<B>,
         scale: f32,
     ) -> Result<Self, B::Error> {
         let (table_kind, quantization) = match &resource.storage {
@@ -81,46 +79,41 @@ impl<B: Backend> EmbeddingLookup<B> {
         )?;
 
         Ok(Self {
-            resource,
             kernel,
             scale,
         })
     }
-
-    pub fn model_dim(&self) -> u32 {
-        self.resource.model_dim
-    }
 }
 
-impl<B: Backend, T: BufferRef<Backend = B>> EncodableBlock<B, EmbeddingLookupInput<T>> for EmbeddingLookup<B> {
+impl<B: Backend, T: BufferRef<Backend = B>> EncodableBlock<B, EmbeddingLookupInput<'_, B, T>> for EmbeddingLookup<B> {
     type Kernel = LookupKernel<B>;
     type Output = B::ScratchBuffer;
     type Error = B::Error;
 
     fn encode(
         &self,
-        input: EmbeddingLookupInput<T>,
+        input: EmbeddingLookupInput<'_, B, T>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Self::Output, Self::Error> {
         command_buffer.push_debug_group("embedding lookup");
 
         let mut output = command_buffer
-            .allocate_scratch_for_shape(&[input.batch_dim, self.resource.model_dim], self.resource.data_type)?;
-        let bindings = LookupBindings::new(&self.resource.storage);
+            .allocate_scratch_for_shape(&[input.batch_dim, input.resource.model_dim], input.resource.data_type)?;
+        let bindings = LookupBindings::new(&input.resource.storage);
         self.kernel.encode(
             input.token_ids,
             bindings.values,
             bindings.scales,
             bindings.zero_points,
             bindings.biases,
-            self.resource.output_hadamard_factors.as_ref(),
+            input.resource.output_hadamard_factors.as_ref(),
             bindings.ladder_indices,
             bindings.ladder,
             bindings.codebook,
             &mut output,
             input.batch_dim,
-            self.resource.vocab_size,
-            self.resource.model_dim,
+            input.resource.vocab_size,
+            input.resource.model_dim,
             self.scale,
             command_buffer,
         );

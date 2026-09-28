@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use parking_lot::Mutex;
 
 use crate::{
@@ -16,7 +14,8 @@ use crate::{
     parameters::ParameterTree,
 };
 
-pub struct EmbeddingReadoutInput<H: BufferRef, G: BufferRef> {
+pub struct EmbeddingReadoutInput<'a, B: Backend, H: BufferRef<Backend = B>, G: BufferRef<Backend = B>> {
+    pub resource: &'a EmbeddingResource<B>,
     pub hidden: H,
     pub batch_dim: u32,
     pub gather: Option<Gather<G>>,
@@ -28,7 +27,6 @@ pub enum EmbeddingReadoutKernel<B: Backend> {
 }
 
 pub struct EmbeddingReadout<B: Backend> {
-    resource: Arc<EmbeddingResource<B>>,
     kernel: EmbeddingReadoutKernel<B>,
 }
 
@@ -37,7 +35,7 @@ impl<B: Backend> EmbeddingReadout<B> {
         context: &B::Context,
         config: &AnyEmbeddingConfig,
         parameter_tree: &ParameterTree<B>,
-        resource: &Arc<EmbeddingResource<B>>,
+        resource: &EmbeddingResource<B>,
     ) -> Result<(Self, Option<B::GlobalBuffer>), EmbeddingError<B>> {
         let vocab_size = resource.vocab_size;
         let model_dim = resource.model_dim;
@@ -69,20 +67,15 @@ impl<B: Backend> EmbeddingReadout<B> {
 
         Ok((
             Self {
-                resource: resource.clone(),
                 kernel,
             },
             input_hadamard_factors,
         ))
     }
-
-    pub fn vocab_size(&self) -> u32 {
-        self.resource.vocab_size
-    }
 }
 
-impl<B: Backend, H: BufferRef<Backend = B>, G: BufferRef<Backend = B>> EncodableBlock<B, EmbeddingReadoutInput<H, G>>
-    for EmbeddingReadout<B>
+impl<B: Backend, H: BufferRef<Backend = B>, G: BufferRef<Backend = B>>
+    EncodableBlock<B, EmbeddingReadoutInput<'_, B, H, G>> for EmbeddingReadout<B>
 {
     type Kernel = EmbeddingReadoutKernel<B>;
     type Output = B::ScratchBuffer;
@@ -90,10 +83,10 @@ impl<B: Backend, H: BufferRef<Backend = B>, G: BufferRef<Backend = B>> Encodable
 
     fn encode(
         &self,
-        input: EmbeddingReadoutInput<H, G>,
+        input: EmbeddingReadoutInput<'_, B, H, G>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Self::Output, Self::Error> {
-        let output_dim = input.gather.as_ref().map_or(self.resource.vocab_size, |gather| gather.output_dim);
+        let output_dim = input.gather.as_ref().map_or(input.resource.vocab_size, |gather| gather.output_dim);
         assert!(input.batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
 
         command_buffer.push_debug_group("embedding readout");
@@ -104,20 +97,20 @@ impl<B: Backend, H: BufferRef<Backend = B>, G: BufferRef<Backend = B>> Encodable
             },
             EmbeddingReadoutKernel::Tied(kernel) => {
                 let mut output = command_buffer
-                    .allocate_scratch_for_shape(&[input.batch_dim, output_dim], self.resource.data_type)?;
+                    .allocate_scratch_for_shape(&[input.batch_dim, output_dim], input.resource.data_type)?;
                 let arguments = MatmulArguments {
                     a: MatmulA::FullPrecision {
                         values: input.hidden,
                         offset: 0,
                     },
-                    b: self.resource.as_matrix().expect("tied embedding tables are matrices").matmul_b(),
+                    b: input.resource.as_matrix().expect("tied embedding tables are matrices").matmul_b(),
                     b_leading_dimension: None,
                     b_transpose: true,
                     output: MatmulOutput::new(&mut output, MatmulDOps::none()),
                     gather_indices: input.gather.map(|gather| gather.indices),
                     m: input.batch_dim,
                     n: output_dim,
-                    k: self.resource.model_dim,
+                    k: input.resource.model_dim,
                 };
                 kernel.lock().encode(arguments, command_buffer)?;
                 output

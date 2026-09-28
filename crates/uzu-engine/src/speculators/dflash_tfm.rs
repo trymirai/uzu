@@ -23,7 +23,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         dflash::{DFlash, DFlashNewError},
-        embedding::{EmbeddingLookup, EmbeddingReadout},
+        embedding::{EmbeddingLookup, EmbeddingReadout, EmbeddingResource},
         sampling::{PRng, Sampling, SamplingMethod},
         weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
@@ -210,6 +210,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         state: &mut DFlashState<B>,
         target_output_norm: impl BufferRef<Backend = B>,
         target_output_token: u32,
+        target_embedding: &EmbeddingResource<B>,
         target_lookup: &EmbeddingLookup<B>,
         target_readout: &EmbeddingReadout<B>,
         shape: DFlashTfmTreeShape,
@@ -257,6 +258,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     .encode_draft(
                         state,
                         target_output_token,
+                        target_embedding,
                         target_lookup,
                         target_readout,
                         dflash_depth,
@@ -337,6 +339,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     .encode_draft(
                         state,
                         target_output_token,
+                        target_embedding,
                         target_lookup,
                         target_readout,
                         dflash_depth,
@@ -349,6 +352,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 let tree = weaver.encode_tree(
                     target_output_norm,
                     &dflash_output.draft_hidden,
+                    target_embedding,
                     target_lookup,
                     target_readout,
                     &dflash_output.logits,

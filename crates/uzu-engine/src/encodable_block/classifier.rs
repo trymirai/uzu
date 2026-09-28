@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use derive_more::Debug;
 use thiserror::Error;
 
@@ -40,6 +38,7 @@ pub enum ClassifierError<B: Backend> {
 pub struct Classifier<B: Backend> {
     hidden_dim: u32,
     data_type: DataType,
+    embedding: EmbeddingResource<B>,
     embedding_lookup: EmbeddingLookup<B>,
     embedding_norm: Normalization<B>,
     transformer: Transformer<B>,
@@ -62,7 +61,7 @@ impl<B: Backend> Classifier<B> {
             data_type,
         )?;
         let embedding_lookup =
-            EmbeddingLookup::new(context, Arc::new(embedding), config.embedding_config.input_scale().unwrap_or(1.0))
+            EmbeddingLookup::new(context, &embedding, config.embedding_config.input_scale().unwrap_or(1.0))
                 .map_err(ClassifierError::Backend)?;
 
         let embedding_norm = Normalization::new(
@@ -105,6 +104,7 @@ impl<B: Backend> Classifier<B> {
         Ok(Self {
             hidden_dim: config.hidden_dim,
             data_type,
+            embedding,
             embedding_lookup,
             embedding_norm,
             transformer,
@@ -129,6 +129,7 @@ impl<B: Backend> Classifier<B> {
             .embedding_lookup
             .encode(
                 EmbeddingLookupInput {
+                    resource: &self.embedding,
                     token_ids,
                     batch_dim,
                 },
