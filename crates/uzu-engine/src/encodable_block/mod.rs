@@ -4,8 +4,9 @@ pub mod convolution;
 pub mod decoder;
 pub mod dflash;
 pub mod embedding;
-pub mod embedding_table;
+mod encodable_block;
 pub mod linear;
+pub mod logit_transform;
 pub mod mixer;
 pub mod mlp;
 pub mod normalization;
@@ -17,3 +18,5 @@ pub mod transformer_layer;
 pub mod weaver;
 pub mod weaver_layer;
 pub mod weight_matrix;
+
+pub use encodable_block::EncodableBlock;

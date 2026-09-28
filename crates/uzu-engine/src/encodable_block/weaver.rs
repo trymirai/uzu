@@ -16,8 +16,9 @@ use crate::{
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
     data_type::DataType,
     encodable_block::{
-        embedding::{Embedding, EmbeddingError},
-        linear::{Linear, LinearBlockError},
+        EncodableBlock,
+        embedding::{EmbeddingLookup, EmbeddingLookupInput, EmbeddingReadout, EmbeddingReadoutInput},
+        linear::{Gather, Linear, LinearBlockError},
         mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
         mlp::MlpBlockError,
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
@@ -163,8 +164,6 @@ pub enum WeaverNewError<B: Backend> {
 pub enum WeaverEncodeError<B: Backend> {
     #[error("backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("embedding error: {0}")]
-    Embedding(#[from] EmbeddingError<B>),
     #[error("invalid Weaver tree input")]
     InvalidTreeInput,
 }
@@ -366,7 +365,8 @@ impl<B: Backend> Weaver<B> {
 
     fn encode_step<Ids: BufferRef<Backend = B>, Logits: BufferRef<Backend = B>>(
         &self,
-        target_embedding: &Embedding<B>,
+        target_lookup: &EmbeddingLookup<B>,
+        target_readout: &EmbeddingReadout<B>,
         mut prefix_kv_layers: impl Iterator<Item = impl BufferRef<Backend = B>>,
         rope: &PrecalculatedRoPE<B>,
         mut node_kv_layers: impl Iterator<Item = impl BufferMut<Backend = B>>,
@@ -424,8 +424,15 @@ impl<B: Backend> Weaver<B> {
 
         // Node expansion: embed the batch's tokens, run every layer against
         // the prefix KV and each node's ancestors, then pick its children.
-        let token_embedding =
-            target_embedding.encode_lookup(node_token_ids.as_ref(), batch_node_count, command_buffer)?;
+        let token_embedding = target_lookup
+            .encode(
+                EmbeddingLookupInput {
+                    token_ids: node_token_ids.as_ref(),
+                    batch_dim: batch_node_count,
+                },
+                command_buffer,
+            )
+            .map_err(WeaverEncodeError::Backend)?;
         let normalized_embedding = self
             .token_embedding_norm
             .encode(&token_embedding, 0, batch_node_count, None::<&mut B::ScratchBuffer>, command_buffer)
@@ -482,14 +489,19 @@ impl<B: Backend> Weaver<B> {
             .readout_query_projection
             .encode(normalized_output, batch_node_count, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
-        let logit_residuals = target_embedding.encode_readout(
-            batch_node_count,
-            &query,
-            self.candidate_pool_size,
-            Some(batch_candidate_ids),
-            false,
-            command_buffer,
-        )?;
+        let logit_residuals = target_readout
+            .encode(
+                EmbeddingReadoutInput {
+                    hidden: &query,
+                    batch_dim: batch_node_count,
+                    gather: Some(Gather {
+                        indices: batch_candidate_ids,
+                        output_dim: self.candidate_pool_size,
+                    }),
+                },
+                command_buffer,
+            )
+            .map_err(WeaverEncodeError::Backend)?;
         let mut child_token_ids = command_buffer
             .allocate_scratch_for_shape(&[batch_node_count, shape.expand_width], DataType::U32)
             .map_err(WeaverEncodeError::Backend)?;
@@ -518,7 +530,7 @@ impl<B: Backend> Weaver<B> {
             batch_node_count,
             self.candidate_pool_size,
             shape.expand_width,
-            target_embedding.vocab_size(),
+            target_readout.vocab_size(),
             shape.prune_noise_scale,
             command_buffer,
         );
@@ -546,7 +558,8 @@ impl<B: Backend> Weaver<B> {
         &self,
         target_hidden: impl BufferRef<Backend = B>,
         draft_hidden: impl BufferRef<Backend = B>,
-        target_embedding: &Embedding<B>,
+        target_lookup: &EmbeddingLookup<B>,
+        target_readout: &EmbeddingReadout<B>,
         logits: impl BufferRef<Backend = B>,
         depth_seeds: &[u64],
         root_token_id: u32,
@@ -578,7 +591,7 @@ impl<B: Backend> Weaver<B> {
 
         // Rank the draft logits: the top `candidate_pool_size` tokens per
         // lookahead row form the candidate pool node expansions draw from.
-        let vocab_size = target_embedding.vocab_size();
+        let vocab_size = target_readout.vocab_size();
         assert!(
             logits.size() >= size_for_shape(&[pool_depth_count, vocab_size], DATA_TYPE),
             "draft logits do not cover the lookahead rows"
@@ -679,7 +692,8 @@ impl<B: Backend> Weaver<B> {
             };
             command_buffer.push_debug_group("weaver step");
             self.encode_step(
-                target_embedding,
+                target_lookup,
+                target_readout,
                 prefix_kv_layers.iter(),
                 &rope,
                 node_kv_layers.iter_mut(),

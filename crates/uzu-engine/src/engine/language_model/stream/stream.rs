@@ -579,7 +579,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 self.model_state.speculator_state.as_mut().unwrap(),
                 output_norm,
                 root_token as u32,
-                self.model.decoder.embedding(),
+                self.model.decoder.embedding_lookup(),
+                self.model.decoder.embedding_readout(),
                 shape,
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),
