@@ -1,4 +1,5 @@
-import { IconButton, useToast } from "@/ui-kit";
+import { IconButton } from "./icon-button";
+import { useToast } from "./toast/use-toast";
 import { Transition } from "@headlessui/react";
 import { Check, Copy } from "lucide-react";
 import { Fragment, useState } from "react";

@@ -1,4 +1,4 @@
-import type { ReasoningSupport } from "@/types/sampling";
+import type { ReasoningSupport } from "./sampling";
 
 export enum ModelKind {
   Text = "text",

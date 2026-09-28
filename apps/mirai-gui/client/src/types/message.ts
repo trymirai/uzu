@@ -1,4 +1,4 @@
-import type { SessionOutputStats } from "@/utils/llm-stream";
+import type { SessionOutputStats } from "./llm-stream";
 import type { NonSystemRole } from "./chat";
 
 export type ParsedOutput = {

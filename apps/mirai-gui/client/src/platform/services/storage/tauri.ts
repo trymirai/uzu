@@ -1,7 +1,7 @@
 import { invoke } from "../shared/invoke";
 import type { StorageCleanupPreview, StorageService } from ".";
-import { chatRepository } from "./chatRepository";
-import { buildChatsZip } from "./exportZip";
+import { chatRepository } from "./chat-repository";
+import { buildChatsZip } from "./export-zip";
 
 export const tauriStorage: StorageService = {
   ...chatRepository,

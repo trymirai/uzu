@@ -31,8 +31,12 @@ registry; without it the registry is used anonymously. See `.env.example`.
 
 ```text
 client/src/            React app, shared by desktop and web
+  components/          app shell, icons and generic UI primitives (components/ui)
+  features/            chat, chat-history, local-models, settings, welcome, runtime; each owns its page
+  routes/              thin TanStack route glue
   platform/            platform contract + tauri/web adapters, the only way to the backend
-  ui-kit/              UI components
+  stores/              zustand stores
+  styles/              design tokens and base styles
 src-tauri/src/         Rust backend: engine, chat, downloads, storage
 ```
 

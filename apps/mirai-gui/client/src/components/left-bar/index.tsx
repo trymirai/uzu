@@ -1,19 +1,19 @@
-import { useIsMobile } from "@/hooks/useMediaQuery";
-import { platformInfo } from "@/platform/platformInfo";
-import { useChatStore } from "@/stores/useChatStore";
-import { useSidebarStore } from "@/stores/useSidebarStore";
-import { isMacPlatform } from "@/ui-kit";
+import { useIsMobile } from "@/hooks/use-media-query";
+import { platformInfo } from "@/platform/platform-info";
+import { useChatStore } from "@/stores/use-chat-store";
+import { useSidebarStore } from "@/stores/use-sidebar-store";
+import { isMacPlatform } from "@/utils/platform";
 import { Transition } from "@headlessui/react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useCallback, useEffect } from "react";
 import { twMerge } from "tailwind-merge";
 import { v4 as uuidv4 } from "uuid";
-import { ChatsIcon } from "../icons/ChatsIcon";
-import { ModelsIcon } from "../icons/ModelsIcon";
-import SidebarToggleIcon from "../icons/SidebarToggleIcon";
+import { ChatsIcon } from "../icons/chats-icon";
+import { ModelsIcon } from "../icons/models-icon";
+import SidebarToggleIcon from "../icons/sidebar-toggle-icon";
 import MenuItem from "./menu-item";
-import SavedChats from "./saved-chats";
+import SavedChats from "@/features/chat-history/components/saved-chats";
 import Settings from "./settings";
 
 function LeftBar() {

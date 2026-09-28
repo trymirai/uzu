@@ -1,4 +1,4 @@
-import type { LlmAsyncStream, LlmRunParams } from "@/utils/llm-stream";
+import type { LlmAsyncStream, LlmRunParams } from "@/types/llm-stream";
 import type { SamplingPolicyPayload } from "@/types/sampling";
 
 export type TitleGenParams = {

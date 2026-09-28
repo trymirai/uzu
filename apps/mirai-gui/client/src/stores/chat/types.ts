@@ -1,4 +1,4 @@
-import type { ChatState } from "../useChatStore";
+import type { ChatState } from "../use-chat-store";
 
 export type ChatStoreApi = {
   get: () => ChatState;

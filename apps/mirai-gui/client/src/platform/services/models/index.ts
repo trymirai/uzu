@@ -1,4 +1,4 @@
-import type { EngineModel } from "@/types/modelManager";
+import type { EngineModel } from "@/types/model-manager";
 
 export type DownloadEvent = { identifier: string; seq: number } & (
   | { kind: "progress"; completedBytes: number; totalBytes: number | null }

@@ -1,9 +1,9 @@
-import { getPlatform } from "@/platform/platformSingleton";
+import { getPlatform } from "@/platform/platform-singleton";
 import { ChatNotFoundError } from "@/platform/services/storage";
 import type { ChatMetadata } from "@/platform/services/storage";
 import { UNTITLED_CHAT_TITLE } from "@/types/chat";
 import type { Message, ParsedOutput } from "@/types/message";
-import { computeErrorPatch, computeFinalizedUpdates } from "./messagePatches";
+import { computeErrorPatch, computeFinalizedUpdates } from "./message-patches";
 import type { ChatStoreApi } from "./types";
 
 const reportSaveFailure = (set: ChatStoreApi["set"]) => set((s) => ({ saveFailureCount: s.saveFailureCount + 1 }));

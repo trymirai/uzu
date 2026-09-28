@@ -2,16 +2,16 @@ import React from "react";
 
 import ReactDOM from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
-import "@/ui-kit/index.css";
+import "@/styles/base.css";
 import { createAppRouter } from "./router";
 import "./index.css";
 import { RuntimeLoader } from "@rive-app/react-canvas";
 import riveWasmUrl from "@rive-app/canvas/rive.wasm?url";
-import { initPlatform } from "./platform/platformSingleton";
-import { TauriPlatformClient } from "./platform/TauriPlatformClient";
-import { WebPlatformClient } from "./platform/WebPlatformClient";
-import { platformInfo } from "./platform/platformInfo";
-import { APP_STORE_KEY } from "./stores/migrateAppStorage";
+import { initPlatform } from "./platform/platform-singleton";
+import { TauriPlatformClient } from "./platform/tauri-platform-client";
+import { WebPlatformClient } from "./platform/web-platform-client";
+import { platformInfo } from "./platform/platform-info";
+import { APP_STORE_KEY } from "./stores/migrate-app-storage";
 
 RuntimeLoader.setWasmUrl(riveWasmUrl);
 

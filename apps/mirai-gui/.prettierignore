@@ -1,4 +1,4 @@
-client/src/routeTree.gen.ts
+client/src/route-tree.gen.ts
 client/dist-*/
 src-tauri/target/
 src-tauri/gen/

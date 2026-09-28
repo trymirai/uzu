@@ -1,8 +1,8 @@
 import { Channel } from "@tauri-apps/api/core";
 import { invoke } from "../shared/invoke";
-import type { LlmRunParams } from "@/utils/llm-stream";
+import type { LlmRunParams } from "@/types/llm-stream";
 import type { ChatService, SamplingDefaults, TitleGenParams } from ".";
-import { runLlmStream, type RunEvent, type RunTransport } from "./runStream";
+import { runLlmStream, type RunEvent, type RunTransport } from "./run-stream";
 
 const cancelRun = async (runId: string): Promise<void> => {
   await invoke("cancel_run", { runId });

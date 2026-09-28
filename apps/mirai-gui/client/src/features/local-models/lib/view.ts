@@ -1,7 +1,7 @@
-import { modelDownloadPhases } from "@/types/modelManager";
+import { modelDownloadPhases } from "@/types/model-manager";
 import type { PlatformModel } from "@/types/models";
-import { createNewestTextModelComparator } from "@/utils/model-sort";
-import type { ModelCardState } from "@/ui-kit";
+import { createNewestTextModelComparator } from "./model-sort";
+import type { ModelCardState } from "../components/model-card/types";
 
 export function toModelCardState(phase?: string, downloadedKbytes?: number, totalKbytes?: number): ModelCardState {
   const progress =

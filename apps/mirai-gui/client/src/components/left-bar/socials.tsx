@@ -1,6 +1,6 @@
-import DiscordIcon from "../icons/DiscordIcon";
-import GithubIcon from "../icons/GithubIcon";
-import XIcon from "../icons/XIcon";
+import DiscordIcon from "../icons/discord-icon";
+import GithubIcon from "../icons/github-icon";
+import XIcon from "../icons/x-icon";
 
 function Socials() {
   return (

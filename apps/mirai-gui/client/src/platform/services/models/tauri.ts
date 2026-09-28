@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "../shared/invoke";
-import type { EngineModel } from "@/types/modelManager";
+import type { EngineModel } from "@/types/model-manager";
 import type { DownloadEvent, ModelsService } from ".";
 
 // One backend subscription for the app's lifetime, fanned out to listeners.

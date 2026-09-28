@@ -4,9 +4,9 @@ const plugin = require("tailwindcss/plugin");
 const fs = require("fs");
 const path = require("path");
 
-// Semantic colors and shadows are scraped from the ui-kit token CSS so
+// Semantic colors and shadows are scraped from the token CSS so
 // Tailwind keys stay in sync with the variables.
-const tokensCss = fs.readFileSync(path.join(__dirname, "client/src/ui-kit/tokens/semantic.css"), "utf8");
+const tokensCss = fs.readFileSync(path.join(__dirname, "client/src/styles/tokens/semantic.css"), "utf8");
 const tokenVars = (family) =>
   Object.fromEntries(
     [...tokensCss.matchAll(new RegExp(`^\\s*--ui-${family}-([a-z0-9-]+)\\s*:`, "gm"))].map((m) => [

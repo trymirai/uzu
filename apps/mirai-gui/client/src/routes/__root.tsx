@@ -1,16 +1,16 @@
 import { ErrorPage } from "@/components/error-page";
 import { FooterBar } from "@/components/footer-bar";
-import { useAppNavigationEvents } from "@/hooks/useAppNavigationEvents";
-import { useIsMobile } from "@/hooks/useMediaQuery";
-import { useGlobalDownloadToasts } from "@/hooks/useGlobalDownloadToasts";
-import { platformInfo } from "@/platform/platformInfo";
-import { useSidebarStore } from "@/stores/useSidebarStore";
+import { useAppNavigationEvents } from "@/hooks/use-app-navigation-events";
+import { useIsMobile } from "@/hooks/use-media-query";
+import { useGlobalDownloadToasts } from "@/hooks/use-global-download-toasts";
+import { platformInfo } from "@/platform/platform-info";
+import { useSidebarStore } from "@/stores/use-sidebar-store";
 import { createRootRoute, Outlet, useLocation } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { twMerge } from "tailwind-merge";
-import LeftBar from "../components/left-bar";
-import { ToastProvider } from "@/ui-kit";
-import { useAppInitialization } from "../hooks/useAppInitialization";
+import LeftBar from "@/components/left-bar";
+import { ToastProvider } from "@/components/ui/toast/toast-provider";
+import { useAppInitialization } from "@/hooks/use-app-initialization";
 
 export const Route = createRootRoute({
   component: RootComponent,

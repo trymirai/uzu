@@ -1,10 +1,10 @@
-import { useFooterRuntimeModel } from "./useFooterRuntimeModel";
-import { useAppStore } from "@/stores/useAppStore";
-import { ModelVendorIcon } from "@/components/models/ModelVendorIcon";
+import { useFooterRuntimeModel } from "./use-footer-runtime-model";
+import { useAppStore } from "@/stores/use-app-store";
+import { ModelVendorIcon } from "@/components/model-vendor-icon";
 import React from "react";
 import { twMerge } from "tailwind-merge";
-import { EjectIcon } from "../icons/EjectIcon";
-import { Loader } from "../ui/loader";
+import { EjectIcon } from "../icons/eject-icon";
+import { Loader } from "../loader";
 
 export const FooterBar = React.memo(({ className }: { className?: string }) => {
   const version = useAppStore((s) => s.appVersion);

@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { useSidebarStore } from "@/stores/useSidebarStore";
-import { useIsMobile } from "@/hooks/useMediaQuery";
+import { useSidebarStore } from "@/stores/use-sidebar-store";
+import { useIsMobile } from "@/hooks/use-media-query";
 
 type MenuItemProps = {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;

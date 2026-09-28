@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { UpdateStatus } from "@/types/update";
 import type { CheckForUpdateResult, UpdaterService } from ".";
-import { createKeyedListeners } from "../shared/keyedListeners";
+import { createKeyedListeners } from "../shared/keyed-listeners";
 
 type RustCheck = {
   currentVersion: string;

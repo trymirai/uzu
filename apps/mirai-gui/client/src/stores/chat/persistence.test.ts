@@ -1,11 +1,11 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import type { ChatData, ChatMetadata } from "@/platform/services/storage";
-import { useChatStore } from "@/stores/useChatStore";
+import { useChatStore } from "@/stores/use-chat-store";
 import { Roles } from "@/types/chat";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), storage: {} as Record<string, unknown> }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
-vi.mock("@/platform/platformSingleton", () => ({ getPlatform: () => ({ storage: mocks.storage }) }));
+vi.mock("@/platform/platform-singleton", () => ({ getPlatform: () => ({ storage: mocks.storage }) }));
 
 import { tauriStorage } from "@/platform/services/storage/tauri";
 

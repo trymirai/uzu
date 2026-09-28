@@ -17,7 +17,7 @@ export const createClientConfig = ({ platform, port }: { platform: Platform; por
       react(),
       tanstackRouter({
         routesDirectory: path.join(__dirname, "client/src/routes"),
-        generatedRouteTree: path.join(__dirname, "client/src/routeTree.gen.ts"),
+        generatedRouteTree: path.join(__dirname, "client/src/route-tree.gen.ts"),
         routeFileIgnorePattern: "\\.test\\..*$",
       }),
     ],

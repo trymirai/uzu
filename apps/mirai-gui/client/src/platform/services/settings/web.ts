@@ -1,6 +1,6 @@
 import type { ModelParams } from "@/types/sampling";
 import type { SettingsService } from ".";
-import { readJson, writeJson } from "../shared/browserStore";
+import { readJson, writeJson } from "../shared/browser-store";
 
 const SETTINGS_KEY = "mirai.web.settings";
 const MODEL_PARAMS_KEY = "mirai.web.modelParams";

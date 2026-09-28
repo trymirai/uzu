@@ -1,7 +1,7 @@
 import type { ChatService } from ".";
-import { emptyStats } from "./emptyStats";
+import { emptyStats } from "./empty-stats";
 import { noopUnsubscribe } from "../shared/noop";
-import type { LlmAsyncStream } from "@/utils/llm-stream";
+import type { LlmAsyncStream } from "@/types/llm-stream";
 
 export const webChat: ChatService = {
   runStream(): LlmAsyncStream {
