@@ -18,7 +18,7 @@ use crate::{
     utils::strict_serde::DeserializeStrictOwned,
 };
 
-pub struct ParameterMetadata {
+struct ParameterMetadata {
     shape: Box<[u32]>,
     data_type: DataType,
     offset: usize,
