@@ -38,7 +38,7 @@ const SelectionRow = forwardRef<HTMLElement, SelectionRowProps>(function Selecti
       ref={ref}
       active={active}
       selected={selected}
-      className="flex items-center gap-2 w-full border-none outline-none bg-transparent text-text-primary hover:bg-surface-tertiary"
+      className="flex items-center gap-2 w-full border-none outline-hidden bg-transparent text-text-primary hover:bg-surface-tertiary"
       {...rest}
       onClick={onClick}
     >
@@ -69,7 +69,7 @@ export function ModelPicker({
             as="button"
             type="button"
             disabled={disabled}
-            className="group/model flex items-center gap-2 h-7 px-2 max-w-full rounded-md bg-surface-tertiary hover:bg-control-surface-hover data-[headlessui-state~=open]:bg-control-surface-active data-[focus]:bg-control-surface-hover cursor-pointer border-none outline-none data-[focus]:shadow-focus disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface-tertiary"
+            className="group/model flex items-center gap-2 h-7 px-2 max-w-full rounded-md bg-surface-tertiary hover:bg-control-surface-hover data-[headlessui-state~=open]:bg-control-surface-active data-[focus]:bg-control-surface-hover cursor-pointer border-none outline-hidden data-[focus]:shadow-focus disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface-tertiary"
           >
             {activeModel && (
               <span className="shrink-0 flex items-center justify-center w-3.5 h-3.5 [&>svg]:w-3.5 [&>svg]:h-3.5">
@@ -106,7 +106,7 @@ export function ModelPicker({
                   : "absolute right-0 top-full pt-1 z-50"
               }
             >
-              <MenuItems className="outline-none">
+              <MenuItems className="outline-hidden">
                 <SelectionPanel className="pt-1.5 min-w-[240px]">
                   <SelectionSection className="max-h-[280px] overflow-y-auto thin-scrollbar">
                     {models?.map((model) => (

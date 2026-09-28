@@ -18,19 +18,6 @@ export default defineConfig([
     },
   },
   {
-    files: ["tailwind.config.js"],
-    languageOptions: {
-      sourceType: "commonjs",
-      globals: {
-        require: "readonly",
-        module: "writable",
-        exports: "writable",
-        process: "readonly",
-        __dirname: "readonly",
-      },
-    },
-  },
-  {
     files: ["client/src/**/*.{ts,tsx}"],
     extends: [tseslint.configs.recommended],
     plugins: { "react-hooks": reactHooks },

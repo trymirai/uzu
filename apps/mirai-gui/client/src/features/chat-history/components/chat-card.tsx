@@ -47,7 +47,7 @@ const ChatCard: React.FC<ChatCardProps> = ({
           })}
       className={twMerge(
         "bg-bg dark:bg-bg-dark cursor-pointer transition-colors border-[0.5px] border-cell-border dark:border-cell-border-dark",
-        !selectMode && "outline-none focus-visible:shadow-focus",
+        !selectMode && "outline-hidden focus-visible:shadow-focus",
         selectMode
           ? "hover:bg-card-modal-hover dark:hover:bg-card-modal-hover-dark"
           : "hover:bg-card-hover dark:hover:bg-card-hover-dark",

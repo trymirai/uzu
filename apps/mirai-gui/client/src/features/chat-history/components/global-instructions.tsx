@@ -132,7 +132,7 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
             onChange={handleChange}
             onBlur={flushSave}
             placeholder="Add instructions to all chats"
-            className="w-full p-1 bg-bg-modal dark:bg-bg-modal-dark rounded-md text-sm leading-[150%] text-label-title dark:text-label-title-dark placeholder:text-label-muted dark:placeholder:text-label-muted-dark focus:outline-none focus:border-primary resize-none thin-scrollbar"
+            className="w-full p-1 bg-bg-modal dark:bg-bg-modal-dark rounded-md text-sm leading-[150%] text-label-title dark:text-label-title-dark placeholder:text-label-muted dark:placeholder:text-label-muted-dark focus:outline-hidden focus:border-primary resize-none thin-scrollbar"
             rows={7}
           />
         </div>

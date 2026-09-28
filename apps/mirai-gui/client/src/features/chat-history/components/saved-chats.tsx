@@ -157,7 +157,7 @@ export default function SavedChats() {
                           if (e.key === "Escape") cancelRename();
                         }}
                         onBlur={() => void commitRename()}
-                        className="block w-full text-left text-[13px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark bg-transparent outline-none border-none p-0"
+                        className="block w-full text-left text-[13px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark bg-transparent outline-hidden border-none p-0"
                       />
                     ) : (
                       <p className="w-full text-left text-[13px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark truncate">
@@ -184,13 +184,13 @@ export default function SavedChats() {
                         aria-label={`Options for ${chat.title}`}
                         onClick={(e) => e?.stopPropagation()}
                         onDoubleClick={(e) => e.stopPropagation()}
-                        className={`${open ? "opacity-100 bg-bg-hover dark:bg-bg-hover-dark" : "opacity-0 group-hover:opacity-100 data-[focus]:opacity-100"} hover:bg-bg-hover hover:dark:bg-bg-hover-dark p-1 rounded transition-opacity outline-none data-[focus]:shadow-focus`}
+                        className={`${open ? "opacity-100 bg-bg-hover dark:bg-bg-hover-dark" : "opacity-0 group-hover:opacity-100 data-[focus]:opacity-100"} hover:bg-bg-hover hover:dark:bg-bg-hover-dark p-1 rounded transition-opacity outline-hidden data-[focus]:shadow-focus`}
                       >
                         <MoreHorizontal className="w-3 h-3 text-label-muted dark:text-label-muted-dark" />
                       </MenuButton>
                       <MenuItems
                         anchor="bottom end"
-                        className="w-32 rounded-lg border border-cell-border dark:border-cell-border-dark bg-card-modal dark:bg-card-modal-dark [--anchor-gap:4px] outline-none focus:outline-none focus:ring-0 z-50 translate-x-2"
+                        className="w-32 rounded-lg border border-cell-border dark:border-cell-border-dark bg-card-modal dark:bg-card-modal-dark [--anchor-gap:4px] outline-hidden focus:outline-hidden focus:ring-0 z-50 translate-x-2"
                       >
                         <MenuItem>
                           <button
@@ -198,7 +198,7 @@ export default function SavedChats() {
                               e.stopPropagation();
                               startRename(chat);
                             }}
-                            className="group/item flex w-full p-1 outline-none"
+                            className="group/item flex w-full p-1 outline-hidden"
                           >
                             <div className="flex grow rounded-md py-1.5 px-2 gap-2 w-full items-center hover:bg-card-modal-hover hover:dark:bg-card-modal-hover-dark group-data-[focus]/item:bg-card-modal-hover dark:group-data-[focus]/item:bg-card-modal-hover-dark transition-colors">
                               <Edit3 className="w-3 h-3 text-label-title dark:text-label-title-dark" />
@@ -212,7 +212,7 @@ export default function SavedChats() {
                               e.stopPropagation();
                               handleDeleteChat(chat, e.shiftKey);
                             }}
-                            className="group/item flex w-full p-1 outline-none"
+                            className="group/item flex w-full p-1 outline-hidden"
                           >
                             <div className="flex grow rounded-md py-1.5 px-2 gap-2 w-full items-center hover:bg-card-modal-hover hover:dark:bg-card-modal-hover-dark group-data-[focus]/item:bg-card-modal-hover dark:group-data-[focus]/item:bg-card-modal-hover-dark transition-colors">
                               <Trash2 className="w-3 h-3 text-error" />

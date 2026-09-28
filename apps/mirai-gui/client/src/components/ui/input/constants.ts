@@ -26,7 +26,7 @@ export const KIND_HOVER: Record<InputKind, string> = {
 };
 
 export const INPUT_BASE =
-  "flex-1 min-w-0 bg-transparent outline-none text-text-primary placeholder:text-text-muted font-normal";
+  "flex-1 min-w-0 bg-transparent outline-hidden text-text-primary placeholder:text-text-muted font-normal";
 
 export const DISABLED_WRAPPER = "opacity-40 cursor-not-allowed";
 export const DISABLED_INPUT = "cursor-not-allowed";

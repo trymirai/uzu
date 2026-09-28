@@ -1,8 +1,7 @@
+import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
-import autoprefixer from "autoprefixer";
 import path from "path";
-import tailwindcss from "tailwindcss";
 import { defineConfig } from "vitest/config";
 
 // `--mode web` builds the browser variant; vitest runs with mode "test".
@@ -11,6 +10,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
+      tailwindcss(),
       ...(mode === "test"
         ? []
         : [
@@ -22,7 +22,6 @@ export default defineConfig(({ mode }) => {
           ]),
     ],
     root: path.join(__dirname, "client"),
-    css: { postcss: { plugins: [tailwindcss(), autoprefixer()] } },
     build: {
       outDir: path.join(__dirname, `client/dist-${platform}`),
       emptyOutDir: true,

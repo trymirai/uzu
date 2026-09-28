@@ -14,7 +14,7 @@ export function Checkbox({
   const sizeConfig = CHECKBOX_SIZE[size];
 
   const boxClasses = twMerge(
-    "relative m-0 block shrink-0 appearance-none border-[1.5px] p-0 outline-none transition-all duration-150 ease-out align-middle cursor-pointer",
+    "relative m-0 block shrink-0 appearance-none border-[1.5px] p-0 outline-hidden transition-all duration-150 ease-out align-middle cursor-pointer",
     sizeConfig.box,
     sizeConfig.radius,
     checked ? `${CHECKED_BG} ${CHECKED_BORDER}` : UNCHECKED_BORDER,

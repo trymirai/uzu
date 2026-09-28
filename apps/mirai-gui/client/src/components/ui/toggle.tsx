@@ -17,7 +17,7 @@ export const Toggle: React.FC<ToggleProps> = ({ checked, onChange, disabled = fa
       disabled={disabled}
       onClick={() => !disabled && onChange(!checked)}
       className={twMerge(
-        "relative inline-flex min-h-6 min-w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-0 focus:ring-offset-0",
+        "relative inline-flex min-h-6 min-w-11 items-center rounded-full transition-colors focus:outline-hidden focus:ring-0 focus:ring-offset-0",
         checked ? "bg-label-title dark:bg-label-title-dark" : "bg-button-border dark:bg-button-border-dark",
         disabled && "opacity-50 cursor-not-allowed",
         !disabled && "cursor-pointer",

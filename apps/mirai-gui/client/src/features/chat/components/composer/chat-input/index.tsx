@@ -102,7 +102,7 @@ export function ChatInput({
                 onClick={onModelSettingsClick}
                 disabled={settingsDisabled}
                 aria-label="Model settings"
-                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-tertiary text-text-muted outline-none transition-colors duration-150 ease-out hover:bg-control-surface-hover hover:text-text-primary focus-visible:shadow-focus disabled:pointer-events-none disabled:opacity-50"
+                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-tertiary text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-control-surface-hover hover:text-text-primary focus-visible:shadow-focus disabled:pointer-events-none disabled:opacity-50"
               >
                 <Settings size={16} />
               </button>

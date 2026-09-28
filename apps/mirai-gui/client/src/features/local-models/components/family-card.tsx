@@ -95,7 +95,7 @@ export function FamilyCard({ vendorIcon, familyName, vendorName, badges, onClick
         type="button"
         onClick={onClick}
         aria-label={fallbackAria}
-        className="w-full flex flex-col items-stretch gap-3 px-4 py-3 rounded-lg border-[0.5px] border-border-default bg-surface-elevated transition-colors duration-150 cursor-pointer outline-none focus-visible:shadow-focus hover:bg-surface-tertiary text-left"
+        className="w-full flex flex-col items-stretch gap-3 px-4 py-3 rounded-lg border-[0.5px] border-border-default bg-surface-elevated transition-colors duration-150 cursor-pointer outline-hidden focus-visible:shadow-focus hover:bg-surface-tertiary text-left"
       >
         <div className="flex items-center gap-3 min-w-0">
           {heading}
@@ -111,7 +111,7 @@ export function FamilyCard({ vendorIcon, familyName, vendorName, badges, onClick
       type="button"
       onClick={onClick}
       aria-label={fallbackAria}
-      className="w-full flex items-center justify-between gap-4 h-12 pl-4 pr-3 rounded-lg border-[0.5px] border-border-default bg-surface-elevated transition-colors duration-150 cursor-pointer outline-none focus-visible:shadow-focus hover:bg-surface-tertiary"
+      className="w-full flex items-center justify-between gap-4 h-12 pl-4 pr-3 rounded-lg border-[0.5px] border-border-default bg-surface-elevated transition-colors duration-150 cursor-pointer outline-hidden focus-visible:shadow-focus hover:bg-surface-tertiary"
     >
       {heading}
       <div className="flex items-center gap-1.5 shrink-0">

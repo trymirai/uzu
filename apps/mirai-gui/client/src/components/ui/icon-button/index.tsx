@@ -12,7 +12,7 @@ export type IconButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "chi
 export function IconButton({ icon, children, variant = "secondary", className, ...rest }: IconButtonProps) {
   const sizeCls = variant === "pill" ? "p-0.5" : "size-8 text-sm";
   const base = twMerge(
-    "inline-flex items-center gap-1 rounded-md focus:outline-none disabled:opacity-50 transition-colors duration-200",
+    "inline-flex items-center gap-1 rounded-md focus:outline-hidden disabled:opacity-50 transition-colors duration-200",
     sizeCls,
   );
   const mergedClassName = twMerge(base, ICON_BUTTON_VARIANT_MAP[variant], className);

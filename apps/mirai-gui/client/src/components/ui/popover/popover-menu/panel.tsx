@@ -33,7 +33,7 @@ export function PopoverMenuPanel({
     <MenuItems
       ref={setFloatingRef}
       style={floatingStyle}
-      className={twMerge("z-50 outline-none", menuOpen ? "pointer-events-auto" : undefined)}
+      className={twMerge("z-50 outline-hidden", menuOpen ? "pointer-events-auto" : undefined)}
     >
       <PopoverSurface open={menuOpen} side={side} align={align} className={className}>
         {items.map((item) => (
@@ -44,7 +44,7 @@ export function PopoverMenuPanel({
             disabled={item.disabled ?? false}
             className={({ focus, disabled }) =>
               twMerge(
-                "flex items-center gap-2 w-full px-2.5 py-2 rounded-md bg-transparent border-none outline-none text-left",
+                "flex items-center gap-2 w-full px-2.5 py-2 rounded-md bg-transparent border-none outline-hidden text-left",
                 focus ? "bg-surface-tertiary" : undefined,
                 disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
                 item.danger ? "text-red-500" : "text-text-primary",

@@ -74,50 +74,32 @@ const MarkdownTable = ({ children, ...props }: MarkdownComponentProps<"table">) 
 
 const CustomComponents = {
   h1: ({ children, ...props }: MarkdownComponentProps<"h1">) => (
-    <h1
-      className="text-[24px] font-medium leading-[130%] mb-4 text-label-title dark:text-label-title-dark font-feature-settings-[liga_off,clig_off]"
-      {...props}
-    >
+    <h1 className="text-[24px] font-medium leading-[130%] mb-4 text-label-title dark:text-label-title-dark" {...props}>
       {children}
     </h1>
   ),
   h2: ({ children, ...props }: MarkdownComponentProps<"h2">) => (
-    <h2
-      className="text-[20px] font-medium leading-[130%] mb-3 text-label-title dark:text-label-title-dark font-feature-settings-[liga_off,clig_off]"
-      {...props}
-    >
+    <h2 className="text-[20px] font-medium leading-[130%] mb-3 text-label-title dark:text-label-title-dark" {...props}>
       {children}
     </h2>
   ),
   h3: ({ children, ...props }: MarkdownComponentProps<"h3">) => (
-    <h3
-      className="text-[18px] font-medium leading-[130%] mb-2 text-label-title dark:text-label-title-dark font-feature-settings-[liga_off,clig_off]"
-      {...props}
-    >
+    <h3 className="text-[18px] font-medium leading-[130%] mb-2 text-label-title dark:text-label-title-dark" {...props}>
       {children}
     </h3>
   ),
   h4: ({ children, ...props }: MarkdownComponentProps<"h4">) => (
-    <h4
-      className="text-[16px] font-medium leading-[130%] mb-2 text-label-title dark:text-label-title-dark font-feature-settings-[liga_off,clig_off]"
-      {...props}
-    >
+    <h4 className="text-[16px] font-medium leading-[130%] mb-2 text-label-title dark:text-label-title-dark" {...props}>
       {children}
     </h4>
   ),
   h5: ({ children, ...props }: MarkdownComponentProps<"h5">) => (
-    <h5
-      className="text-[14px] font-medium leading-[130%] mb-1 text-label-title dark:text-label-title-dark font-feature-settings-[liga_off,clig_off]"
-      {...props}
-    >
+    <h5 className="text-[14px] font-medium leading-[130%] mb-1 text-label-title dark:text-label-title-dark" {...props}>
       {children}
     </h5>
   ),
   h6: ({ children, ...props }: MarkdownComponentProps<"h6">) => (
-    <h6
-      className="text-xs font-medium leading-[130%] mb-1 text-label-title dark:text-label-title-dark font-feature-settings-[liga_off,clig_off]"
-      {...props}
-    >
+    <h6 className="text-xs font-medium leading-[130%] mb-1 text-label-title dark:text-label-title-dark" {...props}>
       {children}
     </h6>
   ),
@@ -206,7 +188,7 @@ const CustomComponents = {
   },
   strong: ({ children, ...props }: MarkdownComponentProps<"strong">) => (
     <strong
-      className="text-[15px] font-medium leading-[150%] tracking-[0.2px] text-label-title dark:text-label-title-dark font-feature-settings-[liga_off,clig_off]"
+      className="text-[15px] font-medium leading-[150%] tracking-[0.2px] text-label-title dark:text-label-title-dark"
       {...props}
     >
       {children}
@@ -224,32 +206,32 @@ const CustomComponents = {
 
 const OneFontSizeComponents = {
   h1: ({ children, ...props }: MarkdownComponentProps<"h1">) => (
-    <h1 className="text-xs font-medium mb-1 font-feature-settings-[liga_off,clig_off]" {...props}>
+    <h1 className="text-xs font-medium mb-1" {...props}>
       {children}
     </h1>
   ),
   h2: ({ children, ...props }: MarkdownComponentProps<"h2">) => (
-    <h2 className="text-xs font-medium mb-1 font-feature-settings-[liga_off,clig_off]" {...props}>
+    <h2 className="text-xs font-medium mb-1" {...props}>
       {children}
     </h2>
   ),
   h3: ({ children, ...props }: MarkdownComponentProps<"h3">) => (
-    <h3 className="text-xs font-medium mb-1 font-feature-settings-[liga_off,clig_off]" {...props}>
+    <h3 className="text-xs font-medium mb-1" {...props}>
       {children}
     </h3>
   ),
   h4: ({ children, ...props }: MarkdownComponentProps<"h4">) => (
-    <h4 className="text-xs font-medium mb-1 font-feature-settings-[liga_off,clig_off]" {...props}>
+    <h4 className="text-xs font-medium mb-1" {...props}>
       {children}
     </h4>
   ),
   h5: ({ children, ...props }: MarkdownComponentProps<"h5">) => (
-    <h5 className="text-xs font-medium mb-1 font-feature-settings-[liga_off,clig_off]" {...props}>
+    <h5 className="text-xs font-medium mb-1" {...props}>
       {children}
     </h5>
   ),
   h6: ({ children, ...props }: MarkdownComponentProps<"h6">) => (
-    <h6 className="text-xs font-medium mb-1 font-feature-settings-[liga_off,clig_off]" {...props}>
+    <h6 className="text-xs font-medium mb-1" {...props}>
       {children}
     </h6>
   ),
@@ -328,7 +310,7 @@ const OneFontSizeComponents = {
     return <input type={type} {...props} />;
   },
   strong: ({ children, ...props }: MarkdownComponentProps<"strong">) => (
-    <strong className="text-xs font-medium tracking-[0.2px] font-feature-settings-[liga_off,clig_off]" {...props}>
+    <strong className="text-xs font-medium tracking-[0.2px]" {...props}>
       {children}
     </strong>
   ),

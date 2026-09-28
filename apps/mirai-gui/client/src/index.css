@@ -21,11 +21,143 @@
   src: url("/fonts/GeistMono-VariableFont_wght.ttf") format("truetype");
 }
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+/* node_modules is skipped by source detection; streamdown ships class names. */
+@source "../../node_modules/streamdown/dist";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans:
+    InterVariable, Inter, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono:
+    "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --breakpoint-lg: 1050px;
+  --ease-spring: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* Kit tokens (styles/tokens/semantic.css and palette.css); the gray scale
+     replaces Tailwind's so only kit steps exist. */
+  --color-gray-*: initial;
+  --color-gray-50: var(--ui-color-gray-50);
+  --color-gray-100: var(--ui-color-gray-100);
+  --color-gray-200: var(--ui-color-gray-200);
+  --color-gray-300: var(--ui-color-gray-300);
+  --color-gray-500: var(--ui-color-gray-500);
+  --color-gray-600: var(--ui-color-gray-600);
+  --color-gray-700: var(--ui-color-gray-700);
+  --color-gray-1000: var(--ui-color-gray-1000);
+  --color-gray-1100: var(--ui-color-gray-1100);
+  --color-gray-1200: var(--ui-color-gray-1200);
+  --color-background: var(--ui-color-background);
+  --color-primary: var(--ui-color-primary);
+  --color-primary-hover: var(--ui-color-primary-hover);
+  --color-primary-active: var(--ui-color-primary-active);
+  --color-primary-contrast: var(--ui-color-primary-contrast);
+  --color-secondary: var(--ui-color-secondary);
+  --color-secondary-hover: var(--ui-color-secondary-hover);
+  --color-secondary-active: var(--ui-color-secondary-active);
+  --color-secondary-contrast: var(--ui-color-secondary-contrast);
+  --color-tertiary-hover: var(--ui-color-tertiary-hover);
+  --color-control-surface-hover: var(--ui-color-control-surface-hover);
+  --color-control-surface-active: var(--ui-color-control-surface-active);
+  --color-danger: var(--ui-color-danger);
+  --color-danger-hover: var(--ui-color-danger-hover);
+  --color-danger-active: var(--ui-color-danger-active);
+  --color-danger-contrast: var(--ui-color-danger-contrast);
+  --color-danger-bg: var(--ui-color-danger-bg);
+  --color-success: var(--ui-color-success);
+  --color-success-bg: var(--ui-color-success-bg);
+  --color-success-border: var(--ui-color-success-border);
+  --color-text-primary: var(--ui-color-text-primary);
+  --color-text-secondary: var(--ui-color-text-secondary);
+  --color-text-muted: var(--ui-color-text-muted);
+  --color-text-disabled: var(--ui-color-text-disabled);
+  --color-border-default: var(--ui-color-border-default);
+  --color-border-strong: var(--ui-color-border-strong);
+  --color-border-outlined: var(--ui-color-border-outlined);
+  --color-border-outlined-hover: var(--ui-color-border-outlined-hover);
+  --color-slider-track: var(--ui-color-slider-track);
+  --color-surface-secondary: var(--ui-color-surface-secondary);
+  --color-surface-tertiary: var(--ui-color-surface-tertiary);
+  --color-surface-elevated: var(--ui-color-surface-elevated);
+  --color-overlay: var(--ui-color-overlay);
+  --color-green-500: var(--ui-color-green-500);
+  --color-amber-500: var(--ui-color-amber-500);
+  --color-red-500: var(--ui-color-red-500);
+  --color-blue-500: var(--ui-color-blue-500);
+  --shadow-sm: var(--ui-shadow-sm);
+  --shadow-md: var(--ui-shadow-md);
+  --shadow-lg: var(--ui-shadow-lg);
+  --shadow-xl: var(--ui-shadow-xl);
+  --shadow-custom: var(--ui-shadow-custom);
+  --shadow-custom-hover: var(--ui-shadow-custom-hover);
+  --shadow-focus: var(--ui-shadow-focus);
+
+  /* App palette; the -dark keys pair with the dark: variant. */
+  --color-bg: #fcfcfc;
+  --color-bg-dark: #0a0a0a;
+  --color-bg-sidebar: #f5f5f5;
+  --color-bg-sidebar-dark: #050506;
+  --color-bg-hover: #e5e5e5;
+  --color-bg-hover-dark: #181a1b;
+  --color-bg-sub: #f4f5f5;
+  --color-bg-sub-dark: #1f1f1f;
+  --color-bg-modal: #ffffff;
+  --color-bg-modal-dark: #141414;
+  --color-card-hover: #f6f8f8;
+  --color-card-hover-dark: #1f1f1f;
+  --color-card-modal: #ffffff;
+  --color-card-modal-dark: #141414;
+  --color-card-modal-hover: #f6f8f8;
+  --color-card-modal-hover-dark: #1f1f1f;
+  --color-button-border: #dfe1e2;
+  --color-button-border-dark: #343434;
+  --color-cell-border: #e5e5e5;
+  --color-cell-border-dark: #212227;
+  --color-label-title: #000000;
+  --color-label-title-dark: #ffffff;
+  --color-label-muted: #526168;
+  --color-label-muted-dark: #9198a1;
+  --color-blue: #33bbff;
+  --color-error: #ff2020;
+  --color-progress: #ff6a20;
+}
+
+@utility thin-scrollbar {
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--ui-color-gray-500);
+    border-radius: 9999px;
+  }
+}
 
 @layer base {
+  /* Tailwind 4 defaults borders to currentColor, buttons to cursor: default and
+     placeholders to a translucent currentColor; the app was designed on the
+     Tailwind 3 defaults, kept here. */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--ui-color-gray-200);
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    opacity: 1;
+    color: #9ca3af;
+  }
+
   /* Native scrollbars and form controls must follow the app theme; without
      this WebKit draws them for the light scheme (black bar on dark lists). */
   :root {
@@ -47,8 +179,8 @@
   }
 
   .shiki {
-    --shiki-font-family: theme("fontFamily.mono");
-    font-family: theme("fontFamily.mono");
+    --shiki-font-family: var(--font-mono);
+    font-family: var(--font-mono);
     font-variant-ligatures: none;
   }
   .shiki code {

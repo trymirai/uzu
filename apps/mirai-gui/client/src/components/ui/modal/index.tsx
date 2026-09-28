@@ -71,7 +71,7 @@ export function Modal(props: ModalProps) {
                   type="button"
                   aria-label="Close"
                   onClick={onClose}
-                  className="shrink-0 flex items-center justify-center size-7 rounded-md text-text-muted hover:text-text-primary hover:bg-tertiary-hover transition-colors duration-150 ease-out outline-none focus-visible:shadow-focus cursor-pointer"
+                  className="shrink-0 flex items-center justify-center size-7 rounded-md text-text-muted hover:text-text-primary hover:bg-tertiary-hover transition-colors duration-150 ease-out outline-hidden focus-visible:shadow-focus cursor-pointer"
                 >
                   <X size={16} />
                 </button>

@@ -89,7 +89,7 @@ function WelcomeScreen() {
 
   return (
     <div className={twMerge("relative max-h-screen flex justify-center h-full", !isDarkMode && "bg-bg")}>
-      <div className="w-full max-w-[500px] md:min-h-0 px-6 md:px-8 pt-10 md:pt-12 pb-8 md:pb-10 grid grid-rows-[auto,1fr,auto] md:flex md:flex-col md:justify-center">
+      <div className="w-full max-w-[500px] md:min-h-0 px-6 md:px-8 pt-10 md:pt-12 pb-8 md:pb-10 grid grid-rows-[auto_1fr_auto] md:flex md:flex-col md:justify-center">
         <div className="contents">
           <motion.div
             className="flex md:justify-center"

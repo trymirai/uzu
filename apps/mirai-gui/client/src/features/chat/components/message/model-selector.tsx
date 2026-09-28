@@ -49,7 +49,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         <div>
           <ListboxButton
             className={twMerge(
-              "flex items-center px-[6px] transition-colors focus:outline-none focus:ring-0",
+              "flex items-center px-[6px] transition-colors focus:outline-hidden focus:ring-0",
               "gap-2",
               variantClasses,
               disabled ? "opacity-60 cursor-not-allowed" : undefined,
@@ -68,7 +68,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           >
             <ListboxOptions
               anchor="bottom end"
-              className="thin-scrollbar [--anchor-gap:8px] [--anchor-max-height:360px] bg-bg-modal dark:bg-bg-modal-dark border border-cell-border dark:border-cell-border-dark rounded-[6px] z-50 pointer-events-auto focus:outline-none focus:ring-0"
+              className="thin-scrollbar [--anchor-gap:8px] [--anchor-max-height:360px] bg-bg-modal dark:bg-bg-modal-dark border border-cell-border dark:border-cell-border-dark rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
             >
               <div className="p-[6px] flex flex-col gap-2">
                 {loadingModels ? (
@@ -83,7 +83,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                         key={model.repoId}
                         value={model.repoId}
                         className={twMerge(
-                          "w-full flex items-center gap-2 px-[14px] py-2 rounded-md text-left transition-colors cursor-pointer hover:bg-bg-hover dark:hover:bg-bg-hover-dark focus:outline-none focus:ring-0",
+                          "w-full flex items-center gap-2 px-[14px] py-2 rounded-md text-left transition-colors cursor-pointer hover:bg-bg-hover dark:hover:bg-bg-hover-dark focus:outline-hidden focus:ring-0",
                           isSelected ? "bg-bg-sub dark:bg-bg-sub-dark" : "",
                         )}
                       >
@@ -107,7 +107,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               <div className="p-[10px]">
                 <button
                   onClick={handleMoreModelsClick}
-                  className="w-full flex items-center justify-between px-[14px] py-2 rounded-md hover:bg-bg-hover dark:hover:bg-bg-hover-dark transition-colors text-label-title dark:text-label-title-dark focus:outline-none focus:ring-0"
+                  className="w-full flex items-center justify-between px-[14px] py-2 rounded-md hover:bg-bg-hover dark:hover:bg-bg-hover-dark transition-colors text-label-title dark:text-label-title-dark focus:outline-hidden focus:ring-0"
                 >
                   <span className="text-sm text-label-title dark:text-label-title-dark">More local models</span>
                   <ChevronRight className="h-4 w-4 text-label-muted dark:text-label-muted-dark" />

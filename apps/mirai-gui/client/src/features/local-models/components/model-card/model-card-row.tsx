@@ -33,7 +33,7 @@ export function ModelCardRow({
     <div
       className={twMerge(
         "relative py-2.5 transition-colors duration-150",
-        isDownloaded && "cursor-pointer hover:bg-surface-tertiary outline-none focus-visible:shadow-focus",
+        isDownloaded && "cursor-pointer hover:bg-surface-tertiary outline-hidden focus-visible:shadow-focus",
         isError && "bg-danger-bg",
       )}
       {...(isDownloaded && onOpen

@@ -20,7 +20,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
     <textarea
       ref={setRef}
       className={twMerge(
-        "w-full resize-none outline-none thin-scrollbar text-text-primary placeholder:text-text-muted",
+        "w-full resize-none outline-hidden thin-scrollbar text-text-primary placeholder:text-text-muted",
         className,
       )}
       value={resolvedValue}

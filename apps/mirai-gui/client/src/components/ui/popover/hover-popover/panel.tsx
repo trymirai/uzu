@@ -68,7 +68,7 @@ export function HoverPopoverPanel({
       {...(open ? { onBlurCapture } : {})}
       {...(open ? { onKeyDown } : {})}
       role="menu"
-      className={twMerge("z-50 outline-none", open ? "pointer-events-auto" : "pointer-events-none")}
+      className={twMerge("z-50 outline-hidden", open ? "pointer-events-auto" : "pointer-events-none")}
     >
       <Transition appear show={open} as={Fragment} afterLeave={afterLeave}>
         <TransitionChild
@@ -89,7 +89,7 @@ export function HoverPopoverPanel({
                 role="menuitem"
                 disabled={!open || item.disabled === true}
                 className={twMerge(
-                  "flex items-center gap-2 w-full px-2.5 py-2 rounded-md bg-transparent border-none outline-none text-left hover:bg-surface-tertiary focus:bg-surface-tertiary",
+                  "flex items-center gap-2 w-full px-2.5 py-2 rounded-md bg-transparent border-none outline-hidden text-left hover:bg-surface-tertiary focus:bg-surface-tertiary",
                   item.disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
                   item.danger ? "text-red-500" : "text-text-primary",
                 )}

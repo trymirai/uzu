@@ -16,9 +16,9 @@ const LABEL_COLOR: Record<FileType, string> = {
 };
 
 const ICON_BACKGROUND: Record<FileType, string> = {
-  document: "bg-blue bg-opacity-[0.12] text-blue border-blue border-opacity-[0.12]",
-  code: "bg-progress bg-opacity-[0.12] text-progress border-progress border-opacity-[0.12]",
-  table: "bg-green-500 bg-opacity-[0.12] text-green-500 border-green-500 border-opacity-[0.12]",
+  document: "bg-blue/[0.12] text-blue border-blue/[0.12]",
+  code: "bg-progress/[0.12] text-progress border-progress/[0.12]",
+  table: "bg-green-500/[0.12] text-green-500 border-green-500/[0.12]",
   other: "bg-bg-hover dark:bg-bg-hover-dark border-button-border dark:border-button-border-dark",
 };
 
