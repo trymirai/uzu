@@ -96,24 +96,9 @@ impl<B: Backend> Sampling<B> {
 
         let sampling_length = sampling_range.end - sampling_range.start;
 
-        assert_eq!(
-            matches!(sampling_method, SamplingMethod::Stochastic { .. }),
-            seeds.is_some(),
-            "mismatch between sampling method type and seeds presence"
-        );
-
         let (is_stochastic, temperature, top_k, top_p, min_p, repetition_penalty, suffix_repetition_length) =
             match sampling_method {
                 SamplingMethod::Greedy => (false, None, None, None, None, None, None),
-                // Zero temperature is the greedy limit, the kernels would scale logits by 1/0 and pick garbage
-                SamplingMethod::Stochastic {
-                    temperature: Some(temperature),
-                    repetition_penalty,
-                    suffix_repetition_length,
-                    ..
-                } if *temperature <= 0.0 => {
-                    (false, None, None, None, None, *repetition_penalty, *suffix_repetition_length)
-                },
                 SamplingMethod::Stochastic {
                     temperature,
                     top_k,
@@ -123,7 +108,8 @@ impl<B: Backend> Sampling<B> {
                     suffix_repetition_length,
                 } => (true, *temperature, *top_k, *top_p, *min_p, *repetition_penalty, *suffix_repetition_length),
             };
-        let seeds = seeds.filter(|_| is_stochastic);
+
+        assert_eq!(is_stochastic, seeds.is_some(), "mismatch between sampling method type and seeds presence");
 
         let key = UnifiedSamplingKey {
             is_stochastic,

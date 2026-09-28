@@ -154,8 +154,15 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             return Box::pin(NoMetricsStream::new(error_stream("Grammar is not supported by this build".to_string())));
         }
 
+        let sampling_method = match get_sampling_method::<B>(&self.model, &config.sampling_policy) {
+            Ok(sampling_method) => sampling_method,
+            Err(err) => {
+                return Box::pin(NoMetricsStream::new(error_stream(err)));
+            },
+        };
+
         let mut options = self.model.default_stream_options();
-        options.sampling_method = get_sampling_method::<B>(&self.model, &config.sampling_policy);
+        options.sampling_method = sampling_method;
         #[cfg(feature = "capability-grammar")]
         {
             options.grammar = grammar;

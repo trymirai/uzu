@@ -1,6 +1,5 @@
 use std::{iter::repeat_with, mem::MaybeUninit};
 
-use half::bf16;
 use num_traits::{Float, NumCast};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
@@ -16,10 +15,7 @@ use crate::{
         batch_topology::BatchTopology,
         sampling::{Sampling, SamplingMethod},
     },
-    tests::{
-        helpers::for_each_backend,
-        proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
-    },
+    tests::proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
 };
 
 struct SamplingTestResults(Vec<u32>);
@@ -191,53 +187,4 @@ fn test_sampling_prop() {
             .compare_results()?
         });
     });
-}
-
-// Backends agree with each other on degenerate parameters even when all of them are wrong, so compare against greedy
-fn assert_matches_greedy<T: ArrayElement + Float>(methods: &[SamplingMethod]) {
-    let batch_size = 4;
-    let vocab_size = 4099;
-    let (logits, seeds, _) = get_data::<T>(42, batch_size, vocab_size, false, true);
-
-    for_each_backend!(|B| {
-        let context = <B as Backend>::Context::new().expect("Failed to create Context");
-        let sample = |seeds: Option<&[u64]>, method: &SamplingMethod| {
-            do_sampling_backend::<B, T>(&context, &logits, seeds, None, vocab_size, method, batch_size as u32)
-                .unwrap()
-                .0
-        };
-
-        let greedy = sample(None, &SamplingMethod::Greedy);
-        for method in methods {
-            assert_eq!(
-                sample(seeds.as_deref(), method),
-                greedy,
-                "{method:?} doesn't match greedy on {}",
-                std::any::type_name::<B>()
-            );
-        }
-    });
-}
-
-fn stochastic(
-    temperature: Option<f32>,
-    top_k: Option<u32>,
-    top_p: Option<f32>,
-    min_p: Option<f32>,
-) -> SamplingMethod {
-    SamplingMethod::Stochastic {
-        temperature,
-        top_k,
-        top_p,
-        min_p,
-        repetition_penalty: None,
-        suffix_repetition_length: None,
-    }
-}
-
-#[uzu_test]
-fn test_zero_temperature_is_greedy() {
-    let methods = [stochastic(Some(0.0), None, None, None), stochastic(Some(0.0), Some(40), Some(0.9), Some(0.05))];
-    assert_matches_greedy::<f32>(&methods);
-    assert_matches_greedy::<bf16>(&methods);
 }
