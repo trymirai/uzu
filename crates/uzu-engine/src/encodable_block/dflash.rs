@@ -80,12 +80,6 @@ pub enum DFlashNewError<B: Backend> {
     InvalidAttentionConfig(&'static str),
 }
 
-#[derive(Debug, Error)]
-pub enum DFlashEncodeError<B: Backend> {
-    #[error("Backend error: {0}")]
-    Backend(#[source] B::Error),
-}
-
 impl<B: Backend> DFlash<B> {
     pub fn new(
         context: &B::Context,
@@ -286,7 +280,7 @@ impl<B: Backend> DFlash<B> {
         target_readout: &EmbeddingReadout<B>,
         batch_size: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<DFlashOutput<B>, DFlashEncodeError<B>> {
+    ) -> Result<DFlashOutput<B>, B::Error> {
         command_buffer.push_debug_group("dflash draft");
 
         assert!(batch_size >= 2 && batch_size <= self.block_size, "batch size exceeds DFlash block size");
@@ -297,17 +291,15 @@ impl<B: Backend> DFlash<B> {
 
         let mut tokens = vec![self.mask_token_id; batch_size as usize];
         tokens[0] = target_output_token;
-        let token_ids = command_buffer.allocate_constant_from_slice(&tokens).map_err(DFlashEncodeError::Backend)?;
+        let token_ids = command_buffer.allocate_constant_from_slice(&tokens)?;
 
-        let token_embeddings = target_lookup
-            .encode(
-                EmbeddingLookupInput {
-                    token_ids: &token_ids,
-                    batch_dim: batch_size,
-                },
-                command_buffer,
-            )
-            .map_err(DFlashEncodeError::Backend)?;
+        let token_embeddings = target_lookup.encode(
+            EmbeddingLookupInput {
+                token_ids: &token_ids,
+                batch_dim: batch_size,
+            },
+            command_buffer,
+        )?;
 
         let nodes = (0..batch_size)
             .map(|index| TrieNode {
@@ -318,45 +310,36 @@ impl<B: Backend> DFlash<B> {
             .collect::<Box<[_]>>();
         let batch_topology = BatchTopology::new(&nodes, true);
         let token_positions = (state.context_length..state.context_length + batch_size).collect::<Box<[_]>>();
-        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)
-            .map_err(DFlashEncodeError::Backend)?;
+        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)?;
 
         let mut hidden = token_embeddings;
-        let mut residual = command_buffer.allocate_scratch(hidden.size()).map_err(DFlashEncodeError::Backend)?;
+        let mut residual = command_buffer.allocate_scratch(hidden.size())?;
         for (layer, mixer_state) in self.layers.iter().zip(state.layer_states.iter_mut()) {
-            mixer_state.prepare(state.context_length, batch_size).map_err(DFlashEncodeError::Backend)?;
-            hidden = layer
-                .encode(
-                    hidden,
-                    &mut residual,
-                    None::<&B::ScratchBuffer>,
-                    Some(&rope),
-                    &batch_topology,
-                    Some(MaybeMut::Mut(mixer_state.as_mut())),
-                    command_buffer,
-                )
-                .map_err(DFlashEncodeError::Backend)?;
+            mixer_state.prepare(state.context_length, batch_size)?;
+            hidden = layer.encode(
+                hidden,
+                &mut residual,
+                None::<&B::ScratchBuffer>,
+                Some(&rope),
+                &batch_topology,
+                Some(MaybeMut::Mut(mixer_state.as_mut())),
+                command_buffer,
+            )?;
         }
-        let draft_hidden = self
-            .output_norm
-            .encode(&hidden, 0, batch_size, Some(&mut residual), command_buffer)
-            .map_err(DFlashEncodeError::Backend)?;
+        let draft_hidden = self.output_norm.encode(&hidden, 0, batch_size, Some(&mut residual), command_buffer)?;
 
         let row_bytes = size_for_shape(&[target_lookup.model_dim()], DataType::BF16);
         let lookahead_rows = Range::from(row_bytes..batch_size as usize * row_bytes);
-        let mut lookahead_hidden =
-            command_buffer.allocate_scratch(lookahead_rows.iter().len()).map_err(DFlashEncodeError::Backend)?;
+        let mut lookahead_hidden = command_buffer.allocate_scratch(lookahead_rows.iter().len())?;
         command_buffer.encode_copy(draft_hidden.subrange(lookahead_rows), &mut lookahead_hidden);
-        let logits = target_readout
-            .encode(
-                EmbeddingReadoutInput {
-                    hidden: &lookahead_hidden,
-                    batch_dim: batch_size - 1,
-                    gather: None::<Gather<&B::ScratchBuffer>>,
-                },
-                command_buffer,
-            )
-            .map_err(DFlashEncodeError::Backend)?;
+        let logits = target_readout.encode(
+            EmbeddingReadoutInput {
+                hidden: &lookahead_hidden,
+                batch_dim: batch_size - 1,
+                gather: None::<Gather<&B::ScratchBuffer>>,
+            },
+            command_buffer,
+        )?;
 
         command_buffer.pop_debug_group();
 
