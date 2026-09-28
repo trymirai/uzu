@@ -12,7 +12,9 @@ use crate::{
     encodable_block::{
         EncodableBlock,
         batch_topology::BatchTopology,
-        embedding::{EmbeddingLookup, EmbeddingLookupInput, EmbeddingReadout, EmbeddingReadoutInput},
+        embedding::{
+            EmbeddingLookup, EmbeddingLookupInput, EmbeddingReadout, EmbeddingReadoutInput, EmbeddingResource,
+        },
         linear::{Gather, Linear, LinearBlockError},
         mixer::{
             MixerState,
@@ -275,6 +277,7 @@ impl<B: Backend> DFlash<B> {
         &self,
         state: &mut DFlashState<B>,
         target_output_token: u32,
+        target_embedding: &EmbeddingResource<B>,
         target_lookup: &EmbeddingLookup<B>,
         target_readout: &EmbeddingReadout<B>,
         batch_size: u32,
@@ -294,6 +297,7 @@ impl<B: Backend> DFlash<B> {
 
         let token_embeddings = target_lookup.encode(
             EmbeddingLookupInput {
+                resource: target_embedding,
                 token_ids: &token_ids,
                 batch_dim: batch_size,
             },
@@ -327,12 +331,13 @@ impl<B: Backend> DFlash<B> {
         }
         let draft_hidden = self.output_norm.encode(&hidden, 0, batch_size, Some(&mut residual), command_buffer)?;
 
-        let row_bytes = size_for_shape(&[target_lookup.model_dim()], DataType::BF16);
+        let row_bytes = size_for_shape(&[target_embedding.model_dim], DataType::BF16);
         let lookahead_rows = Range::from(row_bytes..batch_size as usize * row_bytes);
         let mut lookahead_hidden = command_buffer.allocate_scratch(lookahead_rows.iter().len())?;
         command_buffer.encode_copy(draft_hidden.subrange(lookahead_rows), &mut lookahead_hidden);
         let logits = target_readout.encode(
             EmbeddingReadoutInput {
+                resource: target_embedding,
                 hidden: &lookahead_hidden,
                 batch_dim: batch_size - 1,
                 gather: None::<Gather<&B::ScratchBuffer>>,

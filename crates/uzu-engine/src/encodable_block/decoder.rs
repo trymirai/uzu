@@ -1,4 +1,4 @@
-use std::{range::Range, sync::Arc};
+use std::range::Range;
 
 use thiserror::Error;
 
@@ -37,6 +37,7 @@ pub enum DecoderError<B: Backend> {
 }
 
 pub struct Decoder<B: Backend> {
+    embedding: EmbeddingResource<B>,
     embedding_lookup: EmbeddingLookup<B>,
     embedding_readout: EmbeddingReadout<B>,
     logit_transform: Option<LogitTransform<B>>,
@@ -52,6 +53,10 @@ pub struct DecoderEncodeOutput<B: Backend> {
 }
 
 impl<B: Backend> Decoder<B> {
+    pub fn embedding(&self) -> &EmbeddingResource<B> {
+        &self.embedding
+    }
+
     pub fn embedding_lookup(&self) -> &EmbeddingLookup<B> {
         &self.embedding_lookup
     }
@@ -67,19 +72,19 @@ impl<B: Backend> Decoder<B> {
         data_type: DataType,
     ) -> Result<Self, DecoderError<B>> {
         let embedding_tree = parameter_tree.subtree("embedding");
-        let embedding = Arc::new(EmbeddingResource::load_input(
+        let embedding = EmbeddingResource::load_input(
             &config.embedding_config,
             &embedding_tree,
             config.vocab_size,
             config.transformer_config.model_dim,
             data_type,
-        )?);
+        )?;
         let (embedding_readout, readout_input_hadamard_factors) =
             EmbeddingReadout::new(context, &config.embedding_config, &embedding_tree, &embedding)?;
         let logit_transform =
             LogitTransform::new(context, &config.embedding_config, data_type).map_err(DecoderError::Backend)?;
         let embedding_lookup =
-            EmbeddingLookup::new(context, embedding, config.embedding_config.input_scale().unwrap_or(1.0))
+            EmbeddingLookup::new(context, &embedding, config.embedding_config.input_scale().unwrap_or(1.0))
                 .map_err(DecoderError::Backend)?;
 
         let embedding_norm = config
@@ -125,6 +130,7 @@ impl<B: Backend> Decoder<B> {
         )?;
 
         Ok(Self {
+            embedding,
             embedding_lookup,
             embedding_readout,
             logit_transform,
@@ -169,6 +175,7 @@ impl<B: Backend> Decoder<B> {
             .embedding_lookup
             .encode(
                 EmbeddingLookupInput {
+                    resource: &self.embedding,
                     token_ids,
                     batch_dim: batch_dim.size(),
                 },
@@ -213,6 +220,7 @@ impl<B: Backend> Decoder<B> {
                 .embedding_readout
                 .encode(
                     EmbeddingReadoutInput {
+                        resource: &self.embedding,
                         hidden: output,
                         batch_dim: output_rows,
                         gather: None::<Gather<&B::ScratchBuffer>>,
@@ -224,7 +232,7 @@ impl<B: Backend> Decoder<B> {
                 let Ok(()) = logit_transform.encode(
                     LogitTransformInput {
                         logits: &mut logits,
-                        length: output_rows * self.embedding_readout.vocab_size(),
+                        length: output_rows * self.embedding.vocab_size,
                     },
                     command_buffer,
                 );

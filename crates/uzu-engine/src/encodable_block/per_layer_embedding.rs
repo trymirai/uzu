@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use thiserror::Error;
 
 use crate::{
@@ -34,7 +32,8 @@ pub enum PerLayerEmbeddingError<B: Backend> {
 }
 
 pub struct PerLayerEmbedding<B: Backend> {
-    token_embedding: EmbeddingLookup<B>,
+    token_embedding: EmbeddingResource<B>,
+    token_lookup: EmbeddingLookup<B>,
     model_projection: Box<dyn Linear<B>>,
     projection_norm: Normalization<B>,
     add_scale: <B::Kernels as Kernels>::TensorAddScaleKernel,
@@ -60,9 +59,8 @@ impl<B: Backend> PerLayerEmbedding<B> {
             total_ple_dim,
             data_type,
         )?;
-        let token_embedding =
-            EmbeddingLookup::new(context, Arc::new(token_embedding), config.ple_embed_scale * config.input_scale)
-                .map_err(PerLayerEmbeddingError::BackendError)?;
+        let token_lookup = EmbeddingLookup::new(context, &token_embedding, config.ple_embed_scale * config.input_scale)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
 
         let model_projection = <dyn Linear<B>>::new(
             model_dim,
@@ -95,6 +93,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
 
         Ok(Self {
             token_embedding,
+            token_lookup,
             model_projection,
             projection_norm,
             add_scale,
@@ -118,8 +117,9 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let total_rows = batch_dim * self.num_layers;
         let total_elements = batch_dim * total_ple_dim;
 
-        let token_ple = self.token_embedding.encode(
+        let token_ple = self.token_lookup.encode(
             EmbeddingLookupInput {
+                resource: &self.token_embedding,
                 token_ids,
                 batch_dim,
             },

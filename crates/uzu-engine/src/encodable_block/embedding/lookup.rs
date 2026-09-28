@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
@@ -8,7 +6,8 @@ use crate::{
     encodable_block::{EncodableBlock, embedding::EmbeddingResource},
 };
 
-pub struct EmbeddingLookupInput<T: BufferRef> {
+pub struct EmbeddingLookupInput<'a, B: Backend, T: BufferRef<Backend = B>> {
+    pub resource: &'a EmbeddingResource<B>,
     pub token_ids: T,
     pub batch_dim: u32,
 }
@@ -19,7 +18,6 @@ pub enum EmbeddingLookupKernel<B: Backend> {
 }
 
 pub struct EmbeddingLookup<B: Backend> {
-    resource: Arc<EmbeddingResource<B>>,
     kernel: EmbeddingLookupKernel<B>,
     scale: f32,
 }
@@ -27,7 +25,7 @@ pub struct EmbeddingLookup<B: Backend> {
 impl<B: Backend> EmbeddingLookup<B> {
     pub fn new(
         context: &B::Context,
-        resource: Arc<EmbeddingResource<B>>,
+        resource: &EmbeddingResource<B>,
         scale: f32,
     ) -> Result<Self, B::Error> {
         let data_type = resource.data_type;
@@ -48,58 +46,54 @@ impl<B: Backend> EmbeddingLookup<B> {
         };
 
         Ok(Self {
-            resource,
             kernel,
             scale,
         })
     }
-
-    pub fn model_dim(&self) -> u32 {
-        self.resource.model_dim
-    }
 }
 
-impl<B: Backend, T: BufferRef<Backend = B>> EncodableBlock<B, EmbeddingLookupInput<T>> for EmbeddingLookup<B> {
+impl<B: Backend, T: BufferRef<Backend = B>> EncodableBlock<B, EmbeddingLookupInput<'_, B, T>> for EmbeddingLookup<B> {
     type Kernel = EmbeddingLookupKernel<B>;
     type Output = B::ScratchBuffer;
     type Error = B::Error;
 
     fn encode(
         &self,
-        input: EmbeddingLookupInput<T>,
+        input: EmbeddingLookupInput<'_, B, T>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Self::Output, Self::Error> {
-        let matrix = &self.resource.matrix;
+        let matrix = &input.resource.matrix;
 
         command_buffer.push_debug_group("embedding lookup");
 
         let mut output = command_buffer
-            .allocate_scratch_for_shape(&[input.batch_dim, self.resource.model_dim], self.resource.data_type)?;
-        match &self.kernel {
-            EmbeddingLookupKernel::FullPrecision(kernel) => kernel.encode(
+            .allocate_scratch_for_shape(&[input.batch_dim, input.resource.model_dim], input.resource.data_type)?;
+        match (&self.kernel, matrix.quantization()) {
+            (EmbeddingLookupKernel::FullPrecision(kernel), None) => kernel.encode(
                 input.token_ids,
                 matrix.values(),
                 &mut output,
                 input.batch_dim,
-                self.resource.vocab_size,
-                self.resource.model_dim,
+                input.resource.vocab_size,
+                input.resource.model_dim,
                 self.scale,
                 command_buffer,
             ),
-            EmbeddingLookupKernel::Quantized(kernel) => kernel.encode(
+            (EmbeddingLookupKernel::Quantized(kernel), Some(_)) => kernel.encode(
                 input.token_ids,
                 matrix.values(),
                 matrix.scales().expect("quantized lookup requires scales"),
                 matrix.zero_points(),
                 matrix.biases(),
                 &mut output,
-                self.resource.output_hadamard_factors.as_ref(),
+                input.resource.output_hadamard_factors.as_ref(),
                 input.batch_dim,
-                self.resource.vocab_size,
-                self.resource.model_dim,
+                input.resource.vocab_size,
+                input.resource.model_dim,
                 self.scale,
                 command_buffer,
             ),
+            _ => panic!("embedding lookup kernel does not match the resource quantization"),
         }
 
         command_buffer.pop_debug_group();
