@@ -1,28 +1,19 @@
-import React, { type JSX } from "react";
+import React from "react";
 import { motion } from "motion/react";
 import { twMerge } from "tailwind-merge";
 
 export type TextShimmerProps = {
   children: string;
-  as?: React.ElementType;
   className?: string;
   duration?: number;
   spread?: number;
 };
 
-function TextShimmerComponent({
-  children,
-  as: Component = "p",
-  className,
-  duration = 2,
-  spread = 2,
-}: TextShimmerProps) {
-  const MotionComponent = motion.create(Component as keyof JSX.IntrinsicElements);
-
+function TextShimmerComponent({ children, className, duration = 2, spread = 2 }: TextShimmerProps) {
   const dynamicSpread = children.length * spread;
 
   return (
-    <MotionComponent
+    <motion.p
       className={twMerge(
         "relative inline-block bg-[length:250%_100%,auto] bg-clip-text",
         "text-transparent [--base-color:#a1a1aa] [--base-gradient-color:#000]",
@@ -45,7 +36,7 @@ function TextShimmerComponent({
       }
     >
       {children}
-    </MotionComponent>
+    </motion.p>
   );
 }
 

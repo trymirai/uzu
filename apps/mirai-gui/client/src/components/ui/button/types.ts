@@ -1,4 +1,4 @@
-import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ElementType, ReactNode } from "react";
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from "react";
 
 export type ButtonSize = "xxs" | "xs" | "sm" | "lg";
 export type ButtonKind = "primary" | "secondary" | "danger" | "ghost";
@@ -9,7 +9,7 @@ type ButtonSharedProps = {
   children?: ReactNode;
   size?: ButtonSize;
   kind?: ButtonKind;
-  icon?: ElementType | ReactNode;
+  icon?: ReactNode;
   iconPosition?: IconPosition;
   loading?: boolean;
   disabled?: boolean;

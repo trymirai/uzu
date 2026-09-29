@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { ButtonKind } from "../button/types";
 
 export type ModalProps = {
   open: boolean;
   onClose: () => void;
+  initialFocus?: RefObject<HTMLElement | null>;
 
   title: string;
   description?: string;

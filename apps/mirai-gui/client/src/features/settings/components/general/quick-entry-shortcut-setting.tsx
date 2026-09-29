@@ -27,7 +27,7 @@ export function QuickEntryShortcutSetting({
           <Button
             kind="primary"
             size="xs"
-            icon={XIcon}
+            icon={<XIcon width={16} height={16} />}
             iconPosition="right"
             className={capturingRing}
             ref={buttonRef}

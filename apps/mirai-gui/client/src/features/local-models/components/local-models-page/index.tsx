@@ -158,7 +158,7 @@ export function LocalModelsPage() {
                         </div>
                         <div className="shrink-0">
                           <Button
-                            icon={RefreshCcw}
+                            icon={<RefreshCcw size={16} />}
                             kind="secondary"
                             size="sm"
                             loading={refreshing}

@@ -1,7 +1,6 @@
 import { useInstalledPickerModels } from "../../hooks/use-picker-models";
 import { useChatStore } from "@/stores/use-chat-store";
 import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
-import { Link } from "@tanstack/react-router";
 import { ModelPicker } from "./chat-input/model-picker";
 import { X } from "lucide-react";
 import { Fragment } from "react";
@@ -67,7 +66,7 @@ export const ModelParamsDrawer = ({ open, chatId, repoId, onClose }: ModelParams
                   models={pickerModels}
                   activeModelId={repoId ?? ""}
                   onModelChange={onPickModel}
-                  moreModelsLink={{ href: "/local-models", linkAs: Link }}
+                  moreModelsLink={{ href: "/local-models" }}
                   menuPlacement="down"
                 />
               </div>

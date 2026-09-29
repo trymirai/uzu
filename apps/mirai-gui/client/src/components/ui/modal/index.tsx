@@ -15,6 +15,7 @@ export function Modal(props: ModalProps) {
   const {
     open,
     onClose,
+    initialFocus,
     title,
     description,
     children,
@@ -32,7 +33,7 @@ export function Modal(props: ModalProps) {
 
   return (
     <Transition appear show={open} as={Fragment}>
-      <Dialog as="div" className="relative z-50" onClose={onClose}>
+      <Dialog as="div" className="relative z-50" onClose={onClose} initialFocus={initialFocus}>
         <TransitionChild
           as={Fragment}
           enter="duration-150 ease-out"

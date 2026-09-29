@@ -30,7 +30,7 @@ export function CopyButton({ onCopy, className }: CopyButtonProps) {
   };
 
   return (
-    <IconButton variant="pill" aria-label="Copy" onClick={handleCopy} className={twMerge(BUTTON_CLASSES, className)}>
+    <IconButton aria-label="Copy" onClick={handleCopy} className={twMerge(BUTTON_CLASSES, className)}>
       <Transition
         as={Fragment}
         show={!copied}

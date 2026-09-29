@@ -28,7 +28,9 @@ export function AutoEjectSetting({
     <SettingRow
       title="Auto‑eject models when idle"
       description="Automatically unload local models after inactivity"
-      control={<Toggle checked={autoEjectEnabled} onChange={() => setAutoEjectEnabled(!autoEjectEnabled)} />}
+      control={
+        <Toggle label="Auto-eject" checked={autoEjectEnabled} onChange={() => setAutoEjectEnabled(!autoEjectEnabled)} />
+      }
     >
       <div className="mt-3 flex items-center gap-3">
         <label className="text-[13px] text-label-title min-w-[140px]">Idle timeout (minutes)</label>

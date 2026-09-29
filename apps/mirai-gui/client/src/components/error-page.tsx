@@ -27,7 +27,7 @@ export function ErrorPage() {
             <h1 className="text-2xl font-bold">Page Not Found</h1>
             <p className="text-base text-label-muted">An unexpected error occurred</p>
           </div>
-          <Button kind="primary" icon={ArrowLeft} onClick={handleAction}>
+          <Button kind="primary" icon={<ArrowLeft size={16} />} onClick={handleAction}>
             Go back
           </Button>
         </div>

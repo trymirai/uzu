@@ -92,7 +92,6 @@ export function ClearDataDialog({ open, onClose }: Props) {
 
   const handleClose = () => {
     onClose();
-    setTimeout(reset, 200);
   };
 
   const handleDelete = async () => {

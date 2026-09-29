@@ -8,7 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useId } from "react";
 import { Toggle } from "@/components/ui/toggle";
 
 const TOP_K_MIN = 1;
@@ -237,6 +237,7 @@ export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
         <div className="flex items-center justify-between gap-3 border-t border-cell-border pt-3">
           <span className="text-[13px] text-label-title">Reasoning</span>
           <Toggle
+            label="Reasoning"
             checked={reasoningEffort !== "disabled"}
             onChange={(checked) => onReasoningChange(checked ? "default" : "disabled")}
           />
@@ -288,6 +289,7 @@ const NumberSliderRow = ({
   const optional = onToggle !== undefined;
   const active = !optional || enabled === true;
 
+  const labelId = useId();
   const [draft, setDraft] = useState(fmt(value, decimals));
   useEffect(() => {
     // Keep what the user typed while it still parses to the value ("1." for 1).
@@ -312,12 +314,17 @@ const NumberSliderRow = ({
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] text-label-title">{label}</span>
-          {optional && <Checkbox checked={active} onChange={(on) => onToggle?.(on)} size="sm" />}
+          <span id={labelId} className="text-[13px] text-label-title">
+            {label}
+          </span>
+          {optional && (
+            <Checkbox checked={active} onChange={(on) => onToggle?.(on)} size="sm" aria-label={`Enable ${label}`} />
+          )}
         </div>
         <Input
           size="sm"
           type="text"
+          aria-labelledby={labelId}
           inputMode="decimal"
           disabled={!active}
           className="w-20"
@@ -329,6 +336,7 @@ const NumberSliderRow = ({
       {active && !noSlider && (
         <input
           type="range"
+          aria-labelledby={labelId}
           min={min}
           max={max}
           step={step}

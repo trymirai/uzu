@@ -61,7 +61,6 @@ export function CustomToast({ t, message, type, onClick }: CustomToastProps) {
         <span className="ml-2 mr-5 min-w-0 truncate text-sm font-medium text-text-primary">{message}</span>
       </div>
       <IconButton
-        variant="pill"
         onClick={(e) => {
           e.stopPropagation();
           toast.dismiss(t.id);

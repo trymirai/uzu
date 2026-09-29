@@ -13,7 +13,6 @@ import {
   WRAPPER_BASE,
 } from "./constants";
 import type { InputProps } from "./types";
-import { applyIconSize } from "./utils";
 
 export type { InputProps } from "./types";
 
@@ -45,13 +44,12 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(pro
   const inputClasses = twMerge(INPUT_BASE, sizeConfig.input, disabled ? DISABLED_INPUT : "");
 
   const iconColor = ICON_COLOR[kind];
-  const leftIconNode = applyIconSize(leftIcon, sizeConfig.icon);
 
   return (
     <div className={wrapperClasses}>
-      {leftIconNode && (
+      {leftIcon && (
         <span className={twMerge("shrink-0 flex items-center justify-center", iconColor)} aria-hidden="true">
-          {leftIconNode}
+          {leftIcon}
         </span>
       )}
       <input

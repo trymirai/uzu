@@ -1,4 +1,4 @@
-import type { ElementType, MouseEventHandler, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 export type ChatInputModel = {
   id: string;
@@ -17,18 +17,8 @@ export type ChatInputSendPayload = {
   files: ChatInputFile[];
 };
 
-type ChatInputLinkAsProps = {
-  to: string;
-  className?: string;
-  children: ReactNode;
-  onClick?: MouseEventHandler<HTMLElement>;
-};
-
-export type ChatInputLinkAs = ElementType<ChatInputLinkAsProps>;
-
 export type ChatInputMoreModelsLink = {
   href: string;
-  linkAs?: ChatInputLinkAs;
   onClick?: () => void;
 };
 

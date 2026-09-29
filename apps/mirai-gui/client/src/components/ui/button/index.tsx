@@ -12,7 +12,7 @@ import {
   SPINNER_SIZE_MAP,
 } from "./constants";
 import type { ButtonAsButton, ButtonAsLink, ButtonProps } from "./types";
-import { getButtonCommonProps, getButtonIcon } from "./utils";
+import { getButtonCommonProps } from "./utils";
 
 type SharedButtonPropKeys =
   | "children"
@@ -57,15 +57,21 @@ export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonPr
   const spinnerSize = SPINNER_SIZE_MAP[size];
   const effectiveAriaLabel = ariaLabel || undefined;
 
+  const iconSlot = icon ? (
+    <span aria-hidden className="grid shrink-0 place-items-center">
+      {icon}
+    </span>
+  ) : null;
+
   const content = (
     <>
       {loading && <Spinner size={spinnerSize} />}
-      {isIconOnly && !loading && getButtonIcon(icon, size)}
+      {isIconOnly && !loading && iconSlot}
       {!isIconOnly && (
         <>
-          {!loading && iconPosition === "left" && getButtonIcon(icon, size)}
+          {!loading && iconPosition === "left" && iconSlot}
           {children && <span className="truncate">{children}</span>}
-          {!loading && iconPosition === "right" && getButtonIcon(icon, size)}
+          {!loading && iconPosition === "right" && iconSlot}
         </>
       )}
     </>

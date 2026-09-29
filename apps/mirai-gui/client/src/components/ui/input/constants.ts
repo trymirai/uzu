@@ -3,9 +3,9 @@ import type { InputSize, InputKind } from "./types";
 export const WRAPPER_BASE =
   "inline-flex items-center bg-surface-secondary border-[0.5px] rounded-md transition-all duration-150 ease-out";
 
-export const INPUT_SIZE_STYLES: Record<InputSize, { wrapper: string; input: string; icon: number }> = {
-  sm: { wrapper: "h-8 px-2.5 gap-1.5", input: "text-xs", icon: 14 },
-  md: { wrapper: "h-9 px-3 gap-2", input: "text-sm", icon: 16 },
+export const INPUT_SIZE_STYLES: Record<InputSize, { wrapper: string; input: string }> = {
+  sm: { wrapper: "h-8 px-2.5 gap-1.5", input: "text-xs" },
+  md: { wrapper: "h-9 px-3 gap-2", input: "text-sm" },
 };
 
 export const KIND_BORDER: Record<InputKind, string> = {

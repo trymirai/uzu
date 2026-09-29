@@ -13,7 +13,7 @@ export function SearchInput({ value, onChange, placeholder = "Search", className
     <Input
       size="sm"
       fullWidth
-      leftIcon={<Search />}
+      leftIcon={<Search size={14} />}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}

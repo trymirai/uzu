@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { ChevronDown } from "lucide-react";
 import { Menu, MenuButton, MenuItem, MenuItems, Transition } from "@headlessui/react";
 import { forwardRef, Fragment } from "react";
@@ -139,43 +140,24 @@ export function ModelPicker({
 
                   {moreModelsLink && (
                     <SelectionSection divided className="py-1.5">
-                      {moreModelsLink && (
-                        <MenuItem>
-                          {({ focus }) =>
-                            moreModelsLink.linkAs ? (
-                              <SelectionItem
-                                as={moreModelsLink.linkAs}
-                                to={moreModelsLink.href}
-                                active={focus}
-                                onClick={() => {
-                                  moreModelsLink.onClick?.();
-                                  close();
-                                }}
-                                className="flex items-center w-full bg-transparent text-text-primary hover:bg-surface-tertiary"
-                              >
-                                <Text as="span" color="primary" opticalSize={14} className={TEXT_13_CLASSNAME}>
-                                  Download more local models
-                                </Text>
-                              </SelectionItem>
-                            ) : (
-                              <SelectionItem
-                                as="a"
-                                href={moreModelsLink.href}
-                                active={focus}
-                                onClick={() => {
-                                  moreModelsLink.onClick?.();
-                                  close();
-                                }}
-                                className="flex items-center w-full bg-transparent text-text-primary hover:bg-surface-tertiary"
-                              >
-                                <Text as="span" color="primary" opticalSize={14} className={TEXT_13_CLASSNAME}>
-                                  Download more local models
-                                </Text>
-                              </SelectionItem>
-                            )
-                          }
-                        </MenuItem>
-                      )}
+                      <MenuItem>
+                        {({ focus }) => (
+                          <SelectionItem
+                            as={Link}
+                            to={moreModelsLink.href}
+                            active={focus}
+                            onClick={() => {
+                              moreModelsLink.onClick?.();
+                              close();
+                            }}
+                            className="flex items-center w-full bg-transparent text-text-primary hover:bg-surface-tertiary"
+                          >
+                            <Text as="span" color="primary" opticalSize={14} className={TEXT_13_CLASSNAME}>
+                              Download more local models
+                            </Text>
+                          </SelectionItem>
+                        )}
+                      </MenuItem>
                     </SelectionSection>
                   )}
                 </SelectionPanel>

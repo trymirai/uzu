@@ -14,13 +14,6 @@ export const ICON_ONLY_SIZE_STYLES: Record<ButtonSize, string> = {
   lg: "size-10 rounded-md p-0",
 };
 
-export const ICON_SIZE_MAP: Record<ButtonSize, number> = {
-  xxs: 14,
-  xs: 16,
-  sm: 16,
-  lg: 18,
-};
-
 export const KIND_STYLES: Record<ButtonKind, string> = {
   primary: "bg-primary text-primary-contrast hover:bg-primary-hover active:bg-primary-active active:scale-[0.97]",
   secondary:

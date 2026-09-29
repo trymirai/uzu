@@ -52,7 +52,7 @@ export default function GeneralTab() {
         <SettingRow
           title="Dark mode"
           description="Use the dark appearance across the app"
-          control={<Toggle checked={isDarkMode} onChange={() => setDarkMode(!isDarkMode)} />}
+          control={<Toggle label="Dark mode" checked={isDarkMode} onChange={() => setDarkMode(!isDarkMode)} />}
         />
 
         {platformInfo.features.startupLaunch && (
@@ -61,7 +61,9 @@ export default function GeneralTab() {
             <SettingRow
               title="Run on startup"
               description="Automatically start Mirai when you log in to your computer"
-              control={<Toggle checked={runOnStartup} onChange={() => setRunOnStartup(!runOnStartup)} />}
+              control={
+                <Toggle label="Run on startup" checked={runOnStartup} onChange={() => setRunOnStartup(!runOnStartup)} />
+              }
             />
           </>
         )}
@@ -83,7 +85,13 @@ export default function GeneralTab() {
         <SettingRow
           title="Default reasoning mode"
           description="Let reasoning models think by default. You can override this for each model."
-          control={<Toggle checked={enableThinking} onChange={() => setEnableThinking(!enableThinking)} />}
+          control={
+            <Toggle
+              label="Default reasoning mode"
+              checked={enableThinking}
+              onChange={() => setEnableThinking(!enableThinking)}
+            />
+          }
         />
 
         {platformInfo.features.autoEject && (

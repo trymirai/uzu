@@ -2,22 +2,25 @@ import React from "react";
 import { twMerge } from "tailwind-merge";
 
 type ToggleProps = {
+  /** Accessible name; the switch renders no text of its own. */
+  label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   className?: string;
 };
 
-export const Toggle: React.FC<ToggleProps> = ({ checked, onChange, disabled = false, className }) => {
+export const Toggle: React.FC<ToggleProps> = ({ label, checked, onChange, disabled = false, className }) => {
   return (
     <button
       type="button"
       role="switch"
+      aria-label={label}
       aria-checked={checked}
       disabled={disabled}
       onClick={() => !disabled && onChange(!checked)}
       className={twMerge(
-        "relative inline-flex min-h-6 min-w-11 items-center rounded-full transition-colors focus:outline-hidden focus:ring-0 focus:ring-offset-0",
+        "relative inline-flex min-h-6 min-w-11 items-center rounded-full transition-colors outline-hidden focus-visible:shadow-focus",
         checked ? "bg-label-title" : "bg-button-border",
         disabled && "opacity-50 cursor-not-allowed",
         !disabled && "cursor-pointer",

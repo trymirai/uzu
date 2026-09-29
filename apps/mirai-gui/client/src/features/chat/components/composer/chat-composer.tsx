@@ -5,7 +5,6 @@ import { isOtherChatGenerating } from "@/features/runtime/runtime-busy";
 import type { AttachedFile } from "@/types/files";
 import { MAX_FILES_PER_MESSAGE, SUPPORTED_FILE_TYPES } from "@/constants/attachments";
 import { isValidFileSize, isValidFileType, processFile } from "../../services/attachment-files";
-import { Link } from "@tanstack/react-router";
 import { ChatInput } from "./chat-input";
 import { useState } from "react";
 
@@ -117,7 +116,7 @@ export const ChatComposer = ({
         if (model) onModelSelect(id, model.name);
       }}
       modelPickerDisabled={busy || otherChatGenerating}
-      moreModelsLink={{ href: "/local-models", linkAs: Link }}
+      moreModelsLink={{ href: "/local-models" }}
       {...(selectedModelId ? { onModelSettingsClick: onOpenModelParams } : {})}
       settingsModified={modelParamsModified}
       settingsDisabled={busy}

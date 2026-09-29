@@ -1,4 +1,4 @@
-import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ElementType, MouseEventHandler, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ElementType, MouseEventHandler, ReactNode } from "react";
 
 export type SelectionItemLinkLikeProps = {
   to: string;
@@ -22,15 +22,9 @@ export type SelectionItemButtonProps = BaseSelectionItemProps &
     as: "button";
   };
 
-export type SelectionItemAnchorProps = BaseSelectionItemProps &
-  Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "children" | "className"> & {
-    as: "a";
-    href: string;
-  };
-
 export type SelectionItemLinkProps = BaseSelectionItemProps &
   SelectionItemLinkLikeProps & {
     as: SelectionItemLinkLikeComponent;
   };
 
-export type SelectionItemProps = SelectionItemButtonProps | SelectionItemAnchorProps | SelectionItemLinkProps;
+export type SelectionItemProps = SelectionItemButtonProps | SelectionItemLinkProps;

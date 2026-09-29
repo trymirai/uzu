@@ -100,7 +100,7 @@ export default function PrivacyTab() {
                 kind="primary"
                 size="sm"
                 loading={isExporting}
-                icon={Download}
+                icon={<Download size={16} />}
                 onClick={handleExportChats}
                 disabled={isExporting}
               >
@@ -119,7 +119,7 @@ export default function PrivacyTab() {
                     kind="primary"
                     size="sm"
                     loading={isExportingLogs}
-                    icon={Download}
+                    icon={<Download size={16} />}
                     onClick={handleExportLogs}
                     disabled={isExportingLogs}
                   >

@@ -20,10 +20,6 @@ export const ChatRenameModal: React.FC<ChatRenameModalProps> = ({ isOpen, onClos
     if (isOpen) {
       setName(currentName);
       setError("");
-      setTimeout(() => {
-        inputRef.current?.focus();
-        inputRef.current?.select();
-      }, 100);
     }
   }, [isOpen, currentName]);
 
@@ -63,6 +59,7 @@ export const ChatRenameModal: React.FC<ChatRenameModalProps> = ({ isOpen, onClos
     <Modal
       open={isOpen}
       onClose={handleClose}
+      initialFocus={inputRef}
       title="Rename chat"
       primaryLabel={isSubmitting ? "Saving…" : "Save"}
       onPrimary={() => void submit()}
@@ -80,6 +77,8 @@ export const ChatRenameModal: React.FC<ChatRenameModalProps> = ({ isOpen, onClos
             ref: inputRef,
             value: name,
             onChange: (e) => setName(e.target.value),
+            // The input mounts after open; select on the focus the dialog gives it.
+            onFocus: (e) => e.currentTarget.select(),
             placeholder: "Enter chat name",
             maxLength: CHAT_TITLE_MAX_LENGTH,
             disabled: isSubmitting,
