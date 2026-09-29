@@ -211,7 +211,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
         bias: Some(&bias_pp_buf),
         ..MatmulDOps::none()
     };
-    matmul.gemm.encode_with_engine(args, GemmEngine::Simdgroup, &mut encoder).expect("encode quant with bias");
+    matmul.encode_with_gemm_engine(args, GemmEngine::Simdgroup, &mut encoder).expect("encode quant with bias");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
 
@@ -525,7 +525,7 @@ fn quant_gemm_parameter_layout_prefix_matches_cpu(
         let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
         let mut args = quant_arguments(&mut buffers, &input);
         args.n = logical_n;
-        matmul.gemm.encode_with_engine(args, engine, &mut encoder).unwrap();
+        matmul.encode_with_gemm_engine(args, engine, &mut encoder).unwrap();
         encoder.end_encoding().submit().wait_until_completed().unwrap();
         let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
         let expected: Vec<_> = reference
@@ -786,8 +786,7 @@ fn a8w_mxu_output_bias_parity_bf16(
         ..MatmulDOps::none()
     };
     metal_matmul
-        .gemm
-        .encode_with_engine(metal_arguments, GemmEngine::Mxu, &mut metal_encoder)
+        .encode_with_gemm_engine(metal_arguments, GemmEngine::Mxu, &mut metal_encoder)
         .expect("Metal A8W MXU matmul with output bias");
     metal_encoder.end_encoding().submit().wait_until_completed().unwrap();
     let actual = allocation_to_vec::<Metal, bf16>(&metal_buffers.y);

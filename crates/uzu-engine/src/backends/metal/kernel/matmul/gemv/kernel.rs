@@ -1,6 +1,9 @@
 use metal::MTLGPUFamily;
 
-use super::policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK};
+use super::{
+    super::MatmulOutputWork,
+    policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK},
+};
 use crate::{
     backends::{
         common::{
@@ -145,6 +148,10 @@ impl GemvSpecialization {
         self.output_row_tile
     }
 
+    pub fn fuses_rht(&self) -> bool {
+        self.output_transform.contains(GemmDTransform::RHT)
+    }
+
     fn create_pipeline(
         &self,
         context: &MetalContext,
@@ -234,12 +241,19 @@ impl GemvKernel {
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         specialization: GemvSpecialization,
+        output_work: &MatmulOutputWork,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
         let rht_factors = arguments.d_transform.rht_factors;
         let soft_cap = arguments.d_transform.soft_cap;
+        let deferred_rht = rht_factors.is_some() && !specialization.fuses_rht();
+        let (gemv_bias, gemv_rht_factors) = if deferred_rht {
+            (None, None)
+        } else {
+            (output_bias, rht_factors)
+        };
 
         let MatmulArguments {
             a,
@@ -292,8 +306,8 @@ impl GemvKernel {
             biases,
             (a, a_offset),
             &mut *d,
-            output_bias,
-            rht_factors,
+            gemv_bias,
+            gemv_rht_factors,
             gather_indices,
             k,
             n,
@@ -307,6 +321,10 @@ impl GemvKernel {
             soft_cap,
             encoder,
         );
+
+        if deferred_rht {
+            output_work.apply(&mut *d, rht_factors, output_bias, m, n, encoder);
+        }
 
         Ok(())
     }

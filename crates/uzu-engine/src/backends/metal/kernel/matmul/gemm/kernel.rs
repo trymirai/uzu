@@ -1,7 +1,7 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use super::{
-    super::supports_integer_right_operand,
+    super::{MatmulOutputWork, supports_integer_right_operand},
     GemmEngine, GemmPlan,
     selection::{GemmProblem, outer_block_k},
     specialization::GemmSpecialization,
@@ -14,19 +14,16 @@ use crate::{
                 GemmParams,
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform},
             },
-            kernel::{
-                ActivationTransform, TensorAddBiasKernel,
-                matmul::{
-                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape, QuantParamsLayout,
-                    QuantParamsStrides,
-                },
+            kernel::matmul::{
+                Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulShape, QuantParamsLayout,
+                QuantParamsStrides,
             },
         },
         metal::{
             Metal,
             context::MetalContext,
             error::MetalError,
-            kernel::{GemmMetalKernel, GemmSplitKReduceMetalKernel, TensorAddBiasMetalKernel},
+            kernel::{GemmMetalKernel, GemmSplitKReduceMetalKernel},
         },
     },
     data_type::DataType,
@@ -37,30 +34,22 @@ pub struct GemmKernel {
     input_data_type: DataType,
     output_data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
-    pub bias_add: TensorAddBiasMetalKernel,
-    output_rht: ActivationTransform<Metal>,
     split_k_reduce: HashMap<GemmDTransform, GemmSplitKReduceMetalKernel>,
 }
 
 impl GemmKernel {
     pub fn new(
-        context: &MetalContext,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
-    ) -> Result<Self, MetalError> {
-        let bias_add = TensorAddBiasMetalKernel::new(context, output_data_type, weights_data_type, true)?;
-        let output_rht = ActivationTransform::output_rht(context, output_data_type, true)?;
-        let kernel = Self {
+    ) -> Self {
+        Self {
             weights_data_type,
             input_data_type,
             output_data_type,
             kernels: HashMap::new(),
-            bias_add,
-            output_rht,
             split_k_reduce: HashMap::new(),
-        };
-        Ok(kernel)
+        }
     }
 
     fn get_or_create(
@@ -122,7 +111,7 @@ impl GemmKernel {
     }
 
     #[cfg(test)]
-    fn select_plan_for_engine(
+    pub fn select_plan_for_engine(
         &self,
         shape: &MatmulShape,
         engine: GemmEngine,
@@ -133,22 +122,11 @@ impl GemmKernel {
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))
     }
 
-    #[cfg(test)]
-    pub fn encode_with_engine<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
-        &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
-        engine: GemmEngine,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<(), MetalError> {
-        let shape = MatmulShape::from_arguments(&arguments);
-        let plan = self.select_plan_for_engine(&shape, engine, encoder.context())?;
-        self.encode_plan(arguments, plan, encoder)
-    }
-
     pub fn encode_plan<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
         &mut self,
         arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
         plan: GemmPlan,
+        output_work: &MatmulOutputWork,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
@@ -227,8 +205,15 @@ impl GemmKernel {
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
 
+                let (output_bias, bias_after_rht, output_transform) = if rht_factors.is_some() && output_bias.is_some()
+                {
+                    (None, output_bias, output_transform.difference(GemmDTransform::BIAS))
+                } else {
+                    (output_bias, None, output_transform)
+                };
+
                 if plan.split_k > 1 {
-                    return self.encode_split_k(
+                    self.encode_split_k(
                         MatmulA::FullPrecision {
                             values: a,
                             offset: a_offset,
@@ -245,9 +230,10 @@ impl GemmKernel {
                         plan,
                         output_transform,
                         output_bias,
-                        rht_factors,
                         encoder,
-                    );
+                    )?;
+                    output_work.apply(&mut *d, rht_factors, bias_after_rht, m, n, encoder);
+                    return Ok(());
                 }
 
                 let default_ldb = if b_transpose {
@@ -301,6 +287,7 @@ impl GemmKernel {
                     1,
                     encoder,
                 );
+                output_work.apply(&mut *d, None, bias_after_rht, m, n, encoder);
                 return Ok(());
             },
             MatmulB::Quantized(quantized) => quantized,
@@ -366,7 +353,6 @@ impl GemmKernel {
                 plan,
                 output_transform,
                 output_bias,
-                rht_factors,
                 encoder,
             )?;
         } else {
@@ -400,10 +386,18 @@ impl GemmKernel {
             );
         }
 
-        if let Some(bias) = bias_after_rht {
-            let output_length = m.checked_mul(n).expect("GEMM output length must fit in u32");
-            self.bias_add.encode(None::<&Allocation<Metal>>, bias, &mut *d, n, output_length, encoder);
-        }
+        output_work.apply(
+            &mut *d,
+            if plan.split_k > 1 {
+                rht_factors
+            } else {
+                None
+            },
+            bias_after_rht,
+            m,
+            n,
+            encoder,
+        );
 
         Ok(())
     }
@@ -424,7 +418,6 @@ impl GemmKernel {
         plan: GemmPlan,
         output_transform: GemmDTransform,
         output_bias: Option<&Allocation<Metal>>,
-        rht_factors: Option<&Allocation<Metal>>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let MatmulShape {
@@ -526,11 +519,6 @@ impl GemmKernel {
         let reduce = self.get_or_create_split_k_reduce(encoder.context(), reduce_transform)?;
         reduce.encode((&temp, 0usize), &mut *d, bias_arg, elem as u32, split_k, group_count, n, scale_arg, encoder);
 
-        if output_transform.contains(GemmDTransform::RHT)
-            && let Some(factors) = rht_factors
-        {
-            self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, encoder);
-        }
         Ok(())
     }
 }

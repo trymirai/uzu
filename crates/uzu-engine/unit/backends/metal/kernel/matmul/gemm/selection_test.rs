@@ -105,6 +105,24 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     use GemmEngine::*;
     use GemmTiling::*;
 
+    let mut split_rht_bias = shape(4, 32, 1024);
+    split_rht_bias.d_transform = GemmDTransform::RHT | GemmDTransform::BIAS;
+    for engine in [Simdgroup, Mxu] {
+        let plan = problem(split_rht_bias, DataType::BF16)
+            .select_plan_for_engine(engine)
+            .expect("parity anchor supports the forced GEMM engine");
+        assert!(plan.split_k > 1, "forced {engine:?} RHT+bias parity anchor must exercise split-K");
+    }
+
+    let mut non_split_rht_bias = shape(64, 128, 128);
+    non_split_rht_bias.d_transform = GemmDTransform::RHT | GemmDTransform::BIAS;
+    for engine in [Simdgroup, Mxu] {
+        let plan = problem(non_split_rht_bias, DataType::BF16)
+            .select_plan_for_engine(engine)
+            .expect("parity anchor supports the forced GEMM engine");
+        assert_eq!(plan.split_k, 1, "forced {engine:?} RHT+bias parity anchor must exercise the fused path");
+    }
+
     let mut invalid_layout = quant(shape(64, 4096, 4096));
     invalid_layout.b_transpose = false;
     assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Simdgroup);
