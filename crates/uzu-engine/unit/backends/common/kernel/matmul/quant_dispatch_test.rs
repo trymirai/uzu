@@ -319,6 +319,7 @@ fn parity_gemv_unaligned_width_bf16(
 #[case::qmv_short_prefill_m2_g64(2, 5120, 6144, 64, QuantizationMethod::ScaleZeroPoint, false)]
 #[case::short_prefill_m5_g64(5, 5120, 6144, 64, QuantizationMethod::ScaleZeroPoint, false)]
 #[case::short_prefill_m7_g64(7, 5120, 6144, 64, QuantizationMethod::ScaleZeroPoint, false)]
+#[case::gemm_nonsplit_bias(9, 64, 64, 64, QuantizationMethod::ScaleZeroPoint, true)]
 fn parity_bf16_quant_rht(
     #[case] m: u32,
     #[case] k: u32,

@@ -148,11 +148,13 @@ impl GemmKernel {
         let output_bias = arguments.d_transform.bias;
         let rht_factors = arguments.d_transform.rht_factors;
         let output_transform = arguments.d_transform.mask();
-        let (output_bias, bias_after_rht, output_transform) = if rht_factors.is_some() && output_bias.is_some() {
-            (None, output_bias, output_transform.difference(GemmDTransform::BIAS))
-        } else {
-            (output_bias, None, output_transform)
-        };
+        let split_k_rht_runs_after_reduction = plan.split_k > 1 && rht_factors.is_some();
+        let (output_bias, bias_after_rht, output_transform) =
+            if split_k_rht_runs_after_reduction && output_bias.is_some() {
+                (None, output_bias, output_transform.difference(GemmDTransform::BIAS))
+            } else {
+                (output_bias, None, output_transform)
+            };
 
         let MatmulArguments {
             a,
@@ -281,7 +283,6 @@ impl GemmKernel {
                     1,
                     encoder,
                 );
-                output_work.apply(&mut *d, None, bias_after_rht, m, n, encoder);
                 return Ok(());
             },
             MatmulB::Quantized(quantized) => quantized,
@@ -374,18 +375,9 @@ impl GemmKernel {
             );
         }
 
-        output_work.apply(
-            &mut *d,
-            if plan.split_k > 1 {
-                rht_factors
-            } else {
-                None
-            },
-            bias_after_rht,
-            m,
-            n,
-            encoder,
-        );
+        if plan.split_k > 1 {
+            output_work.apply(&mut *d, rht_factors, bias_after_rht, m, n, encoder);
+        }
 
         Ok(())
     }
