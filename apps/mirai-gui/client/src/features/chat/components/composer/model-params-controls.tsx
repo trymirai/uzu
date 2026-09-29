@@ -40,7 +40,7 @@ const EFFORT_LABELS: Record<ReasoningEffort, string> = {
   xhigh: "XHigh",
 };
 
-const sectionLabel = "text-[12px] font-[450] text-label-muted dark:text-label-muted-dark";
+const sectionLabel = "text-[12px] font-[450] text-label-muted";
 
 export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
   const model = useModelsStore((s) => s.models.find((m) => m.repoId === repoId));
@@ -234,8 +234,8 @@ export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
       </AnimatePresence>
 
       {reasoning.kind === "toggle" && (
-        <div className="flex items-center justify-between gap-3 border-t border-cell-border pt-3 dark:border-cell-border-dark">
-          <span className="text-[13px] text-label-title dark:text-label-title-dark">Reasoning</span>
+        <div className="flex items-center justify-between gap-3 border-t border-cell-border pt-3">
+          <span className="text-[13px] text-label-title">Reasoning</span>
           <Toggle
             checked={reasoningEffort !== "disabled"}
             onChange={(checked) => onReasoningChange(checked ? "default" : "disabled")}
@@ -244,7 +244,7 @@ export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
       )}
 
       {reasoning.kind === "levels" && levelValue !== undefined && (
-        <div className="flex flex-col gap-1.5 border-t border-cell-border pt-3 dark:border-cell-border-dark">
+        <div className="flex flex-col gap-1.5 border-t border-cell-border pt-3">
           <span className={sectionLabel}>Reasoning</span>
           <SegmentedControl
             ariaLabel="Reasoning"
@@ -312,7 +312,7 @@ const NumberSliderRow = ({
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] text-label-title dark:text-label-title-dark">{label}</span>
+          <span className="text-[13px] text-label-title">{label}</span>
           {optional && <Checkbox checked={active} onChange={(on) => onToggle?.(on)} size="sm" />}
         </div>
         <Input
@@ -334,7 +334,7 @@ const NumberSliderRow = ({
           step={step}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="my-1 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-[var(--ui-color-slider-track)] [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[var(--ui-color-text-primary)]"
+          className="my-1 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slider-track [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-text-primary"
         />
       )}
     </div>

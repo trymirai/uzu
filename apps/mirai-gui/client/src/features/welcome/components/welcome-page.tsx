@@ -30,7 +30,7 @@ export function WelcomePage() {
   }, []);
 
   return (
-    <div className="relative w-screen h-screen flex items-start justify-center bg-bg dark:bg-[linear-gradient(180deg,#1A1A1A_0%,#0A0A0A_100%)] ">
+    <div className="relative w-screen h-screen flex items-start justify-center bg-background dark:bg-[linear-gradient(180deg,#1A1A1A_0%,#0A0A0A_100%)]">
       {show ? <WelcomeScreen /> : null}
     </div>
   );

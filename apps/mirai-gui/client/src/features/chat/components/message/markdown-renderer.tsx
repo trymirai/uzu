@@ -74,32 +74,32 @@ const MarkdownTable = ({ children, ...props }: MarkdownComponentProps<"table">) 
 
 const CustomComponents = {
   h1: ({ children, ...props }: MarkdownComponentProps<"h1">) => (
-    <h1 className="text-[24px] font-medium leading-[130%] mb-4 text-label-title dark:text-label-title-dark" {...props}>
+    <h1 className="text-[24px] font-medium leading-[130%] mb-4 text-label-title" {...props}>
       {children}
     </h1>
   ),
   h2: ({ children, ...props }: MarkdownComponentProps<"h2">) => (
-    <h2 className="text-[20px] font-medium leading-[130%] mb-3 text-label-title dark:text-label-title-dark" {...props}>
+    <h2 className="text-[20px] font-medium leading-[130%] mb-3 text-label-title" {...props}>
       {children}
     </h2>
   ),
   h3: ({ children, ...props }: MarkdownComponentProps<"h3">) => (
-    <h3 className="text-[18px] font-medium leading-[130%] mb-2 text-label-title dark:text-label-title-dark" {...props}>
+    <h3 className="text-[18px] font-medium leading-[130%] mb-2 text-label-title" {...props}>
       {children}
     </h3>
   ),
   h4: ({ children, ...props }: MarkdownComponentProps<"h4">) => (
-    <h4 className="text-[16px] font-medium leading-[130%] mb-2 text-label-title dark:text-label-title-dark" {...props}>
+    <h4 className="text-[16px] font-medium leading-[130%] mb-2 text-label-title" {...props}>
       {children}
     </h4>
   ),
   h5: ({ children, ...props }: MarkdownComponentProps<"h5">) => (
-    <h5 className="text-[14px] font-medium leading-[130%] mb-1 text-label-title dark:text-label-title-dark" {...props}>
+    <h5 className="text-[14px] font-medium leading-[130%] mb-1 text-label-title" {...props}>
       {children}
     </h5>
   ),
   h6: ({ children, ...props }: MarkdownComponentProps<"h6">) => (
-    <h6 className="text-xs font-medium leading-[130%] mb-1 text-label-title dark:text-label-title-dark" {...props}>
+    <h6 className="text-xs font-medium leading-[130%] mb-1 text-label-title" {...props}>
       {children}
     </h6>
   ),
@@ -110,7 +110,7 @@ const CustomComponents = {
   ),
   ul: ({ children, ...props }: MarkdownComponentProps<"ul">) => (
     <ul
-      className="mb-3 ml-[9px] list-disc text-[15px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark space-y-3 mt-3 pl-[10px]"
+      className="mb-3 ml-[9px] list-disc text-[15px] font-[350] leading-[150%] text-label-title space-y-3 mt-3 pl-[10px]"
       {...props}
     >
       {children}
@@ -118,7 +118,7 @@ const CustomComponents = {
   ),
   ol: ({ children, ...props }: MarkdownComponentProps<"ol">) => (
     <ol
-      className="mb-3 list-decimal list-inside text-[15px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark space-y-3 mt-3 tabular-nums marker:[font-variant-numeric:tabular-nums]"
+      className="mb-3 list-decimal list-inside text-[15px] font-[350] leading-[150%] text-label-title space-y-3 mt-3 tabular-nums marker:[font-variant-numeric:tabular-nums]"
       {...props}
     >
       {children}
@@ -126,7 +126,7 @@ const CustomComponents = {
   ),
   li: ({ children, ...props }: MarkdownComponentProps<"li">) => (
     <li
-      className="text-[15px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark mb-3 last:mb-0 tabular-nums [&>p:first-child]:inline [&>p:first-child]:m-0"
+      className="text-[15px] font-[350] leading-[150%] text-label-title mb-3 last:mb-0 tabular-nums [&>p:first-child]:inline [&>p:first-child]:m-0"
       {...props}
     >
       {children}
@@ -134,7 +134,7 @@ const CustomComponents = {
   ),
   blockquote: ({ children, ...props }: MarkdownComponentProps<"blockquote">) => (
     <blockquote
-      className="border-l-[4px] border-button-border dark:border-button-border-dark pl-3 text-[15px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark my-3"
+      className="border-l-[4px] border-button-border pl-3 text-[15px] font-[350] leading-[150%] text-label-title my-3"
       {...props}
     >
       {children}
@@ -142,33 +142,27 @@ const CustomComponents = {
   ),
   table: MarkdownTable,
   thead: ({ children, ...props }: MarkdownComponentProps<"thead">) => (
-    <thead className="bg-bg dark:bg-bg-dark border-b border-button-border dark:border-button-border-dark" {...props}>
+    <thead className="bg-background border-b border-button-border" {...props}>
       {children}
     </thead>
   ),
   tbody: ({ children, ...props }: MarkdownComponentProps<"tbody">) => (
-    <tbody className="bg-bg dark:bg-bg-dark" {...props}>
+    <tbody className="bg-background" {...props}>
       {children}
     </tbody>
   ),
   tr: ({ children, ...props }: MarkdownComponentProps<"tr">) => (
-    <tr
-      className="border-b border-cell-border dark:border-cell-border-dark [&:has(th)]:border-button-border [&:has(th)]:dark:border-button-border-dark"
-      {...props}
-    >
+    <tr className="border-b border-cell-border [&:has(th)]:border-button-border" {...props}>
       {children}
     </tr>
   ),
   th: ({ children, ...props }: MarkdownComponentProps<"th">) => (
-    <th
-      className="py-3 text-left text-[15px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark"
-      {...props}
-    >
+    <th className="py-3 text-left text-[15px] font-[350] leading-[150%] text-label-title" {...props}>
       {children}
     </th>
   ),
   td: ({ children, ...props }: MarkdownComponentProps<"td">) => (
-    <td className="py-3 text-[15px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark" {...props}>
+    <td className="py-3 text-[15px] font-[350] leading-[150%] text-label-title" {...props}>
       {children}
     </td>
   ),
@@ -187,18 +181,12 @@ const CustomComponents = {
     return <input type={type} {...props} />;
   },
   strong: ({ children, ...props }: MarkdownComponentProps<"strong">) => (
-    <strong
-      className="text-[15px] font-medium leading-[150%] tracking-[0.2px] text-label-title dark:text-label-title-dark"
-      {...props}
-    >
+    <strong className="text-[15px] font-medium leading-[150%] tracking-[0.2px] text-label-title" {...props}>
       {children}
     </strong>
   ),
   em: ({ children, ...props }: MarkdownComponentProps<"em">) => (
-    <em
-      className="text-[15px] italic font-normal leading-[150%] text-label-title dark:text-label-title-dark"
-      {...props}
-    >
+    <em className="text-[15px] italic font-normal leading-[150%] text-label-title" {...props}>
       {children}
     </em>
   ),
@@ -259,29 +247,23 @@ const OneFontSizeComponents = {
     </li>
   ),
   blockquote: ({ children, ...props }: MarkdownComponentProps<"blockquote">) => (
-    <blockquote
-      className="border-l-[4px] border-button-border dark:border-button-border-dark pl-2 text-xs font-[350] my-3"
-      {...props}
-    >
+    <blockquote className="border-l-[4px] border-button-border pl-2 text-xs font-[350] my-3" {...props}>
       {children}
     </blockquote>
   ),
   table: MarkdownTable,
   thead: ({ children, ...props }: MarkdownComponentProps<"thead">) => (
-    <thead className="bg-bg dark:bg-bg-dark border-b border-button-border dark:border-button-border-dark" {...props}>
+    <thead className="bg-background border-b border-button-border" {...props}>
       {children}
     </thead>
   ),
   tbody: ({ children, ...props }: MarkdownComponentProps<"tbody">) => (
-    <tbody className="bg-bg dark:bg-bg-dark" {...props}>
+    <tbody className="bg-background" {...props}>
       {children}
     </tbody>
   ),
   tr: ({ children, ...props }: MarkdownComponentProps<"tr">) => (
-    <tr
-      className="border-b border-cell-border dark:border-cell-border-dark [&:has(th)]:border-button-border [&:has(th)]:dark:border-button-border-dark"
-      {...props}
-    >
+    <tr className="border-b border-cell-border [&:has(th)]:border-button-border" {...props}>
       {children}
     </tr>
   ),
@@ -324,7 +306,7 @@ const OneFontSizeComponents = {
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   content,
   useOneFontSize = false,
-  className = "max-w-none text-label-title dark:text-label-title-dark markdown-body",
+  className = "max-w-none text-label-title markdown-body",
   streaming = false,
 }) => {
   const isDarkMode = useAppStore((s) => s.isDarkMode);

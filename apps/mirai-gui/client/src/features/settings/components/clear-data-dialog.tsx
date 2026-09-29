@@ -143,13 +143,9 @@ export function ClearDataDialog({ open, onClose }: Props) {
               >
                 <Checkbox checked={selected.has(cat)} onChange={() => {}} className="mt-0.5 shrink-0" />
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[14px] font-[450] leading-[1.4] text-label-title dark:text-label-title-dark">
-                    {getCategoryLabel(cat)}
-                  </span>
+                  <span className="text-[14px] font-[450] leading-[1.4] text-label-title">{getCategoryLabel(cat)}</span>
                   {preview && (
-                    <span className="text-[12px] text-label-muted dark:text-label-muted-dark">
-                      {getCategoryDescription(cat, preview)}
-                    </span>
+                    <span className="text-[12px] text-label-muted">{getCategoryDescription(cat, preview)}</span>
                   )}
                 </div>
               </div>

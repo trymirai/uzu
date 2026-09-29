@@ -130,8 +130,8 @@ export function LocalModelsPage() {
   return (
     <TooltipProvider>
       <HoverPopoverProvider>
-        <div className="flex h-[calc(100vh-24px)] flex-col bg-[var(--ui-color-background)]">
-          <div className="w-full flex h-full overflow-hidden bg-[var(--ui-color-surface-elevated)]">
+        <div className="flex h-[calc(100vh-24px)] flex-col bg-background">
+          <div className="w-full flex h-full overflow-hidden bg-surface-elevated">
             <div className="flex-1 min-w-0 flex flex-col">
               <LocalModelsHeader
                 selectedFamily={selectedFamily}
@@ -142,7 +142,7 @@ export function LocalModelsPage() {
                 onModelsSearchChange={setModelsSearch}
                 onBack={() => selectFamily(null)}
               />
-              <div style={{ borderBottom: "0.5px solid var(--ui-color-border-default)" }}></div>
+              <div style={{ borderBottom: "0.5px solid var(--color-border-default)" }}></div>
 
               <div className="flex-1 overflow-y-auto scrollbar-hide">
                 <div className="px-4 py-4">
@@ -172,7 +172,7 @@ export function LocalModelsPage() {
                     </div>
                   ) : models.length === 0 ? (
                     <div className="flex min-h-[320px] items-center justify-center">
-                      <span className={`${TEXT_14} text-[var(--ui-color-text-muted)]`} style={TEXT_14_STYLE}>
+                      <span className={`${TEXT_14} text-text-muted`} style={TEXT_14_STYLE}>
                         No models available for this device
                       </span>
                     </div>
@@ -190,7 +190,7 @@ export function LocalModelsPage() {
                     />
                   ) : families.length === 0 ? (
                     <div className="flex min-h-[200px] items-center justify-center">
-                      <span className="text-[13px] text-[var(--ui-color-text-muted)]">
+                      <span className="text-[13px] text-text-muted">
                         {searchQuery ? `No families matching "${searchQuery}"` : "No model families"}
                       </span>
                     </div>

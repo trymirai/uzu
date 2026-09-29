@@ -16,7 +16,7 @@ export function ErrorPage() {
   };
 
   return (
-    <div className="min-h-screen min-w-[360px] w-full flex flex-col bg-bg dark:bg-bg-dark text-label-title dark:text-label-title-dark">
+    <div className="min-h-screen min-w-[360px] w-full flex flex-col bg-background text-label-title">
       <div className="flex px-8 py-8 justify-center">
         {isDarkMode ? <Logo width={66} height={57} /> : <LogoLightMode width={48} height={24} />}
       </div>
@@ -25,7 +25,7 @@ export function ErrorPage() {
           <ErrorIcon color="#FF2020" />
           <div className="flex flex-col items-center justify-center gap-3 text-center">
             <h1 className="text-2xl font-bold">Page Not Found</h1>
-            <p className="text-base text-label-muted dark:text-label-muted-dark">An unexpected error occurred</p>
+            <p className="text-base text-label-muted">An unexpected error occurred</p>
           </div>
           <Button kind="primary" icon={ArrowLeft} onClick={handleAction}>
             Go back

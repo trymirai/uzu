@@ -45,7 +45,7 @@ const UserMessage: React.FC<Pick<MessageProps, "text" | "attachmentIds">> = ({ t
         <AttachedFilesDisplay files={attachmentStorage.getFiles(attachmentIds)} />
       </div>
     )}
-    <div className="font-[350] text-label-title dark:text-label-title-dark relative w-fit rounded-[5px] text-[15px] leading-[140%] px-2.5 py-[6px] bg-bg-hover dark:bg-bg-hover-dark ml-auto [&>div>*:first-child]:mt-0 [&>div>*:last-child]:mb-0">
+    <div className="font-[350] text-label-title relative w-fit rounded-[5px] text-[15px] leading-[140%] px-2.5 py-[6px] bg-bg-hover ml-auto [&>div>*:first-child]:mt-0 [&>div>*:last-child]:mb-0">
       <MarkdownRenderer content={text} />
     </div>
   </>
@@ -202,7 +202,7 @@ const AssistantMessage: React.FC<MessageProps> = ({
     : messageFromStore?.modelName;
 
   return (
-    <div className="pb-3 text-label-title dark:text-label-title-dark relative w-full rounded-[5px] text-[15px] leading-[140%]">
+    <div className="pb-3 text-label-title relative w-full rounded-[5px] text-[15px] leading-[140%]">
       {visibleChainOfThought && (
         <button
           onClick={() => {
@@ -210,11 +210,11 @@ const AssistantMessage: React.FC<MessageProps> = ({
             setIsReasoningVisible((v) => !v);
           }}
           className={twMerge(
-            "group mb-1 px-4 pt-4 border border-cell-border dark:border-cell-border-dark w-full rounded-[8px] transition-colors duration-150",
+            "group mb-1 px-4 pt-4 border border-cell-border w-full rounded-[8px] transition-colors duration-150",
             "hover:[background-color:rgba(0,0,0,0.01)] dark:hover:[background-color:rgba(255,255,255,0.01)]",
           )}
         >
-          <div className="flex pb-4 items-center justify-between p-0 group hover:bg-transparent dark:hover:bg-transparent text-label-title dark:text-label-title-dark">
+          <div className="flex pb-4 items-center justify-between p-0 group hover:bg-transparent text-label-title">
             <span className="flex items-center gap-2">
               <ThinkingBubbleIcon className="w-[14px] h-[14px]" />
 
@@ -222,7 +222,7 @@ const AssistantMessage: React.FC<MessageProps> = ({
             </span>
             <ChevronDownIcon
               className={twMerge(
-                "w-[12px] h-[12px] text-label-muted dark:text-label-muted-dark transition-transform transition-colors duration-150",
+                "w-[12px] h-[12px] text-label-muted transition-transform transition-colors duration-150",
                 isReasoningVisible && "rotate-180",
               )}
             />
@@ -246,7 +246,7 @@ const AssistantMessage: React.FC<MessageProps> = ({
                 <MarkdownRenderer
                   content={visibleChainOfThought || ""}
                   useOneFontSize={true}
-                  className="text-[12px] leading-[150%] font-mono text-label-muted dark:text-label-muted-dark [&_p]:mb-1 [&_p]:mt-1"
+                  className="text-[12px] leading-[150%] font-mono text-label-muted [&_p]:mb-1 [&_p]:mt-1"
                 />
               </div>
               <div className="group-hover:pointer-events-none opacity-100 group-hover:opacity-0 transition-opacity duration-150 absolute bottom-0 left-0 right-0 h-[96px] z-10 [background:linear-gradient(180deg,rgba(255,255,255,0)_0%,#FFFFFF_100%)] dark:[background:linear-gradient(180deg,rgba(10,10,10,0)_0%,#0A0A0A_100%)]" />

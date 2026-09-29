@@ -45,19 +45,19 @@ export function LocalModelsHeader({
                   </span>
                 </Tooltip>
                 <ModelVendorIcon vendor={selectedFamily.vendor} size={16} className="h-4 w-4" />
-                <span className={`${TEXT_14} text-[var(--ui-color-text-primary)] truncate`} style={TEXT_14_STYLE}>
+                <span className={`${TEXT_14} text-text-primary truncate`} style={TEXT_14_STYLE}>
                   {selectedFamily.familyName}
                 </span>
                 {!isMobile && (
-                  <span className={`${TEXT_14} text-[var(--ui-color-text-muted)] truncate`} style={TEXT_14_STYLE}>
+                  <span className={`${TEXT_14} text-text-muted truncate`} style={TEXT_14_STYLE}>
                     from {selectedFamily.vendor}
                   </span>
                 )}
               </>
             ) : (
               <>
-                <MonitorSmartphone size={16} className="text-[var(--ui-color-text-primary)] shrink-0" />
-                <span className={`${TEXT_14} text-[var(--ui-color-text-primary)] truncate`} style={TEXT_14_STYLE}>
+                <MonitorSmartphone size={16} className="text-text-primary shrink-0" />
+                <span className={`${TEXT_14} text-text-primary truncate`} style={TEXT_14_STYLE}>
                   Choose local model to chat
                 </span>
               </>
@@ -77,7 +77,7 @@ export function LocalModelsHeader({
       {isMobile && (
         <div
           className="flex shrink-0 items-center gap-2 px-4 py-2"
-          style={{ borderTop: "0.5px solid var(--ui-color-border-default)" }}
+          style={{ borderTop: "0.5px solid var(--color-border-default)" }}
         >
           <SearchInput
             value={search.value}

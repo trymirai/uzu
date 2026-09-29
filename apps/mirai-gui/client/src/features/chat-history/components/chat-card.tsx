@@ -46,12 +46,10 @@ const ChatCard: React.FC<ChatCardProps> = ({
             },
           })}
       className={twMerge(
-        "bg-bg dark:bg-bg-dark cursor-pointer transition-colors border-[0.5px] border-cell-border dark:border-cell-border-dark",
+        "bg-background cursor-pointer transition-colors border-[0.5px] border-cell-border",
         !selectMode && "outline-hidden focus-visible:shadow-focus",
-        selectMode
-          ? "hover:bg-card-modal-hover dark:hover:bg-card-modal-hover-dark"
-          : "hover:bg-card-hover dark:hover:bg-card-hover-dark",
-        selected ? "bg-card-modal dark:bg-card-modal-dark border-button-border dark:border-button-border-dark" : "",
+        selectMode ? "hover:bg-card-hover" : "hover:bg-card-hover",
+        selected ? "bg-bg-modal border-button-border" : "",
       )}
     >
       <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 p-3 w-full">
@@ -66,18 +64,16 @@ const ChatCard: React.FC<ChatCardProps> = ({
               />
             </span>
           ) : (
-            <ChatsIcon className="w-5 h-5 text-label-title dark:text-label-title-dark" />
+            <ChatsIcon className="w-5 h-5 text-label-title" />
           )}
         </div>
         <div className="min-w-0">
-          <h3 className="text-[15px] leading-[150%] font-[350] text-label-title dark:text-label-title-dark overflow-hidden text-ellipsis whitespace-nowrap">
+          <h3 className="text-[15px] leading-[150%] font-[350] text-label-title overflow-hidden text-ellipsis whitespace-nowrap">
             {title}
           </h3>
         </div>
         <div className="flex-shrink-0 ml-2">
-          <span className="text-xs text-label-muted dark:text-label-muted-dark font-mono whitespace-nowrap">
-            {timeAgo}
-          </span>
+          <span className="text-xs text-label-muted font-mono whitespace-nowrap">{timeAgo}</span>
         </div>
       </div>
     </CardContainer>

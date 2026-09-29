@@ -79,7 +79,7 @@ function LeftBar() {
     <button
       onClick={toggleSidebar}
       className={twMerge(
-        "overlay-button p-1 rounded-lg hover:bg-bg-hover dark:hover:bg-bg-hover-dark transition-all duration-300 ease-in-out absolute top-[10px]",
+        "overlay-button p-1 rounded-lg hover:bg-bg-hover transition-all duration-300 ease-in-out absolute top-[10px]",
         isMobile && isMacPlatform() && platformInfo.features.nativeTitleBar
           ? "left-20 translate-x-0"
           : isMobile
@@ -89,7 +89,7 @@ function LeftBar() {
               : "left-3 translate-x-0",
       )}
     >
-      <SidebarToggleIcon className="w-6 h-6 text-label-muted dark:text-label-muted-dark" />
+      <SidebarToggleIcon className="w-6 h-6 text-label-muted" />
     </button>
   );
 
@@ -116,7 +116,7 @@ function LeftBar() {
         <div
           data-tauri-drag-region
           className={twMerge(
-            "relative min-h-screen bg-bg-sidebar dark:bg-bg-sidebar-dark border-[1px] border-cell-border dark:border-cell-border-dark border-b-0 border-t-0 h-screen flex flex-col py-3 overflow-hidden",
+            "relative min-h-screen bg-bg-sidebar border-[1px] border-cell-border border-b-0 border-t-0 h-screen flex flex-col py-3 overflow-hidden",
             isMobile ? "fixed top-0 left-0 w-[280px] z-50" : "w-[200px]",
           )}
         >
@@ -135,7 +135,7 @@ function LeftBar() {
                 ))}
               </nav>
 
-              <div className="mt-3 mb-2 border-t border-cell-border dark:border-cell-border-dark" />
+              <div className="mt-3 mb-2 border-t border-cell-border" />
             </div>
 
             <div className="flex-1 overflow-y-auto min-h-0 scrollbar-hide">

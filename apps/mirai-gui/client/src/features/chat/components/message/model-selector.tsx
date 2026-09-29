@@ -40,8 +40,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   };
 
   const variantClasses = disabled
-    ? "text-label-muted dark:text-label-muted-dark rounded-md py-1"
-    : "text-label-muted dark:text-label-muted-dark group-hover:text-label-title dark:group-hover:text-label-title-dark group-hover:bg-bg-hover dark:group-hover:bg-bg-hover-dark rounded-md py-1";
+    ? "text-label-muted rounded-md py-1"
+    : "text-label-muted group-hover:text-label-title group-hover:bg-bg-hover rounded-md py-1";
 
   return (
     <div className="group w-fit">
@@ -68,13 +68,11 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           >
             <ListboxOptions
               anchor="bottom end"
-              className="thin-scrollbar [--anchor-gap:8px] [--anchor-max-height:360px] bg-bg-modal dark:bg-bg-modal-dark border border-cell-border dark:border-cell-border-dark rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
+              className="thin-scrollbar [--anchor-gap:8px] [--anchor-max-height:360px] bg-bg-modal border border-cell-border rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
             >
               <div className="p-[6px] flex flex-col gap-2">
                 {loadingModels ? (
-                  <div className="px-[14px] py-2 leading-[130%] text-sm text-label-muted dark:text-label-muted-dark">
-                    Loading models...
-                  </div>
+                  <div className="px-[14px] py-2 leading-[130%] text-sm text-label-muted">Loading models...</div>
                 ) : installedModelsList.length > 0 ? (
                   installedModelsList.map((model) => {
                     const isSelected = model.repoId === selectedModel;
@@ -83,34 +81,32 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                         key={model.repoId}
                         value={model.repoId}
                         className={twMerge(
-                          "w-full flex items-center gap-2 px-[14px] py-2 rounded-md text-left transition-colors cursor-pointer hover:bg-bg-hover dark:hover:bg-bg-hover-dark focus:outline-hidden focus:ring-0",
-                          isSelected ? "bg-bg-sub dark:bg-bg-sub-dark" : "",
+                          "w-full flex items-center gap-2 px-[14px] py-2 rounded-md text-left transition-colors cursor-pointer hover:bg-bg-hover focus:outline-hidden focus:ring-0",
+                          isSelected ? "bg-bg-sub" : "",
                         )}
                       >
                         <ModelVendorIcon vendor={model.vendor} />
-                        <span className="text-sm leading-[130%] text-label-title dark:text-label-title-dark flex items-center gap-2">
+                        <span className="text-sm leading-[130%] text-label-title flex items-center gap-2">
                           {model.name}
                         </span>
-                        <span className="text-label-muted dark:text-label-muted-dark text-[10px]">Local</span>
+                        <span className="text-label-muted text-[10px]">Local</span>
                       </ListboxOption>
                     );
                   })
                 ) : (
-                  <div className="px-[14px] py-2 leading-[130%] text-sm text-label-muted dark:text-label-muted-dark">
-                    No models available
-                  </div>
+                  <div className="px-[14px] py-2 leading-[130%] text-sm text-label-muted">No models available</div>
                 )}
               </div>
 
-              <div className="h-[1px] bg-cell-border dark:bg-cell-border-dark" />
+              <div className="h-[1px] bg-cell-border" />
 
               <div className="p-[10px]">
                 <button
                   onClick={handleMoreModelsClick}
-                  className="w-full flex items-center justify-between px-[14px] py-2 rounded-md hover:bg-bg-hover dark:hover:bg-bg-hover-dark transition-colors text-label-title dark:text-label-title-dark focus:outline-hidden focus:ring-0"
+                  className="w-full flex items-center justify-between px-[14px] py-2 rounded-md hover:bg-bg-hover transition-colors text-label-title focus:outline-hidden focus:ring-0"
                 >
-                  <span className="text-sm text-label-title dark:text-label-title-dark">More local models</span>
-                  <ChevronRight className="h-4 w-4 text-label-muted dark:text-label-muted-dark" />
+                  <span className="text-sm text-label-title">More local models</span>
+                  <ChevronRight className="h-4 w-4 text-label-muted" />
                 </button>
               </div>
             </ListboxOptions>

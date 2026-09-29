@@ -15,21 +15,17 @@ export const UpdateToast: React.FC<UpdateToastProps> = ({ version, onApplyNow, o
   return (
     <div
       className={twMerge(
-        "w-[560px] max-w-[90vw] bg-card-modal dark:bg-card-modal-dark border border-button-border dark:border-button-border-dark rounded-xl p-4 shadow-lg",
+        "w-[560px] max-w-[90vw] bg-bg-modal border border-button-border rounded-xl p-4 shadow-lg",
         "flex flex-col gap-3",
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col">
-          <div className="text-label-title dark:text-label-title-dark font-semibold">Update {version} is ready</div>
-          <div className="text-label-muted dark:text-label-muted-dark text-sm mt-1">Restart to apply the update.</div>
+          <div className="text-label-title font-semibold">Update {version} is ready</div>
+          <div className="text-label-muted text-sm mt-1">Restart to apply the update.</div>
           {errorMessage ? <div className="text-sm mt-2 text-error">{errorMessage}</div> : null}
         </div>
-        <button
-          onClick={onClose}
-          className="text-label-muted dark:text-label-muted-dark hover:text-label-title dark:hover:text-label-title-dark p-1 rounded"
-          aria-label="Close"
-        >
+        <button onClick={onClose} className="text-label-muted hover:text-label-title p-1 rounded" aria-label="Close">
           <X size={18} />
         </button>
       </div>

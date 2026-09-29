@@ -2,7 +2,6 @@ import React from "react";
 
 import ReactDOM from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
-import "@/styles/base.css";
 import { createAppRouter } from "./router";
 import "./index.css";
 import { RuntimeLoader } from "@rive-app/react-canvas";

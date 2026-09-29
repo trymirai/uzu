@@ -15,16 +15,15 @@ const formatTps = (tps?: number): string =>
   typeof tps === "number" && Number.isFinite(tps) ? `${Math.round(tps)}` : "—";
 
 const BUTTON_BASE =
-  "flex items-center px-[6px] transition-colors focus:outline-hidden focus:ring-0 gap-2 text-label-muted dark:text-label-muted-dark rounded-md py-1";
-const BUTTON_ENABLED =
-  "group-hover:text-label-title dark:group-hover:text-label-title-dark group-hover:bg-bg-hover dark:group-hover:bg-bg-hover-dark";
+  "flex items-center px-[6px] transition-colors focus:outline-hidden focus:ring-0 gap-2 text-label-muted rounded-md py-1";
+const BUTTON_ENABLED = "group-hover:text-label-title group-hover:bg-bg-hover";
 const BUTTON_DISABLED = "opacity-60 cursor-not-allowed";
 
 function PerfStat({ value, label }: { value: string; label: string }) {
   return (
     <div className="flex flex-col items-center">
-      <div className="text-[15px] leading-[120%] text-label-title dark:text-label-title-dark">{value}</div>
-      <div className="text-[11px] leading-[120%] text-label-muted dark:text-label-muted-dark mt-1">{label}</div>
+      <div className="text-[15px] leading-[120%] text-label-title">{value}</div>
+      <div className="text-[11px] leading-[120%] text-label-muted mt-1">{label}</div>
     </div>
   );
 }
@@ -46,7 +45,7 @@ export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropd
       >
         <PopoverPanel
           anchor="bottom end"
-          className="[--anchor-gap:8px] bg-bg-modal dark:bg-bg-modal-dark border border-cell-border dark:border-cell-border-dark rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
+          className="[--anchor-gap:8px] bg-bg-modal border border-cell-border rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
         >
           <div className="p-[10px]">
             <div className="grid grid-cols-3 gap-3 text-center">

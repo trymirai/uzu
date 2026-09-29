@@ -45,21 +45,17 @@ export const MessageVersionControls: React.FC<MessageVersionControlsProps> = ({
         disabled={!canGoPrevious}
         className={twMerge(
           "p-1 rounded transition-colors",
-          canGoPrevious
-            ? "text-label-muted dark:text-label-muted-dark hover:text-label-title dark:hover:text-label-title-dark"
-            : "text-label-muted/50 dark:text-label-muted-dark/50 cursor-not-allowed",
+          canGoPrevious ? "text-label-muted hover:text-label-title" : "text-label-muted/50 cursor-not-allowed",
         )}
       >
         <ChevronLeft className="w-4 h-4" />
       </button>
 
-      <span className="text-sm text-label-muted dark:text-label-muted-dark">
+      <span className="text-sm text-label-muted">
         {currentVersion + 1}/{totalVersions}
       </span>
       {currentModelName && (
-        <span className="text-[13px] leading-[130%] text-label-muted dark:text-label-muted-dark truncate max-w-[220px]">
-          {currentModelName}
-        </span>
+        <span className="text-[13px] leading-[130%] text-label-muted truncate max-w-[220px]">{currentModelName}</span>
       )}
 
       <button
@@ -67,9 +63,7 @@ export const MessageVersionControls: React.FC<MessageVersionControlsProps> = ({
         disabled={!canGoNext}
         className={twMerge(
           "p-1 rounded transition-colors",
-          canGoNext
-            ? "text-label-muted dark:text-label-muted-dark hover:text-label-title dark:hover:text-label-title-dark"
-            : "text-label-muted/50 dark:text-label-muted-dark/50 cursor-not-allowed",
+          canGoNext ? "text-label-muted hover:text-label-title" : "text-label-muted/50 cursor-not-allowed",
         )}
       >
         <ChevronRight className="w-4 h-4" />

@@ -32,7 +32,7 @@ export const ChatHeader = ({
       >
         <h1
           className={twMerge(
-            "text-[13px] font-[350] text-label-muted dark:text-label-muted-dark line-clamp-1",
+            "text-[13px] font-[350] text-label-muted line-clamp-1",
             !isSidebarOpen && "lg:text-center",
           )}
         >

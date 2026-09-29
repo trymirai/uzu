@@ -48,17 +48,14 @@ export const ModelParamsDrawer = ({ open, chatId, repoId, onClose }: ModelParams
             leaveFrom="translate-x-0"
             leaveTo="translate-x-full"
           >
-            <DialogPanel className="flex h-full w-[320px] flex-col border-l border-cell-border bg-card-modal px-5 pb-6 pt-[18px] shadow-xl dark:border-cell-border-dark dark:bg-card-modal-dark">
+            <DialogPanel className="flex h-full w-[320px] flex-col border-l border-cell-border bg-bg-modal px-5 pb-6 pt-[18px] shadow-xl">
               <div className="flex items-center justify-between gap-3">
-                <DialogTitle
-                  as="h3"
-                  className="text-[17px] font-medium leading-[130%] text-label-title dark:text-label-title-dark"
-                >
+                <DialogTitle as="h3" className="text-[17px] font-medium leading-[130%] text-label-title">
                   Edit parameters
                 </DialogTitle>
                 <button
                   onClick={onClose}
-                  className="text-label-muted transition-colors hover:text-label-title dark:text-label-muted-dark dark:hover:text-label-title-dark"
+                  className="text-label-muted transition-colors hover:text-label-title"
                   aria-label="Close"
                 >
                   <X className="h-5 w-5" />

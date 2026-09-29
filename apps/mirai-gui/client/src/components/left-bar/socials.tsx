@@ -9,7 +9,7 @@ function Socials() {
         href="https://github.com/trymirai"
         target="_blank"
         rel="noopener noreferrer"
-        className="text-label-muted dark:text-label-muted-dark hover:text-label-title dark:hover:text-label-title-dark"
+        className="text-label-muted hover:text-label-title"
       >
         <GithubIcon className="w-5 h-5" />
       </a>
@@ -17,7 +17,7 @@ function Socials() {
         href="https://x.com/trymirai"
         target="_blank"
         rel="noopener noreferrer"
-        className="text-label-muted dark:text-label-muted-dark hover:text-label-title dark:hover:text-label-title-dark"
+        className="text-label-muted hover:text-label-title"
       >
         <XIcon className="w-4 h-4" />
       </a>
@@ -25,7 +25,7 @@ function Socials() {
         href="https://discord.gg/trymirai"
         target="_blank"
         rel="noopener noreferrer"
-        className="text-label-muted dark:text-label-muted-dark hover:text-label-title dark:hover:text-label-title-dark"
+        className="text-label-muted hover:text-label-title"
       >
         <DiscordIcon className="w-5 h-5" />
       </a>

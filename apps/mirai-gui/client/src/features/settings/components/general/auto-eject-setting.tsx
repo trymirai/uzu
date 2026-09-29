@@ -31,15 +31,13 @@ export function AutoEjectSetting({
       control={<Toggle checked={autoEjectEnabled} onChange={() => setAutoEjectEnabled(!autoEjectEnabled)} />}
     >
       <div className="mt-3 flex items-center gap-3">
-        <label className="text-[13px] text-label-title dark:text-label-title-dark min-w-[140px]">
-          Idle timeout (minutes)
-        </label>
+        <label className="text-[13px] text-label-title min-w-[140px]">Idle timeout (minutes)</label>
         <HeadlessInput
           type="text"
           inputMode="numeric"
           value={minutesInput}
           className={twMerge(
-            "max-w-[72px] px-2 py-1 text-[13px] border border-cell-border dark:border-cell-border-dark bg-bg dark:bg-bg-dark placeholder:text-label-muted dark:placeholder:text-label-muted-dark rounded-[8px] focus:outline-hidden",
+            "max-w-[72px] px-2 py-1 text-[13px] border border-cell-border bg-background placeholder:text-label-muted rounded-[8px] focus:outline-hidden",
             !autoEjectEnabled ? "opacity-60 cursor-not-allowed" : "",
           )}
           onChange={(e) => {

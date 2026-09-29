@@ -16,7 +16,7 @@ export function QuickEntryShortcutSetting({
     quickEntryShortcut,
     registerQuickEntryShortcut,
   );
-  const capturingRing = isCapturing ? "ring-2 ring-blue ring-offset-2 ring-offset-bg dark:ring-offset-bg-dark" : "";
+  const capturingRing = isCapturing ? "ring-2 ring-blue ring-offset-2 ring-offset-background" : "";
 
   return (
     <SettingRow

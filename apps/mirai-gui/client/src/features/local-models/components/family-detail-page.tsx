@@ -81,7 +81,7 @@ export function FamilyDetailPage({
   if (detail.installed.length === 0 && detail.available.length === 0) {
     return (
       <div className="flex min-h-[200px] items-center justify-center">
-        <span className="text-[13px] text-[var(--ui-color-text-muted)]">
+        <span className="text-[13px] text-text-muted">
           {searchQuery ? `No models matching "${searchQuery}"` : "No models in this family"}
         </span>
       </div>

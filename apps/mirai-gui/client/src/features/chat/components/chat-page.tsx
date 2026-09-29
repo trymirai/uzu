@@ -145,7 +145,7 @@ export function ChatPage() {
   const modelParamsModified = isCustomParams(selectedModelParams, globalReasoningEnabled);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-24px)] bg-bg dark:bg-bg-dark pt-4 pb-5 px-5">
+    <div className="flex flex-col h-[calc(100vh-24px)] bg-background pt-4 pb-5 px-5">
       <div className="w-full flex flex-col h-full">
         <ChatHeader
           title={currentChatTitle}

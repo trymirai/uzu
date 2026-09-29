@@ -30,8 +30,8 @@ function WelcomeScreen() {
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 1.5, ease, delay: delayS }}
     >
-      <div className="text-label-title dark:text-label-title-dark">{icon}</div>
-      <span className="text-[13px] leading-[130%] font-normal text-label-muted dark:text-label-muted-dark">{text}</span>
+      <div className="text-label-title">{icon}</div>
+      <span className="text-[13px] leading-[130%] font-normal text-label-muted">{text}</span>
     </motion.div>
   );
 
@@ -39,7 +39,7 @@ function WelcomeScreen() {
     const chars = Array.from(text);
 
     return (
-      <h1 className="text-[28px] leading-[130%] font-medium text-label-title dark:text-label-title-dark">
+      <h1 className="text-[28px] leading-[130%] font-medium text-label-title">
         {chars.map((ch, i) => (
           <motion.span
             key={`${i}-${ch}`}
@@ -65,7 +65,7 @@ function WelcomeScreen() {
   };
 
   const renderAnimatedSubtitle = (lines: string[], baseDelay = 1, lineDelay = 0) => (
-    <div className="mt-4 md:mt-3 text-[16px] leading-[130%] font-[450] text-label-muted dark:text-label-muted-dark">
+    <div className="mt-4 md:mt-3 text-[16px] leading-[130%] font-[450] text-label-muted">
       {lines.map((line, i) => (
         <motion.div
           key={`${i}-${line}`}
@@ -88,7 +88,7 @@ function WelcomeScreen() {
   );
 
   return (
-    <div className={twMerge("relative max-h-screen flex justify-center h-full", !isDarkMode && "bg-bg")}>
+    <div className={twMerge("relative max-h-screen flex justify-center h-full", !isDarkMode && "bg-background")}>
       <div className="w-full max-w-[500px] md:min-h-0 px-6 md:px-8 pt-10 md:pt-12 pb-8 md:pb-10 grid grid-rows-[auto_1fr_auto] md:flex md:flex-col md:justify-center">
         <div className="contents">
           <motion.div
@@ -101,7 +101,7 @@ function WelcomeScreen() {
               <Logo
                 width={66}
                 height={57}
-                className="text-label-title dark:text-label-title-dark"
+                className="text-label-title"
                 style={{
                   willChange: "transform,opacity",
                   transform: "translateZ(0)",

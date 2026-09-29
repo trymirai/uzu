@@ -45,7 +45,7 @@ function RootComponent() {
   }
 
   return (
-    <div className="min-h-screen bg-bg dark:bg-bg-dark text-label-title dark:text-label-title-dark flex thin-scrollbar">
+    <div className="min-h-screen bg-background text-label-title flex thin-scrollbar">
       <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
       <LeftBar />
       <div className={twMerge("relative flex-1 flex flex-col h-[100dvh] overflow-hidden", isMobile ? "w-full" : "")}>

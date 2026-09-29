@@ -32,7 +32,7 @@ client/src/            React app, shared by desktop and web
   routes/              thin TanStack route glue
   platform/            platform contract + tauri/web adapters, the only way to the backend
   stores/              zustand stores
-  styles/              design tokens and base styles
+  styles/              theme.css: the palette, light values in @theme, dark ones in .dark
 src-tauri/src/         Rust backend: engine, chat, downloads, storage
 ```
 

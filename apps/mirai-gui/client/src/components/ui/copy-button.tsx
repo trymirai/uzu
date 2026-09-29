@@ -13,7 +13,7 @@ type CopyButtonProps = {
 const COPIED_FEEDBACK_MS = 1000;
 
 const BUTTON_CLASSES =
-  "relative min-w-8 min-h-8 flex items-center justify-center p-[6px] rounded-[5px] text-label-muted dark:text-label-muted-dark hover:bg-card-hover dark:hover:bg-card-hover-dark hover:text-label-title dark:hover:text-label-title-dark active:scale-100";
+  "relative min-w-8 min-h-8 flex items-center justify-center p-[6px] rounded-[5px] text-label-muted hover:bg-card-hover hover:text-label-title active:scale-100";
 
 export function CopyButton({ onCopy, className }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);

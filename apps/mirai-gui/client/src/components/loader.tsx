@@ -45,10 +45,7 @@ export const Loader: React.FC<LoaderProps> = ({
         <div className="flex items-baseline gap-[2px]">
           <TextShimmer
             duration={1.2}
-            className={twMerge(
-              "text-[13px] font-[350] [--base-color:theme(colors.label-muted.DEFAULT)] dark:[--base-color:theme(colors.label-muted.dark)]",
-              textClassName,
-            )}
+            className={twMerge("text-[13px] font-[350] [--base-color:var(--color-label-muted)]", textClassName)}
           >
             {text}
           </TextShimmer>

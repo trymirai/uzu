@@ -203,12 +203,12 @@ const MessageListComponent: React.FC<MessageListProps> = ({
                   className={isLastAssistant ? "flex flex-col min-h-8" : undefined}
                 >
                   {showAssistantLoader ? (
-                    <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted dark:text-label-muted-dark">
+                    <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
                       <Loader text={loaderText} />
                     </div>
                   ) : null}
                   {showInlineLoader ? (
-                    <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted dark:text-label-muted-dark">
+                    <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
                       <Loader text={loaderText} />
                     </div>
                   ) : null}
@@ -230,7 +230,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
           <div className="flex gap-2 items-center justify-center h-full relative">
             {isNew ? (
               <>
-                <span className="text-label-muted dark:text-label-muted-dark text-[13px] font-[350]">
+                <span className="text-label-muted text-[13px] font-[350]">
                   Start your new private and local conversation
                 </span>
                 <LoaderIcon />
@@ -241,7 +241,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
           </div>
         )}
         {lastAssistantIndex === -1 && isBusy && !loadingMessageId && (
-          <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted dark:text-label-muted-dark">
+          <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
             <Loader text={loaderText} />
           </div>
         )}

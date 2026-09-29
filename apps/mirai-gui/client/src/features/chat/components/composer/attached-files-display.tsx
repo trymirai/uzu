@@ -12,14 +12,14 @@ const LABEL_COLOR: Record<FileType, string> = {
   document: "text-blue",
   code: "text-progress",
   table: "text-green-500",
-  other: "text-label-muted dark:text-label-muted-dark",
+  other: "text-label-muted",
 };
 
 const ICON_BACKGROUND: Record<FileType, string> = {
   document: "bg-blue/[0.12] text-blue border-blue/[0.12]",
   code: "bg-progress/[0.12] text-progress border-progress/[0.12]",
   table: "bg-green-500/[0.12] text-green-500 border-green-500/[0.12]",
-  other: "bg-bg-hover dark:bg-bg-hover-dark border-button-border dark:border-button-border-dark",
+  other: "bg-bg-hover border-button-border",
 };
 
 const getFileType = (extension: string): FileType => {
@@ -37,7 +37,7 @@ const getFileNameWithoutExtension = (filename: string): string => {
 function FileCard({ file }: { file: AttachedFile }) {
   const fileType = getFileType(file.extension);
   return (
-    <div className="group relative flex items-center gap-2 px-2 py-[6px] rounded-[8px] border max-w-[200px] border-cell-border dark:border-cell-border-dark">
+    <div className="group relative flex items-center gap-2 px-2 py-[6px] rounded-[8px] border max-w-[200px] border-cell-border">
       <div
         className={twMerge(
           "w-10 h-10 border rounded-[5px] flex items-center justify-center flex-shrink-0",
@@ -48,7 +48,7 @@ function FileCard({ file }: { file: AttachedFile }) {
       </div>
 
       <div className="flex flex-col min-w-0 flex-1 gap-[2px]">
-        <span className="text-[13px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark truncate">
+        <span className="text-[13px] font-[350] leading-[150%] text-label-title truncate">
           {getFileNameWithoutExtension(file.name)}
         </span>
         <span className={twMerge("text-xs leading-[130%]", LABEL_COLOR[fileType])}>{file.extension}</span>

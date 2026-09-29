@@ -91,9 +91,9 @@ export function ChatHistoryPage() {
   return (
     <>
       <div className="sticky top-0 z-10">
-        <div className="w-full bg-card-modal dark:bg-card-modal-dark">
+        <div className="w-full bg-bg-modal">
           <div className="pt-7 pb-7 flex flex-col justify-center px-5 lg:px-0 lg:max-w-[800px] mx-auto gap-6 lg:gap-0">
-            <h1 className="leading-[130%] text-xl font-medium text-label-title dark:text-label-title-dark text-center lg:text-left">
+            <h1 className="leading-[130%] text-xl font-medium text-label-title text-center lg:text-left">
               Chat history
             </h1>
           </div>
@@ -101,12 +101,12 @@ export function ChatHistoryPage() {
           <div className="px-5 lg:px-0 pt-4 pb-7 lg:max-w-[800px] mx-auto">
             <GlobalInstructions instructions={instructions} onSave={saveInstructions} />
           </div>
-          <div className="h-[1px] bg-cell-border dark:bg-cell-border-dark" />
+          <div className="h-[1px] bg-cell-border" />
         </div>
 
-        <div className="w-full bg-bg dark:bg-bg-dark">
+        <div className="w-full bg-background">
           <div className="px-5 lg:px-0 pt-5 pb-2.5 flex items-center justify-between lg:max-w-[800px] mx-auto">
-            <h2 className="text-sm font-[350] text-label-title dark:text-label-title-dark">Your chats</h2>
+            <h2 className="text-sm font-[350] text-label-title">Your chats</h2>
             <div className="flex items-center gap-2">
               <SearchInput
                 value={searchQuery}
@@ -124,13 +124,7 @@ export function ChatHistoryPage() {
                       disabled
                       className="pointer-events-none opacity-100"
                     />
-                    <span
-                      className={
-                        showActive
-                          ? "text-[12px] text-label-title dark:text-label-title-dark"
-                          : "text-[12px] text-label-muted dark:text-label-muted-dark"
-                      }
-                    >
+                    <span className={showActive ? "text-[12px] text-label-title" : "text-[12px] text-label-muted"}>
                       {labelText}
                     </span>
                   </GroupButton.Segment>
@@ -140,11 +134,7 @@ export function ChatHistoryPage() {
                       leftDivider
                       ariaLabel="Rename"
                       onClick={() => setIsRenameOpen(true)}
-                      className={
-                        showActive
-                          ? "text-label-title dark:text-label-title-dark"
-                          : "text-label-muted dark:text-label-muted-dark"
-                      }
+                      className={showActive ? "text-label-title" : "text-label-muted"}
                     >
                       <RenameIcon className="w-4 h-4" />
                     </GroupButton.Segment>
@@ -155,11 +145,7 @@ export function ChatHistoryPage() {
                     ariaLabel="Delete"
                     onClick={() => setIsConfirmOpen(true)}
                     disabled={selectedIds.length === 0}
-                    className={
-                      showActive
-                        ? "text-label-title dark:text-label-title-dark"
-                        : "text-label-muted dark:text-label-muted-dark"
-                    }
+                    className={showActive ? "text-label-title" : "text-label-muted"}
                   >
                     <TrashIcon className="w-4 h-4" />
                   </GroupButton.Segment>
@@ -168,11 +154,7 @@ export function ChatHistoryPage() {
                     leftDivider
                     ariaLabel="Exit selection"
                     onClick={exitSelectionMode}
-                    className={
-                      showActive
-                        ? "text-label-title dark:text-label-title-dark"
-                        : "text-label-muted dark:text-label-muted-dark"
-                    }
+                    className={showActive ? "text-label-title" : "text-label-muted"}
                   >
                     <X className="w-4 h-4" />
                   </GroupButton.Segment>
@@ -181,7 +163,7 @@ export function ChatHistoryPage() {
                 <Button
                   kind="secondary"
                   size="sm"
-                  className="text-label-muted dark:text-label-muted-dark h-8 px-3 rounded-[8px] border border-cell-border dark:border-cell-border-dark text-sm leading-[150%]"
+                  className="text-label-muted h-8 px-3 rounded-[8px] border border-cell-border text-sm leading-[150%]"
                   onClick={() => setIsSelectionMode(true)}
                 >
                   Select
@@ -192,11 +174,11 @@ export function ChatHistoryPage() {
         </div>
       </div>
 
-      <div className="w-full lg:max-w-[808px] pl-2 overflow-auto mx-auto bg-bg dark:bg-bg-dark">
+      <div className="w-full lg:max-w-[808px] pl-2 overflow-auto mx-auto bg-background">
         <div className="px-5 lg:px-0 overflow-visible w-full">
           {filteredChats.length === 0 ? (
             <div className="text-center py-8">
-              <p className="text-label-muted dark:text-label-muted-dark">
+              <p className="text-label-muted">
                 {searchQuery ? "No chats found matching your search." : "No chats yet. Start a new conversation!"}
               </p>
             </div>

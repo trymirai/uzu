@@ -104,19 +104,17 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
         >
           <div className="flex items-center gap-3 flex-1 min-w-0 lg:flex-initial">
             <Plus
-              className={`w-5 h-5 shrink-0 text-label-muted dark:text-label-muted-dark transition-transform duration-200 ${isExpanded ? "rotate-45" : ""}`}
+              className={`w-5 h-5 shrink-0 text-label-muted transition-transform duration-200 ${isExpanded ? "rotate-45" : ""}`}
             />
             <div className="flex-1 min-w-0 lg:flex-initial">
-              <h3 className="text-sm font-[350] leading-[150%] text-label-title dark:text-label-title-dark">
-                Add instructions to all chats
-              </h3>
-              <span className="block text-[13px] font-[350] leading-[130%] text-label-muted dark:text-label-muted-dark lg:hidden">
+              <h3 className="text-sm font-[350] leading-[150%] text-label-title">Add instructions to all chats</h3>
+              <span className="block text-[13px] font-[350] leading-[130%] text-label-muted lg:hidden">
                 Tailor the way the model responds
               </span>
             </div>
           </div>
 
-          <span className="hidden lg:block text-[13px] font-[350] leading-[130%] text-label-muted dark:text-label-muted-dark text-right">
+          <span className="hidden lg:block text-[13px] font-[350] leading-[130%] text-label-muted text-right">
             Tailor the way the model responds
           </span>
         </button>
@@ -132,7 +130,7 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
             onChange={handleChange}
             onBlur={flushSave}
             placeholder="Add instructions to all chats"
-            className="w-full p-1 bg-bg-modal dark:bg-bg-modal-dark rounded-md text-sm leading-[150%] text-label-title dark:text-label-title-dark placeholder:text-label-muted dark:placeholder:text-label-muted-dark focus:outline-hidden focus:border-primary resize-none thin-scrollbar"
+            className="w-full p-1 bg-bg-modal rounded-md text-sm leading-[150%] text-label-title placeholder:text-label-muted focus:outline-hidden focus:border-primary resize-none thin-scrollbar"
             rows={7}
           />
         </div>

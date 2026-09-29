@@ -60,10 +60,10 @@ export default function PrivacyTab() {
         <div className="flex flex-col gap-4 px-5 lg:max-w-[800px] mx-auto w-full">
           <Shield className="w-6 h-6 text-blue" />
           <div className="flex flex-col gap-1">
-            <h3 className="text-[18px] font-medium leading-[130%] tracking-[0.2px] text-label-title dark:text-label-title-dark break-words">
+            <h3 className="text-[18px] font-medium leading-[130%] tracking-[0.2px] text-label-title break-words">
               All data is processed and stored locally on your device.
             </h3>
-            <p className="text-[13px] font-[350] leading-[150%] text-label-muted dark:text-label-muted-dark">
+            <p className="text-[13px] font-[350] leading-[150%] text-label-muted">
               Your privacy is built into the core of how Mirai runs.
             </p>
           </div>
@@ -79,13 +79,11 @@ export default function PrivacyTab() {
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="lg:max-w-[800px] mx-auto w-full hover:bg-bg-sub hover:dark:bg-bg-sub-dark flex items-center justify-between px-5 py-5"
+                className="lg:max-w-[800px] mx-auto w-full hover:bg-bg-sub flex items-center justify-between px-5 py-5"
               >
-                <h4 className="text-[15px] font-[350] leading-[150%] text-label-title dark:text-label-title-dark">
-                  {link.title}
-                </h4>
+                <h4 className="text-[15px] font-[350] leading-[150%] text-label-title">{link.title}</h4>
 
-                <ChevronRight className="w-[14px] h-[14px] text-label-muted dark:text-label-muted-dark" />
+                <ChevronRight className="w-[14px] h-[14px] text-label-muted" />
               </a>
               {index < links.length - 1 && <SettingDivider />}
             </div>
