@@ -11,7 +11,7 @@ use uzu::{
     types::{
         basic::SamplingMethod,
         model::ModelAccessibility,
-        session::chat::{ChatConfig, ChatReplyConfig, ChatReplyEnergy},
+        session::chat::{ChatConfig, ChatReplyConfig, ChatReplyEnergy, ChatReplySpeculatorStats},
     },
 };
 use uzu_engine::{VERSION, data_type::DataType};
@@ -104,6 +104,8 @@ impl BenchRunner {
                 text = replies.last().unwrap().message.text();
             }
             let generate_tokens_per_second = mean(&generate_tokens_per_second);
+            let speculator_stats =
+                aggregate_speculator_stats(replies.iter().filter_map(|reply| reply.stats.speculator_stats.as_ref()));
 
             let input_energy = aggregate_energy(replies.iter().filter_map(|reply| reply.stats.input_energy.as_ref()));
             let output_energy = aggregate_energy(replies.iter().filter_map(|reply| reply.stats.output_energy.as_ref()));
@@ -125,6 +127,7 @@ impl BenchRunner {
                 time_to_first_token,
                 prompt_tokens_per_second,
                 generate_tokens_per_second,
+                speculator_stats,
                 input_energy,
                 output_energy,
                 joules_per_token,
@@ -197,4 +200,19 @@ impl BenchRunner {
 
 fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ChatReplyEnergy>) -> Option<ChatReplyEnergy> {
     energy.into_iter().cloned().reduce(|total, energy| total + energy)
+}
+
+fn aggregate_speculator_stats<'a>(
+    stats: impl IntoIterator<Item = &'a ChatReplySpeculatorStats>
+) -> Option<ChatReplySpeculatorStats> {
+    let (tokens, forward_passes) = stats.into_iter().fold((0.0, 0_u32), |(tokens, forward_passes), stats| {
+        (
+            tokens + stats.tokens_per_forward_pass * f64::from(stats.num_decode_forward_passes),
+            forward_passes + stats.num_decode_forward_passes,
+        )
+    });
+    (forward_passes > 0).then(|| ChatReplySpeculatorStats {
+        tokens_per_forward_pass: tokens / f64::from(forward_passes),
+        num_decode_forward_passes: forward_passes,
+    })
 }

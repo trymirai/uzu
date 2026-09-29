@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, ensure};
 use rocket::serde::{Deserialize, Serialize};
-use uzu::types::session::chat::{ChatMessage, ChatReplyEnergy};
+use uzu::types::session::chat::{ChatMessage, ChatReplyEnergy, ChatReplySpeculatorStats};
 use uzu_engine::data_type::DataType;
 
 use crate::server::{
@@ -87,6 +87,7 @@ pub struct BenchResult {
     pub time_to_first_token: f64,
     pub prompt_tokens_per_second: f64,
     pub generate_tokens_per_second: Option<f64>,
+    pub speculator_stats: Option<ChatReplySpeculatorStats>,
     pub input_energy: Option<ChatReplyEnergy>,
     pub output_energy: Option<ChatReplyEnergy>,
     pub joules_per_token: Option<f64>,
