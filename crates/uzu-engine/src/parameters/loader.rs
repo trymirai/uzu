@@ -210,10 +210,7 @@ impl<'loader, B: Backend> ParameterTree<'loader, B> {
     }
 
     pub fn root(&self) -> Self {
-        Self {
-            loader: self.loader,
-            prefix: None,
-        }
+        self.loader.tree()
     }
 
     /// Reads tensor `name` through `read` on first use; later calls for the same tensor share that allocation.

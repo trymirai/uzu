@@ -24,7 +24,7 @@ use crate::{
     parameters::ParameterTree,
 };
 
-pub(crate) const TRELLIS_STATES: usize = 1 << 16;
+const TRELLIS_STATES: usize = 1 << 16;
 const READOUT_GROUP_SIZE: u32 = 64;
 
 struct Part<B: Backend> {

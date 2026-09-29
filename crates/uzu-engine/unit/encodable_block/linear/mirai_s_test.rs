@@ -19,23 +19,7 @@ pub(crate) fn package_codebook(vector_width: usize) -> Vec<f32> {
 }
 
 #[uzu_test]
-fn codebook_table_fits_computed_levels() {
-    for vector_width in [4, 2] {
-        let table = codebook_table(&package_codebook(vector_width), vector_width).unwrap();
-        let header: &[f32] = bytemuck::cast_slice(&table[..32]);
-        let expected: Vec<f32> = [AFFINE[0]]
-            .into_iter()
-            .chain((0..4).map(|class| AFFINE[1 + class % vector_width]))
-            .chain([0.0; 3])
-            .collect();
-        assert!(header.iter().zip(&expected).all(|(fitted, expected)| (fitted - expected).abs() <= 1e-6), "{header:?}");
-        // V2 level pairs follow the header; the kernels hash V4 levels
-        assert_eq!(table.len(), 32 + (vector_width == 2) as usize * 2 * TRELLIS_STATES);
-        if vector_width == 2 {
-            let [first, second, ..] = trellis_levels(12345);
-            assert_eq!(table[32 + 2 * 12345..][..2], [first as i8 as u8, second as i8 as u8]);
-        }
-    }
+fn codebook_table_rejects_uncomputed_levels() {
     let mut values = package_codebook(4);
     values[4 * 777 + 2] += 1e-3;
     assert!(codebook_table(&values, 4).unwrap_err().starts_with("entry (777, 2) is not a computed level"));

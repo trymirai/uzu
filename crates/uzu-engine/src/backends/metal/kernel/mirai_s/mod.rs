@@ -92,10 +92,7 @@ impl MiraiSProjection for MetalMiraiSProjection {
             wide_64: MiraiSProjectionMetalKernel::new(context, 64, vector_width, transition_bits)?,
             narrow_2: MiraiSNarrowProjectionMetalKernel::new(context, 2, vector_width, transition_bits)?,
             narrow_4: MiraiSNarrowProjectionMetalKernel::new(context, 4, vector_width, transition_bits)?,
-            busy_simdgroups: match vector_width {
-                4 => 512,
-                _ => 256,
-            },
+            busy_simdgroups: 128 * vector_width,
         }))
     }
 
