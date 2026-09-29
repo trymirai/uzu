@@ -23,11 +23,6 @@ pnpm web:dev  # frontend in a browser without the engine: no models, no chats
 `pnpm check` runs typecheck, ESLint, client tests, clippy and Rust tests;
 `pnpm format` runs Prettier.
 
-## Configuration
-
-Optional. `API_KEY` in `.env` next to this README authenticates the model
-registry; without it the registry is used anonymously. See `.env.example`.
-
 ## Layout
 
 ```text

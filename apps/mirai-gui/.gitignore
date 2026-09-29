@@ -12,9 +12,6 @@ src-tauri/resources/cli/
 __pycache__/
 *.pyc
 
-# Environment files
-.env
-
 # Editors
 .vscode/
 .idea/
