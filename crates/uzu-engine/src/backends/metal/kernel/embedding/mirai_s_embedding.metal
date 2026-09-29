@@ -5,8 +5,8 @@
 using namespace metal;
 
 // Mirai S input embedding (`D4S4Spec`): column c of a row is row_scale * ladder[index] * table[code[c / 4]][c % 4]
-// with one 4-bit ladder index per 64 columns (low nibble first), times input_scale, rounded to bf16, then the
-// 32-wide output Hadamard with the factors.
+// with one 4-bit ladder index per 64 columns (low nibble first), times input_scale, then the 32-wide output
+// Hadamard with the factors, rounded to bf16 once at the end.
 PUBLIC KERNEL(MiraiSEmbeddingLookup)(
     const device uint* token_ids,
     const device uchar* codes,
@@ -32,9 +32,9 @@ PUBLIC KERNEL(MiraiSEmbeddingLookup)(
   const uint ladder_index = (ladder_indices[token * (model_dim / 128) + group / 2] >> (4 * (group % 2))) & 15;
   const char4 point = table[codes[token * (model_dim / 4) + column / 4]];
   const float value = float(row_scales[token]) * float(ladder[ladder_index]) * float(point[column % 4]) * input_scale;
-  output[batch_index * model_dim + column] = simdgroup_output_random_hadamard_transform(
+  output[batch_index * model_dim + column] = bfloat(simdgroup_output_random_hadamard_transform(
       ushort(column % METAL_SIMD_SIZE),
-      bfloat(value),
+      value,
       output_hadamard_factors[column]
-  );
+  ));
 }

@@ -40,8 +40,7 @@ pub fn mirai_s_embedding_lookup(
                         (*ladder_indices.add(token * (model_dim / 128) + group / 2) >> (4 * (group % 2))) & 15;
                     let code = *codes.add(token * (model_dim / 4) + column / 4) as usize;
                     let point = *table.add(4 * code + column % 4);
-                    let value = row_scale * (*ladder.add(ladder_index as usize)).to_f32() * point as f32 * input_scale;
-                    bf16::from_f32(value).to_f32()
+                    row_scale * (*ladder.add(ladder_index as usize)).to_f32() * point as f32 * input_scale
                 });
                 hadamard_transform(&mut block);
                 for (lane, value) in block.into_iter().enumerate() {
