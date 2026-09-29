@@ -1,15 +1,14 @@
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
-import { useRuntimeSessionStore } from "@/stores/use-runtime-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import type { Message } from "@/types/message";
-import {
-  getRunMetrics,
-  withParsedOutput,
-  type LlmAsyncStream,
-  type LlmRunParams,
-  type ParsedPatch,
-  type SessionOutputFinishReason,
-  type SessionOutputStats,
+import { withParsedOutput } from "@/stores/chat/message-patches";
+import { getRunMetrics } from "../services/run-metrics";
+import type {
+  LlmAsyncStream,
+  LlmRunParams,
+  ParsedPatch,
+  SessionOutputFinishReason,
+  SessionOutputStats,
 } from "@/types/llm-stream";
 import { useCallback, useRef, useState } from "react";
 import { createRevealLoop } from "../services/reveal-loop";
@@ -124,7 +123,6 @@ export const useLlmStream = (chatId: string) => {
     async (options: StartStreamOptions) => {
       const { messageId, chatId, repoId } = options;
       const session = useChatSessionStore.getState();
-      const residentSession = useRuntimeSessionStore.getState().residentSession;
 
       if (!session.canRun({ repoId })) {
         options.onError(messageId, "Error: Model is busy");
@@ -133,10 +131,6 @@ export const useLlmStream = (chatId: string) => {
 
       return session.withOperation("running", async () => {
         await releaseCurrentRun();
-
-        if (residentSession && residentSession.repoId !== repoId) {
-          await useChatStore.getState().ejectChatSession(residentSession.repoId);
-        }
 
         session.setGenerating(true);
         session.setActiveGenerating(chatId, messageId);

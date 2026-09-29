@@ -6,7 +6,7 @@ pub(super) fn staging_path(version: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("{STAGING_PREFIX}{version}-{pid}.tar.gz"))
 }
 
-// Age gate so a peer's in-flight file survives; only crash-orphans get swept.
+// A younger file may be a peer's download in flight; only age tells them apart.
 const STAGING_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 pub(super) fn clean_stale_staging() {

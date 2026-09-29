@@ -2,7 +2,6 @@ import { useIsMobile } from "@/hooks/use-media-query";
 import { platformInfo } from "@/platform/platform-info";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useSidebarStore } from "@/stores/use-sidebar-store";
-import { isMacPlatform } from "@/utils/platform";
 import { Transition } from "@headlessui/react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
@@ -80,7 +79,7 @@ function LeftBar() {
       onClick={toggleSidebar}
       className={twMerge(
         "overlay-button p-1 rounded-lg hover:bg-bg-hover transition-all duration-300 ease-in-out absolute top-[10px]",
-        isMobile && isMacPlatform() && platformInfo.features.nativeTitleBar
+        isMobile && platformInfo.features.nativeTitleBar
           ? "left-20 translate-x-0"
           : isMobile
             ? "left-4 translate-x-0"

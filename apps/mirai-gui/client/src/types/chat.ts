@@ -7,6 +7,3 @@ export const Roles = {
 } as const;
 
 export type NonSystemRole = Exclude<ChatRole, "system">;
-
-export const UNTITLED_CHAT_TITLE = "Untitled";
-export const DEFAULT_CHAT_TITLE = "General Chat";

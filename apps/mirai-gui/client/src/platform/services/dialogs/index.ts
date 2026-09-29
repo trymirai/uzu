@@ -6,15 +6,8 @@ export type SaveDialogOptions = {
   filters?: FileDialogFilter[];
 };
 
-export type OpenDialogOptions = {
-  title?: string;
-  filters?: FileDialogFilter[];
-};
-
 export type DialogsService = {
-  /** Resolves to the chosen absolute path, or null when cancelled/unsupported. */
+  /** Resolves to the chosen absolute path; null when cancelled, unsupported or failed. */
   showSaveDialog(options: SaveDialogOptions): Promise<string | null>;
-  /** Resolves to the chosen absolute path, or null when cancelled/unsupported. */
-  showOpenDialog(options: OpenDialogOptions): Promise<string | null>;
   readTextFile(absolutePath: string): Promise<string | null>;
 };

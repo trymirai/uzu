@@ -2,8 +2,7 @@ import { format } from "date-fns";
 import type { Message, MessageVersion as StoreMessageVersion, PerfStats } from "@/types/message";
 import type { ChatData } from "..";
 
-const sanitize = (text: string): string =>
-  typeof text === "string" ? text.replace(/\uFFFD/g, "") : (text as unknown as string);
+const sanitize = (text: string): string => text.replace(/\uFFFD/g, "");
 
 const formatPerfToMarkdown = (perf?: PerfStats): string[] => {
   if (!perf) return [];

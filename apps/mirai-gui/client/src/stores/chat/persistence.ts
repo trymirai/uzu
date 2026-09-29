@@ -1,7 +1,7 @@
 import { getPlatform } from "@/platform/platform-singleton";
 import { ChatNotFoundError } from "@/platform/services/storage";
 import type { ChatMetadata } from "@/platform/services/storage";
-import { UNTITLED_CHAT_TITLE } from "@/types/chat";
+import { UNTITLED_CHAT_TITLE } from "@/constants/chat";
 import type { Message, ParsedOutput } from "@/types/message";
 import { computeErrorPatch, computeFinalizedUpdates } from "./message-patches";
 import type { ChatStoreApi } from "./types";

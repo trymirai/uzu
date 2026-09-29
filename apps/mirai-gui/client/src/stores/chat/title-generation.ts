@@ -1,7 +1,8 @@
 import { getPlatform } from "@/platform/platform-singleton";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useModelsStore } from "@/stores/use-models-store";
-import { DEFAULT_CHAT_TITLE, Roles, UNTITLED_CHAT_TITLE } from "@/types/chat";
+import { DEFAULT_CHAT_TITLE, UNTITLED_CHAT_TITLE } from "@/constants/chat";
+import { Roles } from "@/types/chat";
 import type { ChatStoreApi } from "./types";
 
 // Past this length the model answered the message instead of titling it.

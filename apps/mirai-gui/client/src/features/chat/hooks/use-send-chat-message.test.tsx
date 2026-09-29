@@ -130,8 +130,8 @@ it("does not read another chat's history when the user navigates during persiste
   await waitFor(() => expect(finishPersist).toBeTypeOf("function"));
 
   useChatStore.getState().createNewChat(CHAT_B);
-  useChatStore.getState().addMessage({ sender: Roles.User, text: "private content of b" });
-  useChatStore.getState().addMessage({ sender: Roles.Assistant, text: "answer in b" });
+  useChatStore.getState().addMessageTo(CHAT_B, { sender: Roles.User, text: "private content of b" });
+  useChatStore.getState().addMessageTo(CHAT_B, { sender: Roles.Assistant, text: "answer in b" });
   await act(async () => {
     finishPersist();
     await sending;
@@ -205,8 +205,8 @@ it("keeps the Stop of one chat's title generation when another chat sends meanwh
 });
 
 it("keeps another chat's history out of a send that waited for a model eject", async () => {
-  useChatStore.getState().addMessage({ sender: Roles.User, text: "history A" });
-  const answerId = useChatStore.getState().addMessage({ sender: Roles.Assistant, text: "answer A" });
+  useChatStore.getState().addMessageTo(CHAT_A, { sender: Roles.User, text: "history A" });
+  const answerId = useChatStore.getState().addMessageTo(CHAT_A, { sender: Roles.Assistant, text: "answer A" }).id;
   await useChatStore.getState().persistMessage(CHAT_A, answerId);
   useRuntimeSessionStore.setState({ residentSession: { repoId: "old-model" } });
   const eject = deferred<void>();
@@ -219,8 +219,8 @@ it("keeps another chat's history out of a send that waited for a model eject", a
   await waitFor(() => expect(ejectSession).toHaveBeenCalled());
 
   useChatStore.getState().createNewChat(CHAT_B);
-  useChatStore.getState().addMessage({ sender: Roles.User, text: "private history B" });
-  useChatStore.getState().addMessage({ sender: Roles.Assistant, text: "private answer B" });
+  useChatStore.getState().addMessageTo(CHAT_B, { sender: Roles.User, text: "private history B" });
+  useChatStore.getState().addMessageTo(CHAT_B, { sender: Roles.Assistant, text: "private answer B" });
   await act(async () => {
     useRuntimeSessionStore.setState({ residentSession: null });
     eject.resolve();
@@ -248,7 +248,7 @@ it("keeps a failed save of one chat out of the chat opened meanwhile", async () 
   await waitFor(() => expect(useChatStore.getState().savedChats.map((c) => c.id)).toContain(CHAT_A));
 
   useChatStore.getState().createNewChat(CHAT_B);
-  useChatStore.getState().addMessage({ sender: Roles.User, text: "private history B" });
+  useChatStore.getState().addMessageTo(CHAT_B, { sender: Roles.User, text: "private history B" });
   await act(async () => {
     save.reject(new Error("disk full"));
     await sending;

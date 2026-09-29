@@ -53,7 +53,7 @@ it("does not recreate an existing chat when reading it fails", async () => {
     return undefined;
   });
   useChatStore.setState({ savedChats: [metadata] });
-  const id = useChatStore.getState().addMessage({ sender: Roles.User, text: "new message" });
+  const id = useChatStore.getState().addMessageTo(CHAT_A, { sender: Roles.User, text: "new message" }).id;
 
   await expect(useChatStore.getState().persistMessage(CHAT_A, id)).rejects.toThrow("read failed");
   expect(mocks.invoke.mock.calls.filter(([cmd]) => cmd === "chat_save_file")).toHaveLength(0);
@@ -61,7 +61,7 @@ it("does not recreate an existing chat when reading it fails", async () => {
 
 it("persists a generation error for a chat that is no longer open", async () => {
   const storage = mocks.storage as ReturnType<typeof inMemoryStorage>;
-  const id = useChatStore.getState().addMessage({ sender: Roles.Assistant, text: "" });
+  const id = useChatStore.getState().addMessageTo(CHAT_A, { sender: Roles.Assistant, text: "" }).id;
   storage.chats.set(CHAT_A, { metadata, messages: useChatStore.getState().messages });
   useChatStore.getState().createNewChat(CHAT_B);
 
@@ -76,7 +76,7 @@ it("persists a generation error for a chat that is no longer open", async () => 
 
 it("counts a failed final save so the user is warned", async () => {
   const storage = mocks.storage as ReturnType<typeof inMemoryStorage>;
-  const id = useChatStore.getState().addMessage({ sender: Roles.Assistant, text: "complete answer" });
+  const id = useChatStore.getState().addMessageTo(CHAT_A, { sender: Roles.Assistant, text: "complete answer" }).id;
   storage.updateStoredMessage.mockRejectedValue(new Error("disk full"));
 
   await useChatStore.getState().finalizeAssistantMessage(CHAT_A, id, "complete answer");

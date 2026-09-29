@@ -5,7 +5,7 @@ import { isChatGenerating } from "@/features/runtime/runtime-busy";
 import { patchActiveVersion } from "../services/regenerate-versions";
 
 // Replays the buffered streaming text into the in-memory message so a mid-stream
-// chat switch or reload keeps showing the partial output until finalize arrives.
+// chat switch or page remount keeps showing the partial output until finalize arrives.
 export const useActiveAssistantBuffer = (chatId: string): (() => void) => {
   const generatingHere = useChatSessionStore((s) => isChatGenerating(s, chatId));
   const activeAssistantMessageId = useChatSessionStore((s) => s.activeAssistantMessageId);

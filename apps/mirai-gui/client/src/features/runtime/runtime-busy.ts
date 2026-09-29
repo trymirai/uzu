@@ -12,7 +12,7 @@ type GenerationFields = {
 };
 
 // operationState is set as soon as a run operation starts, before isGenerating:
-// the previous run is released and a resident model may be ejected in between.
+// the previous run is released in between.
 const selectRuntimeBusy = (state: BusyFields): boolean =>
   state.isGenerating ||
   state.isTitleGenerating ||

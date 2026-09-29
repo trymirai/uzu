@@ -28,6 +28,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @utility thin-scrollbar {
+  scrollbar-width: thin;
   &::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -158,7 +159,6 @@
     @apply bg-transparent;
   }
 
-  /* Light thumbs use the button border, dark ones the cell border. */
   [data-streamdown="code-block-body"]::-webkit-scrollbar-thumb {
     @apply bg-button-border rounded-full;
   }
@@ -179,26 +179,6 @@
   }
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
-  }
-
-  .thin-scrollbar {
-    scrollbar-width: thin;
-  }
-
-  .thin-scrollbar::-webkit-scrollbar {
-    @apply w-1.5 h-1.5;
-  }
-
-  .thin-scrollbar::-webkit-scrollbar-track {
-    @apply bg-transparent;
-  }
-
-  .thin-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-button-border rounded-full;
-  }
-
-  .dark .thin-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-cell-border;
   }
 
   .drag-layer {

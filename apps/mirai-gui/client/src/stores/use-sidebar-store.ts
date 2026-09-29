@@ -5,7 +5,6 @@ type SidebarState = {
   isOpen: boolean;
   isMobile: boolean;
   toggle: () => void;
-  setOpen: (isOpen: boolean) => void;
   setMobile: (isMobile: boolean) => void;
   closeOnMobile: () => void;
 };
@@ -16,7 +15,6 @@ export const useSidebarStore = create<SidebarState>()(
       isOpen: true,
       isMobile: false,
       toggle: () => set((state) => ({ isOpen: !state.isOpen })),
-      setOpen: (isOpen: boolean) => set({ isOpen }),
       setMobile: (isMobile: boolean) => {
         const currentState = get();
         const wasMobile = currentState.isMobile;

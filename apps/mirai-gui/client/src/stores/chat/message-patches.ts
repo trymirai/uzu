@@ -1,5 +1,19 @@
 import type { Message, MessageVersion, ParsedOutput } from "@/types/message";
-import { withParsedOutput } from "@/types/llm-stream";
+import type { OutputShape, ParsedPatch } from "@/types/llm-stream";
+
+export function withParsedOutput(output: OutputShape | undefined, patch: ParsedPatch): OutputShape {
+  return {
+    ...(output || {}),
+    text: {
+      ...(output?.text || {}),
+      parsed: {
+        ...(output?.text?.parsed || {}),
+        ...(patch.chainOfThought !== undefined ? { chainOfThought: patch.chainOfThought } : {}),
+        ...(patch.response !== undefined ? { response: patch.response } : {}),
+      },
+    },
+  };
+}
 
 const mergeParsedIntoOutput = (
   output: Message["output"] | undefined,

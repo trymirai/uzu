@@ -1,6 +1,5 @@
 import { useChatSessionStore } from "./use-chat-session-store";
 import { defaultReasoningEffort, useModelParamsStore } from "./use-model-params-store";
-import { Roles } from "@/types/chat";
 import type { Message, PerfStats } from "@/types/message";
 import type { ChatMetadata } from "@/platform/services/storage";
 import { v4 as uuidv4 } from "uuid";
@@ -25,7 +24,6 @@ export type ChatState = {
 
   setChatModel: (chatId: string, modelId: string, modelName: string) => void;
 
-  addMessage: (message: Omit<Message, "id" | "timestamp">) => string;
   // For a run that may outlive the page: the message enters the view only
   // while that chat is open, the caller persists it by value.
   addMessageTo: (chatId: string, message: Omit<Message, "id" | "timestamp">) => Message;
@@ -70,7 +68,6 @@ export type ChatState = {
   suppressAutoSelect: (chatId: string, value: boolean) => void;
 
   runChatStream: (params: LlmRunParams) => LlmAsyncStream;
-  ejectChatSession: (repoId: string) => Promise<void>;
 };
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -96,28 +93,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const message: Message = { ...messageData, id: uuidv4(), timestamp: Date.now() };
     if (get().currentChatId === chatId) set((state) => ({ messages: [...state.messages, message] }));
     return message;
-  },
-
-  addMessage: (messageData) => {
-    const message: Message = {
-      ...messageData,
-      id: uuidv4(),
-      timestamp: Date.now(),
-    };
-
-    set((state) => ({
-      messages: [...state.messages, message],
-    }));
-
-    if (message.sender === Roles.Assistant) {
-      const { currentChatId } = get();
-      if (!currentChatId) {
-        const newChatId = uuidv4();
-        set({ currentChatId: newChatId });
-      }
-    }
-
-    return message.id;
   },
 
   updateMessage: (id: string, updates: Partial<Message>) => {
@@ -326,14 +301,5 @@ export const useChatStore = create<ChatState>((set, get) => ({
       samplingPolicy: modelParams.sampling,
       reasoningEffort: modelParams.reasoningEffort ?? defaultReasoningEffort(globalReasoningEnabled),
     });
-  },
-
-  // Model swap right before a stream: ejectRuntimeSessionAndWait refuses while
-  // a generation is in flight, and a failed eject surfaces from the model load
-  // that follows.
-  ejectChatSession: async (repoId: string) => {
-    await getPlatform()
-      .session.ejectSession({ repoId })
-      .catch(() => undefined);
   },
 }));

@@ -26,38 +26,8 @@ export type SessionOutputStats = {
   };
 };
 
-export type RunMetrics = {
-  ttftSec?: number;
-  totalSec?: number;
-  tps?: number;
-  tokensOut: number;
-};
-
-export function getRunMetrics(stats: SessionOutputStats): RunMetrics {
-  return {
-    ttftSec: stats.prefillStats.duration,
-    totalSec: stats.totalStats.duration,
-    tps: stats.generateStats?.tokensPerSecond,
-    tokensOut: stats.totalStats.tokensCountOutput,
-  };
-}
-
 export type ParsedPatch = { response?: string; chainOfThought?: string };
 export type OutputShape = { text?: { parsed?: ParsedPatch; raw?: string } };
-
-export function withParsedOutput(output: OutputShape | undefined, patch: ParsedPatch): OutputShape {
-  return {
-    ...(output || {}),
-    text: {
-      ...(output?.text || {}),
-      parsed: {
-        ...(output?.text?.parsed || {}),
-        ...(patch.chainOfThought !== undefined ? { chainOfThought: patch.chainOfThought } : {}),
-        ...(patch.response !== undefined ? { response: patch.response } : {}),
-      },
-    },
-  };
-}
 
 export type SessionOutputFinishReason =
   | "Stop"

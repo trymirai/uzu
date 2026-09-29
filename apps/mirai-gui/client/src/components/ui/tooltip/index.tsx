@@ -54,7 +54,7 @@ export function Tooltip(props: TooltipProps) {
   const context = useContext(TooltipContext);
   if (!context) {
     // The bubble lives in the provider, so without one the trigger renders bare and
-    // the tip silently disappears. Warn instead of failing quietly on reuse.
+    // the tip silently disappears.
     if (import.meta.env.DEV) {
       console.warn("Tooltip rendered without a TooltipProvider; the tooltip will not appear.");
     }

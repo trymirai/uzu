@@ -1,7 +1,7 @@
 import { Modal } from "@/components/ui/modal";
 import { TextField } from "@/components/ui/text-field";
 import { useEffect, useRef, useState } from "react";
-import { CHAT_TITLE_MAX_LENGTH, CHAT_TITLE_MIN_LENGTH } from "../chat-title";
+import { CHAT_TITLE_MAX_LENGTH, CHAT_TITLE_MIN_LENGTH } from "@/constants/chat";
 
 type ChatRenameModalProps = {
   isOpen: boolean;

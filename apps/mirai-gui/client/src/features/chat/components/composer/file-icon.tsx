@@ -1,7 +1,6 @@
-import React from "react";
+import type { ComponentType } from "react";
 import { File, Table } from "lucide-react";
 
-import { getFileIcon } from "../../services/attachment-files";
 import { CodeIcon } from "@/components/icons/code-icon";
 
 type FileIconProps = {
@@ -9,17 +8,25 @@ type FileIconProps = {
   className?: string;
 };
 
-export const FileIcon: React.FC<FileIconProps> = ({ extension, className }) => {
-  const iconName = getFileIcon(extension);
+const ICON_BY_EXTENSION: Record<string, ComponentType<{ className?: string }>> = {
+  txt: File,
+  md: File,
+  json: CodeIcon,
+  csv: Table,
+  tsv: Table,
+  py: CodeIcon,
+  js: CodeIcon,
+  ts: CodeIcon,
+  tsx: CodeIcon,
+  jsx: CodeIcon,
+  html: CodeIcon,
+  css: CodeIcon,
+  xml: CodeIcon,
+  yaml: CodeIcon,
+  yml: CodeIcon,
+};
 
-  const iconMap = {
-    File: File,
-    FileText: File,
-    Code: CodeIcon,
-    Table: Table,
-  };
-
-  const IconComponent = iconMap[iconName as keyof typeof iconMap] || File;
-
+export const FileIcon = ({ extension, className }: FileIconProps) => {
+  const IconComponent = ICON_BY_EXTENSION[extension] ?? File;
   return <IconComponent className={className} />;
 };

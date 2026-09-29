@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearch } from "@tanstack/react-router";
 
 import { ChatHeader } from "./chat-header";
-import { UNTITLED_CHAT_TITLE } from "@/types/chat";
+import { UNTITLED_CHAT_TITLE } from "@/constants/chat";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { useRuntimeSessionStore } from "@/stores/use-runtime-session-store";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";

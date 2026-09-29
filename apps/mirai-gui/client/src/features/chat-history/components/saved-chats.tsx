@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { Edit3, MoreHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useChatStore } from "@/stores/use-chat-store";
-import { CHAT_TITLE_MAX_LENGTH, CHAT_TITLE_MIN_LENGTH } from "../chat-title";
+import { CHAT_TITLE_MAX_LENGTH, CHAT_TITLE_MIN_LENGTH } from "@/constants/chat";
 import { useShiftHeld } from "@/hooks/use-shift-held";
 import { ChatDeleteModal } from "@/features/chat-history/components/chat-delete-modal";
 import type { ChatMetadata } from "@/platform/services/storage";

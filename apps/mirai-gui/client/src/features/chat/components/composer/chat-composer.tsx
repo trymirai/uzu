@@ -3,7 +3,7 @@ import { useInstalledPickerModels } from "../../hooks/use-picker-models";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { isOtherChatGenerating } from "@/features/runtime/runtime-busy";
 import type { AttachedFile } from "@/types/files";
-import { MAX_FILES_PER_MESSAGE, SUPPORTED_FILE_TYPES } from "@/types/files";
+import { MAX_FILES_PER_MESSAGE, SUPPORTED_FILE_TYPES } from "@/constants/attachments";
 import { isValidFileSize, isValidFileType, processFile } from "../../services/attachment-files";
 import { Link } from "@tanstack/react-router";
 import { ChatInput } from "./chat-input";

@@ -20,7 +20,8 @@ type MarkdownRendererProps = {
 };
 
 // Safety mode opens links via window.open, which WKWebView drops; anchors go
-// through the platform's click interception instead.
+// through the platform's click interception instead. This also drops
+// Streamdown's own leave-site confirmation.
 const LINK_SAFETY = { enabled: false } as const;
 // The default placeholder href gets sanitized into "[blocked]" mid-stream.
 const REMEND = { linkMode: "text-only" } as const;

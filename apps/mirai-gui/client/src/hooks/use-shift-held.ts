@@ -11,7 +11,7 @@ const setShiftHeld = (value: boolean) => {
 
 if (typeof window !== "undefined") {
   window.addEventListener("keydown", (e) => setShiftHeld(e.shiftKey), true);
-  // e.shiftKey stays true while the sibling Shift of a double-hold is down.
+  // On a Shift keyup e.shiftKey can still read true; without the key check the flag sticks.
   window.addEventListener("keyup", (e) => setShiftHeld(e.shiftKey && e.key !== "Shift"), true);
   // Keyup never arrives if focus left the window while Shift was down.
   window.addEventListener("blur", () => setShiftHeld(false));

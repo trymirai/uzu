@@ -1,5 +1,5 @@
 import type { AttachedFile } from "@/types/files";
-import { SUPPORTED_FILE_TYPES, MAX_TOTAL_ATTACHMENTS_SIZE, MAX_SINGLE_FILE_SIZE } from "@/types/files";
+import { SUPPORTED_FILE_TYPES, MAX_TOTAL_ATTACHMENTS_SIZE, MAX_SINGLE_FILE_SIZE } from "@/constants/attachments";
 
 const generateFileId = (): string => {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -41,27 +41,3 @@ export const processFile = async (file: File): Promise<AttachedFile> => {
     extension,
   };
 };
-
-export const getFileIcon = (extension: string): string => {
-  const iconMap: Record<string, string> = {
-    txt: "FileText",
-    md: "FileText",
-    json: "Code",
-    csv: "Table",
-    tsv: "Table",
-    py: "Code",
-    js: "Code",
-    ts: "Code",
-    tsx: "Code",
-    jsx: "Code",
-    html: "Code",
-    css: "Code",
-    xml: "Code",
-    yaml: "Code",
-    yml: "Code",
-  };
-
-  return iconMap[extension] || "File";
-};
-
-export { SUPPORTED_FILE_TYPES, MAX_TOTAL_ATTACHMENTS_SIZE, MAX_SINGLE_FILE_SIZE };
