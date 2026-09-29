@@ -122,6 +122,7 @@ struct MxuMmaCore {
     const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
     const bool apply_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
+    const bool apply_rht = output_transform.contains(GemmDTransform::RHT);
 
     const device RightElementType* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
 
@@ -159,7 +160,7 @@ struct MxuMmaCore {
                   accumulator_tile.map([&](auto value) { return value + AccumulatorType(*(existing_data++)); });
                 }
 
-                if (apply_bias) {
+                if (apply_bias && !apply_rht) {
                   accumulator_tile.map_coords(thread_context.simd_lane_id, [&](short, short col, auto value) {
                     if constexpr (aligned_n.value) {
                       return value + AccumulatorType(bias_simdgroup[col]);
@@ -200,6 +201,8 @@ struct MxuMmaCore {
       apply_output_random_hadamard_transform(
           d_block,
           rht_factors + block_col,
+          output_bias + block_col,
+          apply_bias,
           tile_block_rows,
           tile_block_cols,
           params->leading_dimension_d,

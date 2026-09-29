@@ -56,6 +56,7 @@ impl ActivationQuantization {
 pub struct ActivationTransform<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationTransformKernel,
     in_place: bool,
+    has_bias: bool,
     quantization: Option<ActivationQuantization>,
 }
 
@@ -63,10 +64,12 @@ impl<B: Backend> ActivationTransform<B> {
     fn new(
         context: &B::Context,
         data_type: DataType,
+        bias_data_type: Option<DataType>,
         ops: ActivationTransformOp,
         in_place: bool,
         quantization: Option<ActivationQuantization>,
     ) -> Result<Self, B::Error> {
+        let has_bias = bias_data_type.is_some();
         let (codes_grouped_by_nibble, scale_group_size, sum_group_size) = match quantization {
             Some(q) => (q.code_layout.is_grouped_by_nibble(), q.scale_group_size, q.sum_group_size),
             None => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, None),
@@ -74,15 +77,18 @@ impl<B: Backend> ActivationTransform<B> {
         let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(
             context,
             data_type,
+            bias_data_type.unwrap_or(data_type),
             ops,
             codes_grouped_by_nibble,
             in_place,
             scale_group_size,
             sum_group_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE),
+            has_bias,
         )?;
         Ok(Self {
             kernel,
             in_place,
+            has_bias,
             quantization,
         })
     }
@@ -92,15 +98,16 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::InputRht, in_place, None)
+        Self::new(context, data_type, None, ActivationTransformOp::InputRht, in_place, None)
     }
 
     pub fn output_rht(
         context: &B::Context,
         data_type: DataType,
+        bias_data_type: Option<DataType>,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, ActivationTransformOp::OutputRht, in_place, None)
+        Self::new(context, data_type, bias_data_type, ActivationTransformOp::OutputRht, in_place, None)
     }
 
     pub fn quantize(
@@ -111,7 +118,7 @@ impl<B: Backend> ActivationTransform<B> {
         let op = quantization
             .sum_group_size()
             .map_or(ActivationTransformOp::Quantize, |_| ActivationTransformOp::QuantizeWithGroupSums);
-        Self::new(context, data_type, op, false, Some(quantization))
+        Self::new(context, data_type, None, op, false, Some(quantization))
     }
 
     pub fn scale_group_size(&self) -> u32 {
@@ -136,11 +143,12 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         encoder: &mut Encoder<B>,
     ) {
-        assert!(self.quantization.is_none() && !self.in_place);
+        assert!(self.quantization.is_none() && !self.in_place && !self.has_bias);
         assert_row_width(element_count);
         self.kernel.encode(
             Some(input),
             Some(output),
+            None::<&Allocation<B>>,
             None::<&mut Allocation<B>>,
             None::<&mut Allocation<B>>,
             None::<&mut Allocation<B>>,
@@ -155,15 +163,17 @@ impl<B: Backend> ActivationTransform<B> {
         &self,
         data: &mut Allocation<B>,
         rht_factors: &Allocation<B>,
+        bias: Option<&Allocation<B>>,
         batch_size: u32,
         element_count: u32,
         encoder: &mut Encoder<B>,
     ) {
-        assert!(self.quantization.is_none() && self.in_place);
+        assert!(self.quantization.is_none() && self.in_place && self.has_bias == bias.is_some());
         assert_row_width(element_count);
         self.kernel.encode(
             None::<&Allocation<B>>,
             Some(data),
+            bias,
             None::<&mut Allocation<B>>,
             None::<&mut Allocation<B>>,
             None::<&mut Allocation<B>>,
@@ -198,6 +208,7 @@ impl<B: Backend> ActivationTransform<B> {
         self.kernel.encode(
             Some(input),
             None::<&mut Allocation<B>>,
+            None::<&Allocation<B>>,
             Some(q_out),
             Some(scales_out),
             group_sums_out,

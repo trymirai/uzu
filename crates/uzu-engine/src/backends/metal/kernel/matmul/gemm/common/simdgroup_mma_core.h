@@ -151,7 +151,7 @@ struct SimdgroupMmaCore {
       if (needs_epilogue) {
         accumulator.apply_epilogue(d, params->leading_dimension_d, 1, epilogue);
       }
-      if (needs_bias) {
+      if (needs_bias && !needs_rht) {
         accumulator.apply_bias(bias_block);
       }
       accumulator.store_result(d, params->leading_dimension_d);
@@ -160,7 +160,7 @@ struct SimdgroupMmaCore {
         accumulator
             .apply_epilogue_safe(d, params->leading_dimension_d, 1, short2(tile_block_cols, tile_block_rows), epilogue);
       }
-      if (needs_bias) {
+      if (needs_bias && !needs_rht) {
         accumulator.apply_bias_safe(bias_block, short2(tile_block_cols, tile_block_rows));
       }
       accumulator.store_result_safe(d, params->leading_dimension_d, short2(tile_block_cols, tile_block_rows));
@@ -171,6 +171,8 @@ struct SimdgroupMmaCore {
       apply_output_random_hadamard_transform(
           d,
           rht_factors_block,
+          bias_block,
+          needs_bias,
           tile_block_rows,
           tile_block_cols,
           params->leading_dimension_d,

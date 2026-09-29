@@ -205,7 +205,7 @@ pub fn run_metal<T: ArrayElement + Float>(
 ) -> Vec<T> {
     run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
         if let Some(engine) = dispatch {
-            kernel.gemm.encode_with_engine(args, engine, encoder).expect("forced GEMM engine encode failed");
+            kernel.encode_with_gemm_engine(args, engine, encoder).expect("forced GEMM engine encode failed");
         } else {
             kernel.encode(args, encoder).expect("matmul encode failed");
         }

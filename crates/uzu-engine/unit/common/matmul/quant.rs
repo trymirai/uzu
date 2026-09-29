@@ -486,7 +486,7 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
     let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
     let args = quant_arguments(&mut buffers, input);
     if let Some(engine) = dispatch {
-        matmul.gemm.encode_with_engine(args, engine, &mut encoder).expect("forced GEMM engine encode failed");
+        matmul.encode_with_gemm_engine(args, engine, &mut encoder).expect("forced GEMM engine encode failed");
     } else {
         matmul.encode(args, &mut encoder).expect("matmul encode failed");
     }

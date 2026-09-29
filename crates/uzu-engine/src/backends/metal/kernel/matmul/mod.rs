@@ -13,10 +13,10 @@ use self::{
 use crate::{
     backends::{
         common::{
-            BufferArg, Encoder,
+            Allocation, BufferArg, Encoder,
             gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
             kernel::{
-                ActivationQuantization,
+                ActivationQuantization, ActivationTransform,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
                     ActivationFormat, Int8CodeLayout, MatmulArguments, MatmulError, MatmulKernel, MatmulShape,
@@ -32,6 +32,7 @@ use crate::{
 pub struct MatmulMetalKernel {
     gemv: GemvKernel,
     pub gemm: GemmKernel,
+    output_work: MatmulOutputWork,
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
@@ -40,6 +41,46 @@ pub struct MatmulMetalKernel {
 enum MatmulDispatch {
     Gemv(GemvSpecialization),
     Gemm(GemmPlan),
+}
+
+pub struct MatmulOutputWork {
+    output_rht: ActivationTransform<Metal>,
+    output_rht_with_bias: ActivationTransform<Metal>,
+}
+
+impl MatmulOutputWork {
+    fn new(
+        context: &MetalContext,
+        weights_data_type: DataType,
+        output_data_type: DataType,
+    ) -> Result<Self, MetalError> {
+        Ok(Self {
+            output_rht: ActivationTransform::output_rht(context, output_data_type, None, true)?,
+            output_rht_with_bias: ActivationTransform::output_rht(
+                context,
+                output_data_type,
+                Some(weights_data_type),
+                true,
+            )?,
+        })
+    }
+
+    fn apply(
+        &self,
+        output: &mut Allocation<Metal>,
+        factors: &Allocation<Metal>,
+        bias: Option<&Allocation<Metal>>,
+        m: u32,
+        n: u32,
+        encoder: &mut Encoder<Metal>,
+    ) {
+        let transform = if bias.is_some() {
+            &self.output_rht_with_bias
+        } else {
+            &self.output_rht
+        };
+        transform.encode_fp_in_place(output, factors, bias, m, n, encoder);
+    }
 }
 
 fn supports_integer_right_operand(shape: &MatmulShape) -> bool {
@@ -152,12 +193,14 @@ impl MatmulKernel for MatmulMetalKernel {
             }
         }
 
-        let gemm = GemmKernel::new(context, weights_data_type, input_data_type, output_data_type)?;
+        let output_work = MatmulOutputWork::new(context, weights_data_type, output_data_type)?;
+        let gemm = GemmKernel::new(weights_data_type, input_data_type, output_data_type);
         let gemv = GemvKernel::new(weights_data_type, input_data_type, output_data_type);
 
         Ok(Self {
             gemv,
             gemm,
+            output_work,
             weights_data_type,
             input_data_type,
             output_data_type,
@@ -226,7 +269,7 @@ impl MatmulKernel for MatmulMetalKernel {
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, encoder.context()) {
             MatmulDispatch::Gemv(gemv) => {
-                return self.gemv.encode(arguments, gemv, encoder).map_err(MetalError::from);
+                return self.gemv.encode(arguments, gemv, &self.output_work, encoder).map_err(MetalError::from);
             },
             MatmulDispatch::Gemm(plan) => plan,
         };
@@ -241,6 +284,20 @@ impl MatmulKernel for MatmulMetalKernel {
                 .into(),
             ));
         }
-        self.gemm.encode_plan(arguments, plan, encoder)
+        self.gemm.encode_plan(arguments, plan, &self.output_work, encoder)
+    }
+}
+
+#[cfg(test)]
+impl MatmulMetalKernel {
+    pub fn encode_with_gemm_engine<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+        &mut self,
+        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
+        engine: gemm::GemmEngine,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MetalError> {
+        let shape = MatmulShape::from_arguments(&arguments);
+        let plan = self.gemm.select_plan_for_engine(&shape, engine, encoder.context())?;
+        self.gemm.encode_plan(arguments, plan, &self.output_work, encoder)
     }
 }

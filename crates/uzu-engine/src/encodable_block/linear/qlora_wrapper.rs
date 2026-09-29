@@ -112,7 +112,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
                     input_factors,
                 )),
                 Some((
-                    ActivationTransform::output_rht(context, output_data_type, true)
+                    ActivationTransform::output_rht(context, output_data_type, None, true)
                         .map_err(QLoRALinearWrapperError::BackendError)?,
                     output_factors,
                 )),
@@ -242,7 +242,14 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         }
 
         if let Some((output_hadamard_kernel, output_factors)) = &self.output_hadamard {
-            output_hadamard_kernel.encode_fp_in_place(&mut output, output_factors, batch_dim, self.output_dim, encoder);
+            output_hadamard_kernel.encode_fp_in_place(
+                &mut output,
+                output_factors,
+                None,
+                batch_dim,
+                self.output_dim,
+                encoder,
+            );
         }
 
         encoder.pop_debug_group();

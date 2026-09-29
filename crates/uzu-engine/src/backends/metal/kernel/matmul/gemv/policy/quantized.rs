@@ -1,13 +1,10 @@
 use metal::MTLGPUFamily;
 
 use super::{DEFAULT_RESULTS_PER_SIMDGROUP, GemvTile};
-use crate::backends::{common::gpu_types::gemm::GemmDTransform, metal::context::LARGE_MIN_GPU_CORES};
+use crate::backends::metal::context::LARGE_MIN_GPU_CORES;
 
 const QUANT_N_BUCKET_MAXES: [u32; 6] = [512, 2048, 4096, 8192, 16384, 32768];
 const QUANT_K_BUCKET_MAXES: [u32; 3] = [512, 2048, 8192];
-const QUANT_RHT_TUNED_N_MIN_EXCLUSIVE: u32 = 2048;
-const QUANT_RHT_TUNED_N_MAX: u32 = 4096;
-const QUANT_RHT_TUNED_K_MIN: u32 = 2048;
 
 /// Lane-sliced tiles split each quantization group across reduction lanes.
 /// A lane stages 8 bytes: 16 W4 values or 8 W8 values.
@@ -60,22 +57,10 @@ fn lane_policy(
     k: u32,
     bits: u32,
     group: u32,
-    has_rht: bool,
 ) -> GemvTile {
     let is_large_gpu = gpu_core_count >= LARGE_MIN_GPU_CORES;
     if m != 1 || bits != 4 {
         return lane_default(bits, group);
-    }
-    if has_rht {
-        return if is_large_gpu
-            && n > QUANT_RHT_TUNED_N_MIN_EXCLUSIVE
-            && n <= QUANT_RHT_TUNED_N_MAX
-            && k >= QUANT_RHT_TUNED_K_MIN
-        {
-            lane_tile(4, 8, bits, group)
-        } else {
-            lane_default(bits, group)
-        };
     }
 
     let k_bucket = table_bucket_index(k, &QUANT_K_BUCKET_MAXES);
@@ -118,7 +103,6 @@ pub fn select(
     m: u32,
     n: u32,
     k: u32,
-    d_transform: GemmDTransform,
     bf16_io: bool,
 ) -> Option<GemvTile> {
     if !matches!(bits, 4 | 8) || !matches!(group, 16 | 32 | 64 | 128) || !(1..=8).contains(&m) {
@@ -130,18 +114,13 @@ pub fn select(
         return (m <= 4 && n >= tile.rows_per_lane()).then_some(tile);
     }
 
-    let has_rht = d_transform.contains(GemmDTransform::RHT);
     let tile = match m {
-        1..=4 => lane_policy(gpu_core_count, apple_gpu_family, m, n, k, bits, group, has_rht),
+        1..=4 => lane_policy(gpu_core_count, apple_gpu_family, m, n, k, bits, group),
         5..=8 if n <= 64 => lane_default(bits, group),
         _ => return None,
     };
-    let rows = tile.output_row_tile();
     // Input rows are tiled independently; partial tiles clamp loads and stores.
     if n < tile.rows_per_lane() {
-        return None;
-    }
-    if has_rht && (!rows.is_multiple_of(32) || !n.is_multiple_of(rows)) {
         return None;
     }
     Some(tile)

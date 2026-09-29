@@ -32,7 +32,9 @@ fn run<T: ArrayElement + Float + Debug, B: Backend>(
     let context = B::Context::new().expect("context");
     let kernel = match order {
         TransformOrder::Input => ActivationTransform::<B>::input_rht(context.as_ref(), T::data_type(), in_place),
-        TransformOrder::Output => ActivationTransform::<B>::output_rht(context.as_ref(), T::data_type(), in_place),
+        TransformOrder::Output => {
+            ActivationTransform::<B>::output_rht(context.as_ref(), T::data_type(), None, in_place)
+        },
     }
     .expect("activation transform");
 
@@ -42,7 +44,7 @@ fn run<T: ArrayElement + Float + Debug, B: Backend>(
     let batch_count = (data.len() / channel_count) as u32;
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
     if in_place {
-        kernel.encode_fp_in_place(&mut input, &factors, batch_count, channel_count as u32, &mut encoder);
+        kernel.encode_fp_in_place(&mut input, &factors, None, batch_count, channel_count as u32, &mut encoder);
     } else {
         kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut encoder);
     }
@@ -104,6 +106,40 @@ fn input_and_output_rht_f32() {
 #[uzu_test]
 fn input_and_output_rht_bf16() {
     check::<bf16>(0.1);
+}
+
+#[uzu_test]
+fn output_rht_fused_bias_matches_separate_mixed_dtype() {
+    for_each_backend!(|B| {
+        let context = <B as Backend>::Context::new().expect("context");
+        let channels = 2 * BLOCK_SIZE as usize;
+        let data: Vec<bf16> = (0..2 * channels).map(|i| bf16::from_f32((i as f32 * 0.17).sin() * 2.0)).collect();
+        let bias_data: Vec<f32> = (0..channels).map(|i| (i as f32 * 0.31).cos() * 0.03).collect();
+        let factors_data: Vec<i32> = (0..channels)
+            .map(|i| {
+                if i % 3 == 0 {
+                    -1
+                } else {
+                    1
+                }
+            })
+            .collect();
+        let expected: Vec<_> = run::<bf16, B>(&data, &factors_data, channels, TransformOrder::Output, true)
+            .into_iter()
+            .enumerate()
+            .map(|(i, value)| bf16::from_f32(value.to_f32() + bias_data[i % channels]))
+            .collect();
+        let mut fused = alloc_allocation_with_data::<B, bf16>(context.as_ref(), &data);
+        let bias = alloc_allocation_with_data::<B, f32>(context.as_ref(), &bias_data);
+        let factors = alloc_allocation_with_data::<B, i32>(context.as_ref(), &factors_data);
+
+        let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+        ActivationTransform::output_rht(context.as_ref(), bf16::data_type(), Some(f32::data_type()), true)
+            .expect("fused transform")
+            .encode_fp_in_place(&mut fused, &factors, Some(&bias), 2, channels as u32, &mut encoder);
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        assert_eq!(allocation_to_vec::<B, bf16>(&fused), expected);
+    });
 }
 
 mod quantize {

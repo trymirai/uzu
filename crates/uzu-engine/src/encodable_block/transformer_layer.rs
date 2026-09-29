@@ -132,7 +132,7 @@ impl<B: Backend> TransformerLayerConv<B> {
         let mut output =
             self.pre_conv.encode(input, &coefficients, 2 * self.coefficient_count, 0, sequence_length, encoder)?;
         if let Some((transform, factors)) = &self.input_rht {
-            transform.encode_fp_in_place(&mut output, factors, sequence_length, self.model_dim, encoder);
+            transform.encode_fp_in_place(&mut output, factors, None, sequence_length, self.model_dim, encoder);
         }
         Ok((output, coefficients))
     }
