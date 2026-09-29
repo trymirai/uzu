@@ -322,7 +322,7 @@ fn test_zero_point_group16_hadamard<T: ArrayElement + Float + Debug + Display>()
         .collect();
 
     let context = <Cpu as Backend>::Context::new().expect("Failed to create Context");
-    let output_rht = ActivationTransform::<Cpu>::output_rht(context.as_ref(), T::data_type(), false)
+    let output_rht = ActivationTransform::<Cpu>::output_rht(context.as_ref(), T::data_type(), None, false)
         .expect("Failed to create ActivationTransform");
     let plain_allocation = alloc_allocation_with_data::<Cpu, T>(&context, &plain);
     let hadamard_factors_allocation = alloc_allocation_with_data::<Cpu, i32>(&context, &hadamard_factors);

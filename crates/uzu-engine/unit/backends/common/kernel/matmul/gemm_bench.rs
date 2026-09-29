@@ -52,8 +52,7 @@ fn bench_gemm(c: &mut Criterion) {
             group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
                 iter_encode_loop::<Metal, _>(&context, b, |encoder| {
                     kernel
-                        .gemm
-                        .encode_with_engine(
+                        .encode_with_gemm_engine(
                             MatmulArguments {
                                 a: MatmulA::FullPrecision {
                                     values: &a,

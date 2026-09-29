@@ -98,7 +98,7 @@ impl<B: Backend> InputRht<B> {
         }
 
         let input_dim = self.input_dim();
-        self.rht.encode_fp_in_place(&mut input, &self.rht_signs, batch_dim, input_dim, encoder);
+        self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, encoder);
         Ok(LinearInput::FullPrecision(input))
     }
 

@@ -105,6 +105,26 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     use GemmEngine::*;
     use GemmTiling::*;
 
+    for (mut case, expect_split) in [(shape(4, 32, 1024), true), (shape(64, 128, 128), false)] {
+        case.d_transform = GemmDTransform::RHT | GemmDTransform::BIAS;
+        for engine in [Simdgroup, Mxu] {
+            let plan = problem(case, DataType::BF16)
+                .select_plan_for_engine(engine)
+                .expect("parity anchor supports the forced GEMM engine");
+            assert_eq!(plan.split_k > 1, expect_split, "forced {engine:?} RHT+bias parity anchor");
+        }
+    }
+
+    let mut non_split_quant_rht_bias = shape(9, 64, 64);
+    non_split_quant_rht_bias.b_prologue = GemmBPrologueKind::ScaleZeroPointDequant;
+    non_split_quant_rht_bias.b_bits = Some(4);
+    non_split_quant_rht_bias.b_group_size = Some(64);
+    non_split_quant_rht_bias.params_layout = Some(QuantParamsLayout::GroupOutput);
+    non_split_quant_rht_bias.d_transform = GemmDTransform::RHT | GemmDTransform::BIAS;
+    let plan = problem(non_split_quant_rht_bias, DataType::BF16).select_plan();
+    assert_eq!(plan.engine, Simdgroup);
+    assert_eq!(plan.split_k, 1);
+
     let mut invalid_layout = quant(shape(64, 4096, 4096));
     invalid_layout.b_transpose = false;
     assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Simdgroup);

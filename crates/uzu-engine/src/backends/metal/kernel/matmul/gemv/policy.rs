@@ -51,8 +51,6 @@ const fn tile(
     }
 }
 
-pub(super) const DEFAULT_TILE: GemvTile = tile(DEFAULT_NUM_SIMDGROUPS, 1, DEFAULT_RESULTS_PER_SIMDGROUP);
-
 impl GemvTile {
     pub const fn quantized(
         num_simdgroups: u32,
