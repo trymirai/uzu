@@ -4,10 +4,10 @@
 
 using namespace metal;
 
-// Mirai S input embedding (`D4S4Spec`): column c of a row is row_scale * ladder[index] * table[code[c / 4]][c % 4]
+// D4 lattice input embedding (`D4S4Spec`): column c of a row is row_scale * ladder[index] * table[code[c / 4]][c % 4]
 // with one 4-bit ladder index per 64 columns (low nibble first), times input_scale, then the 32-wide output
 // Hadamard with the factors, rounded to bf16 once at the end.
-PUBLIC KERNEL(MiraiSEmbeddingLookup)(
+PUBLIC KERNEL(D4EmbeddingLookup)(
     const device uint* token_ids,
     const device uchar* codes,
     const device bfloat* row_scales,

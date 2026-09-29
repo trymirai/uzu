@@ -23,14 +23,14 @@ static METAL_FUNC uint transposed_index(ushort lane, ushort simdgroup, uint i) {
   return 32 * (lane + 32 * (i % 2)) + simdgroup + 16 * (i / 2);
 }
 
-// Input rotation of a Mirai S linear, one threadgroup per token. Column k = h * ORDER + q:
+// Input rotation of a trellis linear, one threadgroup per token. Column k = h * ORDER + q:
 //   x * signs -> mixing[ORDER x ORDER] over q -> Walsh-Hadamard transform over h / sqrt(POWER) -> bf16 -> int8
 // with scale max|x| / 127. token_statistics[2 * token] sums the int8 values of the columns k = j (mod 4),
 // [2 * token + 1] is (scale, 0, 0, 0). The WHT runs strides 1..16 as lane shuffles, transposes through
 // threadgroup memory, then the rest the same way.
 template <uint DIMENSION>
 VARIANTS(DIMENSION, 5120, 6144, 17408)
-KERNEL(MiraiSTransform)(
+KERNEL(TrellisTransform)(
     device const bfloat* input,
     device const float* signs,
     device const float* mixing,
@@ -44,7 +44,7 @@ KERNEL(MiraiSTransform)(
     const uint thread_index THREADS(TRANSFORM_THREADS),
     const ThreadContext thread_context
 ) {
-  // ORDER is the odd part of DIMENSION (`mixing_order` in common/kernel/mirai_s.rs), POWER its lowest set bit
+  // ORDER is the odd part of DIMENSION (`mixing_order` in common/kernel/trellis.rs), POWER its lowest set bit
   constexpr uint POWER = DIMENSION & (0u - DIMENSION);
   constexpr uint ORDER = DIMENSION / POWER;
   constexpr uint PER_THREAD = POWER / TRANSFORM_THREADS;

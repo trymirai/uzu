@@ -4,7 +4,7 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::MiraiSEmbeddingLookupKernel},
+        common::{Backend, Context, Encoder, Kernels, kernel::D4EmbeddingLookupKernel},
         cpu::Cpu,
     },
     tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
@@ -26,7 +26,7 @@ fn lookup<B: Backend>(
     let table: Vec<i8> = (0..256 * 4).map(|_| rng.random_range(-4i8..=4)).collect();
     let factors: Vec<i32> = (0..MODEL_DIM).map(|_| [1, -1][rng.random_range(0..2)]).collect();
     let context = B::Context::new().unwrap();
-    let kernel = <B::Kernels as Kernels>::MiraiSEmbeddingLookupKernel::new(&context).unwrap();
+    let kernel = <B::Kernels as Kernels>::D4EmbeddingLookupKernel::new(&context).unwrap();
     let batch = token_ids.len() as u32;
     let mut output = alloc_allocation::<B, bf16>(&context, (batch * MODEL_DIM) as usize);
     let mut encoder = Encoder::new(context.as_ref()).unwrap();
@@ -51,7 +51,7 @@ fn lookup<B: Backend>(
 
 /// Every backend's lookup matches the CPU's to bf16 rounding, and a token past the vocabulary reads zeros.
 #[uzu_test]
-fn mirai_s_embedding_lookup_matches_cpu() {
+fn d4_embedding_lookup_matches_cpu() {
     let token_ids = [3u32, 0, 39, VOCAB_SIZE, 17];
     let cpu = lookup::<Cpu>(7, &token_ids);
     let dim = MODEL_DIM as usize;

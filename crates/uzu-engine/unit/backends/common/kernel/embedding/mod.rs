@@ -1,3 +1,3 @@
+mod d4_embedding_test;
 mod full_precision_embedding_test;
-mod mirai_s_embedding_test;
 mod quant_embedding_test;

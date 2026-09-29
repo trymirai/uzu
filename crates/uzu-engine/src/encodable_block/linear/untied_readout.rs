@@ -10,7 +10,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Gather, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht, mirai_s,
+        Gather, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht, trellis,
     },
     parameters::ParameterTree,
 };
@@ -30,7 +30,7 @@ impl<B: Backend> UntiedReadout<B> {
         data_type: DataType,
     ) -> Result<Self, LinearMatmulError<B>> {
         if let AnyWeightMatrixSpec::I3S4Spec(spec) = spec {
-            let (linear, rht_signs) = mirai_s::load_readout(context, tree, spec, vocab_size, model_dim, data_type)?;
+            let (linear, rht_signs) = trellis::load_readout(context, tree, spec, vocab_size, model_dim, data_type)?;
             return Self::with_input_rht(context, linear, rht_signs, data_type);
         }
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {

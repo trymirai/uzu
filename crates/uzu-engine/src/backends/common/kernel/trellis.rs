@@ -1,6 +1,6 @@
 use crate::backends::common::{Allocation, Backend, Encoder, Kernels, kernel::Unsupported};
 
-/// Trellis code layouts of Mirai S linear weights: V4 restarts its state every 64 columns, V2 runs one trellis over
+/// Trellis code layouts of `QtipGaussianSpec` weights: V4 restarts its state every 64 columns, V2 runs one trellis over
 /// the whole row.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TrellisCodec {
@@ -35,7 +35,7 @@ pub fn mixing_order(columns: u32) -> u32 {
     columns >> columns.trailing_zeros()
 }
 
-/// A linear's input after the Mirai S rotation, quantized to int8 per token.
+/// A linear's input after the trellis input rotation, quantized to int8 per token.
 pub struct RotatedInput<B: Backend> {
     /// i8 `[batch, columns]`, rows past `batch` padded up to the projection's token tile.
     pub activations: Allocation<B>,
@@ -45,10 +45,10 @@ pub struct RotatedInput<B: Backend> {
     pub columns: u32,
 }
 
-pub trait MiraiSTransform: Sized + Send + Sync {
-    type Backend: Backend<Kernels: Kernels<MiraiSTransform = Self>>;
+pub trait TrellisTransform: Sized + Send + Sync {
+    type Backend: Backend<Kernels: Kernels<TrellisTransform = Self>>;
 
-    /// `None` when the device cannot run Mirai S kernels or has no transform for `columns`.
+    /// `None` when the device cannot run trellis kernels or has no transform for `columns`.
     fn new(
         context: &<Self::Backend as Backend>::Context,
         columns: u32,
@@ -78,10 +78,10 @@ pub struct ProjectionArguments<'a, B: Backend> {
     pub output_stride: u32,
 }
 
-pub trait MiraiSProjection: Sized + Send + Sync {
-    type Backend: Backend<Kernels: Kernels<MiraiSProjection = Self>>;
+pub trait TrellisProjection: Sized + Send + Sync {
+    type Backend: Backend<Kernels: Kernels<TrellisProjection = Self>>;
 
-    /// `None` when the device cannot run Mirai S kernels.
+    /// `None` when the device cannot run trellis kernels.
     fn new(
         context: &<Self::Backend as Backend>::Context,
         codec: TrellisCodec,
@@ -94,7 +94,7 @@ pub trait MiraiSProjection: Sized + Send + Sync {
     );
 }
 
-impl<B: Backend<Kernels: Kernels<MiraiSTransform = Unsupported<B>>>> MiraiSTransform for Unsupported<B> {
+impl<B: Backend<Kernels: Kernels<TrellisTransform = Unsupported<B>>>> TrellisTransform for Unsupported<B> {
     type Backend = B;
 
     fn new(
@@ -116,7 +116,7 @@ impl<B: Backend<Kernels: Kernels<MiraiSTransform = Unsupported<B>>>> MiraiSTrans
     }
 }
 
-impl<B: Backend<Kernels: Kernels<MiraiSProjection = Unsupported<B>>>> MiraiSProjection for Unsupported<B> {
+impl<B: Backend<Kernels: Kernels<TrellisProjection = Unsupported<B>>>> TrellisProjection for Unsupported<B> {
     type Backend = B;
 
     fn new(

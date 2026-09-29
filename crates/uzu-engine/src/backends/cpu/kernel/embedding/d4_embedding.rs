@@ -7,8 +7,8 @@ use crate::backends::{
 
 const BLOCK_SIZE: usize = HADAMARD_TRANSFORM_BLOCK_SIZE as usize;
 
-#[kernel(MiraiSEmbeddingLookup)]
-pub fn mirai_s_embedding_lookup(
+#[kernel(D4EmbeddingLookup)]
+pub fn d4_embedding_lookup(
     token_ids: *const u32,
     codes: *const u8,
     row_scales: *const bf16,

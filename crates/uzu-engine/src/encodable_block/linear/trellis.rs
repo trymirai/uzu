@@ -7,7 +7,7 @@ use crate::{
         Allocation, Backend, Context, Encoder, Kernels,
         kernel::{
             matmul::{QuantParams, QuantParamsLayout},
-            mirai_s::{MiraiSProjection, MiraiSTransform, ProjectionArguments, TrellisCodec, mixing_order},
+            trellis::{ProjectionArguments, TrellisCodec, TrellisProjection, TrellisTransform, mixing_order},
         },
     },
     config::weight_matrix::{
@@ -28,7 +28,7 @@ const TRELLIS_STATES: usize = 1 << 16;
 const READOUT_GROUP_SIZE: u32 = 64;
 
 struct Part<B: Backend> {
-    projection: <B::Kernels as Kernels>::MiraiSProjection,
+    projection: <B::Kernels as Kernels>::TrellisProjection,
     codes: Allocation<B>,
     /// f32 `[rows]`: scales * gains * post gains.
     row_scales: Allocation<B>,
@@ -37,17 +37,17 @@ struct Part<B: Backend> {
     rows: u32,
 }
 
-/// Linear over Mirai S trellis weights: the input is rotated and quantized once, then every part writes
+/// Linear over trellis weights: the input is rotated and quantized once, then every part writes
 /// its rows of the output.
-pub struct MiraiSLinear<B: Backend> {
-    transform: <B::Kernels as Kernels>::MiraiSTransform,
+pub struct TrellisLinear<B: Backend> {
+    transform: <B::Kernels as Kernels>::TrellisTransform,
     signs: Arc<Allocation<B>>,
     mixing: Arc<Allocation<B>>,
     parts: Box<[Part<B>]>,
     output_dimension: u32,
 }
 
-impl<B: Backend> MiraiSLinear<B> {
+impl<B: Backend> TrellisLinear<B> {
     /// Loads a `QtipGaussianSpec` leaf or a `RowStackSpec` of them (`parts.<index>`); `qtip_shared` is at the root.
     pub fn load(
         context: &B::Context,
@@ -74,11 +74,11 @@ impl<B: Backend> MiraiSLinear<B> {
                 "row stack parts do not add up to {output_dimension} rows"
             )));
         }
-        let transform = <B::Kernels as Kernels>::MiraiSTransform::new(context, input_dimension)
+        let transform = <B::Kernels as Kernels>::TrellisTransform::new(context, input_dimension)
             .map_err(LinearMatmulError::BackendError)?
             .ok_or_else(|| {
                 LinearMatmulError::UnsupportedConfiguration(format!(
-                    "no Mirai S transform for {input_dimension} columns on this device"
+                    "no trellis transform for {input_dimension} columns on this device"
                 ))
             })?;
         let shared = tree.root().subtree("qtip_shared");
@@ -120,9 +120,9 @@ fn load_part<B: Backend>(
         (2, 4, 0) => TrellisCodec::V2T4,
         _ => return Err(LinearMatmulError::UnsupportedConfiguration(format!("{spec:?}"))),
     };
-    let projection = <B::Kernels as Kernels>::MiraiSProjection::new(context, codec)
+    let projection = <B::Kernels as Kernels>::TrellisProjection::new(context, codec)
         .map_err(LinearMatmulError::BackendError)?
-        .ok_or_else(|| LinearMatmulError::UnsupportedConfiguration("no Mirai S projection on this device".into()))?;
+        .ok_or_else(|| LinearMatmulError::UnsupportedConfiguration("no trellis projection on this device".into()))?;
     let mut codes = tree.leaf("codes")?.validate(&[rows, codec.row_bytes(columns)], DataType::U8)?.read_allocation()?;
     if codec != TrellisCodec::V4 {
         repack_msb_first(codes.as_slice_mut(), codec, columns);
@@ -230,7 +230,7 @@ fn repack_msb_first(
     }
 }
 
-/// The Mirai S readout (`I3S4Spec`) as a symmetric U4 matmul, with the factors of its 32-wide input Hadamard.
+/// The `I3S4Spec` readout as a symmetric U4 matmul, with the factors of its 32-wide input Hadamard.
 pub(super) fn load_readout<B: Backend>(
     context: &B::Context,
     tree: &ParameterTree<B>,
@@ -305,14 +305,14 @@ fn repack_readout(
     (u4_codes, scales)
 }
 
-impl<B: Backend> Linear<B> for MiraiSLinear<B> {
+impl<B: Backend> Linear<B> for TrellisLinear<B> {
     fn encode(
         &self,
         input: Allocation<B>,
         batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("mirai s linear");
+        encoder.push_debug_group("linear (trellis)");
         let rotated = self.transform.encode(&input, &self.signs, &self.mixing, batch_dim, encoder)?;
         let mut output = encoder.allocate_scratch_for_shape(&[batch_dim, self.output_dimension], DataType::BF16)?;
         let mut output_row_offset = 0;
@@ -338,5 +338,5 @@ impl<B: Backend> Linear<B> for MiraiSLinear<B> {
 }
 
 #[cfg(test)]
-#[path = "../../../unit/encodable_block/linear/mirai_s_test.rs"]
+#[path = "../../../unit/encodable_block/linear/trellis_test.rs"]
 pub(crate) mod tests;

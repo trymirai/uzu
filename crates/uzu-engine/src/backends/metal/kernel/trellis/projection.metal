@@ -98,7 +98,7 @@ static METAL_FUNC void decode_rows(
 // output[token][row] = (scale * sum_k level[row][k] * a[token][k] + offsets . class_sums[token])
 //                      * row_scales[row] * activation_scale[token]
 // for weights scale * level + offsets[k % 4] and the int8 activations a and token statistics
-// (class_sums, (activation_scale, 0, 0, 0)) of MiraiSTransform.
+// (class_sums, (activation_scale, 0, 0, 0)) of TrellisTransform.
 struct Epilogue {
   Codebook codebook;
   device const float4* token_statistics;
@@ -127,7 +127,7 @@ VARIANTS(TOKENS, 32, 64)
 VARIANTS(VECTOR_WIDTH, 2, 4)
 VARIANTS(TRANSITION_BITS, 4, 6, 8)
 CONSTRAINT((VECTOR_WIDTH == 4) == (TRANSITION_BITS == 8))
-KERNEL(MiraiSProjection)(
+KERNEL(TrellisProjection)(
     device const uchar* codes,
     device const int8_t* activations,
     device const float4* token_statistics,
@@ -216,7 +216,7 @@ VARIANTS(ROW_FRAGMENTS, 2, 4)
 VARIANTS(VECTOR_WIDTH, 2, 4)
 VARIANTS(TRANSITION_BITS, 4, 6, 8)
 CONSTRAINT((VECTOR_WIDTH == 4) == (TRANSITION_BITS == 8))
-KERNEL(MiraiSNarrowProjection)(
+KERNEL(TrellisNarrowProjection)(
     device const uchar* codes,
     device const int8_t* activations,
     device const float4* token_statistics,
@@ -296,7 +296,7 @@ VARIANTS(TOKENS, 1, 8)
 VARIANTS(VECTOR_WIDTH, 2, 4)
 VARIANTS(TRANSITION_BITS, 4, 6, 8)
 CONSTRAINT((VECTOR_WIDTH == 4) == (TRANSITION_BITS == 8))
-KERNEL(MiraiSSimdgroupProjection)(
+KERNEL(TrellisSimdgroupProjection)(
     device const uchar* codes,
     device const int8_t* activations,
     device const float4* token_statistics,

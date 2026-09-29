@@ -2,15 +2,15 @@ use thiserror::Error;
 
 mod input_rht;
 mod matmul;
-pub(crate) mod mirai_s;
 mod qlora_wrapper;
 mod rht_wrapper;
+pub(crate) mod trellis;
 mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
-pub use mirai_s::MiraiSLinear;
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
+pub use trellis::TrellisLinear;
 pub use untied_readout::UntiedReadout;
 
 use crate::{
@@ -140,7 +140,7 @@ impl<B: Backend> dyn Linear<B> {
             spec @ (AnyWeightMatrixSpec::QtipGaussianSpec(_) | AnyWeightMatrixSpec::RowStackSpec(_))
                 if !has_biases && input_data_type == DataType::BF16 && output_data_type == DataType::BF16 =>
             {
-                let linear = MiraiSLinear::load(context, spec, &weights_tree, input_dimension, output_dimension_sum)?;
+                let linear = TrellisLinear::load(context, spec, &weights_tree, input_dimension, output_dimension_sum)?;
                 Ok(Box::new(linear))
             },
             spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)

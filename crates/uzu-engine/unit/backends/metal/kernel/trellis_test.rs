@@ -5,8 +5,8 @@ use uzu_engine_macros::uzu_test;
 
 use super::*;
 use crate::{
-    backends::common::kernel::mirai_s::mixing_order,
-    encodable_block::linear::mirai_s::{
+    backends::common::kernel::trellis::mixing_order,
+    encodable_block::linear::trellis::{
         codebook_table,
         tests::{AFFINE, package_codebook},
         trellis_levels,
@@ -81,7 +81,7 @@ fn transform_reference(
 #[test_attr(uzu_test)]
 fn transform_matches_reference(#[values(5120, 6144, 17408)] columns: u32) {
     let context = shared_metal_context();
-    let transform = MetalMiraiSTransform::new(&context, columns).unwrap().unwrap();
+    let transform = MetalTrellisTransform::new(&context, columns).unwrap().unwrap();
     let mut rng = SmallRng::seed_from_u64(u64::from(columns));
     let order = mixing_order(columns);
     let signs: Vec<f32> = (0..columns).map(|_| [1.0, -1.0][rng.random_range(0..2)]).collect();
@@ -175,14 +175,14 @@ fn projection_matches_reference(
             ));
         };
     }
-    kernel!("simdgroup 1", MiraiSSimdgroupProjectionMetalKernel, 1);
-    kernel!("simdgroup 8", MiraiSSimdgroupProjectionMetalKernel, 8);
+    kernel!("simdgroup 1", TrellisSimdgroupProjectionMetalKernel, 1);
+    kernel!("simdgroup 8", TrellisSimdgroupProjectionMetalKernel, 8);
     // the MXU kernels need M5 or later
     if context.supports_mxu {
-        kernel!("wide 32", MiraiSProjectionMetalKernel, 32);
-        kernel!("wide 64", MiraiSProjectionMetalKernel, 64);
-        kernel!("narrow 2", MiraiSNarrowProjectionMetalKernel, 2);
-        kernel!("narrow 4", MiraiSNarrowProjectionMetalKernel, 4);
+        kernel!("wide 32", TrellisProjectionMetalKernel, 32);
+        kernel!("wide 64", TrellisProjectionMetalKernel, 64);
+        kernel!("narrow 2", TrellisNarrowProjectionMetalKernel, 2);
+        kernel!("narrow 4", TrellisNarrowProjectionMetalKernel, 4);
     }
     let bits = |allocation: &Allocation<Metal>| -> Vec<u16> {
         allocation_to_vec::<Metal, bf16>(allocation).into_iter().map(bf16::to_bits).collect()

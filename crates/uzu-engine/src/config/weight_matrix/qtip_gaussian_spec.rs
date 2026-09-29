@@ -8,7 +8,7 @@ pub enum PostGainAxis {
     Row,
 }
 
-/// Mirai S trellis leaf: codes decode through a 16-bit state trellis into a shared Gaussian codebook,
+/// Trellis leaf: codes decode through a 16-bit state trellis into a shared Gaussian codebook,
 /// scaled per row (`scales`, `gains`, then one `post_gains.<index>` tensor per axis).
 #[uzu_config(super::WeightMatrixSpec)]
 pub struct QtipGaussianSpec {

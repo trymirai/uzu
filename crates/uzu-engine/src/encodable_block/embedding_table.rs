@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        kernel::{FullPrecisionEmbeddingLookupKernel, MiraiSEmbeddingLookupKernel, QuantizedEmbeddingLookupKernel},
+        kernel::{D4EmbeddingLookupKernel, FullPrecisionEmbeddingLookupKernel, QuantizedEmbeddingLookupKernel},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
@@ -27,8 +27,8 @@ enum LookupKernel<B: Backend> {
     FullPrecision(<B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel),
     Quantized(<B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel),
     /// Lookup-only D4 lattice table (`D4S4Spec`).
-    MiraiS {
-        kernel: <B::Kernels as Kernels>::MiraiSEmbeddingLookupKernel,
+    D4 {
+        kernel: <B::Kernels as Kernels>::D4EmbeddingLookupKernel,
         codes: Allocation<B>,
         row_scales: Allocation<B>,
         ladder_indices: Allocation<B>,
@@ -39,7 +39,7 @@ enum LookupKernel<B: Backend> {
 }
 
 pub struct EmbeddingTable<B: Backend> {
-    /// `None` for the lookup-only Mirai S table.
+    /// `None` for the lookup-only D4 table.
     matrix: Option<WeightMatrix<B>>,
     lookup: LookupKernel<B>,
     output_hadamard_factors: Option<Allocation<B>>,
@@ -78,8 +78,8 @@ impl<B: Backend> EmbeddingTable<B> {
             let read = |name: &str, shape: &[u32], data_type: DataType| {
                 tree.leaf(name)?.validate(shape, data_type)?.read_allocation()
             };
-            let lookup = LookupKernel::MiraiS {
-                kernel: <B::Kernels as Kernels>::MiraiSEmbeddingLookupKernel::new(context)
+            let lookup = LookupKernel::D4 {
+                kernel: <B::Kernels as Kernels>::D4EmbeddingLookupKernel::new(context)
                     .map_err(EmbeddingTableError::BackendError)?,
                 codes: read("codes", &[vocab_size, embedding_dim / 4], DataType::U8)?,
                 row_scales: read("row_scales", &[vocab_size], DataType::BF16)?,
@@ -131,7 +131,7 @@ impl<B: Backend> EmbeddingTable<B> {
     }
 
     pub fn matrix(&self) -> &WeightMatrix<B> {
-        self.matrix.as_ref().expect("Mirai S embedding tables are lookup-only")
+        self.matrix.as_ref().expect("D4 embedding tables are lookup-only")
     }
 
     /// Gathers one row per token id into `output`, scaling by `scale`.
@@ -168,7 +168,7 @@ impl<B: Backend> EmbeddingTable<B> {
                 scale,
                 encoder,
             ),
-            LookupKernel::MiraiS {
+            LookupKernel::D4 {
                 kernel,
                 codes,
                 row_scales,

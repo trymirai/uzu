@@ -55,10 +55,10 @@ fn repack_windows_follow_the_trellis(
     }
 }
 
-/// The symmetric U4 repack of the Mirai S readout dequantizes to row_scale * ladder[index] * (2c - 7) for the
+/// The symmetric U4 repack of the `I3S4Spec` readout dequantizes to row_scale * ladder[index] * (2c - 7) for the
 /// 3-bit code c read LSB first, with the group scale rounded to bf16 and the padding rows zero.
 #[uzu_test]
-fn mirai_s_readout_repack_matches_reference() {
+fn i3_readout_repack_matches_reference() {
     let mut rng = SmallRng::seed_from_u64(5);
     let (rows, columns, padded_rows) = (6usize, 256usize, 8usize);
     let codes: Vec<u8> = (0..rows * columns * 3 / 8).map(|_| rng.random()).collect();

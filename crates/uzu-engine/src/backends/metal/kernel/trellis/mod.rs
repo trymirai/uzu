@@ -1,12 +1,12 @@
 use super::{
-    MiraiSNarrowProjectionMetalKernel, MiraiSProjectionMetalKernel, MiraiSSimdgroupProjectionMetalKernel,
-    MiraiSTransformMetalKernel,
+    TrellisNarrowProjectionMetalKernel, TrellisProjectionMetalKernel, TrellisSimdgroupProjectionMetalKernel,
+    TrellisTransformMetalKernel,
 };
 use crate::{
     backends::{
         common::{
             Allocation, Encoder,
-            kernel::mirai_s::{MiraiSProjection, MiraiSTransform, ProjectionArguments, RotatedInput, TrellisCodec},
+            kernel::trellis::{ProjectionArguments, RotatedInput, TrellisCodec, TrellisProjection, TrellisTransform},
         },
         metal::{Metal, MetalContext, error::MetalError},
     },
@@ -15,12 +15,12 @@ use crate::{
 
 const MAX_TOKEN_TILE: u32 = 64;
 
-pub struct MetalMiraiSTransform {
-    kernel: MiraiSTransformMetalKernel,
+pub struct MetalTrellisTransform {
+    kernel: TrellisTransformMetalKernel,
     columns: u32,
 }
 
-impl MiraiSTransform for MetalMiraiSTransform {
+impl TrellisTransform for MetalTrellisTransform {
     type Backend = Metal;
 
     fn new(
@@ -31,7 +31,7 @@ impl MiraiSTransform for MetalMiraiSTransform {
             return Ok(None);
         }
         Ok(Some(Self {
-            kernel: MiraiSTransformMetalKernel::new(context, columns)?,
+            kernel: TrellisTransformMetalKernel::new(context, columns)?,
             columns,
         }))
     }
@@ -59,21 +59,21 @@ impl MiraiSTransform for MetalMiraiSTransform {
 }
 
 /// The projection kernels of one codec: MXU int8 tensor ops on M5 and later, plain SIMDgroup arithmetic before.
-pub enum MetalMiraiSProjection {
+pub enum MetalTrellisProjection {
     Mxu {
-        wide_32: MiraiSProjectionMetalKernel,
-        wide_64: MiraiSProjectionMetalKernel,
-        narrow_2: MiraiSNarrowProjectionMetalKernel,
-        narrow_4: MiraiSNarrowProjectionMetalKernel,
+        wide_32: TrellisProjectionMetalKernel,
+        wide_64: TrellisProjectionMetalKernel,
+        narrow_2: TrellisNarrowProjectionMetalKernel,
+        narrow_4: TrellisNarrowProjectionMetalKernel,
         busy_simdgroups: u32,
     },
     Simdgroup {
-        tokens_1: MiraiSSimdgroupProjectionMetalKernel,
-        tokens_8: MiraiSSimdgroupProjectionMetalKernel,
+        tokens_1: TrellisSimdgroupProjectionMetalKernel,
+        tokens_8: TrellisSimdgroupProjectionMetalKernel,
     },
 }
 
-impl MiraiSProjection for MetalMiraiSProjection {
+impl TrellisProjection for MetalTrellisProjection {
     type Backend = Metal;
 
     fn new(
@@ -83,15 +83,15 @@ impl MiraiSProjection for MetalMiraiSProjection {
         let (vector_width, transition_bits) = codec.shape();
         if !context.supports_mxu {
             return Ok(Some(Self::Simdgroup {
-                tokens_1: MiraiSSimdgroupProjectionMetalKernel::new(context, 1, vector_width, transition_bits)?,
-                tokens_8: MiraiSSimdgroupProjectionMetalKernel::new(context, 8, vector_width, transition_bits)?,
+                tokens_1: TrellisSimdgroupProjectionMetalKernel::new(context, 1, vector_width, transition_bits)?,
+                tokens_8: TrellisSimdgroupProjectionMetalKernel::new(context, 8, vector_width, transition_bits)?,
             }));
         }
         Ok(Some(Self::Mxu {
-            wide_32: MiraiSProjectionMetalKernel::new(context, 32, vector_width, transition_bits)?,
-            wide_64: MiraiSProjectionMetalKernel::new(context, 64, vector_width, transition_bits)?,
-            narrow_2: MiraiSNarrowProjectionMetalKernel::new(context, 2, vector_width, transition_bits)?,
-            narrow_4: MiraiSNarrowProjectionMetalKernel::new(context, 4, vector_width, transition_bits)?,
+            wide_32: TrellisProjectionMetalKernel::new(context, 32, vector_width, transition_bits)?,
+            wide_64: TrellisProjectionMetalKernel::new(context, 64, vector_width, transition_bits)?,
+            narrow_2: TrellisNarrowProjectionMetalKernel::new(context, 2, vector_width, transition_bits)?,
+            narrow_4: TrellisNarrowProjectionMetalKernel::new(context, 4, vector_width, transition_bits)?,
             busy_simdgroups: 128 * vector_width,
         }))
     }
@@ -156,5 +156,5 @@ impl MiraiSProjection for MetalMiraiSProjection {
 }
 
 #[cfg(test)]
-#[path = "../../../../../unit/backends/metal/kernel/mirai_s_test.rs"]
+#[path = "../../../../../unit/backends/metal/kernel/trellis_test.rs"]
 mod tests;

@@ -12,8 +12,8 @@ use crate::backends::{
 mod attention;
 pub mod gdn;
 pub mod matmul;
-mod mirai_s;
 mod radix_top_k_small;
+mod trellis;
 
 include!(concat!(env!("OUT_DIR"), "/metal.rs"));
 
@@ -27,7 +27,7 @@ impl Kernels for MetalKernels {
     type DeltaNetChunkedPrefill = gdn::chunked::MetalDeltaNetChunkedPrefill;
     type DeltaNetTreeVerify = gdn::tree_verify::MetalDeltaNetTreeVerify;
     type MatmulKernel = matmul::MatmulMetalKernel;
-    type MiraiSProjection = mirai_s::MetalMiraiSProjection;
-    type MiraiSTransform = mirai_s::MetalMiraiSTransform;
     type RadixTopKSmall = radix_top_k_small::MetalRadixTopKSmall;
+    type TrellisProjection = trellis::MetalTrellisProjection;
+    type TrellisTransform = trellis::MetalTrellisTransform;
 }
