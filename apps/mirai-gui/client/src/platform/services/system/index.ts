@@ -8,9 +8,8 @@ export type SystemService = {
   getLogFilePath(): Promise<string | null>;
   /**
    * Install the mirai CLI wrapper now; also clears a persisted startup decline.
-   * Rejects with "cancelled" when the user dismisses the admin prompt.
    */
-  installCli(): Promise<"installed" | "already-installed" | "unsupported">;
+  installCli(): Promise<"installed" | "already-installed" | "cancelled" | "unsupported">;
   /** "missing" is the only state where offering an install makes sense. */
   getCliStatus(): Promise<"missing" | "installed" | "foreign" | "unavailable">;
 };

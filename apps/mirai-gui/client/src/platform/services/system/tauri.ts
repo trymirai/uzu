@@ -52,7 +52,7 @@ export const tauriSystem: SystemService = {
   },
   getAppVersion: () => getVersion().catch(() => null),
   getLogFilePath: () => invoke<string>("get_log_file_path").catch(() => null),
-  installCli: () => invoke<"installed" | "already-installed">("cli_install"),
+  installCli: () => invoke<"installed" | "already-installed" | "cancelled">("cli_install"),
   getCliStatus: () =>
     invoke<"missing" | "installed" | "foreign" | "unavailable">("cli_status").catch(() => "unavailable" as const),
 };

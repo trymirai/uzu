@@ -74,15 +74,21 @@ fn apply_quick_entry_shortcut(
     accelerator: &str,
 ) -> bool {
     let shortcut = app.global_shortcut();
-    let _ = shortcut.unregister_all();
+    if shortcut.is_registered(accelerator) {
+        return true;
+    }
     let handler_app = app.clone();
-    shortcut
+    let registered = shortcut
         .on_shortcut(accelerator, move |_app, _shortcut, event| {
             if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                 show_and_focus_main(&handler_app);
             }
         })
-        .is_ok()
+        .is_ok();
+    if registered && let Some(previous) = get_quick_entry_shortcut().filter(|p| p != accelerator) {
+        let _ = shortcut.unregister(previous.as_str());
+    }
+    registered
 }
 
 #[tauri::command]

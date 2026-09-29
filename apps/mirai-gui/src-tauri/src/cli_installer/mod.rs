@@ -62,7 +62,7 @@ fn available(app: &AppHandle) -> bool {
         && app.path().resource_dir().is_ok_and(|dir| dir.join("cli/mirai").is_file())
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum WrapperState {
     Current,
     Missing,
@@ -71,12 +71,21 @@ enum WrapperState {
 }
 
 fn wrapper_state() -> WrapperState {
-    match std::fs::read_to_string(WRAPPER_PATH) {
+    wrapper_state_at(std::path::Path::new(WRAPPER_PATH))
+}
+
+fn wrapper_state_at(path: &std::path::Path) -> WrapperState {
+    match std::fs::read(path) {
         // The wrapper locates the CLI at run time, so an existing one needs no
         // reinstall.
-        Ok(content) if content.contains(WRAPPER_MARKER) => WrapperState::Current,
+        Ok(bytes) if String::from_utf8_lossy(&bytes).contains(WRAPPER_MARKER) => WrapperState::Current,
         Ok(_) => WrapperState::Foreign,
-        Err(_) => WrapperState::Missing,
+        // `read` follows symlinks, so NotFound alone may be a dangling link that
+        // is still somebody's; only a path with no entry at all is missing.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && std::fs::symlink_metadata(path).is_err() => {
+            WrapperState::Missing
+        },
+        Err(_) => WrapperState::Foreign,
     }
 }
 
@@ -124,6 +133,7 @@ pub enum CliStatus {
 pub enum CliInstalled {
     Installed,
     AlreadyInstalled,
+    Cancelled,
 }
 
 #[tauri::command]
@@ -166,7 +176,11 @@ pub async fn cli_install(app: AppHandle) -> AppResult<CliInstalled> {
                     );
                 },
             }
-            result.map(|()| CliInstalled::Installed)
+            match result {
+                Ok(()) => Ok(CliInstalled::Installed),
+                Err(AppError::Authorization(AuthError::Cancelled)) => Ok(CliInstalled::Cancelled),
+                Err(e) => Err(e),
+            }
         },
     }
 }
@@ -205,4 +219,52 @@ pub fn trigger_if_needed(app: &AppHandle) {
             },
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WRAPPER_MARKER, WrapperState, wrapper_state_at};
+
+    fn scratch(
+        name: &str,
+        bytes: Option<&[u8]>,
+    ) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("mirai-cli-installer-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mirai");
+        if let Some(bytes) = bytes {
+            std::fs::write(&path, bytes).unwrap();
+        }
+        path
+    }
+
+    #[test]
+    fn missing_only_when_the_file_does_not_exist() {
+        assert_eq!(wrapper_state_at(&scratch("missing", None)), WrapperState::Missing);
+    }
+
+    #[test]
+    fn own_wrapper_is_current() {
+        let path = scratch("current", Some(format!("#!/bin/sh\n{WRAPPER_MARKER}\n").as_bytes()));
+        assert_eq!(wrapper_state_at(&path), WrapperState::Current);
+    }
+
+    #[test]
+    fn a_text_file_without_the_marker_is_foreign() {
+        assert_eq!(wrapper_state_at(&scratch("text", Some(b"#!/bin/sh\necho hi\n"))), WrapperState::Foreign);
+    }
+
+    #[test]
+    fn a_dangling_symlink_is_foreign_not_missing() {
+        let path = scratch("dangling", None);
+        std::os::unix::fs::symlink("/nonexistent/mirai-target", &path).unwrap();
+        assert_eq!(wrapper_state_at(&path), WrapperState::Foreign);
+    }
+
+    #[test]
+    fn a_binary_that_is_not_utf8_is_foreign_not_missing() {
+        let path = scratch("binary", Some(&[0xcf, 0xfa, 0xed, 0xfe, 0xff, 0x00, 0xfe, 0x80]));
+        assert_eq!(wrapper_state_at(&path), WrapperState::Foreign);
+    }
 }

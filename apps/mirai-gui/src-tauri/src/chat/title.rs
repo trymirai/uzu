@@ -13,9 +13,9 @@ use super::{
     payloads::TitleGenPayload,
     session::ensure_session,
 };
-use crate::error::AppResult;
+use crate::{error::AppResult, models::ReasoningSupport};
 
-const DEFAULT_TITLE_GEN_TOKENS_LIMIT: u32 = 200;
+const DEFAULT_TITLE_GEN_TOKENS_LIMIT: u32 = 40;
 pub(super) const TITLE_GEN_RUN_ID: &str = "title-gen";
 
 pub(super) async fn title_gen_inner(
@@ -26,6 +26,14 @@ pub(super) async fn title_gen_inner(
     let _run_guard = state.run_lock.lock().await;
     let (session, support) = ensure_session(app, state, &payload.repo_id).await?;
     if state.cancel_requested(TITLE_GEN_RUN_ID) {
+        return Ok(String::new());
+    }
+    // Reasoning that cannot be turned off eats the whole title budget.
+    if matches!(support, ReasoningSupport::AlwaysOn) {
+        crate::logger::info(
+            "title-gen:skip",
+            Some(serde_json::json!({ "repoId": payload.repo_id, "reason": "alwaysOn" })),
+        );
         return Ok(String::new());
     }
 
@@ -61,10 +69,14 @@ pub(super) async fn title_gen_inner(
     }
     let text = output.as_ref().and_then(|r| r.message.text()).unwrap_or_default();
     let reasoning = output.as_ref().and_then(|r| r.message.reasoning()).unwrap_or_default();
-    let title = if text.is_empty() {
-        reasoning
-    } else {
-        text
-    };
-    Ok(sanitize(title.trim()))
+    crate::logger::info(
+        "title-gen:done",
+        Some(serde_json::json!({
+            "repoId": payload.repo_id,
+            "finishReason": output.as_ref().and_then(|r| r.finish_reason.as_ref()),
+            "textLen": text.chars().count(),
+            "reasoningLen": reasoning.chars().count(),
+        })),
+    );
+    Ok(sanitize(text.trim()))
 }

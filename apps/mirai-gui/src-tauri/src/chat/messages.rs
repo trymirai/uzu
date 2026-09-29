@@ -5,9 +5,8 @@ use uzu::types::{
 
 use super::payloads::{MsgIn, Parsed};
 
-// U+FFFD shows up as "�" when the engine's decoder splits a multi-byte
-// character across tokens. Joiners and variation selectors stay: they are
-// what holds composite emoji together.
+// Engine output only: U+FFFD shows up as "�" when the decoder splits a multi-byte
+// character across tokens. Joiners and variation selectors hold composite emoji together.
 pub(super) fn sanitize(s: &str) -> String {
     s.chars()
         .filter(|&c| {
@@ -23,7 +22,7 @@ pub(super) fn build_non_system_message(
     message: &MsgIn,
     include_reasoning: bool,
 ) -> ChatMessage {
-    let content = sanitize(&message.content);
+    let content = message.content.clone();
     if matches!(message.role, ChatRole::User {}) {
         return ChatMessage::user().with_text(content);
     }
@@ -31,7 +30,7 @@ pub(super) fn build_non_system_message(
     let mut assistant = ChatMessage::assistant();
     if include_reasoning && let Some(reasoning) = message.reasoning_content.as_deref().filter(|value| !value.is_empty())
     {
-        assistant = assistant.with_reasoning(sanitize(reasoning));
+        assistant = assistant.with_reasoning(reasoning.to_string());
     }
     assistant.with_text(content)
 }
@@ -44,7 +43,7 @@ pub(super) fn build_messages(
     let mut messages: Vec<ChatMessage> = raw
         .iter()
         .map(|m| match m.role {
-            ChatRole::System {} => ChatMessage::system().with_text(sanitize(&m.content)),
+            ChatRole::System {} => ChatMessage::system().with_text(m.content.clone()),
             _ => build_non_system_message(m, false),
         })
         .collect();
@@ -110,6 +109,12 @@ mod tests {
             sanitize("👩\u{200D}💻 ❤\u{FE0F} 👨\u{200D}👩\u{200D}👧"),
             "👩\u{200D}💻 ❤\u{FE0F} 👨\u{200D}👩\u{200D}👧"
         );
+    }
+
+    #[test]
+    fn user_text_reaches_the_model_as_typed() {
+        let messages = build_messages(&[test_message(ChatRole::User {}, "what does \u{FFFD} mean?", None)], None);
+        assert_eq!(messages[0].text().as_deref(), Some("what does \u{FFFD} mean?"));
     }
 
     #[test]

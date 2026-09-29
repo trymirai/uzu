@@ -94,7 +94,7 @@ unsafe extern "C" {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
-    // The settings page matches this exact text to stay quiet on a dismissed prompt.
+    // cli_install turns this into the Cancelled result instead of an error.
     #[error("cancelled")]
     Cancelled,
     #[error("{0}")]

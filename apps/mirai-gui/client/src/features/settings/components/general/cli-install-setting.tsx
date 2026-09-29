@@ -27,10 +27,8 @@ export function CliInstallSetting() {
         setCliMissing(false);
       }
     } catch (error) {
-      if (!(error instanceof Error && error.message === "cancelled")) {
-        toast.error("Failed to install the CLI");
-        console.error(error);
-      }
+      toast.error("Failed to install the CLI");
+      console.error(error);
     } finally {
       setIsInstalling(false);
     }

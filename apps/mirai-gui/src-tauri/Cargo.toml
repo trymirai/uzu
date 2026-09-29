@@ -25,11 +25,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 futures = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
-# Metal backend only, no grammar (heavy C++ xgrammar).
 uzu = { path = "../../../crates/legacy/uzu", default-features = false, features = ["backend-metal"] }
 hanashi = { path = "../../../crates/legacy/hanashi", default-features = false }
 
-# Metal shader compilation in backend-uzu's build script is unbearably slow
-# without optimized build scripts.
 [profile.dev.build-override]
-opt-level = 3
+opt-level = 2

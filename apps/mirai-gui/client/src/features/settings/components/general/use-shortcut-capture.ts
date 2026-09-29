@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useToast } from "@/components/ui/toast/use-toast";
 
 const DISPLAY_KEYS: Record<string, string> = {
   Meta: "⌘",
@@ -69,6 +70,7 @@ export function useShortcutCapture(
   quickEntryShortcut: string | null,
   registerQuickEntryShortcut: (accelerator: string) => Promise<boolean>,
 ) {
+  const toast = useToast();
   const [isCapturing, setIsCapturing] = useState(false);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -83,14 +85,15 @@ export function useShortcutCapture(
       }
       const accelerator = acceleratorFrom(e);
       if (!accelerator) return;
-      registerQuickEntryShortcut(accelerator).then(() => {
+      void registerQuickEntryShortcut(accelerator).then((ok) => {
         setIsCapturing(false);
+        if (!ok) toast.error("This shortcut can't be registered", { id: "shortcut-register-failed" });
       });
     }
 
     window.addEventListener("keydown", onKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [isCapturing, registerQuickEntryShortcut]);
+  }, [isCapturing, registerQuickEntryShortcut, toast]);
 
   useEffect(() => {
     if (!isCapturing) return;

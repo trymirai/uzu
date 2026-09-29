@@ -1,12 +1,8 @@
 import { getPlatform } from "@/platform/platform-singleton";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
-import { useModelsStore } from "@/stores/use-models-store";
-import { DEFAULT_CHAT_TITLE, UNTITLED_CHAT_TITLE } from "@/constants/chat";
+import { CHAT_TITLE_MAX_LENGTH, DEFAULT_CHAT_TITLE, UNTITLED_CHAT_TITLE } from "@/constants/chat";
 import { Roles } from "@/types/chat";
 import type { ChatStoreApi } from "./types";
-
-// Past this length the model answered the message instead of titling it.
-const MAX_TITLE_LENGTH = 300;
 
 const sanitizeChatTitle = (raw: string): string => {
   if (!raw) return "";
@@ -40,21 +36,11 @@ export const runChatTitleGeneration = async (
   const repoIdToUse = chatModel?.modelId || chatData?.metadata.modelId;
   if (!repoIdToUse) return;
 
-  const localModel = useModelsStore.getState().models.find((m) => m.repoId === repoIdToUse);
-  const normalizedVendor = (localModel?.vendor ?? "").trim().toLowerCase();
-  // LFM models fail this reliably enough that asking is wasted latency.
-  if (normalizedVendor === "liquidai") {
-    const { storage } = getPlatform();
-    await storage.updateChatTitle(chatId, DEFAULT_CHAT_TITLE, existingTitle);
-    const savedChats = await storage.listChats();
-    set({ savedChats });
-    return;
-  }
-
   const firstUserQuoted = userText.replace(/\s+/g, " ").trim().replace(/"/g, '\\"');
+  // Small models copy a fallback phrase from the prompt instead of titling.
   const userOnlyInstruction =
-    `Generate a short, neutral chat title (2–4 words, no punctuation at the end) for the following user message. ` +
-    `If the topic is unclear, return "${DEFAULT_CHAT_TITLE}". Message: "${firstUserQuoted}"`;
+    `Write a chat title of 2 to 4 words for the message below. Reply with the title only, no quotes, no punctuation at the end. ` +
+    `Message: "${firstUserQuoted}"`;
 
   const title = await getPlatform().chat.generateTitle({
     repoId: repoIdToUse,
@@ -66,7 +52,8 @@ export const runChatTitleGeneration = async (
   if (useChatSessionStore.getState().titleGenAbortChatId === chatId) return;
 
   const candidateRaw = sanitizeChatTitle(title);
-  const candidate = candidateRaw.length > MAX_TITLE_LENGTH ? "New chat" : candidateRaw || DEFAULT_CHAT_TITLE;
+  // Longer than a manual rename allows means the model answered instead of titling.
+  const candidate = candidateRaw.length > CHAT_TITLE_MAX_LENGTH ? "New chat" : candidateRaw || DEFAULT_CHAT_TITLE;
   const { storage } = getPlatform();
   // The user may have renamed the chat while the model was thinking.
   await storage.updateChatTitle(chatId, candidate, existingTitle);
