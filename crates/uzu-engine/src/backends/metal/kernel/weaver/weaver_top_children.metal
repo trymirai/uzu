@@ -41,6 +41,13 @@ METAL_FUNC bool weaver_better(uint score, uint token, uint index, uint best_scor
          (score == best_score && (token < best_token || (token == best_token && index < best_index)));
 }
 
+// The target sampler's order (`Logit::operator>` in sampling/unified_sampling.metal): larger logits first, equal
+// ones, -0 and +0 included, by smaller token id. Every valid key is nonzero.
+METAL_FUNC ulong draft_filter_key(float logit, uint token, uint index_bits) {
+  const uint bits = as_type<uint>(logit);
+  return top_k_ordered_key(as_type<float>(bits == TOP_K_SIGN_BIT ? 0u : bits), token, index_bits);
+}
+
 PUBLIC KERNEL(WeaverTopChildren)(
     const device bfloat* residual_logits,
     const device float* candidate_logits,
@@ -55,11 +62,14 @@ PUBLIC KERNEL(WeaverTopChildren)(
     constant uint& expand_width,
     constant uint& vocab_size,
     constant float& prune_noise_scale OPTIONAL(has_prune_noise),
+    const constant DraftSamplingParams& draft_sampling_params OPTIONAL(has_draft_sampling),
     const bool has_prune_noise SPECIALIZE,
+    const bool has_draft_sampling SPECIALIZE,
     threadgroup float reduce_float[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_score[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_token[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_index[TOP_CHILDREN_SIMDGROUPS],
+    threadgroup float2 filter_partials[2 * TOP_CHILDREN_SIMDGROUPS],
     threadgroup float& logit_max,
     threadgroup float& log_sum,
     threadgroup uint& winner_token,
@@ -79,18 +89,21 @@ PUBLIC KERNEL(WeaverTopChildren)(
   const uint second_index = lid + TOP_CHILDREN_THREADS;
   const bool first_valid = first_index < candidates;
   const bool second_valid = second_index < candidates;
-  const float first_logit =
+  float first_logit =
       first_valid ? candidate_logits[base + first_index] + float(residual_logits[base + first_index]) : -INFINITY;
-  const float second_logit =
+  float second_logit =
       second_valid ? candidate_logits[base + second_index] + float(residual_logits[base + second_index]) : -INFINITY;
+  // Draft sampling follows the target's temperature in selection, expansion and pruning alike, scaling as it does.
+  if (has_draft_sampling) {
+    first_logit *= draft_sampling_params.recip_temperature;
+    second_logit *= draft_sampling_params.recip_temperature;
+  }
   const uint first_token = first_valid ? uint(candidate_ids[base + first_index]) : 0xffffffffu;
   const uint second_token = second_valid ? uint(candidate_ids[base + second_index]) : 0xffffffffu;
   const uint first_score =
       first_valid ? top_k_score_key(first_logit + gumbel_noise(seed, first_token, vocab_size)) : 0u;
   const uint second_score =
       second_valid ? top_k_score_key(second_logit + gumbel_noise(seed, second_token, vocab_size)) : 0u;
-  bool first_active = first_valid;
-  bool second_active = second_valid;
 
   const float local_max = fmax(first_logit, second_logit);
   const float simd_maximum = simd_max(local_max);
@@ -108,8 +121,61 @@ PUBLIC KERNEL(WeaverTopChildren)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
+  // Draft sampling keeps the candidates the target's sampler keeps (UnifiedSampling): its parallel top-k, top-p
+  // and min-p over the pool. The kept set is a prefix in the target's order, so one threshold on the order key
+  // decides it; the search sets its bits from the top, each bit costing one reduction of the count and the mass
+  // strictly above it. The most likely candidate always stays, so `logit_max` is the maximum over the kept set.
+  bool first_live = first_valid;
+  bool second_live = second_valid;
+  if (has_draft_sampling) {
+    const float first_weight = first_valid ? exp(first_logit - logit_max) : 0.0f;
+    const float second_weight = second_valid ? exp(second_logit - logit_max) : 0.0f;
+    const float norm = threadgroup_cooperative_reduce<SimdReduceSum<float>, TOP_CHILDREN_THREADS>(
+        first_weight + second_weight,
+        reduce_float,
+        thread_context
+    );
+    const float first_mass = first_weight / norm;
+    const float second_mass = second_weight / norm;
+    const uint index_bits = vocab_size <= 1u ? 1u : 32u - clz(vocab_size - 1u);
+    const ulong first_key = first_valid ? draft_filter_key(first_logit, first_token, index_bits) : 0ul;
+    const ulong second_key = second_valid ? draft_filter_key(second_logit, second_token, index_bits) : 0ul;
+    ulong threshold = 0ul;
+    // Without top-k or top-p (their unset values are `u32::MAX` and `f32::MAX`) every valid key stays above zero.
+    if (draft_sampling_params.top_k < candidates || draft_sampling_params.top_p < FLT_MAX) {
+      for (uint bit = 32u + index_bits; bit-- > 0u;) {
+        const ulong probe = threshold | (1ul << bit);
+        const float simd_count = simd_sum(float(first_key > probe) + float(second_key > probe));
+        const float simd_mass =
+            simd_sum((first_key > probe ? first_mass : 0.0f) + (second_key > probe ? second_mass : 0.0f));
+        // Alternating halves let one barrier per bit separate this bit's writes from the previous bit's reads.
+        threadgroup float2* partials = filter_partials + (bit & 1u) * TOP_CHILDREN_SIMDGROUPS;
+        if (thread_context.simd_lane_id == 0) {
+          partials[thread_context.simdgroup_index] = float2(simd_count, simd_mass);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        float2 above = float2(0.0f);
+        for (uint group = 0; group < TOP_CHILDREN_SIMDGROUPS; ++group) {
+          above += partials[group];
+        }
+        if (uint(above.x) >= draft_sampling_params.top_k || above.y >= draft_sampling_params.top_p) {
+          threshold = probe;
+        }
+      }
+    }
+    first_live = first_key > threshold;
+    second_live = second_key > threshold;
+    if (draft_sampling_params.min_p > 0.0f) {
+      const float min_p_floor = logit_max + log(draft_sampling_params.min_p);
+      first_live = first_live && !(first_logit < min_p_floor);
+      second_live = second_live && !(second_logit < min_p_floor);
+    }
+  }
+  bool first_active = first_live;
+  bool second_active = second_live;
+
   const float local_sum =
-      (first_valid ? exp(first_logit - logit_max) : 0.0f) + (second_valid ? exp(second_logit - logit_max) : 0.0f);
+      (first_live ? exp(first_logit - logit_max) : 0.0f) + (second_live ? exp(second_logit - logit_max) : 0.0f);
   const float simd_total = simd_sum(local_sum);
   if (thread_context.simd_lane_id == 0) {
     reduce_float[thread_context.simdgroup_index] = simd_total;
@@ -130,10 +196,10 @@ PUBLIC KERNEL(WeaverTopChildren)(
   float second_prune_logit = -INFINITY;
   float prune_log_sum = 0.0f;
   if (has_prune_noise) {
-    if (first_valid) {
+    if (first_live) {
       first_prune_logit = first_logit + prune_noise_scale * target_gumbel_noise(seed, first_token, vocab_size);
     }
-    if (second_valid) {
+    if (second_live) {
       second_prune_logit = second_logit + prune_noise_scale * target_gumbel_noise(seed, second_token, vocab_size);
     }
     const float prune_max = threadgroup_cooperative_reduce<SimdReduceMax<float>, TOP_CHILDREN_THREADS>(
@@ -142,8 +208,8 @@ PUBLIC KERNEL(WeaverTopChildren)(
         thread_context
     );
     const float prune_total = threadgroup_cooperative_reduce<SimdReduceSum<float>, TOP_CHILDREN_THREADS>(
-        (first_valid ? exp(first_prune_logit - prune_max) : 0.0f) +
-            (second_valid ? exp(second_prune_logit - prune_max) : 0.0f),
+        (first_live ? exp(first_prune_logit - prune_max) : 0.0f) +
+            (second_live ? exp(second_prune_logit - prune_max) : 0.0f),
         reduce_float,
         thread_context
     );
@@ -196,9 +262,22 @@ PUBLIC KERNEL(WeaverTopChildren)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (lid == 0) {
-      const float winner_logit = candidate_logits[base + winner_index] + float(residual_logits[base + winner_index]);
-      output_token_ids[row * expand_width + child] = winner_token;
-      output_model_logprobs[row * expand_width + child] = winner_logit - log_sum;
+      if (has_draft_sampling && winner_index >= candidates) {
+        // Fewer candidates survived the filters than there are children; the sentinel keeps the slot out of the
+        // frontier.
+        output_token_ids[row * expand_width + child] = FRONTIER_NO_WINNER;
+        output_model_logprobs[row * expand_width + child] = -INFINITY;
+        if (has_prune_noise) {
+          output_prune_logprobs[row * expand_width + child] = -INFINITY;
+        }
+      } else {
+        float winner_logit = candidate_logits[base + winner_index] + float(residual_logits[base + winner_index]);
+        if (has_draft_sampling) {
+          winner_logit *= draft_sampling_params.recip_temperature;
+        }
+        output_token_ids[row * expand_width + child] = winner_token;
+        output_model_logprobs[row * expand_width + child] = winner_logit - log_sum;
+      }
     }
     if (has_prune_noise && (first_index == winner_index || second_index == winner_index)) {
       output_prune_logprobs[row * expand_width + child] =

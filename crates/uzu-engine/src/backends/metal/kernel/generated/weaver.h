@@ -11,6 +11,13 @@ static constant constexpr uint32_t TOP_CHILDREN_THREADS = 256;
 
 static constant constexpr uint32_t TOP_CHILDREN_SIMDGROUPS = 8;
 
+typedef struct {
+  float recip_temperature;
+  uint32_t top_k;
+  float top_p;
+  float min_p;
+} DraftSamplingParams;
+
 enum class FrontierIdx : uint32_t {
   TokenId = 0,
   ParentSlot = 1,

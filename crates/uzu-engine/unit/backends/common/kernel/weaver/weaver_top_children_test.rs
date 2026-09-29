@@ -56,7 +56,8 @@ fn top_children<B: Backend>(
     let mut output_token_ids = alloc_allocation::<B, u32>(&context, rows * CHILDREN);
     let mut output_model_logprobs = alloc_allocation::<B, f32>(&context, rows * CHILDREN);
     let mut output_prune_logprobs = prune_noise_scale.map(|_| alloc_allocation::<B, f32>(&context, rows * CHILDREN));
-    let kernel = <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(&context, prune_noise_scale.is_some()).unwrap();
+    let kernel =
+        <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(&context, prune_noise_scale.is_some(), false).unwrap();
     let mut encoder = Encoder::new(context.as_ref()).unwrap();
     kernel.encode(
         &residual,
@@ -72,6 +73,7 @@ fn top_children<B: Backend>(
         CHILDREN as u32,
         VOCAB_SIZE,
         prune_noise_scale,
+        None,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();

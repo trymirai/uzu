@@ -23,7 +23,7 @@ use crate::{
         dflash::{DFlash, DFlashEncodeError, DFlashNewError},
         embedding::Embedding,
         sampling::{PRng, Sampling, SamplingMethod},
-        weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
+        weaver::{ProposalNode, Weaver, WeaverDraftSampling, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
     parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
     trie::TrieNode,
@@ -68,6 +68,7 @@ pub enum DFlashTfmTreeConstructionMethod {
         /// A shape without it prunes with `DEFAULT_PRUNE_SIGMA`; `null` prunes on the model logprobs.
         #[serde(default = "default_prune_sigma")]
         prune_sigma: Option<f32>,
+        draft_sampling: Option<DFlashTfmDraftSampling>,
     },
 }
 
@@ -76,6 +77,14 @@ pub const DEFAULT_PRUNE_SIGMA: f32 = 1.5;
 
 fn default_prune_sigma() -> Option<f32> {
     Some(DEFAULT_PRUNE_SIGMA)
+}
+
+/// The sampling the Weaver tree follows in child selection, expansion and pruning.
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]
+pub enum DFlashTfmDraftSampling {
+    /// The request's temperature and top-k / top-p / min-p, applied to each node's candidate pool as the target
+    /// sampler applies them to the vocabulary.
+    Target,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -214,6 +223,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         target_output_token: u32,
         target_embedding: &Embedding<B>,
         shape: DFlashTfmTreeShape,
+        sampling_method: &SamplingMethod,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
         prng: &PRng,
         allocation_pool: Arc<AllocationPool<B>>,
@@ -301,6 +311,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 expand_per_round,
                 expand_width,
                 prune_sigma,
+                draft_sampling,
             } => {
                 let weaver =
                     self.weaver.as_ref().expect("weaver tree construction requires a speculator with weaver weights");
@@ -352,6 +363,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         expand_per_round,
                         expand_width,
                         prune_noise_scale: prune_sigma.map(f32::recip),
+                        draft_sampling: draft_sampling.and_then(|draft_sampling| match draft_sampling {
+                            DFlashTfmDraftSampling::Target => {
+                                WeaverDraftSampling::from_sampling_method(sampling_method)
+                            },
+                        }),
                     },
                     &mut encoder,
                 )?;

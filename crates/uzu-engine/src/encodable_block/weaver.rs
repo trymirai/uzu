@@ -5,8 +5,8 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::weaver::{
-            CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FRONTIER_NO_WINNER, FrontierIdx, MetadataIdx,
-            TreeIdx,
+            CANDIDATES_MAX, DraftSamplingParams, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FRONTIER_NO_WINNER,
+            FrontierIdx, MetadataIdx, TreeIdx,
         },
         kernel::{
             AncestorAttentionKernel, AttentionArguments, AttentionKernel, WeaverFrontierInsertChildrenKernel,
@@ -21,6 +21,7 @@ use crate::{
         mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
         mlp::MlpBlockError,
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
+        sampling::SamplingMethod,
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
     },
     parameters::ParameterTree,
@@ -37,6 +38,63 @@ pub struct WeaverTreeShape {
     pub expand_per_round: u32,
     pub expand_width: u32,
     pub prune_noise_scale: Option<f32>,
+    pub draft_sampling: Option<WeaverDraftSampling>,
+}
+
+/// The target's sampling, which the tree then follows in child selection, expansion and pruning: the temperature
+/// scales the pool logits, and the filters keep the candidates the target sampler would keep.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WeaverDraftSampling {
+    pub temperature: Option<f32>,
+    pub top_k: Option<u32>,
+    pub top_p: Option<f32>,
+    pub min_p: Option<f32>,
+}
+
+impl WeaverDraftSampling {
+    /// `None` when there is nothing to follow (greedy, or a unit temperature without filters) or when the values
+    /// could drop every candidate, which the target's own sampler does not handle either.
+    pub fn from_sampling_method(sampling_method: &SamplingMethod) -> Option<Self> {
+        let SamplingMethod::Stochastic {
+            temperature,
+            top_k,
+            top_p,
+            min_p,
+            ..
+        } = *sampling_method
+        else {
+            return None;
+        };
+        let draft_sampling = Self {
+            temperature,
+            top_k,
+            top_p,
+            min_p,
+        };
+        let has_effect = temperature.is_some_and(|temperature| temperature != 1.0)
+            || top_k.is_some()
+            || top_p.is_some()
+            || min_p.is_some();
+        (has_effect && draft_sampling.keeps_argmax()).then_some(draft_sampling)
+    }
+
+    fn keeps_argmax(&self) -> bool {
+        self.temperature
+            .is_none_or(|temperature| temperature > 0.0 && temperature.is_finite() && temperature.recip().is_finite())
+            && self.top_k.is_none_or(|top_k| top_k > 0)
+            && self.top_p.is_none_or(|top_p| top_p > 0.0)
+            && self.min_p.is_none_or(|min_p| min_p <= 1.0)
+    }
+
+    // Unset filters take values that never bind, as the target's absent filters do.
+    pub fn params(&self) -> DraftSamplingParams {
+        DraftSamplingParams {
+            recip_temperature: self.temperature.map_or(1.0, f32::recip),
+            top_k: self.top_k.unwrap_or(u32::MAX),
+            top_p: self.top_p.unwrap_or(f32::MAX),
+            min_p: self.min_p.unwrap_or(0.0),
+        }
+    }
 }
 
 impl WeaverTreeShape {
@@ -121,8 +179,8 @@ pub struct Weaver<B: Backend> {
     readout_query_projection: Box<dyn Linear<B>>,
     rope_config: AnyRoPEConfig,
     top_k: <B::Kernels as Kernels>::RadixTopKSmall,
-    top_children: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
-    top_children_with_prune_noise: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
+    // Indexed by `usize::from(has_prune_noise) | usize::from(has_draft_sampling) << 1`.
+    top_children: [<B::Kernels as Kernels>::WeaverTopChildrenKernel; 4],
     frontier_select: <B::Kernels as Kernels>::WeaverFrontierSelectKernel,
     frontier_insert_children: <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel,
     model_dim: u32,
@@ -258,10 +316,16 @@ impl<B: Backend> Weaver<B> {
         )?;
         let top_k =
             <B::Kernels as Kernels>::RadixTopKSmall::new(context, vocab_size).map_err(WeaverNewError::Backend)?;
-        let top_children =
-            <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context, false).map_err(WeaverNewError::Backend)?;
-        let top_children_with_prune_noise =
-            <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context, true).map_err(WeaverNewError::Backend)?;
+        let new_top_children = |has_prune_noise, has_draft_sampling| {
+            <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context, has_prune_noise, has_draft_sampling)
+                .map_err(WeaverNewError::Backend)
+        };
+        let top_children = [
+            new_top_children(false, false)?,
+            new_top_children(true, false)?,
+            new_top_children(false, true)?,
+            new_top_children(true, true)?,
+        ];
         let frontier_select =
             <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(context).map_err(WeaverNewError::Backend)?;
         let frontier_insert_children = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(context)
@@ -277,7 +341,6 @@ impl<B: Backend> Weaver<B> {
             rope_config: config.rope_config.clone(),
             top_k,
             top_children,
-            top_children_with_prune_noise,
             frontier_select,
             frontier_insert_children,
             model_dim: config.model_dim,
@@ -498,11 +561,8 @@ impl<B: Backend> Weaver<B> {
             .map(|_| encoder.allocate_scratch(size_for_shape(&[batch_node_count, shape.expand_width], DataType::F32)))
             .transpose()
             .map_err(WeaverEncodeError::Backend)?;
-        let top_children = if shape.prune_noise_scale.is_some() {
-            &self.top_children_with_prune_noise
-        } else {
-            &self.top_children
-        };
+        let top_children = &self.top_children
+            [usize::from(shape.prune_noise_scale.is_some()) | usize::from(shape.draft_sampling.is_some()) << 1];
         top_children.encode(
             &logit_residuals,
             batch_candidate_logits,
@@ -517,6 +577,7 @@ impl<B: Backend> Weaver<B> {
             shape.expand_width,
             target_embedding.vocab_size(),
             shape.prune_noise_scale,
+            shape.draft_sampling.as_ref().map(WeaverDraftSampling::params),
             encoder,
         );
 
@@ -567,6 +628,7 @@ impl<B: Backend> Weaver<B> {
             || tree_slot_count > FRONTIER_MAX_SLOTS / shape.expand_width
             || depth_seeds.len() as u32 != self.max_depth
             || shape.prune_noise_scale.is_some_and(|scale| !(scale > 0.0 && scale.is_finite()))
+            || shape.draft_sampling.is_some_and(|draft_sampling| !draft_sampling.keeps_argmax())
         {
             return Err(WeaverEncodeError::InvalidTreeInput);
         }

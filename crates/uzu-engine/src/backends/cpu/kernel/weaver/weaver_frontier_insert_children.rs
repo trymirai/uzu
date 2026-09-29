@@ -1,6 +1,6 @@
 use uzu_engine_macros::kernel;
 
-use crate::backends::common::gpu_types::weaver::{FrontierIdx, MetadataIdx, TreeIdx};
+use crate::backends::common::gpu_types::weaver::{FRONTIER_NO_WINNER, FrontierIdx, MetadataIdx, TreeIdx};
 
 const F32_SIGN_BIT: u32 = 1 << (u32::BITS - 1);
 
@@ -45,6 +45,10 @@ pub fn weaver_frontier_insert_children(
     for index in 0..node_count * expand_width {
         let row = index / expand_width;
         if node_valid[row] == 0 {
+            continue;
+        }
+        // A child the draft sampling filters left unfilled has no token and no place in the frontier.
+        if child_ids[index] == FRONTIER_NO_WINNER {
             continue;
         }
         let parent = parent_indices[row] as usize;

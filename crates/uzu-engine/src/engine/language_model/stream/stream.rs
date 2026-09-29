@@ -578,6 +578,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 root_token as u32,
                 self.model.decoder.embedding(),
                 shape,
+                &self.options.sampling_method,
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),
                 &self.model_state.prng,

@@ -2,6 +2,15 @@ pub const CANDIDATES_MAX: u32 = 512;
 pub const TOP_CHILDREN_THREADS: u32 = 256;
 pub const TOP_CHILDREN_SIMDGROUPS: u32 = 8;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
+pub struct DraftSamplingParams {
+    pub recip_temperature: f32,
+    pub top_k: u32,
+    pub top_p: f32,
+    pub min_p: f32,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub enum FrontierIdx {

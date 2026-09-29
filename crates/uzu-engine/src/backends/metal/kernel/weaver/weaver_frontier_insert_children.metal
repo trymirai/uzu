@@ -27,6 +27,10 @@ PUBLIC KERNEL(WeaverFrontierInsertChildren)(
   if (node_valid[row] == 0u) {
     return;
   }
+  // A child the draft sampling filters left unfilled has no token and no place in the frontier.
+  if (child_ids[row * expand_width + child] == FRONTIER_NO_WINNER) {
+    return;
+  }
 
   const uint parent = node_metadata[uint(MetadataIdx::TreeSlot) * node_count + row];
   if (parent >= tree_slot_count) {
