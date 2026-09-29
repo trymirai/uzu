@@ -134,22 +134,25 @@ impl GemmKernel {
             .validate_engine(plan.engine)
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))?;
 
-        let is_quant = !matches!(arguments.b, MatmulB::FullPrecision { .. });
-        if is_quant {
-            let d_mask = arguments.d_transform.mask();
-            if d_mask.contains(GemmDTransform::ACCUMULATE) {
-                return Err(MatmulError::UnsupportedDOp {
-                    bit: GemmDTransform::ACCUMULATE,
-                    path: "QuantGemm",
-                }
-                .into());
+        if !matches!(arguments.b, MatmulB::FullPrecision { .. })
+            && arguments.d_transform.mask().contains(GemmDTransform::ACCUMULATE)
+        {
+            return Err(MatmulError::UnsupportedDOp {
+                bit: GemmDTransform::ACCUMULATE,
+                path: "QuantGemm",
             }
+            .into());
         }
 
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
         let rht_factors = arguments.d_transform.rht_factors;
         let output_transform = arguments.d_transform.mask();
+        let (output_bias, bias_after_rht, output_transform) = if rht_factors.is_some() && output_bias.is_some() {
+            (None, output_bias, output_transform.difference(GemmDTransform::BIAS))
+        } else {
+            (output_bias, None, output_transform)
+        };
 
         let MatmulArguments {
             a,
@@ -181,37 +184,6 @@ impl GemmKernel {
                     .into());
                 };
 
-                let tiling = plan.tiling;
-
-                let threadgroups_per_row = n.div_ceil(tiling.block_n());
-                let threadgroups_per_column = m.div_ceil(tiling.block_m());
-
-                let (use_morton, group_count_x, group_count_y) = if use_mxu {
-                    let max_dim = threadgroups_per_row.max(threadgroups_per_column);
-                    let min_dim = threadgroups_per_row.min(threadgroups_per_column);
-                    let morton_dim = max_dim.next_power_of_two();
-                    let morton_total = morton_dim.saturating_mul(morton_dim);
-                    let actual_total = threadgroups_per_row.saturating_mul(threadgroups_per_column);
-                    let use_morton = min_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
-                    if use_morton {
-                        (true, morton_total, 1)
-                    } else {
-                        (false, threadgroups_per_row, threadgroups_per_column)
-                    }
-                } else {
-                    (false, threadgroups_per_row, threadgroups_per_column)
-                };
-
-                let alignment =
-                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-
-                let (output_bias, bias_after_rht, output_transform) = if rht_factors.is_some() && output_bias.is_some()
-                {
-                    (None, output_bias, output_transform.difference(GemmDTransform::BIAS))
-                } else {
-                    (output_bias, None, output_transform)
-                };
-
                 if plan.split_k > 1 {
                     self.encode_split_k(
                         MatmulA::FullPrecision {
@@ -235,6 +207,28 @@ impl GemmKernel {
                     output_work.apply(&mut *d, rht_factors, bias_after_rht, m, n, encoder);
                     return Ok(());
                 }
+
+                let tiling = plan.tiling;
+                let threadgroups_per_row = n.div_ceil(tiling.block_n());
+                let threadgroups_per_column = m.div_ceil(tiling.block_m());
+                let (use_morton, group_count_x, group_count_y) = if use_mxu {
+                    let max_dim = threadgroups_per_row.max(threadgroups_per_column);
+                    let min_dim = threadgroups_per_row.min(threadgroups_per_column);
+                    let morton_dim = max_dim.next_power_of_two();
+                    let morton_total = morton_dim.saturating_mul(morton_dim);
+                    let actual_total = threadgroups_per_row.saturating_mul(threadgroups_per_column);
+                    let use_morton = min_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
+                    if use_morton {
+                        (true, morton_total, 1)
+                    } else {
+                        (false, threadgroups_per_row, threadgroups_per_column)
+                    }
+                } else {
+                    (false, threadgroups_per_row, threadgroups_per_column)
+                };
+
+                let alignment =
+                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
 
                 let default_ldb = if b_transpose {
                     k
@@ -323,20 +317,8 @@ impl GemmKernel {
             },
         };
 
-        let (output_bias, bias_after_rht, output_transform) = if rht_factors.is_some() && output_bias.is_some() {
-            (None, output_bias, output_transform.difference(GemmDTransform::BIAS))
-        } else {
-            (output_bias, None, output_transform)
-        };
-
-        let tiling = plan.tiling;
-        let alignment =
-            GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
         let scale_strides = quantized.params.scale_strides();
         let zero_point_strides = quantized.zero_point_strides();
-        let params = gemm_params(shape, plan, ab_scale, scale_strides, zero_point_strides);
-        let group_count_x = n.div_ceil(tiling.block_n());
-        let group_count_y = m.div_ceil(tiling.block_m());
 
         if plan.split_k > 1 {
             self.encode_split_k(
@@ -356,6 +338,12 @@ impl GemmKernel {
                 encoder,
             )?;
         } else {
+            let tiling = plan.tiling;
+            let alignment =
+                GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
+            let params = gemm_params(shape, plan, ab_scale, scale_strides, zero_point_strides);
+            let group_count_x = n.div_ceil(tiling.block_n());
+            let group_count_y = m.div_ceil(tiling.block_m());
             let specialization = GemmSpecialization::from_plan(
                 plan,
                 shape,
