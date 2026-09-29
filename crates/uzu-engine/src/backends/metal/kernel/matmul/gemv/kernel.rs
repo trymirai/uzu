@@ -264,8 +264,8 @@ impl GemvKernel {
         let output_bias = arguments.d_transform.bias;
         let rht_factors = arguments.d_transform.rht_factors;
         let soft_cap = arguments.d_transform.soft_cap;
-        let deferred_rht = rht_factors.is_some() && !specialization.fuses_rht();
-        let (gemv_bias, gemv_rht_factors) = if deferred_rht {
+        let deferred_factors = rht_factors.filter(|_| !specialization.fuses_rht());
+        let (gemv_bias, gemv_rht_factors) = if deferred_factors.is_some() {
             (None, None)
         } else {
             (output_bias, rht_factors)
@@ -338,8 +338,8 @@ impl GemvKernel {
             encoder,
         );
 
-        if deferred_rht {
-            output_work.apply(&mut *d, rht_factors, output_bias, m, n, encoder);
+        if let Some(factors) = deferred_factors {
+            output_work.apply(&mut *d, factors, output_bias, m, n, encoder);
         }
 
         Ok(())

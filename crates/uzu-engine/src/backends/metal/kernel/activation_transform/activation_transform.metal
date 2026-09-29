@@ -15,11 +15,13 @@ using namespace uzu::activation_transform;
 #define QUANTIZED (ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)
 #define EMITS_GROUP_SUMS (ops == ActivationTransformOp::QuantizeWithGroupSums)
 
-template <typename T>
+template <typename T, typename BiasT>
 VARIANTS(T, float, bfloat)
+VARIANTS(BiasT, float, bfloat)
 PUBLIC KERNEL(ActivationTransform)(
     const device T* input OPTIONAL(!in_place),
     device T* fp_out OPTIONAL(!QUANTIZED),
+    const device BiasT* bias OPTIONAL(has_bias),
     device int8_t* q_out OPTIONAL(QUANTIZED),
     device float* scales_out OPTIONAL(QUANTIZED),
     device int32_t* group_sums_out OPTIONAL(EMITS_GROUP_SUMS),
@@ -31,6 +33,7 @@ PUBLIC KERNEL(ActivationTransform)(
     const bool in_place SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
     const uint sum_group_size SPECIALIZE,
+    const bool has_bias SPECIALIZE,
     threadgroup float partial_max OPTIONAL(QUANTIZED && activation_scale_group_size > METAL_SIMD_SIZE)[NUM_SIMDGROUPS],
     threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && sum_group_size > METAL_SIMD_SIZE)[NUM_SIMDGROUPS],
     uint activation_tile_index GROUPS(element_count.div_ceil(NUM_THREADS)),
@@ -61,6 +64,9 @@ PUBLIC KERNEL(ActivationTransform)(
 
   if (!QUANTIZED) {
     if (in_bounds) {
+      if (has_bias) {
+        value = static_cast<float>(static_cast<T>(value)) + static_cast<float>(bias[factor_index]);
+      }
       fp_out[element_index] = static_cast<T>(value);
     }
     return;

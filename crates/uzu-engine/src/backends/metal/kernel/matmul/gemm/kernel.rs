@@ -206,7 +206,9 @@ impl GemmKernel {
                         output_bias,
                         encoder,
                     )?;
-                    output_work.apply(&mut *d, rht_factors, bias_after_rht, m, n, encoder);
+                    if let Some(factors) = rht_factors {
+                        output_work.apply(&mut *d, factors, bias_after_rht, m, n, encoder);
+                    }
                     return Ok(());
                 }
 
@@ -376,7 +378,9 @@ impl GemmKernel {
         }
 
         if plan.split_k > 1 {
-            output_work.apply(&mut *d, rht_factors, bias_after_rht, m, n, encoder);
+            if let Some(factors) = rht_factors {
+                output_work.apply(&mut *d, factors, bias_after_rht, m, n, encoder);
+            }
         }
 
         Ok(())

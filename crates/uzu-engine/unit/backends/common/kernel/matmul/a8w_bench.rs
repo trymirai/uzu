@@ -204,13 +204,13 @@ fn encode_step(
         },
         BenchPath::Bf16GemmMxu => {
             encoder.encode_copy(&data.activations, .., &mut data.a_working, ..);
-            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
+            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, None, data.m, data.k, encoder);
             let args = data.bf16_arguments(output);
             matmul.encode_with_gemm_engine(args, GemmEngine::Mxu, encoder).expect("bf16 gemm mxu encode");
         },
         BenchPath::Bf16Routed => {
             encoder.encode_copy(&data.activations, .., &mut data.a_working, ..);
-            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, data.m, data.k, encoder);
+            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, None, data.m, data.k, encoder);
             let args = data.bf16_arguments(output);
             matmul.encode(args, encoder).expect("routed bf16 matmul encode");
         },

@@ -16,7 +16,7 @@ use crate::{
             Allocation, BufferArg, Encoder,
             gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
             kernel::{
-                ActivationQuantization, ActivationTransform, TensorAddBiasKernel,
+                ActivationQuantization, ActivationTransform,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
                     ActivationFormat, Int8CodeLayout, MatmulArguments, MatmulError, MatmulKernel, MatmulShape,
@@ -24,7 +24,7 @@ use crate::{
                 },
             },
         },
-        metal::{Metal, context::MetalContext, error::MetalError, kernel::TensorAddBiasMetalKernel},
+        metal::{Metal, context::MetalContext, error::MetalError},
     },
     data_type::DataType,
 };
@@ -44,8 +44,8 @@ enum MatmulDispatch {
 }
 
 pub struct MatmulOutputWork {
-    bias_add: TensorAddBiasMetalKernel,
     output_rht: ActivationTransform<Metal>,
+    output_rht_with_bias: ActivationTransform<Metal>,
 }
 
 impl MatmulOutputWork {
@@ -55,27 +55,31 @@ impl MatmulOutputWork {
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
         Ok(Self {
-            bias_add: TensorAddBiasMetalKernel::new(context, output_data_type, weights_data_type, true)?,
-            output_rht: ActivationTransform::output_rht(context, output_data_type, true)?,
+            output_rht: ActivationTransform::output_rht(context, output_data_type, None, true)?,
+            output_rht_with_bias: ActivationTransform::output_rht(
+                context,
+                output_data_type,
+                Some(weights_data_type),
+                true,
+            )?,
         })
     }
 
     fn apply(
         &self,
         output: &mut Allocation<Metal>,
-        factors: Option<&Allocation<Metal>>,
+        factors: &Allocation<Metal>,
         bias: Option<&Allocation<Metal>>,
         m: u32,
         n: u32,
         encoder: &mut Encoder<Metal>,
     ) {
-        if let Some(factors) = factors {
-            self.output_rht.encode_fp_in_place(output, factors, m, n, encoder);
-        }
-        if let Some(bias) = bias {
-            let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
-            self.bias_add.encode(None::<&Allocation<Metal>>, bias, output, n, output_length, encoder);
-        }
+        let transform = if bias.is_some() {
+            &self.output_rht_with_bias
+        } else {
+            &self.output_rht
+        };
+        transform.encode_fp_in_place(output, factors, bias, m, n, encoder);
     }
 }
 

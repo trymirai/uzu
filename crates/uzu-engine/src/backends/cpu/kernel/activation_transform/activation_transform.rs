@@ -47,11 +47,13 @@ pub fn quantize_transformed_row(
 
 #[kernel(ActivationTransform)]
 #[variants(T, f32, bf16)]
-pub fn activation_transform<T: ArrayElement + Float>(
+#[variants(BiasT, f32, bf16)]
+pub fn activation_transform<T: ArrayElement + Float, BiasT: ArrayElement + Float>(
     #[optional(!in_place)] input: Option<*const T>,
     #[optional(ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht)] fp_out: Option<
         *mut T,
     >,
+    #[optional(has_bias)] bias: Option<*const BiasT>,
     #[optional(ops == ActivationTransformOp::Quantize
         || ops == ActivationTransformOp::QuantizeWithGroupSums)]
     q_out: Option<*mut i8>,
@@ -67,6 +69,7 @@ pub fn activation_transform<T: ArrayElement + Float>(
     #[specialize] in_place: bool,
     #[specialize] activation_scale_group_size: u32,
     #[specialize] sum_group_size: u32,
+    #[specialize] has_bias: bool,
 ) {
     let input = match in_place {
         true => fp_out.expect("in-place transform requires fp_out"),
@@ -76,6 +79,7 @@ pub fn activation_transform<T: ArrayElement + Float>(
     let columns = element_count as usize;
     let input_rht = ops != ActivationTransformOp::OutputRht;
     let quantize = matches!(ops, ActivationTransformOp::Quantize | ActivationTransformOp::QuantizeWithGroupSums);
+    assert_eq!(bias.is_some(), has_bias);
 
     let mut transformed = vec![0.0f32; columns];
     for row in 0..rows {
@@ -136,8 +140,15 @@ pub fn activation_transform<T: ArrayElement + Float>(
         } else {
             let fp_out = fp_out.expect("FP transform requires fp_out");
             for index in 0..columns {
+                let mut value = transformed[index];
+                if let Some(bias) = bias {
+                    let rounded: T = NumCast::from(value).unwrap();
+                    value = NumCast::from(rounded).unwrap();
+                    let bias_value: f32 = NumCast::from(unsafe { *bias.add(index) }).unwrap();
+                    value += bias_value;
+                }
                 unsafe {
-                    *fp_out.add(row_offset + index) = <T as NumCast>::from(transformed[index]).unwrap();
+                    *fp_out.add(row_offset + index) = NumCast::from(value).unwrap();
                 }
             }
         }

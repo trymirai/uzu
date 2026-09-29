@@ -37,7 +37,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
             }
         }
-        let output_rht = ActivationTransform::output_rht(context, output_data_type, true)?;
+        let output_rht = ActivationTransform::output_rht(context, output_data_type, None, true)?;
         let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
             context,
             output_data_type,
@@ -267,7 +267,7 @@ impl MatmulKernel for MatmulCpuKernel {
         });
 
         if let Some(factors) = post_rht {
-            self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, encoder);
+            self.output_rht.encode_fp_in_place(&mut *d, factors, None, m, n, encoder);
             if let Some(bias) = bias_alloc {
                 let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
                 self.bias_add.encode(None::<&Allocation<Cpu>>, bias, &mut *d, n, output_length, encoder);
