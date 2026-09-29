@@ -20,6 +20,7 @@ pub fn weaver_frontier_insert_children(
     node_valid: *const u32,
     child_ids: *const u32,
     child_logprobs: *const f32,
+    child_prune_logprobs: *const f32,
     frontier: *mut u32,
     frontier_capacity: u32,
     tree_slot_count: u32,
@@ -38,6 +39,7 @@ pub fn weaver_frontier_insert_children(
     let node_valid = unsafe { std::slice::from_raw_parts(node_valid, node_count) };
     let child_ids = unsafe { std::slice::from_raw_parts(child_ids, node_count * expand_width) };
     let child_logprobs = unsafe { std::slice::from_raw_parts(child_logprobs, node_count * expand_width) };
+    let child_prune_logprobs = unsafe { std::slice::from_raw_parts(child_prune_logprobs, node_count * expand_width) };
     let frontier = unsafe { std::slice::from_raw_parts_mut(frontier, FrontierIdx::COUNT * frontier_capacity) };
 
     for index in 0..node_count * expand_width {
@@ -58,7 +60,8 @@ pub fn weaver_frontier_insert_children(
         frontier[FrontierIdx::Depth as usize * frontier_capacity + slot] =
             packed_tree[TreeIdx::Depth as usize * tree_slot_count + parent] + 1;
         frontier[FrontierIdx::PathLogprobBits as usize * frontier_capacity + slot] = cumulative_logprob.to_bits();
-        frontier[FrontierIdx::EdgeLogprobBits as usize * frontier_capacity + slot] = logprob.to_bits();
+        frontier[FrontierIdx::EdgeLogprobBits as usize * frontier_capacity + slot] =
+            child_prune_logprobs[index].to_bits();
         frontier[FrontierIdx::PathScoreKey as usize * frontier_capacity + slot] = top_k_score_key(cumulative_logprob);
         frontier[FrontierIdx::Active as usize * frontier_capacity + slot] = 1;
     }

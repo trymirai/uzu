@@ -2,6 +2,7 @@
 #include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
+#include "../common/threadgroup_reduce.h"
 #include "../common/top_k.h"
 #include "../rng.h"
 #include "weaver_frontier.h"
@@ -26,6 +27,15 @@ METAL_FUNC float gumbel_noise(uint64_t seed, uint logit_idx, uint vocab_size) {
   return -log(-log(uniform));
 }
 
+// The noise the target sampler adds for this token: the 24-bit uniform of `uniform_float` in rng.h keeps it finite.
+METAL_FUNC float target_gumbel_noise(uint64_t seed, uint logit_idx, uint vocab_size) {
+  const uint2 offset_word = gumbel_revidx(logit_idx, vocab_size);
+  PhiloxState rng;
+  philox_init(&rng, seed, offset_word.x);
+  const float uniform = float(max(rng.output[offset_word.y] >> 8, 1u)) * (1.0f / 16777216.0f);
+  return -log(-log(uniform));
+}
+
 METAL_FUNC bool weaver_better(uint score, uint token, uint index, uint best_score, uint best_token, uint best_index) {
   return score > best_score ||
          (score == best_score && (token < best_token || (token == best_token && index < best_index)));
@@ -39,10 +49,13 @@ PUBLIC KERNEL(WeaverTopChildren)(
     const device uint* node_metadata,
     device uint* output_token_ids,
     device float* output_model_logprobs,
+    device float* output_prune_logprobs OPTIONAL(has_prune_noise),
     constant uint& rows,
     constant uint& candidates,
     constant uint& expand_width,
     constant uint& vocab_size,
+    constant float& prune_noise_scale OPTIONAL(has_prune_noise),
+    const bool has_prune_noise SPECIALIZE,
     threadgroup float reduce_float[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_score[TOP_CHILDREN_SIMDGROUPS],
     threadgroup uint reduce_token[TOP_CHILDREN_SIMDGROUPS],
@@ -112,6 +125,31 @@ PUBLIC KERNEL(WeaverTopChildren)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
+  // Final pruning weighs each edge by the pool softmax of logits plus the target's noise scaled by 1 / sigma.
+  float first_prune_logit = -INFINITY;
+  float second_prune_logit = -INFINITY;
+  float prune_log_sum = 0.0f;
+  if (has_prune_noise) {
+    if (first_valid) {
+      first_prune_logit = first_logit + prune_noise_scale * target_gumbel_noise(seed, first_token, vocab_size);
+    }
+    if (second_valid) {
+      second_prune_logit = second_logit + prune_noise_scale * target_gumbel_noise(seed, second_token, vocab_size);
+    }
+    const float prune_max = threadgroup_cooperative_reduce<SimdReduceMax<float>, TOP_CHILDREN_THREADS>(
+        fmax(first_prune_logit, second_prune_logit),
+        reduce_float,
+        thread_context
+    );
+    const float prune_total = threadgroup_cooperative_reduce<SimdReduceSum<float>, TOP_CHILDREN_THREADS>(
+        (first_valid ? exp(first_prune_logit - prune_max) : 0.0f) +
+            (second_valid ? exp(second_prune_logit - prune_max) : 0.0f),
+        reduce_float,
+        thread_context
+    );
+    prune_log_sum = log(prune_total) + prune_max;
+  }
+
   for (uint child = 0; child < expand_width; ++child) {
     uint local_score = 0u;
     uint local_token = 0xffffffffu;
@@ -161,6 +199,10 @@ PUBLIC KERNEL(WeaverTopChildren)(
       const float winner_logit = candidate_logits[base + winner_index] + float(residual_logits[base + winner_index]);
       output_token_ids[row * expand_width + child] = winner_token;
       output_model_logprobs[row * expand_width + child] = winner_logit - log_sum;
+    }
+    if (has_prune_noise && (first_index == winner_index || second_index == winner_index)) {
+      output_prune_logprobs[row * expand_width + child] =
+          (first_index == winner_index ? first_prune_logit : second_prune_logit) - prune_log_sum;
     }
     first_active = first_active && first_index != winner_index;
     second_active = second_active && second_index != winner_index;
