@@ -311,10 +311,25 @@ fn parity_gemv_unaligned_width_bf16(
     run_parity::<bf16>(m, k, n, gs, bits, method, None, "gemv", 0.05, 0.6);
 }
 
-#[uzu_test]
-fn parity_bf16_gemv_quant_rht_with_bias() {
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::decode_fused(1, 256, 64, 32, QuantizationMethod::ScaleBias)]
+#[case::short_prefill_deferred_rht_then_bias(2, 5120, 6144, 64, QuantizationMethod::ScaleZeroPoint)]
+fn parity_bf16_gemv_quant_rht_with_bias(
+    #[case] m: u32,
+    #[case] k: u32,
+    #[case] n: u32,
+    #[case] group_size: u32,
+    #[case] method: QuantizationMethod,
+) {
     let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<bf16>::new(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
+    // The M=2 W4/G64 route uses a 16-row GEMV tile, so this checks deferred RHT before bias.
+    let input = QuantInput::<bf16>::new(m, k, n, group_size, 4, method, 0);
+    let input = if group_size == 64 {
+        input.with_group_output()
+    } else {
+        input
+    };
     let rht: Vec<i32> = (0..input.n as usize)
         .map(|i| {
             if i % 2 == 0 {
@@ -373,11 +388,27 @@ fn parity_bf16_gemv_quant_rht_with_bias() {
     assert_parity::<bf16>("gemv_quant_rht_bias", &reference, &actual, 0.05, 0.6);
 }
 
-#[uzu_test]
-fn parity_bf16_gemv_quant_rht() {
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::gemv(1, 256, 64, 32, QuantizationMethod::ScaleBias)]
+#[case::qmv_short_prefill_m2_g64(2, 5120, 6144, 64, QuantizationMethod::ScaleZeroPoint)]
+#[case::qmv_short_prefill_m5_g64(5, 5120, 6144, 64, QuantizationMethod::ScaleZeroPoint)]
+#[case::qmv_short_prefill_m7_g64(7, 5120, 6144, 64, QuantizationMethod::ScaleZeroPoint)]
+fn parity_bf16_quant_rht(
+    #[case] m: u32,
+    #[case] k: u32,
+    #[case] n: u32,
+    #[case] group_size: u32,
+    #[case] method: QuantizationMethod,
+) {
     let context = MetalContext::new().expect("Metal context");
-    // n % 32 == 0 so the output RHT covers whole 32-element blocks; m = 1 routes to GEMV.
-    let input = QuantInput::<bf16>::new(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
+    // W4/G64 matches the Qwen short-prefill route; keep the decode anchor at G32.
+    let input = QuantInput::<bf16>::new(m, k, n, group_size, 4, method, 0);
+    let input = if group_size == 64 {
+        input.with_group_output()
+    } else {
+        input
+    };
     let rht: Vec<i32> = (0..input.n as usize)
         .map(|i| {
             if i % 2 == 0 {
@@ -409,7 +440,6 @@ fn parity_bf16_gemv_quant_rht() {
     cpu_encoder.end_encoding().submit().wait_until_completed().unwrap();
     let reference = allocation_to_vec::<Cpu, bf16>(&cpu_buffers.y);
 
-    // Metal GEMV: m = 1 quant routes to GEMV, RHT selects the 8-simdgroup (32-row) layout.
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let metal_rht = crate::tests::helpers::alloc_allocation_with_data::<Metal, i32>(&context, &rht);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
@@ -425,11 +455,11 @@ fn parity_bf16_gemv_quant_rht() {
         rht_factors: Some(&metal_rht),
         ..MatmulDOps::none()
     };
-    matmul.encode(args, &mut encoder).expect("encode quant gemv with rht");
+    matmul.encode(args, &mut encoder).expect("encode quant matmul with rht");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
 
-    assert_parity::<bf16>("gemv_quant_rht", &reference, &actual, 0.05, 0.6);
+    assert_parity::<bf16>("quant_rht", &reference, &actual, 0.05, 0.6);
 }
 
 #[uzu_test]

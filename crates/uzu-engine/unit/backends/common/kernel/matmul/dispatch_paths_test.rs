@@ -187,6 +187,10 @@ fn gemv_fp_output_transforms_bf16() {
     for case in cases {
         check_case::<bf16>(&context, &mut kernel, None, case, 1.0);
     }
+
+    // M5 selects the ordinary 8-row, four-slice FP GEMV tile; RHT and bias are deferred.
+    let split_k_rht = Case::new(Shape::new(1, 512, 1024)).with_rht(true).with_bias(true);
+    check_case::<bf16>(&context, &mut kernel, None, split_k_rht, 1.0);
 }
 
 #[uzu_test]
