@@ -1,6 +1,6 @@
 use uzu_engine_macros::uzu_test;
 
-use super::{MaskKind, SplitGeometry, choose_long_prefill_splits, choose_splits, should_encode};
+use super::{MaskKind, SplitGeometry, choose_splits, should_encode};
 
 fn geometry(head_dim: u32) -> SplitGeometry {
     let (num_q_heads, block_rows, num_groups) = if head_dim == 128 {
@@ -33,10 +33,10 @@ fn measured_and_fallback_boundaries() {
         (40, 256, 32, 32_768, 10),
         (40, 128, 64, 32_768, 10),
         (40, 256, 17, 262_144, 10),
-        (40, 256, 128, 262_144, 3),
+        (40, 256, 128, 16_383, 3),
         (40, 256, 16, 128, 4),
         (10, 256, 32, 262_144, 3),
-        (10, 256, 128, 262_144, 1),
+        (10, 256, 128, 16_383, 1),
     ] {
         assert_eq!(splits(cores, head_dim, suffix, kv), expected);
     }
@@ -59,14 +59,20 @@ fn should_encode_boundaries() {
 
 #[uzu_test]
 fn long_prefill_split_selection_boundaries() {
-    // head_dim 256, gqa 6, 4 groups, 32-row tiles: 24 576 partial rows x 1 032 bytes at suffix 1 024.
-    let bytes_per_split = |suffix: u32| ((6 * suffix).div_ceil(32) * 4 * 32) as u64 * 1032;
-    let splits = |suffix, kv| choose_long_prefill_splits(suffix, kv, 32, bytes_per_split(suffix));
-    assert_eq!(splits(1024, 16_383), None, "short cache stays on choose_splits");
-    assert_eq!(splits(64, 61_440), None, "decode suffix stays on choose_splits");
-    assert_eq!(splits(1024, 16_384), Some(8), "2 048-key splits fit under the cap");
-    assert_eq!(splits(256, 61_440), Some(30), "2 048-key splits fit under the cap");
-    assert_eq!(splits(1024, 20_480), Some(10), "cap binds: fewer, longer splits");
-    assert_eq!(splits(1024, 102_400), Some(10), "cap binds: fewer, longer splits");
-    assert_eq!(choose_long_prefill_splits(1024, 61_440, 32, 200 << 20), None, "fewer than two fit");
+    for (suffix, kv, expected) in [
+        (1024, 16_383, 1),
+        (64, 61_440, 5),
+        (1024, 16_384, 8),
+        (256, 61_440, 30),
+        (1024, 20_480, 10),
+        (1024, 102_400, 10),
+    ] {
+        assert_eq!(splits(40, 256, suffix, kv), expected, "suffix={suffix}, kv={kv}");
+    }
+
+    let many_heads = SplitGeometry {
+        num_q_heads: 240,
+        ..geometry(256)
+    };
+    assert_eq!(choose_splits(many_heads, 1024, 61_440, 40), 1, "fewer than two prefill splits fit");
 }
