@@ -1,6 +1,6 @@
 use uzu_engine_macros::uzu_test;
 
-use super::{MaskKind, choose_splits, should_encode};
+use super::{MaskKind, choose_splits, prefill_splits_within_scratch, should_encode};
 
 fn splits(
     cores: u32,
@@ -46,4 +46,18 @@ fn should_encode_boundaries() {
     ] {
         assert_eq!(should_encode(head_dim, mask, suffix_length, kv_length), expected);
     }
+}
+
+#[uzu_test]
+fn prefill_splits_within_scratch_boundaries() {
+    // head_dim 256, gqa 6, 4 groups, 32-row tiles: 24 576 partial rows x 1 032 bytes at suffix 1 024.
+    let bytes_per_split = |suffix: u32| u64::from((6 * suffix).div_ceil(32) * 4 * 32) * 1032;
+    let splits = |suffix, kv| prefill_splits_within_scratch(suffix, kv, 32, bytes_per_split(suffix));
+    assert_eq!(splits(1024, 16_383), None, "short cache stays on choose_splits");
+    assert_eq!(splits(64, 61_440), None, "decode suffix stays on choose_splits");
+    assert_eq!(splits(1024, 16_384), Some(8), "2 048-key splits fit under the cap");
+    assert_eq!(splits(256, 61_440), Some(30), "2 048-key splits fit under the cap");
+    assert_eq!(splits(1024, 20_480), Some(10), "cap binds: fewer, longer splits");
+    assert_eq!(splits(1024, 102_400), Some(10), "cap binds: fewer, longer splits");
+    assert_eq!(prefill_splits_within_scratch(1024, 61_440, 32, 200 << 20), None, "fewer than two fit");
 }

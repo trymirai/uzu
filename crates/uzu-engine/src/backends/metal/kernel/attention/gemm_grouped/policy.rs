@@ -92,6 +92,27 @@ fn tabled_splits(
         })
 }
 
+const PREFILL_SPLIT_KEYS: u32 = 2048;
+const PREFILL_SPLIT_MIN_KV: u32 = 16384;
+const PREFILL_SPLIT_SCRATCH_BYTES: u64 = 256 << 20;
+const PREFILL_MIN_SPLITS: u32 = 2;
+
+/// Long-cache prefill: 2 048-key splits, partials capped at 256 MiB; fewer, longer splits when the cap binds.
+pub fn prefill_splits_within_scratch(
+    suffix_length: u32,
+    kv_length: u32,
+    block_k: u32,
+    bytes_per_split: u64,
+) -> Option<u32> {
+    if suffix_length <= MEASURED_SUFFIX_MAX || kv_length < PREFILL_SPLIT_MIN_KV {
+        return None;
+    }
+    let wanted = kv_length.div_ceil(PREFILL_SPLIT_KEYS).min(kv_length.div_ceil(block_k));
+    let fit = PREFILL_SPLIT_SCRATCH_BYTES / bytes_per_split;
+    let splits = u64::from(wanted).min(fit) as u32;
+    (splits >= PREFILL_MIN_SPLITS).then_some(splits)
+}
+
 pub fn choose_splits(
     head_dim: u32,
     suffix_length: u32,

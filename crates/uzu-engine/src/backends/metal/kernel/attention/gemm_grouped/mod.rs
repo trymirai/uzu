@@ -18,7 +18,7 @@ use crate::{
 };
 
 mod policy;
-use policy::{MAX_TRIE_SUFFIX, choose_splits};
+use policy::{MAX_TRIE_SUFFIX, choose_splits, prefill_splits_within_scratch};
 
 use super::MaskKind;
 
@@ -263,14 +263,15 @@ impl AttentionGemmGrouped {
             encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], DataType::BF16)?;
         let gpu_core_count = encoder.context().gpu_core_count;
         let core = self.get_or_create(encoder.context(), mask)?;
-        let num_splits = choose_splits(
-            core.head_dim,
-            suffix_length,
-            kv_length,
-            (core.num_q_heads / core.num_groups * suffix_length).div_ceil(core.block_rows) * core.num_groups,
-            BLOCK_K,
-            gpu_core_count,
-        );
+        let unsplit_threadgroups =
+            (core.num_q_heads / core.num_groups * suffix_length).div_ceil(core.block_rows) * core.num_groups;
+        let partial_rows = u64::from(unsplit_threadgroups * core.block_rows);
+        let partial_bytes_per_row = u64::from(core.head_dim * 4 + 8);
+        let bytes_per_split = partial_rows * partial_bytes_per_row;
+        let num_splits = prefill_splits_within_scratch(suffix_length, kv_length, BLOCK_K, bytes_per_split)
+            .unwrap_or_else(|| {
+                choose_splits(core.head_dim, suffix_length, kv_length, unsplit_threadgroups, BLOCK_K, gpu_core_count)
+            });
         core.encode(
             arguments.queries,
             arguments.keys,
