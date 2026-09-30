@@ -37,3 +37,6 @@ line-length = 120
 
 [tool.ruff.lint]
 extend-select = ["E501"]
+
+[tool.ty.environment]
+extra-paths = ["engine-splash/deps"]
