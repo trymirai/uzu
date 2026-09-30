@@ -107,15 +107,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     const { storage } = getPlatform();
     try {
-      // The caller awaits title generation first, so the user may be in another
-      // chat by now: rewrite the file from storage, never from in-memory messages.
-      const stored = await storage.loadChat(chatId);
-      if (!stored) return;
-      const remaining = stored.messages.filter((m) => m.id !== id);
-      await storage.createOrReplaceChat({
-        metadata: { ...stored.metadata, messageCount: remaining.length },
-        messages: remaining,
-      });
+      await storage.removeMessage(chatId, id);
       set({ savedChats: await storage.listChats() });
     } catch (e) {
       console.error("[storage] discardMessage failed", { chatId, id }, e);
@@ -266,8 +258,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       s.isModelLoading ||
       s.isTitleGenerating ||
       st === "stopping" ||
-      st === "ejecting" ||
-      st === "loading";
+      st === "ejecting";
     if (blocked) return { ok: true };
 
     useChatSessionStore.getState().setTitleGenerating(true);

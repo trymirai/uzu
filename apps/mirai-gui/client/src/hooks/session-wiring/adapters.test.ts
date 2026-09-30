@@ -38,7 +38,6 @@ it("marks the model as loading on the start event", () => {
   mocks.loading?.({ status: "start", repoId: REPO });
 
   expect(useChatSessionStore.getState().isModelLoading).toBe(true);
-  expect(useChatSessionStore.getState().operationState).toBe("loading");
   expect(useRuntimeSessionStore.getState().loadingSession).toEqual({ repoId: REPO });
 });
 
@@ -47,8 +46,27 @@ it("clears the loading state on the error event", () => {
   mocks.loading?.({ status: "error", repoId: REPO });
 
   expect(useChatSessionStore.getState().isModelLoading).toBe(false);
-  expect(useChatSessionStore.getState().operationState).toBe("idle");
   expect(useRuntimeSessionStore.getState().loadingSession).toBeNull();
+});
+
+it("keeps a held run operation across a model load", () => {
+  useChatSessionStore.setState({ operationState: "running", operationId: "held-by-test" });
+  mocks.loading?.({ status: "start", repoId: REPO });
+  expect(useChatSessionStore.getState().operationState).toBe("running");
+  mocks.state?.({ active: true, repoId: REPO, isEjecting: false });
+
+  expect(useChatSessionStore.getState().isModelLoading).toBe(false);
+  expect(useChatSessionStore.getState().operationState).toBe("running");
+});
+
+it("keeps a held run operation across a backend eject", () => {
+  useRuntimeSessionStore.setState({ residentSession: { repoId: REPO } });
+  useChatSessionStore.setState({ operationState: "running", operationId: "held-by-test" });
+  mocks.state?.({ active: true, repoId: REPO, isEjecting: true });
+  expect(useChatSessionStore.getState()).toMatchObject({ isEjecting: true, operationState: "running" });
+  mocks.state?.({ active: false, repoId: REPO, isEjecting: false });
+
+  expect(useChatSessionStore.getState()).toMatchObject({ isEjecting: false, operationState: "running" });
 });
 
 it("turns a finished load into the resident session", () => {

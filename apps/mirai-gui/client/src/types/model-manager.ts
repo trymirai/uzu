@@ -31,7 +31,6 @@ export type EngineModel = {
   familyIdentifier?: string;
   familyName?: string;
   paramSize?: number;
-  isThinking: boolean;
   reasoning: ReasoningSupport;
   quantization?: string | null;
   quantizationBits?: number;

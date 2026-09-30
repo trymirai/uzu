@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { twMerge } from "tailwind-merge";
 import { Text } from "@/components/ui/typography";
 
-export function Chip({ children, className }: { children: ReactNode; className?: string }) {
+function Chip({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div
       className={twMerge(

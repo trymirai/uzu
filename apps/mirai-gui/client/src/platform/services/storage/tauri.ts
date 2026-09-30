@@ -2,13 +2,15 @@ import { invoke } from "../shared/invoke";
 import type { StorageCleanupPreview, StorageService } from ".";
 import { chatRepository } from "./chat-repository";
 import { buildChatsZip } from "./export-zip";
+import { withFileQueue } from "./file-queue";
 
 export const tauriStorage: StorageService = {
   ...chatRepository,
   exportAllChatsZip: buildChatsZip,
 
   saveBinaryFile: (absolutePath, data) => invoke<boolean>("save_binary_file", { absolutePath, data: Array.from(data) }),
-  saveGlobalInstructions: (content) => invoke<void>("global_instructions_save", { content }),
+  saveGlobalInstructions: (content) =>
+    withFileQueue("global-instructions", () => invoke<void>("global_instructions_save", { content })),
   loadGlobalInstructions: () => invoke<string | null>("global_instructions_load"),
 
   previewCleanup: (skipModelIdentifiers) =>

@@ -14,7 +14,6 @@ const snapshot = (phase: EngineModel["state"]["phase"], seq: number): EngineMode
   repoId: REPO_ID,
   vendor: "Vendor",
   name: "Model",
-  isThinking: false,
   reasoning: { kind: "unsupported" },
   state: { phase, totalKbytes: 100, downloadedKbytes: 50, seq },
 });

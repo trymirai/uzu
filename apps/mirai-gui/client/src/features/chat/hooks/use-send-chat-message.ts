@@ -11,8 +11,6 @@ import type { ChatComposerState } from "./use-chat-composer-state";
 import type { StartStreamOptions } from "./use-llm-stream";
 import type { ToastApi } from "@/components/ui/toast/use-toast";
 
-const isTransientTitleGenError = (error: string): boolean => /Network error:/i.test(error);
-
 type UseSendChatMessageParams = {
   chatId: string;
   composer: ChatComposerState;
@@ -27,7 +25,7 @@ export const useSendChatMessage = (params: UseSendChatMessageParams) => {
   const { chatId, composer, globalInstructions, runStatusBlockReason, toast, setScrollTargetId, startStream } = params;
 
   return useCallback(
-    async (message: string) => {
+    async (message: string): Promise<void> => {
       const session = useChatSessionStore.getState();
       useChatStore.getState().setCurrentChatId(chatId);
 
@@ -61,121 +59,101 @@ export const useSendChatMessage = (params: UseSendChatMessageParams) => {
         return;
       }
 
-      const fileIds = composer.attachedFiles.map((file: AttachedFile) => {
-        attachmentStorage.saveFile(file);
-        return file.id;
-      });
-
-      const userMessage = useChatStore.getState().addMessageTo(chatId, {
-        text: message,
-        sender: Roles.User,
-        attachmentIds: fileIds.length > 0 ? fileIds : undefined,
-      });
-      const userId = userMessage.id;
-      const filesToSend = [...composer.attachedFiles];
-      composer.clear();
-
-      setScrollTargetId(userId);
-
-      try {
-        await useChatStore.getState().persistMessage(chatId, userId, userMessage);
-
-        const { messages: messagesForRun } = buildChatRunInput({
-          history,
-          prompt: message,
-          attachments: filesToSend,
-          globalInstructions,
+      const accepted = await session.withOperation("running", async () => {
+        const fileIds = composer.attachedFiles.map((file: AttachedFile) => {
+          attachmentStorage.saveFile(file);
+          return file.id;
         });
+        const attachmentIds = fileIds.length > 0 ? fileIds : undefined;
 
-        // Placeholder must exist before title-gen so Stop during title-gen has a
-        // message to settle instead of leaving a dangling user turn.
-        const freshStore = useChatStore.getState();
-        const placeholder = freshStore.addMessageTo(chatId, {
+        const userMessage = useChatStore.getState().addMessageTo(chatId, {
+          text: message,
+          sender: Roles.User,
+          attachmentIds,
+        });
+        const filesToSend = [...composer.attachedFiles];
+        composer.clear(message);
+        setScrollTargetId(userMessage.id);
+
+        // Created before the first await so Stop during title generation has a reply to remove.
+        const placeholder = useChatStore.getState().addMessageTo(chatId, {
           text: "",
           sender: Roles.Assistant,
           modelId: modelId || undefined,
-          modelName: freshStore.chatModels[chatId]?.modelName || undefined,
+          modelName: storeState.chatModels[chatId]?.modelName || undefined,
           perf: {},
-          attachmentIds: fileIds.length > 0 ? fileIds : undefined,
+          attachmentIds,
         });
-        const assistantMessageId = placeholder.id;
-        session.setLoadingMessage(chatId, assistantMessageId);
-        await useChatStore.getState().persistMessage(chatId, assistantMessageId, placeholder);
+        session.setLoadingMessage(chatId, placeholder.id);
 
-        const titleGenResult = await useChatStore.getState().generateChatTitle(chatId, message);
-
-        if (useChatSessionStore.getState().consumeTitleGenAbort(chatId)) {
-          // The placeholder is already on disk; left there it would come back
-          // as a blank bubble after a reload.
-          session.setCanceledMessage(chatId, null);
+        const failReply = async (errText: string) => {
           session.setLoadingMessage(chatId, null);
-          await useChatStore.getState().discardMessage(chatId, assistantMessageId);
-          return;
-        }
-
-        if (!titleGenResult.ok && titleGenResult.error && !isTransientTitleGenError(titleGenResult.error)) {
-          const errText = `Error: ${titleGenResult.error}`;
-          useChatStore.getState().updateMessage(assistantMessageId, {
-            text: "",
-            error: errText,
-            attachmentIds: fileIds.length > 0 ? fileIds : undefined,
-          });
+          useChatStore.getState().updateMessage(placeholder.id, { text: "", error: errText, attachmentIds });
           await useChatStore
             .getState()
-            .persistMessageError(chatId, assistantMessageId, "", errText, fileIds.length > 0 ? fileIds : undefined);
-          session.setLoadingMessage(chatId, null);
-          return;
-        }
+            .persistMessage(chatId, placeholder.id, { ...placeholder, text: "", error: errText })
+            .catch((err) => console.error("[storage] failed to persist error message", err));
+        };
 
-        void startStream({
-          repoId: modelId,
-          messages: messagesForRun,
-          messageId: assistantMessageId,
-          chatId,
-          updateText: (id: string, updatedText: string) => {
-            useChatStore.getState().updateMessage(id, {
-              text: updatedText,
-              attachmentIds: fileIds.length > 0 ? fileIds : undefined,
-            });
-          },
-          onDone: () => session.setLoadingMessage(chatId, null),
-          onError: (id, errorText) => {
-            const current = useChatStore.getState().messages.find((m) => m.id === id);
-            useChatStore.getState().updateMessage(id, {
-              text: "",
-              error: errorText,
-              attachmentIds: current?.attachmentIds,
-            });
-            void useChatStore.getState().persistMessageError(chatId, id, "", errorText, current?.attachmentIds);
-            session.setLoadingMessage(chatId, null);
-          },
-          onFinishReason: (reason) => {
-            if (reason === "ContextLimitReached") {
-              toast.warning("Conversation reached the model's context limit; reply may be truncated");
-            } else if (reason === "Length") {
-              toast.warning("Reply hit the output length limit and may be truncated");
-            }
-          },
-        });
-      } catch (e) {
-        session.setLoadingMessage(chatId, null);
-        const s = useChatStore.getState();
-        const errText = `Error: ${e instanceof Error ? e.message : String(e)}`;
-        const errMsg = s.addMessageTo(chatId, {
-          text: "",
-          error: errText,
-          sender: Roles.Assistant,
-          modelId: s.chatModels[chatId]?.modelId || undefined,
-          modelName: s.chatModels[chatId]?.modelName || undefined,
-          attachmentIds: fileIds.length > 0 ? fileIds : undefined,
-        });
-        await useChatStore
-          .getState()
-          .persistMessage(chatId, errMsg.id, errMsg)
-          .catch((err) => {
-            console.error("[storage] failed to persist error message", err);
+        try {
+          await useChatStore.getState().persistMessage(chatId, userMessage.id, userMessage);
+          await useChatStore.getState().persistMessage(chatId, placeholder.id, placeholder);
+
+          const { messages: messagesForRun } = buildChatRunInput({
+            history,
+            prompt: message,
+            attachments: filesToSend,
+            globalInstructions,
           });
-      }
+
+          const titleGenResult = await useChatStore.getState().generateChatTitle(chatId, message);
+
+          if (useChatSessionStore.getState().consumeTitleGenAbort(chatId)) {
+            // The placeholder is already on disk; left there it would come back
+            // as a blank bubble after a reload.
+            session.setCanceledMessage(chatId, null);
+            session.setLoadingMessage(chatId, null);
+            await useChatStore.getState().discardMessage(chatId, placeholder.id);
+            return;
+          }
+
+          if (!titleGenResult.ok && titleGenResult.error) {
+            await failReply(`Error: ${titleGenResult.error}`);
+            return;
+          }
+
+          await startStream({
+            repoId: modelId,
+            messages: messagesForRun,
+            messageId: placeholder.id,
+            chatId,
+            updateText: (id: string, updatedText: string) => {
+              useChatStore.getState().updateMessage(id, { text: updatedText, attachmentIds });
+            },
+            onDone: () => session.setLoadingMessage(chatId, null),
+            onError: (id, errorText) => {
+              const current = useChatStore.getState().messages.find((m) => m.id === id);
+              useChatStore.getState().updateMessage(id, {
+                text: "",
+                error: errorText,
+                attachmentIds: current?.attachmentIds,
+              });
+              void useChatStore.getState().persistMessageError(chatId, id, "", errorText, current?.attachmentIds);
+              session.setLoadingMessage(chatId, null);
+            },
+            onFinishReason: (reason) => {
+              if (reason === "ContextLimitReached") {
+                toast.warning("Conversation reached the model's context limit; reply may be truncated");
+              } else if (reason === "Length") {
+                toast.warning("Reply hit the output length limit and may be truncated");
+              }
+            },
+          });
+        } catch (e) {
+          await failReply(`Error: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      });
+      if (accepted === null) toast.error("Model is not ready yet, please wait");
     },
     [chatId, composer, globalInstructions, runStatusBlockReason, toast, setScrollTargetId, startStream],
   );

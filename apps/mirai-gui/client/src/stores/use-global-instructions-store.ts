@@ -5,7 +5,7 @@ type GlobalInstructionsState = {
   instructions: string;
   isLoading: boolean;
   loadInstructions: () => Promise<void>;
-  saveInstructions: (instructions: string) => Promise<void>;
+  saveInstructions: (instructions: string) => Promise<boolean>;
 };
 
 export const useGlobalInstructionsStore = create<GlobalInstructionsState>((set) => ({
@@ -31,8 +31,10 @@ export const useGlobalInstructionsStore = create<GlobalInstructionsState>((set) 
     try {
       await storage.saveGlobalInstructions(instructions);
       set({ instructions });
+      return true;
     } catch (error) {
       console.error("Failed to save global instructions:", error);
+      return false;
     } finally {
       set({ isLoading: false });
     }

@@ -1,5 +1,5 @@
 import type { KeyboardEvent as ReactKeyboardEvent, MutableRefObject } from "react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { isMacPlatform } from "@/utils/platform";
 import type { ChatInputFile, ChatInputSendPayload } from "./types";
 
@@ -7,9 +7,8 @@ const EMPTY_FILES: ChatInputFile[] = [];
 
 export type UseChatInputControllerArgs = {
   value: string;
-  onChange: (value: string) => void;
   files?: ChatInputFile[];
-  onSend?: (payload: ChatInputSendPayload) => void | Promise<void>;
+  onSend?: (payload: ChatInputSendPayload) => void;
   canSend?: (payload: ChatInputSendPayload) => boolean;
   onBlockedSend?: (payload: ChatInputSendPayload) => void;
 };
@@ -24,14 +23,12 @@ export type UseChatInputControllerResult = {
 
 export function useChatInputController({
   value,
-  onChange,
   files,
   onSend,
   canSend,
   onBlockedSend,
 }: UseChatInputControllerArgs): UseChatInputControllerResult {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [internalBusy, setInternalBusy] = useState(false);
   const isMac = isMacPlatform();
 
   const effectiveFiles = files ?? EMPTY_FILES;
@@ -43,50 +40,42 @@ export function useChatInputController({
     [effectiveFiles, trimmedText],
   );
 
-  const sendDisabled = internalBusy || !hasContent || typeof onSend !== "function";
+  const sendDisabled = !hasContent || !onSend;
 
   const focusTextarea = useCallback(() => {
     textareaRef.current?.focus();
   }, []);
 
-  const clearTextarea = useCallback(() => {
-    onChange("");
-  }, [onChange]);
-
   const handleSubmit = useCallback(() => {
     if (sendDisabled) return;
-    if (typeof onSend !== "function") return;
-    if (typeof canSend === "function" && !canSend(payload)) {
+    if (!onSend) return;
+    if (canSend && !canSend(payload)) {
       onBlockedSend?.(payload);
       return;
     }
 
-    setInternalBusy(true);
-    Promise.resolve(onSend(payload))
-      .then(() => {
-        clearTextarea();
-        focusTextarea();
-      })
-      .finally(() => {
-        setInternalBusy(false);
-      });
-  }, [canSend, clearTextarea, focusTextarea, onBlockedSend, onSend, payload, sendDisabled]);
+    onSend(payload);
+    focusTextarea();
+  }, [canSend, focusTextarea, onBlockedSend, onSend, payload, sendDisabled]);
 
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
       const metaOrCtrl = isMac ? e.metaKey : e.ctrlKey;
 
       if (e.key !== "Enter") return;
+      // In WebKit the Enter that confirms an IME choice arrives with isComposing
+      // already false and keyCode 229.
+      if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
 
       if (metaOrCtrl) {
-        if (!hasContent || typeof onSend !== "function") return;
+        if (!hasContent || !onSend) return;
         e.preventDefault();
         handleSubmit();
         return;
       }
 
       if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (!hasContent || typeof onSend !== "function") return;
+      if (!hasContent || !onSend) return;
 
       e.preventDefault();
       handleSubmit();

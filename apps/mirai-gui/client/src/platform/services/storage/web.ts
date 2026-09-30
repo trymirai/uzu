@@ -8,6 +8,7 @@ export const webStorage: StorageService = {
   createOrReplaceChat: () => Promise.resolve(),
   appendMessage: () => Promise.resolve(),
   updateStoredMessage: () => Promise.resolve(),
+  removeMessage: () => Promise.resolve(),
   updateChatTitle: () => Promise.resolve(),
   deleteChat: () => Promise.resolve(),
   exportAllChatsZip: () => Promise.resolve(null),

@@ -4,12 +4,14 @@ import type { ChatData, ChatMetadata, StorageService } from ".";
 import { deleteChatFile, listChatFiles, loadChatFile, saveChatFile } from "./chat-files";
 import { extractMessageBlocks, parseMessage, parseMetadata } from "./markdown/parse";
 import { serializeToMarkdown } from "./markdown/serialize";
+import { withFileQueue } from "./file-queue";
 
 type ChatRepository = Pick<
   StorageService,
   | "listChats"
   | "loadChat"
   | "createOrReplaceChat"
+  | "removeMessage"
   | "appendMessage"
   | "updateStoredMessage"
   | "updateChatTitle"
@@ -20,24 +22,9 @@ const writeChat = async (chat: ChatData): Promise<void> => {
   await saveChatFile(`${chat.metadata.id}.md`, serializeToMarkdown(chat));
 };
 
-// Mutations are load-modify-save over the whole file; concurrent ones on the
-// same chat (e.g. appendMessage racing the title-gen update) would drop each
-// other's writes, so they queue per chatId.
-const chains = new Map<string, Promise<unknown>>();
-const withChatLock = <T>(chatId: string, run: () => Promise<T>): Promise<T> => {
-  const prev = chains.get(chatId) ?? Promise.resolve();
-  const next = prev.then(run, run);
-  const tail: Promise<unknown> = next
-    .catch(() => undefined)
-    .finally(() => {
-      if (chains.get(chatId) === tail) chains.delete(chatId);
-    });
-  chains.set(chatId, tail);
-  return next;
-};
+const withChatLock = <T>(chatId: string, run: () => Promise<T>): Promise<T> => withFileQueue(`chat:${chatId}`, run);
 
-// null means the file does not exist; a read failure must reject, otherwise
-// appendMessage would treat the chat as missing and recreate it from memory.
+// A read error must throw: appendMessage takes null for a missing chat and rewrites it from memory.
 const loadChat = async (chatId: string): Promise<ChatData | null> => {
   const content = await loadChatFile(`${chatId}.md`);
   if (!content) return null;
@@ -79,9 +66,11 @@ export const chatRepository: ChatRepository = {
     return withChatLock(chatId, async () => {
       const existing = await loadChat(chatId);
       if (!existing) throw new ChatNotFoundError(chatId);
+      // A recovery rewrite from memory may already hold this message.
+      const others = existing.messages.filter((m) => m.id !== message.id);
       await writeChat({
-        metadata: { ...existing.metadata, messageCount: existing.messages.length + 1, updatedAt: Date.now() },
-        messages: [...existing.messages, message],
+        metadata: { ...existing.metadata, messageCount: others.length + 1, updatedAt: Date.now() },
+        messages: [...others, message],
       });
     });
   },
@@ -95,6 +84,16 @@ export const chatRepository: ChatRepository = {
         metadata: { ...existing.metadata, updatedAt: Date.now() },
         messages,
       });
+    });
+  },
+
+  removeMessage(chatId, messageId) {
+    return withChatLock(chatId, async () => {
+      const existing = await loadChat(chatId);
+      if (!existing) return;
+      const messages = existing.messages.filter((m) => m.id !== messageId);
+      if (messages.length === existing.messages.length) return;
+      await writeChat({ metadata: { ...existing.metadata, messageCount: messages.length }, messages });
     });
   },
 

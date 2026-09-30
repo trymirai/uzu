@@ -37,7 +37,6 @@ export function ChatInput({
 
   const controller = useChatInputController({
     value,
-    onChange,
     files,
     onSend,
     canSend,

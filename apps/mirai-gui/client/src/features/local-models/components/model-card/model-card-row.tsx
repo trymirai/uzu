@@ -15,8 +15,6 @@ export function ModelCardRow({
   logo,
   parameters,
   size,
-  isThinking = false,
-  isCompressed = false,
   state,
   onDownload,
   onPause,
@@ -123,9 +121,9 @@ export function ModelCardRow({
         </div>
       </div>
 
-      {compact && (size || parameters || isCompressed || isThinking) && (
+      {compact && (size || parameters) && (
         <div className="mt-2.5 pl-4 pr-3 flex items-center gap-1.5 flex-wrap">
-          <ModelBadges parameters={parameters} size={size} isThinking={isThinking} isCompressed={isCompressed} />
+          <ModelBadges parameters={parameters} size={size} />
         </div>
       )}
 

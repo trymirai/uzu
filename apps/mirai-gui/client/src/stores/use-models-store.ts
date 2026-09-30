@@ -96,7 +96,6 @@ export const useModelsStore = create<ModelsState>()(
                 ...(typeof m.quantizationBits === "number" ? { quantizationBits: m.quantizationBits } : {}),
                 repoId,
                 kind: ModelKind.Text,
-                isThinking: m.isThinking,
                 reasoning: m.reasoning,
                 size: totalBytes,
                 ...(typeof m.paramSize === "number" ? { paramSize: m.paramSize } : {}),

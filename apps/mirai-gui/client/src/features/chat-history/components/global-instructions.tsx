@@ -2,27 +2,30 @@ import { Textarea as HeadlessTextarea } from "@headlessui/react";
 import { Plus } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { CardContainer } from "@/components/ui/card-container";
+import { useToast } from "@/components/ui/toast/use-toast";
 
 type GlobalInstructionsProps = {
   instructions: string;
-  onSave: (instructions: string) => void;
+  onSave: (instructions: string) => Promise<boolean>;
 };
 
 const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, onSave }) => {
+  const toast = useToast();
   const [isExpanded, setIsExpanded] = useState(false);
   const [localInstructions, setLocalInstructions] = useState(instructions);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const saveTimerRef = useRef<number | null>(null);
-  const lastSavedRef = useRef<string>(instructions || "");
+  // null after a failed save, so the next blur saves again.
+  const lastRequestedRef = useRef<string | null>(instructions || "");
   const latestValueRef = useRef<string>(instructions || "");
+  const touchedRef = useRef(false);
 
-  // The editor owns the draft: the store's value is taken only while nothing is
-  // unsaved, so a save confirmation cannot roll back text typed meanwhile.
+  // After the first keystroke the store only repeats what this editor saved.
   useEffect(() => {
-    if (localInstructions !== lastSavedRef.current) return;
+    if (touchedRef.current) return;
     setLocalInstructions(instructions);
-    lastSavedRef.current = instructions || "";
-  }, [instructions, localInstructions]);
+    lastRequestedRef.current = instructions || "";
+  }, [instructions]);
 
   useEffect(() => {
     latestValueRef.current = localInstructions;
@@ -30,11 +33,15 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
 
   const doSave = useCallback(
     (value: string) => {
-      if (value === lastSavedRef.current) return;
-      onSave(value);
-      lastSavedRef.current = value;
+      if (value === lastRequestedRef.current) return;
+      lastRequestedRef.current = value;
+      void onSave(value).then((saved) => {
+        if (saved) return;
+        if (lastRequestedRef.current === value) lastRequestedRef.current = null;
+        toast.error("Failed to save instructions", { id: "instructions-save-failed" });
+      });
     },
-    [onSave],
+    [onSave, toast],
   );
 
   const scheduleSave = useCallback(
@@ -89,6 +96,7 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const value = e.target.value;
+      touchedRef.current = true;
       setLocalInstructions(value);
       scheduleSave(value);
     },

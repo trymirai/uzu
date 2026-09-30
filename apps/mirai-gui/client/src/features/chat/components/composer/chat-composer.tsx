@@ -6,7 +6,6 @@ import type { AttachedFile } from "@/types/files";
 import { MAX_FILES_PER_MESSAGE, SUPPORTED_FILE_TYPES } from "@/constants/attachments";
 import { isValidFileSize, isValidFileType, processFile } from "../../services/attachment-files";
 import { ChatInput } from "./chat-input";
-import { useState } from "react";
 
 type ChatComposerProps = {
   chatId: string;
@@ -16,6 +15,8 @@ type ChatComposerProps = {
   autoSelectSuppressed: boolean;
   selectedModelId: string;
   hasInstalledModels: boolean;
+  draft: string;
+  onDraftChange: (draft: string) => void;
   attachedFiles: AttachedFile[];
   canRun: boolean;
   onSendMessage: (message: string) => void;
@@ -37,6 +38,8 @@ export const ChatComposer = ({
   autoSelectSuppressed,
   selectedModelId,
   hasInstalledModels,
+  draft,
+  onDraftChange,
   attachedFiles,
   canRun,
   onSendMessage,
@@ -47,7 +50,6 @@ export const ChatComposer = ({
   onOpenModelParams,
   modelParamsModified,
 }: ChatComposerProps) => {
-  const [draft, setDraft] = useState("");
   const toast = useToast();
 
   const isEjecting = useChatSessionStore((s) => s.isEjecting);
@@ -89,7 +91,7 @@ export const ChatComposer = ({
   return (
     <ChatInput
       value={draft}
-      onChange={setDraft}
+      onChange={onDraftChange}
       placeholder="Add message…"
       onSend={({ text }) => {
         if (text) onSendMessage(text);

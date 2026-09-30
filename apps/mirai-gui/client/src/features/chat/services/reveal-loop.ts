@@ -9,7 +9,7 @@ type RevealLoopOptions = {
 
 export type RevealLoop = {
   append: (delta: string) => void;
-  /** Resolves once everything appended so far is on screen. */
+  /** Resolves once everything appended so far is on screen, or once the loop is cancelled. */
   drain: () => Promise<void>;
   cancel: () => void;
 };
@@ -28,10 +28,32 @@ export const createRevealLoop = ({ baseText, isActive, apply }: RevealLoopOption
     pending.forEach((resolve) => resolve());
   };
 
+  // A hidden window gets no animation frames, even one already requested.
+  const onVisibilityChange = (): void => {
+    if (document.visibilityState === "hidden") schedule();
+  };
+  const cancelFrame = (): void => {
+    if (frame === null) return;
+    window.cancelAnimationFrame(frame);
+    frame = null;
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+  };
+
   const schedule = (): void => {
+    if (document.visibilityState === "hidden") {
+      cancelFrame();
+      if (isActive()) {
+        const visible = pacer.flush();
+        if (visible !== null) apply(visible);
+      }
+      releaseWaiters();
+      return;
+    }
     if (frame !== null) return;
+    document.addEventListener("visibilitychange", onVisibilityChange);
     frame = window.requestAnimationFrame((now) => {
       frame = null;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (!isActive()) {
         releaseWaiters();
         return;
@@ -62,10 +84,7 @@ export const createRevealLoop = ({ baseText, isActive, apply }: RevealLoopOption
       });
     },
     cancel: () => {
-      if (frame !== null) {
-        window.cancelAnimationFrame(frame);
-        frame = null;
-      }
+      cancelFrame();
       pacer.reset();
       releaseWaiters();
     },

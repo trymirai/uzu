@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearch } from "@tanstack/react-router";
 
 import { ChatHeader } from "./chat-header";
@@ -48,7 +48,6 @@ export function ChatPage() {
   const titleGenChatId = useChatSessionStore((s) => s.titleGenChatId);
   const isTitleGeneratingForChat = isTitleGenerating && titleGenChatId === chatId;
   const savedChats = useChatStore((s) => s.savedChats);
-  const saveFailureCount = useChatStore((s) => s.saveFailureCount);
   const isChatStreaming = useChatSessionStore((s) => isChatGenerating(s, chatId));
   const loadingMessageId = useChatSessionStore((s) =>
     s.loadingMessage?.chatId === chatId ? s.loadingMessage.messageId : null,
@@ -56,14 +55,6 @@ export function ChatPage() {
   const canceledMessageId = useChatSessionStore((s) =>
     s.canceledMessage?.chatId === chatId ? s.canceledMessage.messageId : null,
   );
-
-  // The counter outlives this page, so only a rise seen while mounted is news.
-  const seenSaveFailuresRef = useRef(saveFailureCount);
-  useEffect(() => {
-    if (saveFailureCount === seenSaveFailuresRef.current) return;
-    seenSaveFailuresRef.current = saveFailureCount;
-    toast.error("Failed to save the message. It may be missing after a restart.", { id: "chat-save-failed" });
-  }, [saveFailureCount, toast]);
 
   const composer = useChatComposerState();
   const { isLoading, startStream, cancel } = useLlmStream(chatId);
@@ -178,6 +169,8 @@ export function ChatPage() {
             autoSelectSuppressed={autoSelectSuppressed}
             selectedModelId={effectiveSelectedModelId}
             hasInstalledModels={hasInstalledModels}
+            draft={composer.draft}
+            onDraftChange={composer.setDraft}
             attachedFiles={composer.attachedFiles}
             canRun={runStatus.canRun}
             onSendMessage={handleSendMessage}

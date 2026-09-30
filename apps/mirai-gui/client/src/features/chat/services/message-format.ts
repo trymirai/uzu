@@ -27,7 +27,10 @@ export const normalizeMessagesForRun = (messages: ChatRunMessage[]): ChatRunMess
     if (!prev) {
       return m.role === Roles.User ? [m] : acc;
     }
-    return prev.role === m.role ? [...acc.slice(0, -1), m] : [...acc, m];
+    // Two user turns in a row follow a stopped reply; dropping either would lose text.
+    return prev.role === m.role
+      ? [...acc.slice(0, -1), { ...prev, content: `${prev.content}\n\n${m.content}` }]
+      : [...acc, m];
   }, []);
 
   return system.concat(alternated);

@@ -50,7 +50,7 @@ export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
 
   const sampling: SamplingPolicyPayload = params?.sampling ?? { type: "Default" };
   const reasoningEffort = params?.reasoningEffort ?? defaultReasoningEffort(globalReasoningEnabled);
-  const reasoning: ReasoningSupport = model?.reasoning ?? { kind: model?.isThinking ? "toggle" : "unsupported" };
+  const reasoning: ReasoningSupport = model?.reasoning ?? { kind: "unsupported" };
   const stochastic = sampling.type === "Stochastic" ? sampling : null;
 
   const isResident = useRuntimeSessionStore((s) => s.residentSession?.repoId === repoId);

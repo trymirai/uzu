@@ -8,7 +8,7 @@ type SessionKey = RuntimeSessionRef;
 
 type ChatMessageRef = { chatId: string; messageId: string };
 
-type OperationState = "idle" | "running" | "stopping" | "ejecting" | "loading";
+type OperationState = "idle" | "running" | "stopping" | "ejecting";
 
 type SessionStoreState = {
   isGenerating: boolean;
@@ -55,7 +55,7 @@ type SessionStoreState = {
   canStop: () => boolean;
   canEject: () => boolean;
 
-  withOperation: <T>(op: Exclude<OperationState, "idle" | "loading">, effect: () => Promise<T>) => Promise<T | null>;
+  withOperation: <T>(op: Exclude<OperationState, "idle">, effect: () => Promise<T>) => Promise<T | null>;
 };
 
 export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
@@ -86,32 +86,19 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
       if (messageId) return { canceledMessage: { chatId, messageId } };
       return s.canceledMessage?.chatId === chatId ? { canceledMessage: null } : {};
     }),
-  setGenerating: (running) =>
-    set(() => {
-      const next = {
-        isGenerating: running,
-        operationState: running ? "running" : get().operationState === "running" ? "idle" : get().operationState,
-      };
-      return next;
-    }),
-  setEjecting: (ejecting) =>
-    set({
-      isEjecting: ejecting,
-      operationState: ejecting ? "ejecting" : get().operationState === "ejecting" ? "idle" : get().operationState,
-    }),
-  startModelLoading: () => {
-    if (!get().isModelLoading) set({ isModelLoading: true, operationState: "loading" });
+  setGenerating: (running) => set({ isGenerating: running }),
+  // The backend can eject on its own timer while a run is being prepared.
+  setEjecting: (ejecting) => {
+    const st = get().operationState;
+    const next = ejecting ? (st === "idle" ? "ejecting" : st) : st === "ejecting" ? "idle" : st;
+    set({ isEjecting: ejecting, operationState: next });
   },
+  // A model load only ever happens inside a run.
+  startModelLoading: () => set({ isModelLoading: true }),
   // Loads never overlap, so the terminal event is not matched to a load;
   // ignoring a mismatched one would strand isModelLoading and block send,
   // stop and eject.
-  endModelLoading: () => {
-    if (get().isModelLoading)
-      set({
-        isModelLoading: false,
-        operationState: get().operationState === "loading" ? "idle" : get().operationState,
-      });
-  },
+  endModelLoading: () => set({ isModelLoading: false }),
   setTitleGenerating: (v) => set({ isTitleGenerating: v }),
   setTitleGenChat: (chatId) => set({ titleGenChatId: chatId }),
   consumeTitleGenAbort: (chatId) => {
@@ -163,7 +150,7 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
 
   canRun: (key) => {
     const s = get();
-    const notLoading = !s.isModelLoading && s.operationState !== "loading";
+    const notLoading = !s.isModelLoading;
     const notEjecting = !s.isEjecting && s.operationState !== "ejecting";
     const notRunning = !s.isGenerating && s.operationState !== "running";
     const notStopping = s.operationState !== "stopping";
@@ -174,17 +161,17 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
   },
   canStop: () => {
     const s = get();
-    const running = s.isGenerating || s.operationState === "running";
+    // A run still loading its model can be stopped: the backend checks for a cancel first.
+    const running = s.isGenerating;
     const notEjecting = !s.isEjecting && s.operationState !== "ejecting";
-    const notLoading = !s.isModelLoading && s.operationState !== "loading";
     const notTitling = !s.isTitleGenerating;
-    return running && notEjecting && notLoading && notTitling && s.operationState !== "stopping";
+    return running && notEjecting && notTitling && s.operationState !== "stopping";
   },
   canEject: () => {
     const s = get();
     const resident = useRuntimeSessionStore.getState().residentSession;
     const hasResident = !!resident;
-    const notLoading = !s.isModelLoading && s.operationState !== "loading";
+    const notLoading = !s.isModelLoading;
     const notEjecting = !s.isEjecting && s.operationState !== "ejecting";
     const notRunning = !s.isGenerating && s.operationState !== "running";
     const notStopping = s.operationState !== "stopping";
@@ -196,7 +183,6 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
     const s = get();
     const st: OperationState = s.operationState;
 
-    const isLoadingState = st === "loading";
     const isEjectingState = st === "ejecting";
     const isRunningState = st === "running";
     const isStoppingState = st === "stopping";
@@ -204,12 +190,11 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
     const isTitling = s.isTitleGenerating;
 
     const isBlocked =
-      isLoadingState ||
       isTitling ||
       sameOp ||
       (op === "running" && (isStoppingState || isEjectingState)) ||
-      (op === "stopping" && (isEjectingState || isLoadingState)) ||
-      (op === "ejecting" && (isRunningState || isStoppingState || isLoadingState));
+      (op === "stopping" && isEjectingState) ||
+      (op === "ejecting" && (isRunningState || isStoppingState));
 
     if (isBlocked) return Promise.resolve(null);
 

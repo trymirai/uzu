@@ -9,8 +9,7 @@ export type UzuModel = {
   kind: ModelKind;
   name: string;
   vendor: string;
-  isThinking: boolean;
-  reasoning?: ReasoningSupport;
+  reasoning: ReasoningSupport;
   quantization?: string | null;
   quantizationBits?: number;
 };

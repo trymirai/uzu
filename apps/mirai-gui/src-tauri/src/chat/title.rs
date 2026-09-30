@@ -28,7 +28,7 @@ pub(super) async fn title_gen_inner(
     if state.cancel_requested(TITLE_GEN_RUN_ID) {
         return Ok(String::new());
     }
-    // Reasoning that cannot be turned off eats the whole title budget.
+    // Such a model spends the whole budget on reasoning; a bigger budget would delay the reply.
     if matches!(support, ReasoningSupport::AlwaysOn) {
         crate::logger::info(
             "title-gen:skip",
@@ -36,7 +36,6 @@ pub(super) async fn title_gen_inner(
         );
         return Ok(String::new());
     }
-
     let messages = build_messages(&payload.messages, support.cheapest());
 
     let reply_config = ChatReplyConfig::create()

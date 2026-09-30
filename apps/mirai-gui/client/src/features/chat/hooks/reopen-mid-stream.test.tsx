@@ -84,7 +84,7 @@ it("keeps streaming into the message after leaving and reopening the chat", asyn
     onError: vi.fn(),
   };
   act(() => {
-    void page.result.current.startStream(options);
+    void useChatSessionStore.getState().withOperation("running", () => page.result.current.startStream(options));
   });
   await waitFor(() => expect(page.result.current.isStreaming).toBe(true));
   act(() => emit({ type: "chunk", delta: "Hello" }));

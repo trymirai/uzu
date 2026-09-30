@@ -7,6 +7,14 @@ import { Roles } from "@/types/chat";
 import type { SessionOutputStats } from "@/types/llm-stream";
 import { STALL_TIMEOUT_MS, useLlmStream, type StartStreamOptions } from "./use-llm-stream";
 
+const mocks = vi.hoisted(() => ({ cancelRun: vi.fn(async () => {}), updateStoredMessage: vi.fn(async () => {}) }));
+vi.mock("@/platform/platform-singleton", () => ({
+  getPlatform: () => ({
+    chat: { cancelRun: mocks.cancelRun },
+    storage: { updateStoredMessage: mocks.updateStoredMessage },
+  }),
+}));
+
 const CHAT_ID = "chat-1";
 const MESSAGE_ID = "assistant-1";
 
@@ -23,8 +31,10 @@ const setup = () => {
   let emit: (event: RunEvent) => void = () => {
     throw new Error("run was not started");
   };
+  let startedRunId = "";
   const transport: RunTransport = {
-    start: (_runId, _params, onEvent) => {
+    start: (runId, _params, onEvent) => {
+      startedRunId = runId;
       emit = onEvent;
       return new Promise(() => {});
     },
@@ -52,7 +62,18 @@ const setup = () => {
     ...callbacks,
   };
   const hook = renderHook(() => useLlmStream(CHAT_ID));
-  return { hook, options, callbacks, transport, finalizeAssistantMessage, emit: (event: RunEvent) => emit(event) };
+  const start = (o: StartStreamOptions) =>
+    useChatSessionStore.getState().withOperation("running", () => hook.result.current.startStream(o));
+  return {
+    hook,
+    start,
+    options,
+    callbacks,
+    transport,
+    finalizeAssistantMessage,
+    emit: (event: RunEvent) => emit(event),
+    runId: () => startedRunId,
+  };
 };
 
 const messageText = () => useChatStore.getState().messages.find((m) => m.id === MESSAGE_ID)?.text;
@@ -64,11 +85,11 @@ describe("useLlmStream", () => {
   });
 
   it("reveals streamed text, records perf and finalizes the message", async () => {
-    const { hook, options, callbacks, finalizeAssistantMessage, emit } = setup();
+    const { hook, start, options, callbacks, finalizeAssistantMessage, emit } = setup();
 
     let run!: Promise<unknown>;
     act(() => {
-      run = hook.result.current.startStream(options);
+      run = start(options);
     });
     await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
     expect(hook.result.current.isLoading).toBe(true);
@@ -103,11 +124,11 @@ describe("useLlmStream", () => {
   });
 
   it("reports a backend error and does not finalize", async () => {
-    const { hook, options, callbacks, finalizeAssistantMessage, emit } = setup();
+    const { hook, start, options, callbacks, finalizeAssistantMessage, emit } = setup();
 
     let run!: Promise<unknown>;
     act(() => {
-      run = hook.result.current.startStream(options);
+      run = start(options);
     });
     await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
     act(() => emit({ type: "error", error: "model exploded" }));
@@ -121,11 +142,11 @@ describe("useLlmStream", () => {
   });
 
   it("stops a run without finalizing or reporting an error", async () => {
-    const { hook, options, callbacks, transport, finalizeAssistantMessage, emit } = setup();
+    const { hook, start, options, callbacks, transport, finalizeAssistantMessage, emit } = setup();
 
     let run!: Promise<unknown>;
     act(() => {
-      run = hook.result.current.startStream(options);
+      run = start(options);
     });
     await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
     act(() => emit({ type: "chunk", delta: "partial" }));
@@ -141,29 +162,58 @@ describe("useLlmStream", () => {
   });
 
   it("stops a run started by an instance that has since unmounted", async () => {
-    const { hook, options, transport } = setup();
-    const cancelActiveRunForChat = vi.fn(() => Promise.resolve());
-    useChatSessionStore.setState({ cancelActiveRunForChat });
+    const { hook, start, options, transport, finalizeAssistantMessage, emit, runId } = setup();
+    mocks.cancelRun.mockClear();
 
+    let run!: Promise<unknown>;
     act(() => {
-      void hook.result.current.startStream(options);
+      run = start(options);
     });
     await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    act(() => emit({ type: "chunk", delta: "partial" }));
+    hook.unmount();
 
     const remounted = renderHook(() => useLlmStream(CHAT_ID));
     await act(() => remounted.result.current.cancel());
-
-    expect(cancelActiveRunForChat).toHaveBeenCalledWith(CHAT_ID);
+    expect(mocks.cancelRun).toHaveBeenCalledWith(runId());
     expect(transport.cancel).not.toHaveBeenCalled();
+
+    act(() => emit({ type: "done", text: "partial", stats, finishReason: "Cancelled" }));
+    await act(() => run);
+
+    expect(finalizeAssistantMessage).not.toHaveBeenCalled();
+    expect(mocks.updateStoredMessage).toHaveBeenCalledWith(
+      CHAT_ID,
+      MESSAGE_ID,
+      expect.objectContaining({ text: "partial" }),
+    );
+    expect(useChatSessionStore.getState()).toMatchObject({ isGenerating: false, operationState: "idle" });
+  });
+
+  it("stops a run whose model is still loading", async () => {
+    const { hook, start, options, transport } = setup();
+
+    let run!: Promise<unknown>;
+    act(() => {
+      run = start(options);
+    });
+    await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    act(() => useChatSessionStore.getState().startModelLoading());
+
+    await act(() => hook.result.current.cancel());
+    await act(() => run);
+
+    expect(transport.cancel).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.isStreaming).toBe(false);
   });
 
   it("reports a stalled stream once", async () => {
     vi.useFakeTimers();
     try {
-      const { hook, options, callbacks, emit } = setup();
+      const { start, options, callbacks, emit } = setup();
 
       act(() => {
-        void hook.result.current.startStream(options);
+        void start(options);
       });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
@@ -181,23 +231,13 @@ describe("useLlmStream", () => {
   });
 
   it("refuses an empty history", async () => {
-    const { hook, options, callbacks, finalizeAssistantMessage } = setup();
+    const { start, options, callbacks, finalizeAssistantMessage } = setup();
 
-    await act(() => hook.result.current.startStream({ ...options, messages: [] }));
+    await act(() => start({ ...options, messages: [] }));
 
     expect(callbacks.onError).toHaveBeenCalledWith(MESSAGE_ID, "Error: empty message history");
     expect(callbacks.onDone).toHaveBeenCalledTimes(1);
     expect(finalizeAssistantMessage).not.toHaveBeenCalled();
     expect(useChatSessionStore.getState().isGenerating).toBe(false);
-  });
-
-  it("refuses to start while another generation is running", async () => {
-    const { hook, options, callbacks } = setup();
-    useChatSessionStore.setState({ isGenerating: true });
-
-    await act(() => hook.result.current.startStream(options));
-
-    expect(callbacks.onError).toHaveBeenCalledWith(MESSAGE_ID, "Error: Model is busy");
-    expect(hook.result.current.isStreaming).toBe(false);
   });
 });

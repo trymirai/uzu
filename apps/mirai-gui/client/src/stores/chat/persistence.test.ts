@@ -1,5 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import type { ChatData, ChatMetadata } from "@/platform/services/storage";
+import { serializeToMarkdown } from "@/platform/services/storage/markdown/serialize";
+import { extractMessageBlocks, parseMessage } from "@/platform/services/storage/markdown/parse";
 import { useChatStore } from "@/stores/use-chat-store";
 import { Roles } from "@/types/chat";
 
@@ -30,11 +32,13 @@ const inMemoryStorage = () => {
       chats.set(chat.metadata.id, structuredClone(chat));
     }),
     appendMessage: vi.fn(async (id: string, message: ChatData["messages"][number]) => {
-      chats.get(id)?.messages.push(structuredClone(message));
+      const chat = chats.get(id);
+      if (chat) chat.messages = [...chat.messages.filter((m) => m.id !== message.id), structuredClone(message)];
     }),
     loadChat: vi.fn(async (id: string) => chats.get(id) ?? null),
     listChats: vi.fn(async () => [...chats.values()].map((c) => c.metadata)),
     updateStoredMessage: vi.fn(async () => {}),
+    removeMessage: vi.fn(async () => {}),
   };
 };
 
@@ -74,7 +78,7 @@ it("persists a generation error for a chat that is no longer open", async () => 
   );
 });
 
-it("counts a failed final save so the user is warned", async () => {
+it("counts a failed final save", async () => {
   const storage = mocks.storage as ReturnType<typeof inMemoryStorage>;
   const id = useChatStore.getState().addMessageTo(CHAT_A, { sender: Roles.Assistant, text: "complete answer" }).id;
   storage.updateStoredMessage.mockRejectedValue(new Error("disk full"));
@@ -83,4 +87,22 @@ it("counts a failed final save so the user is warned", async () => {
 
   expect(useChatStore.getState().saveFailureCount).toBe(1);
   expect(useChatStore.getState().messages.find((m) => m.id === id)?.text).toBe("complete answer");
+});
+
+it("keeps one copy of a message the file already holds when appending it", async () => {
+  mocks.storage = tauriStorage as unknown as Record<string, unknown>;
+  const message = { id: "m1", sender: Roles.Assistant, text: "", timestamp: 1 };
+  const onDisk = serializeToMarkdown({ metadata: { ...metadata, messageCount: 1 }, messages: [message] });
+  let saved = "";
+  mocks.invoke.mockImplementation(async (cmd: string, args: { content?: string }) => {
+    if (cmd === "chat_load_file") return onDisk;
+    if (cmd === "chat_save_file") saved = args.content ?? "";
+    return undefined;
+  });
+
+  await tauriStorage.appendMessage(CHAT_A, { ...message, text: "done" });
+
+  const messages = extractMessageBlocks(saved).map(parseMessage);
+  expect(messages.map((m) => m?.id)).toEqual(["m1"]);
+  expect(messages[0]?.text).toBe("done");
 });

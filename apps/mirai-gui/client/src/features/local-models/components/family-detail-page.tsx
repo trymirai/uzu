@@ -62,8 +62,6 @@ export function FamilyDetailPage({
         logo={<ModelVendorIcon vendor={model.vendor} size={16} className="h-4 w-4" />}
         size={formatModelSize(model.size)}
         parameters={formatQuantization(model)}
-        isCompressed={Boolean(model.quantization)}
-        isThinking={model.isThinking}
         state={cardState}
         onDownload={() => void onDownload(model)}
         onPause={() => (isPaused ? onResume(model) : onPause(model))}

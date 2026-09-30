@@ -34,6 +34,13 @@ export class RevealPacer {
     this.revealed = 0;
   }
 
+  /** Shows everything received; returns the full text, or null if it was already visible. */
+  flush(): string | null {
+    if (this.revealed >= this.received.length) return null;
+    this.revealed = this.received.length;
+    return this.received;
+  }
+
   // Returns newly visible text, or null if nothing changed this frame.
   step(dtMs: number): string | null {
     if (this.revealed >= this.received.length) return null;

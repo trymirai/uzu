@@ -193,7 +193,6 @@ pub struct EngineModel {
     pub family_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub param_size: Option<i64>,
-    pub is_thinking: bool,
     pub reasoning: ReasoningSupport,
     pub quantization: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -290,7 +289,6 @@ pub fn engine_model(
         family_identifier: model.family.as_ref().map(|f| f.identifier.clone()),
         family_name: model.family.as_ref().map(|f| f.name()),
         param_size: model.properties.as_ref().map(|p| p.size),
-        is_thinking: reasoning != ReasoningSupport::Unsupported,
         reasoning,
         quantization: model.quantization.as_ref().map(|q| q.method.clone()),
         quantization_bits: model.quantization.as_ref().map(|q| q.bits_per_weight),

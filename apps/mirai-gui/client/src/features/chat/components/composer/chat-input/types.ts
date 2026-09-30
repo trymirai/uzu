@@ -25,7 +25,7 @@ export type ChatInputMoreModelsLink = {
 export type ChatInputProps = {
   value: string;
   onChange: (value: string) => void;
-  onSend?: (payload: ChatInputSendPayload) => void | Promise<void>;
+  onSend?: (payload: ChatInputSendPayload) => void;
   canSend?: (payload: ChatInputSendPayload) => boolean;
   onBlockedSend?: (payload: ChatInputSendPayload) => void;
   onAttach?: (file: File) => void | Promise<void>;

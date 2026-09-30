@@ -35,6 +35,7 @@ export type StorageService = {
   createOrReplaceChat(chat: ChatData): Promise<void>;
   appendMessage(chatId: string, message: Message): Promise<void>;
   updateStoredMessage(chatId: string, messageId: string, patch: Partial<Message>): Promise<void>;
+  removeMessage(chatId: string, messageId: string): Promise<void>;
   /** With `expectedTitle`, writes only while the stored title is still that one. */
   updateChatTitle(chatId: string, title: string, expectedTitle?: string): Promise<void>;
   deleteChat(chatId: string): Promise<void>;

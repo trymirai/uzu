@@ -24,11 +24,11 @@ const getSessionBlockReason = (target: RuntimeSessionRef): ChatRunBlockReason | 
   const residentSession = useRuntimeSessionStore.getState().residentSession;
   const residentConflict = !!residentSession && residentSession.repoId !== target.repoId;
 
-  if (state.isModelLoading || state.operationState === "loading") return ChatRunBlockReason.Loading;
+  if (state.isModelLoading) return ChatRunBlockReason.Loading;
   if (state.isEjecting || state.operationState === "ejecting") return ChatRunBlockReason.Ejecting;
+  if (state.isTitleGenerating) return ChatRunBlockReason.TitleGenerating;
   if (state.isGenerating || state.operationState === "running") return ChatRunBlockReason.Running;
   if (state.operationState === "stopping") return ChatRunBlockReason.Stopping;
-  if (state.isTitleGenerating) return ChatRunBlockReason.TitleGenerating;
   if (residentConflict) return ChatRunBlockReason.ResidentConflict;
   return null;
 };

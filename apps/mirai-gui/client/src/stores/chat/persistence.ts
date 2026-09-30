@@ -46,6 +46,7 @@ export const persistMessage = async (
   } else {
     const chatModel = state.chatModels[chatId];
     const now = Date.now();
+    // savedChats loads lazily: this chat may already have a file, which a partial write would truncate.
     const messages = state.currentChatId === chatId ? state.messages : [message];
     const newMetadata: ChatMetadata = {
       id: chatId,

@@ -29,7 +29,9 @@ const metadata: ChatMetadata = {
   modelName: "Model",
 };
 
-const startStream = vi.fn<(options: StartStreamOptions) => Promise<void>>(async () => {});
+const startStream = vi.fn<(options: StartStreamOptions) => Promise<void>>(async () => {
+  expect(useChatSessionStore.getState().operationState).toBe("running");
+});
 const composer = { attachedFiles: [], clear: vi.fn() } as unknown as ChatComposerState;
 const toast = { error: vi.fn(), info: vi.fn(), warning: vi.fn() } as unknown as ToastApi;
 const noop = () => {};
@@ -91,12 +93,16 @@ beforeEach(() => {
       appendMessage: vi.fn(async (id: string, message: ChatData["messages"][number]) => {
         const chat = chats.get(id);
         if (!chat) throw new ChatNotFoundError(id);
-        chat.messages.push(structuredClone(message));
+        chat.messages = [...chat.messages.filter((m) => m.id !== message.id), structuredClone(message)];
       }),
       loadChat: vi.fn(async (id: string) => structuredClone(chats.get(id) ?? null)),
       listChats: vi.fn(async () => [...chats.values()].map((c) => c.metadata)),
       updateChatTitle,
       updateStoredMessage: vi.fn(async () => {}),
+      removeMessage: vi.fn(async (id: string, messageId: string) => {
+        const chat = chats.get(id);
+        if (chat) chat.messages = chat.messages.filter((m) => m.id !== messageId);
+      }),
       deleteChat: vi.fn(async (id: string) => {
         chats.delete(id);
       }),
@@ -192,7 +198,7 @@ it("keeps the Stop of one chat's title generation when another chat sends meanwh
   useChatStore.getState().createNewChat(CHAT_B);
   useChatStore.getState().setChatModel(CHAT_B, "model", "Model");
   const b = renderSend(CHAT_B);
-  await act(() => b.result.current.send("meanwhile"));
+  await act(async () => void (await b.result.current.send("meanwhile")));
   expect(toast.error).toHaveBeenCalledWith("Generating chat title, please wait");
 
   await act(async () => {
@@ -305,8 +311,72 @@ it("reports a failed eject instead of rejecting the send", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   const hook = renderSend();
 
-  await act(() => hook.result.current.send("prompt A"));
+  await act(async () => void (await hook.result.current.send("prompt A")));
 
   expect(toast.error).toHaveBeenCalledWith("Failed to eject previous model");
   expect(startStream).not.toHaveBeenCalled();
+  expect(composer.clear).not.toHaveBeenCalled();
+});
+
+it("clears the composer with the sent text once the message is accepted", async () => {
+  const hook = renderSend();
+
+  await act(async () => void (await hook.result.current.send("prompt A")));
+
+  expect(composer.clear).toHaveBeenCalledWith("prompt A");
+  await waitFor(() => expect(startStream).toHaveBeenCalled());
+});
+
+it("stores a new chat's first exchange without duplicates", async () => {
+  const hook = renderSend();
+
+  await act(() => hook.result.current.send("hello"));
+
+  const stored = chats.get(CHAT_A)?.messages ?? [];
+  expect(stored.map((m) => m.sender)).toEqual([Roles.User, Roles.Assistant]);
+  expect(new Set(stored.map((m) => m.id)).size).toBe(2);
+});
+
+it("refuses a second send while the first is still being written", async () => {
+  const firstWrite = deferred<void>();
+  (mocks.platform.storage as { createOrReplaceChat: ReturnType<typeof vi.fn> }).createOrReplaceChat.mockReturnValueOnce(
+    firstWrite.promise,
+  );
+  const hook = renderSend();
+
+  let first!: Promise<void>;
+  act(() => {
+    first = hook.result.current.send("first");
+  });
+  await waitFor(() => expect(useChatStore.getState().messages).toHaveLength(2));
+  await act(() => hook.result.current.send("second"));
+
+  expect(toast.error).toHaveBeenCalledWith("A response is already generating.");
+  expect(useChatStore.getState().messages.map((m) => m.text)).toEqual(["first", ""]);
+
+  await act(async () => {
+    firstWrite.resolve();
+    await first;
+  });
+  expect(startStream).toHaveBeenCalledTimes(1);
+  expect(useChatSessionStore.getState().operationState).toBe("idle");
+});
+
+it("turns the placeholder into the error bubble when the first write fails", async () => {
+  (mocks.platform.storage as { createOrReplaceChat: ReturnType<typeof vi.fn> }).createOrReplaceChat
+    .mockRejectedValueOnce(new Error("disk full"))
+    .mockImplementation(async (chat: ChatData) => {
+      chats.set(chat.metadata.id, structuredClone(chat));
+    });
+  const hook = renderSend();
+
+  await act(() => hook.result.current.send("hello"));
+
+  const messages = useChatStore.getState().messages;
+  expect(messages.map((m) => [m.sender, m.error ?? m.text])).toEqual([
+    [Roles.User, "hello"],
+    [Roles.Assistant, "Error: disk full"],
+  ]);
+  expect(chats.get(CHAT_A)?.messages.map((m) => m.id)).toEqual(messages.map((m) => m.id));
+  expect(useChatSessionStore.getState()).toMatchObject({ loadingMessage: null, operationState: "idle" });
 });

@@ -1,6 +1,7 @@
 import { ErrorPage } from "@/components/error-page";
 import { FooterBar } from "@/components/footer-bar";
 import { useAppNavigationEvents } from "@/hooks/use-app-navigation-events";
+import { useSaveFailureToast } from "@/hooks/use-save-failure-toast";
 import { useIsMobile } from "@/hooks/use-media-query";
 import { useGlobalDownloadToasts } from "@/hooks/use-global-download-toasts";
 import { platformInfo } from "@/platform/platform-info";
@@ -26,6 +27,7 @@ function RootComponent() {
   useAppInitialization(!isWelcome);
   useGlobalDownloadToasts();
   useAppNavigationEvents();
+  useSaveFailureToast();
 
   useEffect(() => {
     setMobile(isMobile);
