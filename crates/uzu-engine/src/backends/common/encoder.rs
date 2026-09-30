@@ -39,7 +39,7 @@ fn resolve_copy_range(
 }
 
 pub struct Encoder<'encoding, B: Backend> {
-    context: &'encoding B::Context,
+    pub context: &'encoding B::Context,
     command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
     allocation_pool: Arc<AllocationPool<B>>,
     hazard_tracker: HazardTracker,
@@ -147,11 +147,11 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         let dst_buffer_range = dst_buffer_range.subrange(dst_range);
         self.access(&[
             Access {
-                range: src_buffer_range.buffer().gpu_address_subrange(src_buffer_range.range()),
+                range: src_buffer_range.buffer.gpu_address_subrange(src_buffer_range.range()),
                 flags: AccessFlags::copy_read(),
             },
             Access {
-                range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
+                range: dst_buffer_range.buffer.gpu_address_subrange(dst_buffer_range.range()),
                 flags: AccessFlags::copy_write(),
             },
         ]);
@@ -166,7 +166,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         let dst_buffer_range = dst.as_buffer_range_mut();
         assert!(!dst_buffer_range.range().is_empty(), "zero-sized fills are not allowed");
         self.access(&[Access {
-            range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
+            range: dst_buffer_range.buffer.gpu_address_subrange(dst_buffer_range.range()),
             flags: AccessFlags::copy_write(),
         }]);
         self.command_buffer.encode_fill(dst_buffer_range, value);
@@ -194,10 +194,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
     pub fn as_command_buffer_mut(&mut self) -> &mut <B::CommandBuffer as CommandBuffer>::Encoding {
         &mut self.command_buffer
-    }
-
-    pub fn context(&self) -> &'encoding B::Context {
-        self.context
     }
 
     pub fn end_encoding(self) -> Executable<B> {

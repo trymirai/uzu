@@ -198,7 +198,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 return output;
             },
         };
-        let format = self.inner_linear.select_activation_format(batch_dim, encoder.context());
+        let format = self.inner_linear.select_activation_format(batch_dim, encoder.context);
         let input = self.input_rht.prepare_in_place(input, batch_dim, format, encoder)?;
         let output = self.inner_linear.encode_with_a(input.as_matmul_a(), batch_dim, None, encoder)?;
 

@@ -1,10 +1,10 @@
 use crate::backends::common::gpu_types::trie::TrieNode;
 
 pub struct BatchTopology<'a> {
-    nodes: &'a [TrieNode],
+    pub nodes: &'a [TrieNode],
     parents: Box<[i32]>,
-    is_flat: bool,
-    full_accept: bool,
+    pub is_flat: bool,
+    pub full_accept: bool,
 }
 
 impl<'a> BatchTopology<'a> {
@@ -36,20 +36,8 @@ impl<'a> BatchTopology<'a> {
         }
     }
 
-    pub fn nodes(&self) -> &'a [TrieNode] {
-        self.nodes
-    }
-
     pub fn size(&self) -> u32 {
         self.nodes.len() as u32
-    }
-
-    pub fn is_flat(&self) -> bool {
-        self.is_flat
-    }
-
-    pub fn full_accept(&self) -> bool {
-        self.full_accept
     }
 
     pub fn heights(&self) -> impl Iterator<Item = u32> + 'a {

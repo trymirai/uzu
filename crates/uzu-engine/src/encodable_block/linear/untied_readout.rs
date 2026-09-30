@@ -93,7 +93,7 @@ impl<B: Backend> UntiedReadout<B> {
         let format = if gather.is_some() {
             ActivationFormat::Bf16
         } else {
-            self.linear.select_activation_format(batch_dim, encoder.context())
+            self.linear.select_activation_format(batch_dim, encoder.context)
         };
         let input = input_rht.prepare(input, batch_dim, format, encoder)?;
         self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, encoder)

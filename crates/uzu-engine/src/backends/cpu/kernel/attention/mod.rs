@@ -47,7 +47,7 @@ impl AttentionKernel for AttentionCpuKernel {
         )?;
 
         let single_pass = <attention_single_pass::AttentionSinglePassCpuKernel as AttentionSinglePassKernel>::new(
-            encoder.context(),
+            encoder.context,
             config.data_type,
             config.head_dim,
             config.has_sinks,

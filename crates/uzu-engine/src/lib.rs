@@ -15,6 +15,9 @@ pub mod data_type;
 
 pub mod engine;
 
+pub mod trace;
+
+pub use config::token_codec::chat_codec::ChatCodecConfig;
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 
 #[cfg(test)]

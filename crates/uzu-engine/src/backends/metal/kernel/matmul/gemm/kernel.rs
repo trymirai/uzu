@@ -130,7 +130,7 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
-        self.problem(shape, encoder.context())
+        self.problem(shape, encoder.context)
             .validate_engine(plan.engine)
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))?;
 
@@ -305,7 +305,7 @@ impl GemmKernel {
             a_prologue,
             a_group_size,
         )?;
-        let kernel = self.get_or_create(encoder.context(), specialization)?;
+        let kernel = self.get_or_create(encoder.context, specialization)?;
         kernel.encode(
             a_full_precision,
             weights,
@@ -384,7 +384,7 @@ impl GemmKernel {
         let mut temp = encoder.allocate_scratch(split_k as usize * slice_bytes)?;
         let mut params = gemm_params(shape, plan, 1.0, scale_strides, zero_point_strides);
         params.aligned_inner_iterations = kp / k_step;
-        let part_kernel = self.get_or_create(encoder.context(), part_spec)?;
+        let part_kernel = self.get_or_create(encoder.context, part_spec)?;
         part_kernel.encode(
             a_full_precision,
             weights,
@@ -418,7 +418,7 @@ impl GemmKernel {
         } else {
             None
         };
-        let reduce = self.get_or_create_split_k_reduce(encoder.context(), reduce_transform)?;
+        let reduce = self.get_or_create_split_k_reduce(encoder.context, reduce_transform)?;
         reduce.encode((&temp, 0usize), &mut *d, bias_arg, elem as u32, split_k, group_count, n, scale_arg, encoder);
 
         Ok(())

@@ -40,7 +40,7 @@ impl WeightData {
     ) -> Result<Self, MatmulError<Cpu>> {
         let alloc_ptr = |a: &crate::backends::common::Allocation<Cpu>| {
             let r = a.as_buffer_range_ref();
-            SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
+            SendPtr(unsafe { &*r.buffer.get() }.as_ptr().wrapping_byte_add(r.range().start))
         };
         match b {
             MatmulB::FullPrecision {

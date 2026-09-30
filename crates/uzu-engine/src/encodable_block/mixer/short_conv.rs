@@ -330,7 +330,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
 
         let in_projected = self.in_projection.encode(hidden, batch_dim.size(), encoder)?;
 
-        let conv_output = if batch_dim.full_accept() {
+        let conv_output = if batch_dim.full_accept {
             let conv_output = if batch_dim.size() == 1 {
                 self.encode_decode_conv(&in_projected, state, encoder)?
             } else {
