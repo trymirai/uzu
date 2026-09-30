@@ -10,6 +10,9 @@
     "ruff.path": [
         "${workspaceFolder}/.venv/bin/ruff"
     ],
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/engine-splash/deps"
+    ],
     "[python]": {
         "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true,

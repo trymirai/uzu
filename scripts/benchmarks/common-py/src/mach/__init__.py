@@ -1,4 +1,4 @@
-"""Collect memory usage of the current Python process using macOS Mach APIs."""
+"""Collect process memory usage using macOS Mach APIs."""
 
 import ctypes
 
@@ -64,18 +64,29 @@ class MemoryCounters(ctypes.Structure):
 _library = ctypes.CDLL(_mach.__file__)
 _library.get_memory_counters.argtypes = [ctypes.POINTER(MemoryCounters), ctypes.c_bool]
 _library.get_memory_counters.restype = ctypes.c_int
+_library.get_memory_counters_for_pid.argtypes = [ctypes.POINTER(MemoryCounters), ctypes.c_int32, ctypes.c_bool]
+_library.get_memory_counters_for_pid.restype = ctypes.c_int
 _library.memory_counters_error_string.argtypes = [ctypes.c_int]
 _library.memory_counters_error_string.restype = ctypes.c_char_p
 
 
-def get_memory_counters(with_malloc_zone_stats: bool = False) -> MemoryCounters:
+def get_memory_counters(with_malloc_zone_stats: bool = False, *, pid: int | None = None) -> MemoryCounters:
     """Return a native counter snapshot, raising RuntimeError on collection failure.
 
+    By default, collect the current process. Set pid to inspect another process
+    owned by the same user, including a native engine subprocess.
+
     Set with_malloc_zone_stats=True to collect the more expensive allocator
-    statistics. Otherwise, the malloc_* fields remain zero.
+    statistics for the current process only. Otherwise, the malloc_* fields
+    remain zero.
     """
     counters = MemoryCounters()
-    result = _library.get_memory_counters(ctypes.byref(counters), with_malloc_zone_stats)
+    if pid is None:
+        result = _library.get_memory_counters(ctypes.byref(counters), with_malloc_zone_stats)
+    else:
+        if not isinstance(pid, int) or isinstance(pid, bool) or not 0 < pid < 2**31:
+            raise ValueError("pid must be a positive 32-bit integer")
+        result = _library.get_memory_counters_for_pid(ctypes.byref(counters), pid, with_malloc_zone_stats)
     if result != 0:
         message = _library.memory_counters_error_string(result)
         detail = message.decode("utf-8", errors="replace") if message else "Unknown error"

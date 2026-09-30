@@ -11,6 +11,7 @@ extern "C" {
 
 #define KERN_RETURN_COUNTERS_NULL (KERN_RETURN_MAX + 1)
 #define KERN_RETURN_GRAPHICS_UNAVAILABLE (KERN_RETURN_MAX + 2)
+#define KERN_RETURN_REMOTE_MALLOC_UNAVAILABLE (KERN_RETURN_MAX + 3)
 
 typedef struct {
     int32_t pid;
@@ -33,6 +34,14 @@ typedef struct {
 
 kern_return_t get_memory_counters(
     memory_counters_t* counters,
+    bool with_malloc_zone_stats
+);
+
+// The target must be accessible through task_name_for_pid (normally the same user).
+// Allocator statistics are available only when pid is the current process.
+kern_return_t get_memory_counters_for_pid(
+    memory_counters_t* counters,
+    int32_t pid,
     bool with_malloc_zone_stats
 );
 
