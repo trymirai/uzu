@@ -2,9 +2,8 @@ use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{
             ActivationQuantization, Kernels,
             matmul::{ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulShape},
@@ -36,8 +35,8 @@ pub enum LinearMatmulError<B: Backend> {
 pub struct LinearMatmul<B: Backend> {
     kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     matrix: WeightMatrix<B>,
-    biases: Option<Allocation<B>>,
-    output_hadamard_factors: Option<Allocation<B>>,
+    biases: Option<B::GlobalBuffer>,
+    output_hadamard_factors: Option<B::GlobalBuffer>,
     input_dim: u32,
     output_dim: u32,
     output_data_type: DataType,
@@ -48,14 +47,14 @@ fn load_biases<B: Backend>(
     output_data_type: DataType,
     output_dim: u32,
     parameter_tree: Option<&ParameterTree<B>>,
-) -> Result<Option<Allocation<B>>, LinearMatmulError<B>> {
+) -> Result<Option<B::GlobalBuffer>, LinearMatmulError<B>> {
     if parameter_tree.is_some() && weights_data_type != output_data_type {
         return Err(LinearMatmulError::UnsupportedConfiguration(format!(
             "mixed precision linear with biases is not supported: weights={weights_data_type:?}, output={output_data_type:?}",
         )));
     }
     Ok(parameter_tree
-        .map(|tree| tree.leaf("biases")?.validate(&[output_dim], weights_data_type)?.read_allocation())
+        .map(|tree| tree.leaf("biases")?.validate(&[output_dim], weights_data_type)?.read_buffer())
         .transpose()?)
 }
 
@@ -72,7 +71,7 @@ impl<B: Backend> LinearMatmul<B> {
         output_data_type: DataType,
         weights_tree: &ParameterTree<B>,
         bias_tree: Option<&ParameterTree<B>>,
-        output_hadamard_factors: Option<Allocation<B>>,
+        output_hadamard_factors: Option<B::GlobalBuffer>,
     ) -> Result<Self, LinearMatmulError<B>> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
             if !matches!(data_type, DataType::BF16 | DataType::F32) {
@@ -117,14 +116,14 @@ impl<B: Backend> LinearMatmul<B> {
 
     pub(super) fn encode_with_a(
         &self,
-        a: MatmulA<'_, B>,
+        a: MatmulA<impl BufferRef<Backend = B>>,
         batch_dim: u32,
-        gather: Option<Gather<'_, B>>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
+        gather: Option<Gather<impl BufferRef<Backend = B>>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
         let (output_dim, gather_indices) =
             gather.map_or((self.output_dim, None), |gather| (gather.output_dim, Some(gather.indices)));
-        let mut output = encoder.allocate_scratch(size_for_shape(&[batch_dim, output_dim], self.output_data_type))?;
+        let mut output = command_buffer.allocate_scratch_for_shape(&[batch_dim, output_dim], self.output_data_type)?;
         self.kernel.lock().encode(
             MatmulArguments {
                 a,
@@ -138,7 +137,7 @@ impl<B: Backend> LinearMatmul<B> {
                 n: output_dim,
                 k: self.input_dim,
             },
-            encoder,
+            command_buffer,
         )?;
 
         Ok(output)
@@ -167,7 +166,7 @@ impl<B: Backend> LinearMatmul<B> {
         }
     }
 
-    fn matmul_b(&self) -> MatmulB<'_, B> {
+    fn matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
         self.matrix.matmul_b()
     }
 
@@ -183,11 +182,11 @@ impl<B: Backend> LinearMatmul<B> {
 impl<B: Backend> Linear<B> for LinearMatmul<B> {
     fn encode(
         &self,
-        input: Allocation<B>,
+        input: B::ScratchBuffer,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("matmul");
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        command_buffer.push_debug_group("matmul");
 
         let output = self.encode_with_a(
             MatmulA::FullPrecision {
@@ -195,11 +194,11 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 offset: 0,
             },
             batch_dim,
-            None,
-            encoder,
+            None::<Gather<&B::ScratchBuffer>>,
+            command_buffer,
         )?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }
@@ -208,9 +207,9 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         &self,
         input: LinearInput<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        self.encode_with_a(input.as_matmul_a(), batch_dim, None, encoder)
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        self.encode_with_a(input.as_matmul_a(), batch_dim, None::<Gather<&B::ScratchBuffer>>, command_buffer)
     }
 
     fn select_activation_format(

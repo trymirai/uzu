@@ -2,7 +2,10 @@ use std::{mem::size_of, sync::Arc};
 
 use crate::{
     array::ArrayElement,
-    backends::common::{Allocation, AllocationType, Backend, Context, Encoder, SparseBuffer, SparseBufferExt},
+    backends::common::{
+        Backend, Buffer, BufferCpuAccessible, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferPending, Context, SparseBuffer,
+    },
 };
 
 /// Invokes `$body` once per available backend, with `$B` bound to each backend type.
@@ -38,39 +41,37 @@ macro_rules! for_each_non_cpu_backend {
 }
 pub(crate) use for_each_non_cpu_backend;
 
-pub fn allocation_size_bytes<T>(elements_count: usize) -> usize {
+pub fn buffer_size_bytes<T>(elements_count: usize) -> usize {
     elements_count * size_of::<T>()
 }
 
-pub fn alloc_allocation<B: Backend, T>(
+pub fn create_buffer<B: Backend, T>(
     context: &B::Context,
     elements_count: usize,
-) -> Allocation<B> {
-    context
-        .create_allocation(allocation_size_bytes::<T>(elements_count), AllocationType::Global)
-        .expect("Failed to create allocation")
+) -> B::GlobalBuffer {
+    context.create_buffer(buffer_size_bytes::<T>(elements_count)).expect("Failed to create buffer")
 }
 
-pub fn alloc_allocation_with_data<B: Backend, T: ArrayElement>(
+pub fn create_buffer_with_data<B: Backend, T: ArrayElement>(
     context: &B::Context,
     data: &[T],
-) -> Allocation<B> {
-    let mut allocation = context
-        .create_allocation(allocation_size_bytes::<T>(data.len()), AllocationType::Global)
-        .expect("Failed to create allocation");
-    allocation.copyin(data);
-    allocation
+) -> B::GlobalBuffer {
+    let mut buffer = context.create_buffer(buffer_size_bytes::<T>(data.len())).expect("Failed to create buffer");
+    buffer.copyin(data);
+    buffer
 }
 
-pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
-    allocation.copyout()
+pub fn buffer_to_vec<B: Backend, T: ArrayElement>(
+    buffer: impl BufferRef<Backend = B, Buffer: BufferCpuAccessible>
+) -> Vec<T> {
+    buffer.copyout()
 }
 
-pub fn allocation_prefix_to_vec<B: Backend, T: ArrayElement>(
-    allocation: &Allocation<B>,
+pub fn buffer_prefix_to_vec<B: Backend, T: ArrayElement>(
+    buffer: impl BufferRef<Backend = B, Buffer: BufferCpuAccessible>,
     elements_count: usize,
 ) -> Vec<T> {
-    let mut values = allocation_to_vec::<B, T>(allocation);
+    let mut values = buffer_to_vec::<B, T>(buffer);
     values.truncate(elements_count);
     values
 }
@@ -79,8 +80,8 @@ pub fn create_context<B: Backend>() -> Arc<<B as Backend>::Context> {
     B::Context::new().unwrap_or_else(|_| panic!("Failed to create context for {}", std::any::type_name::<B>()))
 }
 
-pub fn submit_encoder<B: Backend>(encoder: Encoder<B>) {
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+pub fn submit_command_buffer<E: CommandBufferEncoding>(command_buffer: E) {
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 }
 
 pub fn sparse_buffer_create<B: Backend>(
@@ -95,7 +96,7 @@ pub fn sparse_buffer_create_and_map<B: Backend>(
     capacity: usize,
 ) -> B::SparseBuffer {
     let mut buffer = sparse_buffer_create::<B>(context, capacity);
-    buffer.map(context, &(0..buffer.total_pages())).expect("Failed to map sparse buffer");
+    buffer.map(context, 0..buffer.total_pages()).expect("Failed to map sparse buffer");
     buffer
 }
 
@@ -103,46 +104,43 @@ pub fn sparse_buffer_create_with<B: Backend, T: ArrayElement>(
     context: &B::Context,
     data: &[T],
 ) -> B::SparseBuffer {
-    let capacity_bytes = allocation_size_bytes::<T>(data.len());
+    let capacity_bytes = buffer_size_bytes::<T>(data.len());
     let mut buffer = sparse_buffer_create_and_map::<B>(context, capacity_bytes);
     sparse_buffer_write::<B, T>(context, &mut buffer, data);
     buffer
 }
 
-pub fn sparse_buffer_read_allocation<B: Backend>(
+pub fn buffer_readback<B: Backend>(
     context: &B::Context,
-    buffer: &B::SparseBuffer,
-    size: usize,
-) -> Allocation<B> {
-    let mut allocation = alloc_allocation::<B, u8>(context, size);
-    let range = 0..size;
+    buffer: impl BufferRef<Backend = B>,
+) -> B::GlobalBuffer {
+    let mut output_buffer = create_buffer::<B, u8>(context, buffer.size());
 
-    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
-    encoder.encode_copy(buffer, range.clone(), &mut allocation, range.clone());
-    submit_encoder(encoder);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    command_buffer.encode_copy(buffer, &mut output_buffer);
+    submit_command_buffer(command_buffer);
 
-    allocation
+    output_buffer
 }
 
 pub fn sparse_buffer_read_vec<B: Backend, T: ArrayElement>(
     context: &B::Context,
-    buffer: &B::SparseBuffer,
+    buffer: impl BufferRef<Backend = B>,
     elements_count: usize,
 ) -> Vec<T> {
-    let allocation =
-        sparse_buffer_read_allocation::<B>(context, buffer, elements_count * T::data_type().size_in_bytes());
-    allocation_to_vec(&allocation)
+    let dense_buffer =
+        buffer_readback::<B>(context, buffer.subrange(..elements_count * T::data_type().size_in_bytes()));
+    buffer_to_vec(&dense_buffer)
 }
 
 pub fn sparse_buffer_write<B: Backend, T: ArrayElement>(
     context: &B::Context,
-    buffer: &mut B::SparseBuffer,
+    buffer: impl BufferMut<Backend = B>,
     data: &[T],
 ) {
-    let data_allocation = alloc_allocation_with_data::<B, T>(context, data);
-    let data_range = 0..allocation_size_bytes::<T>(data.len());
+    let data_buffer = create_buffer_with_data::<B, T>(context, data);
 
-    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
-    encoder.encode_copy(&data_allocation, data_range.clone(), buffer, data_range.clone());
-    submit_encoder(encoder);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    command_buffer.encode_copy(&data_buffer, buffer.subrange_mut(..data_buffer.size()));
+    submit_command_buffer(command_buffer);
 }

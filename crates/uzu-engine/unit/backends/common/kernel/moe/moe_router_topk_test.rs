@@ -8,12 +8,13 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Encoder, Kernels, kernel::MoeRouterTopKKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::MoeRouterTopKKernel,
+        },
         cpu::Cpu,
     },
-    tests::helpers::{
-        alloc_allocation, alloc_allocation_with_data, allocation_to_vec, create_context, for_each_non_cpu_backend,
-    },
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -39,33 +40,32 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
 ) -> (Vec<i32>, Vec<T>) {
     let ctx = create_context::<B>();
 
-    let input_allocation = alloc_allocation_with_data::<B, T>(&ctx, input);
-    let weights_allocation = alloc_allocation_with_data::<B, T>(&ctx, weights);
-    let bias_allocation = bias.map(|bias| alloc_allocation_with_data::<B, T>(&ctx, bias));
-    let router_scale_allocation =
-        router_scale.map(|router_scale| alloc_allocation_with_data::<B, T>(&ctx, router_scale));
-    let per_expert_scale_allocation =
-        per_expert_scale.map(|per_expert_scale| alloc_allocation_with_data::<B, T>(&ctx, per_expert_scale));
-    let mut ids = alloc_allocation::<B, i32>(&ctx, t * k);
-    let mut probs = alloc_allocation::<B, T>(&ctx, t * k);
+    let input_buffer = create_buffer_with_data::<B, T>(&ctx, input);
+    let weights_buffer = create_buffer_with_data::<B, T>(&ctx, weights);
+    let bias_buffer = bias.map(|bias| create_buffer_with_data::<B, T>(&ctx, bias));
+    let router_scale_buffer = router_scale.map(|router_scale| create_buffer_with_data::<B, T>(&ctx, router_scale));
+    let per_expert_scale_buffer =
+        per_expert_scale.map(|per_expert_scale| create_buffer_with_data::<B, T>(&ctx, per_expert_scale));
+    let mut ids = create_buffer::<B, i32>(&ctx, t * k);
+    let mut probs = create_buffer::<B, T>(&ctx, t * k);
 
     let kernel = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(
         &ctx,
         T::data_type(),
-        bias_allocation.is_some(),
-        router_scale_allocation.is_some(),
-        per_expert_scale_allocation.is_some(),
+        bias_buffer.is_some(),
+        router_scale_buffer.is_some(),
+        per_expert_scale_buffer.is_some(),
         router_input_scale.is_some(),
         router_norm_epsilon.is_some(),
     )
     .expect("kernel");
-    let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
-        &input_allocation,
-        &weights_allocation,
-        bias_allocation.as_ref(),
-        router_scale_allocation.as_ref(),
-        per_expert_scale_allocation.as_ref(),
+        &input_buffer,
+        &weights_buffer,
+        bias_buffer.as_ref(),
+        router_scale_buffer.as_ref(),
+        per_expert_scale_buffer.as_ref(),
         &mut ids,
         &mut probs,
         t as u32,
@@ -75,11 +75,11 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         renorm,
         router_norm_epsilon,
         router_input_scale,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    (allocation_to_vec(&ids), allocation_to_vec(&probs))
+    (buffer_to_vec(&ids), buffer_to_vec(&probs))
 }
 
 fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(
@@ -95,12 +95,13 @@ fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(
     let mut rng = StdRng::seed_from_u64(1234);
     let gemma4 = matches!(router_input, RouterInput::Gemma4);
     let input: Vec<T> = (0..t * d_model).map(|_| T::from(rng.random_range(-1.0..1.0)).unwrap()).collect();
-    let weight_range = if gemma4 {
-        -0.4..0.4
+    let weight_limit = if gemma4 {
+        0.4
     } else {
-        -1.0..1.0
+        1.0
     };
-    let weight: Vec<T> = (0..e * d_model).map(|_| T::from(rng.random_range(weight_range.clone())).unwrap()).collect();
+    let weight: Vec<T> =
+        (0..e * d_model).map(|_| T::from(rng.random_range(-weight_limit..weight_limit)).unwrap()).collect();
     let bias: Option<Vec<T>> = matches!(router_input, RouterInput::Biased)
         .then(|| (0..e).map(|_| T::from(rng.random_range(-0.5..0.5)).unwrap()).collect());
     let router_scale: Option<Vec<T>> =

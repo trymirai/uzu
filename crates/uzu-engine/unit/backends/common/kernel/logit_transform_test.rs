@@ -7,13 +7,16 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::LogitTransformKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::LogitTransformKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -27,12 +30,12 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         <<B as Backend>::Kernels as Kernels>::LogitTransformKernel::new(&context, T::data_type(), soft_cap.is_some())
             .expect("Failed to create LogitTransformKernel");
 
-    let mut logits_allocation = alloc_allocation_with_data::<B, T>(&context, logits);
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(&mut logits_allocation, logits.len() as u32, scale, soft_cap.unwrap_or(0.0), &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let mut logits_buffer = create_buffer_with_data::<B, T>(&context, logits);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    kernel.encode(&mut logits_buffer, logits.len() as u32, scale, soft_cap.unwrap_or(0.0), &mut command_buffer);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec::<B, T>(&logits_allocation)
+    buffer_to_vec::<B, T>(&logits_buffer)
 }
 
 fn test_logit_transform<T: ArrayElement + Float + Display>(

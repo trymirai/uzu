@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         kernel::{FullPrecisionEmbeddingLookupKernel, QuantizedEmbeddingLookupKernel},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -31,7 +31,7 @@ enum LookupKernel<B: Backend> {
 pub struct EmbeddingTable<B: Backend> {
     matrix: WeightMatrix<B>,
     lookup: LookupKernel<B>,
-    output_hadamard_factors: Option<Allocation<B>>,
+    output_hadamard_factors: Option<B::GlobalBuffer>,
     vocab_size: u32,
     embedding_dim: u32,
 }
@@ -55,7 +55,7 @@ impl<B: Backend> EmbeddingTable<B> {
         embedding_dim: u32,
         data_type: DataType,
         spec: AnyWeightMatrixSpec,
-        output_hadamard_factors: Option<Allocation<B>>,
+        output_hadamard_factors: Option<B::GlobalBuffer>,
     ) -> Result<Self, EmbeddingTableError<B>> {
         let matrix = WeightMatrix::load(tree, spec, Layout::InputOutput, embedding_dim, vocab_size, data_type)?;
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
@@ -98,11 +98,11 @@ impl<B: Backend> EmbeddingTable<B> {
     /// Gathers one row per token id into `output`, scaling by `scale`.
     pub fn encode_lookup(
         &self,
-        token_ids: &Allocation<B>,
-        output: &mut Allocation<B>,
+        token_ids: impl BufferRef<Backend = B>,
+        output: impl BufferMut<Backend = B>,
         batch_dim: u32,
         scale: f32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         match &self.lookup {
             LookupKernel::FullPrecision(kernel) => kernel.encode(
@@ -113,7 +113,7 @@ impl<B: Backend> EmbeddingTable<B> {
                 self.vocab_size,
                 self.embedding_dim,
                 scale,
-                encoder,
+                command_buffer,
             ),
             LookupKernel::Quantized(kernel) => kernel.encode(
                 token_ids,
@@ -127,7 +127,7 @@ impl<B: Backend> EmbeddingTable<B> {
                 self.vocab_size,
                 self.embedding_dim,
                 scale,
-                encoder,
+                command_buffer,
             ),
         }
     }

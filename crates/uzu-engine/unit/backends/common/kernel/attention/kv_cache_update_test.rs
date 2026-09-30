@@ -9,12 +9,15 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, gpu_types::Copy, kernel::KVCacheUpdateKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            gpu_types::Copy, kernel::KVCacheUpdateKernel,
+        },
         cpu::Cpu,
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 #[cfg(backend = "metal")]
@@ -50,14 +53,21 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let kernel = <<B as Backend>::Kernels as Kernels>::KVCacheUpdateKernel::new(&context, T::data_type())
         .expect("Failed to create KVCacheUpdateKernel");
 
-    let mut keys = alloc_allocation_with_data::<B, T>(&context, &input.keys);
-    let mut values = alloc_allocation_with_data::<B, T>(&context, &input.values);
+    let mut keys = create_buffer_with_data::<B, T>(&context, &input.keys);
+    let mut values = create_buffer_with_data::<B, T>(&context, &input.values);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
-    kernel.encode(&mut keys, &mut values, &input.copies, input.copies.len() as u32, input.element_dim, &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
+    kernel.encode(
+        &mut keys,
+        &mut values,
+        &input.copies,
+        input.copies.len() as u32,
+        input.element_dim,
+        &mut command_buffer,
+    );
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    (allocation_to_vec(&keys), allocation_to_vec(&values))
+    (buffer_to_vec(&keys), buffer_to_vec(&values))
 }
 
 /// Single copy between two different positions.
@@ -348,9 +358,16 @@ fn test_sparse_random_pattern_f32() {
     let mut key_buffer = sparse_buffer_create_with::<Metal, f32>(&context, key_data.as_slice().unwrap());
     let mut value_buffer = sparse_buffer_create_with::<Metal, f32>(&context, value_data.as_slice().unwrap());
 
-    let mut encoder = Encoder::<Metal>::new(&context).unwrap();
-    kernel.encode(&mut key_buffer, &mut value_buffer, &copies, copies.len() as u32, element_dim as u32, &mut encoder);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    kernel.encode(
+        &mut key_buffer,
+        &mut value_buffer,
+        &copies,
+        copies.len() as u32,
+        element_dim as u32,
+        &mut command_buffer,
+    );
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let elements_count = seq_len * num_heads * head_dim;
     let key_values: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &key_buffer, elements_count);

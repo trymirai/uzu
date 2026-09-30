@@ -3,7 +3,7 @@ use std::any::Any;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, Context, DeviceCapabilities, Encoder, Kernels, SparseBuffer,
+        Backend, Buffer, CommandBuffer, Context, DeviceCapabilities, Kernels, SparseBuffer,
         gpu_types::{Copy, ring::RingParams},
         kernel::KVCacheUpdateKernel,
     },
@@ -253,7 +253,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
             let buffer_end_page = bytes_required.div_ceil(buffer_page_size);
 
             if buffer_end_page > buffer_start_page {
-                buffer.map(context, &(buffer_start_page..buffer_end_page))?;
+                buffer.map(context, buffer_start_page..buffer_end_page)?;
             }
         }
 
@@ -265,18 +265,18 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let copies = self.cache.accept(accepted_indices);
 
-        for copies_chunk in copies.chunks(B::MAX_INLINE_BYTES / size_of::<Copy>()) {
+        if !copies.is_empty() {
             self.kv_cache_update.encode(
                 self.keys.as_mut(),
                 self.values.as_mut(),
-                copies_chunk,
-                copies_chunk.len() as u32,
+                &copies,
+                copies.len() as u32,
                 self.element_dim,
-                encoder,
+                command_buffer,
             );
         }
 

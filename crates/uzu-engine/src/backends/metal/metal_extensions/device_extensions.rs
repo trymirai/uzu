@@ -18,12 +18,12 @@ use super::GpuFamilyExt;
 // would succeed.
 //
 // The caller must verify with `respondsToSelector:` first.
-unsafe fn raw_msg_send<T: Message + ?Sized, R>(
-    obj: &T,
+unsafe fn raw_msg_send<R>(
+    obj: &(impl Message + ?Sized),
     sel: Sel,
 ) -> R {
-    let object_pointer: *const T = obj;
-    let send: unsafe extern "C" fn(*const T, Sel) -> R = unsafe { transmute(objc_msgSend as *const ()) };
+    let object_pointer = std::ptr::from_ref(obj);
+    let send: unsafe extern "C" fn(*const _, Sel) -> R = unsafe { transmute(objc_msgSend as *const ()) };
     unsafe { send(object_pointer, sel) }
 }
 
@@ -40,14 +40,11 @@ fn register_selector(name: &str) -> Sel {
 // class check so the send also works on the `CaptureMTLDevice` forwarding proxy
 // (where a typed `msg_send!` would panic) — this is why the typed `mtl-rs`
 // accessors are not used here.
-fn optional_selector_value<T, R>(
-    device: &T,
+fn optional_selector_value<R>(
+    device: &(impl Message + NSObjectProtocol),
     name: &str,
     fallback: R,
-) -> R
-where
-    T: Message + NSObjectProtocol,
-{
+) -> R {
     let selector = register_selector(name);
     if device.respondsToSelector(selector) {
         unsafe { raw_msg_send(device, selector) }

@@ -1,44 +1,57 @@
-use std::{any::Any, fmt::Debug, ops::Range};
+use std::{any::Any, fmt::Debug, range::Range};
 
-use crate::backends::common::{AsBufferRangeMut, AsBufferRangeRef, Backend, BufferRangeMut, BufferRangeRef};
+use crate::backends::common::{Backend, BufferMut, BufferRef};
 
-pub mod dense;
+pub mod constant;
+pub mod cpu_accessible;
+pub mod global;
+pub mod scratch;
 pub mod sparse;
 
-pub mod arg;
-pub mod range;
+pub mod reference;
 
-pub trait Buffer: Any + Debug + Send + Sync {
+pub trait Buffer: Any + Debug + Send + Sync + Unpin {
     type Backend: Backend;
-
-    fn gpu_ptr(&self) -> usize;
 
     fn size(&self) -> usize;
 }
 
-impl<B: Buffer> AsBufferRangeRef for B {
+impl<B: Buffer + ?Sized> BufferRef for &B {
+    type Backend = B::Backend;
     type Buffer = B;
 
-    fn as_buffer_range_ref(&self) -> BufferRangeRef<'_, B> {
-        BufferRangeRef::new(self, 0..self.size())
+    fn size(&self) -> usize {
+        Buffer::size(*self)
+    }
+
+    fn parts<'a>(self) -> (&'a B, Range<usize>)
+    where
+        Self: 'a,
+    {
+        (self, (0..self.size()).into())
     }
 }
 
-impl<B: Buffer> AsBufferRangeMut for B {
-    fn as_buffer_range_mut(&mut self) -> BufferRangeMut<'_, B> {
-        BufferRangeMut::new_exclusive(self, 0..self.size())
+impl<B: Buffer + ?Sized> BufferMut for &mut B {
+    type Backend = B::Backend;
+    type Buffer = B;
+
+    fn size(&self) -> usize {
+        Buffer::size(&**self)
+    }
+
+    fn parts<'a>(self) -> (&'a B, Range<usize>)
+    where
+        Self: 'a,
+    {
+        (self, (0..self.size()).into())
+    }
+
+    fn reborrow(&mut self) -> impl BufferMut<Backend = Self::Backend, Buffer = B> {
+        &mut **self
+    }
+
+    fn as_ref(&self) -> impl BufferRef<Backend = Self::Backend, Buffer = B> {
+        &**self
     }
 }
-
-pub trait BufferGpuAddressRangeExt: Buffer {
-    fn gpu_address_subrange(
-        &self,
-        subrange: Range<usize>,
-    ) -> Range<usize> {
-        assert!(subrange.end <= self.size(), "subrange overflow: subrange={:?} length={}", subrange, self.size());
-
-        (self.gpu_ptr() + subrange.start)..(self.gpu_ptr() + subrange.end)
-    }
-}
-
-impl<B: Buffer + ?Sized> BufferGpuAddressRangeExt for B {}

@@ -7,13 +7,16 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::Conv1dPackKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::Conv1dPackKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -56,11 +59,11 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let total_rows = input.state_stride as usize + input.suffix_len as usize;
     let padded_size = total_rows * input.row_stride as usize;
 
-    let state = alloc_allocation_with_data::<B, T>(&context, &input.state_in);
-    let x = alloc_allocation_with_data::<B, T>(&context, &input.x);
-    let mut padded = alloc_allocation::<B, T>(&context, padded_size);
+    let state = create_buffer_with_data::<B, T>(&context, &input.state_in);
+    let x = create_buffer_with_data::<B, T>(&context, &input.x);
+    let mut padded = create_buffer::<B, T>(&context, padded_size);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &state,
         &x,
@@ -69,11 +72,11 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         input.row_stride,
         input.suffix_len,
         input.num_channels,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    allocation_to_vec(&padded)
+    buffer_to_vec(&padded)
 }
 
 fn get_test_data<T: ArrayElement + Float>(

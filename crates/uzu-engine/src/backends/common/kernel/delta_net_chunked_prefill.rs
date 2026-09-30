@@ -1,14 +1,14 @@
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::Unsupported},
+    backends::common::{Backend, CommandBuffer, Kernels, kernel::Unsupported},
     data_type::DataType,
 };
 
 pub struct DeltaNetChunkedPrefillArgs<'a, B: Backend> {
-    pub in_projected: &'a Allocation<B>,
-    pub a_log: &'a Allocation<B>,
-    pub dt_bias: &'a Allocation<B>,
-    pub ssm_state: &'a mut Allocation<B>,
-    pub delta_output: &'a mut Allocation<B>,
+    pub in_projected: &'a B::ScratchBuffer,
+    pub a_log: &'a B::GlobalBuffer,
+    pub dt_bias: &'a B::GlobalBuffer,
+    pub ssm_state: &'a mut B::GlobalBuffer,
+    pub delta_output: &'a mut B::ScratchBuffer,
     pub num_heads: u32,
     pub num_groups: u32,
     pub value_head_dim: u32,
@@ -34,7 +34,7 @@ pub trait DeltaNetChunkedPrefill: Sized + Send + Sync {
     fn encode(
         &self,
         args: DeltaNetChunkedPrefillArgs<'_, Self::Backend>,
-        encoder: &mut Encoder<Self::Backend>,
+        command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 }
 
@@ -59,7 +59,7 @@ impl<B: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Unsupported<B>>>> Delt
     fn encode(
         &self,
         _args: DeltaNetChunkedPrefillArgs<'_, B>,
-        _encoder: &mut Encoder<B>,
+        _command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         match self.never {}
     }

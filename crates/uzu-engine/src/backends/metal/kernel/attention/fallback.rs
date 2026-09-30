@@ -3,7 +3,7 @@ use parking_lot::Mutex;
 use crate::{
     backends::{
         common::{
-            Allocation, BufferArg, Encoder, Kernels,
+            Backend, BufferRef, CommandBufferEncoding, Kernels,
             kernel::{
                 AttentionArguments, AttentionKernelConfig, SoftmaxKernel,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -11,6 +11,7 @@ use crate::{
         },
         metal::{
             Metal,
+            command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
             kernel::{
@@ -79,11 +80,18 @@ impl AttentionFallback {
         })
     }
 
-    pub fn encode<'a, KT: BufferArg<'a, Metal>, VT: BufferArg<'a, Metal>>(
+    pub fn encode(
         &self,
-        arguments: AttentionArguments<'a, Metal, KT, VT>,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<Allocation<Metal>, MetalError> {
+        arguments: AttentionArguments<
+            '_,
+            Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+        >,
+        command_buffer: &mut MetalCommandBufferEncoding,
+    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         assert!(arguments.trie.is_none(), "fallback does not support trie");
         let suffix_length = arguments.suffix_length;
         let sequence_length = arguments.cache.prefix_len() + suffix_length;
@@ -92,12 +100,12 @@ impl AttentionFallback {
         let dt_bytes = self.data_type.size_in_bytes();
         let head_dim_bytes = self.head_dim as usize * dt_bytes;
         let group_rows = (gqa_factor * suffix_length) as usize;
-        let mut output =
-            encoder.allocate_constant_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
-        let mut scores =
-            encoder.allocate_scratch_for_shape(&[self.num_q_heads, suffix_length, sequence_length], self.data_type)?;
-        let mut group_scores =
-            encoder.allocate_scratch_for_shape(&[gqa_factor * suffix_length, sequence_length], self.data_type)?;
+        let mut output = command_buffer
+            .allocate_scratch_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
+        let mut scores = command_buffer
+            .allocate_scratch_for_shape(&[self.num_q_heads, suffix_length, sequence_length], self.data_type)?;
+        let mut group_scores = command_buffer
+            .allocate_scratch_for_shape(&[gqa_factor * suffix_length, sequence_length], self.data_type)?;
 
         for group_index in 0..self.num_groups {
             self.matmul.lock().encode(
@@ -107,7 +115,7 @@ impl AttentionFallback {
                         offset: group_index as usize * group_rows * head_dim_bytes,
                     },
                     b: MatmulB::FullPrecision {
-                        b: (arguments.keys, group_index as usize * head_dim_bytes),
+                        b: arguments.keys.subrange(group_index as usize * head_dim_bytes..),
                     },
                     b_leading_dimension: Some(self.num_groups * self.head_dim),
                     b_transpose: true,
@@ -116,31 +124,38 @@ impl AttentionFallback {
                         ab_scale: scale,
                         ..MatmulDOps::none()
                     },
-                    gather_indices: None,
+                    gather_indices: None::<&<Metal as Backend>::ScratchBuffer>,
                     m: gqa_factor * suffix_length,
                     n: sequence_length,
                     k: self.head_dim,
                 },
-                encoder,
+                command_buffer,
             )?;
             self.scatter_scores.encode(
                 &group_scores,
                 &mut scores,
                 arguments.cache.ring_params(),
-                None::<&Allocation<Metal>>,
+                None::<&<Metal as Backend>::ConstantBuffer>,
                 self.sliding_window_size,
                 group_index,
                 gqa_factor,
                 sequence_length,
                 suffix_length,
                 gqa_factor * suffix_length * sequence_length,
-                encoder,
+                command_buffer,
             );
         }
 
-        self.softmax.encode(&mut scores, arguments.sinks, sequence_length, self.num_q_heads, suffix_length, encoder);
+        self.softmax.encode(
+            &mut scores,
+            arguments.sinks,
+            sequence_length,
+            self.num_q_heads,
+            suffix_length,
+            command_buffer,
+        );
         let mut group_output =
-            encoder.allocate_scratch_for_shape(&[gqa_factor * suffix_length, self.head_dim], self.data_type)?;
+            command_buffer.allocate_scratch_for_shape(&[gqa_factor * suffix_length, self.head_dim], self.data_type)?;
         for group_index in 0..self.num_groups {
             self.matmul.lock().encode(
                 MatmulArguments {
@@ -149,18 +164,18 @@ impl AttentionFallback {
                         offset: group_index as usize * group_rows * sequence_length as usize * dt_bytes,
                     },
                     b: MatmulB::FullPrecision {
-                        b: (arguments.values, group_index as usize * head_dim_bytes),
+                        b: arguments.values.subrange(group_index as usize * head_dim_bytes..),
                     },
                     b_leading_dimension: Some(self.num_groups * self.head_dim),
                     b_transpose: false,
                     d: &mut group_output,
                     d_transform: MatmulDOps::none(),
-                    gather_indices: None,
+                    gather_indices: None::<&<Metal as Backend>::ScratchBuffer>,
                     m: gqa_factor * suffix_length,
                     n: self.head_dim,
                     k: sequence_length,
                 },
-                encoder,
+                command_buffer,
             )?;
             self.scatter_values.encode(
                 &group_output,
@@ -171,7 +186,7 @@ impl AttentionFallback {
                 self.num_q_heads,
                 self.head_dim,
                 gqa_factor * suffix_length * self.head_dim,
-                encoder,
+                command_buffer,
             );
         }
         Ok(output)

@@ -7,13 +7,16 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::SplitInProjKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::SplitInProjKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -65,16 +68,16 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let z_out_size = input.suffix_length as usize * input.inner_dim as usize;
     let dt_out_size = input.suffix_length as usize * input.num_heads as usize;
 
-    let input_allocation = alloc_allocation_with_data::<B, T>(&context, &input.input);
-    let z_bias = alloc_allocation_with_data::<B, T>(&context, &input.z_bias);
+    let input_buffer = create_buffer_with_data::<B, T>(&context, &input.input);
+    let z_bias = create_buffer_with_data::<B, T>(&context, &input.z_bias);
 
-    let mut conv_out = alloc_allocation::<B, T>(&context, conv_out_size);
-    let mut z_out = alloc_allocation::<B, T>(&context, z_out_size);
-    let mut dt_out = alloc_allocation::<B, T>(&context, dt_out_size);
+    let mut conv_out = create_buffer::<B, T>(&context, conv_out_size);
+    let mut z_out = create_buffer::<B, T>(&context, z_out_size);
+    let mut dt_out = create_buffer::<B, T>(&context, dt_out_size);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
-        &input_allocation,
+        &input_buffer,
         &mut conv_out,
         &mut z_out,
         &mut dt_out,
@@ -84,14 +87,14 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         input.conv_dim,
         input.inner_dim,
         input.num_heads,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
-        conv_out: allocation_to_vec(&conv_out),
-        z_out: allocation_to_vec(&z_out),
-        dt_out: allocation_to_vec(&dt_out),
+        conv_out: buffer_to_vec(&conv_out),
+        z_out: buffer_to_vec(&z_out),
+        dt_out: buffer_to_vec(&dt_out),
     }
 }
 

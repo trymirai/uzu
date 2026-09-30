@@ -1,10 +1,10 @@
-use std::{ops::Range, sync::Arc};
+use std::{range::Range, sync::Arc};
 
 use metal::{MTL4UpdateSparseBufferMappingOperation, MTLBuffer};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
 
-use crate::backends::metal::sparse::sparse_heap::MetalSparseHeap;
+use crate::backends::metal::buffer::sparse::sparse_heap::MetalSparseHeap;
 
 #[derive(Clone, PartialEq)]
 pub(crate) struct MetalSparseHeapBufferMapping {
@@ -28,11 +28,11 @@ impl MetalSparseHeapBufferMapping {
 
     pub fn buffer_pages_for(
         &self,
-        heap_range: &Range<usize>,
+        heap_range: Range<usize>,
     ) -> Range<usize> {
         let start = self.buffer_page_anchor + (heap_range.start - self.heap_page_anchor);
         let end = self.buffer_page_anchor + (heap_range.end - self.heap_page_anchor);
-        start..end
+        (start..end).into()
     }
 }
 

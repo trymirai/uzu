@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend,
+        Backend, BufferCpuAccessible, BufferMut,
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection},
     },
@@ -80,15 +80,15 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
 }
 
 struct Quantized<B: Backend> {
-    scales: Allocation<B>,
-    correction: QuantizedCorrection<Allocation<B>>,
+    scales: B::GlobalBuffer,
+    correction: QuantizedCorrection<B::GlobalBuffer>,
     params: QuantParams,
     info: QuantizationInfo,
     signed_codes: bool,
 }
 
 pub struct WeightMatrix<B: Backend> {
-    values: Allocation<B>,
+    values: B::GlobalBuffer,
     quantized: Option<Quantized<B>>,
 }
 
@@ -113,7 +113,7 @@ impl<B: Backend> WeightMatrix<B> {
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
         let Some(info) = quantization_info else {
-            let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_allocation()?;
+            let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_buffer()?;
             return Ok(Self {
                 values,
                 quantized: None,
@@ -136,11 +136,11 @@ impl<B: Backend> WeightMatrix<B> {
         let groups = columns.div_ceil(group_size);
 
         let values =
-            tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_allocation()?;
+            tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_buffer()?;
         let params = QuantParams::new(params_layout, rows, groups);
         let load_plane =
-            |name: &str, shape: [u32; 2], storage_type: DataType| -> Result<Allocation<B>, WeightMatrixError<B>> {
-                Ok(tree.leaf(name)?.validate(&shape, storage_type)?.read_allocation()?)
+            |name: &str, shape: [u32; 2], storage_type: DataType| -> Result<B::GlobalBuffer, WeightMatrixError<B>> {
+                Ok(tree.leaf(name)?.validate(&shape, storage_type)?.read_buffer()?)
             };
         let scales = load_plane("scales", params.scale_shape(), data_type)?;
         let correction = match info.method {
@@ -167,7 +167,7 @@ impl<B: Backend> WeightMatrix<B> {
         })
     }
 
-    pub fn values(&self) -> &Allocation<B> {
+    pub fn values(&self) -> &B::GlobalBuffer {
         &self.values
     }
 
@@ -175,19 +175,19 @@ impl<B: Backend> WeightMatrix<B> {
         self.quantized.as_ref().map(|quantized| quantized.info)
     }
 
-    pub fn scales(&self) -> Option<&Allocation<B>> {
+    pub fn scales(&self) -> Option<&B::GlobalBuffer> {
         self.quantized.as_ref().map(|quantized| &quantized.scales)
     }
 
-    pub fn zero_points(&self) -> Option<&Allocation<B>> {
+    pub fn zero_points(&self) -> Option<&B::GlobalBuffer> {
         self.quantized.as_ref()?.correction.zero_points()
     }
 
-    pub fn biases(&self) -> Option<&Allocation<B>> {
+    pub fn biases(&self) -> Option<&B::GlobalBuffer> {
         self.quantized.as_ref()?.correction.biases()
     }
 
-    pub fn matmul_b(&self) -> MatmulB<'_, B> {
+    pub fn matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
         let Some(quantized) = self.quantized.as_ref() else {
             return MatmulB::FullPrecision {
                 b: &self.values,
@@ -222,7 +222,7 @@ impl<B: Backend> WeightMatrix<B> {
 impl<B: Backend> Quantized<B> {
     fn prepare_a8_storage(
         &mut self,
-        values: &mut Allocation<B>,
+        values: impl BufferMut<Buffer: BufferCpuAccessible>,
     ) -> bool {
         if self.params.layout() != QuantParamsLayout::GroupOutput {
             return false;

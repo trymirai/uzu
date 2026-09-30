@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer, DeviceCapabilities};
+use crate::backends::common::{Backend, CommandBuffer, DeviceCapabilities};
 
 pub trait Context: Sized + Send + Sync {
     type Backend: Backend<Context = Self>;
@@ -12,28 +12,20 @@ pub trait Context: Sized + Send + Sync {
     fn create_command_buffer(
         &self,
         name: Option<&str>,
-    ) -> Result<<<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Initial, <Self::Backend as Backend>::Error>;
+        allocation_pool: Option<Arc<<Self::Backend as Backend>::AllocationPool>>,
+    ) -> Result<<<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding, <Self::Backend as Backend>::Error>;
 
     fn create_buffer(
         &self,
         size: usize,
-    ) -> Result<<Self::Backend as Backend>::DenseBuffer, <Self::Backend as Backend>::Error>;
-
-    fn create_allocation(
-        &self,
-        size: usize,
-        allocation_type: AllocationType<Self::Backend>,
-    ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error>;
-
-    fn create_allocation_pool(
-        &self,
-        reusable: bool,
-    ) -> AllocationPool<Self::Backend>;
+    ) -> Result<<Self::Backend as Backend>::GlobalBuffer, <Self::Backend as Backend>::Error>;
 
     fn create_sparse_buffer(
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error>;
+
+    fn create_allocation_pool(&self) -> Arc<<Self::Backend as Backend>::AllocationPool>;
 
     fn peak_memory_usage(&self) -> Option<usize>;
 

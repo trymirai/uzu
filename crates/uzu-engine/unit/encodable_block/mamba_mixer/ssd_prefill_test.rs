@@ -2,12 +2,12 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::common::{
-        Backend, Context, Encoder, Kernels,
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         gpu_types::ActivationType,
         kernel::{Conv1dScanKernel, SSDPrefill64Kernel, SSDPrefillKernel},
     },
     data_type::DataType,
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -146,21 +146,21 @@ fn run_prefill_kernel_mode<B: Backend>(
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
 ) -> (Vec<f32>, Vec<f32>) {
-    let x_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.x_data);
-    let dt_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.dt_data);
-    let b_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.b_data);
-    let c_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.c_data);
-    let d_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.d_data);
-    let z_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.z_data);
-    let mut state_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.state_init);
-    let mut y_buf = alloc_allocation::<B, f32>(ctx, fixture.suffix_len * fixture.num_heads * fixture.head_dim);
+    let x_buf = create_buffer_with_data::<B, _>(ctx, &fixture.x_data);
+    let dt_buf = create_buffer_with_data::<B, _>(ctx, &fixture.dt_data);
+    let b_buf = create_buffer_with_data::<B, _>(ctx, &fixture.b_data);
+    let c_buf = create_buffer_with_data::<B, _>(ctx, &fixture.c_data);
+    let d_buf = create_buffer_with_data::<B, _>(ctx, &fixture.d_data);
+    let z_buf = create_buffer_with_data::<B, _>(ctx, &fixture.z_data);
+    let mut state_buf = create_buffer_with_data::<B, _>(ctx, &fixture.state_init);
+    let mut y_buf = create_buffer::<B, f32>(ctx, fixture.suffix_len * fixture.num_heads * fixture.head_dim);
 
     let x_strides = fixture.x_strides.map(|stride| stride as u32);
     let dt_strides = fixture.dt_strides.map(|stride| stride as u32);
     let cb_strides = fixture.cb_strides.map(|stride| stride as u32);
     let state_strides = fixture.state_strides.map(|stride| stride as u32);
 
-    let mut encoder = Encoder::new(ctx).unwrap();
+    let mut command_buffer = ctx.create_command_buffer(None, None).unwrap();
     match mode {
         SSDPrefillMode::Universal => {
             let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(ctx, DataType::F32)
@@ -183,7 +183,7 @@ fn run_prefill_kernel_mode<B: Backend>(
                 &state_strides,
                 fixture.num_heads as u32,
                 fixture.head_dim as u32,
-                &mut encoder,
+                &mut command_buffer,
             );
         },
         SSDPrefillMode::Special64 => {
@@ -208,14 +208,14 @@ fn run_prefill_kernel_mode<B: Backend>(
                 &state_strides,
                 fixture.num_heads as u32,
                 fixture.head_dim as u32,
-                &mut encoder,
+                &mut command_buffer,
             );
         },
     }
-    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let y_vec = allocation_to_vec::<B, f32>(&y_buf);
-    let state_vec = allocation_to_vec::<B, f32>(&state_buf);
+    let y_vec = buffer_to_vec::<B, f32>(&y_buf);
+    let state_vec = buffer_to_vec::<B, f32>(&state_buf);
     drop(y_buf);
     drop(completed);
     (y_vec, state_vec)
@@ -240,16 +240,16 @@ fn run_conv_scan_once<B: Backend>(
     let total_state = channels * tap_count;
 
     let mut y_buf = if alias_io {
-        alloc_allocation_with_data::<B, _>(ctx, x_data)
+        create_buffer_with_data::<B, _>(ctx, x_data)
     } else {
-        alloc_allocation::<B, f32>(ctx, total_x)
+        create_buffer::<B, f32>(ctx, total_x)
     };
-    let mut b_out_buf = alloc_allocation::<B, f32>(ctx, total_x);
-    let mut c_out_buf = alloc_allocation::<B, f32>(ctx, total_x);
-    let w_buf = alloc_allocation_with_data::<B, _>(ctx, w_data);
-    let b_buf = alloc_allocation_with_data::<B, _>(ctx, b_data);
-    let mut state_buf = alloc_allocation_with_data::<B, _>(ctx, state_init);
-    let mut scratch_buf = alloc_allocation::<B, f32>(ctx, total_state);
+    let mut b_out_buf = create_buffer::<B, f32>(ctx, total_x);
+    let mut c_out_buf = create_buffer::<B, f32>(ctx, total_x);
+    let w_buf = create_buffer_with_data::<B, _>(ctx, w_data);
+    let b_buf = create_buffer_with_data::<B, _>(ctx, b_data);
+    let mut state_buf = create_buffer_with_data::<B, _>(ctx, state_init);
+    let mut scratch_buf = create_buffer::<B, f32>(ctx, total_state);
 
     let padded_len = tap_count + suffix_len;
     let mut padded_host = vec![0.0f32; padded_len * channels];
@@ -263,11 +263,11 @@ fn run_conv_scan_once<B: Backend>(
             padded_host[(tap_count + token) * channels + ch] = x_data[token * channels + ch];
         }
     }
-    let padded_buf = alloc_allocation_with_data::<B, _>(ctx, &padded_host);
+    let padded_buf = create_buffer_with_data::<B, _>(ctx, &padded_host);
 
-    let mut encoder = Encoder::new(ctx).unwrap();
+    let mut command_buffer = ctx.create_command_buffer(None, None).unwrap();
     if use_scratch && tap_count > 0 {
-        encoder.encode_fill(&mut scratch_buf, 0);
+        command_buffer.encode_fill(&mut scratch_buf, 0);
     }
     kernel.encode(
         &padded_buf,
@@ -285,18 +285,17 @@ fn run_conv_scan_once<B: Backend>(
         channels as u32,
         0u32,
         ActivationType::SILU,
-        &mut encoder,
+        &mut command_buffer,
     );
 
     if use_scratch && tap_count > 0 {
-        let bytes = channels * tap_count * size_of::<f32>();
-        encoder.encode_copy(&scratch_buf, 0..bytes, &mut state_buf, 0..bytes);
+        command_buffer.encode_copy(&scratch_buf, &mut state_buf);
     }
 
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let y_vec = allocation_to_vec::<B, f32>(&y_buf);
-    let state_vec = allocation_to_vec::<B, f32>(&state_buf);
+    let y_vec = buffer_to_vec::<B, f32>(&y_buf);
+    let state_vec = buffer_to_vec::<B, f32>(&state_buf);
     (y_vec, state_vec)
 }
 

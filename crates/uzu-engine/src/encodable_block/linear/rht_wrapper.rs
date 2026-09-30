@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Allocation, Backend, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
     config::weight_matrix::{
         AnyWeightMatrixSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
@@ -129,18 +129,18 @@ impl<B: Backend> RHTLinearWrapper<B> {
         output_data_type: DataType,
         weights_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
-    ) -> Result<(Allocation<B>, LinearMatmul<B>), RHTLinearWrapperError<B>> {
+    ) -> Result<(B::GlobalBuffer, LinearMatmul<B>), RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let rht_signs = weights_tree
             .leaf("incoherence_signs.input_signs")?
             .validate(&[input_dimension], DataType::I32)?
-            .read_allocation()?;
+            .read_buffer()?;
         let output_factors = weights_tree
             .leaf("incoherence_signs.output_signs")?
             .validate(&[output_dimension], DataType::I32)?
-            .read_allocation()?;
+            .read_buffer()?;
         let inner_linear = LinearMatmul::load(
             context,
             quantization_spec,
@@ -175,34 +175,39 @@ impl<B: Backend> RHTLinearWrapper<B> {
 impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
     fn encode(
         &self,
-        input: Allocation<B>,
+        input: B::ScratchBuffer,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        self.encode_input(LinearInput::FullPrecision(input), batch_dim, encoder)
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        self.encode_input(LinearInput::FullPrecision(input), batch_dim, command_buffer)
     }
 
     fn encode_input(
         &self,
         input: LinearInput<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("linear (rht)");
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        command_buffer.push_debug_group("linear (rht)");
 
         let input = match input {
             LinearInput::FullPrecision(input) => input,
             input => {
-                let output = self.inner_linear.encode_input(input, batch_dim, encoder);
-                encoder.pop_debug_group();
+                let output = self.inner_linear.encode_input(input, batch_dim, command_buffer);
+                command_buffer.pop_debug_group();
                 return output;
             },
         };
-        let format = self.inner_linear.select_activation_format(batch_dim, encoder.context());
-        let input = self.input_rht.prepare_in_place(input, batch_dim, format, encoder)?;
-        let output = self.inner_linear.encode_with_a(input.as_matmul_a(), batch_dim, None, encoder)?;
+        let format = self.inner_linear.select_activation_format(batch_dim, command_buffer.context());
+        let input = self.input_rht.prepare_in_place(input, batch_dim, format, command_buffer)?;
+        let output = self.inner_linear.encode_with_a(
+            input.as_matmul_a(),
+            batch_dim,
+            None::<super::Gather<&B::ScratchBuffer>>,
+            command_buffer,
+        )?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
         Ok(output)
     }
 }

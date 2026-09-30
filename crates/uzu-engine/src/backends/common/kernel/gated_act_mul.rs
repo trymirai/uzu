@@ -2,7 +2,7 @@ use bitflags::bitflags;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::{ActivationQuantization, GatedActMulKernel},
     },
@@ -100,16 +100,16 @@ impl<B: Backend> GatedActMul<B> {
 
     pub fn encode_fp(
         &self,
-        act_operand: &Allocation<B>,
-        value_operand: Option<&Allocation<B>>,
-        output: &mut Allocation<B>,
-        hadamard_factors: Option<&Allocation<B>>,
+        act_operand: impl BufferRef<Backend = B>,
+        value_operand: Option<impl BufferRef<Backend = B>>,
+        output: impl BufferMut<Backend = B>,
+        hadamard_factors: Option<impl BufferRef<Backend = B>>,
         gated_dim: u32,
         batch_dim: u32,
         value_offset: u32,
         value_row_stride: u32,
         act_type: ActivationType,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         assert!(self.quantization.is_none());
         assert_eq!(self.options.contains(GatedActMulOptions::INTERLEAVED), value_operand.is_none());
@@ -124,9 +124,9 @@ impl<B: Backend> GatedActMul<B> {
             act_operand,
             value_operand,
             Some(output),
-            None::<&mut Allocation<B>>,
-            None::<&mut Allocation<B>>,
-            None::<&mut Allocation<B>>,
+            None::<&mut B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
             hadamard_factors,
             gated_dim,
             batch_dim,
@@ -138,21 +138,21 @@ impl<B: Backend> GatedActMul<B> {
             gate_clip_max,
             value_clip_min,
             value_clip_max,
-            encoder,
+            command_buffer,
         );
     }
 
     pub fn encode_quantized(
         &self,
-        act_operand: &Allocation<B>,
-        values: &mut Allocation<B>,
-        scales: &mut Allocation<B>,
-        group_sums: Option<&mut Allocation<B>>,
-        hadamard_factors: &Allocation<B>,
+        act_operand: impl BufferRef<Backend = B>,
+        values: impl BufferMut<Backend = B>,
+        scales: impl BufferMut<Backend = B>,
+        group_sums: Option<impl BufferMut<Backend = B>>,
+        hadamard_factors: impl BufferRef<Backend = B>,
         gated_dim: u32,
         batch_dim: u32,
         act_type: ActivationType,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         let quantization = self.quantization.expect("quantized gated activation required");
         assert!(self.options.contains(GatedActMulOptions::INTERLEAVED));
@@ -167,8 +167,8 @@ impl<B: Backend> GatedActMul<B> {
         let (value_clip_min, value_clip_max) = self.settings.value_clipping.into_pair().unzip();
         self.kernel.encode(
             act_operand,
-            None::<&Allocation<B>>,
-            None::<&mut Allocation<B>>,
+            None::<&B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
             Some(values),
             Some(scales),
             group_sums,
@@ -183,7 +183,7 @@ impl<B: Backend> GatedActMul<B> {
             gate_clip_max,
             value_clip_min,
             value_clip_max,
-            encoder,
+            command_buffer,
         );
     }
 }
