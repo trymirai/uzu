@@ -1,6 +1,21 @@
 use uzu_engine_macros::uzu_test;
 
-use super::{MaskKind, choose_splits, prefill_splits_within_scratch, should_encode};
+use super::{MaskKind, SplitGeometry, choose_long_prefill_splits, choose_splits, should_encode};
+
+fn geometry(head_dim: u32) -> SplitGeometry {
+    let (num_q_heads, block_rows, num_groups) = if head_dim == 128 {
+        (32, 64, 8)
+    } else {
+        (24, 32, 4)
+    };
+    SplitGeometry {
+        head_dim,
+        num_q_heads,
+        num_groups,
+        block_rows,
+        block_k: 32,
+    }
+}
 
 fn splits(
     cores: u32,
@@ -8,13 +23,7 @@ fn splits(
     suffix_length: u32,
     kv_length: u32,
 ) -> u32 {
-    let (gqa, rows, groups) = if head_dim == 128 {
-        (4, 64, 8)
-    } else {
-        (6, 32, 4)
-    };
-    let threadgroups = (gqa * suffix_length).div_ceil(rows) * groups;
-    choose_splits(head_dim, suffix_length, kv_length, threadgroups, 32, cores)
+    choose_splits(geometry(head_dim), suffix_length, kv_length, cores)
 }
 
 #[uzu_test]
@@ -49,15 +58,15 @@ fn should_encode_boundaries() {
 }
 
 #[uzu_test]
-fn prefill_splits_within_scratch_boundaries() {
+fn long_prefill_split_selection_boundaries() {
     // head_dim 256, gqa 6, 4 groups, 32-row tiles: 24 576 partial rows x 1 032 bytes at suffix 1 024.
-    let bytes_per_split = |suffix: u32| u64::from((6 * suffix).div_ceil(32) * 4 * 32) * 1032;
-    let splits = |suffix, kv| prefill_splits_within_scratch(suffix, kv, 32, bytes_per_split(suffix));
+    let bytes_per_split = |suffix: u32| ((6 * suffix).div_ceil(32) * 4 * 32) as u64 * 1032;
+    let splits = |suffix, kv| choose_long_prefill_splits(suffix, kv, 32, bytes_per_split(suffix));
     assert_eq!(splits(1024, 16_383), None, "short cache stays on choose_splits");
     assert_eq!(splits(64, 61_440), None, "decode suffix stays on choose_splits");
     assert_eq!(splits(1024, 16_384), Some(8), "2 048-key splits fit under the cap");
     assert_eq!(splits(256, 61_440), Some(30), "2 048-key splits fit under the cap");
     assert_eq!(splits(1024, 20_480), Some(10), "cap binds: fewer, longer splits");
     assert_eq!(splits(1024, 102_400), Some(10), "cap binds: fewer, longer splits");
-    assert_eq!(prefill_splits_within_scratch(1024, 61_440, 32, 200 << 20), None, "fewer than two fit");
+    assert_eq!(choose_long_prefill_splits(1024, 61_440, 32, 200 << 20), None, "fewer than two fit");
 }
