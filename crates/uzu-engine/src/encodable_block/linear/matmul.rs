@@ -82,13 +82,36 @@ impl<B: Backend> LinearMatmul<B> {
 
         let matrix =
             WeightMatrix::load(weights_tree, spec, Layout::OutputInput, output_dim, input_dim, weights_data_type)?;
+        let biases = load_biases(weights_data_type, output_data_type, output_dim, bias_tree)?;
+        Self::from_matrix(
+            context,
+            matrix,
+            biases,
+            output_hadamard_factors,
+            input_dim,
+            output_dim,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+        )
+    }
+
+    pub(super) fn from_matrix(
+        context: &B::Context,
+        matrix: WeightMatrix<B>,
+        biases: Option<Allocation<B>>,
+        output_hadamard_factors: Option<Allocation<B>>,
+        input_dim: u32,
+        output_dim: u32,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+    ) -> Result<Self, LinearMatmulError<B>> {
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
             return Err(LinearMatmulError::UnsupportedConfiguration(
                 "fused output-hadamard factors require quantized weights".into(),
             ));
         }
-
-        let biases = load_biases(weights_data_type, output_data_type, output_dim, bias_tree)?;
 
         let kernel =
             <B::Kernels as Kernels>::MatmulKernel::new(context, weights_data_type, input_data_type, output_data_type)

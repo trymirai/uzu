@@ -13,6 +13,7 @@ mod attention;
 pub mod gdn;
 pub mod matmul;
 mod radix_top_k_small;
+mod trellis;
 
 include!(concat!(env!("OUT_DIR"), "/metal.rs"));
 
@@ -27,4 +28,6 @@ impl Kernels for MetalKernels {
     type DeltaNetTreeVerify = gdn::tree_verify::MetalDeltaNetTreeVerify;
     type MatmulKernel = matmul::MatmulMetalKernel;
     type RadixTopKSmall = radix_top_k_small::MetalRadixTopKSmall;
+    type TrellisProjection = trellis::MetalTrellisProjection;
+    type TrellisTransform = trellis::MetalTrellisTransform;
 }

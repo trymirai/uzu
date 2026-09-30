@@ -39,4 +39,6 @@ impl Kernels for CpuKernels {
     type DeltaNetTreeVerify = Unsupported<Cpu>;
     type MatmulKernel = matmul::MatmulCpuKernel;
     type RadixTopKSmall = radix_top_k_small::CpuRadixTopKSmall;
+    type TrellisProjection = Unsupported<Cpu>;
+    type TrellisTransform = Unsupported<Cpu>;
 }

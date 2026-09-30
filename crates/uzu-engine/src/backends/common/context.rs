@@ -1,5 +1,7 @@
 use std::{path::Path, sync::Arc};
 
+use bytemuck::{AnyBitPattern, NoUninit};
+
 use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer, DeviceCapabilities};
 
 pub trait Context: Sized + Send + Sync {
@@ -24,6 +26,15 @@ pub trait Context: Sized + Send + Sync {
         size: usize,
         allocation_type: AllocationType<Self::Backend>,
     ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error>;
+
+    fn create_allocation_from_slice<T: NoUninit + AnyBitPattern>(
+        &self,
+        data: &[T],
+    ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error> {
+        let mut allocation = self.create_allocation(size_of_val(data), AllocationType::Global)?;
+        allocation.copyin(data);
+        Ok(allocation)
+    }
 
     fn create_allocation_pool(
         &self,

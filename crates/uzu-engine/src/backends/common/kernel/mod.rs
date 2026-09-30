@@ -9,6 +9,7 @@ pub mod delta_net_tree_verify;
 pub mod gated_act_mul;
 pub mod matmul;
 pub mod radix_top_k_small;
+pub mod trellis;
 
 pub use activation_transform::{ActivationQuantization, ActivationTransform};
 pub use attention::{AttentionArguments, AttentionKernel, AttentionKernelConfig};
@@ -25,6 +26,8 @@ pub trait Kernels: Sized {
     type DeltaNetTreeVerify: delta_net_tree_verify::DeltaNetTreeVerify<Backend = Self::Backend>;
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
     type RadixTopKSmall: radix_top_k_small::RadixTopKSmall<Backend = Self::Backend>;
+    type TrellisProjection: trellis::TrellisProjection<Backend = Self::Backend>;
+    type TrellisTransform: trellis::TrellisTransform<Backend = Self::Backend>;
 }
 
 pub struct Unsupported<B: Backend> {
