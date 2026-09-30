@@ -4,7 +4,7 @@
 use std::os::unix::fs::FileExt;
 #[cfg(target_family = "wasm")]
 use std::os::wasi::fs::FileExt;
-use std::{collections::HashMap, fs::File, str::Utf8Error};
+use std::{collections::HashMap, fs::File};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -17,14 +17,10 @@ pub enum HeaderLoadingError {
     UnableToReadHeader(#[source] std::io::Error),
     #[error("Unable to read safetensors header JSON: {0}")]
     UnableToReadHeaderJson(#[source] std::io::Error),
-    #[error("The header is an invalid UTF-8 string and cannot be read: {0}")]
-    InvalidHeader(#[from] Utf8Error),
-    #[error("The header does contain a valid string, but it is not valid JSON: {0}")]
+    #[error("The header is not valid UTF-8 JSON: {0}")]
     InvalidHeaderDeserialization(#[from] serde_json::Error),
     #[error("The header is too large.")]
     HeaderTooLarge,
-    #[error("The header length is invalid.")]
-    InvalidHeaderLength,
     #[error("Unsupported safetensors dtype: {0:?}")]
     UnsupportedDtype(Dtype),
     #[error("Invalid data offsets for tensor {key}: begin={begin}, end={end}")]
@@ -60,7 +56,7 @@ pub struct TensorInfo {
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 #[non_exhaustive]
 pub enum Dtype {
-    /// Boolan type
+    /// Boolean type
     BOOL,
     /// Unsigned byte
     U8,
@@ -119,15 +115,14 @@ pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoading
     let metadata_size: usize =
         u64::from_le_bytes(header_buffer).try_into().map_err(|_| HeaderLoadingError::HeaderTooLarge)?;
     if metadata_size > MAX_HEADER_SIZE {
-        return Err(HeaderLoadingError::InvalidHeaderLength);
+        return Err(HeaderLoadingError::HeaderTooLarge);
     }
 
-    let stop = metadata_size.checked_add(8).ok_or(HeaderLoadingError::InvalidHeaderLength)?;
-    let mut json_buffer: Box<[u8]> = core::iter::repeat_n(0, stop - size_of::<u64>()).collect();
-    file.read_exact_at(&mut json_buffer, 8).map_err(HeaderLoadingError::UnableToReadHeaderJson)?;
-    let string = core::str::from_utf8(&json_buffer)?;
-    let metadata: HashMetadata = serde_json::from_str(string)?;
-    Ok((stop, metadata))
+    let mut json_buffer = vec![0u8; metadata_size];
+    file.read_exact_at(&mut json_buffer, size_of::<u64>() as u64)
+        .map_err(HeaderLoadingError::UnableToReadHeaderJson)?;
+    let metadata: HashMetadata = serde_json::from_slice(&json_buffer)?;
+    Ok((size_of::<u64>() + metadata_size, metadata))
 }
 
 #[cfg(test)]
