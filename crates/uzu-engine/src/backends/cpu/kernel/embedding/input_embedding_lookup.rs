@@ -5,7 +5,9 @@ use uzu_engine_macros::kernel;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::gpu_types::{EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
+        common::gpu_types::{
+            EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode, d4s4,
+        },
         cpu::kernel::activation_transform::hadamard_transform,
     },
 };
@@ -19,9 +21,9 @@ pub fn input_embedding_lookup<T: ArrayElement + Float>(
     #[optional(quantization_method == QuantizationMethod::ScaleZeroPoint)] zero_points: Option<*const u8>,
     #[optional(quantization_method == QuantizationMethod::ScaleBias)] biases: Option<*const T>,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
-    #[optional(table_kind == EmbeddingTableKind::D4)] ladder_indices: Option<*const u8>,
-    #[optional(table_kind == EmbeddingTableKind::D4)] ladder: Option<*const f16>,
-    #[optional(table_kind == EmbeddingTableKind::D4)] codebook: Option<*const i8>,
+    #[optional(table_kind == EmbeddingTableKind::D4S4)] ladder_indices: Option<*const u8>,
+    #[optional(table_kind == EmbeddingTableKind::D4S4)] ladder: Option<*const f16>,
+    #[optional(table_kind == EmbeddingTableKind::D4S4)] codebook: Option<*const i8>,
     output: *mut T,
     batch_size: u32,
     vocab_size: u32,
@@ -33,7 +35,11 @@ pub fn input_embedding_lookup<T: ArrayElement + Float>(
     #[specialize] quantization_method: QuantizationMethod,
     #[specialize] use_hadamard: bool,
 ) {
-    let factors = hadamard_factors.filter(|_| use_hadamard);
+    let factors = if use_hadamard {
+        hadamard_factors
+    } else {
+        None
+    };
     let dim = model_dim as usize;
     let (num_groups, weights_stride) = if table_kind == EmbeddingTableKind::Quantized {
         (dim.div_ceil(group_size as usize), dim / quantization_mode.packing_divisor() as usize)
@@ -90,14 +96,18 @@ pub fn input_embedding_lookup<T: ArrayElement + Float>(
                     // Ordinary quantization rounds to T before the transform.
                     T::from((scale * code + bias) * input_scale).unwrap().to_f32().unwrap()
                 },
-                EmbeddingTableKind::D4 => {
-                    let row_scales = scales.expect("D4 lookup requires row scales");
-                    let ladder_indices = ladder_indices.expect("D4 lookup requires ladder indices");
-                    let ladder = ladder.expect("D4 lookup requires a ladder");
-                    let codebook = codebook.expect("D4 lookup requires a codebook");
-                    let ladder_index = read_u4(ladder_indices, 2 * token * (dim / 128) + column / 64);
-                    let code = unsafe { *values.add(token * (dim / 4) + column / 4) } as usize;
-                    let point = unsafe { *codebook.add(4 * code + column % 4) };
+                EmbeddingTableKind::D4S4 => {
+                    let row_scales = scales.expect("D4S4 lookup requires row scales");
+                    let ladder_indices = ladder_indices.expect("D4S4 lookup requires ladder indices");
+                    let ladder = ladder.expect("D4S4 lookup requires a ladder");
+                    let codebook = codebook.expect("D4S4 lookup requires a codebook");
+                    let values_per_code = d4s4::VALUES_PER_CODE as usize;
+                    let columns_per_scale = d4s4::COLUMNS_PER_LADDER_SCALE as usize;
+                    let ladder_index =
+                        read_u4(ladder_indices, token * (dim / columns_per_scale) + column / columns_per_scale);
+                    let code =
+                        unsafe { *values.add(token * (dim / values_per_code) + column / values_per_code) } as usize;
+                    let point = unsafe { *codebook.add(values_per_code * code + column % values_per_code) };
                     let row_scale = unsafe { (*row_scales.add(token)).to_f32().unwrap() };
                     let step = unsafe { (*ladder.add(ladder_index as usize)).to_f32() };
                     row_scale * step * point as f32 * input_scale

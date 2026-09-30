@@ -4,5 +4,5 @@
 pub enum EmbeddingTableKind {
     Dense = 0,
     Quantized = 1,
-    D4 = 2,
+    D4S4 = 2,
 }

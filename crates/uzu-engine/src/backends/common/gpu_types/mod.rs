@@ -6,6 +6,7 @@
 pub mod activation_transform;
 pub mod activation_type;
 pub mod attention;
+pub mod d4s4;
 pub mod embedding;
 pub mod gated_act_mul;
 pub mod gemm;

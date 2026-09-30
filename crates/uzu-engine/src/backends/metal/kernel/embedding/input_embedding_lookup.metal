@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
+#include "../generated/d4s4.h"
 #include "../generated/embedding.h"
 #include "../generated/quantization_method.h"
 #include "../hadamard_transform/hadamard_transform.h"
@@ -9,6 +10,9 @@ using namespace metal;
 using namespace uzu::embedding;
 using namespace uzu::quantization_method;
 using namespace uzu::quantization;
+namespace d4s4 = uzu::d4s4;
+
+static_assert(d4s4::VALUES_PER_CODE == 4, "D4S4 codebook entries are read as char4");
 
 inline uint read_u4(const device uchar* packed, uint nibble) {
   return (packed[nibble / 2] >> (4 * (nibble & 1))) & 0x0F;
@@ -23,9 +27,9 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
     const device uchar* zero_points OPTIONAL(quantization_method == QuantizationMethod::ScaleZeroPoint),
     const device T* biases OPTIONAL(quantization_method == QuantizationMethod::ScaleBias),
     const device int* hadamard_factors OPTIONAL(use_hadamard),
-    const device uchar* ladder_indices OPTIONAL(table_kind == EmbeddingTableKind::D4),
-    const device half* ladder OPTIONAL(table_kind == EmbeddingTableKind::D4),
-    const device char4* codebook OPTIONAL(table_kind == EmbeddingTableKind::D4),
+    const device uchar* ladder_indices OPTIONAL(table_kind == EmbeddingTableKind::D4S4),
+    const device half* ladder OPTIONAL(table_kind == EmbeddingTableKind::D4S4),
+    const device char4* codebook OPTIONAL(table_kind == EmbeddingTableKind::D4S4),
     device T* output,
     constant uint& batch_size,
     constant uint& vocab_size,
@@ -76,9 +80,14 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
     }
     loaded = float(T((scale * code + bias) * input_scale));
   } else {
-    const uint ladder_index = read_u4(ladder_indices, 2 * token_id * (model_dim / 128) + dim_idx / 64);
-    const char4 point = codebook[values[token_id * (model_dim / 4) + dim_idx / 4]];
-    loaded = float(scales[token_id]) * float(ladder[ladder_index]) * float(point[dim_idx % 4]) * input_scale;
+    const uint ladder_index = read_u4(
+        ladder_indices,
+        token_id * (model_dim / d4s4::COLUMNS_PER_LADDER_SCALE) + dim_idx / d4s4::COLUMNS_PER_LADDER_SCALE
+    );
+    const char4 point =
+        codebook[values[token_id * (model_dim / d4s4::VALUES_PER_CODE) + dim_idx / d4s4::VALUES_PER_CODE]];
+    loaded = float(scales[token_id]) * float(ladder[ladder_index]) * float(point[dim_idx % d4s4::VALUES_PER_CODE]) *
+             input_scale;
   }
   if (use_hadamard) {
     loaded = simdgroup_output_random_hadamard_transform(
