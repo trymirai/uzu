@@ -1,2 +1,1 @@
-pub mod full_precision_embedding;
-pub mod quant_embedding;
+pub mod input_embedding_lookup;

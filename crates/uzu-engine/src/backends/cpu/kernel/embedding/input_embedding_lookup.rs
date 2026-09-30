@@ -33,11 +33,7 @@ pub fn input_embedding_lookup<T: ArrayElement + Float>(
     #[specialize] quantization_method: QuantizationMethod,
     #[specialize] use_hadamard: bool,
 ) {
-    let factors = match table_kind {
-        EmbeddingTableKind::Dense => None,
-        EmbeddingTableKind::Quantized => hadamard_factors.filter(|_| use_hadamard),
-        EmbeddingTableKind::D4 => Some(hadamard_factors.expect("D4 lookup requires Hadamard factors")),
-    };
+    let factors = hadamard_factors.filter(|_| use_hadamard);
     let dim = model_dim as usize;
     let (num_groups, weights_stride) = if table_kind == EmbeddingTableKind::Quantized {
         (dim.div_ceil(group_size as usize), dim / quantization_mode.packing_divisor() as usize)
