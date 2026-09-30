@@ -23,6 +23,7 @@ pub fn is_supported(
         && arguments.sliding_window_size.is_none()
         && arguments.scale.is_none_or(|scale| scale > 0.0)
         && arguments.num_groups > 0
+        && arguments.num_q_heads > 0
         && arguments.num_q_heads.is_multiple_of(arguments.num_groups)
 }
 
@@ -57,6 +58,19 @@ const MEASURED_TG_PER_CORE_TENTHS: &[MeasuredSplits] = &[
 ];
 const TG_PER_CORE_FALLBACK: u32 = 6;
 const TENTHS_PER_RATIO: u32 = 10;
+const PREFILL_SPLIT_KEYS: u32 = 2048;
+const PREFILL_SPLIT_MIN_KV: u32 = 16384;
+const PREFILL_SPLIT_SCRATCH_BYTES: u64 = 256 << 20;
+const PREFILL_MIN_SPLITS: u32 = 2;
+const PARTIAL_STATS_PER_ROW: u64 = 2; // max and sum
+
+pub struct SplitGeometry {
+    pub head_dim: u32,
+    pub num_q_heads: u32,
+    pub num_groups: u32,
+    pub block_rows: u32,
+    pub block_k: u32,
+}
 
 fn tg_per_core_tenths_for(
     steps: &[(u32, u32)],
@@ -68,16 +82,16 @@ fn tg_per_core_tenths_for(
 fn splits_for_ratio(
     tg_per_core_tenths: u32,
     gpu_core_count: u32,
-    unsplit_threadgroups: u32,
+    threadgroups_per_kv_split: u32,
 ) -> u32 {
-    (tg_per_core_tenths * gpu_core_count.max(1)).div_ceil(TENTHS_PER_RATIO * unsplit_threadgroups.max(1))
+    (tg_per_core_tenths * gpu_core_count.max(1)).div_ceil(TENTHS_PER_RATIO * threadgroups_per_kv_split.max(1))
 }
 
 fn tabled_splits(
     head_dim: u32,
     suffix_length: u32,
     kv_length: u32,
-    unsplit_threadgroups: u32,
+    threadgroups_per_kv_split: u32,
     gpu_core_count: u32,
 ) -> Option<u32> {
     if !(MEASURED_SUFFIX_MIN..=MEASURED_SUFFIX_MAX).contains(&suffix_length) {
@@ -88,23 +102,42 @@ fn tabled_splits(
         .filter(|(row_head_dim, _, _)| *row_head_dim == head_dim)
         .min_by_key(|(_, row_suffix, _)| (row_suffix.abs_diff(suffix_length), u32::MAX - row_suffix))
         .map(|(_, _, steps)| {
-            splits_for_ratio(tg_per_core_tenths_for(steps, kv_length), gpu_core_count, unsplit_threadgroups)
+            splits_for_ratio(tg_per_core_tenths_for(steps, kv_length), gpu_core_count, threadgroups_per_kv_split)
         })
 }
 
 pub fn choose_splits(
-    head_dim: u32,
+    geometry: SplitGeometry,
     suffix_length: u32,
     kv_length: u32,
-    unsplit_threadgroups: u32,
-    block_k: u32,
     gpu_core_count: u32,
 ) -> u32 {
-    let splits = tabled_splits(head_dim, suffix_length, kv_length, unsplit_threadgroups, gpu_core_count)
-        .unwrap_or_else(|| {
-            splits_for_ratio(TENTHS_PER_RATIO * TG_PER_CORE_FALLBACK, gpu_core_count, unsplit_threadgroups)
-        });
-    splits.clamp(1, kv_length.div_ceil(block_k).max(1))
+    let threadgroups_per_kv_split = (geometry.num_q_heads / geometry.num_groups * suffix_length)
+        .div_ceil(geometry.block_rows)
+        * geometry.num_groups;
+    let max_splits = kv_length.div_ceil(geometry.block_k).max(1);
+
+    if suffix_length > GEMM_GROUPED_DECODE_SUFFIX_MAX && kv_length >= PREFILL_SPLIT_MIN_KV {
+        // Each padded row has head_dim partial values, one max, and one sum, all F32.
+        let bytes_per_split = threadgroups_per_kv_split as u64
+            * geometry.block_rows as u64
+            * (geometry.head_dim as u64 + PARTIAL_STATS_PER_ROW)
+            * DataType::F32.size_in_bytes() as u64;
+        let requested_splits = kv_length.div_ceil(PREFILL_SPLIT_KEYS).min(max_splits);
+        let scratch_splits = PREFILL_SPLIT_SCRATCH_BYTES / bytes_per_split;
+        let splits = (requested_splits as u64).min(scratch_splits) as u32;
+        if splits >= PREFILL_MIN_SPLITS {
+            return splits;
+        }
+    }
+
+    let measured_splits =
+        tabled_splits(geometry.head_dim, suffix_length, kv_length, threadgroups_per_kv_split, gpu_core_count);
+    let splits = match measured_splits {
+        Some(splits) => splits,
+        None => splits_for_ratio(TENTHS_PER_RATIO * TG_PER_CORE_FALLBACK, gpu_core_count, threadgroups_per_kv_split),
+    };
+    splits.clamp(1, max_splits)
 }
 
 #[cfg(test)]

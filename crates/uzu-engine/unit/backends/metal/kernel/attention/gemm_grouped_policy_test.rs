@@ -1,6 +1,21 @@
 use uzu_engine_macros::uzu_test;
 
-use super::{MaskKind, choose_splits, should_encode};
+use super::{MaskKind, SplitGeometry, choose_splits, should_encode};
+
+fn geometry(head_dim: u32) -> SplitGeometry {
+    let (num_q_heads, block_rows, num_groups) = if head_dim == 128 {
+        (32, 64, 8)
+    } else {
+        (24, 32, 4)
+    };
+    SplitGeometry {
+        head_dim,
+        num_q_heads,
+        num_groups,
+        block_rows,
+        block_k: 32,
+    }
+}
 
 fn splits(
     cores: u32,
@@ -8,13 +23,7 @@ fn splits(
     suffix_length: u32,
     kv_length: u32,
 ) -> u32 {
-    let (gqa, rows, groups) = if head_dim == 128 {
-        (4, 64, 8)
-    } else {
-        (6, 32, 4)
-    };
-    let threadgroups = (gqa * suffix_length).div_ceil(rows) * groups;
-    choose_splits(head_dim, suffix_length, kv_length, threadgroups, 32, cores)
+    choose_splits(geometry(head_dim), suffix_length, kv_length, cores)
 }
 
 #[uzu_test]
@@ -24,10 +33,10 @@ fn measured_and_fallback_boundaries() {
         (40, 256, 32, 32_768, 10),
         (40, 128, 64, 32_768, 10),
         (40, 256, 17, 262_144, 10),
-        (40, 256, 128, 262_144, 3),
+        (40, 256, 128, 16_383, 3),
         (40, 256, 16, 128, 4),
         (10, 256, 32, 262_144, 3),
-        (10, 256, 128, 262_144, 1),
+        (10, 256, 128, 16_383, 1),
     ] {
         assert_eq!(splits(cores, head_dim, suffix, kv), expected);
     }
@@ -46,4 +55,24 @@ fn should_encode_boundaries() {
     ] {
         assert_eq!(should_encode(head_dim, mask, suffix_length, kv_length), expected);
     }
+}
+
+#[uzu_test]
+fn long_prefill_split_selection_boundaries() {
+    for (suffix, kv, expected) in [
+        (1024, 16_383, 1),
+        (64, 61_440, 5),
+        (1024, 16_384, 8),
+        (256, 61_440, 30),
+        (1024, 20_480, 10),
+        (1024, 102_400, 10),
+    ] {
+        assert_eq!(splits(40, 256, suffix, kv), expected, "suffix={suffix}, kv={kv}");
+    }
+
+    let many_heads = SplitGeometry {
+        num_q_heads: 240,
+        ..geometry(256)
+    };
+    assert_eq!(choose_splits(many_heads, 1024, 61_440, 40), 1, "fewer than two prefill splits fit");
 }
