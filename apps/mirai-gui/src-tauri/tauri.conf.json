@@ -29,7 +29,7 @@
     "category": "public.app-category.productivity",
     "macOS": {
       "signingIdentity": "-",
-      "minimumSystemVersion": "26.0",
+      "minimumSystemVersion": "26.4",
       "dmg": {
         "background": "dmg-background.tiff",
         "windowSize": { "width": 638, "height": 398 },

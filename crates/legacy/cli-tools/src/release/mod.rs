@@ -1,4 +1,5 @@
 mod binaries;
+mod mirai_gui;
 mod platform;
 mod version;
 
@@ -24,6 +25,7 @@ pub fn run_release(
 
     bump_workspace_version(version)?;
     run_sync(false)?;
+    mirai_gui::update_lock(&paths)?;
 
     let platforms = PlatformsConfig::load()?;
     let workspace = WorkspaceManifest::load()?;

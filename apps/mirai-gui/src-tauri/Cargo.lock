@@ -3522,7 +3522,7 @@ dependencies = [
 
 [[package]]
 name = "mirai-gui"
-version = "0.4.10"
+version = "0.5.27"
 dependencies = [
  "base64 0.22.1",
  "chrono",

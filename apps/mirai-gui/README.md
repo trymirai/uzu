@@ -5,7 +5,7 @@ Tauri v2, React, Rust.
 
 ## Requirements
 
-- macOS 26 or newer, Apple silicon
+- macOS 26.4 or newer, Apple silicon
 - Xcode 26 with the Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`)
 - rustup; the first `cargo` run installs the nightly toolchain pinned by
   `rust-toolchain.toml` at the repository root

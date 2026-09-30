@@ -1,6 +1,6 @@
 [package]
 name = "mirai-gui"
-version = "0.4.10"
+version = "0.5.27"
 edition = "2024"
 publish = false
 

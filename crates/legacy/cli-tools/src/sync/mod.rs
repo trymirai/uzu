@@ -3,6 +3,7 @@ use std::path::Path;
 mod docs;
 mod jsr;
 mod license;
+mod mirai_gui;
 mod package_json;
 mod playground;
 mod pyproject;
@@ -13,6 +14,7 @@ mod toolchains;
 use anyhow::{Ok, Result, anyhow};
 pub use jsr::JsrSyncTask;
 pub use license::LicenseSyncTask;
+pub use mirai_gui::MiraiGuiSyncTask;
 pub use package_json::PackageJsonSyncTask;
 pub use playground::PlaygroundSyncTask;
 pub use pyproject::PyprojectSyncTask;
@@ -99,6 +101,10 @@ pub fn run_sync(check: bool) -> Result<()> {
     )?;
 
     PlaygroundSyncTask.run(&platforms, &workspace, &root_path.join("apps/playground/Project.swift"), check)?;
+
+    let mirai_gui_path = root_path.join("apps/mirai-gui");
+    MiraiGuiSyncTask::PackageJson.run(&platforms, &workspace, &mirai_gui_path.join("package.json"), check)?;
+    MiraiGuiSyncTask::CargoToml.run(&platforms, &workspace, &mirai_gui_path.join("src-tauri/Cargo.toml"), check)?;
 
     docs::sync_docs(&platforms, root_path, check)?;
 
