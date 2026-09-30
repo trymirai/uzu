@@ -18,7 +18,7 @@ use crate::{
 };
 
 mod policy;
-use policy::{MAX_TRIE_SUFFIX, choose_splits};
+use policy::{MAX_TRIE_SUFFIX, SplitGeometry, choose_splits};
 
 use super::MaskKind;
 
@@ -264,11 +264,15 @@ impl AttentionGemmGrouped {
         let gpu_core_count = encoder.context().gpu_core_count;
         let core = self.get_or_create(encoder.context(), mask)?;
         let num_splits = choose_splits(
-            core.head_dim,
+            SplitGeometry {
+                head_dim: core.head_dim,
+                num_q_heads: core.num_q_heads,
+                num_groups: core.num_groups,
+                block_rows: core.block_rows,
+                block_k: BLOCK_K,
+            },
             suffix_length,
             kv_length,
-            (core.num_q_heads / core.num_groups * suffix_length).div_ceil(core.block_rows) * core.num_groups,
-            BLOCK_K,
             gpu_core_count,
         );
         core.encode(
