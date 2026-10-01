@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -93,9 +93,9 @@ pub fn choose_tools<'t>(
 }
 
 /// Declared JSON-Schema types of each tool parameter, keyed by function name.
-/// Tool-call markup cannot carry scalar types — the parser keeps every scalar
-/// parameter a string and types JSON-shaped values by their braces — so the
-/// declared schema is what restores the wire types clients validate against.
+/// Tool-call markup cannot carry types — the parser keeps every parameter the
+/// text the model wrote — so the declared schema is what restores the wire
+/// types clients validate against.
 #[derive(Clone, Default)]
 pub struct ToolParameterTypes(HashMap<String, HashMap<String, Vec<String>>>);
 
@@ -115,13 +115,7 @@ impl ToolParameterTypes {
             let parameters = properties
                 .iter()
                 .filter_map(|(name, property)| {
-                    let types = match property.get("type")? {
-                        serde_json::Value::String(kind) => vec![kind.clone()],
-                        serde_json::Value::Array(kinds) => {
-                            kinds.iter().filter_map(|kind| kind.as_str().map(str::to_string)).collect()
-                        },
-                        _ => return None,
-                    };
+                    let types = declared_types(property, &schema, 8);
                     (!types.is_empty()).then(|| (name.clone(), types))
                 })
                 .collect();
@@ -137,6 +131,72 @@ impl ToolParameterTypes {
     ) -> Option<&[String]> {
         Some(self.0.get(function)?.get(parameter)?.as_slice())
     }
+}
+
+// Per parameter: count each queued schema and each entry in a type array.
+const MAX_SCHEMA_TRAVERSAL_WORK: usize = 1024;
+
+/// The JSON-Schema types a property schema declares: its `type` keyword, or the
+/// union of its `anyOf`/`oneOf` branches, following local `$ref`s (the shape
+/// pydantic and schemars clients emit for optional and nested objects).
+fn declared_types(
+    property: &serde_json::Value,
+    root: &serde_json::Value,
+    depth: u32,
+) -> Vec<String> {
+    let mut pending = vec![(property, depth)];
+    let mut visited = HashMap::new();
+    let mut types = HashSet::new();
+    let mut remaining_work = MAX_SCHEMA_TRAVERSAL_WORK - 1;
+    while let Some((property, depth)) = pending.pop() {
+        if depth == 0 {
+            continue;
+        }
+        let property = match property.get("$ref").and_then(serde_json::Value::as_str) {
+            Some(reference) => {
+                reference.strip_prefix('#').and_then(|pointer| root.pointer(pointer)).unwrap_or(property)
+            },
+            None => property,
+        };
+        // Track identity without hashing the schema's contents. Revisit a shared
+        // node only when a shorter path leaves more depth to discover its types.
+        let identity = std::ptr::from_ref(property);
+        if visited.get(&identity).is_some_and(|seen_depth| *seen_depth >= depth) {
+            continue;
+        }
+        visited.insert(identity, depth);
+        match property.get("type") {
+            Some(serde_json::Value::String(kind)) => {
+                types.insert(kind.as_str());
+            },
+            Some(serde_json::Value::Array(kinds)) => {
+                let Some(remaining) = remaining_work.checked_sub(kinds.len()) else {
+                    return Vec::new();
+                };
+                remaining_work = remaining;
+                types.extend(kinds.iter().filter_map(serde_json::Value::as_str));
+            },
+            _ if depth > 1 => {
+                for branches in
+                    ["anyOf", "oneOf"].iter().filter_map(|key| property.get(*key).and_then(serde_json::Value::as_array))
+                {
+                    // Charge work before enqueueing, bounding both visits and
+                    // pending allocations even for a wide, nonrecursive union.
+                    let Some(remaining) = remaining_work.checked_sub(branches.len()) else {
+                        // Partial types may omit a string branch and cause an
+                        // incorrect coercion, so leave the parameter unchanged.
+                        return Vec::new();
+                    };
+                    remaining_work = remaining;
+                    pending.extend(branches.iter().map(|branch| (branch, depth - 1)));
+                }
+            },
+            _ => {},
+        }
+    }
+    let mut types: Vec<String> = types.into_iter().map(str::to_string).collect();
+    types.sort_unstable();
+    types
 }
 
 fn matches_declared_type(
@@ -155,10 +215,12 @@ fn matches_declared_type(
     })
 }
 
-/// Bare scalar text is strict JSON, plus the Python-style booleans some models
-/// emit in tool markup (qwen3.5 writes `True`/`False`).
-pub fn parse_scalar_text(text: &str) -> Option<serde_json::Value> {
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(text) {
+/// Parameter text read as JSON: strict first, then with the bounded repair of
+/// control characters and bare quotes models leave inside string values, plus
+/// the Python-style booleans some models emit in tool markup (qwen3.5 writes
+/// `True`/`False`).
+pub fn parse_parameter_text(text: &str) -> Option<serde_json::Value> {
+    if let Some(parsed) = parse_lenient_json(text) {
         return Some(parsed);
     }
     match text.trim() {
@@ -174,23 +236,23 @@ fn coerce_parameter_value(
 ) -> Option<serde_json::Value> {
     let declares_string = declared.iter().any(|kind| kind == "string");
     match value {
-        // The parser kept the bare markup text as a string; restore the
-        // declared type when the text reads as it. A union that includes
-        // "string" stays a string: the text is already schema-valid and the
-        // intended type is unknowable.
+        // The parser kept the markup text as a string; restore the declared
+        // type when the text reads as it. A union that includes "string" stays
+        // a string: the text is already schema-valid and the intended type is
+        // unknowable.
         serde_json::Value::String(text) if !declares_string => {
-            let parsed = parse_scalar_text(text)?;
+            let parsed = parse_parameter_text(text)?;
             matches_declared_type(&parsed, declared).then_some(parsed)
         },
-        // JSON-shaped markup text was typed by its braces although the
-        // parameter is a plain string.
+        // A JSON-format parser typed a value although the parameter is a
+        // plain string.
         value if declared == ["string"] && !value.is_string() => Some(serde_json::Value::String(value.to_string())),
         _ => None,
     }
 }
 
-/// Restores the declared scalar types the markup could not carry. Applied only
-/// at the OpenAI boundary: the session keeps the parser's values so its stored
+/// Restores the declared types the markup could not carry. Applied only at
+/// the OpenAI boundary: the session keeps the parser's values so its stored
 /// history stays consistent with what the template renders.
 pub fn coerce_tool_call(
     tool_call: &ToolCall,
@@ -400,31 +462,14 @@ fn parse_framed_call(raw: &str) -> FramedCall {
     }
 }
 
-// Mirrors the parser's synthesis rule composed with the schema coercion the
-// final call goes through: values starting with `{` or `[` are typed JSON
-// unless the parameter is declared a plain string, bare scalars take a
-// declared non-string type when they parse as it, everything else is a string.
+// A completed parameter serializes exactly as coerce_tool_call serializes it in
+// the final call, so the streamed prefix is a prefix of the final text.
 fn serialize_param_value(
     value: &str,
     declared: Option<&[String]>,
 ) -> String {
-    let trimmed = value.trim_start();
-    let json_shaped = trimmed.starts_with('{') || trimmed.starts_with('[');
-    if json_shaped && let Some(parsed) = parse_lenient_json(value) {
-        if declared.is_some_and(|declared| declared == ["string"]) {
-            return serde_json::Value::String(parsed.to_string()).to_string();
-        }
-        return parsed.to_string();
-    }
-    if !json_shaped
-        && let Some(declared) = declared
-        && !declared.iter().any(|kind| kind == "string")
-        && let Some(parsed) = parse_scalar_text(value)
-        && matches_declared_type(&parsed, declared)
-    {
-        return parsed.to_string();
-    }
-    serde_json::Value::String(value.to_string()).to_string()
+    let text = serde_json::Value::String(value.to_string());
+    declared.and_then(|declared| coerce_parameter_value(&text, declared)).unwrap_or(text).to_string()
 }
 
 // The longest suffix of `content` that could be the start of the parameter close tag is
@@ -456,18 +501,13 @@ fn open_arguments_text(
         let serialized = match param {
             FramedParam::Complete(value) => serialize_param_value(value, declared),
             FramedParam::Open(content) => {
-                // an empty value has no known type yet, and typed values (JSON
-                // starting with `{`/`[`, or declared non-string so the final
-                // form is a bare literal) can only be serialized once
-                // complete: either way nothing about the parameter may be emitted
+                // an empty value has nothing to emit yet, and a declared non-string
+                // value takes its final form (a bare literal) only once complete:
+                // either way nothing about the parameter may be emitted
                 let streamable = withhold_ambiguous_tail(content);
                 let declared_non_string =
                     declared.is_some_and(|declared| !declared.iter().any(|kind| kind == "string"));
-                if streamable.is_empty()
-                    || streamable.starts_with('{')
-                    || streamable.starts_with('[')
-                    || declared_non_string
-                {
+                if streamable.is_empty() || declared_non_string {
                     break;
                 }
                 let quoted = serde_json::Value::String(streamable.to_string()).to_string();

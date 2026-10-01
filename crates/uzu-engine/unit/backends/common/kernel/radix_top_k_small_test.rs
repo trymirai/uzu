@@ -1,18 +1,20 @@
 #[cfg(backend = "metal")]
 use std::time::Instant;
 
+use half::bf16;
 use uzu_engine_macros::uzu_test;
 
 #[cfg(backend = "metal")]
-use crate::backends::metal::Metal;
+use crate::backends::{common::CommandBufferCompleted, metal::Metal};
 use crate::{
     backends::{
-        common::{Backend, Encoder, Kernels, kernel::radix_top_k_small::RadixTopKSmall},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::radix_top_k_small::RadixTopKSmall,
+        },
         cpu::Cpu,
     },
-    tests::helpers::{
-        alloc_allocation, alloc_allocation_with_data, allocation_to_vec, create_context, for_each_non_cpu_backend,
-    },
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
 
 const TARGET_COLUMNS: usize = 248_320;
@@ -26,20 +28,20 @@ fn values(
 }
 
 fn radix_top_k_small<B: Backend>(
-    input: &[f32],
+    input: &[bf16],
     rows: usize,
     columns: usize,
     k: usize,
 ) -> (Vec<u32>, Vec<f32>) {
     let context = create_context::<B>();
-    let input = alloc_allocation_with_data::<B, f32>(&context, input);
-    let mut ids = alloc_allocation::<B, u32>(&context, rows * k);
-    let mut scores = alloc_allocation::<B, f32>(&context, rows * k);
+    let input = create_buffer_with_data::<B, bf16>(&context, input);
+    let mut ids = create_buffer::<B, u32>(&context, rows * k);
+    let mut scores = create_buffer::<B, f32>(&context, rows * k);
     let kernel = <B::Kernels as Kernels>::RadixTopKSmall::new(&context, columns as u32).unwrap();
-    let mut encoder = Encoder::new(context.as_ref()).unwrap();
-    kernel.encode(&input, &mut ids, &mut scores, rows as u32, k as u32, &mut encoder).unwrap();
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    (allocation_to_vec(&ids), allocation_to_vec(&scores))
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    kernel.encode(&input, &mut ids, &mut scores, rows as u32, k as u32, &mut command_buffer).unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    (buffer_to_vec(&ids), buffer_to_vec(&scores))
 }
 
 fn reference(
@@ -83,20 +85,20 @@ fn radix_top_k_small_matches_cpu() {
         (3, 1025, TARGET_K),
         (15, TARGET_COLUMNS, TARGET_K),
     ] {
-        let mut input = values(rows, columns);
+        let mut input = values(rows, columns).into_iter().map(bf16::from_f32).collect::<Vec<_>>();
         let special = [
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            -0.0,
-            0.0,
-            1.0,
-            1.0,
-            f32::from_bits(0x7fc0_0001),
-            f32::from_bits(0xffc0_0001),
+            bf16::INFINITY,
+            bf16::NEG_INFINITY,
+            bf16::NEG_ZERO,
+            bf16::ZERO,
+            bf16::ONE,
+            bf16::ONE,
+            bf16::from_bits(0x7fc1),
+            bf16::from_bits(0xffc1),
         ];
         let special_count = special.len().min(input.len());
         input[..special_count].copy_from_slice(&special[..special_count]);
-        let expected = reference(&input, rows, columns, k);
+        let expected = reference(&input.iter().map(|value| value.to_f32()).collect::<Vec<_>>(), rows, columns, k);
         assert_output(&radix_top_k_small::<Cpu>(&input, rows, columns, k), &expected, shape);
         for_each_non_cpu_backend!(|B| {
             let actual = radix_top_k_small::<B>(&input, rows, columns, k);
@@ -119,18 +121,21 @@ fn benchmark_radix_top_k_small() {
     const BATCH: u32 = 16;
 
     let context = create_context::<Metal>();
-    let input = alloc_allocation_with_data::<Metal, f32>(&context, &values(ROWS, TARGET_COLUMNS));
-    let mut ids = alloc_allocation::<Metal, u32>(&context, ROWS * TARGET_K);
-    let mut scores = alloc_allocation::<Metal, f32>(&context, ROWS * TARGET_K);
+    let input = create_buffer_with_data::<Metal, bf16>(
+        &context,
+        &values(ROWS, TARGET_COLUMNS).into_iter().map(bf16::from_f32).collect::<Vec<_>>(),
+    );
+    let mut ids = create_buffer::<Metal, u32>(&context, ROWS * TARGET_K);
+    let mut scores = create_buffer::<Metal, f32>(&context, ROWS * TARGET_K);
     let kernel =
         <<Metal as Backend>::Kernels as Kernels>::RadixTopKSmall::new(&context, TARGET_COLUMNS as u32).unwrap();
     let mut run = || {
         let start = Instant::now();
-        let mut encoder = Encoder::new(context.as_ref()).unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None).unwrap();
         for _ in 0..BATCH {
-            kernel.encode(&input, &mut ids, &mut scores, ROWS as u32, TARGET_K as u32, &mut encoder).unwrap();
+            kernel.encode(&input, &mut ids, &mut scores, ROWS as u32, TARGET_K as u32, &mut command_buffer).unwrap();
         }
-        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         (completed.gpu_execution_time().div_f64(BATCH as f64), start.elapsed().div_f64(BATCH as f64))
     };
     for _ in 0..5 {

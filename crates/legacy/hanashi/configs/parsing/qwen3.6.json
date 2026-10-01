@@ -71,8 +71,7 @@
                             "arguments": [
                                 {
                                     "type": "regex_capture_object",
-                                    "pattern": "<parameter=(\\w+)>\\n([\\s\\S]*?)\\n</parameter>",
-                                    "parse_json_values": true
+                                    "pattern": "<parameter=(\\w+)>\\n([\\s\\S]*?)\\n</parameter>"
                                 }
                             ]
                         }

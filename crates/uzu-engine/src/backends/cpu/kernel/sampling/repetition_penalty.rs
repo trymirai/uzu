@@ -17,9 +17,9 @@ pub fn repetition_penalty<T: ArrayElement + Float + NumCast>(
     sampling_start: u32,
     sampling_length: u32,
 ) {
-    fn apply<T: ArrayElement + Float + NumCast>(
-        original_logits: *const T,
-        logits_copy: *mut T,
+    fn apply(
+        original_logits: *const (impl ArrayElement + Float),
+        logits_copy: *mut (impl ArrayElement + Float),
         vocab_size: usize,
         sample_index: usize,
         token_id: usize,

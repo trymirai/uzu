@@ -2,32 +2,13 @@ use bitflags::bitflags;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
-        kernel::GatedActMulKernel,
+        kernel::{ActivationQuantization, GatedActMulKernel},
     },
     config::clipping::ClippingBounds,
     data_type::DataType,
 };
-
-#[repr(u32)]
-#[derive(Clone, Copy)]
-enum GatedActMulGroupSize {
-    Size32 = 32,
-    Size64 = 64,
-    Size128 = 128,
-}
-
-impl GatedActMulGroupSize {
-    fn from_u32(value: u32) -> Self {
-        match value {
-            32 => Self::Size32,
-            64 => Self::Size64,
-            128 => Self::Size128,
-            _ => panic!("unsupported activation group size: {value}"),
-        }
-    }
-}
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,11 +28,9 @@ pub struct GatedActMulSettings {
 
 pub struct GatedActMul<B: Backend> {
     kernel: <B::Kernels as Kernels>::GatedActMulKernel,
-    ops: GatedActMulOp,
     options: GatedActMulOptions,
     settings: GatedActMulSettings,
-    activation_group_size: u32,
-    sum_group_size: u32,
+    quantization: Option<ActivationQuantization>,
 }
 
 impl<B: Backend> GatedActMul<B> {
@@ -65,53 +44,47 @@ impl<B: Backend> GatedActMul<B> {
         let mut options = GatedActMulOptions::empty();
         options.set(GatedActMulOptions::INTERLEAVED, interleaved);
         options.set(GatedActMulOptions::HADAMARD, use_hadamard);
-        Self::new(
-            context,
-            data_type,
-            GatedActMulOp::FullPrecision,
-            options,
-            HADAMARD_TRANSFORM_BLOCK_SIZE,
-            HADAMARD_TRANSFORM_BLOCK_SIZE,
-            settings,
-        )
+        Self::new(context, data_type, options, settings, None)
     }
 
     pub fn quantized(
         context: &B::Context,
         data_type: DataType,
-        activation_group_size: u32,
-        sum_group_size: Option<u32>,
+        quantization: ActivationQuantization,
         settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
-        let activation_group_size = GatedActMulGroupSize::from_u32(activation_group_size);
-        let sum_group_size = sum_group_size.map(GatedActMulGroupSize::from_u32);
-        Self::new(
-            context,
-            data_type,
-            sum_group_size.map_or(GatedActMulOp::Quantize, |_| GatedActMulOp::QuantizeWithGroupSums),
-            GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD,
-            activation_group_size as u32,
-            sum_group_size.unwrap_or(activation_group_size) as u32,
-            settings,
-        )
+        let options = GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD;
+        Self::new(context, data_type, options, settings, Some(quantization))
     }
 
     fn new(
         context: &B::Context,
         data_type: DataType,
-        ops: GatedActMulOp,
         options: GatedActMulOptions,
-        activation_group_size: u32,
-        sum_group_size: u32,
         settings: GatedActMulSettings,
+        quantization: Option<ActivationQuantization>,
     ) -> Result<Self, B::Error> {
+        let (ops, codes_grouped_by_nibble, scale_group_size, sum_group_size) = match quantization {
+            Some(quantization) => (
+                if quantization.sum_group_size().is_some() {
+                    GatedActMulOp::QuantizeWithGroupSums
+                } else {
+                    GatedActMulOp::Quantize
+                },
+                quantization.code_layout().is_grouped_by_nibble(),
+                quantization.scale_group_size(),
+                quantization.sum_group_size().unwrap_or(quantization.scale_group_size()),
+            ),
+            None => (GatedActMulOp::FullPrecision, false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE),
+        };
         let kernel = <B::Kernels as Kernels>::GatedActMulKernel::new(
             context,
             data_type,
             ops,
+            codes_grouped_by_nibble,
             options.contains(GatedActMulOptions::INTERLEAVED),
             options.contains(GatedActMulOptions::HADAMARD),
-            activation_group_size,
+            scale_group_size,
             sum_group_size,
             settings.activation_alpha.is_some(),
             settings.gate_clipping.into_pair().is_some(),
@@ -119,28 +92,26 @@ impl<B: Backend> GatedActMul<B> {
         )?;
         Ok(Self {
             kernel,
-            ops,
             options,
             settings,
-            activation_group_size,
-            sum_group_size,
+            quantization,
         })
     }
 
     pub fn encode_fp(
         &self,
-        act_operand: &Allocation<B>,
-        value_operand: Option<&Allocation<B>>,
-        output: &mut Allocation<B>,
-        hadamard_factors: Option<&Allocation<B>>,
+        act_operand: impl BufferRef<Backend = B>,
+        value_operand: Option<impl BufferRef<Backend = B>>,
+        output: impl BufferMut<Backend = B>,
+        hadamard_factors: Option<impl BufferRef<Backend = B>>,
         gated_dim: u32,
         batch_dim: u32,
         value_offset: u32,
         value_row_stride: u32,
         act_type: ActivationType,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        assert_eq!(self.ops, GatedActMulOp::FullPrecision);
+        assert!(self.quantization.is_none());
         assert_eq!(self.options.contains(GatedActMulOptions::INTERLEAVED), value_operand.is_none());
         assert_eq!(self.options.contains(GatedActMulOptions::HADAMARD), hadamard_factors.is_some());
         assert!(
@@ -153,9 +124,9 @@ impl<B: Backend> GatedActMul<B> {
             act_operand,
             value_operand,
             Some(output),
-            None::<&mut Allocation<B>>,
-            None::<&mut Allocation<B>>,
-            None::<&mut Allocation<B>>,
+            None::<&mut B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
             hadamard_factors,
             gated_dim,
             batch_dim,
@@ -167,37 +138,37 @@ impl<B: Backend> GatedActMul<B> {
             gate_clip_max,
             value_clip_min,
             value_clip_max,
-            encoder,
+            command_buffer,
         );
     }
 
     pub fn encode_quantized(
         &self,
-        act_operand: &Allocation<B>,
-        values: &mut Allocation<B>,
-        scales: &mut Allocation<B>,
-        group_sums: Option<&mut Allocation<B>>,
-        hadamard_factors: &Allocation<B>,
+        act_operand: impl BufferRef<Backend = B>,
+        values: impl BufferMut<Backend = B>,
+        scales: impl BufferMut<Backend = B>,
+        group_sums: Option<impl BufferMut<Backend = B>>,
+        hadamard_factors: impl BufferRef<Backend = B>,
         gated_dim: u32,
         batch_dim: u32,
         act_type: ActivationType,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        assert!(matches!(self.ops, GatedActMulOp::Quantize | GatedActMulOp::QuantizeWithGroupSums));
+        let quantization = self.quantization.expect("quantized gated activation required");
         assert!(self.options.contains(GatedActMulOptions::INTERLEAVED));
         assert!(self.options.contains(GatedActMulOptions::HADAMARD));
         assert!(gated_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
-        assert!(gated_dim.is_multiple_of(self.activation_group_size));
-        assert_eq!(self.ops == GatedActMulOp::QuantizeWithGroupSums, group_sums.is_some());
-        if self.ops == GatedActMulOp::QuantizeWithGroupSums {
-            assert!(gated_dim.is_multiple_of(self.sum_group_size));
+        assert!(gated_dim.is_multiple_of(quantization.scale_group_size()));
+        assert_eq!(quantization.sum_group_size().is_some(), group_sums.is_some());
+        if let Some(group_size) = quantization.sum_group_size() {
+            assert!(gated_dim.is_multiple_of(group_size));
         }
         let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping.into_pair().unzip();
         let (value_clip_min, value_clip_max) = self.settings.value_clipping.into_pair().unzip();
         self.kernel.encode(
             act_operand,
-            None::<&Allocation<B>>,
-            None::<&mut Allocation<B>>,
+            None::<&B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
             Some(values),
             Some(scales),
             group_sums,
@@ -212,7 +183,7 @@ impl<B: Backend> GatedActMul<B> {
             gate_clip_max,
             value_clip_min,
             value_clip_max,
-            encoder,
+            command_buffer,
         );
     }
 }

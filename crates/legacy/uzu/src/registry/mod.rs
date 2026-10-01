@@ -8,3 +8,4 @@ pub mod openai;
 pub use cached::CachedRegistry;
 pub use error::RegistryError;
 pub use merged::MergedRegistry;
+pub(crate) use merged::unique_model;

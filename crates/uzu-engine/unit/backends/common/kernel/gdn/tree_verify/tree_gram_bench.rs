@@ -8,13 +8,13 @@ use uzu_engine_macros::uzu_bench;
 
 use crate::{
     backends::{
-        common::{Allocation, Backend, Context, Kernels, kernel::BuildTreeGramKernel},
+        common::{Backend, Context, Kernels, kernel::BuildTreeGramKernel},
         metal::Metal,
     },
     data_type::DataType,
     tests::{
         cold_pool::ColdPool,
-        helpers::{alloc_allocation, alloc_allocation_with_data},
+        helpers::{create_buffer, create_buffer_with_data},
         matmul::iter_encode_loop_named,
     },
 };
@@ -27,17 +27,17 @@ const TREE_SIZES: &[usize] = &[32, 33, 49, 64, 128, 256, 512];
 const BATCH_SIZES: &[usize] = &[1, 2, 4, 8];
 
 struct TreeGramBuffers {
-    q: Allocation<Metal>,
-    k: Allocation<Metal>,
-    trie: Allocation<Metal>,
-    prefix: Allocation<Metal>,
-    beta: Allocation<Metal>,
-    h0: Allocation<Metal>,
-    h0_idx: Allocation<Metal>,
-    a_packed: Allocation<Metal>,
-    qkd: Allocation<Metal>,
-    a_inv: Allocation<Metal>,
-    kh0: Allocation<Metal>,
+    q: <Metal as Backend>::GlobalBuffer,
+    k: <Metal as Backend>::GlobalBuffer,
+    trie: <Metal as Backend>::GlobalBuffer,
+    prefix: <Metal as Backend>::GlobalBuffer,
+    beta: <Metal as Backend>::GlobalBuffer,
+    h0: <Metal as Backend>::GlobalBuffer,
+    h0_idx: <Metal as Backend>::GlobalBuffer,
+    a_packed: <Metal as Backend>::GlobalBuffer,
+    qkd: <Metal as Backend>::GlobalBuffer,
+    a_inv: <Metal as Backend>::GlobalBuffer,
+    kh0: <Metal as Backend>::GlobalBuffer,
 }
 
 fn reranker_like_trie(
@@ -109,17 +109,17 @@ fn make_buffers(
     let scale = (HEAD_K_DIM as f32).sqrt().recip();
     (
         TreeGramBuffers {
-            q: alloc_allocation_with_data::<Metal, bf16>(context, &q),
-            k: alloc_allocation_with_data::<Metal, bf16>(context, &k),
-            trie: alloc_allocation_with_data::<Metal, u32>(context, &trie),
-            prefix: alloc_allocation_with_data::<Metal, f32>(context, &prefix),
-            beta: alloc_allocation_with_data::<Metal, f32>(context, &beta),
-            h0: alloc_allocation_with_data::<Metal, f32>(context, &h0),
-            h0_idx: alloc_allocation_with_data::<Metal, i32>(context, &h0_idx),
-            a_packed: alloc_allocation::<Metal, f32>(context, a_len),
-            qkd: alloc_allocation::<Metal, f32>(context, out_len),
-            a_inv: alloc_allocation::<Metal, f32>(context, a_inv_len),
-            kh0: alloc_allocation::<Metal, f32>(context, kh0_len),
+            q: create_buffer_with_data::<Metal, bf16>(context, &q),
+            k: create_buffer_with_data::<Metal, bf16>(context, &k),
+            trie: create_buffer_with_data::<Metal, u32>(context, &trie),
+            prefix: create_buffer_with_data::<Metal, f32>(context, &prefix),
+            beta: create_buffer_with_data::<Metal, f32>(context, &beta),
+            h0: create_buffer_with_data::<Metal, f32>(context, &h0),
+            h0_idx: create_buffer_with_data::<Metal, i32>(context, &h0_idx),
+            a_packed: create_buffer::<Metal, f32>(context, a_len),
+            qkd: create_buffer::<Metal, f32>(context, out_len),
+            a_inv: create_buffer::<Metal, f32>(context, a_inv_len),
+            kh0: create_buffer::<Metal, f32>(context, kh0_len),
         },
         scale,
     )
@@ -178,7 +178,7 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                     make_buffers(&context, batch_size, tree_size).0
                 });
                 group.bench_function(benchmark_id, |bencher| {
-                    iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |encoder| {
+                    iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |command_buffer| {
                         let buffers = buffers.next_mut();
                         kernel.encode(
                             &buffers.q,
@@ -199,7 +199,7 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                             VALUE_HEADS as u32,
                             HEAD_K_DIM as u32,
                             HEAD_V_DIM as u32,
-                            encoder,
+                            command_buffer,
                         );
                     });
                 });

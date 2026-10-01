@@ -152,6 +152,7 @@ impl LanguageBackend for SwiftLanguageBackend {
         let url = FRAMEWORK_URL_TEMPLATE.replace("{version}", version);
         let replacement = format!("url: \"{url}\",\n            checksum: \"{checksum}\"");
         let body = body.replace("path: \"uzu.xcframework\"", &replacement);
+        let body = body.replace("path: \"Sources/", "path: \"crates/legacy/uzu/bindings/swift/Sources/");
 
         // Inject `path:` after `dependencies:` so the resulting argument order
         // matches PackageDescription's Target initializer (name, dependencies, path, ...).

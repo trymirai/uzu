@@ -9,7 +9,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder,
+            Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::QuantizationMethod,
             kernel::{
                 Kernels,
@@ -20,9 +20,14 @@ use crate::{
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
-        matmul::{QuantBuffers, QuantInput, quant_b_variant},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
+        matmul::{QuantBuffers, QuantInput},
     },
+};
+#[cfg(backend = "metal")]
+use crate::{
+    backends::metal::{Metal, MetalContext},
+    tests::matmul::run_quant_cpu,
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -58,21 +63,21 @@ fn get_test_data<T: ArrayElement + Float>(
 }
 
 // Encode one GEMV (dense, or a per-row B-row gather when `gather_indices` is set) and copy out.
-fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
+fn run_gemv<B: Backend, T: ArrayElement + Float>(
     context: &B::Context,
-    a: &'a Allocation<B>,
-    b: MatmulB<'a, B>,
-    gather_indices: Option<&'a Allocation<B>>,
+    a: impl BufferRef<Backend = B>,
+    b: MatmulB<impl BufferRef<Backend = B>>,
+    gather_indices: Option<impl BufferRef<Backend = B>>,
     m: usize,
     n_out: usize,
     k: usize,
     soft_cap: Option<f32>,
 ) -> Vec<T> {
-    let mut d = alloc_allocation::<B, T>(context, m * n_out);
+    let mut d = create_buffer::<B, T>(context, m * n_out);
     let mut kernel =
         <B::Kernels as Kernels>::MatmulKernel::new(context, T::data_type(), T::data_type(), T::data_type())
             .expect("MatmulKernel");
-    let mut encoder = Encoder::new(context).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     kernel
         .encode(
             MatmulArguments {
@@ -93,18 +98,18 @@ fn run_gemv<'a, B: Backend, T: ArrayElement + Float>(
                 n: n_out as u32,
                 k: k as u32,
             },
-            &mut encoder,
+            &mut command_buffer,
         )
         .expect("encode failed");
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec::<B, T>(&d)
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec::<B, T>(&d)
 }
 
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
-    let a = alloc_allocation_with_data::<B, T>(&context, &input.a);
-    let weights = alloc_allocation_with_data::<B, T>(&context, &input.b);
-    let ids = input.ids.as_ref().map(|ids| alloc_allocation_with_data::<B, u32>(&context, ids));
+    let a = create_buffer_with_data::<B, T>(&context, &input.a);
+    let weights = create_buffer_with_data::<B, T>(&context, &input.b);
+    let ids = input.ids.as_ref().map(|ids| create_buffer_with_data::<B, u32>(&context, ids));
     run_gemv::<B, T>(
         &context,
         &a,
@@ -147,6 +152,34 @@ fn gemv_bf16(
     #[case] n: usize,
 ) {
     test::<bf16>(m, k, n, 0.1);
+}
+
+#[cfg(backend = "metal")]
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::w4_zero_point(4, QuantizationMethod::ScaleZeroPoint)]
+#[case::w8_bias(8, QuantizationMethod::ScaleBias)]
+fn group_major_gemv_bf16(
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+) {
+    let context = MetalContext::new().expect("Metal context");
+    let input = QuantInput::<bf16>::new(1, 256, 72, 32, bits, method, 0).with_group_output();
+    let reference = run_quant_cpu::<bf16>(&input);
+
+    let buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+    let actual = run_gemv::<Metal, bf16>(
+        &context,
+        &buffers.x,
+        buffers.matmul_b(&input),
+        None::<&<Metal as Backend>::GlobalBuffer>,
+        1,
+        input.n as usize,
+        input.k as usize,
+        None,
+    );
+
+    assert_eq_float(&reference, &actual, 0.05, &format!("GroupOutput GEMV W{bits} {method:?}"));
 }
 
 #[rstest]
@@ -227,6 +260,25 @@ fn fp_gather_case<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
+fn quant_gather_case(
+    input: QuantInput<bf16>,
+    eps: f32,
+) {
+    let (m, k, vocab, ids_per_row) = (input.m as usize, input.k as usize, input.n as usize, 8);
+    let ids: Vec<u32> = (0..m * ids_per_row).map(|i| ((i * 37 + 11) % vocab) as u32).collect();
+    // K_SPLIT == 1 keeps dense and gathered accumulation order identical.
+    check_gather!(m, vocab, ids, ids_per_row, eps, |B| {
+        let context = <B as Backend>::Context::new().expect("context");
+        let buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
+        let ids_alloc = create_buffer_with_data::<B, u32>(&context, &ids);
+        let b = || buffers.matmul_b(&input);
+        (
+            run_gemv::<B, bf16>(&context, &buffers.x, b(), None::<&<B as Backend>::GlobalBuffer>, m, vocab, k, None),
+            run_gemv::<B, bf16>(&context, &buffers.x, b(), Some(&ids_alloc), m, ids_per_row, k, None),
+        )
+    });
+}
+
 #[uzu_test]
 fn gemv_gather() {
     // Full precision: one call per dtype (generic over T, so bf16/f32 can't be a runtime loop).
@@ -235,26 +287,21 @@ fn gemv_gather() {
         fp_gather_case::<f32>(soft_cap, 0.01);
     }
     // Quantized (bf16, per bits/method) — inline, since it isn't type-generic.
-    for (bits, method) in [
-        (4, QuantizationMethod::ScaleBias),
-        (4, QuantizationMethod::ScaleZeroPoint),
-        (4, QuantizationMethod::ScaleSymmetric),
-        (8, QuantizationMethod::ScaleZeroPoint),
+    for (bits, method, signed_codes) in [
+        (4, QuantizationMethod::ScaleBias, false),
+        (4, QuantizationMethod::ScaleZeroPoint, false),
+        (4, QuantizationMethod::ScaleZeroPoint, true),
+        (4, QuantizationMethod::ScaleSymmetric, false),
+        (8, QuantizationMethod::ScaleZeroPoint, false),
     ] {
-        let (m, k, vocab, ids_per_row, group_size) = (8usize, 128usize, 64usize, 8usize, 32u32);
-        let input = QuantInput::<bf16>::new(m as u32, k as u32, vocab as u32, group_size, bits, method, 0x5EED);
-        let ids: Vec<u32> = (0..m * ids_per_row).map(|i| ((i * 37 + 11) % vocab) as u32).collect();
-        // K_SPLIT == 1 keeps k in one reduction, so gather and dense share the exact accumulation.
-        check_gather!(m, vocab, ids, ids_per_row, 0.05, |B| {
-            let context = <B as Backend>::Context::new().expect("context");
-            let buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
-            let ids_alloc = alloc_allocation_with_data::<B, u32>(&context, &ids);
-            let variant =
-                || quant_b_variant(&buffers.w, &buffers.scales, buffers.zp.as_ref(), buffers.bias.as_ref(), &input);
-            (
-                run_gemv::<B, bf16>(&context, &buffers.x, variant(), None, m, vocab, k, None),
-                run_gemv::<B, bf16>(&context, &buffers.x, variant(), Some(&ids_alloc), m, ids_per_row, k, None),
-            )
-        });
+        let mut input = QuantInput::new(8, 128, 64, 32, bits, method, 0x5EED);
+        if signed_codes {
+            input = input.with_signed_weight_codes();
+        }
+        quant_gather_case(input, 0.05);
     }
+    quant_gather_case(
+        QuantInput::new(8, 96, 66, 32, 4, QuantizationMethod::ScaleZeroPoint, 0x5EED).with_group_output(),
+        0.5,
+    );
 }

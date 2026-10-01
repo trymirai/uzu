@@ -467,6 +467,13 @@ fn prefix_match_treats_coerced_arguments_as_equal() {
     let stored_python = vec![assistant_call(r#"{"metric":"True"}"#)];
     let echoed_boolean = vec![assistant_call(r#"{"metric":true}"#), ChatMessage::user().with_text("more".to_string())];
     assert!(messages_have_prefix(&echoed_boolean, &stored_python));
+
+    // the session stores a declared array as the text the model wrote; the
+    // client echoes the typed array it received
+    let stored_text = vec![assistant_call(r#"{"edits":"[{\"a\": 1}, 2]"}"#)];
+    let echoed_array =
+        vec![assistant_call(r#"{"edits":[{"a":1},2]}"#), ChatMessage::user().with_text("more".to_string())];
+    assert!(messages_have_prefix(&echoed_array, &stored_text));
 }
 
 #[test]

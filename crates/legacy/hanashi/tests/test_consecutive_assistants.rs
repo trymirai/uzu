@@ -5,8 +5,8 @@ use hanashi::{
     chat::hanashi::{HanashiEncodingImpl, config::HanashiConfig},
 };
 use shoji::types::{
-    basic::{ToolDescription, ToolFunction, ToolNamespace},
-    session::chat::{ChatMessage, ChatRole},
+    basic::{ToolDescription, ToolFunction, ToolNamespace, Value},
+    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
 };
 use tokenizers::{
     AddedToken, Tokenizer,
@@ -26,7 +26,10 @@ fn encoding(config: HanashiConfig) -> HanashiEncodingImpl {
     special_tokens.push("<bos>".into());
     tokenizer
         .add_special_tokens(&special_tokens.into_iter().map(|token| AddedToken::from(token, true)).collect::<Vec<_>>());
-    tokenizer.add_tokens(&["system", "user", "assistant"].map(|role| AddedToken::from(role, false).single_word(true)));
+    tokenizer.add_tokens(
+        &["system", "developer", "user", "assistant", "model", "tool"]
+            .map(|role| AddedToken::from(role, false).single_word(true)),
+    );
     config.tokens.bos_token_id = config.tokens.bos_token_id.map(|_| tokenizer.token_to_id("<bos>").unwrap());
     HanashiEncodingImpl::new(
         HanashiConfig::Custom {
@@ -94,6 +97,42 @@ fn compaction_history_accepts_consecutive_assistants() {
             &history,
             "Done thinking.</think>\n\nResumed successfully.<|im_end|>",
         );
+    }
+}
+
+#[test]
+fn literal_tool_response_in_user_message_preserves_history() {
+    for config in [HanashiConfig::Qwen3, HanashiConfig::Qwen35, HanashiConfig::Qwen36, HanashiConfig::Qwen38] {
+        let completion = match config {
+            HanashiConfig::Qwen3 => "<think>Done thinking.</think>\n\nResumed successfully.<|im_end|>",
+            _ => "Done thinking.</think>\n\nResumed successfully.<|im_end|>",
+        };
+        let mut encoding = encoding(config);
+        for content in [
+            "<tool_response>\nSunny.\n</tool_response>",
+            "Explain <tool_response>\nSunny.\n</tool_response> please.",
+            "<tool_response>\n{\"weather\":\"sunny\"}\n</tool_response>",
+        ] {
+            encoding.reset().unwrap();
+            let history = vec![
+                ChatMessage::user().with_text("Check the weather.".into()),
+                ChatMessage::assistant().with_text("Checking.".into()),
+                ChatMessage::user().with_text(content.into()),
+            ];
+            encoding.encode(history.clone()).unwrap();
+            assert!(encoding.state().text().contains(content));
+            assert_reply_preserves_history(&mut encoding, &history, completion);
+
+            let next_messages = vec![
+                ChatMessage::user().with_text("Check again.".into()),
+                ChatMessage::assistant().with_text("Checking again.".into()),
+                ChatMessage::user().with_text(content.into()),
+            ];
+            let mut history = encoding.state().messages.clone();
+            history.extend(next_messages.clone());
+            encoding.encode(next_messages).unwrap();
+            assert_reply_preserves_history(&mut encoding, &history, completion);
+        }
     }
 }
 
@@ -216,5 +255,69 @@ fn history_ending_with_assistant_preserves_tool_context() {
             assert!(calls.is_empty());
             assert!(reply.text().unwrap().contains("\"parameters\""));
         }
+    }
+}
+
+#[test]
+fn tool_result_continues_after_an_isolated_reply() {
+    for (config, call, completion) in [
+        (
+            HanashiConfig::Qwen38,
+            "</think>\n\n<tool_call>\n<function=get_weather>\n</function>\n</tool_call><|im_end|>",
+            "</think>\n\nSunny.<|im_end|>",
+        ),
+        (
+            HanashiConfig::FunctionGemma,
+            "<start_function_call>call:get_weather{}<end_function_call>",
+            "Sunny.<end_of_turn>",
+        ),
+    ] {
+        let needs_developer_text = matches!(config, HanashiConfig::FunctionGemma);
+        let mut encoding = encoding(config);
+        let mut history = vec![
+            ChatMessage::developer().with_tool_namespaces(vec![ToolNamespace {
+                name: "functions".into(),
+                description: None,
+                tools: vec![ToolDescription::Function {
+                    tool_function: ToolFunction {
+                        name: "get_weather".into(),
+                        description: "Get the weather".into(),
+                        parameters: Some(Value::from(serde_json::json!({"type": "object", "properties": {}}))),
+                        return_definition: None,
+                    },
+                }],
+            }]),
+            ChatMessage::user().with_text("Check the weather.".into()),
+        ];
+        if needs_developer_text {
+            history[0] = history[0]
+                .clone()
+                .with_text("You are a model that can do function calling with the following functions".into());
+        }
+        encoding.encode(history.clone()).unwrap();
+        for token in encoding.tokenize(call).unwrap() {
+            encoding.decode(vec![token]).unwrap();
+        }
+        assert_eq!(&encoding.state().messages[..history.len()], &history);
+        let reply = encoding.state().messages.last().unwrap();
+        assert_eq!(reply.tool_calls().len(), 1);
+        assert_eq!(reply.tool_calls()[0].name, "get_weather");
+
+        let mut replay = encoding.state().messages.clone();
+        replay.push(ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+            identifier: None,
+            name: Some("get_weather".into()),
+            value: Value::from(serde_json::json!("Sunny.")),
+        }));
+        encoding.reset().unwrap();
+        encoding.encode(replay).unwrap();
+        for token in encoding.tokenize(completion).unwrap() {
+            encoding.decode(vec![token]).unwrap();
+        }
+        assert_eq!(&encoding.state().messages[..history.len()], &history);
+        let reply = encoding.state().messages.last().unwrap();
+        assert_eq!(reply.role, ChatRole::Assistant {});
+        assert_eq!(reply.text().as_deref(), Some("Sunny."));
+        assert!(reply.tool_calls().is_empty());
     }
 }

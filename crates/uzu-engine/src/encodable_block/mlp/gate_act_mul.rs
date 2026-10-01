@@ -1,12 +1,8 @@
 use crate::{
-    array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         gpu_types::ActivationType,
-        kernel::{
-            GatedActMul, GatedActMulSettings,
-            matmul::{A8ActivationPlan, ActivationFormat},
-        },
+        kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::ActivationFormat},
     },
     config::{activation::AnyActivation, clipping::ClippingBounds},
     data_type::DataType,
@@ -18,8 +14,8 @@ pub struct MlpGateActMulEncodable<B: Backend> {
     activation: AnyActivation,
     hidden_dim: u32,
     data_type: DataType,
-    hadamard_factors: Option<Allocation<B>>,
-    a8_plan: Option<A8ActivationPlan>,
+    hadamard_factors: Option<B::GlobalBuffer>,
+    activation_quantization: Option<ActivationQuantization>,
     quantized_kernel: Option<GatedActMul<B>>,
 }
 
@@ -33,18 +29,16 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         hidden_dim: u32,
         input_preparation: Option<LinearInputPreparation<B>>,
     ) -> Result<Self, B::Error> {
-        let (hadamard_factors, a8_plan) = input_preparation
-            .map_or((None, None), |preparation| (Some(preparation.input_factors), preparation.a8_plan));
+        let (hadamard_factors, activation_quantization) = input_preparation
+            .map_or((None, None), |preparation| (Some(preparation.rht_signs), preparation.activation_quantization));
         let settings = GatedActMulSettings {
             activation_alpha: activation.custom_alpha(),
             gate_clipping,
             value_clipping,
         };
         let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some(), settings)?;
-        let quantized_kernel = a8_plan
-            .map(|plan| {
-                GatedActMul::quantized(context, data_type, plan.activation_group_size, plan.sum_group_size, settings)
-            })
+        let quantized_kernel = activation_quantization
+            .map(|quantization| GatedActMul::quantized(context, data_type, quantization, settings))
             .transpose()?;
         Ok(Self {
             fp_kernel,
@@ -52,39 +46,37 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             hidden_dim,
             data_type,
             hadamard_factors,
-            a8_plan,
+            activation_quantization,
             quantized_kernel,
         })
     }
 
     pub fn encode_for_linear(
         &self,
-        encoder: &mut Encoder<B>,
-        fused_up: &Allocation<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        fused_up: impl BufferRef<Backend = B>,
         batch_dim: u32,
         act_format: ActivationFormat,
     ) -> Result<LinearInput<B>, B::Error> {
-        encoder.push_debug_group("gate act mul");
+        command_buffer.push_debug_group("gate act mul");
 
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
         }
         let input = if act_format == ActivationFormat::Int8
-            && let Some(plan) = self.a8_plan
+            && let Some(quantization) = self.activation_quantization
         {
             let kernel = self.quantized_kernel.as_ref().expect("INT8 input requires a quantized gate kernel");
-            let mut values = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], DataType::I8))?;
-            let mut scales = encoder.allocate_scratch(size_for_shape(
-                &[batch_dim, self.hidden_dim.div_ceil(plan.activation_group_size)],
+            let mut values = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], DataType::I8)?;
+            let mut scales = command_buffer.allocate_scratch_for_shape(
+                &[batch_dim, self.hidden_dim.div_ceil(quantization.scale_group_size())],
                 DataType::F32,
-            ))?;
-            let mut group_sums = plan
-                .sum_group_size
+            )?;
+            let mut group_sums = quantization
+                .sum_group_size()
                 .map(|group_size| {
-                    encoder.allocate_scratch(size_for_shape(
-                        &[batch_dim, self.hidden_dim.div_ceil(group_size)],
-                        DataType::I32,
-                    ))
+                    command_buffer
+                        .allocate_scratch_for_shape(&[batch_dim, self.hidden_dim.div_ceil(group_size)], DataType::I32)
                 })
                 .transpose()?;
             kernel.encode_quantized(
@@ -96,19 +88,21 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 self.hidden_dim,
                 batch_dim,
                 self.activation.act_type(),
-                encoder,
+                command_buffer,
             );
             LinearInput::Int8Symmetric {
                 values,
                 scales,
                 group_sums,
-                group_size: plan.activation_group_size,
+                scale_group_size: quantization.scale_group_size(),
+                code_layout: quantization.code_layout(),
             }
         } else {
-            let mut hidden = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;
+            let mut hidden =
+                command_buffer.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
             self.fp_kernel.encode_fp(
                 fused_up,
-                None,
+                None::<&B::ScratchBuffer>,
                 &mut hidden,
                 self.hadamard_factors.as_ref(),
                 self.hidden_dim,
@@ -116,12 +110,12 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 0,
                 0,
                 self.activation.act_type(),
-                encoder,
+                command_buffer,
             );
             LinearInput::FullPrecision(hidden)
         };
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(input)
     }

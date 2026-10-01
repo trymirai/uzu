@@ -1,8 +1,19 @@
-use super::{
-    command_buffer::CpuCommandBuffer, context::CpuContext, dense_buffer::CpuBuffer, error::CpuError,
-    kernel::CpuKernels, sparse::CpuSparseBuffer,
+use crate::backends::{
+    common::{
+        Backend,
+        allocator::{
+            bump::BumpAllocation,
+            pool::{PoolAllocation, PoolAllocator},
+        },
+    },
+    cpu::{
+        buffer::{dense::CpuBuffer, sparse::CpuSparseBuffer},
+        command_buffer::CpuCommandBuffer,
+        context::CpuContext,
+        error::CpuError,
+        kernel::CpuKernels,
+    },
 };
-use crate::backends::common::Backend;
 
 #[derive(Debug, Clone)]
 pub struct Cpu;
@@ -10,14 +21,13 @@ pub struct Cpu;
 impl Backend for Cpu {
     type Context = CpuContext;
     type CommandBuffer = CpuCommandBuffer;
-    type DenseBuffer = CpuBuffer;
+    type GlobalBuffer = CpuBuffer;
+    type ConstantBuffer = BumpAllocation<Self::GlobalBuffer>;
+    type ScratchBuffer = PoolAllocation<Self::GlobalBuffer>;
     type SparseBuffer = CpuSparseBuffer;
+    type AllocationPool = PoolAllocator<Self::GlobalBuffer>;
     type Kernels = CpuKernels;
     type Error = CpuError;
 
     const NAME: &'static str = "cpu";
-    const MIN_ALLOCATION_ALIGNMENT: usize = 4;
-    const MAX_ALLOCATION_ALIGNMENT: usize = 64;
-    const ALLOCATION_GRANULARITY: usize = 8 * 1024 * 1024;
-    const MAX_INLINE_BYTES: usize = usize::MAX;
 }

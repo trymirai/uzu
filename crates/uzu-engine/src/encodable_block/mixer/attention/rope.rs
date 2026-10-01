@@ -1,11 +1,11 @@
 use crate::{
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding},
     config::rope::AnyRoPEConfig,
 };
 
 pub struct PrecalculatedRoPE<B: Backend> {
-    pub cosines: Allocation<B>,
-    pub sines: Allocation<B>,
+    pub cosines: B::ConstantBuffer,
+    pub sines: B::ConstantBuffer,
     pub dim: u32,
 }
 
@@ -13,7 +13,7 @@ impl<B: Backend> PrecalculatedRoPE<B> {
     pub fn precalculate(
         rope_config: &AnyRoPEConfig,
         token_positions: &[u32],
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Self, B::Error> {
         let head_dim = *rope_config.head_dim();
         assert!(head_dim > 0 && head_dim.is_multiple_of(2), "RoPE head_dim must be positive and even");
@@ -101,14 +101,9 @@ impl<B: Backend> PrecalculatedRoPE<B> {
             }
         }
 
-        let mut sines_allocation = encoder.allocate_constant(sines.len() * std::mem::size_of::<f32>())?;
-        sines_allocation.copyin(sines.as_ref());
-        let mut cosines_allocation = encoder.allocate_constant(cosines.len() * std::mem::size_of::<f32>())?;
-        cosines_allocation.copyin(cosines.as_ref());
-
         Ok(Self {
-            cosines: cosines_allocation,
-            sines: sines_allocation,
+            cosines: command_buffer.allocate_constant_from_slice(&cosines)?,
+            sines: command_buffer.allocate_constant_from_slice(&sines)?,
             dim: *rope_config.head_dim(),
         })
     }

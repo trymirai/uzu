@@ -1,17 +1,24 @@
+use thiserror::Error;
+
+mod input_rht;
 mod matmul;
 mod qlora_wrapper;
 mod rht_wrapper;
+mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
-use thiserror::Error;
+pub use untied_readout::UntiedReadout;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder,
+        Backend, BufferRef, CommandBuffer,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        kernel::matmul::{A8ActivationPlan, ActivationFormat},
+        kernel::{
+            ActivationQuantization,
+            matmul::{ActivationFormat, Int8CodeLayout, MatmulA},
+        },
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -24,19 +31,19 @@ use crate::{
 pub trait Linear<B: Backend>: Send + Sync {
     fn encode(
         &self,
-        input: Allocation<B>,
+        input: B::ScratchBuffer,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error>;
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error>;
 
     fn encode_input(
         &self,
         input: LinearInput<B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
         match input {
-            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, encoder),
+            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, command_buffer),
             LinearInput::Int8Symmetric {
                 ..
             } => {
@@ -55,18 +62,48 @@ pub trait Linear<B: Backend>: Send + Sync {
 }
 
 pub enum LinearInput<B: Backend> {
-    FullPrecision(Allocation<B>),
+    FullPrecision(B::ScratchBuffer),
     Int8Symmetric {
-        values: Allocation<B>,
-        scales: Allocation<B>,
-        group_sums: Option<Allocation<B>>,
-        group_size: u32,
+        values: B::ScratchBuffer,
+        scales: B::ScratchBuffer,
+        group_sums: Option<B::ScratchBuffer>,
+        scale_group_size: u32,
+        code_layout: Int8CodeLayout,
     },
 }
 
+pub struct Gather<T: BufferRef> {
+    pub indices: T,
+    pub output_dim: u32,
+}
+
+impl<B: Backend> LinearInput<B> {
+    fn as_matmul_a(&self) -> MatmulA<&B::ScratchBuffer> {
+        match self {
+            Self::FullPrecision(values) => MatmulA::FullPrecision {
+                values,
+                offset: 0,
+            },
+            Self::Int8Symmetric {
+                values,
+                scales,
+                group_sums,
+                scale_group_size,
+                code_layout,
+            } => MatmulA::Int8Symmetric {
+                values,
+                scales,
+                group_sums: group_sums.as_ref(),
+                scale_group_size: *scale_group_size,
+                code_layout: *code_layout,
+            },
+        }
+    }
+}
+
 pub struct LinearInputPreparation<B: Backend> {
-    pub input_factors: Allocation<B>,
-    pub a8_plan: Option<A8ActivationPlan>,
+    pub rht_signs: B::GlobalBuffer,
+    pub activation_quantization: Option<ActivationQuantization>,
 }
 
 #[derive(Debug, Error)]
@@ -84,9 +121,9 @@ pub enum LinearBlockError<B: Backend> {
 }
 
 impl<B: Backend> dyn Linear<B> {
-    pub fn new_mixed_precision<const N: usize>(
+    pub fn new_mixed_precision(
         input_dimension: u32,
-        output_dimensions: [u32; N],
+        output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
         context: &B::Context,
         weights_data_type: DataType,
@@ -94,7 +131,7 @@ impl<B: Backend> dyn Linear<B> {
         output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
-        let output_dimension_sum: u32 = output_dimensions.iter().sum();
+        let output_dimension_sum: u32 = output_dimensions.as_ref().iter().sum();
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
@@ -160,9 +197,9 @@ impl<B: Backend> dyn Linear<B> {
         }
     }
 
-    pub fn new<const N: usize>(
+    pub fn new(
         input_dimension: u32,
-        output_dimensions: [u32; N],
+        output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
         context: &B::Context,
         data_type: DataType,
@@ -180,17 +217,17 @@ impl<B: Backend> dyn Linear<B> {
         )
     }
 
-    pub fn new_with_input_rht_mixed_precision<const N: usize>(
+    pub fn new_with_input_rht_mixed_precision(
         input_dimension: u32,
-        output_dimensions: [u32; N],
+        output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
         context: &B::Context,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
-    ) -> Result<(Box<dyn Linear<B>>, Option<Allocation<B>>), LinearBlockError<B>> {
-        let output_dimension_sum: u32 = output_dimensions.iter().sum();
+    ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
+        let output_dimension_sum: u32 = output_dimensions.as_ref().iter().sum();
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
             context,
             input_dimension,
@@ -202,7 +239,7 @@ impl<B: Backend> dyn Linear<B> {
             false,
             parameter_tree,
         )? {
-            return Ok((linear.0, linear.1.map(|preparation| preparation.input_factors)));
+            return Ok((linear.0, linear.1.map(|preparation| preparation.rht_signs)));
         }
 
         let linear = Self::new_mixed_precision(
@@ -218,15 +255,15 @@ impl<B: Backend> dyn Linear<B> {
         Ok((linear, None))
     }
 
-    pub fn new_for_fused_input<const N: usize>(
+    pub fn new_for_fused_input(
         input_dimension: u32,
-        output_dimensions: [u32; N],
+        output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
         context: &B::Context,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
-        let output_dimension_sum: u32 = output_dimensions.iter().sum();
+        let output_dimension_sum: u32 = output_dimensions.as_ref().iter().sum();
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
             context,
             input_dimension,
@@ -254,14 +291,14 @@ impl<B: Backend> dyn Linear<B> {
         Ok((linear, None))
     }
 
-    pub fn new_with_input_rht<const N: usize>(
+    pub fn new_with_input_rht(
         input_dimension: u32,
-        output_dimensions: [u32; N],
+        output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
         context: &B::Context,
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
-    ) -> Result<(Box<dyn Linear<B>>, Option<Allocation<B>>), LinearBlockError<B>> {
+    ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
         Self::new_with_input_rht_mixed_precision(
             input_dimension,
             output_dimensions,

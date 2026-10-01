@@ -1,115 +1,113 @@
+use super::{QuantParams, QuantParamsLayout};
 use crate::{
     backends::common::{
-        Allocation, Backend, BufferArg,
+        BufferRef,
         gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
     },
     data_type::DataType,
 };
 
-pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
+pub enum MatmulB<TB: BufferRef> {
     FullPrecision {
         b: TB,
     },
-    ScaleBiasDequant {
-        b: &'a Allocation<B>,
-        scales: &'a Allocation<B>,
-        biases: &'a Allocation<B>,
-        mode: QuantizationMode,
-        group_size: u32,
-        signed_codes: bool,
-    },
-    ScaleZeroPointDequant {
-        b: &'a Allocation<B>,
-        scales: &'a Allocation<B>,
-        zero_points: &'a Allocation<B>,
-        mode: QuantizationMode,
-        group_size: u32,
-        signed_codes: bool,
-    },
-    ScaleSymmetricDequant {
-        b: &'a Allocation<B>,
-        scales: &'a Allocation<B>,
-        mode: QuantizationMode,
-        group_size: u32,
-        signed_codes: bool,
-    },
+    Quantized(QuantizedB<TB>),
 }
 
-impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
-    pub fn b_prologue(&self) -> GemmBPrologueKind {
+pub struct QuantizedB<TB: BufferRef> {
+    pub codes: TB,
+    pub scales: TB,
+    pub correction: QuantizedCorrection<TB>,
+    pub params: QuantParams,
+    pub mode: QuantizationMode,
+    pub group_size: u32,
+    pub signed_codes: bool,
+}
+
+#[derive(Clone, Copy)]
+pub enum QuantizedCorrection<T> {
+    Symmetric,
+    Biases(T),
+    ZeroPoints(T),
+}
+
+impl<T> QuantizedCorrection<T> {
+    pub fn as_ref(&self) -> QuantizedCorrection<&T> {
+        match self {
+            Self::Symmetric => QuantizedCorrection::Symmetric,
+            Self::Biases(biases) => QuantizedCorrection::Biases(biases),
+            Self::ZeroPoints(zero_points) => QuantizedCorrection::ZeroPoints(zero_points),
+        }
+    }
+
+    pub fn biases(&self) -> Option<&T> {
+        match self {
+            Self::Biases(biases) => Some(biases),
+            Self::Symmetric | Self::ZeroPoints(_) => None,
+        }
+    }
+
+    pub fn zero_points(&self) -> Option<&T> {
+        match self {
+            Self::ZeroPoints(zero_points) => Some(zero_points),
+            Self::Symmetric | Self::Biases(_) => None,
+        }
+    }
+}
+
+impl<TB: BufferRef> QuantizedB<TB> {
+    pub fn bits(&self) -> u32 {
+        DataType::from(self.mode).size_in_bits() as u32
+    }
+
+    pub fn prologue(&self) -> GemmBPrologueKind {
+        match self.correction {
+            QuantizedCorrection::Symmetric => GemmBPrologueKind::ScaleSymmetricDequant,
+            QuantizedCorrection::Biases(_) => GemmBPrologueKind::ScaleBiasDequant,
+            QuantizedCorrection::ZeroPoints(_) => GemmBPrologueKind::ScaleZeroPointDequant,
+        }
+    }
+
+    pub fn biases(&self) -> Option<TB> {
+        self.correction.biases().copied()
+    }
+
+    pub fn zero_points(&self) -> Option<TB> {
+        self.correction.zero_points().copied()
+    }
+
+    pub fn zero_point_strides(&self) -> super::QuantParamsStrides {
+        self.params.zero_point_strides(self.mode)
+    }
+}
+
+impl<TB: BufferRef> MatmulB<TB> {
+    pub fn quantized(&self) -> Option<&QuantizedB<TB>> {
         match self {
             Self::FullPrecision {
                 ..
-            } => GemmBPrologueKind::FullPrecision,
-            Self::ScaleBiasDequant {
-                ..
-            } => GemmBPrologueKind::ScaleBiasDequant,
-            Self::ScaleZeroPointDequant {
-                ..
-            } => GemmBPrologueKind::ScaleZeroPointDequant,
-            Self::ScaleSymmetricDequant {
-                ..
-            } => GemmBPrologueKind::ScaleSymmetricDequant,
+            } => None,
+            Self::Quantized(quantized) => Some(quantized),
         }
+    }
+
+    pub fn b_prologue(&self) -> GemmBPrologueKind {
+        self.quantized().map_or(GemmBPrologueKind::FullPrecision, QuantizedB::prologue)
     }
 
     pub fn bits_per_b(&self) -> Option<u32> {
-        match self {
-            Self::FullPrecision {
-                ..
-            } => None,
-            Self::ScaleBiasDequant {
-                mode,
-                ..
-            }
-            | Self::ScaleZeroPointDequant {
-                mode,
-                ..
-            }
-            | Self::ScaleSymmetricDequant {
-                mode,
-                ..
-            } => Some(DataType::from(*mode).size_in_bits() as u32),
-        }
+        self.quantized().map(QuantizedB::bits)
     }
 
     pub fn group_size(&self) -> Option<u32> {
-        match self {
-            Self::FullPrecision {
-                ..
-            } => None,
-            Self::ScaleBiasDequant {
-                group_size,
-                ..
-            }
-            | Self::ScaleZeroPointDequant {
-                group_size,
-                ..
-            }
-            | Self::ScaleSymmetricDequant {
-                group_size,
-                ..
-            } => Some(*group_size),
-        }
+        self.quantized().map(|quantized| quantized.group_size)
     }
 
     pub fn signed_codes(&self) -> bool {
-        match self {
-            Self::FullPrecision {
-                ..
-            } => false,
-            Self::ScaleBiasDequant {
-                signed_codes,
-                ..
-            }
-            | Self::ScaleZeroPointDequant {
-                signed_codes,
-                ..
-            }
-            | Self::ScaleSymmetricDequant {
-                signed_codes,
-                ..
-            } => *signed_codes,
-        }
+        self.quantized().is_some_and(|quantized| quantized.signed_codes)
+    }
+
+    pub fn quant_params_layout(&self) -> Option<QuantParamsLayout> {
+        self.quantized().map(|quantized| quantized.params.layout())
     }
 }

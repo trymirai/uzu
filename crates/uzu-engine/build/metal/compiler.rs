@@ -5,10 +5,9 @@ use std::{
 };
 
 use anyhow::Context;
-use async_trait::async_trait;
-use futures::{StreamExt, TryStreamExt, future::try_join_all, stream};
 use itertools::{Itertools, izip};
 use quote::{format_ident, quote};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
@@ -25,7 +24,7 @@ use crate::{
         identifiers::KernelPath, kernel::Kernel,
     },
     debug_log,
-    metal::gpu_types::gpu_type_gen,
+    metal::{compression, gpu_types::gpu_type_gen},
 };
 
 const MIN_VARIANTS_PER_SHARD: usize = 8;
@@ -89,7 +88,7 @@ pub struct MetalCompiler {
 }
 
 impl MetalCompiler {
-    pub async fn new() -> anyhow::Result<Self> {
+    pub fn new() -> anyhow::Result<Self> {
         let source_directory = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("missing CARGO_MANIFEST_DIR")?)
             .join("src/backends/metal/kernel");
         println!("cargo::rerun-if-changed={}", source_directory.display());
@@ -109,9 +108,8 @@ impl MetalCompiler {
             _ => true,                // treat everything else (3,s,z) as release build where size matters
         };
 
-        let toolchain = MetalToolchain::new(modules_cache_path, gpu_types_directory.clone())
-            .await
-            .context("cannot create toolchain")?;
+        let toolchain =
+            MetalToolchain::new(modules_cache_path, gpu_types_directory.clone()).context("cannot create toolchain")?;
 
         let cache_key = {
             let build_system_hash = caching::build_system_hash().context("cannot get build system hash")?;
@@ -143,7 +141,7 @@ impl MetalCompiler {
         }
     }
 
-    async fn compile(
+    fn compile(
         &self,
         source_path: PathBuf,
         enum_paths: &EnumPaths,
@@ -188,7 +186,6 @@ impl MetalCompiler {
         let (metal_kernel_infos, dependencies) = self
             .toolchain
             .analyze(&source_path)
-            .await
             .with_context(|| format!("cannot analyze {source_path_relative_str}"))?;
 
         let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
@@ -225,36 +222,31 @@ impl MetalCompiler {
                 .iter()
                 .map(|file| {
                     if self.metallib_compressed {
-                        file.with_added_extension("zst")
+                        file.with_added_extension("lzfse")
                     } else {
                         file.clone()
                     }
                 })
                 .collect();
 
-            let compile_outputs = try_join_all(izip!(&footers, &metallib_files, &metallib_maybe_compressed_files).map(
-                |(footer, metallib_file, compressed_file)| {
-                    let source_path = &source_path;
-                    async move {
-                        let warnings = self.toolchain.compile(source_path, footer, metallib_file).await?;
+            let compile_outputs: Vec<_> = izip!(&footers, &metallib_files, &metallib_maybe_compressed_files)
+                .collect::<Vec<_>>()
+                .into_par_iter()
+                .map(|(footer, metallib_file, compressed_file)| {
+                    let footer_path = metallib_file.with_extension("metal");
+                    fs::write(&footer_path, footer)
+                        .with_context(|| format!("cannot write generated Metal source {}", footer_path.display()))?;
+                    let warnings = self.toolchain.compile(&source_path, &footer_path, metallib_file)?;
 
-                        if self.metallib_compressed {
-                            let metallib_file = metallib_file.clone();
-                            let compressed_file = compressed_file.clone();
-                            tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                                let metallib_source = fs::read(metallib_file)?;
-                                fs::write(compressed_file, zstd::encode_all(metallib_source.as_slice(), 22)?)?;
-                                Ok(())
-                            })
-                            .await??;
-                        }
-
-                        anyhow::Ok(warnings)
+                    if self.metallib_compressed {
+                        let metallib_source = fs::read(metallib_file)?;
+                        fs::write(compressed_file, compression::compress(&metallib_source))?;
                     }
-                },
-            ))
-            .await
-            .with_context(|| format!("cannot compile {source_path_relative_str}"))?;
+
+                    anyhow::Ok(warnings)
+                })
+                .collect::<anyhow::Result<_>>()
+                .with_context(|| format!("cannot compile {source_path_relative_str}"))?;
 
             for warnings in compile_outputs.into_iter().flatten() {
                 for line in warnings.lines() {
@@ -319,14 +311,13 @@ impl MetalCompiler {
     }
 }
 
-#[async_trait]
 impl Compiler for MetalCompiler {
-    async fn build(
+    fn build(
         &self,
         gpu_types: &GpuTypes,
         enum_paths: &EnumPaths,
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
-        gpu_type_gen(&self.gpu_types_directory, gpu_types).await.context("cannot generate shared gpu types")?;
+        gpu_type_gen(&self.gpu_types_directory, gpu_types).context("cannot generate shared gpu types")?;
 
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.source_directory)
             .into_iter()
@@ -335,17 +326,12 @@ impl Compiler for MetalCompiler {
             .map(|e| e.into_path())
             .collect();
 
-        let num_concurrent_compiles = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4) * 2;
-
-        let compiled: Vec<(KernelPath, Box<[Kernel]>, bool)> = stream::iter(metal_sources)
-            .map(|path| async move {
-                self.compile(path.clone(), enum_paths)
-                    .await
-                    .with_context(|| format!("cannot compile {}", path.display()))
+        let compiled: Vec<(KernelPath, Box<[Kernel]>, bool)> = metal_sources
+            .into_par_iter()
+            .map(|path| {
+                self.compile(path.clone(), enum_paths).with_context(|| format!("cannot compile {}", path.display()))
             })
-            .buffer_unordered(num_concurrent_compiles)
-            .try_collect()
-            .await?;
+            .collect::<anyhow::Result<_>>()?;
 
         let mut kernels_bindgen = compiled
             .iter()

@@ -1,9 +1,12 @@
 use crate::{
     backends::common::{
-        Backend, BufferArg, Encoder, Kernels,
-        kernel::matmul::{
-            arguments::MatmulArguments,
-            routing::{A8ActivationPlan, ActivationFormat, MatmulShape},
+        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
+        kernel::{
+            ActivationQuantization,
+            matmul::{
+                arguments::MatmulArguments,
+                routing::{ActivationFormat, MatmulShape},
+            },
         },
     },
     data_type::DataType,
@@ -19,17 +22,24 @@ pub trait MatmulKernel: Sized + Send + Sync {
         output_data_type: DataType,
     ) -> Result<Self, <Self::Backend as Backend>::Error>;
 
-    fn encode<'a, 'b, 'd, TB: BufferArg<'b, Self::Backend>>(
+    fn encode(
         &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Self::Backend, TB>,
-        encoder: &mut Encoder<Self::Backend>,
+        arguments: MatmulArguments<
+            '_,
+            Self::Backend,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferMut<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+        >,
+        command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 
-    fn a8_activation_plan(
+    fn select_activation_quantization(
         &self,
         _candidate: &MatmulShape,
         _context: &<Self::Backend as Backend>::Context,
-    ) -> Option<A8ActivationPlan> {
+    ) -> Option<ActivationQuantization> {
         None
     }
 

@@ -1,6 +1,6 @@
-use super::{MatmulA, MatmulArguments};
+use super::{MatmulA, MatmulArguments, QuantParamsLayout};
 use crate::backends::common::{
-    Backend, BufferArg,
+    Backend, BufferMut, BufferRef,
     gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
 };
 
@@ -8,12 +8,6 @@ use crate::backends::common::{
 pub enum ActivationFormat {
     Bf16,
     Int8,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct A8ActivationPlan {
-    pub activation_group_size: u32,
-    pub sum_group_size: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -29,12 +23,20 @@ pub struct MatmulShape {
     pub signed_codes: bool,
     pub a_full_precision: bool,
     pub gathered: bool,
+    pub params_layout: Option<QuantParamsLayout>,
     pub d_transform: GemmDTransform,
 }
 
 impl MatmulShape {
-    pub fn from_arguments<'a, 'b, 'd, B: Backend, TB: BufferArg<'b, B>>(
-        arguments: &MatmulArguments<'a, 'b, 'd, B, TB>
+    pub fn from_arguments<B: Backend>(
+        arguments: &MatmulArguments<
+            '_,
+            B,
+            impl BufferRef<Backend = B>,
+            impl BufferRef<Backend = B>,
+            impl BufferMut<Backend = B>,
+            impl BufferRef<Backend = B>,
+        >
     ) -> Self {
         Self {
             m: arguments.m,
@@ -48,6 +50,7 @@ impl MatmulShape {
             signed_codes: arguments.b.signed_codes(),
             a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
             gathered: arguments.gather_indices.is_some(),
+            params_layout: arguments.b.quant_params_layout(),
             d_transform: arguments.d_transform.mask(),
         }
     }

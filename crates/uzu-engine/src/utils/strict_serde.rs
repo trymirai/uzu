@@ -14,7 +14,7 @@ macro_rules! impl_strict {
   };
 }
 
-impl_strict!(Unsupported, String, f32, u32, u64, usize, bool);
+impl_strict!(Unsupported, String, f32, u32, u64, usize, bool, serde_json::Map<String, serde_json::Value>);
 
 impl<'de, T: DeserializeStrict<'de>> DeserializeStrict<'de> for Box<T> {}
 impl<'de, T: DeserializeStrict<'de>> DeserializeStrict<'de> for Box<[T]> {}

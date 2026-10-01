@@ -1,5 +1,12 @@
 use uzu_engine_macros::uzu_config;
 
+#[uzu_config]
+pub struct ReasoningConfig {
+    pub default_reasoning_effort: String,
+    pub field_name: String,
+    pub reasoning_effort_to_field_value: serde_json::Map<String, serde_json::Value>,
+}
+
 #[uzu_config(super::TokenCodecConfig)]
 pub struct ChatCodecConfig {
     pub prompt_template: String,
@@ -11,4 +18,6 @@ pub struct ChatCodecConfig {
     pub bos_token: Option<String>,
     pub end_of_thinking_tag: Option<String>,
     pub default_system_prompt: Option<String>,
+    #[serde(default)] // TODO: ??? inconsistency in converted models in registry workaround, remove when resolved
+    pub reasoning_config: Option<ReasoningConfig>,
 }

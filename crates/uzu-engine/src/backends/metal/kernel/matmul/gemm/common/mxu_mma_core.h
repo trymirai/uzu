@@ -77,8 +77,6 @@ struct MxuMmaCore {
       const device RightElementType* output_bias,
       const device int32_t* rht_factors,
       threadgroup RightElementType* b_shared,
-      const bool stage_weight_scales,
-      const bool hoist_operand_addressing,
       const thread ThreadContext& thread_context
   ) {
     const uint partition = thread_context.threadgroup_position.z;
@@ -124,6 +122,7 @@ struct MxuMmaCore {
     const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
     const bool apply_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
+    const bool apply_rht = output_transform.contains(GemmDTransform::RHT);
 
     const device RightElementType* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
 
@@ -133,21 +132,16 @@ struct MxuMmaCore {
           dispatch_bool(
               alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
               [&](auto aligned_n) {
-                AccumFragment accumulator_tile;
-                dispatch_bool(stage_weight_scales, [&](auto stage) {
-                  dispatch_bool(hoist_operand_addressing, [&](auto hoist) {
-                    accumulator_tile = Schedule::
-                        template launch<MxuMmaCore, aligned_m.value, aligned_n.value, stage.value, hoist.value>(
-                            left,
-                            right,
-                            b_shared,
-                            params,
-                            tile_context,
-                            alignment,
-                            thread_context
-                        );
-                  });
-                });
+                AccumFragment accumulator_tile =
+                    Schedule::template launch<MxuMmaCore, aligned_m.value, aligned_n.value>(
+                        left,
+                        right,
+                        b_shared,
+                        params,
+                        tile_context,
+                        alignment,
+                        thread_context
+                    );
 
                 if (apply_scale) {
                   const AccumulatorType scale = AccumulatorType(params->ab_scale);
@@ -166,7 +160,7 @@ struct MxuMmaCore {
                   accumulator_tile.map([&](auto value) { return value + AccumulatorType(*(existing_data++)); });
                 }
 
-                if (apply_bias) {
+                if (apply_bias && !apply_rht) {
                   accumulator_tile.map_coords(thread_context.simd_lane_id, [&](short, short col, auto value) {
                     if constexpr (aligned_n.value) {
                       return value + AccumulatorType(bias_simdgroup[col]);
@@ -195,13 +189,20 @@ struct MxuMmaCore {
     );
 
     if (output_transform.contains(GemmDTransform::RHT)) {
-      threadgroup_barrier(mem_flags::mem_device);
+      // Metal rejects a threadgroup barrier when the threadgroup contains one simdgroup.
+      if constexpr (SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN == 1) {
+        simdgroup_barrier(mem_flags::mem_device);
+      } else {
+        threadgroup_barrier(mem_flags::mem_device);
+      }
       device OutputElementType* d_block = d + block_row * params->leading_dimension_d + block_col;
       const ushort tile_block_rows = ushort(min(int(THREADGROUP_BLOCK_M), int(params->M) - int(block_row)));
       const ushort tile_block_cols = ushort(min(int(THREADGROUP_BLOCK_N), int(params->N) - int(block_col)));
       apply_output_random_hadamard_transform(
           d_block,
           rht_factors + block_col,
+          output_bias + block_col,
+          apply_bias,
           tile_block_rows,
           tile_block_cols,
           params->leading_dimension_d,

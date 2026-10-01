@@ -5,7 +5,7 @@ use super::*;
 use crate::{
     backends::common::{
         gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-        kernel::matmul::MatmulShape,
+        kernel::matmul::{MatmulShape, QuantParamsLayout},
     },
     data_type::DataType,
 };
@@ -40,36 +40,21 @@ fn fp_policy_cases() {
 #[uzu_test]
 fn quant_policy_cases() {
     let cases = [
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 256, 1536, 4, false, qtile(2, 1)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 262144, 1536, 4, false, qtile(8, 4)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 256, 4, false, qtile(4, 4)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 1, 1536, 256, 4, false, qtile(8, 4)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple8, 1, 2048, 1536, 4, false, qtile(8, 2)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple7, 1, 256, 1536, 4, false, qtile(8, 2)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple7, 1, 1536, 256, 4, false, qtile(4, 8)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 2, 2048, 1536, 4, false, qtile(8, 4)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 5120, 5120, 4, false, qtile(8, 4)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 2048, 1536, 8, false, GemvTile::quantized(8, 4, 1, 32, 4)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 2560, 9216, 4, true, qtile(4, 8)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 256, 1536, 4, qtile(2, 1)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 262144, 1536, 4, qtile(8, 4)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 256, 4, qtile(4, 4)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 1, 1536, 256, 4, qtile(8, 4)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple8, 1, 2048, 1536, 4, qtile(8, 2)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple7, 1, 256, 1536, 4, qtile(8, 2)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple7, 1, 1536, 256, 4, qtile(4, 8)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 2, 2048, 1536, 4, qtile(8, 4)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 5120, 5120, 4, qtile(8, 4)),
+        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 2048, 1536, 8, GemvTile::quantized(8, 4, 1, 32, 4)),
     ];
 
-    for (gpu_core_count, apple_gpu_family, m, n, k, bits, has_rht, expected) in cases {
-        let actual = quantized_tile(
-            gpu_core_count,
-            apple_gpu_family,
-            bits,
-            32,
-            m,
-            n,
-            k,
-            if has_rht {
-                GemmDTransform::RHT
-            } else {
-                GemmDTransform::empty()
-            },
-            true,
-        )
-        .expect("quantized route");
+    for (gpu_core_count, apple_gpu_family, m, n, k, bits, expected) in cases {
+        let actual =
+            quantized_tile(gpu_core_count, apple_gpu_family, bits, 32, m, n, k, true).expect("quantized route");
         assert_eq!(
             actual, expected,
             "m={m} n={n} k={k} bits={bits} gpu_core_count={gpu_core_count} apple_gpu_family={apple_gpu_family:?}"
@@ -79,11 +64,8 @@ fn quant_policy_cases() {
 
 #[uzu_test]
 fn gpu_core_count_boundary_selects_large_policy() {
-    let transform = GemmDTransform::empty();
-    let small =
-        quantized(SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 32, 1, 256, 1536, transform).expect("small GPU route");
-    let large =
-        quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 32, 1, 256, 1536, transform).expect("large GPU route");
+    let small = quantized(SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 32, 1, 256, 1536).expect("small GPU route");
+    let large = quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 32, 1, 256, 1536).expect("large GPU route");
 
     assert_eq!(small, qtile(4, 2));
     assert_eq!(large, qtile(2, 1));
@@ -97,70 +79,32 @@ fn quantized(
     m: u32,
     n: u32,
     k: u32,
-    d_transform: GemmDTransform,
 ) -> Option<GemvTile> {
-    quantized_tile(gpu_core_count, apple_gpu_family, bits, group, m, n, k, d_transform, true)
+    quantized_tile(gpu_core_count, apple_gpu_family, bits, group, m, n, k, true)
 }
 
 #[uzu_test]
 fn quantized_policy_edges() {
-    for (gpu_core_count, apple_gpu_family, m, group, expected) in [
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 2, 32, GemvTile::quantized(8, 4, 1, 32, 4)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 3, 32, GemvTile::quantized(8, 4, 1, 32, 4)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple8, 4, 64, GemvTile::quantized(8, 4, 1, 32, 8)),
-    ] {
-        assert_eq!(
-            quantized(gpu_core_count, apple_gpu_family, 8, group, m, 4096, 4096, GemmDTransform::RHT),
-            Some(expected)
-        );
-    }
-    let none = GemmDTransform::empty();
     assert_eq!(
-        quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 64, 4, 8192, 4100, none),
+        quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 64, 4, 8192, 4100),
         Some(GemvTile::quantized(8, 4, 1, 32, 4))
     );
-    assert!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8, 4096, none).is_some());
-    assert!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 1, 8192, 4096, none).is_some());
-    assert_eq!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 9, 8192, 4096, none), None);
+    assert!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8, 4096).is_some());
+    assert!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 1, 8192, 4096).is_some());
+    assert_eq!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 9, 8192, 4096), None);
     assert_eq!(
-        quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8192, 4096, none, true),
+        quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8192, 4096, true),
         Some(GemvTile::quantized(8, 4, 1, 32, 2))
     );
 }
 
 #[uzu_test]
 fn untuned_quantized_io_uses_only_the_generated_fallback() {
-    assert_eq!(
-        quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 3, 4096, GemmDTransform::empty(), false,),
-        None
-    );
-    let tile = quantized_tile(
-        LARGE_GPU_CORE_COUNT,
-        MTLGPUFamily::Apple10,
-        4,
-        32,
-        4,
-        4096,
-        4096,
-        GemmDTransform::empty(),
-        false,
-    )
-    .expect("mixed-IO fallback");
+    assert_eq!(quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 3, 4096, false), None);
+    let tile = quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 4096, 4096, false)
+        .expect("mixed-IO fallback");
     assert_eq!(tile, GemvTile::quantized(8, 4, 1, 32, 2));
-    assert_eq!(
-        quantized_tile(
-            LARGE_GPU_CORE_COUNT,
-            MTLGPUFamily::Apple10,
-            4,
-            32,
-            5,
-            4096,
-            4096,
-            GemmDTransform::empty(),
-            false,
-        ),
-        None
-    );
+    assert_eq!(quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 5, 4096, 4096, false), None);
 }
 
 fn quant_shape(
@@ -180,6 +124,7 @@ fn quant_shape(
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
+        params_layout: Some(QuantParamsLayout::OutputGroup),
         d_transform,
     }
 }
@@ -198,6 +143,7 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
         signed_codes: false,
         a_full_precision: true,
         gathered: false,
+        params_layout: Some(QuantParamsLayout::OutputGroup),
         d_transform: GemmDTransform::empty(),
     };
     assert!(
@@ -228,4 +174,21 @@ fn specialization_preserves_quantized_route_and_accumulate_tail() {
     let clean = select(8192, GemmDTransform::empty()).expect("quantized specialization");
     assert!(clean.output_row_tile() > DEFAULT_RESULTS_PER_SIMDGROUP);
     assert_eq!(select(8192 + clean.output_row_tile() / 2, GemmDTransform::ACCUMULATE), None);
+}
+
+#[uzu_test]
+fn gathered_group_major_is_a_gemv_route() {
+    let mut shape = quant_shape(1, 8192, GemmDTransform::empty());
+    shape.params_layout = Some(QuantParamsLayout::GroupOutput);
+    shape.gathered = true;
+    assert!(
+        super::super::kernel::GemvSpecialization::select_tile(
+            &shape,
+            DataType::BF16,
+            DataType::BF16,
+            DataType::BF16,
+            qtile(8, 4),
+        )
+        .is_some()
+    );
 }

@@ -129,6 +129,10 @@ KERNEL(Gemv)(
     const constant uint& batch_size,
     const constant float& ab_scale,
     const constant uint& group_count_x,
+    const constant uint& scale_output_stride,
+    const constant uint& scale_group_stride,
+    const constant uint& zero_point_output_stride,
+    const constant uint& zero_point_group_stride,
     const constant float& soft_cap
         OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
     const GemmDTransform output_transform SPECIALIZE,
@@ -143,8 +147,20 @@ KERNEL(Gemv)(
 ) {
   using Ops = GemvOperands<AT, BT, DT>;
   const Ops ops = {b, scales, zero_points, biases, a, d, output_bias, hadamard_factors, gather_indices};
-  const GemvParams params =
-      {in_vec_size, out_vec_size, batch_size, ab_scale, soft_cap, output_transform, gathered, signed_codes};
+  const GemvParams params = {
+      in_vec_size,
+      out_vec_size,
+      scale_output_stride,
+      scale_group_stride,
+      zero_point_output_stride,
+      zero_point_group_stride,
+      batch_size,
+      ab_scale,
+      soft_cap,
+      output_transform,
+      gathered,
+      signed_codes
+  };
   dispatch_bool(full_tile, [&](auto full_tile_constant) {
     constexpr bool FullTile = decltype(full_tile_constant)::value;
     using Tile = GemvTile<INPUT_ROW_TILE, OUTPUT_ROW_TILE, REDUCTION_LANES, GROUP_LANES, NUM_SIMDGROUPS, K_SPLIT>;

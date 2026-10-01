@@ -8,12 +8,12 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE,
-            kernel::ActivationTransform,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+            gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE, kernel::ActivationTransform,
         },
         cpu::Cpu,
     },
-    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend},
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -22,7 +22,7 @@ enum TransformOrder {
     Output,
 }
 
-fn run<T: ArrayElement + Float, B: Backend>(
+fn run<T: ArrayElement + Float + Debug, B: Backend>(
     data: &[T],
     factors: &[i32],
     channel_count: usize,
@@ -32,22 +32,27 @@ fn run<T: ArrayElement + Float, B: Backend>(
     let context = B::Context::new().expect("context");
     let kernel = match order {
         TransformOrder::Input => ActivationTransform::<B>::input_rht(context.as_ref(), T::data_type(), in_place),
-        TransformOrder::Output => ActivationTransform::<B>::output_rht(context.as_ref(), T::data_type(), in_place),
+        TransformOrder::Output => {
+            ActivationTransform::<B>::output_rht(context.as_ref(), T::data_type(), None, in_place)
+        },
     }
     .expect("activation transform");
 
-    let mut input = alloc_allocation_with_data::<B, T>(context.as_ref(), data);
-    let mut output = alloc_allocation::<B, T>(context.as_ref(), data.len());
-    let factors = alloc_allocation_with_data::<B, i32>(context.as_ref(), factors);
+    let mut input = create_buffer_with_data::<B, T>(context.as_ref(), data);
+    let mut output = create_buffer::<B, T>(context.as_ref(), data.len());
+    let factors = create_buffer_with_data::<B, i32>(context.as_ref(), factors);
     let batch_count = (data.len() / channel_count) as u32;
-    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     if in_place {
-        kernel.encode_fp_in_place(&mut input, &factors, batch_count, channel_count as u32, &mut encoder);
+        kernel.encode_fp_in_place(&mut input, &factors, None, batch_count, channel_count as u32, &mut command_buffer);
     } else {
-        kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut encoder);
+        kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut command_buffer);
     }
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec(if in_place {
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    if !in_place {
+        assert_eq!(buffer_to_vec::<B, T>(&input), data);
+    }
+    buffer_to_vec(if in_place {
         &input
     } else {
         &output
@@ -103,18 +108,56 @@ fn input_and_output_rht_bf16() {
     check::<bf16>(0.1);
 }
 
+#[uzu_test]
+fn output_rht_fused_bias_matches_separate_mixed_dtype() {
+    for_each_backend!(|B| {
+        let context = <B as Backend>::Context::new().expect("context");
+        let channels = 2 * BLOCK_SIZE as usize;
+        let data: Vec<bf16> = (0..2 * channels).map(|i| bf16::from_f32((i as f32 * 0.17).sin() * 2.0)).collect();
+        let bias_data: Vec<f32> = (0..channels).map(|i| (i as f32 * 0.31).cos() * 0.03).collect();
+        let factors_data: Vec<i32> = (0..channels)
+            .map(|i| {
+                if i % 3 == 0 {
+                    -1
+                } else {
+                    1
+                }
+            })
+            .collect();
+        let expected: Vec<_> = run::<bf16, B>(&data, &factors_data, channels, TransformOrder::Output, true)
+            .into_iter()
+            .enumerate()
+            .map(|(i, value)| bf16::from_f32(value.to_f32() + bias_data[i % channels]))
+            .collect();
+        let mut fused = create_buffer_with_data::<B, bf16>(context.as_ref(), &data);
+        let bias = create_buffer_with_data::<B, f32>(context.as_ref(), &bias_data);
+        let factors = create_buffer_with_data::<B, i32>(context.as_ref(), &factors_data);
+
+        let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+        ActivationTransform::<B>::output_rht(context.as_ref(), bf16::data_type(), Some(f32::data_type()), true)
+            .expect("fused transform")
+            .encode_fp_in_place(&mut fused, &factors, Some(&bias), 2, channels as u32, &mut command_buffer);
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        assert_eq!(buffer_to_vec::<B, bf16>(&fused), expected);
+    });
+}
+
 mod quantize {
+
     use rand::{RngExt, SeedableRng, rngs::SmallRng};
     use uzu_engine_macros::uzu_test;
 
     use super::BLOCK_SIZE;
     use crate::{
         backends::{
-            common::{Backend, Context, Encoder, kernel::ActivationTransform},
+            common::{
+                Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+                kernel::{ActivationQuantization, ActivationTransform, matmul::Int8CodeLayout},
+            },
             cpu::Cpu,
         },
         data_type::DataType,
-        tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend},
+        tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
     };
 
     fn run<B: Backend>(
@@ -122,23 +165,33 @@ mod quantize {
         factors_data: &[i32],
         rows: u32,
         columns: u32,
-        activation_group_size: u32,
+        scale_group_size: u32,
         emit_group_sums: bool,
         sum_group_size: Option<u32>,
+        code_layout: Int8CodeLayout,
     ) -> (Vec<i8>, Vec<f32>, Option<Vec<i32>>) {
-        let scale_groups = columns / activation_group_size;
+        let scale_groups = columns / scale_group_size;
         let sum_groups = sum_group_size.map_or(0, |group_size| columns / group_size);
         let context = B::Context::new().expect("context");
-        let input = alloc_allocation_with_data::<B, f32>(context.as_ref(), input_data);
-        let factors = alloc_allocation_with_data::<B, i32>(context.as_ref(), factors_data);
-        let mut values = alloc_allocation::<B, i8>(context.as_ref(), (rows * columns) as usize);
-        let mut scales = alloc_allocation::<B, f32>(context.as_ref(), (rows * scale_groups) as usize);
+        let input = create_buffer_with_data::<B, f32>(context.as_ref(), input_data);
+        let factors = create_buffer_with_data::<B, i32>(context.as_ref(), factors_data);
+        let mut values = create_buffer::<B, i8>(context.as_ref(), (rows * columns) as usize);
+        let mut scales = create_buffer::<B, f32>(context.as_ref(), (rows * scale_groups) as usize);
         let mut group_sums =
-            emit_group_sums.then(|| alloc_allocation::<B, i32>(context.as_ref(), (rows * sum_groups) as usize));
-        let kernel =
-            ActivationTransform::quantize(context.as_ref(), DataType::F32, activation_group_size, sum_group_size)
-                .expect("quantize transform");
-        let mut encoder = Encoder::<B>::new(context.as_ref()).expect("encoder");
+            emit_group_sums.then(|| create_buffer::<B, i32>(context.as_ref(), (rows * sum_groups) as usize));
+        let kernel = ActivationTransform::<B>::quantize(
+            context.as_ref(),
+            DataType::F32,
+            ActivationQuantization::new(
+                scale_group_size,
+                sum_group_size.unwrap_or(scale_group_size),
+                emit_group_sums,
+                code_layout,
+            )
+            .expect("supported activation quantization"),
+        )
+        .expect("quantize transform");
+        let mut command_buffer = context.as_ref().create_command_buffer(None, None).expect("command buffer");
         kernel.encode_quantize(
             &input,
             &mut values,
@@ -147,17 +200,18 @@ mod quantize {
             &factors,
             rows,
             columns,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-        (allocation_to_vec(&values), allocation_to_vec(&scales), group_sums.as_ref().map(allocation_to_vec))
+        (buffer_to_vec(&values), buffer_to_vec(&scales), group_sums.as_ref().map(buffer_to_vec))
     }
 
     fn check_quantize(
-        activation_group_size: u32,
+        scale_group_size: u32,
         emit_group_sums: bool,
         sum_group_size: Option<u32>,
+        code_layout: Int8CodeLayout,
     ) {
         let rows = 3;
         let columns = 256;
@@ -177,9 +231,10 @@ mod quantize {
             &factors_data,
             rows,
             columns,
-            activation_group_size,
+            scale_group_size,
             emit_group_sums,
             sum_group_size,
+            code_layout,
         );
 
         for_each_backend!(|B| {
@@ -188,9 +243,10 @@ mod quantize {
                 &factors_data,
                 rows,
                 columns,
-                activation_group_size,
+                scale_group_size,
                 emit_group_sums,
                 sum_group_size,
+                code_layout,
             );
 
             for (index, (&actual, &expected)) in actual_scales.iter().zip(&expected_scales).enumerate() {
@@ -224,22 +280,23 @@ mod quantize {
 
     #[uzu_test]
     fn quantize_with_group_sums_matches_cpu() {
-        check_quantize(128, true, Some(BLOCK_SIZE));
+        check_quantize(128, true, Some(BLOCK_SIZE), Int8CodeLayout::Sequential);
     }
 
     #[uzu_test]
     fn quantize_without_group_sums_matches_cpu() {
-        check_quantize(128, false, None);
+        check_quantize(128, false, None, Int8CodeLayout::Sequential);
     }
 
     #[uzu_test]
     fn quantize_compact_scale_g128_sum_g64_matches_cpu() {
-        check_quantize(128, true, Some(64));
+        check_quantize(128, true, Some(64), Int8CodeLayout::Sequential);
     }
 
     #[uzu_test]
     fn quantize_scale_g32_and_g64_match_cpu() {
-        check_quantize(32, false, None);
-        check_quantize(64, false, None);
+        check_quantize(32, false, None, Int8CodeLayout::Sequential);
+        check_quantize(64, false, None, Int8CodeLayout::Sequential);
+        check_quantize(128, false, None, Int8CodeLayout::GroupedByNibble);
     }
 }

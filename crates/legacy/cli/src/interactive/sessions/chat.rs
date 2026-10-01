@@ -7,10 +7,11 @@ use nagare::{
     tool::uzu_tool_function,
 };
 use shoji::types::{
-    basic::{CancelToken, ToolCall},
+    basic::{CancelToken, SamplingSeed, ToolCall},
     model::Model,
     session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyStats, ChatRole},
 };
+use uzu::engine::Engine;
 
 use crate::interactive::{
     components::{ApplicationState, HistoryCellType, TranscriptItem},
@@ -116,17 +117,11 @@ pub async fn ensure_session(
         }
     }
 
-    let engine = state.read().engine.clone();
-    let session = match async {
-        let mut session = engine.chat(model.clone(), ChatConfig::default()).await?;
-        if session.supports_tool_calls().await {
-            session.add_tool(get_current_date_time).await?;
-            session.add_tool(sleep).await?;
-        }
-        Ok::<_, anyhow::Error>(session)
-    }
-    .await
-    {
+    let (engine, seed, no_tools) = {
+        let state = state.read();
+        (state.engine.clone(), state.seed, state.no_tools)
+    };
+    let session = match create_session(&engine, model, seed, no_tools).await {
         Ok(session) => session,
         Err(error) => {
             let mut state = state.write();
@@ -149,6 +144,26 @@ pub async fn ensure_session(
         }
     }
     Some(session)
+}
+
+pub async fn create_session(
+    engine: &Engine,
+    model: &Model,
+    seed: Option<i64>,
+    no_tools: bool,
+) -> anyhow::Result<ChatSession> {
+    let mut config = ChatConfig::default();
+    if let Some(seed) = seed {
+        config = config.with_sampling_seed(SamplingSeed::Custom {
+            seed,
+        });
+    }
+    let mut session = engine.chat(model.clone(), config).await?;
+    if !no_tools && session.supports_tool_calls().await {
+        session.add_tool(get_current_date_time).await?;
+        session.add_tool(sleep).await?;
+    }
+    Ok(session)
 }
 
 pub async fn run_session(
@@ -256,7 +271,7 @@ pub async fn run_session(
 
 /// A tool call is `calling` until its result message shows up in the history,
 /// then it becomes `called`.
-fn build_transcript(
+pub fn build_transcript(
     messages: &[ChatMessage],
     history_offset: usize,
 ) -> Vec<TranscriptItem> {

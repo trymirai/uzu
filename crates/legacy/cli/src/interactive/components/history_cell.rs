@@ -116,7 +116,7 @@ pub fn HistoryCell(
     view
 }
 
-fn chat_transcript_component(
+pub fn chat_transcript_component(
     items: Vec<TranscriptItem>,
     stats: Option<ChatReplyStats>,
     subtitle_color: Color,

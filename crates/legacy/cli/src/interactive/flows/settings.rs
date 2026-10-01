@@ -12,6 +12,7 @@ use crate::{
 
 const LABEL_WIDTH: u16 = 14;
 const TEMPERATURE_STEP: f64 = 0.05;
+const TEMPERATURE_MIN: f64 = TEMPERATURE_STEP;
 const TEMPERATURE_MAX: f64 = 2.0;
 const PROBABILITY_STEP: f64 = 0.05;
 const PROBABILITY_MAX: f64 = 1.0;
@@ -19,6 +20,7 @@ const TOP_K_STEP: i64 = 1;
 const TOP_K_MIN: i64 = 1;
 const TOP_K_MAX: i64 = 4096;
 const REPETITION_PENALTY_STEP: f64 = 0.05;
+const REPETITION_PENALTY_MIN: f64 = 1.0;
 const REPETITION_PENALTY_MAX: f64 = 2.0;
 const SUFFIX_REPETITION_LENGTH_STEP: i64 = 32;
 const SUFFIX_REPETITION_LENGTH_MIN: i64 = 32;
@@ -85,7 +87,7 @@ fn adjust(
         },
         Field::Temperature => {
             preferences.sampling.temperature =
-                step_f64(preferences.sampling.temperature, delta, TEMPERATURE_STEP, 0.0, TEMPERATURE_MAX);
+                step_f64(preferences.sampling.temperature, delta, TEMPERATURE_STEP, TEMPERATURE_MIN, TEMPERATURE_MAX);
         },
         Field::TopK => {
             preferences.sampling.top_k = (preferences.sampling.top_k + delta * TOP_K_STEP).clamp(TOP_K_MIN, TOP_K_MAX);
@@ -103,7 +105,7 @@ fn adjust(
                 preferences.sampling.repetition_penalty,
                 delta,
                 REPETITION_PENALTY_STEP,
-                1.0,
+                REPETITION_PENALTY_MIN,
                 REPETITION_PENALTY_MAX,
             );
         },
@@ -126,7 +128,8 @@ fn toggle(
         Field::Thinking => adjust(preferences, Field::Thinking, 1, support),
         Field::SamplingMode => sampling.mode = sampling.mode.next(),
         Field::Temperature => {
-            toggle_value(&mut sampling.temperature_enabled, &mut sampling.temperature, defaults.temperature)
+            toggle_value(&mut sampling.temperature_enabled, &mut sampling.temperature, defaults.temperature);
+            sampling.temperature = sampling.temperature.max(TEMPERATURE_MIN);
         },
         Field::TopK => toggle_value(&mut sampling.top_k_enabled, &mut sampling.top_k, defaults.top_k),
         Field::TopP => toggle_value(&mut sampling.top_p_enabled, &mut sampling.top_p, defaults.top_p),
@@ -142,6 +145,8 @@ fn toggle(
             {
                 sampling.suffix_repetition_length = value;
             }
+            sampling.repetition_penalty = sampling.repetition_penalty.max(REPETITION_PENALTY_MIN);
+            sampling.suffix_repetition_length = sampling.suffix_repetition_length.max(SUFFIX_REPETITION_LENGTH_MIN);
         },
         Field::SuffixRepetitionLength => {
             assert!(sampling.suffix_repetition_length_enabled(), "suffix_repetition_length cannot be enabled");

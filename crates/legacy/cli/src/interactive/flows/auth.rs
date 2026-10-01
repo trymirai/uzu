@@ -1,6 +1,6 @@
 use iocraft::prelude::*;
 use uzu::engine::config::{
-    KEY_ANTHROPIC_API_KEY, KEY_BASETEN_API_KEY, KEY_GEMINI_API_KEY, KEY_HF_TOKEN, KEY_LALAMO_PATH, KEY_MIRAI_API_KEY,
+    KEY_ANTHROPIC_API_KEY, KEY_BASETEN_API_KEY, KEY_GEMINI_API_KEY, KEY_HF_TOKEN, KEY_LOCAL_PATH, KEY_MIRAI_API_KEY,
     KEY_OPENAI_API_KEY, KEY_OPENROUTER_API_KEY, KEY_XAI_API_KEY,
 };
 
@@ -73,6 +73,6 @@ fn auth_providers() -> Vec<AuthProvider> {
         AuthProvider::key("Baseten", KEY_BASETEN_API_KEY),
         AuthProvider::key("OpenRouter", KEY_OPENROUTER_API_KEY),
         AuthProvider::key("HuggingFace", KEY_HF_TOKEN),
-        AuthProvider::path("lalamo", KEY_LALAMO_PATH),
+        AuthProvider::path("Local", KEY_LOCAL_PATH),
     ]
 }

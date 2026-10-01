@@ -3,13 +3,12 @@ use std::{
     ffi::OsString,
     fs,
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Command, Stdio},
 };
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
 use tempfile::NamedTempFile;
-use tokio::{io::AsyncWriteExt, process::Command};
 
 use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo};
 
@@ -100,7 +99,7 @@ pub struct MetalToolchain {
 }
 
 impl MetalToolchain {
-    pub async fn new(
+    pub fn new(
         modules_cache_path: PathBuf,
         include_dir: PathBuf,
     ) -> anyhow::Result<Self> {
@@ -143,7 +142,6 @@ impl MetalToolchain {
                     .args(["-sdk", sdk.to_str()])
                     .args(args)
                     .output()
-                    .await
                     .with_context(|| format!("cannot execute xcrun {}", args.join(" ")))?;
                 if !output.status.success() {
                     bail!("xcrun {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr));
@@ -188,7 +186,7 @@ impl MetalToolchain {
         cmd.arg("-I").arg(&self.include_dir);
     }
 
-    pub async fn analyze(
+    pub fn analyze(
         &self,
         path: impl AsRef<Path>,
     ) -> anyhow::Result<(impl Iterator<Item = MetalKernelInfo>, impl Iterator<Item = Box<str>>)> {
@@ -213,7 +211,7 @@ impl MetalToolchain {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let analyze_output = cmd.output().await.context("cannot execute metal analyzer")?;
+        let analyze_output = cmd.output().context("cannot execute metal analyzer")?;
 
         if !analyze_output.status.success() {
             bail!("metal analyzer failed: {}", String::from_utf8_lossy(&analyze_output.stderr));
@@ -221,26 +219,23 @@ impl MetalToolchain {
 
         let source_contents = fs::read_to_string(path).context("cannot read source file")?;
 
-        let kernel_infos = tokio::task::spawn_blocking(move || {
-            let mut deserializer = serde_json::Deserializer::from_slice(&analyze_output.stdout);
-            deserializer.disable_recursion_limit();
-            let ast_root = MetalAstNode::deserialize(&mut deserializer).context("cannot deserialize ast dump")?;
+        let mut deserializer = serde_json::Deserializer::from_slice(&analyze_output.stdout);
+        deserializer.disable_recursion_limit();
+        let ast_root = MetalAstNode::deserialize(&mut deserializer).context("cannot deserialize ast dump")?;
 
-            if !matches!(&ast_root.kind, MetalAstKind::TranslationUnitDecl) {
-                bail!(
-                    "unexpected kind of ast root: MetalAstKind::TranslationUnitDecl expected, but {:?} found",
-                    ast_root.kind
-                );
-            }
+        if !matches!(&ast_root.kind, MetalAstKind::TranslationUnitDecl) {
+            bail!(
+                "unexpected kind of ast root: MetalAstKind::TranslationUnitDecl expected, but {:?} found",
+                ast_root.kind
+            );
+        }
 
-            ast_root
-                .inner
-                .into_iter()
-                .filter_map(|node| MetalKernelInfo::from_ast_node_and_source(node, &source_contents).transpose())
-                .collect::<anyhow::Result<Vec<_>>>()
-                .context("cannot parse kernel infos from AST")
-        })
-        .await??;
+        let kernel_infos = ast_root
+            .inner
+            .into_iter()
+            .filter_map(|node| MetalKernelInfo::from_ast_node_and_source(node, &source_contents).transpose())
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context("cannot parse kernel infos from AST")?;
 
         let depfile_contents = fs::read_to_string(depfile_path.path()).context("cannot read depfile")?;
 
@@ -255,10 +250,10 @@ impl MetalToolchain {
         Ok((kernel_infos.into_iter(), dependencies))
     }
 
-    pub async fn compile(
+    pub fn compile(
         &self,
         source: impl AsRef<Path>,
-        footer: impl AsRef<str>,
+        footer_path: impl AsRef<Path>,
         output: impl AsRef<Path>,
     ) -> anyhow::Result<Option<Box<str>>> {
         let mut cmd = self.xcrun();
@@ -272,23 +267,12 @@ impl MetalToolchain {
 
         cmd.arg("-include")
             .arg(source.as_ref())
-            .arg("-")
+            .arg(footer_path.as_ref())
             .arg("-o")
             .arg(output.as_ref())
-            .stdin(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut compile_child = cmd.spawn().context("cannot execute metal compiler")?;
-
-        compile_child
-            .stdin
-            .as_mut()
-            .context("metal compiler stdin missing")?
-            .write_all(footer.as_ref().as_bytes())
-            .await
-            .context("cannot write to metal compiler stdin")?;
-
-        let compile_output = compile_child.wait_with_output().await.context("cannot wait on metal compiler")?;
+        let compile_output = cmd.output().context("cannot execute metal compiler")?;
 
         let stderr = String::from_utf8_lossy(&compile_output.stderr).into_owned().into_boxed_str();
 

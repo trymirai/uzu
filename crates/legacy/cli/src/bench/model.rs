@@ -1,6 +1,12 @@
+use anyhow::{Result, anyhow, ensure};
 use rocket::serde::{Deserialize, Serialize};
-use uzu::types::session::chat::{ChatMessage, ChatReplyEnergy, ChatRole};
+use uzu::types::session::chat::{ChatMessage, ChatReplyEnergy};
 use uzu_engine::data_type::DataType;
+
+use crate::server::{
+    chat_completions::{OaiMessage, to_chat_messages},
+    chat_tool_calls::{OaiTool, backfill_tool_result_names, choose_tools, insert_tools_message},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchTask {
@@ -10,30 +16,46 @@ pub struct BenchTask {
     pub tokens_limit: u64,
     pub messages: Vec<BenchMessage>,
     pub greedy: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+}
+
+impl BenchTask {
+    pub fn to_chat_messages(&self) -> Result<Vec<ChatMessage>> {
+        let messages: Vec<OaiMessage> = serde_json::from_value(serde_json::to_value(&self.messages)?)
+            .map_err(|_| anyhow!("Invalid benchmark messages"))?;
+        let tools: Vec<OaiTool> =
+            serde_json::from_value(serde_json::to_value(self.tools.as_deref().unwrap_or_default())?)
+                .map_err(|_| anyhow!("Invalid benchmark tools"))?;
+        // Reject arguments that the server converter would repair or wrap;
+        // replay must preserve the recorded calls.
+        for call in messages.iter().flat_map(|message| message.tool_calls.iter().flatten()) {
+            ensure!(
+                serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                    .is_ok_and(|arguments| arguments.is_object()),
+                "Invalid benchmark tool arguments: expected a JSON object"
+            );
+        }
+        let mut messages = to_chat_messages(&messages);
+        backfill_tool_result_names(&mut messages);
+        let tools = choose_tools(Some(&tools), self.tool_choice.as_ref())
+            .map_err(|_| anyhow!("Invalid benchmark tool_choice"))?;
+        insert_tools_message(&mut messages, &tools);
+        Ok(messages)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BenchMessage {
     pub role: BenchMessageRole,
-    pub content: String,
+    pub content: Option<String>,
     pub reasoning_content: Option<String>,
-}
-
-impl BenchMessage {
-    pub fn to_chat_message(&self) -> ChatMessage {
-        let role = match self.role {
-            BenchMessageRole::Assistant => ChatRole::Assistant {},
-            BenchMessageRole::System => ChatRole::System {},
-            BenchMessageRole::User => ChatRole::User {},
-        };
-
-        let mut message = ChatMessage::for_role(role).with_text(self.content.clone());
-        if let Some(reasoning) = &self.reasoning_content {
-            message = message.with_reasoning(reasoning.clone())
-        };
-
-        message
-    }
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -42,6 +64,7 @@ pub enum BenchMessageRole {
     System,
     User,
     Assistant,
+    Tool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,3 +92,7 @@ pub struct BenchResult {
     pub joules_per_token: Option<f64>,
     pub text: String,
 }
+
+#[cfg(test)]
+#[path = "../../unit/bench/model_test.rs"]
+mod tests;

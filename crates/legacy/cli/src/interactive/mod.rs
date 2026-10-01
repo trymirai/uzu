@@ -16,20 +16,24 @@ mod components;
 mod flows;
 mod helpers;
 mod list;
-mod model;
+mod non_interactive;
 mod sampling;
 mod sessions;
 mod util;
+
+pub use non_interactive::run_non_interactive;
 
 const APP_IDENTIFIER: &str = "com.trymirai.cli";
 
 pub async fn run_interactive(
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
+    seed: Option<i64>,
+    no_tools: bool,
 ) -> anyhow::Result<()> {
     let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
     let application = CliApplication::create(engine_config).await?;
-    application.run_with_model(model, reasoning_effort).await?;
+    application.run_with_model(model, reasoning_effort, seed, no_tools).await?;
     Ok(())
 }
 

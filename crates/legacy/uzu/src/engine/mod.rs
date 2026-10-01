@@ -4,8 +4,9 @@ pub mod config;
 mod downloader;
 mod downloader_stream;
 mod error;
+mod shorthand;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
@@ -28,6 +29,7 @@ use shoji::{
         session::chat::ChatConfig,
     },
 };
+use sysinfo::System;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
@@ -38,11 +40,12 @@ use crate::{
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
-        mirai::{Backend as MiraiBackend, Registry as MiraiRegistry, TELEMETRY_URL},
+        mirai::{Backend as MiraiBackend, HUGGING_FACE_URL, Registry as MiraiRegistry, TELEMETRY_URL},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
+        unique_model,
     },
     settings::Settings,
-    storage::{Config as StorageConfig, DownloadPhase, DownloadState, Storage},
+    storage::{BearerToken, Config as StorageConfig, DownloadPhase, DownloadState, Storage},
 };
 
 #[bindings::export(Class)]
@@ -89,8 +92,15 @@ impl Engine {
         });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
-        let storage_config =
-            StorageConfig::new(device.clone(), None, "mirai".to_string(), config.download_manager_type);
+        let huggingface_api_key = config.huggingface_api_key.map(BearerToken::from);
+        let storage_config = StorageConfig::new(
+            device.clone(),
+            None,
+            "mirai".to_string(),
+            config.download_manager_type,
+            HUGGING_FACE_URL.to_string(),
+            huggingface_api_key.clone(),
+        );
         let storage_cache_path = Storage::cache_path(&storage_config);
         logs::start(storage_cache_path.clone(), &format!("{}.log", storage_config.name), false);
         let storage = Arc::new(Storage::new(runtime_handle, storage_config).await?);
@@ -113,6 +123,7 @@ impl Engine {
             let mirai_registry = Box::new(
                 MiraiRegistry::builder()
                     .maybe_api_key(config.mirai_api_key)
+                    .maybe_huggingface_api_key(huggingface_api_key)
                     .device(device.clone())
                     .backends(vec![MiraiBackend {
                         identifier: uzu_backend_identifier.clone(),
@@ -125,16 +136,8 @@ impl Engine {
             engine.add_backend(Arc::new(uzu_backend) as Arc<dyn Backend>).await;
             engine.add_registry(mirai_registry).await?;
 
-            if let Some(lalamo_path) = config.lalamo_path {
-                let lalamo_registry = LocalRegistry::new(LocalRegistryConfig::lalamo(
-                    uzu_backend_identifier.clone(),
-                    uzu_backend_version.clone(),
-                    lalamo_path,
-                ))?;
-                engine.add_registry(Box::new(lalamo_registry)).await?;
-            }
             if let Some(local_path) = config.local_path {
-                let local_registry = LocalRegistry::new(LocalRegistryConfig::local(
+                let local_registry = LocalRegistry::new(LocalRegistryConfig::new(
                     uzu_backend_identifier.clone(),
                     uzu_backend_version.clone(),
                     local_path,
@@ -260,8 +263,8 @@ impl Engine {
     }
 
     #[bindings::export(Method(Getter))]
-    pub async fn models_local(&self) -> Result<Vec<Model>, EngineError> {
-        Ok(self.models().await?.into_iter().filter(|model| model.is_local()).collect())
+    pub async fn models_on_device(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_on_device()).collect())
     }
 
     #[bindings::export(Method(Getter))]
@@ -374,13 +377,24 @@ impl Engine {
         &self,
         identifier: String,
     ) -> Result<Option<Model>, EngineError> {
-        if let Some(model) = self.model_by_identifier(identifier.clone()).await? {
+        let registered = self.registry.lock().await.model(&identifier).await?;
+        if registered.is_some() && Path::new(&identifier).is_dir() {
+            return Err(RegistryError::UnableToGetModels {
+                message: format!(
+                    "Ambiguous model reference `{identifier}`: matches both a registered model and a directory"
+                ),
+            }
+            .into());
+        }
+        let by_path = self.model_by_path(identifier.clone()).await?;
+        if let Some(model) = unique_model(&identifier, registered.into_iter().chain(by_path))? {
             return Ok(Some(model));
         }
-        if let Some(model) = self.model_by_repo_id(identifier.clone()).await? {
-            return Ok(Some(model));
-        }
-        self.model_by_path(identifier).await
+
+        let models = self.models().await?;
+        let mut system = System::new();
+        system.refresh_memory();
+        Ok(shorthand::resolve_model_shorthand(&models, &identifier, system.total_memory())?.cloned())
     }
 
     #[bindings::export(Method)]
@@ -405,10 +419,20 @@ impl Engine {
         path: String,
     ) -> Result<Option<Model>, EngineError> {
         let models = self.models().await?;
+        let mut matches = Vec::new();
         for model in models {
             if self.model_path(&model).await.is_some_and(|model_path| model_path == path) {
-                return Ok(Some(model));
+                matches.push(model);
             }
+        }
+        if let Some(model) = unique_model(&path, matches.into_iter())? {
+            return Ok(Some(model));
+        }
+        if Path::new(&path).is_dir() {
+            let backend = UzuLlmBackend::new();
+            return LocalRegistry::model_at_path(Path::new(&path), backend.identifier(), backend.version())
+                .map(Some)
+                .map_err(EngineError::from);
         }
         Ok(None)
     }
@@ -421,11 +445,11 @@ impl Engine {
         &self,
         model: &Model,
     ) -> Option<String> {
-        if !model.is_local() {
+        if !model.is_on_device() {
             return None;
         }
-        if let Some(local_external_path) = model.local_external_path() {
-            return Some(local_external_path);
+        if let Some(filesystem_path) = model.filesystem_path() {
+            return Some(filesystem_path);
         }
         let state = self.storage.state(&model.identifier).await.ok()?;
         if !matches!(state.phase, DownloadPhase::Downloaded {}) {

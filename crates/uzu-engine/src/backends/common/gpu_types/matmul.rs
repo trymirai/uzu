@@ -1,3 +1,5 @@
+pub const QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT: u32 = 4;
+
 #[repr(C)]
 #[allow(non_snake_case)]
 #[derive(Debug, Default, Copy, Clone)]
@@ -7,6 +9,10 @@ pub struct GemmParams {
     pub K: u32,
     pub leading_dimension_a: u32,
     pub leading_dimension_b: u32,
+    pub scale_output_stride: u32,
+    pub scale_group_stride: u32,
+    pub zero_point_output_stride: u32,
+    pub zero_point_group_stride: u32,
     pub leading_dimension_d: u32,
     pub threadgroups_per_column: u32,
     pub threadgroups_per_row: u32,

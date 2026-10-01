@@ -69,10 +69,9 @@ private:
       bool signed_codes
   ) {
     constexpr uint CODES_PER_WORD = WORD_BITS / BITS;
-    constexpr uint W4_SIGN_BITS = 0x88888888u;
     constexpr uint W8_SIGN_BITS = 0x80808080u;
     if constexpr (BITS == 4) {
-      word0 ^= signed_codes ? W4_SIGN_BITS : 0u;
+      word0 ^= signed_codes ? W4_SIGN_MASK : 0u;
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < VALUES; i++) {
         values[i] = as_type<float>(extract_bits(word0, BITS * i, BITS) | MANTISSA_BASE_BITS) - origin;

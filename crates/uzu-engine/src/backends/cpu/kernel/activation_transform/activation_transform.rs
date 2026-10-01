@@ -5,7 +5,10 @@ use uzu_engine_macros::kernel;
 use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8};
 use crate::{
     array::ArrayElement,
-    backends::common::gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::{
+        gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+        kernel::matmul::Int8CodeLayout,
+    },
 };
 
 pub fn quantize_transformed_row(
@@ -15,6 +18,7 @@ pub fn quantize_transformed_row(
     values: &mut [i8],
     scales: &mut [f32],
     mut group_sums: Option<&mut [i32]>,
+    code_layout: Int8CodeLayout,
 ) {
     assert_eq!(transformed.len(), values.len());
     assert_eq!(scales.len(), transformed.len() / activation_scale_group_size);
@@ -32,7 +36,8 @@ pub fn quantize_transformed_row(
         for (index, &value) in source.iter().enumerate() {
             let code = quantize_symmetric_i8(value, scale);
             let absolute_index = scale_group_index * activation_scale_group_size + index;
-            values[absolute_index] = code;
+            let output_index = code_layout.index(absolute_index);
+            values[output_index] = code;
             if let Some(group_sums) = group_sums.as_deref_mut() {
                 group_sums[absolute_index / sum_group_size.expect("correction group")] += code as i32;
             }
@@ -42,23 +47,29 @@ pub fn quantize_transformed_row(
 
 #[kernel(ActivationTransform)]
 #[variants(T, f32, bf16)]
-pub fn activation_transform<T: ArrayElement + Float>(
+#[variants(BiasT, f32, bf16)]
+pub fn activation_transform<T: ArrayElement + Float, BiasT: ArrayElement + Float>(
     #[optional(!in_place)] input: Option<*const T>,
     #[optional(ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht)] fp_out: Option<
         *mut T,
     >,
-    #[optional(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)]
+    #[optional(has_bias)] bias: Option<*const BiasT>,
+    #[optional(ops == ActivationTransformOp::Quantize
+        || ops == ActivationTransformOp::QuantizeWithGroupSums)]
     q_out: Option<*mut i8>,
-    #[optional(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)]
+    #[optional(ops == ActivationTransformOp::Quantize
+        || ops == ActivationTransformOp::QuantizeWithGroupSums)]
     scales_out: Option<*mut f32>,
     #[optional(ops == ActivationTransformOp::QuantizeWithGroupSums)] group_sums_out: Option<*mut i32>,
     rht_factors: *const i32,
     batch_size: u32,
     element_count: u32,
     #[specialize] ops: ActivationTransformOp,
+    #[specialize] grouped_by_weight_nibble: bool,
     #[specialize] in_place: bool,
     #[specialize] activation_scale_group_size: u32,
     #[specialize] sum_group_size: u32,
+    #[specialize] has_bias: bool,
 ) {
     let input = match in_place {
         true => fp_out.expect("in-place transform requires fp_out"),
@@ -68,6 +79,7 @@ pub fn activation_transform<T: ArrayElement + Float>(
     let columns = element_count as usize;
     let input_rht = ops != ActivationTransformOp::OutputRht;
     let quantize = matches!(ops, ActivationTransformOp::Quantize | ActivationTransformOp::QuantizeWithGroupSums);
+    assert_eq!(bias.is_some(), has_bias);
 
     let mut transformed = vec![0.0f32; columns];
     for row in 0..rows {
@@ -123,12 +135,20 @@ pub fn activation_transform<T: ArrayElement + Float>(
                 values,
                 scales,
                 sums,
+                Int8CodeLayout::from_grouped_by_nibble(grouped_by_weight_nibble),
             );
         } else {
             let fp_out = fp_out.expect("FP transform requires fp_out");
             for index in 0..columns {
+                let mut value = transformed[index];
+                if let Some(bias) = bias {
+                    let rounded: T = NumCast::from(value).unwrap();
+                    value = NumCast::from(rounded).unwrap();
+                    let bias_value: f32 = NumCast::from(unsafe { *bias.add(index) }).unwrap();
+                    value += bias_value;
+                }
                 unsafe {
-                    *fp_out.add(row_offset + index) = <T as NumCast>::from(transformed[index]).unwrap();
+                    *fp_out.add(row_offset + index) = NumCast::from(value).unwrap();
                 }
             }
         }

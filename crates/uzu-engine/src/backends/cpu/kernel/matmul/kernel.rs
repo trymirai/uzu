@@ -2,14 +2,16 @@ use super::reference::{WeightData, read_f32, write_f32};
 use crate::{
     backends::{
         common::{
-            Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, BufferArg, Encoder, Kernels,
+            Backend, BufferCpuAccessible, BufferMut, BufferRef, Kernels,
             gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel},
+                matmul::{Int8CodeLayout, MatmulA, MatmulArguments, MatmulError, MatmulKernel},
             },
         },
-        cpu::{Cpu, context::CpuContext, error::CpuError},
+        cpu::{
+            Cpu, buffer::CpuBufferExt, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError,
+        },
     },
     data_type::DataType,
     utils::pointers::{SendPtr, SendPtrMut},
@@ -37,7 +39,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
             }
         }
-        let output_rht = ActivationTransform::output_rht(context, output_data_type, true)?;
+        let output_rht = ActivationTransform::output_rht(context, output_data_type, None, true)?;
         let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
             context,
             output_data_type,
@@ -53,14 +55,21 @@ impl MatmulKernel for MatmulCpuKernel {
         })
     }
 
-    fn encode<'a, 'b, 'd, TB: BufferArg<'b, Cpu>>(
+    fn encode(
         &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Cpu, TB>,
-        encoder: &mut Encoder<Cpu>,
+        arguments: MatmulArguments<
+            '_,
+            Cpu,
+            impl BufferRef<Backend = Cpu>,
+            impl BufferRef<Backend = Cpu>,
+            impl BufferMut<Backend = Cpu>,
+            impl BufferRef<Backend = Cpu>,
+        >,
+        command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<(), CpuError> {
         let output_scale = arguments.d_transform.ab_scale;
         let accumulate = arguments.d_transform.accumulate;
-        let bias_alloc = arguments.d_transform.bias;
+        let bias_buffer = arguments.d_transform.bias;
         let post_rht = arguments.d_transform.rht_factors;
         let soft_cap = arguments.d_transform.soft_cap;
 
@@ -69,7 +78,7 @@ impl MatmulKernel for MatmulCpuKernel {
             b,
             b_leading_dimension,
             b_transpose,
-            d,
+            mut d,
             m,
             n,
             k,
@@ -91,6 +100,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 values: SendPtr<u8>,
                 scales: SendPtr<u8>,
                 group_size: usize,
+                code_layout: Int8CodeLayout,
             },
         }
         let a_data = match a {
@@ -98,32 +108,24 @@ impl MatmulKernel for MatmulCpuKernel {
                 values,
                 offset,
             } => {
-                let range = values.as_buffer_range_ref();
-                let byte_offset = range.range().start + offset * input_data_type.size_in_bytes();
-                AData::FullPrecision(SendPtr(unsafe { &*range.buffer().get() }.as_ptr().wrapping_byte_add(byte_offset)))
+                let (values, range) = values.parts();
+                let byte_offset = range.start + offset * input_data_type.size_in_bytes();
+                AData::FullPrecision(SendPtr(
+                    values.cpu_address().as_ptr().cast::<u8>().cast_const().wrapping_byte_add(byte_offset),
+                ))
             },
             MatmulA::Int8Symmetric {
                 values,
                 scales,
                 group_sums: _,
-                group_size: a_group_size,
+                scale_group_size: a_group_size,
+                code_layout,
             } => {
                 let compatible = matches!(a_group_size, 32 | 64 | 128)
                     && k.is_multiple_of(a_group_size)
                     && matches!(b.group_size(), Some(32 | 64 | 128))
-                    && matches!(
-                        b,
-                        MatmulB::ScaleSymmetricDequant {
-                            mode: QuantizationMode::U4 | QuantizationMode::U8,
-                            ..
-                        } | MatmulB::ScaleBiasDequant {
-                            mode: QuantizationMode::U4 | QuantizationMode::U8,
-                            ..
-                        } | MatmulB::ScaleZeroPointDequant {
-                            mode: QuantizationMode::U4 | QuantizationMode::U8,
-                            ..
-                        }
-                    );
+                    && b.quantized()
+                        .is_some_and(|quantized| matches!(quantized.mode, QuantizationMode::U4 | QuantizationMode::U8));
                 if !compatible {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
@@ -131,61 +133,32 @@ impl MatmulKernel for MatmulCpuKernel {
                     }
                     .into());
                 }
-                let values_range = values.as_buffer_range_ref();
-                let scales_range = scales.as_buffer_range_ref();
+                let (values, values_range) = values.parts();
+                let (scales, scales_range) = scales.parts();
                 AData::Int8 {
                     values: SendPtr(
-                        unsafe { &*values_range.buffer().get() }.as_ptr().wrapping_byte_add(values_range.range().start),
+                        values.cpu_address().as_ptr().cast::<u8>().cast_const().wrapping_byte_add(values_range.start),
                     ),
                     scales: SendPtr(
-                        unsafe { &*scales_range.buffer().get() }.as_ptr().wrapping_byte_add(scales_range.range().start),
+                        scales.cpu_address().as_ptr().cast::<u8>().cast_const().wrapping_byte_add(scales_range.start),
                     ),
                     group_size: a_group_size as usize,
+                    code_layout,
                 }
             },
         };
-        let bias_ptr = bias_alloc.map(|bias| {
-            let r = bias.as_buffer_range_ref();
-            SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start))
-        });
+        let bias_ptr = bias_buffer.map(|bias| SendPtr(bias.cpu_ptr().as_ptr().cast::<u8>().cast_const()));
         let gather_ptr = gather_indices.map(|indices| {
-            let r = indices.as_buffer_range_ref();
-            SendPtr(unsafe { &*r.buffer().get() }.as_ptr().wrapping_byte_add(r.range().start) as *const u32)
+            let (indices, range) = indices.parts();
+            SendPtr(indices.cpu_address().as_ptr().cast::<u32>().cast_const().wrapping_byte_add(range.start))
         });
-        let d_buffer_range = d.as_buffer_range_mut();
-        let d_ptr = SendPtrMut(unsafe {
-            (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_buffer_range.range().start) as *mut u8
-        });
+        let (d_buffer, d_range) = d.reborrow().parts();
+        let d_ptr = SendPtrMut(d_buffer.cpu_address().as_ptr().cast::<u8>().wrapping_byte_add(d_range.start));
 
-        let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u);
+        let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u)?;
 
         let bias_after_rht = post_rht.is_some();
-        let command_buffer = encoder.as_command_buffer_mut();
         command_buffer.push_command(move || {
-            let quant_layout = match &weight_data {
-                WeightData::Quantized {
-                    bits,
-                    group_size,
-                    ..
-                } => {
-                    let num_groups_k = k_u.div_ceil(*group_size);
-                    let zero_point_stride = if *bits == 4 {
-                        num_groups_k.div_ceil(2)
-                    } else {
-                        num_groups_k
-                    };
-                    let pack_factor = if *bits == 4 {
-                        8
-                    } else {
-                        4
-                    };
-                    Some((num_groups_k, zero_point_stride, pack_factor))
-                },
-                WeightData::FullPrecision {
-                    ..
-                } => None,
-            };
-
             unsafe {
                 for row in 0..m_u {
                     for col in 0..n_u {
@@ -202,10 +175,12 @@ impl MatmulKernel for MatmulCpuKernel {
                                     values,
                                     scales,
                                     group_size,
+                                    code_layout,
                                 } => {
                                     let groups = k_u.div_ceil(group_size);
                                     let group = inner / group_size;
-                                    let q = *(values.as_ptr() as *const i8).add(row * k_u + inner) as f32;
+                                    let code_index = code_layout.index(inner);
+                                    let q = *(values.as_ptr() as *const i8).add(row * k_u + code_index) as f32;
                                     let scale = *(scales.as_ptr() as *const f32).add(row * groups + group);
                                     q * scale
                                 },
@@ -228,14 +203,16 @@ impl MatmulKernel for MatmulCpuKernel {
                                     scales,
                                     zero_points,
                                     biases,
+                                    scale_strides,
                                     bits,
                                     group_size,
                                     signed_codes,
                                 } => {
-                                    let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
+                                    let pack_factor = 32 / *bits;
                                     let weight_linear_index = b_col * k_u + inner;
                                     let word_index = weight_linear_index / pack_factor;
-                                    let bit_offset = (weight_linear_index % pack_factor) * *bits;
+                                    let code_index_in_word = weight_linear_index % pack_factor;
+                                    let bit_offset = code_index_in_word * *bits;
                                     let weights_words = weights.as_ptr() as *const u32;
                                     let word = weights_words.add(word_index).read_unaligned();
                                     let code_mask = (1u32 << bits) - 1;
@@ -245,29 +222,29 @@ impl MatmulKernel for MatmulCpuKernel {
                                     }
                                     let quantized_value = f32::from(weight_code);
                                     let group_index = inner / group_size;
-                                    let scale = read_f32(
-                                        scales.as_ptr(),
-                                        weights_data_type,
-                                        b_col * num_groups_k + group_index,
-                                    );
+                                    let metadata_index = b_col * scale_strides.output_stride as usize
+                                        + group_index * scale_strides.group_stride as usize;
+                                    let scale = read_f32(scales.as_ptr(), weights_data_type, metadata_index);
                                     let midpoint = (1u32 << (bits - 1)) as f32;
-                                    let zero_point = zero_points.map(|zp| {
+                                    let zero_point = zero_points.as_ref().map(|(zp, strides)| {
+                                        let zero_point_index = b_col * strides.output_stride as usize
+                                            + group_index * strides.group_stride as usize;
                                         if *bits == 4 {
-                                            let byte_index = b_col * zero_point_stride + (group_index >> 1);
+                                            let byte_index = zero_point_index / 2;
                                             let byte_value = *zp.as_ptr().add(byte_index);
-                                            if (group_index & 1) == 0 {
+                                            if zero_point_index.is_multiple_of(2) {
                                                 (byte_value & 0x0F) as f32
                                             } else {
                                                 ((byte_value >> 4) & 0x0F) as f32
                                             }
                                         } else {
-                                            *zp.as_ptr().add(b_col * zero_point_stride + group_index) as f32
+                                            *zp.as_ptr().add(zero_point_index) as f32
                                         }
                                     });
                                     let bias_term = if let Some(zp) = zero_point {
                                         -scale * zp
                                     } else if let Some(b) = biases {
-                                        read_f32(b.as_ptr(), weights_data_type, b_col * num_groups_k + group_index)
+                                        read_f32(b.as_ptr(), weights_data_type, metadata_index)
                                     } else {
                                         -scale * midpoint
                                     };
@@ -295,10 +272,17 @@ impl MatmulKernel for MatmulCpuKernel {
         });
 
         if let Some(factors) = post_rht {
-            self.output_rht.encode_fp_in_place(&mut *d, factors, m, n, encoder);
-            if let Some(bias) = bias_alloc {
+            self.output_rht.encode_fp_in_place(d.reborrow(), factors, None, m, n, command_buffer);
+            if let Some(bias) = bias_buffer {
                 let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
-                self.bias_add.encode(None::<&Allocation<Cpu>>, bias, &mut *d, n, output_length, encoder);
+                self.bias_add.encode(
+                    None::<&<Cpu as Backend>::ScratchBuffer>,
+                    bias,
+                    d,
+                    n,
+                    output_length,
+                    command_buffer,
+                );
             }
         }
 

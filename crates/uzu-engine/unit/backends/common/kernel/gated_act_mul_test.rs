@@ -8,9 +8,9 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::ActivationType,
-            kernel::{GatedActMul, GatedActMulSettings},
+            kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::Int8CodeLayout},
         },
         cpu::Cpu,
     },
@@ -18,9 +18,7 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{
-            alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_backend, for_each_non_cpu_backend,
-        },
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend, for_each_non_cpu_backend},
     },
 };
 
@@ -33,7 +31,7 @@ struct InterleavedInput<T: ArrayElement + Float> {
 }
 
 fn interleaved_input<T: ArrayElement + Float>(act_type: ActivationType) -> InterleavedInput<T> {
-    let gated_dim = 64u32;
+    let gated_dim = 128u32;
     let batch_dim = 4u32;
     let fused_length = (batch_dim * 2 * gated_dim) as usize;
     let mut fused_up: Vec<T> = vec![T::zero(); fused_length];
@@ -60,14 +58,14 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
 
     let fused_length = (input.batch_dim * 2 * input.gated_dim) as usize;
     let output_length = (input.batch_dim * input.gated_dim) as usize;
-    let fused_up = alloc_allocation_with_data::<B, T>(&context, &input.fused_up[..fused_length]);
-    let hadamard_factors = alloc_allocation_with_data::<B, i32>(&context, &input.hadamard_factors);
-    let mut output = alloc_allocation::<B, T>(&context, output_length);
+    let fused_up = create_buffer_with_data::<B, T>(&context, &input.fused_up[..fused_length]);
+    let hadamard_factors = create_buffer_with_data::<B, i32>(&context, &input.hadamard_factors);
+    let mut output = create_buffer::<B, T>(&context, output_length);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
     kernel.encode_fp(
         &fused_up,
-        None::<&Allocation<B>>,
+        None::<&<B as Backend>::GlobalBuffer>,
         &mut output,
         use_hadamard.then_some(&hadamard_factors),
         input.gated_dim,
@@ -75,11 +73,11 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
         0,
         0,
         input.act_type,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec::<B, T>(&output)
+    buffer_to_vec::<B, T>(&output)
 }
 
 fn interleaved_test<T: ArrayElement + Float + Debug + Display>(act_type: ActivationType) {
@@ -116,6 +114,45 @@ fn test_gated_act_mul_interleaved_silu_f32() {
 #[uzu_test]
 fn test_gated_act_mul_interleaved_silu_bf16() {
     interleaved_test::<bf16>(ActivationType::SILU);
+}
+
+fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> Vec<i8> {
+    let context = B::Context::new().expect("create context");
+    let act_operand = create_buffer_with_data::<B, bf16>(&context, &input.fused_up);
+    let factors = create_buffer_with_data::<B, i32>(&context, &input.hadamard_factors);
+    let mut values = create_buffer::<B, i8>(&context, (input.batch_dim * input.gated_dim) as usize);
+    let mut scales = create_buffer::<B, f32>(&context, (input.batch_dim * input.gated_dim / 128) as usize);
+    let kernel = GatedActMul::<B>::quantized(
+        &context,
+        DataType::BF16,
+        ActivationQuantization::new(128, 128, false, Int8CodeLayout::GroupedByNibble)
+            .expect("supported activation quantization"),
+        GatedActMulSettings::default(),
+    )
+    .expect("create quantized GatedActMul");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
+    kernel.encode_quantized(
+        &act_operand,
+        &mut values,
+        &mut scales,
+        None::<&mut B::GlobalBuffer>,
+        &factors,
+        input.gated_dim,
+        input.batch_dim,
+        input.act_type,
+        &mut command_buffer,
+    );
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec(&values)
+}
+
+#[uzu_test]
+fn test_gated_act_mul_nibble_grouped_quantization_matches_cpu() {
+    let input = interleaved_input::<bf16>(ActivationType::SILU);
+    let expected_values = run_nibble_grouped_quantized::<Cpu>(&input);
+    for_each_non_cpu_backend!(|B| {
+        assert_eq!(run_nibble_grouped_quantized::<B>(&input), expected_values, "gated activation bytes differ");
+    });
 }
 
 #[uzu_test]
@@ -172,26 +209,26 @@ fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -
         GatedActMul::<B>::full_precision(&context, T::data_type(), false, false, GatedActMulSettings::default())
             .expect("create GatedActMul");
 
-    let gate_out = alloc_allocation_with_data::<B, T>(&context, &input.gate_out);
-    let per_layer_input = alloc_allocation_with_data::<B, T>(&context, &input.per_layer_input);
-    let mut output = alloc_allocation::<B, T>(&context, (input.batch_dim * input.gated_dim) as usize);
+    let gate_out = create_buffer_with_data::<B, T>(&context, &input.gate_out);
+    let per_layer_input = create_buffer_with_data::<B, T>(&context, &input.per_layer_input);
+    let mut output = create_buffer::<B, T>(&context, (input.batch_dim * input.gated_dim) as usize);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
     kernel.encode_fp(
         &gate_out,
         Some(&per_layer_input),
         &mut output,
-        None,
+        None::<&B::GlobalBuffer>,
         input.gated_dim,
         input.batch_dim,
         input.value_offset,
         input.value_row_stride,
         input.act_type,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec::<B, T>(&output)
+    buffer_to_vec::<B, T>(&output)
 }
 
 fn separate_test<T: ArrayElement + Float + Debug>() {
@@ -249,24 +286,24 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
         let context = <B as Backend>::Context::new().expect("create context");
         let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), true, false, settings)
             .expect("create transformed GatedActMul");
-        let fused_up = alloc_allocation_with_data::<B, T>(&context, &fused_up);
-        let mut output = alloc_allocation::<B, T>(&context, GATED_DIM as usize);
-        let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
+        let fused_up = create_buffer_with_data::<B, T>(&context, &fused_up);
+        let mut output = create_buffer::<B, T>(&context, GATED_DIM as usize);
+        let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
         kernel.encode_fp(
             &fused_up,
-            None::<&Allocation<B>>,
+            None::<&<B as Backend>::GlobalBuffer>,
             &mut output,
-            None::<&Allocation<B>>,
+            None::<&<B as Backend>::GlobalBuffer>,
             GATED_DIM,
             1,
             0,
             0,
             ActivationType::SILU,
-            &mut encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-        let output = allocation_to_vec::<B, T>(&output);
+        let output = buffer_to_vec::<B, T>(&output);
         assert_eq_float(
             &expected,
             &output,

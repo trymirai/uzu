@@ -15,13 +15,10 @@ using namespace uzu::gemm;
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
-#define GEMM_INTEGER_TGB_ELEMENTS                                                                                      \
-  ((B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant)                                                            \
-       ? (2 * gemm_tiling_block_n(GEMM_TILING))                                                                        \
-       : (2 * gemm_tiling_block_n(GEMM_TILING) * (1 + 4 / int(sizeof(BT)))))
+// The A8 MXU route reads its scales into registers, so it asks for no
+// threadgroup B memory.
 #define GEMM_TGB_ELEMENTS                                                                                              \
-  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT))))         \
-                               : (A_IS_INT8 ? GEMM_INTEGER_TGB_ELEMENTS : 1))                                          \
+  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)    \
              : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
 template <
@@ -107,7 +104,9 @@ CONSTRAINT(
     (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
 CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (A_GROUP_SIZE == 0))
-CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || A_GROUP_SIZE >= 32)
+// The integer schedule drains one weight group at a time, so an activation
+// group narrower than the weight group has no kernel.
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || A_GROUP_SIZE >= GROUP_SIZE)
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
     const device BT* b,
@@ -132,8 +131,6 @@ KERNEL(Gemm)(
     const GemmDTransform output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
     const bool signed_codes SPECIALIZE,
-    const bool stage_weight_scales SPECIALIZE,
-    const bool hoist_operand_addressing SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
     const uint group_x GROUPS(group_count_x),
@@ -151,7 +148,8 @@ KERNEL(Gemm)(
   (void)thread_y;
   (void)thread_z;
 
-  using LeftOperand = operands::LeftOperandFor<A_PROLOGUE, AT, ushort(A_GROUP_SIZE)>;
+  using LeftOperand = operands::
+      LeftOperandFor<A_PROLOGUE, AT, ushort(A_GROUP_SIZE), A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && BITS == 4>;
   using RightOperand = operands::RightOperandFor<B_PROLOGUE, ushort(BITS), ushort(GROUP_SIZE), BT>;
   static_assert(
       NEEDS_ASYMMETRIC_WEIGHT_CORRECTION == (A_IS_INT8 && RightOperand::NEEDS_CORRECTION),
@@ -159,11 +157,6 @@ KERNEL(Gemm)(
   );
   const auto left_storage = operands::pack_left<LeftOperand, AT>(a, a_int8, a_scales, a_group_sums);
   const auto right_storage = operands::pack_right<RightOperand, BT>(b, scales, biases, zero_points, signed_codes);
-
-  static_assert(
-      !A_IS_INT8 || GEMM_TGB_ELEMENTS >= GEMM_INTEGER_TGB_ELEMENTS,
-      "threadgroup scale-line cache is undersized"
-  );
 
   if constexpr (USE_MXU) {
     using Core = MxuMmaCore<DT, GEMM_TILING, TRANSPOSE_B, LeftOperand, RightOperand>;
@@ -177,8 +170,6 @@ KERNEL(Gemm)(
         output_bias,
         rht_factors,
         b_shared,
-        stage_weight_scales,
-        hoist_operand_addressing,
         thread_context
     );
   } else {

@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Backend, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel, SigmoidGateKernel},
     },
     config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
@@ -38,10 +38,10 @@ pub struct Attention<B: Backend> {
     ring_capacity: Option<u32>,
     max_rope_length: Option<u32>,
     data_type: DataType,
-    qkv: LinearProjection<B>,
+    projection_dim: u32,
+    projection: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
-    gate_projection: Option<Box<dyn Linear<B>>>,
-    sinks: Option<Allocation<B>>,
+    sinks: Option<B::GlobalBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
     gate_kernel: Option<<B::Kernels as Kernels>::SigmoidGateKernel>,
     out_projection: Box<dyn Linear<B>>,
@@ -67,7 +67,7 @@ impl<B: Backend> Attention<B> {
         config: &AttentionConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
-    ) -> Result<(Self, Option<Allocation<B>>), AttentionNewError<B>> {
+    ) -> Result<(Self, Option<B::GlobalBuffer>), AttentionNewError<B>> {
         let is_kv_sharing = config.is_kv_sharing;
 
         let head_dim = config.head_dim;
@@ -81,51 +81,26 @@ impl<B: Backend> Attention<B> {
 
         let q_dim = num_q_heads * head_dim;
 
-        let has_gate = config.gate_projection_config.is_some();
-
-        // TODO: qkv and gate should be fused to be qkvg in lalamo
-        let qkv_projection_tree = parameter_tree.subtree("qkv_projection");
-        let qkv_projection_output_dimension = if let Some(num_kv_heads) = num_kv_heads {
+        let projection_tree = parameter_tree.subtree("qkvg_projection");
+        let qkv_dim = if let Some(num_kv_heads) = num_kv_heads {
             let kv_dim = num_kv_heads * head_dim;
             q_dim + kv_dim + kv_dim
         } else {
             q_dim
         };
-        let (qkv_projection, in_projection_input_hadamard_factors) = if !has_gate {
-            <dyn Linear<B>>::new_with_input_rht(
-                hidden_dim,
-                [qkv_projection_output_dimension],
-                config.has_qkv_biases,
-                context,
-                data_type,
-                &qkv_projection_tree,
-            )?
+        let projection_dim = if config.has_gate {
+            qkv_dim + q_dim
         } else {
-            (
-                <dyn Linear<B>>::new(
-                    hidden_dim,
-                    [qkv_projection_output_dimension],
-                    config.has_qkv_biases,
-                    context,
-                    data_type,
-                    &qkv_projection_tree,
-                )?,
-                None,
-            )
+            qkv_dim
         };
-
-        let gate_projection = has_gate
-            .then(|| {
-                <dyn Linear<B>>::new(
-                    hidden_dim,
-                    [q_dim],
-                    false,
-                    context,
-                    data_type,
-                    &parameter_tree.subtree("gate_projection"),
-                )
-            })
-            .transpose()?;
+        let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
+            hidden_dim,
+            [projection_dim],
+            config.has_qkvg_biases,
+            context,
+            data_type,
+            &projection_tree,
+        )?;
 
         let query_norm_config = config.query_norm_config.clone();
         // TODO: Fix lalamo config, those two must be None if kv sharing.
@@ -142,6 +117,7 @@ impl<B: Backend> Attention<B> {
                     parameter_tree,
                     config.num_heads,
                     num_kv_heads.unwrap_or(0), // TODO: should take option
+                    projection_dim,
                     config.head_dim,
                 )
             })
@@ -157,7 +133,7 @@ impl<B: Backend> Attention<B> {
         .map_err(AttentionNewError::Backend)?;
         let sinks = config
             .has_sinks
-            .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_allocation())
+            .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_buffer())
             .transpose()?;
 
         assert!(sliding_window_size.is_none_or(|size| size > 0), "zero sliding window size");
@@ -180,7 +156,8 @@ impl<B: Backend> Attention<B> {
         )
         .map_err(AttentionNewError::Backend)?;
 
-        let gate_kernel = has_gate
+        let gate_kernel = config
+            .has_gate
             .then(|| <B::Kernels as Kernels>::SigmoidGateKernel::new(context, data_type))
             .transpose()
             .map_err(AttentionNewError::Backend)?;
@@ -202,12 +179,12 @@ impl<B: Backend> Attention<B> {
                 ring_capacity,
                 max_rope_length,
                 data_type,
-                qkv: LinearProjection {
-                    lin: qkv_projection,
+                projection_dim,
+                projection: LinearProjection {
+                    lin: projection,
                     norm: qkv_norm,
                 },
                 prepare,
-                gate_projection,
                 sinks,
                 kernel,
                 gate_kernel,
@@ -237,21 +214,21 @@ impl<B: Backend> Mixer<B> for Attention<B> {
 
     fn encode(
         &self,
-        hidden: Allocation<B>,
+        hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        encoder.push_debug_group("attention");
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        command_buffer.push_debug_group("attention");
 
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        let output = self.attend(hidden, precalculated_rope, batch_dim, state, encoder)?;
+        let output = self.attend(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }

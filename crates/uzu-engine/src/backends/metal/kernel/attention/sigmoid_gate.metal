@@ -6,11 +6,13 @@ VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(SigmoidGate)(
     const device T* gate,
     device T* output,
-    const constant uint& total_elements,
-    const uint tid AXIS(total_elements, 256)
+    const constant uint& gate_dim,
+    const constant uint& batch_dim,
+    const constant uint& gate_row_stride,
+    const uint gate_idx AXIS(gate_dim, 256),
+    const uint batch_idx AXIS(batch_dim, 1)
 ) {
-  if (tid >= total_elements)
-    return;
-  float sigmoid = 1.0f / (1.0f + exp(-float(gate[tid])));
-  output[tid] = T(float(output[tid]) * sigmoid);
+  const uint output_idx = batch_idx * gate_dim + gate_idx;
+  float sigmoid = 1.0f / (1.0f + exp(-float(gate[batch_idx * gate_row_stride + gate_idx])));
+  output[output_idx] = T(float(output[output_idx]) * sigmoid);
 }

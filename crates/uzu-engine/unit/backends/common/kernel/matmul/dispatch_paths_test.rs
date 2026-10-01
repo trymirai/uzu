@@ -120,6 +120,12 @@ fn rht_parity_bf16() {
             let case = Case::new(shape).with_rht(true);
             check_case::<bf16>(&context, &mut kernel, Some(engine), case, 1.0);
         }
+
+        let split_k_case = Case::new(Shape::new(4, 1024, 32)).with_rht(true).with_bias(true);
+        check_case::<bf16>(&context, &mut kernel, Some(engine), split_k_case, 0.1);
+
+        let non_split_case = Case::new(Shape::new(64, 128, 128)).with_rht(true).with_bias(true);
+        check_case::<bf16>(&context, &mut kernel, Some(engine), non_split_case, 0.1);
     }
 }
 
@@ -181,6 +187,10 @@ fn gemv_fp_output_transforms_bf16() {
     for case in cases {
         check_case::<bf16>(&context, &mut kernel, None, case, 1.0);
     }
+
+    // M5 selects the ordinary 8-row, four-slice FP GEMV tile; RHT and bias are deferred.
+    let split_k_rht = Case::new(Shape::new(1, 512, 1024)).with_rht(true).with_bias(true);
+    check_case::<bf16>(&context, &mut kernel, None, split_k_rht, 1.0);
 }
 
 #[uzu_test]

@@ -8,7 +8,6 @@ use crate::{
 };
 
 pub const KEY_MIRAI_API_KEY: &str = "MIRAI_API_KEY";
-pub const KEY_LALAMO_PATH: &str = "LALAMO_PATH";
 pub const KEY_LOCAL_PATH: &str = "LOCAL_PATH";
 pub const KEY_HF_TOKEN: &str = "HF_TOKEN";
 pub const KEY_OPENAI_API_KEY: &str = "OPENAI_API_KEY";
@@ -24,7 +23,6 @@ pub const KEY_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
 pub struct EngineConfig {
     pub application_identifier: Option<String>,
     pub mirai_api_key: Option<String>,
-    pub lalamo_path: Option<String>,
     pub local_path: Option<String>,
     pub huggingface_api_key: Option<String>,
     pub openai_api_key: Option<String>,
@@ -44,7 +42,6 @@ impl Default for EngineConfig {
         Self {
             application_identifier: None,
             mirai_api_key: env::var(KEY_MIRAI_API_KEY).ok(),
-            lalamo_path: env::var(KEY_LALAMO_PATH).ok(),
             local_path: env::var(KEY_LOCAL_PATH).ok(),
             huggingface_api_key: env::var(KEY_HF_TOKEN).ok(),
             openai_api_key: env::var(KEY_OPENAI_API_KEY).ok(),
@@ -74,7 +71,7 @@ impl EngineConfig {
         }
 
         synchronize_field!(SettingKind::Secret, mirai_api_key, KEY_MIRAI_API_KEY.to_string());
-        synchronize_field!(SettingKind::Config, lalamo_path, KEY_LALAMO_PATH.to_string());
+        synchronize_field!(SettingKind::Config, local_path, KEY_LOCAL_PATH.to_string());
         synchronize_field!(SettingKind::Secret, huggingface_api_key, KEY_HF_TOKEN.to_string());
         synchronize_field!(SettingKind::Secret, openai_api_key, KEY_OPENAI_API_KEY.to_string());
         synchronize_field!(SettingKind::Secret, anthropic_api_key, KEY_ANTHROPIC_API_KEY.to_string());
@@ -115,17 +112,6 @@ impl EngineConfig {
     ) -> Self {
         Self {
             mirai_api_key: Some(mirai_api_key),
-            ..self.clone()
-        }
-    }
-
-    #[bindings::export(Method)]
-    pub fn with_lalamo_path(
-        &self,
-        lalamo_path: String,
-    ) -> Self {
-        Self {
-            lalamo_path: Some(lalamo_path),
             ..self.clone()
         }
     }

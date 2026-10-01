@@ -36,7 +36,7 @@ impl serde_json::ser::Formatter for SpacedJsonFormatter {
     }
 }
 
-/// Copied from minijinja::filters::tojson with SpacedJsonFormatter
+/// Serialize model prompt JSON with Python-style separators and without HTML escaping.
 pub fn to_json(
     value: &minijinja::Value,
     indent: Option<minijinja::Value>,
@@ -69,18 +69,5 @@ pub fn to_json(
     .map_err(|err| {
         minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, "cannot serialize to JSON").with_source(err)
     })
-    .map(|s| {
-        // When this filter is used the return value is safe for both HTML and JSON
-        let mut rv = String::with_capacity(s.len());
-        for c in s.chars() {
-            match c {
-                '<' => rv.push_str("\\u003c"),
-                '>' => rv.push_str("\\u003e"),
-                '&' => rv.push_str("\\u0026"),
-                '\'' => rv.push_str("\\u0027"),
-                _ => rv.push(c),
-            }
-        }
-        minijinja::Value::from_safe_string(rv)
-    })
+    .map(minijinja::Value::from_safe_string)
 }

@@ -38,6 +38,16 @@ pub enum Encoding {
 }
 
 impl Encoding {
+    pub fn try_append(
+        &mut self,
+        messages: &[ChatMessage],
+    ) -> Result<Option<Vec<TokenId>>, Error> {
+        match self {
+            Self::Hanashi(inner) => inner.try_append(messages).map_err(Into::into),
+            Self::Harmony(_) => Ok(None),
+        }
+    }
+
     pub fn tokenize(
         &self,
         text: &str,

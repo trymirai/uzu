@@ -27,6 +27,40 @@ jobs:
       VERSION: ${{ inputs.version }}
 
     steps:
+      - name: "Send initial release notification"
+        id: release-notification
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_CHANNEL_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -u
+
+          : "${DISCORD_WEBHOOK_URL:?DISCORD_RELEASE_CHANNEL_WEBHOOK_URL secret is required}"
+
+          started_at=$(date +%s)
+          echo "started_at=$started_at" >> "$GITHUB_OUTPUT"
+
+          jq -n \
+            --argjson started_at "$started_at" \
+            --arg version "$VERSION" \
+            --arg actor "$GITHUB_ACTOR" \
+            --arg run_url "$RUN_URL" \
+            '{
+              allowed_mentions: {parse: []},
+              content: ([
+                "\u23f3 **uzu \u00b7 \($version)**",
+                "In progress, <t:\($started_at):R>. [Logs](<\($run_url)>)",
+                "-# Triggered by: \($actor)"
+              ] | join("\n"))
+            }' |
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --header "Content-Type: application/json" \
+            --data-binary @- \
+            --url-query "wait=true" \
+            "$DISCORD_WEBHOOK_URL" |
+          jq -er '"message_id=" + (.id | strings | select(test("^[0-9]+$")))' >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
         with:
@@ -362,3 +396,57 @@ jobs:
           name: ${{ env.VERSION }}
           files: ${{ env.UZU_RELEASE_PATH }}/binaries/**/*.tar.gz
           fail_on_unmatched_files: true
+
+      - name: "Send final release notification"
+        if: ${{ always() }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_CHANNEL_WEBHOOK_URL }}
+          DISCORD_MESSAGE_ID: ${{ steps.release-notification.outputs.message_id }}
+          RELEASE_STARTED_AT: ${{ steps.release-notification.outputs.started_at }}
+          RELEASE_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -u
+
+          : "${DISCORD_WEBHOOK_URL:?DISCORD_RELEASE_CHANNEL_WEBHOOK_URL secret is required}"
+          : "${DISCORD_MESSAGE_ID:?Initial Discord release notification did not return a message ID}"
+
+          jq -n \
+            --argjson started_at "$RELEASE_STARTED_AT" \
+            --arg status "${RELEASE_STATUS:-unknown}" \
+            --arg version "$VERSION" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg server "$GITHUB_SERVER_URL" \
+            --arg actor "$GITHUB_ACTOR" \
+            --arg run_url "$RUN_URL" \
+            '
+            ([0, (now | floor) - $started_at] | max) as $elapsed |
+            ([
+              (if $elapsed >= 3600 then "\(($elapsed / 3600) | floor)h" else empty end),
+              (if ($elapsed % 3600) >= 60 then "\((($elapsed % 3600) / 60) | floor)m" else empty end),
+              (if ($elapsed % 60) > 0 then "\($elapsed % 60)s" else empty end)
+            ] | join(" ") | if . == "" then "<1s" else . end) as $duration |
+            ($status == "success") as $success |
+            ({success: "\ud83d\udce6", failure: "\u274c", cancelled: "\u23f9\ufe0f"}[$status] // "\u26a0\ufe0f") as $icon |
+            "\($server)/\($repository)/releases/tag/\($version | @uri)" as $release_url |
+            {
+              allowed_mentions: {parse: []},
+              content: ([
+                (if $success then "\($icon) **[uzu \u00b7 \($version)](<\($release_url)>)**"
+                 else "\($icon) **uzu \u00b7 \($version)**" end),
+                "Release \($status) in \($duration). [Logs](<\($run_url)>)",
+                "-# Triggered by: \($actor)"
+              ] | join("\n"))
+            }
+            ' |
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --header "Content-Type: application/json" \
+            --data-binary @- \
+            --url-query "wait=true" \
+            "$DISCORD_WEBHOOK_URL"
+
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --request DELETE \
+            "${DISCORD_WEBHOOK_URL%/}/messages/$DISCORD_MESSAGE_ID"
