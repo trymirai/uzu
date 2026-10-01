@@ -9,6 +9,10 @@ pub trait Registry: Send + Sync {
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, Self::Error>> + Send + '_>>;
 
+    fn listing(&self) -> Pin<Box<dyn Future<Output = Result<(Vec<Model>, bool), Self::Error>> + Send + '_>> {
+        Box::pin(async { Ok((self.models().await?, false)) })
+    }
+
     fn model_by_identifier(
         &self,
         identifier: &ModelIdentifier,

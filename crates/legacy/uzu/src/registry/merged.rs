@@ -93,19 +93,27 @@ impl Registry for MergedRegistry {
     }
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
+        Box::pin(async { Ok(self.listing().await?.0) })
+    }
+
+    fn listing(&self) -> Pin<Box<dyn Future<Output = Result<(Vec<Model>, bool), RegistryError>> + Send + '_>> {
         Box::pin(async {
-            let results = futures::future::join_all(self.registries.iter().map(|registry| registry.models())).await;
+            let results = futures::future::join_all(self.registries.iter().map(|registry| registry.listing())).await;
 
             let mut models = Vec::new();
+            let mut complete = false;
             for (registry, result) in self.registries.iter().zip(results) {
                 match result {
-                    Ok(registry_models) => models.extend(registry_models),
+                    Ok((registry_models, registry_complete)) => {
+                        models.extend(registry_models);
+                        complete |= registry_complete;
+                    },
                     Err(error) => {
                         tracing::warn!(?error, registry = %registry.identifier(), "skipping registry that failed to list models");
                     },
                 }
             }
-            Ok(models)
+            Ok((models, complete))
         })
     }
 }

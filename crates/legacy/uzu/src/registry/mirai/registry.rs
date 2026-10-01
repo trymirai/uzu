@@ -74,10 +74,15 @@ impl RegistryTrait for Registry {
     }
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
+        Box::pin(async { Ok(self.listing().await?.0) })
+    }
+
+    fn listing(&self) -> Pin<Box<dyn Future<Output = Result<(Vec<Model>, bool), RegistryError>> + Send + '_>> {
         Box::pin(async {
             let cached = self.load_registry();
             match self.fetch_models().await {
                 Ok(models) => {
+                    let listed = models.len();
                     let models = self.resolve(models, cached.unwrap_or_default()).await;
                     let saved = serde_json::to_vec_pretty(&models)
                         .map_err(io::Error::other)
@@ -85,14 +90,15 @@ impl RegistryTrait for Registry {
                     if let Err(error) = saved {
                         tracing::warn!(?error, "failed to save Mirai registry");
                     }
-                    Ok(models)
+                    let complete = listed > 0 && models.len() == listed;
+                    Ok((models, complete))
                 },
                 Err(error) => {
                     if error.is_transient()
                         && let Ok(models) = cached
                     {
                         tracing::warn!(?error, "serving cached Mirai registry after fetch failure");
-                        return Ok(models);
+                        return Ok((models, false));
                     }
                     Err(RegistryError::UnableToGetModels {
                         message: error.to_string(),
