@@ -581,6 +581,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 output_norm,
                 root_token as u32,
                 self.model.decoder.embedding(),
+                self.model.decoder.embedding_lookup(),
+                self.model.decoder.embedding_readout(),
                 shape,
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),

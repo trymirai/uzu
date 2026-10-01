@@ -11,7 +11,8 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        embedding_table::{EmbeddingTable, EmbeddingTableError},
+        EncodableBlock,
+        embedding::{EmbeddingError, EmbeddingLookup, EmbeddingLookupInput, EmbeddingResource},
         linear::{Linear, LinearBlockError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
@@ -26,19 +27,19 @@ pub enum PerLayerEmbeddingError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Linear error: {0}")]
     LinearError(#[from] LinearBlockError<B>),
-    #[error("Embedding table error: {0}")]
-    EmbeddingTable(#[from] EmbeddingTableError<B>),
+    #[error("Embedding error: {0}")]
+    Embedding(#[from] EmbeddingError<B>),
 }
 
 pub struct PerLayerEmbedding<B: Backend> {
-    token_embedding: EmbeddingTable<B>,
+    token_embedding: EmbeddingResource<B>,
+    token_lookup: EmbeddingLookup<B>,
     model_projection: Box<dyn Linear<B>>,
     projection_norm: Normalization<B>,
     add_scale: <B::Kernels as Kernels>::TensorAddScaleKernel,
     ple_dim: u32,
     num_layers: u32,
     model_dim: u32,
-    fused_token_scale: f32,
     data_type: DataType,
 }
 
@@ -52,13 +53,14 @@ impl<B: Backend> PerLayerEmbedding<B> {
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
         let total_ple_dim = config.num_layers * config.ple_dim;
 
-        let token_embedding = EmbeddingTable::load(
-            context,
+        let token_embedding = EmbeddingResource::load(
             &parameter_tree.subtree("token_embedding"),
             config.ple_vocab_size,
             total_ple_dim,
             data_type,
         )?;
+        let token_lookup = EmbeddingLookup::new(context, &token_embedding, config.ple_embed_scale * config.input_scale)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
 
         let model_projection = <dyn Linear<B>>::new(
             model_dim,
@@ -91,13 +93,13 @@ impl<B: Backend> PerLayerEmbedding<B> {
 
         Ok(Self {
             token_embedding,
+            token_lookup,
             model_projection,
             projection_norm,
             add_scale,
             ple_dim: config.ple_dim,
             num_layers: config.num_layers,
             model_dim,
-            fused_token_scale: config.ple_embed_scale * config.input_scale,
             data_type,
         })
     }
@@ -115,14 +117,14 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let total_rows = batch_dim * self.num_layers;
         let total_elements = batch_dim * total_ple_dim;
 
-        let mut token_ple = command_buffer.allocate_scratch_for_shape(&[batch_dim, total_ple_dim], self.data_type)?;
-        self.token_embedding.encode_lookup(
-            token_ids,
-            &mut token_ple,
-            batch_dim,
-            self.fused_token_scale,
+        let token_ple = self.token_lookup.encode(
+            EmbeddingLookupInput {
+                resource: &self.token_embedding,
+                token_ids,
+                batch_dim,
+            },
             command_buffer,
-        );
+        )?;
 
         let mut model_projection_input =
             command_buffer.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;

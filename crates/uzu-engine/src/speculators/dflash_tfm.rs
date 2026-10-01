@@ -21,8 +21,8 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        dflash::{DFlash, DFlashEncodeError, DFlashNewError},
-        embedding::Embedding,
+        dflash::{DFlash, DFlashNewError},
+        embedding::{EmbeddingLookup, EmbeddingReadout, EmbeddingResource},
         sampling::{PRng, Sampling, SamplingMethod},
         weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
@@ -34,8 +34,6 @@ use crate::{
 pub enum DFlashTreeError<B: Backend> {
     #[error("backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("DFlash draft error: {0}")]
-    DFlash(#[from] DFlashEncodeError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverEncodeError<B>),
     #[error("invalid tree shape: {0}")]
@@ -211,7 +209,9 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         state: &mut DFlashState<B>,
         target_output_norm: impl BufferRef<Backend = B>,
         target_output_token: u32,
-        target_embedding: &Embedding<B>,
+        target_embedding: &EmbeddingResource<B>,
+        target_lookup: &EmbeddingLookup<B>,
+        target_readout: &EmbeddingReadout<B>,
         shape: DFlashTfmTreeShape,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
         prng: &PRng,
@@ -252,13 +252,18 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     logprob: 0.0,
                     child_indices: vec![1],
                 });
-                let dflash_output = self.dflash.encode_draft(
-                    state,
-                    target_output_token,
-                    target_embedding,
-                    dflash_depth,
-                    &mut command_buffer,
-                )?;
+                let dflash_output = self
+                    .dflash
+                    .encode_draft(
+                        state,
+                        target_output_token,
+                        target_embedding,
+                        target_lookup,
+                        target_readout,
+                        dflash_depth,
+                        &mut command_buffer,
+                    )
+                    .map_err(DFlashTreeError::Backend)?;
                 let topology_nodes = (0..chain_length)
                     .map(|index| GpuTrieNode {
                         trie_start: index,
@@ -328,13 +333,18 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         "prune sigma {prune_sigma} is not positive and finite"
                     )));
                 }
-                let dflash_output = self.dflash.encode_draft(
-                    state,
-                    target_output_token,
-                    target_embedding,
-                    dflash_depth,
-                    &mut command_buffer,
-                )?;
+                let dflash_output = self
+                    .dflash
+                    .encode_draft(
+                        state,
+                        target_output_token,
+                        target_embedding,
+                        target_lookup,
+                        target_readout,
+                        dflash_depth,
+                        &mut command_buffer,
+                    )
+                    .map_err(DFlashTreeError::Backend)?;
                 let depth_seeds = (0..weaver.max_depth())
                     .map(|depth| prng.derive(root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
@@ -342,6 +352,8 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     target_output_norm,
                     &dflash_output.draft_hidden,
                     target_embedding,
+                    target_lookup,
+                    target_readout,
                     &dflash_output.logits,
                     &depth_seeds,
                     target_output_token,
