@@ -44,6 +44,41 @@ enum Storage<B: Backend> {
     D4S4(D4S4Table<B>),
 }
 
+struct LookupBindings<'a, B: Backend> {
+    values: &'a Allocation<B>,
+    scales: Option<&'a Allocation<B>>,
+    zero_points: Option<&'a Allocation<B>>,
+    biases: Option<&'a Allocation<B>>,
+    ladder_indices: Option<&'a Allocation<B>>,
+    ladder: Option<&'a Allocation<B>>,
+    codebook: Option<&'a Allocation<B>>,
+}
+
+impl<B: Backend> Storage<B> {
+    fn lookup_bindings(&self) -> LookupBindings<'_, B> {
+        match self {
+            Self::Matrix(matrix) => LookupBindings {
+                values: matrix.values(),
+                scales: matrix.scales(),
+                zero_points: matrix.zero_points(),
+                biases: matrix.biases(),
+                ladder_indices: None,
+                ladder: None,
+                codebook: None,
+            },
+            Self::D4S4(table) => LookupBindings {
+                values: &table.codes,
+                scales: Some(&table.row_scales),
+                zero_points: None,
+                biases: None,
+                ladder_indices: Some(&table.ladder_indices),
+                ladder: Some(&table.ladder),
+                codebook: Some(&table.codebook),
+            },
+        }
+    }
+}
+
 pub struct EmbeddingTable<B: Backend> {
     storage: Storage<B>,
     output_hadamard_factors: Option<Allocation<B>>,
@@ -148,30 +183,17 @@ impl<B: Backend> EmbeddingTable<B> {
         scale: f32,
         encoder: &mut Encoder<B>,
     ) {
-        let (values, scales, zero_points, biases, ladder_indices, ladder, codebook) = match &self.storage {
-            Storage::Matrix(matrix) => {
-                (matrix.values(), matrix.scales(), matrix.zero_points(), matrix.biases(), None, None, None)
-            },
-            Storage::D4S4(table) => (
-                &table.codes,
-                Some(&table.row_scales),
-                None,
-                None,
-                Some(&table.ladder_indices),
-                Some(&table.ladder),
-                Some(&table.codebook),
-            ),
-        };
+        let bindings = self.storage.lookup_bindings();
         self.lookup.encode(
             token_ids,
-            values,
-            scales,
-            zero_points,
-            biases,
+            bindings.values,
+            bindings.scales,
+            bindings.zero_points,
+            bindings.biases,
             self.output_hadamard_factors.as_ref(),
-            ladder_indices,
-            ladder,
-            codebook,
+            bindings.ladder_indices,
+            bindings.ladder,
+            bindings.codebook,
             output,
             batch_dim,
             self.vocab_size,
