@@ -1,18 +1,19 @@
 use std::{
     cmp::{max, min},
     fmt::Debug,
-    ops::Range,
+    range::Range,
     sync::Arc,
 };
 
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions, MTLSparsePageSize};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResidencySet, MTLResourceOptions, MTLSparsePageSize};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeSet;
 
 use crate::backends::{
-    common::{Backend, Buffer, SparseBuffer, SparseBufferExt},
+    common::{Backend, Buffer, SparseBuffer},
     metal::{
-        Metal, MetalContext, error::MetalError, metal_extensions::SparsePageSizeExt, sparse::MetalSparseMappingOpsBatch,
+        Metal, MetalContext, buffer::sparse::MetalSparseMappingOpsBatch, error::MetalError,
+        metal_extensions::SparsePageSizeExt,
     },
 };
 
@@ -38,6 +39,12 @@ impl MetalSparseBuffer {
                 page_size,
             )
             .ok_or(MetalError::SparseBufferAlloc(aligned_capacity))?;
+
+        let residency_set_locked = context.residency_set.lock();
+        residency_set_locked.add_allocation(buffer.as_ref());
+        residency_set_locked.commit();
+        residency_set_locked.request_residency();
+        drop(residency_set_locked);
 
         Ok(Self {
             buffer,
@@ -67,19 +74,18 @@ impl Debug for MetalSparseBuffer {
 impl Drop for MetalSparseBuffer {
     fn drop(&mut self) {
         let context = self.context.clone();
-        self.unmap(&context, &(0..self.total_pages())).expect("Failed to unmap");
+        self.unmap(&context, 0..self.total_pages()).expect("Failed to unmap");
+        let residency_set_locked = context.residency_set.lock();
+        residency_set_locked.remove_allocation(self.buffer.as_ref());
+        residency_set_locked.commit();
     }
 }
 
 impl Buffer for MetalSparseBuffer {
     type Backend = Metal;
 
-    fn gpu_ptr(&self) -> usize {
-        self.buffer.gpu_ptr()
-    }
-
     fn size(&self) -> usize {
-        self.buffer.size()
+        self.buffer.length()
     }
 }
 
@@ -87,19 +93,20 @@ impl SparseBuffer for MetalSparseBuffer {
     fn map(
         &mut self,
         context: &<Self::Backend as Backend>::Context,
-        pages: &Range<usize>,
+        pages: impl Into<Range<usize>>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
+        let pages = pages.into();
         if pages.is_empty() {
             return Ok(());
         }
 
         // prepare operations
         let mut all_batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
-        let gaps = self.mapped_pages.gaps(pages).collect::<Vec<_>>();
-        let pages_to_map = gaps.iter().map(|gap| gap.len()).sum();
+        let gaps = self.mapped_pages.gaps(&pages.into()).map(Range::from).collect::<Vec<_>>();
+        let pages_to_map = gaps.iter().map(|gap| gap.iter().len()).sum();
         context.sparse_heap_pool().ensure_enough_free_pages(context, pages_to_map)?;
 
-        for gap in gaps.iter() {
+        for &gap in &gaps {
             let mut pool = context.sparse_heap_pool();
             let operations = pool.create_map_operations(context, &self.buffer, gap)?;
             pool.apply_map_operations(&operations);
@@ -109,7 +116,7 @@ impl SparseBuffer for MetalSparseBuffer {
         // execute operations
         context.sparse_update_mappings(&all_batches);
         for gap in gaps {
-            self.mapped_pages.insert(gap)
+            self.mapped_pages.insert(gap.into())
         }
 
         Ok(())
@@ -118,8 +125,9 @@ impl SparseBuffer for MetalSparseBuffer {
     fn unmap(
         &mut self,
         context: &<Self::Backend as Backend>::Context,
-        pages: &Range<usize>,
+        pages: impl Into<Range<usize>>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
+        let pages = pages.into();
         if pages.is_empty() {
             return Ok(());
         }
@@ -128,10 +136,10 @@ impl SparseBuffer for MetalSparseBuffer {
         let mut all_batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
         let mapped_ranges = self
             .mapped_pages
-            .overlapping(pages)
-            .map(|range| max(range.start, pages.start)..min(range.end, pages.end))
+            .overlapping(&pages.into())
+            .map(|range| Range::from(max(range.start, pages.start)..min(range.end, pages.end)))
             .collect::<Vec<_>>();
-        for mapped_range in mapped_ranges.iter() {
+        for &mapped_range in &mapped_ranges {
             let batches = context.sparse_heap_pool().create_unmap_operations(&self.buffer, mapped_range);
             context.sparse_heap_pool().apply_map_operations(&batches);
             all_batches.extend(batches);
@@ -140,7 +148,7 @@ impl SparseBuffer for MetalSparseBuffer {
         // execute operations
         context.sparse_update_mappings(&all_batches);
         for mapped_range in mapped_ranges {
-            self.mapped_pages.remove(mapped_range)
+            self.mapped_pages.remove(mapped_range.into())
         }
 
         Ok(())
@@ -152,5 +160,5 @@ impl SparseBuffer for MetalSparseBuffer {
 }
 
 #[cfg(test)]
-#[path = "../../../../unit/backends/metal/sparse/sparse_buffer_test.rs"]
+#[path = "../../../../../unit/backends/metal/sparse/sparse_buffer_test.rs"]
 mod tests;

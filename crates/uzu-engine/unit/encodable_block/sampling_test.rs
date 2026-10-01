@@ -8,7 +8,10 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,
-    backends::common::{AllocationType, Backend, Context, Encoder, gpu_types::trie::TrieNode},
+    backends::common::{
+        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+        gpu_types::trie::TrieNode,
+    },
     data_type::DataType,
     dispatch_dtype,
     encodable_block::{
@@ -41,25 +44,12 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     method: &SamplingMethod,
     batch_size: u32,
 ) -> Result<SamplingTestResults, TestCaseError> {
-    let sampling = Sampling::new(T::data_type(), vocab_size as u32);
+    let sampling = Sampling::<B>::new(T::data_type(), vocab_size as u32);
 
-    let mut logits_allocation =
-        context.create_allocation(logits.len() * T::data_type().size_in_bytes(), AllocationType::Global).unwrap();
-    logits_allocation.copyin(logits);
-    let seeds_allocation = if let Some(seeds) = seeds {
-        let mut seeds_allocation = context.create_allocation(seeds.len() * 8, AllocationType::Global).unwrap();
-        seeds_allocation.copyin(seeds);
-        Some(seeds_allocation)
-    } else {
-        None
-    };
-    let bitmask_allocation = if let Some(bitmask) = bitmask {
-        let mut bitmask_allocation = context.create_allocation(bitmask.len() * 4, AllocationType::Global).unwrap();
-        bitmask_allocation.copyin(bitmask);
-        Some(bitmask_allocation)
-    } else {
-        None
-    };
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let logits_buffer = command_buffer.allocate_constant_from_slice(logits).unwrap();
+    let seeds_buffer = seeds.map(|seeds| command_buffer.allocate_constant_from_slice(seeds).unwrap());
+    let bitmask_buffer = bitmask.map(|bitmask| command_buffer.allocate_constant_from_slice(bitmask).unwrap());
 
     let nodes = (0..batch_size)
         .map(|index| TrieNode {
@@ -70,23 +60,25 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
         .collect::<Box<[_]>>();
     let batch_topology = BatchTopology::new(&nodes, true);
 
-    let mut encoder = Encoder::new(context).unwrap();
-    let sampled_allocation = sampling
+    let sampled_buffer = sampling
         .encode(
-            &logits_allocation,
-            seeds_allocation.as_ref(),
-            bitmask_allocation.as_ref(),
-            None, // TODO
-            None, // TODO
+            &logits_buffer,
+            seeds_buffer.as_ref(),
+            bitmask_buffer.as_ref(),
+            None::<&B::GlobalBuffer>,   // TODO
+            None::<&B::ConstantBuffer>, // TODO
             method,
             &batch_topology,
-            0..batch_size,
-            &mut encoder,
+            (0..batch_size).into(),
+            &mut command_buffer,
         )
         .unwrap();
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    drop(logits_buffer);
+    drop(seeds_buffer);
+    drop(bitmask_buffer);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let sampled = sampled_allocation.copyout::<u32>();
+    let sampled = sampled_buffer.copyout::<u32>();
 
     Ok(SamplingTestResults(sampled))
 }

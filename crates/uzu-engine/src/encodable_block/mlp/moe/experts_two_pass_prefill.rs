@@ -1,6 +1,6 @@
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{
             MoeBuildTileMapKernel, MoeExpertsPrefillPassAKernel, MoeExpertsPrefillPassBKernel, MoeTileCountsKernel,
             MoeTileScanKernel, MoeWriteDispatchArgsKernel,
@@ -38,34 +38,39 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
 
     pub fn encode(
         &self,
-        args: MoeExpertsTwoPassArguments<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let mut tile_counts = encoder.allocate_scratch_for_shape(&[args.num_routed_experts], DataType::U32)?;
-        self.counts.encode(args.expert_offsets, &mut tile_counts, args.num_routed_experts, encoder);
+        args: MoeExpertsTwoPassArguments<
+            impl BufferRef<Backend = B>,
+            impl BufferRef<Backend = B>,
+            impl BufferRef<Backend = B>,
+        >,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        let mut tile_counts = command_buffer.allocate_scratch_for_shape(&[args.num_routed_experts], DataType::U32)?;
+        self.counts.encode(args.expert_offsets, &mut tile_counts, args.num_routed_experts, command_buffer);
 
-        let mut tile_offsets = encoder.allocate_scratch_for_shape(&[args.num_routed_experts + 1], DataType::U32)?;
-        let mut total_tiles = encoder.allocate_scratch_for_shape(&[8], DataType::U32)?;
-        self.scan.encode(&tile_counts, &mut tile_offsets, &mut total_tiles, args.num_routed_experts, encoder);
+        let mut tile_offsets =
+            command_buffer.allocate_scratch_for_shape(&[args.num_routed_experts + 1], DataType::U32)?;
+        let mut total_tiles = command_buffer.allocate_scratch_for_shape(&[8], DataType::U32)?;
+        self.scan.encode(&tile_counts, &mut tile_offsets, &mut total_tiles, args.num_routed_experts, command_buffer);
 
-        let mut tile_map = encoder.allocate_scratch_for_shape(&[args.total_rows, 3], DataType::U32)?;
+        let mut tile_map = command_buffer.allocate_scratch_for_shape(&[args.total_rows, 3], DataType::U32)?;
         self.build.encode(
             args.expert_offsets,
             &tile_offsets,
             &tile_counts,
             &mut tile_map,
             args.num_routed_experts,
-            encoder,
+            command_buffer,
         );
 
         const COL_TILE_FF: u32 = 32; // Must match PASSA_BN in kernel
         let n_tiles_ff = args.d_ff.div_ceil(COL_TILE_FF);
 
-        let mut pass_a_dispatch_args = encoder.allocate_scratch_for_shape(&[3], DataType::U32)?;
-        self.dispatch.encode(&total_tiles, &mut pass_a_dispatch_args, n_tiles_ff, encoder);
+        let mut pass_a_dispatch_args = command_buffer.allocate_scratch_for_shape(&[3], DataType::U32)?;
+        self.dispatch.encode(&total_tiles, &mut pass_a_dispatch_args, n_tiles_ff, command_buffer);
 
-        let mut hidden = encoder.allocate_scratch_for_shape(&[args.total_rows, args.d_ff], DataType::F32)?;
-        encoder.encode_fill(&mut hidden, 0);
+        let mut hidden = command_buffer.allocate_scratch_for_shape(&[args.total_rows, args.d_ff], DataType::F32)?;
+        command_buffer.encode_fill(&mut hidden, 0);
 
         self.pass_a_indirect.encode(
             args.x_perm,
@@ -83,16 +88,16 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             args.silu_alpha,
             &tile_map,
             &pass_a_dispatch_args,
-            encoder,
+            command_buffer,
         );
 
         const COL_TILE_MODEL: u32 = 64;
         let n_tiles_model = args.d_model.div_ceil(COL_TILE_MODEL);
 
-        let mut pass_b_dispatch_args = encoder.allocate_scratch_for_shape(&[3], DataType::U32)?;
-        self.dispatch.encode(&total_tiles, &mut pass_b_dispatch_args, n_tiles_model, encoder);
+        let mut pass_b_dispatch_args = command_buffer.allocate_scratch_for_shape(&[3], DataType::U32)?;
+        self.dispatch.encode(&total_tiles, &mut pass_b_dispatch_args, n_tiles_model, command_buffer);
 
-        let mut output = encoder.allocate_scratch_for_shape(&[args.total_rows, args.d_model], self.data_type)?;
+        let mut output = command_buffer.allocate_scratch_for_shape(&[args.total_rows, args.d_model], self.data_type)?;
         self.pass_b_indirect.encode(
             &hidden,
             args.expert_offsets,
@@ -104,19 +109,23 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             args.num_routed_experts,
             &tile_map,
             &pass_b_dispatch_args,
-            encoder,
+            command_buffer,
         );
         Ok(output)
     }
 }
 
-pub struct MoeExpertsTwoPassArguments<'a, B: Backend> {
-    pub x_perm: &'a Allocation<B>,
-    pub expert_offsets: &'a Allocation<B>,
-    pub w13_all: &'a Allocation<B>,
-    pub w2_all: &'a Allocation<B>,
-    pub up_biases: &'a Allocation<B>,
-    pub down_biases: &'a Allocation<B>,
+pub struct MoeExpertsTwoPassArguments<
+    X: BufferRef,
+    O: BufferRef<Backend = X::Backend>,
+    W: BufferRef<Backend = X::Backend>,
+> {
+    pub x_perm: X,
+    pub expert_offsets: O,
+    pub w13_all: W,
+    pub w2_all: W,
+    pub up_biases: W,
+    pub down_biases: W,
     pub total_rows: u32,
     pub d_model: u32,
     pub d_ff: u32,

@@ -7,13 +7,17 @@ use super::{
 use crate::{
     backends::{
         common::{
+            CommandBufferEncoding,
             gpu_types::{
                 HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
             kernel::matmul::{MatmulB, MatmulShape},
         },
-        metal::{context::MetalContext, error::MetalError, kernel::GemvMetalKernel},
+        metal::{
+            command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
+            kernel::GemvMetalKernel,
+        },
     },
     data_type::DataType,
 };
@@ -209,7 +213,7 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use crate::backends::{
     common::{
-        BufferArg, Encoder,
+        BufferMut, BufferRef,
         kernel::matmul::{MatmulA, MatmulArguments, MatmulError},
     },
     metal::Metal,
@@ -253,12 +257,19 @@ impl GemvKernel {
         }
     }
 
-    pub fn encode<'a, 'b, 'd, TB: BufferArg<'b, Metal>>(
+    pub fn encode(
         &mut self,
-        arguments: MatmulArguments<'a, 'b, 'd, Metal, TB>,
+        arguments: MatmulArguments<
+            '_,
+            Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferMut<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+        >,
         specialization: GemvSpecialization,
         output_work: &MatmulOutputWork,
-        encoder: &mut Encoder<Metal>,
+        command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulError<Metal>> {
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
@@ -274,7 +285,7 @@ impl GemvKernel {
         let MatmulArguments {
             a,
             b,
-            d,
+            mut d,
             m,
             n,
             k,
@@ -292,54 +303,71 @@ impl GemvKernel {
             });
         };
 
-        let (weights, scales, biases, zero_points, scale_strides, zero_point_strides) = match b {
-            MatmulB::FullPrecision {
-                b: weights,
-            } => {
-                let (buffer, offset, _) = weights.into_parts();
-                ((buffer, offset), None, None, None, Default::default(), Default::default())
-            },
-            MatmulB::Quantized(quantized) => {
-                let (buffer, offset, _) = quantized.codes.into_parts();
-                let zero_points = quantized.zero_points();
+        let a = a.subrange(a_offset..);
+        let (scales, biases, zero_points, scale_strides, zero_point_strides) =
+            b.quantized().map_or((None, None, None, Default::default(), Default::default()), |quantized| {
                 (
-                    (buffer, offset),
                     Some(quantized.scales),
                     quantized.biases(),
-                    zero_points,
+                    quantized.zero_points(),
                     quantized.params.scale_strides(),
                     quantized.zero_point_strides(),
                 )
-            },
-        };
+            });
         let output_group_count = n.div_ceil(specialization.output_row_tile());
-        let context = encoder.context();
+        let context = command_buffer.context();
         let pipeline = self.get_or_create(context, specialization)?;
-        pipeline.encode(
-            weights,
-            scales,
-            zero_points,
-            biases,
-            (a, a_offset),
-            &mut *d,
-            gemv_bias,
-            gemv_rht_factors,
-            gather_indices,
-            k,
-            n,
-            m,
-            ab_scale,
-            output_group_count,
-            scale_strides.output_stride,
-            scale_strides.group_stride,
-            zero_point_strides.output_stride,
-            zero_point_strides.group_stride,
-            soft_cap,
-            encoder,
-        );
+        match b {
+            MatmulB::FullPrecision {
+                b: weights,
+            } => pipeline.encode(
+                weights,
+                scales,
+                zero_points,
+                biases,
+                a,
+                d.reborrow(),
+                gemv_bias,
+                gemv_rht_factors,
+                gather_indices,
+                k,
+                n,
+                m,
+                ab_scale,
+                output_group_count,
+                scale_strides.output_stride,
+                scale_strides.group_stride,
+                zero_point_strides.output_stride,
+                zero_point_strides.group_stride,
+                soft_cap,
+                command_buffer,
+            ),
+            MatmulB::Quantized(quantized) => pipeline.encode(
+                quantized.codes,
+                scales,
+                zero_points,
+                biases,
+                a,
+                d.reborrow(),
+                gemv_bias,
+                gemv_rht_factors,
+                gather_indices,
+                k,
+                n,
+                m,
+                ab_scale,
+                output_group_count,
+                scale_strides.output_stride,
+                scale_strides.group_stride,
+                zero_point_strides.output_stride,
+                zero_point_strides.group_stride,
+                soft_cap,
+                command_buffer,
+            ),
+        }
 
         if let Some(factors) = deferred_factors {
-            output_work.apply(&mut *d, factors, output_bias, m, n, encoder);
+            output_work.apply(d, factors, output_bias, m, n, command_buffer);
         }
 
         Ok(())

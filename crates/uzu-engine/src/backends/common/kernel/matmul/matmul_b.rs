@@ -1,23 +1,23 @@
 use super::{QuantParams, QuantParamsLayout};
 use crate::{
     backends::common::{
-        Allocation, Backend, BufferArg,
+        BufferRef,
         gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
     },
     data_type::DataType,
 };
 
-pub enum MatmulB<'a, B: Backend, TB: BufferArg<'a, B> = &'a Allocation<B>> {
+pub enum MatmulB<TB: BufferRef> {
     FullPrecision {
         b: TB,
     },
-    Quantized(QuantizedB<'a, B>),
+    Quantized(QuantizedB<TB>),
 }
 
-pub struct QuantizedB<'a, B: Backend> {
-    pub codes: &'a Allocation<B>,
-    pub scales: &'a Allocation<B>,
-    pub correction: QuantizedCorrection<&'a Allocation<B>>,
+pub struct QuantizedB<TB: BufferRef> {
+    pub codes: TB,
+    pub scales: TB,
+    pub correction: QuantizedCorrection<TB>,
     pub params: QuantParams,
     pub mode: QuantizationMode,
     pub group_size: u32,
@@ -55,7 +55,7 @@ impl<T> QuantizedCorrection<T> {
     }
 }
 
-impl<'a, B: Backend> QuantizedB<'a, B> {
+impl<TB: BufferRef> QuantizedB<TB> {
     pub fn bits(&self) -> u32 {
         DataType::from(self.mode).size_in_bits() as u32
     }
@@ -68,11 +68,11 @@ impl<'a, B: Backend> QuantizedB<'a, B> {
         }
     }
 
-    pub fn biases(&self) -> Option<&'a Allocation<B>> {
+    pub fn biases(&self) -> Option<TB> {
         self.correction.biases().copied()
     }
 
-    pub fn zero_points(&self) -> Option<&'a Allocation<B>> {
+    pub fn zero_points(&self) -> Option<TB> {
         self.correction.zero_points().copied()
     }
 
@@ -81,8 +81,8 @@ impl<'a, B: Backend> QuantizedB<'a, B> {
     }
 }
 
-impl<'a, B: Backend, TB: BufferArg<'a, B>> MatmulB<'a, B, TB> {
-    pub fn quantized(&self) -> Option<&QuantizedB<'a, B>> {
+impl<TB: BufferRef> MatmulB<TB> {
+    pub fn quantized(&self) -> Option<&QuantizedB<TB>> {
         match self {
             Self::FullPrecision {
                 ..

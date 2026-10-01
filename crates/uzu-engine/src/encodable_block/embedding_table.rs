@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         gpu_types::{EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode, d4s4},
         kernel::InputEmbeddingLookupKernel,
     },
@@ -32,11 +32,11 @@ pub enum EmbeddingTableError<B: Backend> {
 
 /// Lookup-only D4S4 table: one codebook entry per 4 columns and a ladder scale per 64 columns.
 struct D4S4Table<B: Backend> {
-    codes: Allocation<B>,
-    row_scales: Allocation<B>,
-    ladder_indices: Allocation<B>,
-    ladder: Allocation<B>,
-    codebook: Allocation<B>,
+    codes: B::GlobalBuffer,
+    row_scales: B::GlobalBuffer,
+    ladder_indices: B::GlobalBuffer,
+    ladder: B::GlobalBuffer,
+    codebook: B::GlobalBuffer,
 }
 
 enum Storage<B: Backend> {
@@ -45,13 +45,13 @@ enum Storage<B: Backend> {
 }
 
 struct LookupBindings<'a, B: Backend> {
-    values: &'a Allocation<B>,
-    scales: Option<&'a Allocation<B>>,
-    zero_points: Option<&'a Allocation<B>>,
-    biases: Option<&'a Allocation<B>>,
-    ladder_indices: Option<&'a Allocation<B>>,
-    ladder: Option<&'a Allocation<B>>,
-    codebook: Option<&'a Allocation<B>>,
+    values: &'a B::GlobalBuffer,
+    scales: Option<&'a B::GlobalBuffer>,
+    zero_points: Option<&'a B::GlobalBuffer>,
+    biases: Option<&'a B::GlobalBuffer>,
+    ladder_indices: Option<&'a B::GlobalBuffer>,
+    ladder: Option<&'a B::GlobalBuffer>,
+    codebook: Option<&'a B::GlobalBuffer>,
 }
 
 impl<B: Backend> Storage<B> {
@@ -81,7 +81,7 @@ impl<B: Backend> Storage<B> {
 
 pub struct EmbeddingTable<B: Backend> {
     storage: Storage<B>,
-    output_hadamard_factors: Option<Allocation<B>>,
+    output_hadamard_factors: Option<B::GlobalBuffer>,
     lookup: LookupKernel<B>,
     vocab_size: u32,
     embedding_dim: u32,
@@ -176,11 +176,11 @@ impl<B: Backend> EmbeddingTable<B> {
     /// Gathers one row per token id into `output`, scaling by `scale`.
     pub fn encode_lookup(
         &self,
-        token_ids: &Allocation<B>,
-        output: &mut Allocation<B>,
+        token_ids: impl BufferRef<Backend = B>,
+        output: impl BufferMut<Backend = B>,
         batch_dim: u32,
         scale: f32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         let bindings = self.storage.lookup_bindings();
         self.lookup.encode(
@@ -198,7 +198,7 @@ impl<B: Backend> EmbeddingTable<B> {
             self.vocab_size,
             self.embedding_dim,
             scale,
-            encoder,
+            command_buffer,
         );
     }
 }
@@ -209,13 +209,13 @@ fn load_d4s4<B: Backend>(
     embedding_dim: u32,
     data_type: DataType,
     spec: D4S4Spec,
-) -> Result<(D4S4Table<B>, Allocation<B>), EmbeddingTableError<B>> {
+) -> Result<(D4S4Table<B>, B::GlobalBuffer), EmbeddingTableError<B>> {
     if spec.layout != Layout::InputOutput || !embedding_dim.is_multiple_of(d4s4::COLUMNS_PER_LADDER_INDEX_BYTE) {
         return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
             "{spec:?} with {data_type:?} and embedding dim {embedding_dim}"
         )));
     }
-    let read = |name: &str, shape: &[u32], data_type| tree.leaf(name)?.validate(shape, data_type)?.read_allocation();
+    let read = |name: &str, shape: &[u32], data_type| tree.leaf(name)?.validate(shape, data_type)?.read_buffer();
     let table = D4S4Table {
         codes: read("codes", &[vocab_size, embedding_dim / d4s4::VALUES_PER_CODE], DataType::U8)?,
         row_scales: read("row_scales", &[vocab_size], data_type)?,
@@ -234,7 +234,7 @@ fn load_d4s4<B: Backend>(
 pub(super) fn read_output_signs<B: Backend>(
     tree: &ParameterTree<B>,
     embedding_dim: u32,
-) -> Result<Allocation<B>, EmbeddingTableError<B>> {
+) -> Result<B::GlobalBuffer, EmbeddingTableError<B>> {
     let signs = tree.subtree("incoherence_signs");
-    Ok(signs.leaf("output_signs")?.validate(&[embedding_dim], DataType::I32)?.read_allocation()?)
+    Ok(signs.leaf("output_signs")?.validate(&[embedding_dim], DataType::I32)?.read_buffer()?)
 }

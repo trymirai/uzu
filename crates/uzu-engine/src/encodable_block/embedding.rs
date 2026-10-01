@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{
             LogitTransformKernel,
             matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel},
@@ -32,15 +32,19 @@ pub enum EmbeddingError<B: Backend> {
     LinearMatmul(#[from] LinearMatmulError<B>),
 }
 
-/// Tied readout multiplies by the lookup table's own matrix; untied readout owns a separate one.
-enum Readout<B: Backend> {
-    Tied(Mutex<<B::Kernels as Kernels>::MatmulKernel>),
-    Untied(UntiedReadout<B>),
+enum EmbeddingTying<B: Backend> {
+    Tied {
+        table: EmbeddingTable<B>,
+        readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
+    },
+    Untied {
+        input_table: EmbeddingTable<B>,
+        output: UntiedReadout<B>,
+    },
 }
 
 pub struct Embedding<B: Backend> {
-    table: EmbeddingTable<B>,
-    readout: Readout<B>,
+    tying: EmbeddingTying<B>,
     input_scale: f32,
     data_type: DataType,
     logit_transform: Option<LogitTransform<B>>,
@@ -70,8 +74,8 @@ impl<B: Backend> Embedding<B> {
         config: &AnyEmbeddingConfig,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
-    ) -> Result<(Self, Option<Allocation<B>>), EmbeddingError<B>> {
-        let (table, readout, readout_input_hadamard_factors) = match config {
+    ) -> Result<(Self, Option<B::GlobalBuffer>), EmbeddingError<B>> {
+        let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
                 let table = EmbeddingTable::load(context, &embedding_tree, vocab_size, model_dim, data_type)?;
@@ -85,13 +89,18 @@ impl<B: Backend> Embedding<B> {
                     } else {
                         None
                     };
-                let kernel = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
-                    .map_err(EmbeddingError::BackendError)?;
-                (table, Readout::Tied(Mutex::new(kernel)), readout_input_hadamard_factors)
+                (
+                    EmbeddingTying::Tied {
+                        table,
+                        readout: readout_kernel(context, data_type)?,
+                    },
+                    readout_input_hadamard_factors,
+                )
             },
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
                 let input_embedding_tree = parameter_tree.subtree("input_embedding");
-                let table = EmbeddingTable::load(context, &input_embedding_tree, vocab_size, model_dim, data_type)?;
+                let input_table =
+                    EmbeddingTable::load(context, &input_embedding_tree, vocab_size, model_dim, data_type)?;
                 let output_embedding_tree = parameter_tree.subtree("output_embedding");
                 let output_embedding_spec = output_embedding_tree.metadata("spec")?;
                 let output = UntiedReadout::load(
@@ -102,7 +111,13 @@ impl<B: Backend> Embedding<B> {
                     model_dim,
                     data_type,
                 )?;
-                (table, Readout::Untied(output), None)
+                (
+                    EmbeddingTying::Untied {
+                        input_table,
+                        output,
+                    },
+                    None,
+                )
             },
         };
 
@@ -124,8 +139,7 @@ impl<B: Backend> Embedding<B> {
 
         Ok((
             Self {
-                table,
-                readout,
+                tying,
                 input_scale,
                 data_type,
                 logit_transform,
@@ -138,19 +152,29 @@ impl<B: Backend> Embedding<B> {
 
     pub fn encode_lookup(
         &self,
-        token_ids: &Allocation<B>,
+        token_ids: impl BufferRef<Backend = B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, EmbeddingError<B>> {
-        encoder.push_debug_group("embedding lookup");
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
+        command_buffer.push_debug_group("embedding lookup");
 
-        let mut output = encoder
+        let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
 
-        self.table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, encoder);
+        let table = match &self.tying {
+            EmbeddingTying::Tied {
+                table,
+                ..
+            } => table,
+            EmbeddingTying::Untied {
+                input_table,
+                ..
+            } => input_table,
+        };
+        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(output)
     }
@@ -158,34 +182,39 @@ impl<B: Backend> Embedding<B> {
     pub fn encode_readout(
         &self,
         batch_dim: u32,
-        input_allocation: &Allocation<B>,
+        input_buffer: impl BufferRef<Backend = B>,
         output_dim: u32,
-        gather_indices: Option<&Allocation<B>>,
+        gather_indices: Option<impl BufferRef<Backend = B>>,
         apply_logit_transform: bool,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, EmbeddingError<B>> {
-        encoder.push_debug_group("embedding readout");
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
+        command_buffer.push_debug_group("embedding readout");
 
         assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
-        let mut output_allocation = match &self.readout {
-            Readout::Untied(output) => {
+        let mut output_buffer = match &self.tying {
+            EmbeddingTying::Untied {
+                output,
+                ..
+            } => {
                 let gather = gather_indices.map(|indices| Gather {
                     indices,
                     output_dim,
                 });
-                output.encode(input_allocation, batch_dim, gather, encoder).map_err(EmbeddingError::BackendError)?
+                output.encode(input_buffer, batch_dim, gather, command_buffer).map_err(EmbeddingError::BackendError)?
             },
-            Readout::Tied(readout) => {
-                let matrix = self.table.as_matrix().expect("tied embedding tables are matrices");
-                let mut output = encoder
+            EmbeddingTying::Tied {
+                table,
+                readout,
+            } => {
+                let mut output = command_buffer
                     .allocate_scratch_for_shape(&[batch_dim, output_dim], self.data_type)
                     .map_err(EmbeddingError::BackendError)?;
                 let arguments = MatmulArguments {
                     a: MatmulA::FullPrecision {
-                        values: input_allocation,
+                        values: input_buffer,
                         offset: 0,
                     },
-                    b: matrix.matmul_b(),
+                    b: table.as_matrix().expect("tied embedding tables are matrices").matmul_b(),
                     b_leading_dimension: None,
                     b_transpose: true,
                     d: &mut output,
@@ -195,7 +224,7 @@ impl<B: Backend> Embedding<B> {
                     n: output_dim,
                     k: self.model_dim,
                 };
-                readout.lock().encode(arguments, encoder).map_err(EmbeddingError::BackendError)?;
+                readout.lock().encode(arguments, command_buffer).map_err(EmbeddingError::BackendError)?;
                 output
             },
         };
@@ -203,16 +232,24 @@ impl<B: Backend> Embedding<B> {
         if apply_logit_transform && let Some(logit_transform) = &self.logit_transform {
             let length = batch_dim * output_dim;
             logit_transform.kernel.encode(
-                &mut output_allocation,
+                &mut output_buffer,
                 length,
                 logit_transform.scale,
                 logit_transform.soft_cap.unwrap_or(0.0),
-                encoder,
+                command_buffer,
             );
         }
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
-        Ok(output_allocation)
+        Ok(output_buffer)
     }
+}
+fn readout_kernel<B: Backend>(
+    context: &B::Context,
+    data_type: DataType,
+) -> Result<Mutex<<B::Kernels as Kernels>::MatmulKernel>, EmbeddingError<B>> {
+    let kernel = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+        .map_err(EmbeddingError::BackendError)?;
+    Ok(Mutex::new(kernel))
 }

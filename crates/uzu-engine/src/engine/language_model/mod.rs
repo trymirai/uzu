@@ -15,7 +15,7 @@ use crate::{
         sampling::{Sampling, SamplingMethod},
     },
     engine::Engine,
-    parameters::{HeaderLoadingError, ParameterLoader, ParameterLoaderError},
+    parameters::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
 };
 
@@ -32,8 +32,6 @@ pub struct LanguageModel<B: Backend> {
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
-    /// The literal text the model emits between its reasoning and its final
-    /// answer (e.g. "</think>"); None when the model does not separate them.
     end_of_thinking_tag: Option<String>,
     tokenizer: Arc<Tokenizer>,
     #[cfg(grammar)]
@@ -46,8 +44,6 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     IO(#[from] io::Error),
     #[error("Serde error: {0}")]
     Serde(#[from] serde_json::Error),
-    #[error("HeaderLoading error: {0}")]
-    HeaderLoading(#[from] HeaderLoadingError),
     #[error("ParameterLoader error: {0}")]
     ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Backend error: {0}")]

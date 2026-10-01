@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Allocation, Backend, Encoder,
+        Backend, BufferMut, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, QKVNormKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
@@ -20,7 +20,7 @@ pub enum QKVNormError<B: Backend> {
 
 struct Head<B: Backend> {
     kernel: <B::Kernels as Kernels>::QKVNormKernel,
-    scales: Option<Allocation<B>>,
+    scales: Option<B::GlobalBuffer>,
     config: NormalizationConfig,
 }
 
@@ -97,7 +97,7 @@ impl<B: Backend> QKVNorm<B> {
                     .expect("scaled norm requires parameter tree")
                     .leaf("scales")?
                     .validate(&[head_dim], DataType::F32)?
-                    .read_allocation()?,
+                    .read_buffer()?,
             )
         } else {
             None
@@ -121,29 +121,29 @@ impl<B: Backend> QKVNorm<B> {
 
     pub fn encode(
         &self,
-        qkvg: &mut Allocation<B>,
+        qkvg: impl BufferMut<Backend = B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, encoder)
+        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, command_buffer)
     }
 
     pub fn encode_key_value(
         &self,
-        key_value: &mut Allocation<B>,
+        key_value: impl BufferMut<Backend = B>,
         batch_dim: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, encoder)
+        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, command_buffer)
     }
 
     fn encode_packed(
         &self,
-        buffer: &mut Allocation<B>,
+        mut buffer: impl BufferMut<Backend = B>,
         batch_dim: u32,
         q_heads: u32,
         input_row_stride: u32,
-        encoder: &mut Encoder<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let packed_row_width = (q_heads + 2 * self.num_kv_heads) * self.head_dim;
         assert!(
@@ -151,7 +151,7 @@ impl<B: Backend> QKVNorm<B> {
             "QKV norm input row stride ({input_row_stride}) is smaller than its packed row width ({packed_row_width})"
         );
 
-        encoder.push_debug_group("qkv norm");
+        command_buffer.push_debug_group("qkv norm");
 
         let kv = self.num_kv_heads;
         let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
@@ -163,9 +163,9 @@ impl<B: Backend> QKVNorm<B> {
                 continue;
             }
             head.kernel.encode(
-                None::<&Allocation<B>>,
+                None::<&B::ScratchBuffer>,
                 head.scales.as_ref(),
-                &mut *buffer,
+                buffer.reborrow(),
                 batch_dim,
                 input_row_stride,
                 self.head_dim,
@@ -174,11 +174,11 @@ impl<B: Backend> QKVNorm<B> {
                 head_offset,
                 head_count,
                 head.config.upcast_mode == UpcastMode::FullLayer,
-                encoder,
+                command_buffer,
             );
         }
 
-        encoder.pop_debug_group();
+        command_buffer.pop_debug_group();
 
         Ok(())
     }

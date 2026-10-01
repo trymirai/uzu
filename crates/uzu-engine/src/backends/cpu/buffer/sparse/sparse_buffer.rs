@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::range::Range;
 
 use crate::backends::{
     common::{Backend, Buffer, SparseBuffer},
@@ -11,10 +11,6 @@ pub struct CpuSparseBuffer {}
 impl Buffer for CpuSparseBuffer {
     type Backend = Cpu;
 
-    fn gpu_ptr(&self) -> usize {
-        todo!()
-    }
-
     fn size(&self) -> usize {
         todo!()
     }
@@ -24,7 +20,7 @@ impl SparseBuffer for CpuSparseBuffer {
     fn map(
         &mut self,
         _context: &<Self::Backend as Backend>::Context,
-        _pages: &Range<usize>,
+        _pages: impl Into<Range<usize>>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
         todo!()
     }
@@ -32,7 +28,7 @@ impl SparseBuffer for CpuSparseBuffer {
     fn unmap(
         &mut self,
         _context: &<Self::Backend as Backend>::Context,
-        _pages: &Range<usize>,
+        _pages: impl Into<Range<usize>>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
         todo!()
     }

@@ -1,3 +1,4 @@
+use std::range::Range;
 #[cfg(backend = "metal")]
 use std::{mem::size_of, time::Duration};
 
@@ -11,18 +12,21 @@ use uzu_engine_macros::uzu_test;
 
 #[cfg(backend = "metal")]
 use crate::{
-    backends::{common::Allocation, metal::Metal},
+    backends::metal::Metal,
     tests::{cold_pool::ColdPool, matmul::iter_encode_loop_named},
 };
 use crate::{
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::ConvTreeScanKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::ConvTreeScanKernel,
+        },
         cpu::Cpu,
     },
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -73,15 +77,15 @@ fn run<B: Backend>(
     let bias = (0..CONV_DIM).map(|i| i as f32 * 0.003 - 0.04).collect::<Vec<_>>();
     let base_state = (0..CONV_DIM * STATE_STRIDE).map(|i| (i % 13) as f32 * 0.01 - 0.05).collect::<Vec<_>>();
 
-    let input = alloc_allocation_with_data::<B, f32>(&context, &input);
-    let weights = alloc_allocation_with_data::<B, f32>(&context, &weights);
-    let bias = alloc_allocation_with_data::<B, f32>(&context, &bias);
-    let base_state_buffer = alloc_allocation_with_data::<B, f32>(&context, &base_state);
-    let parents = alloc_allocation_with_data::<B, i32>(&context, &parents(tree_size, shape));
-    let mut output = alloc_allocation::<B, f32>(&context, tree_size * TOTAL_PROJ_DIM);
-    let mut suffix_state = alloc_allocation::<B, f32>(&context, tree_size * CONV_DIM * STATE_STRIDE);
+    let input = create_buffer_with_data::<B, f32>(&context, &input);
+    let weights = create_buffer_with_data::<B, f32>(&context, &weights);
+    let bias = create_buffer_with_data::<B, f32>(&context, &bias);
+    let base_state_buffer = create_buffer_with_data::<B, f32>(&context, &base_state);
+    let parents = create_buffer_with_data::<B, i32>(&context, &parents(tree_size, shape));
+    let mut output = create_buffer::<B, f32>(&context, tree_size * TOTAL_PROJ_DIM);
+    let mut suffix_state = create_buffer::<B, f32>(&context, tree_size * CONV_DIM * STATE_STRIDE);
 
-    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     kernel.encode(
         &input,
         &weights,
@@ -93,16 +97,11 @@ fn run<B: Backend>(
         tree_size as u32,
         TOTAL_PROJ_DIM as u32,
         CONV_DIM as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    assert_eq_float(
-        &base_state,
-        &allocation_to_vec(&base_state_buffer),
-        0.0,
-        &format!("base state {shape} T={tree_size}"),
-    );
-    (allocation_to_vec(&output), allocation_to_vec(&suffix_state))
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    assert_eq_float(&base_state, &buffer_to_vec(&base_state_buffer), 0.0, &format!("base state {shape} T={tree_size}"));
+    (buffer_to_vec(&output), buffer_to_vec(&suffix_state))
 }
 
 #[uzu_test]
@@ -121,17 +120,17 @@ fn test_conv_tree_scan() {
 
     let baseline = run::<Cpu>(49, "binary", false);
     let perturbed = run::<Cpu>(49, "binary", true);
-    let output = 2 * TOTAL_PROJ_DIM..3 * TOTAL_PROJ_DIM;
-    let state = 2 * CONV_DIM * STATE_STRIDE..3 * CONV_DIM * STATE_STRIDE;
-    assert_eq_float(&baseline.0[output.clone()], &perturbed.0[output], 0.0, "sibling output");
-    assert_eq_float(&baseline.1[state.clone()], &perturbed.1[state], 0.0, "sibling state");
+    let output = Range::from(2 * TOTAL_PROJ_DIM..3 * TOTAL_PROJ_DIM);
+    let state = Range::from(2 * CONV_DIM * STATE_STRIDE..3 * CONV_DIM * STATE_STRIDE);
+    assert_eq_float(&baseline.0[output], &perturbed.0[output], 0.0, "sibling output");
+    assert_eq_float(&baseline.1[state], &perturbed.1[state], 0.0, "sibling state");
 }
 
 #[cfg(backend = "metal")]
 struct Buffers {
-    input: Allocation<Metal>,
-    output: Allocation<Metal>,
-    suffix_state: Allocation<Metal>,
+    input: <Metal as Backend>::GlobalBuffer,
+    output: <Metal as Backend>::GlobalBuffer,
+    suffix_state: <Metal as Backend>::GlobalBuffer,
 }
 
 #[cfg(backend = "metal")]
@@ -149,38 +148,43 @@ fn bench_conv_tree_scan(c: &mut Criterion) {
         true,
     )
     .expect("kernel");
-    let weights = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.01; BENCH_CONV_DIM * KERNEL_SIZE]);
-    let bias = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.0; BENCH_CONV_DIM]);
-    let base_state = alloc_allocation_with_data::<Metal, f32>(&context, &vec![0.0; BENCH_CONV_DIM * STATE_STRIDE]);
+    let weights = create_buffer_with_data::<Metal, f32>(&context, &vec![0.01; BENCH_CONV_DIM * KERNEL_SIZE]);
+    let bias = create_buffer_with_data::<Metal, f32>(&context, &vec![0.0; BENCH_CONV_DIM]);
+    let base_state = create_buffer_with_data::<Metal, f32>(&context, &vec![0.0; BENCH_CONV_DIM * STATE_STRIDE]);
     let mut group = c.benchmark_group(BENCHMARK);
     group.sample_size(30).warm_up_time(Duration::from_millis(300)).measurement_time(Duration::from_secs(1));
 
     for tree_size in [49usize, 64, 128] {
-        let parents = alloc_allocation_with_data::<Metal, i32>(&context, &parents(tree_size, "binary"));
+        let parents = create_buffer_with_data::<Metal, i32>(&context, &parents(tree_size, "binary"));
         let input_len = tree_size * BENCH_TOTAL_PROJ_DIM;
         let state_len = tree_size * BENCH_CONV_DIM * STATE_STRIDE;
         let mut buffers = ColdPool::new(2 * input_len * size_of::<bf16>() + state_len * size_of::<f32>(), || Buffers {
-            input: alloc_allocation_with_data::<Metal, bf16>(&context, &vec![bf16::from_f32(0.1); input_len]),
-            output: alloc_allocation::<Metal, bf16>(&context, input_len),
-            suffix_state: alloc_allocation::<Metal, f32>(&context, state_len),
+            input: create_buffer_with_data::<Metal, bf16>(&context, &vec![bf16::from_f32(0.1); input_len]),
+            output: create_buffer::<Metal, bf16>(&context, input_len),
+            suffix_state: create_buffer::<Metal, f32>(&context, state_len),
         });
         group.bench_function(format!("T{tree_size}"), |bencher| {
-            iter_encode_loop_named::<Metal, _>(&context, bencher, &format!("{BENCHMARK}/T{tree_size}"), |encoder| {
-                let buffers = buffers.next_mut();
-                kernel.encode(
-                    &buffers.input,
-                    &weights,
-                    Some(&bias),
-                    &base_state,
-                    &parents,
-                    &mut buffers.output,
-                    &mut buffers.suffix_state,
-                    tree_size as u32,
-                    BENCH_TOTAL_PROJ_DIM as u32,
-                    BENCH_CONV_DIM as u32,
-                    encoder,
-                );
-            });
+            iter_encode_loop_named::<Metal, _>(
+                &context,
+                bencher,
+                &format!("{BENCHMARK}/T{tree_size}"),
+                |command_buffer| {
+                    let buffers = buffers.next_mut();
+                    kernel.encode(
+                        &buffers.input,
+                        &weights,
+                        Some(&bias),
+                        &base_state,
+                        &parents,
+                        &mut buffers.output,
+                        &mut buffers.suffix_state,
+                        tree_size as u32,
+                        BENCH_TOTAL_PROJ_DIM as u32,
+                        BENCH_CONV_DIM as u32,
+                        command_buffer,
+                    );
+                },
+            );
         });
     }
 }

@@ -1,6 +1,6 @@
 use std::{
     cmp::{max, min},
-    ops::Range,
+    range::Range,
     sync::Arc,
 };
 
@@ -10,9 +10,9 @@ use parking_lot::Mutex;
 
 use crate::backends::metal::{
     MetalContext,
+    buffer::sparse::{MetalSparseMappingOpsBatch, sparse_heap::MetalSparseHeap},
     error::MetalError,
     metal_extensions::SparsePageSizeExt,
-    sparse::{MetalSparseMappingOpsBatch, sparse_heap::MetalSparseHeap},
 };
 
 pub struct MetalSparseHeapPool {
@@ -40,8 +40,8 @@ impl MetalSparseHeapPool {
     ) -> Result<(), MetalError> {
         let mut pages_to_alloc = pages;
         for heap in self.heaps.iter() {
-            for free_pages_range in heap.lock().free_pages().iter() {
-                pages_to_alloc -= min(free_pages_range.len(), pages_to_alloc);
+            for free_pages_range in heap.lock().free_pages() {
+                pages_to_alloc -= min(free_pages_range.iter().len(), pages_to_alloc);
             }
         }
         if pages_to_alloc == 0 {
@@ -62,16 +62,16 @@ impl MetalSparseHeapPool {
         &mut self,
         context: &MetalContext,
         buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
-        buffer_pages: &Range<usize>,
+        buffer_pages: Range<usize>,
     ) -> Result<Vec<MetalSparseMappingOpsBatch>, MetalError> {
-        self.ensure_enough_free_pages(context, buffer_pages.len())?;
+        self.ensure_enough_free_pages(context, buffer_pages.iter().len())?;
 
-        let mut pages_to_map = buffer_pages.clone();
+        let mut pages_to_map = buffer_pages;
         let mut batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
         for heap in self.heaps.iter() {
             let mut heap_mtl_operations: Vec<MTL4UpdateSparseBufferMappingOperation> = Vec::new();
-            for heap_free_pages_range in heap.lock().free_pages().iter() {
-                let map_pages_count = min(heap_free_pages_range.len(), pages_to_map.len());
+            for heap_free_pages_range in heap.lock().free_pages() {
+                let map_pages_count = min(heap_free_pages_range.iter().len(), pages_to_map.iter().len());
                 if map_pages_count == 0 {
                     break;
                 }
@@ -102,7 +102,7 @@ impl MetalSparseHeapPool {
     pub fn create_unmap_operations(
         &self,
         buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
-        buffer_pages: &Range<usize>,
+        buffer_pages: Range<usize>,
     ) -> Vec<MetalSparseMappingOpsBatch> {
         let mut batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
 
@@ -111,7 +111,7 @@ impl MetalSparseHeapPool {
             let mut heap_mtl_operations: Vec<MTL4UpdateSparseBufferMappingOperation> = Vec::new();
 
             for (heap_range, mapping) in heap.lock().mappings_for(buffer_address) {
-                let mapped_buffer_pages = mapping.buffer_pages_for(&heap_range);
+                let mapped_buffer_pages = mapping.buffer_pages_for(heap_range);
                 let unmap_start_page = max(buffer_pages.start, mapped_buffer_pages.start);
                 let unmap_end_page = min(buffer_pages.end, mapped_buffer_pages.end);
                 if unmap_start_page < unmap_end_page {
@@ -174,5 +174,5 @@ impl MetalSparseHeapPool {
 }
 
 #[cfg(test)]
-#[path = "../../../../unit/backends/metal/sparse/sparse_heap_pool_test.rs"]
+#[path = "../../../../../unit/backends/metal/sparse/sparse_heap_pool_test.rs"]
 mod tests;

@@ -9,7 +9,7 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Backend, Context, Kernels,
             gpu_types::{
                 EmbeddingTableKind::{self, D4S4, Dense, Quantized},
                 QuantizationMethod::{self, ScaleBias, ScaleSymmetric, ScaleZeroPoint},
@@ -22,7 +22,9 @@ use crate::{
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, for_each_non_cpu_backend},
+        helpers::{
+            buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend, submit_command_buffer,
+        },
     },
 };
 
@@ -53,7 +55,7 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
 ) -> Vec<T> {
     let context = <B as Backend>::Context::new().unwrap();
     let context = context.as_ref();
-    let bytes = |data: &[u8]| alloc_allocation_with_data::<B, u8>(context, data);
+    let bytes = |data: &[u8]| create_buffer_with_data::<B, u8>(context, data);
     let (mode, method, group_size) = quantization.unwrap_or((U4, ScaleSymmetric, 128));
 
     let (mut scales, mut zero_points, mut biases) = (None, None, None);
@@ -64,9 +66,8 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
         },
         Quantized => {
             let groups = MODEL_DIM.div_ceil(group_size);
-            let group_values = |value: fn(u32) -> f32| {
-                alloc_allocation_with_data::<B, T>(context, &floats(VOCAB_SIZE * groups, value))
-            };
+            let group_values =
+                |value: fn(u32) -> f32| create_buffer_with_data::<B, T>(context, &floats(VOCAB_SIZE * groups, value));
             scales = Some(group_values(|index| 0.02 + (index % 5) as f32 * 0.01));
             if method == ScaleBias {
                 biases = Some(group_values(|index| -0.1 + index as f32 * 0.03));
@@ -81,10 +82,10 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
                 (0..d4s4::LADDER_SIZE).map(|index| f16::from_f32(2f32.powf(index as f32 / 2.0 - 5.5))).collect();
             let points: Vec<i8> =
                 (0..d4s4::CODEBOOK_SIZE * d4s4::VALUES_PER_CODE).map(|index| (index % 9) as i8 - 4).collect();
-            scales = Some(alloc_allocation_with_data::<B, T>(context, &row_scales));
+            scales = Some(create_buffer_with_data::<B, T>(context, &row_scales));
             ladder_indices = Some(bytes(&pattern(VOCAB_SIZE * MODEL_DIM / d4s4::COLUMNS_PER_LADDER_INDEX_BYTE, 5)));
-            ladder = Some(alloc_allocation_with_data::<B, f16>(context, &steps));
-            codebook = Some(alloc_allocation_with_data::<B, i8>(context, &points));
+            ladder = Some(create_buffer_with_data::<B, f16>(context, &steps));
+            codebook = Some(create_buffer_with_data::<B, i8>(context, &points));
             bytes(&pattern(VOCAB_SIZE * MODEL_DIM / d4s4::VALUES_PER_CODE, 37))
         },
     };
@@ -98,7 +99,7 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
                 }
             })
             .collect();
-        Some(alloc_allocation_with_data::<B, i32>(context, &signs))
+        Some(create_buffer_with_data::<B, i32>(context, &signs))
     } else {
         None
     };
@@ -113,9 +114,9 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
         use_hadamard,
     )
     .unwrap();
-    let token_ids = alloc_allocation_with_data::<B, u32>(context, &TOKEN_IDS);
-    let mut output = alloc_allocation::<B, T>(context, TOKEN_IDS.len() * MODEL_DIM as usize);
-    let mut encoder = Encoder::<B>::new(context).unwrap();
+    let token_ids = create_buffer_with_data::<B, u32>(context, &TOKEN_IDS);
+    let mut output = create_buffer::<B, T>(context, TOKEN_IDS.len() * MODEL_DIM as usize);
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &token_ids,
         &values,
@@ -131,10 +132,10 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
         VOCAB_SIZE,
         MODEL_DIM,
         1.5,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-    allocation_to_vec::<B, T>(&output)
+    submit_command_buffer(command_buffer);
+    buffer_to_vec::<B, T>(&output)
 }
 
 fn check<T: ArrayElement + Float + Display>(

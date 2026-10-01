@@ -1,6 +1,6 @@
 use super::{MatmulA, MatmulArguments, QuantParamsLayout};
 use crate::backends::common::{
-    Backend, BufferArg,
+    Backend, BufferMut, BufferRef,
     gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
 };
 
@@ -28,8 +28,15 @@ pub struct MatmulShape {
 }
 
 impl MatmulShape {
-    pub fn from_arguments<'a, 'b, 'd, B: Backend, TB: BufferArg<'b, B>>(
-        arguments: &MatmulArguments<'a, 'b, 'd, B, TB>
+    pub fn from_arguments<B: Backend>(
+        arguments: &MatmulArguments<
+            '_,
+            B,
+            impl BufferRef<Backend = B>,
+            impl BufferRef<Backend = B>,
+            impl BufferMut<Backend = B>,
+            impl BufferRef<Backend = B>,
+        >
     ) -> Self {
         Self {
             m: arguments.m,

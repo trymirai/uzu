@@ -6,9 +6,9 @@ use uzu_engine_macros::uzu_test;
 
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock};
 use crate::{
-    backends::common::{Backend, Encoder},
+    backends::common::{Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context},
     data_type::DataType,
-    tests::helpers::{alloc_allocation_with_data, create_context, for_each_non_cpu_backend},
+    tests::helpers::{create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
 
 fn build_offsets(
@@ -71,15 +71,15 @@ fn run_decode_case<B: Backend>(
 
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(ctx, DataType::BF16, 2).expect("experts decode kernel");
 
-    let x_perm_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x_perm);
-    let offsets_buf = alloc_allocation_with_data::<B, u32>(ctx, &offsets);
-    let w13_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w13);
-    let w2_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w2);
-    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &up_biases);
-    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &down_biases);
+    let x_perm_buf = create_buffer_with_data::<B, bf16>(ctx, &x_perm);
+    let offsets_buf = create_buffer_with_data::<B, u32>(ctx, &offsets);
+    let w13_buf = create_buffer_with_data::<B, bf16>(ctx, &w13);
+    let w2_buf = create_buffer_with_data::<B, bf16>(ctx, &w2);
+    let up_biases_buf = create_buffer_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = create_buffer_with_data::<B, bf16>(ctx, &down_biases);
 
     for _ in 0..warmup {
-        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
+        let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
         let output = experts_kernel
             .encode(
                 MoeExpertsTwoPassArguments {
@@ -99,10 +99,10 @@ fn run_decode_case<B: Backend>(
                     up_clip_max: f32::INFINITY,
                     silu_alpha: 1.702,
                 },
-                &mut encoder,
+                &mut command_buffer,
             )
             .expect("failed to encode MoE experts");
-        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
         drop(completed);
     }
@@ -110,7 +110,7 @@ fn run_decode_case<B: Backend>(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
+        let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
         let output = experts_kernel
             .encode(
                 MoeExpertsTwoPassArguments {
@@ -130,10 +130,10 @@ fn run_decode_case<B: Backend>(
                     up_clip_max: f32::INFINITY,
                     silu_alpha: 1.702,
                 },
-                &mut encoder,
+                &mut command_buffer,
             )
             .expect("failed to encode MoE experts");
-        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
         drop(completed);
         times.push(start.elapsed().as_secs_f64() * 1000.0);
@@ -192,15 +192,15 @@ fn run_two_pass_prefill_case<B: Backend>(
     let experts_kernel =
         MoeExpertsTwoPassPrefillBlock::<B>::new(ctx, DataType::BF16, 2).expect("experts prefill kernel");
 
-    let x_perm_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x_perm);
-    let offsets_buf = alloc_allocation_with_data::<B, u32>(ctx, &offsets);
-    let w13_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w13);
-    let w2_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w2);
-    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &up_biases);
-    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &down_biases);
+    let x_perm_buf = create_buffer_with_data::<B, bf16>(ctx, &x_perm);
+    let offsets_buf = create_buffer_with_data::<B, u32>(ctx, &offsets);
+    let w13_buf = create_buffer_with_data::<B, bf16>(ctx, &w13);
+    let w2_buf = create_buffer_with_data::<B, bf16>(ctx, &w2);
+    let up_biases_buf = create_buffer_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = create_buffer_with_data::<B, bf16>(ctx, &down_biases);
 
     for _ in 0..warmup {
-        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
+        let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
         let args = MoeExpertsTwoPassArguments {
             x_perm: &x_perm_buf,
             expert_offsets: &offsets_buf,
@@ -218,8 +218,8 @@ fn run_two_pass_prefill_case<B: Backend>(
             up_clip_max: f32::INFINITY,
             silu_alpha: 1.702,
         };
-        let output = experts_kernel.encode(args, &mut encoder).expect("failed to encode MoE experts");
-        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let output = experts_kernel.encode(args, &mut command_buffer).expect("failed to encode MoE experts");
+        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
         drop(completed);
     }
@@ -227,7 +227,7 @@ fn run_two_pass_prefill_case<B: Backend>(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
+        let mut command_buffer = ctx.create_command_buffer(None, None).expect("Failed to create command buffer");
         let args = MoeExpertsTwoPassArguments {
             x_perm: &x_perm_buf,
             expert_offsets: &offsets_buf,
@@ -245,8 +245,8 @@ fn run_two_pass_prefill_case<B: Backend>(
             up_clip_max: f32::INFINITY,
             silu_alpha: 1.702,
         };
-        let output = experts_kernel.encode(args, &mut encoder).expect("failed to encode MoE experts");
-        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let output = experts_kernel.encode(args, &mut command_buffer).expect("failed to encode MoE experts");
+        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
         drop(completed);
         times.push(start.elapsed().as_secs_f64() * 1000.0);
