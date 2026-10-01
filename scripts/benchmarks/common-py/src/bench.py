@@ -49,6 +49,7 @@ class BenchRequest(BaseModel):
 
 class BenchResponse(BaseModel):
     text: str
+    tokens_count: int
     time_to_first_token: float
     prompt_tps: float
     decode_tps: float

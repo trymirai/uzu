@@ -1,6 +1,7 @@
 #ifndef __benchmarks_bench_hpp__
 #define __benchmarks_bench_hpp__
 
+#include <cstddef>
 #include <cstdint>
 #include <glaze/json/generic.hpp>
 #include <optional>
@@ -36,6 +37,7 @@ struct BenchRequest {
 
 struct BenchResponse {
     std::string text;
+    size_t tokens_count;
     double time_to_first_token;
     double prompt_tps;
     double decode_tps;

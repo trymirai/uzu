@@ -95,6 +95,7 @@ class MLXEngine(InferenceEngine):
 
         return BenchResponse(
             text=text,
+            tokens_count=response.generation_tokens,
             time_to_first_token=time_to_first_token,
             prompt_tps=response.prompt_tps,
             decode_tps=response.generation_tps,

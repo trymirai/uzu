@@ -107,6 +107,7 @@ class OMLXEngine(InferenceEngine):
 
         return BenchResponse(
             text=response.text,
+            tokens_count=completion_tokens,
             time_to_first_token=time_to_first_token,
             prompt_tps=prompt_tokens / time_to_first_token if time_to_first_token > 0.0 else 0.0,
             decode_tps=(completion_tokens - 1) / decode_time if decode_time > 0.0 else 0.0,

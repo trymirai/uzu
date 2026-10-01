@@ -359,6 +359,7 @@ BenchResponse LlamaEngine::run_single(
     const double tokens_per_fp = forward_passes > 0 ? (double)(tokens_generated) / forward_passes : 1.0;
     return BenchResponse{
         output_text,
+        tokens_generated,
         time_to_first_token,
         prompt_tps,
         decode_tps,
