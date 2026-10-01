@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use regex::Regex;
 use toml_edit::{DocumentMut, value};
 
@@ -10,12 +10,13 @@ use crate::{
 pub enum MiraiGuiSyncTask {
     PackageJson,
     CargoToml,
+    TauriConf,
 }
 
 impl SyncTask for MiraiGuiSyncTask {
     fn process(
         &self,
-        _platforms: &PlatformsConfig,
+        platforms: &PlatformsConfig,
         workspace: &WorkspaceManifest,
         input: &str,
     ) -> Result<String> {
@@ -26,6 +27,13 @@ impl SyncTask for MiraiGuiSyncTask {
                 let mut document: DocumentMut = input.parse()?;
                 document["package"]["version"] = value(version);
                 Ok(document.to_string())
+            },
+            Self::TauriConf => {
+                let target = platforms
+                    .envs
+                    .get("MACOSX_DEPLOYMENT_TARGET")
+                    .context("Missing MACOSX_DEPLOYMENT_TARGET in platforms.toml [envs]")?;
+                replace_string_field(input, "minimumSystemVersion", target)
             },
         }
     }
