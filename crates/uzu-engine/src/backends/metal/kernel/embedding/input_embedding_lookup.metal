@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
+#include "../common/packed.h"
 #include "../generated/d4s4.h"
 #include "../generated/embedding.h"
 #include "../generated/quantization_method.h"
@@ -9,10 +10,7 @@
 using namespace metal;
 using namespace uzu::embedding;
 using namespace uzu::quantization_method;
-
-inline uint read_u4(const device uchar* packed, uint nibble) {
-  return (packed[nibble / 2] >> (4 * (nibble & 1))) & 0x0F;
-}
+using uzu::read_packed;
 
 template <typename T>
 VARIANTS(T, float, bfloat)
@@ -58,7 +56,7 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
     const uint row = token_id * (is_u4 ? model_dim / 2 : model_dim);
     float code;
     if (is_u4) {
-      code = float(read_u4(values, 2 * row + dim_idx));
+      code = float(read_packed<4>(values, 2 * row + dim_idx));
     } else if (quantization_mode == uzu::quantization::QuantizationMode::I8) {
       code = float(reinterpret_cast<const device char*>(values)[row + dim_idx]);
     } else {
@@ -69,14 +67,15 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
       bias = float(biases[scale_idx]);
     } else if (quantization_method == QuantizationMethod::ScaleZeroPoint) {
       const uint zero_point =
-          is_u4 ? read_u4(zero_points, 2 * token_id * ((num_groups + 1) / 2) + group_idx) : zero_points[scale_idx];
+          is_u4 ? read_packed<4>(zero_points, 2 * token_id * ((num_groups + 1) / 2) + group_idx)
+                : zero_points[scale_idx];
       bias = -scale * float(zero_point);
     } else {
       bias = -scale * (is_u4 ? 8.0f : 128.0f);
     }
     loaded = float(T((scale * code + bias) * input_scale));
   } else {
-    const uint ladder_index = read_u4(
+    const uint ladder_index = read_packed<4>(
         ladder_indices,
         token_id * (model_dim / uzu::d4s4::COLUMNS_PER_LADDER_SCALE) + dim_idx / uzu::d4s4::COLUMNS_PER_LADDER_SCALE
     );
