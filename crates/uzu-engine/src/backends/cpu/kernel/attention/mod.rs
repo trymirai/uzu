@@ -45,7 +45,7 @@ impl AttentionKernel for AttentionCpuKernel {
         >,
         command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<<Cpu as Backend>::ScratchBuffer, CpuError> {
-        arguments.assert_valid_trie();
+        arguments.validate_trie_size();
         let config = self.config;
         let mut output = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, config.head_dim],

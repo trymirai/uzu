@@ -64,7 +64,7 @@ impl<
     VT: BufferRef<Backend = B>,
 > AttentionArguments<'_, B, QT, TT, KT, VT>
 {
-    pub fn assert_valid_trie(&self) {
+    pub fn validate_trie_size(&self) {
         assert!(
             self.trie.is_none_or(|trie| trie.size() >= self.suffix_length as usize * size_of::<TrieNode>()),
             "trie buffer must cover every suffix token"
