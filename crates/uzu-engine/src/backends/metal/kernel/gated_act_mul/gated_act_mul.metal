@@ -125,9 +125,8 @@ PUBLIC KERNEL(GatedActMul) (
       [](float x) { return simd_max(x); },
       [](float x, float y) { return max(x, y); }
   );
-  const float scale = isfinite(maximum) && maximum > 0.0f ? maximum / ACTIVATION_QUANT_INT8_MAX : 1.0f;
-  const int8_t code =
-      static_cast<int8_t>(clamp(round(result / scale), -ACTIVATION_QUANT_INT8_MAX, ACTIVATION_QUANT_INT8_MAX));
+  const float scale = int8_activation_scale(maximum);
+  const int8_t code = quantize_activation_int8(result, scale);
   if (element_in_bounds) {
     const uint output_gated_index = grouped_by_weight_nibble ? nibble_grouped_index(gated_idx) : gated_idx;
     q_out[batch_idx * gated_dim + output_gated_index] = code;

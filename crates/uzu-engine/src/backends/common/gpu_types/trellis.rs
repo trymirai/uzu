@@ -1,0 +1,4 @@
+pub const SHORT_HADAMARD_SIZE: u32 = 1024;
+pub const LONG_HADAMARD_SIZE: u32 = 2048;
+pub const COLUMN_CLASS_COUNT: u32 = 4;
+pub const TOKEN_STATISTICS_LEN: u32 = 8;

@@ -1,4 +1,5 @@
 pub mod activation_transform;
+pub(super) mod trellis;
 
 use crate::backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE;
 

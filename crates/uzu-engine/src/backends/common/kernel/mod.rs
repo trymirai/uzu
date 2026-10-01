@@ -9,10 +9,12 @@ pub mod delta_net_tree_verify;
 pub mod gated_act_mul;
 pub mod matmul;
 pub mod radix_top_k_small;
+mod trellis;
 
 pub use activation_transform::{ActivationQuantization, ActivationTransform};
 pub use attention::{AttentionArguments, AttentionKernel, AttentionKernelConfig};
 pub use gated_act_mul::{GatedActMul, GatedActMulSettings};
+pub use trellis::{RotatedInput, TrellisTransform, mixing_order};
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
