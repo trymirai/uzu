@@ -32,6 +32,11 @@ members = [
     "engine-splash",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["common-py/src"]
+markers = ["integration: runs real inference engines (opt in with --engine)"]
+
 [tool.ruff]
 line-length = 120
 
