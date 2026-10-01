@@ -11,7 +11,10 @@
 
 class LlamaEngine final : public InferenceEngine {
 public:
-    explicit LlamaEngine(const std::string& model);
+    explicit LlamaEngine(
+        const std::string& model,
+        const std::string& draft_model = ""
+    );
 
     std::vector<BenchResponse> execute(const BenchRequest& request) const override;
 
@@ -27,6 +30,8 @@ private:
     ) const;
 
     llama_model_ptr model;
+    llama_model_ptr draft_model;
+    size_t dflash_depth = 0;
     const llama_vocab* tokenizer;
     common_chat_templates_ptr chat_templates;
     bool has_mtp;

@@ -20,16 +20,19 @@ struct llama_batch_deleter {
 typedef std::unique_ptr<llama_batch, llama_batch_deleter> llama_batch_ptr;
 
 struct LlamaEngine::RunConfig {
-    size_t max_tokens;
+    std::optional<size_t> max_tokens;
     llama_context_params ctx_params;
-    std::optional<llama_context_params> mtp_params;
+    std::optional<llama_context_params> draft_params;
     common_params_speculative spec_params;
 };
 
-LlamaEngine::LlamaEngine(const std::string& model) {
+LlamaEngine::LlamaEngine(
+    const std::string& model,
+    const std::string& draft_model
+) {
     const std::filesystem::path model_path = get_model_path(model);
     llama_model_params params = llama_model_default_params();
-    params.load_mtp = has_mtp_weights(model_path);
+    params.load_mtp = draft_model.empty() && has_mtp_weights(model_path);
     this->model.reset(llama_model_load_from_file(model_path.c_str(), params));
     if (!this->model) {
         throw std::runtime_error("Failed to load model: " + model_path.string());
@@ -46,6 +49,39 @@ LlamaEngine::LlamaEngine(const std::string& model) {
     }
 
     this->has_mtp = params.load_mtp && llama_model_n_layer_nextn(this->model.get()) > 0;
+
+    if (!draft_model.empty()) {
+        const std::filesystem::path draft_path = get_model_path(draft_model, true);
+        if (common_speculative_types_from_gguf(draft_path.string()) !=
+            std::vector<common_speculative_type>{COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH}) {
+            throw std::invalid_argument("--model-draft requires a DFlash GGUF model");
+        }
+        this->draft_model.reset(llama_model_load_from_file(draft_path.c_str(), llama_model_default_params()));
+        if (!this->draft_model) {
+            throw std::runtime_error("Failed to load DFlash draft model: " + draft_path.string());
+        }
+        if (llama_model_n_embd(this->draft_model.get()) != llama_model_n_embd(this->model.get())) {
+            throw std::invalid_argument("DFlash draft and target model embedding dimensions must match");
+        }
+        const llama_token mask = llama_vocab_mask(llama_model_get_vocab(this->draft_model.get()));
+        if (mask < 0 || mask >= llama_vocab_n_tokens(this->tokenizer)) {
+            throw std::invalid_argument("DFlash draft model must have a valid mask token in the target vocabulary");
+        }
+        char block_size_text[32]{};
+        int32_t block_size = 16;
+        if (llama_model_meta_val_str(
+                this->draft_model.get(),
+                "dflash.block_size",
+                block_size_text,
+                sizeof(block_size_text)
+            ) >= 0) {
+            block_size = std::stoi(block_size_text);
+        }
+        if (block_size < 2) {
+            throw std::invalid_argument("DFlash block size must be at least 2");
+        }
+        this->dflash_depth = block_size - 1;
+    }
 }
 
 std::vector<llama_token> LlamaEngine::tokenize(const BenchRequest& request) const {
@@ -129,9 +165,8 @@ BenchResponse LlamaEngine::run_single(
     const RunConfig& config,
     const llama_sampler_ptr& sampler_chain
 ) const {
-    const size_t max_tokens = config.max_tokens;
     const size_t prompt_tokens_count = tokens.size();
-    const bool use_mtp = config.mtp_params.has_value();
+    const bool use_speculation = config.draft_params.has_value();
 
     llama_sampler_reset(sampler_chain.get());
     llama_context_ptr ctx{llama_init_from_model(model.get(), config.ctx_params)};
@@ -139,30 +174,37 @@ BenchResponse LlamaEngine::run_single(
         throw std::runtime_error("Failed to create context");
     }
 
-    llama_context_ptr ctx_mtp;
+    const size_t context_capacity = llama_n_ctx(ctx.get());
+    if (prompt_tokens_count > context_capacity) {
+        throw std::invalid_argument("Prompt exceeds the context capacity");
+    }
+
+    const size_t max_tokens = config.max_tokens.value_or(context_capacity - prompt_tokens_count + 1);
+
+    llama_context_ptr ctx_draft;
     common_speculative_ptr spec;
     bool checkpoint_target = false;
-    if (use_mtp) {
+    if (use_speculation) {
         const common_context_seq_rm_type rm_type = common_context_can_seq_rm(ctx.get());
         if (rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
             throw std::runtime_error("Target context does not support speculative rollback");
         }
         checkpoint_target = rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
 
-        llama_context_params mtp_params = config.mtp_params.value();
-        mtp_params.ctx_other = ctx.get();
-        mtp_params.n_ctx = llama_n_ctx(ctx.get());
-        ctx_mtp.reset(llama_init_from_model(model.get(), mtp_params));
-        if (!ctx_mtp) {
-            throw std::runtime_error("Failed to create MTP context");
+        llama_context_params draft_params = config.draft_params.value();
+        draft_params.ctx_other = ctx.get();
+        draft_params.n_ctx = llama_n_ctx(ctx.get());
+        ctx_draft.reset(llama_init_from_model(draft_model ? draft_model.get() : model.get(), draft_params));
+        if (!ctx_draft) {
+            throw std::runtime_error("Failed to create draft context");
         }
 
         common_params_speculative spec_params = config.spec_params;
         spec_params.draft.ctx_tgt = ctx.get();
-        spec_params.draft.ctx_dft = ctx_mtp.get();
+        spec_params.draft.ctx_dft = ctx_draft.get();
         spec.reset(common_speculative_init(spec_params, 1));
         if (!spec) {
-            throw std::runtime_error("Failed to initialize MTP speculation");
+            throw std::runtime_error("Failed to initialize speculative decoding");
         }
     }
 
@@ -189,7 +231,8 @@ BenchResponse LlamaEngine::run_single(
     llama_batch& batch = *batch_storage;
     const int64_t time_start = llama_time_us();
     const size_t physical_batch_size = llama_n_ubatch(ctx.get());
-    const size_t prefill_batch_size = use_mtp ? physical_batch_size : llama_n_batch(ctx.get());
+    // Hidden-state extraction exposes only the latest physical batch for MTP and DFlash.
+    const size_t prefill_batch_size = use_speculation ? physical_batch_size : llama_n_batch(ctx.get());
     for (size_t offset = 0; offset < tokens.size(); offset += prefill_batch_size) {
         common_batch_clear(batch);
         const size_t end = std::min(tokens.size(), offset + prefill_batch_size);
@@ -202,13 +245,13 @@ BenchResponse LlamaEngine::run_single(
         // A single-sequence prefill call can contain multiple physical forward passes.
         forward_passes += (end - offset + physical_batch_size - 1) / physical_batch_size;
         if (!common_speculative_process(spec.get(), batch)) {
-            throw std::runtime_error("MTP prefill failed");
+            throw std::runtime_error("Draft prefill failed");
         }
     }
 
     llama_synchronize(ctx.get());
-    if (ctx_mtp) {
-        llama_synchronize(ctx_mtp.get());
+    if (ctx_draft) {
+        llama_synchronize(ctx_draft.get());
         common_speculative_begin(spec.get(), 0, tokens);
     }
 
@@ -230,14 +273,15 @@ BenchResponse LlamaEngine::run_single(
     while (!stop && tokens_generated < max_tokens) {
         const llama_pos n_past = tokens.size();
         std::vector<llama_token> draft;
-        // The upstream driver limits the result after drafting, so its full draft must fit the context.
+        // The driver truncates after drafting; reserve the full block, including the DFlash anchor.
         if (spec && max_tokens - tokens_generated > 1 &&
-            llama_n_ctx(ctx_mtp.get()) - n_past >= static_cast<uint32_t>(common_speculative_n_max(spec.get()))) {
+            llama_n_ctx(ctx_draft.get()) - n_past >=
+                static_cast<uint32_t>(common_speculative_n_max(spec.get()) + (draft_model ? 1 : 0))) {
             const int32_t n_draft =
                 std::min<size_t>(common_speculative_n_max(spec.get()), max_tokens - tokens_generated - 1);
             common_speculative_get_draft_params(spec.get(), 0) = {true, n_draft, n_past, token, &tokens, &draft};
             common_speculative_draft(spec.get());
-            trim_context(ctx_mtp.get(), n_past);
+            trim_context(ctx_draft.get(), n_past);
         }
 
         if (checkpoint_target && !draft.empty()) {
@@ -281,20 +325,26 @@ BenchResponse LlamaEngine::run_single(
                 trim_context(ctx.get(), n_past);
                 batch.n_tokens = tokens.size() - n_past;
                 if (llama_decode(ctx.get(), batch) != 0) {
-                    throw std::runtime_error("Failed to replay accepted MTP tokens");
+                    throw std::runtime_error("Failed to replay accepted speculative tokens");
                 }
                 forward_passes++;
             }
             if (!common_speculative_process(spec.get(), batch)) {
-                throw std::runtime_error("MTP verification failed");
+                throw std::runtime_error("Draft verification failed");
             }
             common_speculative_accept(spec.get(), 0, accepted);
             trim_context(ctx.get(), tokens.size());
-            trim_context(ctx_mtp.get(), tokens.size());
-            llama_synchronize(ctx_mtp.get());
+            trim_context(ctx_draft.get(), tokens.size());
+            llama_synchronize(ctx_draft.get());
         }
 
         update_memory();
+    }
+
+    if (!config.max_tokens.has_value() && !stop) {
+        throw std::runtime_error(
+            "Context capacity exhausted before EOS/EOG (" + std::to_string(context_capacity) + " tokens)"
+        );
     }
 
     const int64_t time_end = llama_time_us();
@@ -336,14 +386,25 @@ std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) con
     }
 
     const std::vector<llama_token> tokens = tokenize(request);
-    const size_t max_tokens = request.max_tokens.value_or(256);
+    std::optional<size_t> max_tokens = request.max_tokens;
     if (max_tokens == 0) {
-        throw std::invalid_argument("max_tokens must be 1 or greater");
+        max_tokens.reset();
     }
 
     const size_t max_context = std::numeric_limits<llama_pos>::max();
-    if (tokens.empty() || tokens.size() > max_context || max_tokens > max_context - tokens.size()) {
+    if (tokens.empty() || tokens.size() > max_context ||
+        (max_tokens.has_value() && max_tokens.value() > max_context - tokens.size())) {
         throw std::invalid_argument("Prompt and generation length exceed the supported context size");
+    }
+
+    if (!max_tokens.has_value()) {
+        const int32_t model_context = llama_model_n_ctx_train(this->model.get());
+        if (model_context <= 0) {
+            throw std::invalid_argument("Model does not declare a valid context capacity");
+        }
+        if (tokens.size() > static_cast<size_t>(model_context)) {
+            throw std::invalid_argument("Prompt exceeds the model's declared context capacity");
+        }
     }
 
     // prepare config to run
@@ -351,24 +412,34 @@ std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) con
         .max_tokens = max_tokens,
         .ctx_params = llama_context_default_params(),
     };
-    config.ctx_params.n_ctx = std::max<size_t>(config.ctx_params.n_ctx, tokens.size() + max_tokens);
+    config.ctx_params.n_ctx = max_tokens.has_value()
+        ? std::max<size_t>(config.ctx_params.n_ctx, tokens.size() + max_tokens.value())
+        : 0;  // Let llama.cpp use the model's declared context capacity for EOS-only generation.
 
+    const bool use_dflash = speculative_depth > 0 && this->draft_model;
     const bool use_mtp = speculative_depth > 0 && this->has_mtp;
-    if (use_mtp) {
-        config.spec_params.types = {COMMON_SPECULATIVE_TYPE_DRAFT_MTP};
+    if (use_dflash || use_mtp) {
+        config.spec_params.types = {
+            use_dflash ? COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH : COMMON_SPECULATIVE_TYPE_DRAFT_MTP
+        };
         // keep verification in one physical batch so recurrent snapshots cover every draft token.
         config.spec_params.draft.n_max =
             std::min<int32_t>(speculative_depth, std::min(config.ctx_params.n_batch, config.ctx_params.n_ubatch) - 1);
+        if (use_dflash) {
+            config.spec_params.draft.n_max = std::min<size_t>(config.spec_params.draft.n_max, this->dflash_depth);
+        }
 
         config.ctx_params.n_rs_seq = config.spec_params.need_n_rs_seq();
         config.ctx_params.n_outputs_max = config.spec_params.draft.n_max + 1;
         config.ctx_params.n_outputs_max_per_seq = config.spec_params.draft.n_max + 1;
 
-        config.mtp_params = config.ctx_params;
-        config.mtp_params->ctx_type = LLAMA_CONTEXT_TYPE_MTP;
-        config.mtp_params->n_rs_seq = 0;
-        config.mtp_params->n_outputs_max = 1;
-        config.mtp_params->n_outputs_max_per_seq = 1;
+        config.draft_params = config.ctx_params;
+        config.draft_params->n_rs_seq = 0;
+        if (use_mtp) {
+            config.draft_params->ctx_type = LLAMA_CONTEXT_TYPE_MTP;
+            config.draft_params->n_outputs_max = 1;
+            config.draft_params->n_outputs_max_per_seq = 1;
+        }
     }
 
     // build the sampling pipeline once.
