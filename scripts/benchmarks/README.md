@@ -21,6 +21,8 @@ Each engine supports:
     EOF
     ```
 
+When `max_tokens` is omitted, `null`, or `0`, decoding continues until an EOS token.
+
 ## Engines
 
 ### llama.cpp
@@ -39,6 +41,10 @@ Also DFlash is supported
 ### MLX
 
 https://github.com/ml-explore/mlx-lm
+
+```bash
+uv run mlx -m "mlx-community/Qwen3.5-0.8B-4bit"
+```
 
 ### MTPLX
 

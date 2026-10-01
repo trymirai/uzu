@@ -23,13 +23,16 @@ class MLXEngine(InferenceEngine):
 
     def __init__(self, model: str | Path):
         super().__init__()
-        model_path: str = get_model_path(model)
+        local_path = Path(model).expanduser()
+        model_path = str(local_path) if local_path.is_dir() else get_model_path(model)
         self.model, self.tokenizer = cast(tuple[nn.Module, TokenizerWrapper], mlx_lm.load(model_path))
 
     def execute(self, request: BenchRequest) -> list[BenchResponse]:
         num_runs = request.num_runs if request.num_runs is not None else 1
         if num_runs < 1:
             raise ValueError("num_runs must be 1 or greater")
+        if request.speculative_depth not in (None, 0):
+            raise ValueError("MLXEngine does not support speculative decoding")
 
         prompt: list[int] = get_tokenized_prompt(request, self.tokenizer)
 
@@ -46,60 +49,56 @@ class MLXEngine(InferenceEngine):
                 xtc_special_tokens=[],
             )
 
-        generation_options: dict[str, int] = {}
-        if request.speculative_depth is not None:
-            generation_options["num_draft_tokens"] = request.speculative_depth
         generate = partial(
             mlx_lm.stream_generate,
             model=self.model,
             tokenizer=self.tokenizer,
             prompt=prompt,
-            max_tokens=request.max_tokens or 256,
+            # MLX uses -1 for unlimited generation; EOS still ends the stream.
+            max_tokens=request.max_tokens or -1,
             sampler=sampler,
-            **generation_options,
         )
 
         return [self._run(generate) for _ in range(num_runs)]
 
-    def _run(self, generate: Callable[[], Generator[GenerationResponse]]) -> BenchResponse:
+    def _run(self, generate: Callable[..., Generator[GenerationResponse]]) -> BenchResponse:
         # prepare variables
         text: str = ""
         time_to_first_token: float = -1.0
-        draft_flags: list[bool] = []
         response: GenerationResponse | None = None
         mem_counters_max: MemoryCounters = get_memory_counters()
 
+        def update_memory(*_progress: int) -> None:
+            nonlocal mem_counters_max
+            counters = get_memory_counters()
+            if counters.resident_size > mem_counters_max.resident_size:
+                mem_counters_max = counters
+
         # create and run inference loop
         time_start: float = time.perf_counter()
-        stream: Generator[GenerationResponse] = generate()
+        stream: Generator[GenerationResponse] = generate(prompt_progress_callback=update_memory)
         for response in stream:
             if time_to_first_token < 0.0:
                 time_to_first_token = time.perf_counter() - time_start
             text += response.text
-            draft_flags.append(response.from_draft)
 
-            mem_counters = get_memory_counters()
-            if mem_counters.graphics_total > mem_counters_max.graphics_total:
-                mem_counters_max = mem_counters
+            update_memory()
         time_total: float = time.perf_counter() - time_start
 
         if response is None:
             raise RuntimeError("Generation did not return a response")
 
-        # Collect tokens per forward passes
-        target_forward_passes: int = sum(not flag for flag in draft_flags)
-        if draft_flags and draft_flags[-1]:
-            # A trailing draft group also used one target verification pass.
-            target_forward_passes += 1
-        tokens_per_forward_pass: float = response.generation_tokens / target_forward_passes
+        # The first token is produced during prefill, outside the decode interval.
+        decode_duration = time_total - time_to_first_token
+        decode_tokens = max(0, response.generation_tokens - 1)
 
         return BenchResponse(
             text=text,
             tokens_count=response.generation_tokens,
             time_to_first_token=time_to_first_token,
             prompt_tps=response.prompt_tps,
-            decode_tps=response.generation_tps,
-            tokens_per_forward_pass=tokens_per_forward_pass,
+            decode_tps=decode_tokens / decode_duration if decode_duration > 0.0 else 0.0,
+            tokens_per_forward_pass=1.0,
             duration=time_total,
             memory_phys_footprint=mem_counters_max.phys_footprint,
             memory_resident=mem_counters_max.resident_size,
