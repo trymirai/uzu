@@ -63,6 +63,7 @@ impl Storage {
     pub async fn refresh(
         &self,
         models: &[Model],
+        complete: bool,
     ) -> Result<(), StorageError> {
         let mut requests = HashMap::new();
         for model in models {
@@ -80,10 +81,14 @@ impl Storage {
         let destinations: HashSet<&Path> = requests.values().map(|request| request.destination.as_path()).collect();
         let listed: HashSet<&Path> = destinations.iter().filter_map(|destination| destination.parent()).collect();
         for model_path in fs::asyn::read_dir(self.models_path()).await.unwrap_or_default() {
-            if !listed.contains(model_path.as_path()) {
+            let old_paths = if listed.contains(model_path.as_path()) {
+                fs::asyn::read_dir(&model_path).await.unwrap_or_default()
+            } else if complete {
+                vec![model_path]
+            } else {
                 continue;
-            }
-            for old_path in fs::asyn::read_dir(&model_path).await.unwrap_or_default() {
+            };
+            for old_path in old_paths {
                 if destinations.contains(old_path.as_path()) || fs::asyn::is_file(&old_path).await {
                     continue;
                 }

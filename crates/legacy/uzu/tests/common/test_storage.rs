@@ -30,7 +30,7 @@ impl TestStorage {
             huggingface_api_key.map(|token| BearerToken::from(token.to_string())),
         );
         let storage = Storage::new(tokio_handle, config).await?;
-        storage.refresh(&models).await?;
+        storage.refresh(&models, false).await?;
         Ok(Self {
             storage: Arc::new(storage),
             _temp_dir_guard: temp_dir_guard,
