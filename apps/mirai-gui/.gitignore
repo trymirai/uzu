@@ -4,9 +4,9 @@ node_modules/
 # Build outputs
 client/dist-web/
 client/dist-tauri/
-src-tauri/target/
-src-tauri/gen/
-src-tauri/resources/cli/
+desktop/target/
+desktop/gen/
+desktop/resources/cli/
 
 # Python (dmgbuild settings)
 __pycache__/

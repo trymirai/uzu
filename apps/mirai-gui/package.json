@@ -14,8 +14,8 @@
     "typecheck": "tsc -p client/tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "lint:rust": "cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings",
+    "test:rust": "cargo test --manifest-path desktop/Cargo.toml",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm lint:rust && pnpm test:rust",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,css,md}\"",
     "format:check": "prettier --check \"**/*.{js,jsx,ts,tsx,json,css,md}\""

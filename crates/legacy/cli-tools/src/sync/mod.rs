@@ -104,7 +104,7 @@ pub fn run_sync(check: bool) -> Result<()> {
 
     let mirai_gui_path = root_path.join("apps/mirai-gui");
     MiraiGuiSyncTask::PackageJson.run(&platforms, &workspace, &mirai_gui_path.join("package.json"), check)?;
-    MiraiGuiSyncTask::CargoToml.run(&platforms, &workspace, &mirai_gui_path.join("src-tauri/Cargo.toml"), check)?;
+    MiraiGuiSyncTask::CargoToml.run(&platforms, &workspace, &mirai_gui_path.join("desktop/Cargo.toml"), check)?;
 
     docs::sync_docs(&platforms, root_path, check)?;
 

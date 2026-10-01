@@ -16,7 +16,7 @@ Tauri v2, React, Rust.
 ```bash
 pnpm install
 pnpm dev      # desktop app; the first build also compiles the engine and its Metal shaders, later builds are incremental
-pnpm build    # .app and .dmg in src-tauri/target/aarch64-apple-darwin/release/bundle/, ad-hoc signed
+pnpm build    # .app and .dmg in desktop/target/aarch64-apple-darwin/release/bundle/, ad-hoc signed
 pnpm web:dev  # frontend in a browser without the engine: no models, no chats
 ```
 
@@ -33,7 +33,7 @@ client/src/            React app, shared by desktop and web
   platform/            platform contract + tauri/web adapters, the only way to the backend
   stores/              zustand stores
   styles/              theme.css: the palette, light values in @theme, dark ones in .dark
-src-tauri/src/         Rust backend: engine, chat, downloads, storage
+desktop/src/           Rust backend: engine, chat, downloads, storage
 ```
 
 Inter and Geist Mono are bundled under the SIL Open Font License; license texts

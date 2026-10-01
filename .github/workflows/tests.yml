@@ -184,24 +184,24 @@ jobs:
 
       - name: Check Rust formatting
         if: ${{ always() && steps.install.outcome == 'success' }}
-        working-directory: apps/mirai-gui/src-tauri
+        working-directory: apps/mirai-gui/desktop
         run: cargo +nightly fmt --check
 
       - name: Lint with clippy
         if: ${{ always() && steps.install.outcome == 'success' }}
-        working-directory: apps/mirai-gui/src-tauri
+        working-directory: apps/mirai-gui/desktop
         run: cargo +nightly clippy --workspace --all-targets -- -D warnings
 
       - name: Check that Cargo.lock is consistent with Cargo.toml
         if: ${{ always() && steps.install.outcome == 'success' }}
-        working-directory: apps/mirai-gui/src-tauri
+        working-directory: apps/mirai-gui/desktop
         run: |
           cargo metadata --locked --format-version=1 > /dev/null
           git diff --exit-code -- Cargo.lock
 
       - name: Check with cargo-deny
         if: ${{ always() && steps.install.outcome == 'success' }}
-        working-directory: apps/mirai-gui/src-tauri
+        working-directory: apps/mirai-gui/desktop
         run: cargo deny check -D warnings
 
   tests-mirai-gui:
@@ -256,7 +256,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mirai-gui-macos-arm64
-          path: apps/mirai-gui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          path: apps/mirai-gui/desktop/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
   completed:

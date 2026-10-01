@@ -139,10 +139,10 @@ jobs:
           export MACOSX_DEPLOYMENT_TARGET="$(awk -F'"' '/^MACOSX_DEPLOYMENT_TARGET/{print $2}' .config/platforms.toml)"
           cargo build -p cli --release --target aarch64-apple-darwin \
             --no-default-features --features backend-metal,capability-grammar
-          rm -rf apps/mirai-gui/src-tauri/resources/cli
-          mkdir -p apps/mirai-gui/src-tauri/resources/cli
-          cp target/aarch64-apple-darwin/release/cli apps/mirai-gui/src-tauri/resources/cli/mirai
-          chmod 755 apps/mirai-gui/src-tauri/resources/cli/mirai
+          rm -rf apps/mirai-gui/desktop/resources/cli
+          mkdir -p apps/mirai-gui/desktop/resources/cli
+          cp target/aarch64-apple-darwin/release/cli apps/mirai-gui/desktop/resources/cli/mirai
+          chmod 755 apps/mirai-gui/desktop/resources/cli/mirai
 
       - name: Import signing certificate and read its identity
         run: |
@@ -173,7 +173,7 @@ jobs:
         run: |
           set -euo pipefail
           # tauri-bundler does not sign binaries under Resources.
-          CLI="src-tauri/resources/cli/mirai"
+          CLI="desktop/resources/cli/mirai"
           codesign --force --options runtime --timestamp \
             --sign "${APPLE_SIGNING_IDENTITY}" "${CLI}"
           codesign --verify --strict --verbose=2 "${CLI}"
@@ -183,7 +183,7 @@ jobs:
           set -euo pipefail
           # Only the .app: on CI tauri skips its DMG styling (tauri-apps/tauri#1731),
           # so dmgbuild makes the DMG below.
-          pnpm build --bundles app --config src-tauri/tauri.release.conf.json 2>&1 | tee build.log
+          pnpm build --bundles app --config desktop/tauri.release.conf.json 2>&1 | tee build.log
           if grep -qi "does not match the public key\|won't be accepted at runtime" build.log; then
             echo "Tauri updater signing key does not match the configured pubkey" >&2
             exit 1
@@ -196,18 +196,18 @@ jobs:
           VENV_DIR="${RUNNER_TEMP}/dmgbuild-venv"
           python3 -m venv "${VENV_DIR}"
           "${VENV_DIR}/bin/pip" install --quiet dmgbuild
-          BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle"
+          BUNDLE_DIR="desktop/target/aarch64-apple-darwin/release/bundle"
           APP_PATH="$(ls -1dt "${BUNDLE_DIR}/macos/"*.app 2>/dev/null | head -n 1 || true)"
           mkdir -p "${BUNDLE_DIR}/dmg"
           DMG_OUT="${BUNDLE_DIR}/dmg/${MIRAI_TITLE}-${VERSION}.dmg"
           DMG_APP_PATH="${APP_PATH}" \
-          DMG_BACKGROUND="${PWD}/src-tauri/dmg-background.tiff" \
-            "${VENV_DIR}/bin/python" -m dmgbuild -s src-tauri/dmg-settings.py "Mirai" "${DMG_OUT}"
+          DMG_BACKGROUND="${PWD}/desktop/dmg-background.tiff" \
+            "${VENV_DIR}/bin/python" -m dmgbuild -s desktop/dmg-settings.py "Mirai" "${DMG_OUT}"
 
       - name: Locate and notarize artifacts
         run: |
           set -euo pipefail
-          BUNDLE_DIR="${PWD}/src-tauri/target/aarch64-apple-darwin/release/bundle"
+          BUNDLE_DIR="${PWD}/desktop/target/aarch64-apple-darwin/release/bundle"
           DMG_PATH="$(ls -1t "${BUNDLE_DIR}/dmg/"*.dmg 2>/dev/null | head -n 1 || true)"
           APP_PATH="$(ls -1dt "${BUNDLE_DIR}/macos/"*.app 2>/dev/null | head -n 1 || true)"
           TARGZ_PATH="$(ls -1t "${BUNDLE_DIR}/macos/"*.app.tar.gz 2>/dev/null | head -n 1 || true)"

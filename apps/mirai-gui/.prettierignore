@@ -1,5 +1,5 @@
 client/src/route-tree.gen.ts
 client/dist-*/
-src-tauri/target/
-src-tauri/gen/
+desktop/target/
+desktop/gen/
 pnpm-lock.yaml
