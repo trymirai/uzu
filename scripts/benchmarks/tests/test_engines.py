@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from bench import BenchRequest, BenchResponse, BenchSampling, ChatMessage, ChatRole
 
-from .engines import llamacpp, mlx
+from .engines import llamacpp, mlx, mtplx
 from .engines.engine_process import EngineProcess, run_engine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +41,20 @@ def mlx_engine(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPath
 
     stderr_log = tmp_path_factory.mktemp("engine-mlx") / "stderr.log"
     with run_engine(mlx.command(request.config), ROOT, stderr_log, timeout) as process:
+        yield process
+
+
+@pytest.fixture(scope="class")
+def mtplx_engine(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> Iterator[EngineProcess]:
+    if "mtplx" not in request.config.getoption("engine"):
+        pytest.skip("Enable MTPLX tests with --engine mtplx")
+
+    timeout = request.config.getoption("engine_timeout")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise pytest.UsageError("--engine-timeout must be finite and greater than zero")
+
+    stderr_log = tmp_path_factory.mktemp("engine-mtplx") / "stderr.log"
+    with run_engine(mtplx.command(request.config), ROOT, stderr_log, timeout) as process:
         yield process
 
 
@@ -101,3 +115,9 @@ class TestMLX(EngineTests):
     @pytest.fixture
     def engine(self, mlx_engine: EngineProcess) -> EngineProcess:
         return mlx_engine
+
+
+class TestMTPLX(EngineTests):
+    @pytest.fixture
+    def engine(self, mtplx_engine: EngineProcess) -> EngineProcess:
+        return mtplx_engine

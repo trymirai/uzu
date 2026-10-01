@@ -4,23 +4,28 @@ from pathlib import Path
 
 import pytest
 
-from tests.engines import llamacpp, mlx
+from tests.engines import llamacpp, mlx, mtplx
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("benchmark engines")
     group.addoption(
-        "--engine", action="append", choices=["llamacpp", "mlx"], default=[], help="Engine to test (repeatable)."
+        "--engine",
+        action="append",
+        choices=["llamacpp", "mlx", "mtplx"],
+        default=[],
+        help="Engine to test (repeatable).",
     )
     group.addoption("--engine-timeout", type=float, default=600, help="Response timeout in seconds, including startup.")
     llamacpp.add_options(parser)
     mlx.add_options(parser)
+    mtplx.add_options(parser)
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Allow `pytest llamacpp` and `pytest mlx` to select and enable engine tests."""
+    """Allow engine names as shortcuts to select and enable engine tests."""
     engines = config.getoption("engine")
-    for name, test_class in {"llamacpp": "TestLlamaCpp", "mlx": "TestMLX"}.items():
+    for name, test_class in {"llamacpp": "TestLlamaCpp", "mlx": "TestMLX", "mtplx": "TestMTPLX"}.items():
         if name not in config.args:
             continue
         target = f"{Path(__file__).with_name('test_engines.py')}::{test_class}"
