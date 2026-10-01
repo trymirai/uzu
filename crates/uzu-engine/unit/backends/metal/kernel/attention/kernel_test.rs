@@ -596,6 +596,7 @@ fn run_attention_with_kernel<B: Backend>(
     trie_nodes: Option<&[GpuTrieNode]>,
 ) -> Vec<bf16> {
     let (head_dim, num_q_heads, _, suffix_length, _, _) = shape;
+    assert!(trie_nodes.is_none_or(|nodes| nodes.len() >= suffix_length), "trie must cover every suffix token");
     let queries =
         create_buffer_with_data::<B, bf16>(context, &fill_attention(num_q_heads * suffix_length * head_dim, 0.5));
     let keys = create_buffer_with_data::<B, bf16>(context, keys_data);
@@ -625,15 +626,16 @@ fn run_attention_with_kernel<B: Backend>(
 
 #[uzu_test]
 fn attention_kernel_matches_cpu() {
-    let trie: Vec<GpuTrieNode> =
-        TrieNode::flat(0, &[0, 1, 2, 3, 4], &PRng::new(0)).linearize().token_subtrie_ranges().collect();
+    const TRIE_SUFFIX_LENGTH: usize = 31;
+    let tokens: Vec<u64> = (0..TRIE_SUFFIX_LENGTH as u64).collect();
+    let trie: Vec<GpuTrieNode> = TrieNode::flat(0, &tokens, &PRng::new(0)).linearize().token_subtrie_ranges().collect();
     let cpu_context = <Cpu as Backend>::Context::new().expect("CPU attention context");
     let metal_context = <Metal as Backend>::Context::new().expect("Metal attention context");
     for &(head_dim, num_q_heads, num_groups, suffix_length, prefix_length, causal, use_trie) in &[
         (512, 8, 8, 9, 0, false, false),
         (128, 8, 2, 16, 1024, false, false),
         (256, 6, 1, 32, 1024, true, false),
-        (256, 6, 1, 31, 1024, true, true),
+        (256, 6, 1, TRIE_SUFFIX_LENGTH, 1024, true, true),
         (512, 8, 8, 1, 0, false, false),
         (512, 8, 8, 1, 1024, false, false),
         (64, 8, 8, 9, 0, false, false),
