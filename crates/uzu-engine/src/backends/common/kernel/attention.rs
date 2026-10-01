@@ -1,5 +1,5 @@
 use crate::{
-    backends::common::{Backend, BufferRef, CommandBuffer, Kernels},
+    backends::common::{Backend, BufferRef, CommandBuffer, Kernels, gpu_types::trie::TrieNode},
     data_type::DataType,
     encodable_block::mixer::attention::KVCacheView,
 };
@@ -54,4 +54,20 @@ pub struct AttentionArguments<
     pub trie: Option<TT>,
     pub sinks: Option<&'a B::GlobalBuffer>,
     pub cache: KVCacheView,
+}
+
+impl<
+    B: Backend,
+    QT: BufferRef<Backend = B>,
+    TT: BufferRef<Backend = B>,
+    KT: BufferRef<Backend = B>,
+    VT: BufferRef<Backend = B>,
+> AttentionArguments<'_, B, QT, TT, KT, VT>
+{
+    pub fn assert_valid_trie(&self) {
+        assert!(
+            self.trie.is_none_or(|trie| trie.size() >= self.suffix_length as usize * size_of::<TrieNode>()),
+            "trie buffer must cover every suffix token"
+        );
+    }
 }

@@ -596,7 +596,6 @@ fn run_attention_with_kernel<B: Backend>(
     trie_nodes: Option<&[GpuTrieNode]>,
 ) -> Vec<bf16> {
     let (head_dim, num_q_heads, _, suffix_length, _, _) = shape;
-    assert!(trie_nodes.is_none_or(|nodes| nodes.len() >= suffix_length), "trie must cover every suffix token");
     let queries =
         create_buffer_with_data::<B, bf16>(context, &fill_attention(num_q_heads * suffix_length * head_dim, 0.5));
     let keys = create_buffer_with_data::<B, bf16>(context, keys_data);
@@ -647,6 +646,20 @@ fn attention_kernel_matches_cpu() {
         let label = format!("attention kernel D{head_dim} S{suffix_length} L{prefix_length} causal={causal}");
         assert_eq_float::<bf16>(&expected, &actual, 1e-2, &label);
     }
+}
+
+#[uzu_test]
+fn attention_rejects_short_trie() {
+    let context = <Cpu as Backend>::Context::new().expect("CPU attention context");
+    let trie = [GpuTrieNode {
+        trie_start: 0,
+        trie_end: 0,
+        height: 0,
+    }];
+    let result = std::panic::catch_unwind(|| {
+        run_attention::<Cpu>(context.as_ref(), (64, 1, 1, 2, 0, true), Some(&trie));
+    });
+    assert!(result.is_err(), "attention accepted a trie shorter than the suffix");
 }
 
 #[uzu_test]
