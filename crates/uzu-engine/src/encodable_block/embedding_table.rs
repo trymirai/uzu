@@ -165,12 +165,11 @@ impl<B: Backend> EmbeddingTable<B> {
         })
     }
 
-    /// Returns the matrix storage, if present. D4S4 only compress lookup storage.
+    /// The matrix used by tied readout; D4S4 tables support lookup only.
     pub fn as_matrix(&self) -> Option<&WeightMatrix<B>> {
-        if let Storage::Matrix(matrix) = &self.storage {
-            Some(matrix)
-        } else {
-            None
+        match &self.storage {
+            Storage::Matrix(matrix) => Some(matrix),
+            Storage::D4S4(_) => None,
         }
     }
 
