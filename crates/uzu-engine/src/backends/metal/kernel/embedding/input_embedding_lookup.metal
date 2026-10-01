@@ -9,10 +9,6 @@
 using namespace metal;
 using namespace uzu::embedding;
 using namespace uzu::quantization_method;
-using namespace uzu::quantization;
-namespace d4s4 = uzu::d4s4;
-
-static_assert(d4s4::VALUES_PER_CODE == 4, "D4S4 codebook entries are read as char4");
 
 inline uint read_u4(const device uchar* packed, uint nibble) {
   return (packed[nibble / 2] >> (4 * (nibble & 1))) & 0x0F;
@@ -37,7 +33,7 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
     constant float& input_scale,
     const EmbeddingTableKind table_kind SPECIALIZE,
     const uint group_size SPECIALIZE,
-    const QuantizationMode quantization_mode SPECIALIZE,
+    const uzu::quantization::QuantizationMode quantization_mode SPECIALIZE,
     const QuantizationMethod quantization_method SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
     const uint dim_idx AXIS(model_dim, 256),
@@ -54,7 +50,7 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
   if (table_kind == EmbeddingTableKind::Dense) {
     loaded = float(reinterpret_cast<const device T*>(values)[token_id * model_dim + dim_idx] * T(input_scale));
   } else if (table_kind == EmbeddingTableKind::Quantized) {
-    const bool is_u4 = quantization_mode == QuantizationMode::U4;
+    const bool is_u4 = quantization_mode == uzu::quantization::QuantizationMode::U4;
     const uint group_idx = dim_idx / group_size;
     const uint num_groups = (model_dim + group_size - 1) / group_size;
     const uint scale_idx = token_id * num_groups + group_idx;
@@ -63,7 +59,7 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
     float code;
     if (is_u4) {
       code = float(read_u4(values, 2 * row + dim_idx));
-    } else if (quantization_mode == QuantizationMode::I8) {
+    } else if (quantization_mode == uzu::quantization::QuantizationMode::I8) {
       code = float(reinterpret_cast<const device char*>(values)[row + dim_idx]);
     } else {
       code = float(values[row + dim_idx]);
@@ -82,11 +78,11 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
   } else {
     const uint ladder_index = read_u4(
         ladder_indices,
-        token_id * (model_dim / d4s4::COLUMNS_PER_LADDER_SCALE) + dim_idx / d4s4::COLUMNS_PER_LADDER_SCALE
+        token_id * (model_dim / uzu::d4s4::COLUMNS_PER_LADDER_SCALE) + dim_idx / uzu::d4s4::COLUMNS_PER_LADDER_SCALE
     );
     const char4 point =
-        codebook[values[token_id * (model_dim / d4s4::VALUES_PER_CODE) + dim_idx / d4s4::VALUES_PER_CODE]];
-    loaded = float(scales[token_id]) * float(ladder[ladder_index]) * float(point[dim_idx % d4s4::VALUES_PER_CODE]) *
+        codebook[values[token_id * (model_dim / uzu::d4s4::VALUES_PER_CODE) + dim_idx / uzu::d4s4::VALUES_PER_CODE]];
+    loaded = float(scales[token_id]) * float(ladder[ladder_index]) * float(point[dim_idx % uzu::d4s4::VALUES_PER_CODE]) *
              input_scale;
   }
   if (use_hadamard) {
