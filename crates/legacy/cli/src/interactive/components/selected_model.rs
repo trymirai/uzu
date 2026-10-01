@@ -183,7 +183,7 @@ pub fn SelectedModel(
             let is_downloaded = matches!(download_state.phase, DownloadPhase::Downloaded {});
             let is_downloading = download_state.is_in_progress();
             let percent = (download_state.progress() * 100.0).round() as u32;
-            let status = match download_state.phase {
+            let status = match &download_state.phase {
                 DownloadPhase::Downloading {} => format!("{percent}%"),
                 DownloadPhase::Locked {
                     ..
@@ -194,6 +194,9 @@ pub fn SelectedModel(
                     .map(|specializations| specializations.name())
                     .collect::<Vec<String>>()
                     .join(", "),
+                DownloadPhase::Error {
+                    message,
+                } => format!("Error: {message}"),
                 _ => download_state.name(),
             };
             let progress_value = download_state.progress();
