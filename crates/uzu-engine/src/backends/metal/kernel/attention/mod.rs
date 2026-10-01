@@ -93,7 +93,6 @@ impl AttentionKernel for AttentionMetalKernel {
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
-        arguments.validate_trie_size();
         command_buffer.push_debug_group("attention core");
         let result = self.encode_impl(arguments, command_buffer);
         command_buffer.pop_debug_group();

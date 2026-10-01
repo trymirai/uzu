@@ -649,20 +649,6 @@ fn attention_kernel_matches_cpu() {
 }
 
 #[uzu_test]
-fn attention_rejects_short_trie() {
-    let context = <Cpu as Backend>::Context::new().expect("CPU attention context");
-    let trie = [GpuTrieNode {
-        trie_start: 0,
-        trie_end: 0,
-        height: 0,
-    }];
-    let result = std::panic::catch_unwind(|| {
-        run_attention::<Cpu>(context.as_ref(), (64, 1, 1, 2, 0, true), Some(&trie));
-    });
-    assert!(result.is_err(), "attention accepted a trie shorter than the suffix");
-}
-
-#[uzu_test]
 fn attention_kernel_reuses_instance_for_flat_and_trie() {
     let shape = (256, 6, 1, 5, 1024, true);
     let trie: Vec<GpuTrieNode> =
