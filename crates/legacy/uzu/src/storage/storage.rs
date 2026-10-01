@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -78,10 +78,10 @@ impl Storage {
             };
             requests.entry(model.identifier.clone()).or_insert(self.request(model, files)?);
         }
-        let destinations: HashSet<&Path> = requests.values().map(|request| request.destination.as_path()).collect();
-        let listed: HashSet<&Path> = destinations.iter().filter_map(|destination| destination.parent()).collect();
+        let destinations: Vec<&Path> = requests.values().map(|request| request.destination.as_path()).collect();
+        let is_listed = |path: &Path| destinations.iter().any(|destination| destination.starts_with(path));
         for model_path in fs::asyn::read_dir(self.models_path()).await.unwrap_or_default() {
-            let old_paths = if listed.contains(model_path.as_path()) {
+            let old_paths = if is_listed(&model_path) {
                 fs::asyn::read_dir(&model_path).await.unwrap_or_default()
             } else if complete && !destinations.is_empty() {
                 vec![model_path]
@@ -89,7 +89,7 @@ impl Storage {
                 continue;
             };
             for old_path in old_paths {
-                if destinations.contains(old_path.as_path()) || fs::asyn::is_file(&old_path).await {
+                if is_listed(&old_path) || fs::asyn::is_file(&old_path).await {
                     continue;
                 }
                 match fs::asyn::remove_dir_all(&old_path).await {
