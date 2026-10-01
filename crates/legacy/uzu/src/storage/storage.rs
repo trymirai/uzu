@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use download_manager::{Checksum, DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
 use futures_util::future::join_all;
@@ -53,13 +57,7 @@ impl Storage {
         model: &Model,
     ) -> Option<PathBuf> {
         let checkpoint_version = model.checkpoint_version()?;
-        Some(
-            Self::cache_path(&self.config)
-                .join("models")
-                .join("mirai")
-                .join(model.cache_identifier())
-                .join(checkpoint_version),
-        )
+        Some(self.models_path().join(model.cache_identifier()).join(checkpoint_version))
     }
 
     pub async fn refresh(
@@ -78,6 +76,22 @@ impl Storage {
                 continue;
             };
             requests.entry(model.identifier.clone()).or_insert(self.request(model, files)?);
+        }
+        let destinations: HashSet<&Path> = requests.values().map(|request| request.destination.as_path()).collect();
+        let listed: HashSet<&Path> = destinations.iter().filter_map(|destination| destination.parent()).collect();
+        for model_path in fs::asyn::read_dir(self.models_path()).await.unwrap_or_default() {
+            if !listed.contains(model_path.as_path()) {
+                continue;
+            }
+            for old_path in fs::asyn::read_dir(&model_path).await.unwrap_or_default() {
+                if destinations.contains(old_path.as_path()) || fs::asyn::is_file(&old_path).await {
+                    continue;
+                }
+                match fs::asyn::remove_dir_all(&old_path).await {
+                    Ok(()) => tracing::info!(path = %old_path.display(), "removed old model"),
+                    Err(error) => tracing::warn!(?error, path = %old_path.display(), "failed to remove old model"),
+                }
+            }
         }
         let missing: Vec<(ModelIdentifier, DownloadTaskRequest)> = {
             let mut tasks = self.tasks.lock().await;
@@ -159,6 +173,10 @@ impl Storage {
                 identifier: identifier.clone(),
             }
         })
+    }
+
+    fn models_path(&self) -> PathBuf {
+        Self::cache_path(&self.config).join("models").join("mirai")
     }
 
     fn request(
