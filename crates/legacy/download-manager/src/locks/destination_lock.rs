@@ -45,6 +45,22 @@ impl DestinationLock {
         }
     }
 
+    pub async fn held_within(directory: &Path) -> bool {
+        let mut directories = vec![directory.to_path_buf()];
+        while let Some(directory) = directories.pop() {
+            for path in fs::asyn::read_dir(&directory).await.unwrap_or_default() {
+                if !fs::asyn::is_file(&path).await {
+                    directories.push(path);
+                } else if path.extension().is_some_and(|extension| extension == "lock")
+                    && !matches!(FileLock::try_acquire(&path).await, Ok(Some(_)))
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub async fn owner(destination: &Path) -> LockOwner {
         fs::asyn::read_to_string(Self::path_for(destination))
             .await

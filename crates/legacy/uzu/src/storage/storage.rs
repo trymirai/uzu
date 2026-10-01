@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use download_manager::{Checksum, DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
+use download_manager::{Checksum, DestinationLock, DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
 use futures_util::future::join_all;
 use kiban::{fs, rt::RuntimeHandle};
 use shoji::types::{
@@ -89,7 +89,10 @@ impl Storage {
                 continue;
             };
             for old_path in old_paths {
-                if is_listed(&old_path) || fs::asyn::is_file(&old_path).await {
+                if is_listed(&old_path)
+                    || fs::asyn::is_file(&old_path).await
+                    || DestinationLock::held_within(&old_path).await
+                {
                     continue;
                 }
                 match fs::asyn::remove_dir_all(&old_path).await {
