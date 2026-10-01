@@ -37,8 +37,10 @@ kern_return_t get_memory_counters(
     bool with_malloc_zone_stats
 );
 
-// The target must be accessible through task_name_for_pid (normally the same user).
-// Allocator statistics are available only when pid is the current process.
+/**
+ * The target must be accessible through task_name_for_pid (normally the same user).
+ * Allocator statistics are available only when pid is the current process.
+ */
 kern_return_t get_memory_counters_for_pid(
     memory_counters_t* counters,
     int32_t pid,

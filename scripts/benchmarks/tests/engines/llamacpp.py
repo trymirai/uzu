@@ -20,5 +20,5 @@ def command(config: pytest.Config) -> list[str]:
         binary = binary.expanduser().resolve()
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise pytest.UsageError(f"--llamacpp-binary is not an executable file: {binary}")
-        return [str(binary), "--model", model]
-    return [str(ROOT / "engine-llamacpp/run.sh"), "--model", model]
+        return [str(binary), "--model", MODEL]
+    return [str(ROOT / "engine-llamacpp/run.sh"), "--model", MODEL]
