@@ -143,27 +143,26 @@ const CustomComponents = {
   ),
   table: MarkdownTable,
   thead: ({ children, ...props }: MarkdownComponentProps<"thead">) => (
-    <thead className="bg-background border-b border-button-border" {...props}>
+    <thead className="border-b border-button-border" {...props}>
       {children}
     </thead>
   ),
-  tbody: ({ children, ...props }: MarkdownComponentProps<"tbody">) => (
-    <tbody className="bg-background" {...props}>
-      {children}
-    </tbody>
-  ),
+  tbody: ({ children, ...props }: MarkdownComponentProps<"tbody">) => <tbody {...props}>{children}</tbody>,
   tr: ({ children, ...props }: MarkdownComponentProps<"tr">) => (
     <tr className="border-b border-cell-border [&:has(th)]:border-button-border" {...props}>
       {children}
     </tr>
   ),
   th: ({ children, ...props }: MarkdownComponentProps<"th">) => (
-    <th className="py-3 text-left text-[15px] font-[350] leading-[150%] text-label-title" {...props}>
+    <th
+      className="px-2 py-3 first:pl-0 last:pr-0 text-left text-[15px] font-[350] leading-[150%] text-label-title"
+      {...props}
+    >
       {children}
     </th>
   ),
   td: ({ children, ...props }: MarkdownComponentProps<"td">) => (
-    <td className="py-3 text-[15px] font-[350] leading-[150%] text-label-title" {...props}>
+    <td className="px-2 py-3 first:pl-0 last:pr-0 text-[15px] font-[350] leading-[150%] text-label-title" {...props}>
       {children}
     </td>
   ),
@@ -254,27 +253,23 @@ const OneFontSizeComponents = {
   ),
   table: MarkdownTable,
   thead: ({ children, ...props }: MarkdownComponentProps<"thead">) => (
-    <thead className="bg-background border-b border-button-border" {...props}>
+    <thead className="border-b border-button-border" {...props}>
       {children}
     </thead>
   ),
-  tbody: ({ children, ...props }: MarkdownComponentProps<"tbody">) => (
-    <tbody className="bg-background" {...props}>
-      {children}
-    </tbody>
-  ),
+  tbody: ({ children, ...props }: MarkdownComponentProps<"tbody">) => <tbody {...props}>{children}</tbody>,
   tr: ({ children, ...props }: MarkdownComponentProps<"tr">) => (
     <tr className="border-b border-cell-border [&:has(th)]:border-button-border" {...props}>
       {children}
     </tr>
   ),
   th: ({ children, ...props }: MarkdownComponentProps<"th">) => (
-    <th className="py-2 text-left text-xs font-[350]" {...props}>
+    <th className="px-2 py-2 first:pl-0 last:pr-0 text-left text-xs font-[350]" {...props}>
       {children}
     </th>
   ),
   td: ({ children, ...props }: MarkdownComponentProps<"td">) => (
-    <td className="py-2 text-xs font-[350]" {...props}>
+    <td className="px-2 py-2 first:pl-0 last:pr-0 text-xs font-[350]" {...props}>
       {children}
     </td>
   ),

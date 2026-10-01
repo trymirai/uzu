@@ -28,7 +28,6 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @utility thin-scrollbar {
-  scrollbar-width: thin;
   &::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -146,7 +145,6 @@
     line-height: 1rem !important;
     font-weight: 400;
     font-variant-ligatures: none;
-    scrollbar-width: thin;
   }
 
   [data-streamdown="code-block-body"] code {

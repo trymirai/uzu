@@ -45,7 +45,7 @@ const UserMessage: React.FC<Pick<MessageProps, "text" | "attachmentIds">> = ({ t
         <AttachedFilesDisplay files={attachmentStorage.getFiles(attachmentIds)} />
       </div>
     )}
-    <div className="font-[350] text-label-title relative w-fit rounded-[5px] text-[15px] leading-[140%] px-2.5 py-[6px] bg-bg-hover ml-auto [&>div>*:first-child]:mt-0 [&>div>*:last-child]:mb-0">
+    <div className="font-[350] text-label-title relative w-fit max-w-full rounded-[5px] text-[15px] leading-[140%] px-2.5 py-[6px] bg-bg-hover ml-auto [&>div>*:first-child]:mt-0 [&>div>*:last-child]:mb-0">
       <MarkdownRenderer content={text} />
     </div>
   </>
