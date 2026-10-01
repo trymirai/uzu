@@ -66,9 +66,8 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
     if (quantization_method == QuantizationMethod::ScaleBias) {
       bias = float(biases[scale_idx]);
     } else if (quantization_method == QuantizationMethod::ScaleZeroPoint) {
-      const uint zero_point =
-          is_u4 ? read_packed<4>(zero_points, 2 * token_id * ((num_groups + 1) / 2) + group_idx)
-                : zero_points[scale_idx];
+      const uint zero_point = is_u4 ? read_packed<4>(zero_points, 2 * token_id * ((num_groups + 1) / 2) + group_idx)
+                                    : zero_points[scale_idx];
       bias = -scale * float(zero_point);
     } else {
       bias = -scale * (is_u4 ? 8.0f : 128.0f);
@@ -81,8 +80,8 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
     );
     const char4 point =
         codebook[values[token_id * (model_dim / uzu::d4s4::VALUES_PER_CODE) + dim_idx / uzu::d4s4::VALUES_PER_CODE]];
-    loaded = float(scales[token_id]) * float(ladder[ladder_index]) * float(point[dim_idx % uzu::d4s4::VALUES_PER_CODE]) *
-             input_scale;
+    loaded = float(scales[token_id]) * float(ladder[ladder_index]) *
+             float(point[dim_idx % uzu::d4s4::VALUES_PER_CODE]) * input_scale;
   }
   if (use_hadamard) {
     loaded = simdgroup_output_random_hadamard_transform(
