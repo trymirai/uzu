@@ -101,14 +101,15 @@ impl Registry for MergedRegistry {
             let results = futures::future::join_all(self.registries.iter().map(|registry| registry.listing())).await;
 
             let mut models = Vec::new();
-            let mut complete = false;
+            let mut complete = true;
             for (registry, result) in self.registries.iter().zip(results) {
                 match result {
                     Ok((registry_models, registry_complete)) => {
                         models.extend(registry_models);
-                        complete |= registry_complete;
+                        complete &= registry_complete;
                     },
                     Err(error) => {
+                        complete = false;
                         tracing::warn!(?error, registry = %registry.identifier(), "skipping registry that failed to list models");
                     },
                 }

@@ -90,7 +90,7 @@ impl RegistryTrait for Registry {
                     if let Err(error) = saved {
                         tracing::warn!(?error, "failed to save Mirai registry");
                     }
-                    let complete = listed > 0 && models.len() == listed;
+                    let complete = models.len() == listed;
                     Ok((models, complete))
                 },
                 Err(error) => {

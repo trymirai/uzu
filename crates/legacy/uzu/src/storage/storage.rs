@@ -83,7 +83,7 @@ impl Storage {
         for model_path in fs::asyn::read_dir(self.models_path()).await.unwrap_or_default() {
             let old_paths = if listed.contains(model_path.as_path()) {
                 fs::asyn::read_dir(&model_path).await.unwrap_or_default()
-            } else if complete {
+            } else if complete && !destinations.is_empty() {
                 vec![model_path]
             } else {
                 continue;
