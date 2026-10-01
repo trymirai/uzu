@@ -632,6 +632,8 @@ fn attention_kernel_matches_cpu() {
     for &(head_dim, num_q_heads, num_groups, suffix_length, prefix_length, causal, use_trie) in &[
         (512, 8, 8, 9, 0, false, false),
         (128, 8, 2, 16, 1024, false, false),
+        (256, 6, 1, 2, 1024, false, false),
+        (256, 6, 1, 15, 2048, true, false),
         (256, 6, 1, 32, 1024, true, false),
         (256, 6, 1, 31, 1024, true, true),
         (512, 8, 8, 1, 0, false, false),
