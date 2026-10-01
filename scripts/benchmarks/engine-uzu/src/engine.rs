@@ -123,6 +123,7 @@ impl UzuEngine {
         let decode_duration = finished.duration_since(first_token).as_secs_f64();
         Ok(BenchResponse {
             text,
+            tokens_count: tokens_generated,
             time_to_first_token,
             prompt_tps: rate(tokens.len(), time_to_first_token),
             decode_tps: rate(tokens_generated.saturating_sub(1), decode_duration),

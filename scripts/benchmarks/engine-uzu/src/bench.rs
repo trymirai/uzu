@@ -34,6 +34,7 @@ pub struct BenchRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchResponse {
     pub text: String,
+    pub tokens_count: usize,
     pub time_to_first_token: f64,
     pub prompt_tps: f64,
     pub decode_tps: f64,

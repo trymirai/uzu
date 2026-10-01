@@ -77,6 +77,7 @@ class MTPLXEngine(InferenceEngine):
 
         return BenchResponse(
             text=output.text,
+            tokens_count=output.stats.generated_tokens,
             time_to_first_token=(time_first_token - time_start),
             prompt_tps=output.stats.prompt_tps,
             decode_tps=output.stats.decode_tok_s,

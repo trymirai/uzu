@@ -298,6 +298,7 @@ class SplashEngine(InferenceEngine):
 
         return BenchResponse(
             text="".join(chunks),
+            tokens_count=result.completion_tokens,
             time_to_first_token=latency.get("ttft_ms", result.request_wall_ms) / 1000.0,
             prompt_tps=timings["prompt_per_second"],
             decode_tps=timings["predicted_per_second"],
