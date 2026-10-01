@@ -45,7 +45,7 @@ LlamaEngine::LlamaEngine(const std::string& model) {
         throw std::runtime_error("Failed to load chat templates: " + model_path.string());
     }
 
-    this->has_mtp = llama_model_n_layer_nextn(this->model.get()) > 0;
+    this->has_mtp = params.load_mtp && llama_model_n_layer_nextn(this->model.get()) > 0;
 }
 
 std::vector<llama_token> LlamaEngine::tokenize(const BenchRequest& request) const {
@@ -188,7 +188,8 @@ BenchResponse LlamaEngine::run_single(
     llama_batch_ptr batch_storage{new llama_batch(llama_batch_init(llama_n_batch(ctx.get()), 0, 1))};
     llama_batch& batch = *batch_storage;
     const int64_t time_start = llama_time_us();
-    const size_t prefill_batch_size = use_mtp ? llama_n_ubatch(ctx.get()) : llama_n_batch(ctx.get());
+    const size_t physical_batch_size = llama_n_ubatch(ctx.get());
+    const size_t prefill_batch_size = use_mtp ? physical_batch_size : llama_n_batch(ctx.get());
     for (size_t offset = 0; offset < tokens.size(); offset += prefill_batch_size) {
         common_batch_clear(batch);
         const size_t end = std::min(tokens.size(), offset + prefill_batch_size);
@@ -198,7 +199,8 @@ BenchResponse LlamaEngine::run_single(
         if (llama_decode(ctx.get(), batch) != 0) {
             throw std::runtime_error("Prefill failed");
         }
-        forward_passes++;
+        // A single-sequence prefill call can contain multiple physical forward passes.
+        forward_passes += (end - offset + physical_batch_size - 1) / physical_batch_size;
         if (!common_speculative_process(spec.get(), batch)) {
             throw std::runtime_error("MTP prefill failed");
         }
@@ -329,9 +331,16 @@ std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) con
     }
 
     const size_t speculative_depth = request.speculative_depth.value_or(0);
+    if (speculative_depth > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+        throw std::invalid_argument("speculative_depth exceeds the supported range");
+    }
 
     const std::vector<llama_token> tokens = tokenize(request);
     const size_t max_tokens = request.max_tokens.value_or(256);
+    if (max_tokens == 0) {
+        throw std::invalid_argument("max_tokens must be 1 or greater");
+    }
+
     const size_t max_context = std::numeric_limits<llama_pos>::max();
     if (tokens.empty() || tokens.size() > max_context || max_tokens > max_context - tokens.size()) {
         throw std::invalid_argument("Prompt and generation length exceed the supported context size");
@@ -350,6 +359,7 @@ std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) con
         // keep verification in one physical batch so recurrent snapshots cover every draft token.
         config.spec_params.draft.n_max =
             std::min<int32_t>(speculative_depth, std::min(config.ctx_params.n_batch, config.ctx_params.n_ubatch) - 1);
+
         config.ctx_params.n_rs_seq = config.spec_params.need_n_rs_seq();
         config.ctx_params.n_outputs_max = config.spec_params.draft.n_max + 1;
         config.ctx_params.n_outputs_max_per_seq = config.spec_params.draft.n_max + 1;
