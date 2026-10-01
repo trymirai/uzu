@@ -133,6 +133,19 @@ fn get_custom_sampling_method(method: &ShojiSamplingMethod) -> Result<UzuSamplin
                     "stochastic sampling needs temperature > 0, got {temperature}, use greedy sampling instead"
                 ));
             }
+            if let Some(repetition_penalty) = repetition_penalty
+                && (repetition_penalty.is_nan() || *repetition_penalty <= 0.0)
+            {
+                return Err(format!("repetition_penalty must be > 0, got {repetition_penalty}"));
+            }
+            if let Some(suffix_repetition_length) = suffix_repetition_length
+                && *suffix_repetition_length < 1
+            {
+                return Err(format!("suffix_repetition_length must be >= 1, got {suffix_repetition_length}"));
+            }
+            if repetition_penalty.is_some() && suffix_repetition_length.is_none() {
+                return Err("repetition_penalty needs suffix_repetition_length".to_string());
+            }
             Ok(UzuSamplingMethod::Stochastic {
                 temperature: temperature.map(|value| value as f32),
                 top_k: top_k.map(|value| value as u32),
@@ -215,6 +228,43 @@ mod sampling_tests {
         for temperature in [Some(0.7), None] {
             assert!(matches!(
                 get_custom_sampling_method(&stochastic(temperature)),
+                Ok(UzuSamplingMethod::Stochastic { .. })
+            ));
+        }
+    }
+
+    fn with_repetition(
+        repetition_penalty: Option<f64>,
+        suffix_repetition_length: Option<i64>,
+    ) -> ShojiSamplingMethod {
+        ShojiSamplingMethod::Stochastic {
+            temperature: Some(0.7),
+            top_k: None,
+            top_p: Some(0.9),
+            min_p: None,
+            repetition_penalty,
+            suffix_repetition_length,
+        }
+    }
+
+    #[test]
+    fn stochastic_rejects_invalid_repetition_settings() {
+        for (penalty, suffix) in [
+            (Some(0.0), Some(64)),
+            (Some(f64::NAN), Some(64)),
+            (Some(1.1), Some(0)),
+            (None, Some(0)),
+            (Some(1.1), None),
+        ] {
+            assert!(get_custom_sampling_method(&with_repetition(penalty, suffix)).is_err(), "{penalty:?} {suffix:?}");
+        }
+    }
+
+    #[test]
+    fn stochastic_accepts_valid_repetition_settings() {
+        for (penalty, suffix) in [(Some(1.1), Some(64)), (None, None), (None, Some(64))] {
+            assert!(matches!(
+                get_custom_sampling_method(&with_repetition(penalty, suffix)),
                 Ok(UzuSamplingMethod::Stochastic { .. })
             ));
         }
