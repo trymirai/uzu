@@ -30,12 +30,7 @@ export type ParsedPatch = { response?: string; chainOfThought?: string };
 export type OutputShape = { text?: { parsed?: ParsedPatch; raw?: string } };
 
 export type SessionOutputFinishReason =
-  | "Stop"
-  | "Length"
-  | "Cancelled"
-  | "ContextLimitReached"
-  | "ToolCalls"
-  | "Rejected";
+  "Stop" | "Length" | "Cancelled" | "ContextLimitReached" | "ToolCalls" | "Rejected";
 
 export type LlmRunResult = {
   text: string;

@@ -179,8 +179,8 @@ const MessageListComponent: React.FC<MessageListProps> = ({
 
             const hasVisibleParsed = Boolean(
               (activeParsed?.chainOfThought && activeParsed.chainOfThought.length > 0) ||
-                (activeParsed?.response && activeParsed.response.length > 0) ||
-                (activeText && activeText.length > 0),
+              (activeParsed?.response && activeParsed.response.length > 0) ||
+              (activeText && activeText.length > 0),
             );
 
             const showInlineLoader = isLoadingThisMessage && !hasVisibleParsed;

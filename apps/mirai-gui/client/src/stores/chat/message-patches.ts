@@ -30,8 +30,8 @@ export const computeErrorPatch = (
   if (hasVersions) {
     const versionsArr = message.versions || [];
     const idx = typeof message.currentVersionIndex === "number" ? message.currentVersionIndex : versionsArr.length - 1;
-    const versions: MessageVersion[] = versionsArr.map(
-      (v, i): MessageVersion => (i === idx ? { ...v, text, error, ...(attachmentIds ? { attachmentIds } : {}) } : v),
+    const versions: MessageVersion[] = versionsArr.map((v, i): MessageVersion =>
+      i === idx ? { ...v, text, error, ...(attachmentIds ? { attachmentIds } : {}) } : v,
     );
     return { text, error, versions, ...(attachmentIds ? { attachmentIds } : {}) };
   }
@@ -43,16 +43,15 @@ export const computeFinalizedUpdates = (message: Message, text: string, parsed?:
   if (hasVersions) {
     const versionsArr = message.versions || [];
     const idx = typeof message.currentVersionIndex === "number" ? message.currentVersionIndex : versionsArr.length - 1;
-    const versions: MessageVersion[] = versionsArr.map(
-      (v, i): MessageVersion =>
-        i === idx
-          ? {
-              ...v,
-              text,
-              error: undefined,
-              output: mergeParsedIntoOutput(v.output, parsed),
-            }
-          : v,
+    const versions: MessageVersion[] = versionsArr.map((v, i): MessageVersion =>
+      i === idx
+        ? {
+            ...v,
+            text,
+            error: undefined,
+            output: mergeParsedIntoOutput(v.output, parsed),
+          }
+        : v,
     );
     return { text, error: undefined, versions };
   }

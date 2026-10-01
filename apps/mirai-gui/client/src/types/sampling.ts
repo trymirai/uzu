@@ -19,10 +19,7 @@ export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   typeof value === "string" && (REASONING_EFFORTS as readonly string[]).includes(value);
 
 export type ReasoningSupport =
-  | { kind: "unsupported" }
-  | { kind: "alwaysOn" }
-  | { kind: "toggle" }
-  | { kind: "levels"; efforts: ReasoningEffort[] };
+  { kind: "unsupported" } | { kind: "alwaysOn" } | { kind: "toggle" } | { kind: "levels"; efforts: ReasoningEffort[] };
 
 export type ModelParams = {
   sampling: SamplingPolicyPayload;

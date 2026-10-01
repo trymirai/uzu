@@ -65,11 +65,9 @@ function PopoverMenuContent({
 
   const triggerElement = renderTrigger(trigger, menuOpen);
   const triggerOnKeyDownCapture = triggerElement.props.onKeyDownCapture as
-    | ((event: ReactKeyboardEvent<HTMLElement>) => void)
-    | undefined;
+    ((event: ReactKeyboardEvent<HTMLElement>) => void) | undefined;
   const triggerOnPointerDownCapture = triggerElement.props.onPointerDownCapture as
-    | ((event: ReactPointerEvent<HTMLElement>) => void)
-    | undefined;
+    ((event: ReactPointerEvent<HTMLElement>) => void) | undefined;
 
   const mergedTrigger = cloneElement(triggerElement, {
     onKeyDownCapture: (event: ReactKeyboardEvent<HTMLElement>) => {

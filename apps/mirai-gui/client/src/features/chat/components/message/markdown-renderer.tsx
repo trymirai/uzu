@@ -324,6 +324,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         mode="streaming"
         isAnimating={streaming}
         parseIncompleteMarkdown
+        lineNumbers={false}
+        codeBlockMaxHeight="none"
         linkSafety={LINK_SAFETY}
         remend={REMEND}
         components={useOneFontSize ? OneFontSizeComponents : CustomComponents}

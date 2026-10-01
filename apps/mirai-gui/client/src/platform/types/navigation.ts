@@ -5,5 +5,4 @@ export const navigationRequestTypes = {
 } as const;
 
 export type NavigationRequest =
-  | { type: typeof navigationRequestTypes.newChat }
-  | { type: typeof navigationRequestTypes.openPreferences };
+  { type: typeof navigationRequestTypes.newChat } | { type: typeof navigationRequestTypes.openPreferences };
