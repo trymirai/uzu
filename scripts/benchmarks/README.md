@@ -39,7 +39,6 @@ Also DFlash is supported
 ```
 
 ### MLX
-
 https://github.com/ml-explore/mlx-lm
 
 ```bash
@@ -49,6 +48,10 @@ uv run mlx -m "mlx-community/Qwen3.5-0.8B-4bit"
 ### MTPLX
 
 https://github.com/youssofal/mtplx
+
+```bash
+uv run mtplx -m "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed"
+```
 
 ### oMLX
 
