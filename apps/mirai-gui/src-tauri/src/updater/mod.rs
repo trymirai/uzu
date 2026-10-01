@@ -1,9 +1,7 @@
 mod gcs;
 mod staging;
 
-use std::sync::Arc;
-
-use gcs::{GcsAuth, ensure_auth};
+use gcs::ensure_bucket;
 use serde::Serialize;
 use staging::{clean_stale_staging, staging_path};
 use tauri::{AppHandle, Emitter};
@@ -34,7 +32,6 @@ pub struct UpdaterState {
 
 #[derive(Default)]
 struct UpdaterInner {
-    auth: Option<Arc<GcsAuth>>,
     bucket: String,
     phase: Phase,
     pending: Option<Update>,
@@ -90,29 +87,17 @@ pub async fn update_check(
         }
     }
 
-    let (auth, bucket) = match ensure_auth(&state).await {
+    let bucket = match ensure_bucket(&state).await {
         Ok(v) => v,
         Err(reason) => return Ok(check_error(current, reason)),
     };
 
     let endpoint = format!("https://storage.googleapis.com/{bucket}/latest.json");
-    let bearer = match auth.bearer().await {
-        Ok(b) => b,
-        Err(e) => {
-            crate::logger::warn("update:error", Some(serde_json::json!({ "phase": "auth", "error": e })));
-            return Ok(check_error(current, e));
-        },
-    };
     let url = match endpoint.parse() {
         Ok(u) => u,
         Err(_) => return Ok(check_error(current, "bad-endpoint".to_string())),
     };
-    let updater = match app
-        .updater_builder()
-        .endpoints(vec![url])
-        .and_then(|b| b.header("Authorization", bearer))
-        .and_then(|b| b.build())
-    {
+    let updater = match app.updater_builder().endpoints(vec![url]).and_then(|b| b.build()) {
         Ok(u) => u,
         Err(e) => return Ok(check_error(current, e.to_string())),
     };

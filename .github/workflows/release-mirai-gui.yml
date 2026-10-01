@@ -109,7 +109,6 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
       # Compiled into the binary.
       MIRAI_CHAT_BUCKET_NAME: ${{ vars.MIRAI_CHAT_BUCKET_NAME }}/update-feed/tauri
-      APP_UPDATE_CREDENTIALS: ${{ secrets.APP_UPDATE_CREDENTIALS }}
 
     steps:
       - uses: actions/checkout@v6
@@ -126,17 +125,7 @@ jobs:
             exit 1
           fi
           if [ -z "${{ vars.MIRAI_CHAT_BUCKET_NAME }}" ]; then
-            echo "MIRAI_CHAT_BUCKET_NAME secret is not configured" >&2
-            exit 1
-          fi
-          if [ -z "${APP_UPDATE_CREDENTIALS}" ]; then
-            echo "APP_UPDATE_CREDENTIALS secret is not configured" >&2
-            exit 1
-          fi
-          # Decoded as updater/gcs.rs does; a wrapped secret would fail only in the shipped build.
-          if ! printf '%s' "${APP_UPDATE_CREDENTIALS}" \
-            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const t=s.trim();if(/[\r\n]/.test(t))process.exit(1);const j=JSON.parse(Buffer.from(t,"base64").toString("utf8"));for(const k of ["client_email","private_key","token_uri"])if(!j[k])process.exit(1);})'; then
-            echo "APP_UPDATE_CREDENTIALS must be single-line base64 of SA JSON with client_email/private_key/token_uri (no line breaks; use base64 -w0)" >&2
+            echo "MIRAI_CHAT_BUCKET_NAME var is not configured" >&2
             exit 1
           fi
 
@@ -401,6 +390,5 @@ jobs:
           publish_archive "${ZIP_NAME}" "${DEST_BUCKET}/${ZIP_NAME}"
           publish_archive "${TARGZ_NAME}" "${DEST_BUCKET}/update-feed/tauri/${TARGZ_NAME}"
           publish_archive "${TARGZ_NAME}.sig" "${DEST_BUCKET}/update-feed/tauri/${TARGZ_NAME}.sig"
-          # Always rewritten: a re-run's archives are not the earlier run's bytes.
           gsutil -h "Content-Type: text/yaml" cp latest-mac.yml "${DEST_BUCKET}/latest-mac.yml"
           gsutil -h "Content-Type: application/json" cp latest.json "${DEST_BUCKET}/update-feed/tauri/latest.json"

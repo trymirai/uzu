@@ -199,6 +199,11 @@ jobs:
           cargo metadata --locked --format-version=1 > /dev/null
           git diff --exit-code -- Cargo.lock
 
+      - name: Check with cargo-deny
+        if: ${{ always() && steps.install.outcome == 'success' }}
+        working-directory: apps/mirai-gui/src-tauri
+        run: cargo deny check -D warnings
+
   tests-mirai-gui:
     name: tests-mirai-gui
     runs-on: [self-hosted, macos, arm64]
