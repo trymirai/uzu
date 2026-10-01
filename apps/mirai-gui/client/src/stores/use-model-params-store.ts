@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { getPlatform } from "@/platform/platform-singleton";
-import { isReasoningEffort, type ModelParams, type ReasoningEffort } from "@/types/sampling";
+import { isReasoningEffort, normalizeSampling, type ModelParams, type ReasoningEffort } from "@/types/sampling";
 
 const DEFAULT_PARAMS: ModelParams = { sampling: { type: "Default" } };
 
@@ -31,7 +31,7 @@ const migrateParams = (raw: unknown): ModelParams | null => {
     : typeof reasoningEnabled === "boolean"
       ? defaultReasoningEffort(reasoningEnabled)
       : undefined;
-  return { sampling, ...(effort !== undefined ? { reasoningEffort: effort } : {}) };
+  return { sampling: normalizeSampling(sampling), ...(effort !== undefined ? { reasoningEffort: effort } : {}) };
 };
 
 type ModelParamsState = {

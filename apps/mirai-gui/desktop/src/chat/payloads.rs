@@ -144,6 +144,12 @@ pub(super) fn sampling_policy(payload: &Option<SamplingPolicyPayload>) -> Sampli
             method: SamplingMethod::Greedy {},
         },
         Some(SamplingPolicyPayload::Stochastic {
+            temperature: Some(temperature),
+            ..
+        }) if *temperature <= 0.0 => SamplingPolicy::Custom {
+            method: SamplingMethod::Greedy {},
+        },
+        Some(SamplingPolicyPayload::Stochastic {
             temperature,
             top_k,
             top_p,
@@ -202,6 +208,32 @@ mod tests {
         .expect("message");
         assert_eq!(message.role, ChatRole::Assistant {});
         assert_eq!(message.reasoning_content.as_deref(), Some("reasoning"));
+    }
+
+    #[test]
+    fn zero_temperature_samples_greedily() {
+        let stochastic = |temperature: f64| {
+            Some(SamplingPolicyPayload::Stochastic {
+                temperature: Some(temperature),
+                top_k: Some(40),
+                top_p: None,
+                min_p: None,
+                repetition_penalty: None,
+                suffix_repetition_length: None,
+            })
+        };
+        assert!(matches!(
+            sampling_policy(&stochastic(0.0)),
+            SamplingPolicy::Custom {
+                method: SamplingMethod::Greedy {}
+            }
+        ));
+        assert!(matches!(
+            sampling_policy(&stochastic(0.7)),
+            SamplingPolicy::Custom {
+                method: SamplingMethod::Stochastic { .. }
+            }
+        ));
     }
 
     #[test]

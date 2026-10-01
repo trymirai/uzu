@@ -76,7 +76,7 @@ pub fn auto_resume_on_startup(app: AppHandle) {
             return;
         };
         for key in wanted {
-            let found = models.iter().filter(|m| m.is_local()).find(|m| m.repo_ids().contains(&key));
+            let found = models.iter().filter(|m| m.is_on_device()).find(|m| m.repo_ids().contains(&key));
             let Some(model) = found.cloned() else {
                 continue;
             };

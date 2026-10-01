@@ -3,7 +3,12 @@ import type { SamplingDefaults } from "@/platform/services/chat";
 import { STOCHASTIC_SEED, defaultReasoningEffort, useModelParamsStore } from "@/stores/use-model-params-store";
 import { useModelsStore } from "@/stores/use-models-store";
 import { useRuntimeSessionStore } from "@/stores/use-runtime-session-store";
-import type { ReasoningEffort, ReasoningSupport, SamplingPolicyPayload } from "@/types/sampling";
+import {
+  TEMPERATURE_MIN,
+  type ReasoningEffort,
+  type ReasoningSupport,
+  type SamplingPolicyPayload,
+} from "@/types/sampling";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -69,7 +74,7 @@ export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
     };
   }, [repoId, isResident]);
   const seed = {
-    temperature: modelDefaults?.temperature ?? STOCHASTIC_SEED.temperature,
+    temperature: Math.max(TEMPERATURE_MIN, modelDefaults?.temperature ?? STOCHASTIC_SEED.temperature),
     topK: modelDefaults?.topK ?? STOCHASTIC_SEED.topK,
     topP: modelDefaults?.topP ?? STOCHASTIC_SEED.topP,
     minP: modelDefaults?.minP ?? STOCHASTIC_SEED.minP,
@@ -166,7 +171,7 @@ export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
             <div className="flex flex-col gap-3 pt-3">
               <NumberSliderRow
                 label="Temperature"
-                min={0}
+                min={TEMPERATURE_MIN}
                 max={1}
                 step={0.01}
                 decimals={2}

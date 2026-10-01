@@ -300,7 +300,7 @@ pub fn find_in(
     models: Vec<Model>,
     repo_id: &str,
 ) -> Option<Model> {
-    let local: Vec<Model> = models.into_iter().filter(|m| m.is_local()).collect();
+    let local: Vec<Model> = models.into_iter().filter(|m| m.is_on_device()).collect();
     local
         .iter()
         .find(|m| m.repo_ids().first().is_some_and(|id| id == repo_id))
@@ -358,7 +358,7 @@ pub async fn chat_models_get(
     // carries a newer seq than this snapshot and wins on the client.
     let seq = state.event_seq();
     let states = engine.download_states().await;
-    let local: Vec<Model> = models.into_iter().filter(|m| m.is_local()).collect();
+    let local: Vec<Model> = models.into_iter().filter(|m| m.is_on_device()).collect();
     state.remember_repo_ids(&local).await;
     crate::downloads::ensure_watcher(app, &state);
     let mut result = Vec::with_capacity(local.len());

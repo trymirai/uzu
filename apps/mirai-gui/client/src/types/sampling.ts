@@ -11,6 +11,14 @@ export type SamplingPolicyPayload =
       suffixRepetitionLength?: number;
     };
 
+// Same floor as the CLI.
+export const TEMPERATURE_MIN = 0.05;
+
+export const normalizeSampling = (sampling: SamplingPolicyPayload): SamplingPolicyPayload =>
+  sampling.type === "Stochastic" && sampling.temperature !== undefined && sampling.temperature <= 0
+    ? { type: "Argmax" }
+    : sampling;
+
 export type ReasoningEffort = "disabled" | "default" | "low" | "medium" | "high" | "xhigh";
 
 export const REASONING_EFFORTS: readonly ReasoningEffort[] = ["disabled", "default", "low", "medium", "high", "xhigh"];
