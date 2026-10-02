@@ -7,6 +7,7 @@ use std::{
     sync::Arc,
 };
 
+use derive_more::Debug;
 use half::bf16;
 use shoji::{
     traits::backend::classification::ClassifierOutput,

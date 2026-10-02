@@ -4,6 +4,7 @@ mod experts_two_pass_decode;
 mod experts_two_pass_prefill;
 mod gather;
 
+use derive_more::Debug;
 use experts_two_pass_decode::MoeExpertsTwoPassDecodeBlock;
 use experts_two_pass_prefill::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock};
 use gather::MoeGather;

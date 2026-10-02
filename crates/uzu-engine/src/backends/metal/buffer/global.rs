@@ -1,4 +1,4 @@
-use std::{fmt::Debug, os::raw::c_void, ptr::NonNull};
+use std::{os::raw::c_void, ptr::NonNull};
 
 use metal::MTLBuffer;
 
@@ -22,15 +22,3 @@ impl BufferCpuAccessible for BlockAllocation<MetalDenseBuffer> {
 }
 
 impl GlobalBuffer for BlockAllocation<MetalDenseBuffer> {}
-
-impl Debug for BlockAllocation<MetalDenseBuffer> {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        f.debug_struct("BlockAllocation<MetalDenseBuffer>")
-            .field("page", &self.page())
-            .field("range", &self.range())
-            .finish_non_exhaustive()
-    }
-}

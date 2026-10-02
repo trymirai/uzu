@@ -1,4 +1,8 @@
-use std::{io, ops::Range, path::Path};
+use std::{
+    io,
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 use crate::time::SystemTime;
 
@@ -78,6 +82,25 @@ pub async fn read_range(
     }
 }
 
+pub async fn read_dir(path: impl AsRef<Path>) -> Result<Vec<PathBuf>, io::Error> {
+    #[cfg(target_family = "wasm")]
+    {
+        let path = path.as_ref();
+        let names = super::asyn_opfs::dir_entries(path.to_str().unwrap()).await?;
+        Ok(names.into_iter().map(|name| path.join(name)).collect())
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let mut entries = tokio::fs::read_dir(path.as_ref()).await?;
+        let mut paths = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            paths.push(entry.path());
+        }
+        Ok(paths)
+    }
+}
+
 pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, io::Error> {
     #[cfg(target_family = "wasm")]
     {
@@ -88,6 +111,14 @@ pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, io::Error>
 
     #[cfg(not(target_family = "wasm"))]
     tokio::fs::read_to_string(path.as_ref()).await
+}
+
+pub async fn remove_dir_all(path: impl AsRef<Path>) -> Result<(), io::Error> {
+    #[cfg(target_family = "wasm")]
+    return super::asyn_opfs::dir_remove_all(path.as_ref().to_str().unwrap()).await;
+
+    #[cfg(not(target_family = "wasm"))]
+    tokio::fs::remove_dir_all(path.as_ref()).await
 }
 
 pub async fn remove_file(path: impl AsRef<Path>) -> Result<(), io::Error> {

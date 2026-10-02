@@ -1,5 +1,6 @@
 use std::{fs::File, io, io::BufReader, path::Path, sync::Arc};
 
+use derive_more::Debug;
 use thiserror::Error;
 use tokenizers::Tokenizer;
 
