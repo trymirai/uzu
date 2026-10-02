@@ -1,4 +1,4 @@
-"""Compare model declarations without building the Rust or C++ inference engines.
+"""Compare model declarations without building the Rust, C++, or Zig engines.
 
 Python's unbounded integers, float precision, and existing ChatRole enum are
 normalized to their native counterparts. Rust/C++ numeric widths are also
@@ -42,8 +42,10 @@ NATIVE_TYPES = {
     "float": "float32",
     "f64": "float64",
     "double": "float64",
+    "[]constu8": "string",
     "Value": "json",
     "glz::generic_u64": "json",
+    "std.json.Value": "json",
 }
 
 OMIT_WHEN_NONE = {
@@ -72,6 +74,10 @@ class Field:
 
 def native_type(annotation: str, model_names: set[str]) -> str:
     annotation = re.sub(r"\s+", "", annotation)
+    if annotation.startswith("?"):
+        return f"optional<{native_type(annotation[1:], model_names)}>"
+    if annotation.startswith("[]const") and annotation != "[]constu8":
+        return f"list<{native_type(annotation[len('[]const') :], model_names)}>"
     if match := re.fullmatch(r"([\w:]+)<(.+)>", annotation):
         container, inner = match.groups()
         assert container in CONTAINERS, f"Unsupported native container: {annotation}"
@@ -92,6 +98,10 @@ def read_native_models(path: Path, language: str) -> dict[str, dict[str, Field]]
         source = re.sub(r"\buse\s+[^;]+;", "", source)
         struct_pattern = r"\bpub\s+struct\s+(\w+)\s*\{([^{}]*)\}"
         field_pattern = r"\s*pub\s+(?P<name>\w+)\s*:\s*(?P<type>[\w\s:<>]+)\s*,"
+    elif language == "zig":
+        source = re.sub(r'const std = @import\("std"\);', "", source)
+        struct_pattern = r"\bpub\s+const\s+(\w+)\s*=\s*struct\s*\{([^{}]*)\}\s*;"
+        field_pattern = r"\s*(?P<name>\w+)\s*:\s*(?P<type>[\w\s.:?\[\]]+?)(?:\s*=\s*(?P<default>[^,]+))?\s*,"
     else:
         source = re.sub(r"^\s*#(?:include|ifndef|define|endif)[^\n]*", "", source, flags=re.MULTILINE)
         struct_pattern = r"\bstruct\s+(\w+)\s*\{([^{}]*)\}\s*;"
@@ -117,9 +127,12 @@ def read_native_models(path: Path, language: str) -> dict[str, dict[str, Field]]
             field_name = match["name"]
             field_type = native_type(match["type"], names)
             default = None if field_type.startswith("optional<") else Default.REQUIRED
-            if language == "cpp" and match["default"] is not None:
+            if language == "zig" and default is None:
+                assert match["default"] is not None, f"{name}.{field_name}: optional Zig fields must default to null"
+            if language in ("cpp", "zig") and match["default"] is not None:
                 initializer = match["default"].strip()
-                assert initializer == "std::nullopt" and default is None, (
+                expected = "null" if language == "zig" else "std::nullopt"
+                assert initializer == expected and default is None, (
                     f"{path.relative_to(ROOT)}: {name}.{field_name}: unexpected default {initializer}"
                 )
             assert field_name not in fields, f"{path}: {name}.{field_name}: duplicate field"
@@ -206,17 +219,19 @@ def models() -> dict[str, dict[str, dict[str, Field]]]:
         "python": read_python_models(),
         "rust": read_native_models(ROOT / "engine-uzu/src/bench.rs", "rust"),
         "cpp": read_native_models(ROOT / "common-cpp/src/bench.hpp", "cpp"),
+        "zig": read_native_models(ROOT / "engine-mlxserve/src/bench.zig", "zig"),
     }
 
 
 def test_model_names_match(models):
     assert {"BenchRequest", "BenchResponse", "ChatMessage", "BenchSampling"} <= models["python"].keys()
-    assert models["rust"].keys() == models["cpp"].keys() == models["python"].keys()
+    assert models["rust"].keys() == models["cpp"].keys() == models["python"].keys() == models["zig"].keys()
 
 
 def test_native_models_match(models):
     """Also catch Rust/C++ signedness and numeric-width differences."""
     assert models["rust"] == models["cpp"], "engine-uzu/src/bench.rs and common-cpp/src/bench.hpp differ"
+    assert models["rust"] == models["zig"], "engine-uzu/src/bench.rs and engine-mlxserve/src/bench.zig differ"
 
 
 def test_python_models_match_rust(models):

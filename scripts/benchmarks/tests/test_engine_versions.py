@@ -98,15 +98,17 @@ def test_llamacpp_uses_latest_version() -> None:
     assert current == latest, f"engine-llamacpp/CMakeLists.txt: LLAMA_VERSION is {current}, latest release is {latest}"
 
 
-def test_splash_uses_latest_version() -> None:
-    path = ROOT / "engine-splash/bootstrap.sh"
-    source = path.read_text().replace("\\\n", " ")
-    clones = [shlex.split(line, comments=True) for line in source.splitlines() if re.match(r"\s*git\s+clone\s", line)]
-    assert len(clones) == 1 and "--branch" in clones[0], f"{path.name}: expected a git clone with a pinned --branch"
-    command = clones[0]
-    current = command[command.index("--branch") + 1]
-    latest = latest_github_tag("incoai/splash")
-    assert current == latest, f"engine-splash/bootstrap.sh: --branch is {current}, latest release is {latest}"
+def test_mlxserve_uses_latest_version() -> None:
+    project = ROOT / "engine-mlxserve"
+    source = (project / "bootstrap.sh").read_text()
+    clone = re.search(r"git clone --depth 1 --branch (\S+) https://github.com/ddalcu/mlx-serve.git", source)
+    assert clone, "engine-mlxserve/bootstrap.sh: expected a pinned source clone"
+    assert clone[1] == '"$VERSION"', "engine-mlxserve/bootstrap.sh: --branch must use VERSION"
+    version = re.search(r'^VERSION="([^"]+)"$', source, re.MULTILINE)
+    assert version, "engine-mlxserve/bootstrap.sh: missing VERSION"
+    current = version[1]
+    latest = latest_github_tag("ddalcu/mlx-serve")
+    assert current == latest, f"mlx-serve is {current}, latest release is {latest}"
 
 
 def test_omlx_uses_latest_version() -> None:
@@ -122,3 +124,14 @@ def test_omlx_uses_latest_version() -> None:
         f"engine-omlx/uv.lock: omlx is {locked['version']} from {locked['source']}, latest release is {latest}. "
         "Run uv lock --project engine-omlx --upgrade-package omlx"
     )
+
+
+def test_splash_uses_latest_version() -> None:
+    path = ROOT / "engine-splash/bootstrap.sh"
+    source = path.read_text().replace("\\\n", " ")
+    clones = [shlex.split(line, comments=True) for line in source.splitlines() if re.match(r"\s*git\s+clone\s", line)]
+    assert len(clones) == 1 and "--branch" in clones[0], f"{path.name}: expected a git clone with a pinned --branch"
+    command = clones[0]
+    current = command[command.index("--branch") + 1]
+    latest = latest_github_tag("incoai/splash")
+    assert current == latest, f"engine-splash/bootstrap.sh: --branch is {current}, latest release is {latest}"

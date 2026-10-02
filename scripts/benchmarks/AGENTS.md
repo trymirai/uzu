@@ -7,11 +7,12 @@
 These files define the same benchmark request and response models. Paths are
 relative to this directory:
 
-- `engine-uzu/src/bench.rs`
 - `common-cpp/src/bench.hpp`
 - `common-py/src/bench.py`
+- `engine-mlxserve/src/bench.zig`
+- `engine-uzu/src/bench.rs`
 
-When changing or reviewing any of these files, read all three, including files
+When changing or reviewing any of these files, read all four, including files
 absent from the diff. Keep `ChatMessage`, `BenchSampling`, `BenchRequest`,
 `BenchResponse`, and any new shared models consistent across the implementations.
 
