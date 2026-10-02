@@ -100,3 +100,5 @@ Specific engine test
 ```bash
 uv run pytest --engine uzu
 ```
+
+The default suite also checks engine pins against the latest stable releases on PyPI and GitHub, including Python lockfiles. 

@@ -34,6 +34,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "packaging" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
@@ -44,6 +45,7 @@ requires-dist = [{ name = "benchmarks-common", editable = "common-py" }]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "packaging", specifier = ">=26.3" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "ruff", specifier = ">=0.16.8" },
     { name = "ty", specifier = ">=0.0.84" },
