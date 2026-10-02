@@ -278,6 +278,16 @@ fn parse_argument_annotation(
     integer_defines: &IntegerObjectDefines,
 ) -> anyhow::Result<(MetalArgumentType, Option<Box<str>>)> {
     if let Some(annotation) = annotation
+        && annotation.first().map(|s| s.as_ref()) == Some("dsl.specialize_if")
+    {
+        if annotation.len() != 2 {
+            bail!("dsl.specialize_if takes 1 argument, found {}", annotation.len() - 1);
+        }
+        let ty = MetalArgument::scalar_type_to_rust(c_type)?;
+        return Ok((MetalArgumentType::Specialize(format!("Option < {ty} >").into()), Some(annotation[1].clone())));
+    }
+
+    if let Some(annotation) = annotation
         && annotation.first().map(|s| s.as_ref()) == Some("dsl.optional")
     {
         if annotation.len() != 2 {

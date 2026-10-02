@@ -4,7 +4,7 @@ use quote::{format_ident, quote};
 use syn::{Expr, Ident, Type};
 
 use crate::{
-    common::enum_paths::EnumPaths,
+    common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with},
     metal::{
         ast::{
             MetalArgument, MetalArgumentType, MetalBufferAccess, MetalConstantType, MetalGroupsType, MetalKernelInfo,
@@ -205,11 +205,26 @@ impl ArgumentEmission {
         Some(quote! { #field_name: bool })
     }
 
-    pub fn struct_initializer(&self) -> Option<TokenStream> {
+    pub fn struct_initializer(
+        &self,
+        kernel: &MetalKernelInfo,
+    ) -> Option<TokenStream> {
         let condition = self.condition()?;
         let field_name = &condition.field_name;
-        let rust_expression = &condition.rust_expression;
-        Some(quote! { #field_name: #rust_expression })
+        let mut expression: Expr = syn::parse2(condition.rust_expression.clone()).unwrap();
+        rewrite_paths_with(&mut expression, |path| {
+            let ident = path.get_ident()?;
+            kernel
+                .arguments
+                .iter()
+                .any(|argument| {
+                    ident == argument.name.as_ref()
+                        && matches!(argument.argument_type, MetalArgumentType::Specialize(_))
+                        && argument.condition.is_some()
+                })
+                .then(|| syn::parse_quote! { #ident.unwrap() })
+        });
+        Some(quote! { #field_name: #expression })
     }
 
     pub fn encode_argument_definition(&self) -> Option<TokenStream> {
