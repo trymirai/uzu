@@ -56,7 +56,7 @@ xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 [dependencies]
 uzu-engine-macros.workspace = true
 bitflags.workspace = true
-derive_more.workspace = true
+derive_more = { workspace = true, features = ["debug"] }
 shoji.workspace = true
 half.workspace = true
 serde.workspace = true

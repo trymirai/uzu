@@ -1,6 +1,5 @@
 use std::{
     cmp::{max, min},
-    fmt::Debug,
     range::Range,
     sync::Arc,
 };
@@ -56,18 +55,6 @@ impl MetalSparseBuffer {
 
     pub(crate) fn mtl_buffer(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
         &self.buffer
-    }
-}
-
-impl Debug for MetalSparseBuffer {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        f.debug_struct("MetalSparseBuffer")
-            .field("mapped_pages", &self.mapped_pages)
-            .field("buffer", &self.buffer)
-            .finish_non_exhaustive()
     }
 }
 
