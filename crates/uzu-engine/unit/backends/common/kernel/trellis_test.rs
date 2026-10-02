@@ -51,15 +51,19 @@ fn run<B: Backend>(
     let input = create_buffer_with_data::<B, bf16>(context.as_ref(), input);
     let rht_factors = create_buffer_with_data::<B, f32>(context.as_ref(), rht_factors);
     let mixing = create_buffer_with_data::<B, f32>(context.as_ref(), mixing);
-    let rotated = transform.encode(&input, &rht_factors, &mixing, batch, &mut command_buffer).expect("encode");
-    // the rotated input lives in command buffer scratch, so copy it out before submitting
     let mut activations = create_buffer::<B, i8>(context.as_ref(), (batch * columns) as usize);
     let mut column_group_sums = create_buffer::<B, f32>(context.as_ref(), COLUMN_GROUP_COUNT as usize * batch as usize);
     let mut scales = create_buffer::<B, f32>(context.as_ref(), batch as usize);
-    command_buffer.encode_copy(&rotated.activations, &mut activations);
-    command_buffer.encode_copy(&rotated.column_group_sums, &mut column_group_sums);
-    command_buffer.encode_copy(&rotated.scales, &mut scales);
-    drop(rotated);
+    transform.encode(
+        &input,
+        &rht_factors,
+        &mixing,
+        &mut activations,
+        &mut column_group_sums,
+        &mut scales,
+        batch,
+        &mut command_buffer,
+    );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     (
         buffer_to_vec::<B, i8>(&activations),
