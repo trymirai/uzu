@@ -19,4 +19,4 @@ class TestMTPLX(EngineTests):
 
     @staticmethod
     def command(config: pytest.Config) -> list[str]:
-        return ["uv", "run", "mtplx", "--model", config.getoption("mtplx_model")]
+        return ["uv", "run", "--project", "engine-mtplx", "bench-mtplx", "--model", config.getoption("mtplx_model")]

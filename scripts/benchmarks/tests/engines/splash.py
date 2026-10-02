@@ -19,4 +19,4 @@ class TestSplash(EngineTests):
 
     @staticmethod
     def command(config: pytest.Config) -> list[str]:
-        return ["uv", "run", "splash", "--model", config.getoption("splash_model")]
+        return ["uv", "run", "--project", "engine-splash", "bench-splash", "--model", config.getoption("splash_model")]

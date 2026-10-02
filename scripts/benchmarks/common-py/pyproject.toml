@@ -3,6 +3,7 @@ name = "benchmarks-common"
 version = "0.0.1"
 requires-python = ">=3.13.7"
 dependencies = [
+    "huggingface-hub>=0.36",
     "pydantic>=2.13.5",
 ]
 
@@ -11,7 +12,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["bench"]
+py-modules = ["bench", "common"]
 packages = ["mach"]
 package-dir = { "" = "src" }
 

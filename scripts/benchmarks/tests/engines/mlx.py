@@ -1,4 +1,4 @@
-"""Launch the MLX benchmark adapter through uv run mlx."""
+"""Launch the MLX benchmark adapter in its own uv project."""
 
 import pytest
 
@@ -17,4 +17,4 @@ class TestMLX(EngineTests):
 
     @staticmethod
     def command(config: pytest.Config) -> list[str]:
-        return ["uv", "run", "mlx", "--model", config.getoption("mlx_model")]
+        return ["uv", "run", "--project", "engine-mlx", "bench-mlx", "--model", config.getoption("mlx_model")]
