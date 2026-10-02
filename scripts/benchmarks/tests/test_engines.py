@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from bench import BenchRequest, BenchResponse, BenchSampling, ChatMessage, ChatRole
 
-from .engines import llamacpp, mlx, mtplx
+from .engines import llamacpp, mlx, mtplx, omlx
 from .engines.engine_process import EngineProcess, run_engine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +58,20 @@ def mtplx_engine(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPa
         yield process
 
 
+@pytest.fixture(scope="class")
+def omlx_engine(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> Iterator[EngineProcess]:
+    if "omlx" not in request.config.getoption("engine"):
+        pytest.skip("Enable oMLX tests with --engine omlx")
+
+    timeout = request.config.getoption("engine_timeout")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise pytest.UsageError("--engine-timeout must be finite and greater than zero")
+
+    stderr_log = tmp_path_factory.mktemp("engine-omlx") / "stderr.log"
+    with run_engine(omlx.command(request.config), ROOT, stderr_log, timeout) as process:
+        yield process
+
+
 def assert_responses(responses: list[BenchResponse], num_runs: int) -> None:
     assert len(responses) == num_runs
     for response in responses:
@@ -93,7 +107,7 @@ class EngineTests:
         request = BenchRequest(
             prompt_text="The capital of France is",
             max_tokens=8,
-            sampling=BenchSampling(top_k=20, top_p=0.9, min_p=0.05, temp=0.7),
+            sampling=BenchSampling(top_k=20, top_p=0.9, temp=0.7),
         )
         assert_responses(engine.request(request), 1)
 
@@ -121,3 +135,9 @@ class TestMTPLX(EngineTests):
     @pytest.fixture
     def engine(self, mtplx_engine: EngineProcess) -> EngineProcess:
         return mtplx_engine
+
+
+class TestOMLX(EngineTests):
+    @pytest.fixture
+    def engine(self, omlx_engine: EngineProcess) -> EngineProcess:
+        return omlx_engine

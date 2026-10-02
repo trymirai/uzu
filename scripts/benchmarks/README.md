@@ -35,7 +35,8 @@ https://github.com/ggml-org/llama.cpp
 
 Also DFlash is supported
 ```bash
-./engine-llamacpp/run.sh -m "unsloth/Qwen3.6-27B-GGUF:Q4_K_S" -d "ggml-org/Qwen3.6-27B-GGUF:BF16"
+./engine-llamacpp/run.sh -m "unsloth/Qwen3.6-27B-GGUF:Q4_K_S" \
+    -d "ggml-org/Qwen3.6-27B-GGUF:BF16"
 ```
 
 ### MLX
@@ -53,9 +54,27 @@ https://github.com/youssofal/mtplx
 uv run mtplx -m "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed"
 ```
 
+MTPLX uses the model's multi-token prediction (MTP) heads to draft tokens and verifies them with the target model: this is speculative decoding without a separate draft model. Omit `speculative_depth` to use the model pack's recommended depth (fallback: 3), set it to `0` for ordinary autoregressive decoding, or supply a positive depth to override it. Positive depths require matching MTP weights.
+
 ### oMLX
 
 https://github.com/jundot/omlx
+
+```bash
+uv run omlx -m "mlx-community/SmolLM-135M-Instruct-4bit"
+```
+
+Native MTP is enabled automatically when the target checkpoint has embedded prediction heads supported by oMLX's text engine.
+
+```bash
+uv run omlx -m "TheWirelessPhoenix/Qwen3.5-4B-oQ4e-mtp"
+```
+
+Also DFlash is supported
+```bash
+uv run omlx -m "mlx-community/Qwen3.6-27B-4bit" \
+    -d "z-lab/Qwen3.6-27B-DFlash"
+```
 
 ### splash
 
