@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.engines import llamacpp, mlx, mtplx
+from tests.engines import llamacpp, mlx, mtplx, omlx
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -12,7 +12,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption(
         "--engine",
         action="append",
-        choices=["llamacpp", "mlx", "mtplx"],
+        choices=["llamacpp", "mlx", "mtplx", "omlx"],
         default=[],
         help="Engine to test (repeatable).",
     )
@@ -20,12 +20,18 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     llamacpp.add_options(parser)
     mlx.add_options(parser)
     mtplx.add_options(parser)
+    omlx.add_options(parser)
 
 
 def pytest_configure(config: pytest.Config) -> None:
     """Allow engine names as shortcuts to select and enable engine tests."""
     engines = config.getoption("engine")
-    for name, test_class in {"llamacpp": "TestLlamaCpp", "mlx": "TestMLX", "mtplx": "TestMTPLX"}.items():
+    for name, test_class in {
+        "llamacpp": "TestLlamaCpp",
+        "mlx": "TestMLX",
+        "mtplx": "TestMTPLX",
+        "omlx": "TestOMLX",
+    }.items():
         if name not in config.args:
             continue
         target = f"{Path(__file__).with_name('test_engines.py')}::{test_class}"
