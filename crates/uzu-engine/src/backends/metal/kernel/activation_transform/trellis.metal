@@ -139,8 +139,8 @@ static METAL_FUNC void rotate_columns(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 }
 
-template <uint DIMENSION>
 // TODO: a columns agnostic kernel
+template <uint DIMENSION>
 VARIANTS(DIMENSION, 5120, 6144, 17408)
 PUBLIC KERNEL(TrellisTransform)(
     device const bfloat* input,
