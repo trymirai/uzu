@@ -1,8 +1,8 @@
-use std::{error::Error, fmt::Debug};
+use std::error::Error;
 
 use super::{CommandBuffer, ConstantBuffer, Context, GlobalBuffer, Kernels, ScratchBuffer, SparseBuffer};
 
-pub trait Backend: Debug + Clone + Send + Sync + 'static {
+pub trait Backend: Clone + Send + Sync + 'static {
     type Context: Context<Backend = Self>;
     type CommandBuffer: CommandBuffer<Backend = Self>;
     type GlobalBuffer: GlobalBuffer<Backend = Self>;
@@ -11,7 +11,7 @@ pub trait Backend: Debug + Clone + Send + Sync + 'static {
     type SparseBuffer: SparseBuffer<Backend = Self>;
     type AllocationPool: Send + Sync;
     type Kernels: Kernels<Backend = Self>;
-    type Error: Error + Debug;
+    type Error: Error;
 
     const NAME: &'static str;
 }

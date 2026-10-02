@@ -3,6 +3,7 @@ mod gate_act_mul;
 mod moe;
 
 pub use dense::DenseMlp;
+use derive_more::Debug;
 use gate_act_mul::MlpGateActMulEncodable;
 pub use moe::{MoeBlock, MoeBlockError};
 use thiserror::Error;

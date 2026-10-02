@@ -1,4 +1,4 @@
-use std::{fmt::Debug, os::raw::c_void, ptr::NonNull};
+use std::{os::raw::c_void, ptr::NonNull};
 
 use crate::backends::{
     common::{Backend, Buffer, BufferCpuAccessible, ScratchBuffer, allocator::pool::PoolAllocation},
@@ -20,15 +20,3 @@ impl BufferCpuAccessible for PoolAllocation<<Metal as Backend>::GlobalBuffer> {
 }
 
 impl ScratchBuffer for PoolAllocation<<Metal as Backend>::GlobalBuffer> {}
-
-impl Debug for PoolAllocation<<Metal as Backend>::GlobalBuffer> {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        f.debug_struct("PoolAllocation<Metal::GlobalBuffer>")
-            .field("page", &self.page())
-            .field("range", &self.range())
-            .finish_non_exhaustive()
-    }
-}

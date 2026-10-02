@@ -1,4 +1,4 @@
-use std::{any::Any, fmt::Debug, range::Range};
+use std::{any::Any, range::Range};
 
 use crate::backends::common::{Backend, BufferMut, BufferRef};
 
@@ -10,7 +10,7 @@ pub mod sparse;
 
 pub mod reference;
 
-pub trait Buffer: Any + Debug + Send + Sync + Unpin {
+pub trait Buffer: Any + Send + Sync + Unpin {
     type Backend: Backend;
 
     fn size(&self) -> usize;
