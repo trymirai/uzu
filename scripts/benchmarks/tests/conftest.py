@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.engines import llamacpp, mlx, mtplx, omlx
+from tests.engines import llamacpp, mlx, mtplx, omlx, splash
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -12,7 +12,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption(
         "--engine",
         action="append",
-        choices=["llamacpp", "mlx", "mtplx", "omlx"],
+        choices=["llamacpp", "mlx", "mtplx", "omlx", "splash"],
         default=[],
         help="Engine to test (repeatable).",
     )
@@ -21,6 +21,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     mlx.add_options(parser)
     mtplx.add_options(parser)
     omlx.add_options(parser)
+    splash.add_options(parser)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -31,6 +32,7 @@ def pytest_configure(config: pytest.Config) -> None:
         "mlx": "TestMLX",
         "mtplx": "TestMTPLX",
         "omlx": "TestOMLX",
+        "splash": "TestSplash",
     }.items():
         if name not in config.args:
             continue

@@ -71,7 +71,7 @@ class MLXEngine(InferenceEngine):
         def update_memory(*_progress: int) -> None:
             nonlocal mem_counters_max
             counters = get_memory_counters()
-            if counters.resident_size > mem_counters_max.resident_size:
+            if counters.graphics_total > mem_counters_max.graphics_total:
                 mem_counters_max = counters
 
         # create and run inference loop

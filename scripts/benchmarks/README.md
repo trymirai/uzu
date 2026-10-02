@@ -80,6 +80,10 @@ uv run omlx -m "mlx-community/Qwen3.6-27B-4bit" \
 
 https://github.com/incoai/splash
 
+```bash
+uv run splash -m "unsloth/Qwen3.8-27B-GGUF:UD-IQ1_S"
+```
+
 ### uzu
 
 https://github.com/trymirai/uzu
