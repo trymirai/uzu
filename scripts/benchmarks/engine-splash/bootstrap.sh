@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$PROJECT_DIR/deps/splash"
 PARALLEL_JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1\n')"
-PYTHON_EXECUTABLE="${Python3_EXECUTABLE:-$PROJECT_DIR/../.venv/bin/python}"
+PYTHON_EXECUTABLE="${Python3_EXECUTABLE:-$PROJECT_DIR/.venv/bin/python}"
 
 if [[ ! -x "$PYTHON_EXECUTABLE" ]]; then
     PYTHON_EXECUTABLE="$(command -v python3)"

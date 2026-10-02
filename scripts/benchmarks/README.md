@@ -23,16 +23,6 @@ Each engine supports:
 
 When `max_tokens` is omitted, `null`, or `0`, decoding continues until an EOS token.
 
-## Tests
-
-Run the shared integration tests against every engine:
-
-```bash
-uv run pytest engines
-```
-
-Use an engine name to run only its tests, for example `uv run pytest uzu`.
-
 ## Engines
 
 ### [llama.cpp](https://github.com/ggml-org/llama.cpp)
@@ -49,37 +39,37 @@ Also DFlash is supported
 
 ### [MLX](https://github.com/ml-explore/mlx-lm)
 ```bash
-uv run mlx -m "mlx-community/Qwen3.5-0.8B-4bit"
+uv run --project engine-mlx bench-mlx -m "mlx-community/Qwen3.5-0.8B-4bit"
 ```
 
 ### [MTPLX](https://github.com/youssofal/mtplx)
 ```bash
-uv run mtplx -m "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed"
+uv run --project engine-mtplx bench-mtplx -m "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed"
 ```
 
 MTPLX uses the model's multi-token prediction (MTP) heads to draft tokens and verifies them with the target model: this is speculative decoding without a separate draft model. Omit `speculative_depth` to use the model pack's recommended depth (fallback: 3), set it to `0` for ordinary autoregressive decoding, or supply a positive depth to override it. Positive depths require matching MTP weights.
 
 ### [oMLX](https://github.com/jundot/omlx)
 ```bash
-uv run omlx -m "mlx-community/SmolLM-135M-Instruct-4bit"
+uv run --project engine-omlx bench-omlx -m "mlx-community/SmolLM-135M-Instruct-4bit"
 ```
 
 Native MTP is enabled automatically when the target checkpoint has embedded prediction heads supported by oMLX's text engine.
 
 ```bash
-uv run omlx -m "TheWirelessPhoenix/Qwen3.5-4B-oQ4e-mtp"
+uv run --project engine-omlx bench-omlx -m "TheWirelessPhoenix/Qwen3.5-4B-oQ4e-mtp"
 ```
 
 Also DFlash is supported
 ```bash
-uv run omlx -m "mlx-community/Qwen3.6-27B-4bit" \
+uv run --project engine-omlx bench-omlx -m "mlx-community/Qwen3.6-27B-4bit" \
     -d "z-lab/Qwen3.6-27B-DFlash"
 ```
 
 ### [splash](https://github.com/incoai/splash)
 
 ```bash
-uv run splash -m "unsloth/Qwen3.8-27B-GGUF:UD-IQ1_S"
+uv run --project engine-splash bench-splash -m "unsloth/Qwen3.8-27B-GGUF:UD-IQ1_S"
 ```
 
 DFlash already supported with hardcoded `speculative_depth == 7`

@@ -18,7 +18,7 @@ class TestOMLX(EngineTests):
 
     @staticmethod
     def command(config: pytest.Config) -> list[str]:
-        args = ["uv", "run", "omlx", "--model", config.getoption("omlx_model")]
+        args = ["uv", "run", "--project", "engine-omlx", "bench-omlx", "--model", config.getoption("omlx_model")]
         if draft := config.getoption("omlx_draft_model"):
             args.extend(["--draft-model", draft])
         return args

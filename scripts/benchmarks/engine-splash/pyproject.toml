@@ -13,8 +13,7 @@ dependencies = [
     "numpy>=2.3.5",
     "pillow>=12.3.0",
     "tokenizers==0.22.2",
-    # oMLX pins transformers below 5.13 in this shared workspace.
-    "transformers>=5.12.1,<6",
+    "transformers>=5.15.1,<6",
     "typer>=0.27.2",
 ]
 
@@ -23,10 +22,10 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-splash = "bench_splash:main"
+bench-splash = "bench_splash:main"
 
 [tool.setuptools]
 py-modules = ["bench_splash"]
 
 [tool.uv.sources]
-benchmarks-common = { workspace = true }
+benchmarks-common = { path = "../common-py", editable = true }

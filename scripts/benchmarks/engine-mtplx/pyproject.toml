@@ -2,17 +2,17 @@
 name = "benchmarks-mtplx"
 version = "0.0.1"
 requires-python = ">=3.13.7"
-dependencies = ["benchmarks-common", "mtplx==2.11.3"]
+dependencies = ["benchmarks-common", "mtplx==2.12.0", "typer>=0.27.2"]
 
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-mtplx = "bench_mtplx:main"
+bench-mtplx = "bench_mtplx:main"
 
 [tool.setuptools]
 py-modules = ["bench_mtplx"]
 
 [tool.uv.sources]
-benchmarks-common = { workspace = true }
+benchmarks-common = { path = "../common-py", editable = true }
