@@ -6,9 +6,9 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
             gpu_types::trellis::COLUMN_GROUP_COUNT,
-            kernel::{TrellisTransform, mixing_dimension},
+            kernel::{TrellisTransformKernel, mixing_dimension},
         },
         cpu::Cpu,
     },
@@ -45,7 +45,8 @@ fn run<B: Backend>(
     input: &[bf16],
 ) -> (Vec<i8>, Vec<f32>, Vec<f32>) {
     let context = B::Context::new().expect("context");
-    let transform = TrellisTransform::<B>::new(context.as_ref(), columns).expect("trellis transform").unwrap();
+    let transform =
+        <B::Kernels as Kernels>::TrellisTransformKernel::new(context.as_ref(), columns).expect("trellis transform");
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     // kept alive until the command buffer has run: the CPU backend reads them at submit time
     let input = create_buffer_with_data::<B, bf16>(context.as_ref(), input);

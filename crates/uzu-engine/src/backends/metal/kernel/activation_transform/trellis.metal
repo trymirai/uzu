@@ -140,6 +140,7 @@ static METAL_FUNC void rotate_columns(
 }
 
 template <uint DIMENSION>
+// TODO: a columns agnostic kernel
 VARIANTS(DIMENSION, 5120, 6144, 17408)
 PUBLIC KERNEL(TrellisTransform)(
     device const bfloat* input,
