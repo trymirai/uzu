@@ -216,7 +216,7 @@ PUBLIC KERNEL(TrellisTransform)(
       simdgroup_maxima,
       thread_context
   );
-  const float scale = int8_activation_scale(maximum);
+  const float scale = (isfinite(maximum) && maximum > 0.0f) ? precise::divide(maximum, 127.0f) : 1.0f;
 
   int local_column_group_sums[trellis::COLUMN_GROUP_COUNT] = {};
   METAL_PRAGMA_UNROLL

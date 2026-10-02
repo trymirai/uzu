@@ -10,13 +10,6 @@ UZU_CONST uint ACTIVATION_QUANT_TILE_SIZE = 128;
 UZU_CONST float ACTIVATION_QUANT_INT8_MAX = 127.0f;
 #define ACTIVATION_QUANT_SIMDGROUPS 4
 
-static METAL_FUNC float int8_activation_scale(const float maximum_magnitude) {
-  if (isfinite(maximum_magnitude) && maximum_magnitude > 0.0f) {
-    return maximum_magnitude / ACTIVATION_QUANT_INT8_MAX;
-  }
-  return 1.0f;
-}
-
 static METAL_FUNC int8_t quantize_activation_int8(const float value, const float scale) {
   return static_cast<int8_t>(clamp(round(value / scale), -ACTIVATION_QUANT_INT8_MAX, ACTIVATION_QUANT_INT8_MAX));
 }
