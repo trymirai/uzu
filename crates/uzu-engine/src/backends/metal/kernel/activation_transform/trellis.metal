@@ -8,51 +8,40 @@
 using namespace metal;
 namespace trellis = uzu::trellis;
 
-#define TRANSFORM_THREADS 512
+#define THREADS_PER_THREADGROUP 512
 
-UZU_CONST uint TRANSFORM_SIMDGROUPS = TRANSFORM_THREADS / METAL_SIMD_SIZE;
-UZU_CONST ushort LARGEST_LANE_STRIDE = METAL_SIMD_SIZE / 2;
-
-UZU_CONST uint REGISTER_BUTTERFLY_WIDTH = 2048 / 1024;
+UZU_CONST uint SIMDGROUPS_PER_THREADGROUP = THREADS_PER_THREADGROUP / METAL_SIMD_SIZE;
 
 UZU_CONST uint MAX_MIXING_DIMENSION = 17;
-UZU_CONST uint NARROW_PASS_COLUMNS = 2;
-UZU_CONST uint WIDE_PASS_COLUMNS = 4;
-UZU_CONST uint WIDE_PASS_MIXING_DIMENSION_THRESHOLD = 8;
 
 static METAL_FUNC float butterfly(float value, ushort lane, ushort lane_stride) {
   const float other = simd_shuffle_xor(value, lane_stride);
   return (lane & lane_stride) != 0 ? other - value : value + other;
 }
 
-// Transposed reads are METAL_SIMD_SIZE floats apart; one pad float per row spreads them across all banks.
 static METAL_FUNC uint bank_conflict_free_offset(uint hadamard_index) {
   return hadamard_index + hadamard_index / METAL_SIMD_SIZE;
 }
 
 static METAL_FUNC uint hadamard_index_before_transpose(ushort lane, ushort simdgroup, uint value_index) {
-  return METAL_SIMD_SIZE * (simdgroup + TRANSFORM_SIMDGROUPS * value_index) + lane;
+  return METAL_SIMD_SIZE * (simdgroup + SIMDGROUPS_PER_THREADGROUP * value_index) + lane;
 }
 
 template <uint HADAMARD_SIZE>
 static METAL_FUNC uint hadamard_index_after_transpose(ushort lane, ushort simdgroup, uint value_index) {
   if (HADAMARD_SIZE == 1024) {
-    return METAL_SIMD_SIZE * lane + simdgroup + TRANSFORM_SIMDGROUPS * value_index;
+    return METAL_SIMD_SIZE * lane + simdgroup + SIMDGROUPS_PER_THREADGROUP * value_index;
   }
-  return METAL_SIMD_SIZE * (lane + METAL_SIMD_SIZE * (value_index % REGISTER_BUTTERFLY_WIDTH)) + simdgroup +
-         TRANSFORM_SIMDGROUPS * (value_index / REGISTER_BUTTERFLY_WIDTH);
+  return METAL_SIMD_SIZE * (lane + METAL_SIMD_SIZE * (value_index % 2)) + simdgroup +
+         SIMDGROUPS_PER_THREADGROUP * (value_index / 2);
 }
 
 template <uint DIMENSION>
-struct TransformPassLayout {
+struct TransformLayout {
   static constant constexpr uint HADAMARD_SIZE = DIMENSION & (0u - DIMENSION);
   static constant constexpr uint MIXING_DIMENSION = DIMENSION / HADAMARD_SIZE;
-  static constant constexpr uint VALUES_PER_THREAD = HADAMARD_SIZE / TRANSFORM_THREADS;
-  // Four columns beat two at width 17408; width 5120 stays at two to keep its threadgroup memory.
-  static constant constexpr uint COLUMNS_PER_PASS =
-      HADAMARD_SIZE == 1024
-          ? (MIXING_DIMENSION > WIDE_PASS_MIXING_DIMENSION_THRESHOLD ? WIDE_PASS_COLUMNS : NARROW_PASS_COLUMNS)
-          : 1;
+  static constant constexpr uint VALUES_PER_THREAD = HADAMARD_SIZE / THREADS_PER_THREADGROUP;
+  static constant constexpr uint COLUMNS_PER_PASS = HADAMARD_SIZE == 2048 ? 1 : (MIXING_DIMENSION > 8 ? 4 : 2);
   static constant constexpr uint COLUMN_SCRATCH_SIZE = HADAMARD_SIZE + HADAMARD_SIZE / METAL_SIMD_SIZE;
   static constant constexpr uint SCRATCH_SIZE = COLUMNS_PER_PASS * COLUMN_SCRATCH_SIZE;
   typedef float SignFlippedInput[VALUES_PER_THREAD][MIXING_DIMENSION];
@@ -65,7 +54,7 @@ static METAL_FUNC void hadamard_transform_lanes(
     const ushort lane
 ) {
   METAL_PRAGMA_UNROLL
-  for (ushort lane_stride = 1; lane_stride <= LARGEST_LANE_STRIDE; lane_stride <<= 1) {
+  for (ushort lane_stride = 1; lane_stride <= METAL_SIMD_SIZE / 2; lane_stride <<= 1) {
     METAL_PRAGMA_UNROLL
     for (uint column = 0; column < COLUMNS; ++column) {
       METAL_PRAGMA_UNROLL
@@ -130,7 +119,7 @@ static METAL_FUNC void rotate_columns(
     METAL_PRAGMA_UNROLL
     for (uint column = 0; column < COLUMNS; ++column) {
       METAL_PRAGMA_UNROLL
-      for (uint value_index = 0; value_index < Layout::VALUES_PER_THREAD; value_index += REGISTER_BUTTERFLY_WIDTH) {
+      for (uint value_index = 0; value_index < Layout::VALUES_PER_THREAD; value_index += 2) {
         const float lower = column_values[column][value_index];
         const float upper = column_values[column][value_index + 1];
         column_values[column][value_index] = lower + upper;
@@ -160,14 +149,14 @@ PUBLIC KERNEL(TrellisTransform)(
     device float4* column_group_sums,
     device float* scales,
     constant uint& batch,
-    threadgroup float scratch[TransformPassLayout<DIMENSION>::SCRATCH_SIZE],
-    threadgroup float simdgroup_maxima[TRANSFORM_SIMDGROUPS],
+    threadgroup float scratch[TransformLayout<DIMENSION>::SCRATCH_SIZE],
+    threadgroup float simdgroup_maxima[SIMDGROUPS_PER_THREADGROUP],
     threadgroup float shared_mixing[MAX_MIXING_DIMENSION * MAX_MIXING_DIMENSION],
     const uint token GROUPS(batch),
-    const uint thread_index THREADS(TRANSFORM_THREADS),
+    const uint thread_index THREADS(THREADS_PER_THREADGROUP),
     const ThreadContext thread_context
 ) {
-  using Layout = TransformPassLayout<DIMENSION>;
+  using Layout = TransformLayout<DIMENSION>;
   static_assert(Layout::HADAMARD_SIZE == 1024 || Layout::HADAMARD_SIZE == 2048, "unsupported Hadamard size");
   static_assert(Layout::MIXING_DIMENSION <= MAX_MIXING_DIMENSION, "mixing matrix does not fit threadgroup memory");
 
@@ -175,7 +164,7 @@ PUBLIC KERNEL(TrellisTransform)(
   const ushort simdgroup = ushort(thread_context.simdgroup_index);
 
   for (uint index = thread_index; index < Layout::MIXING_DIMENSION * Layout::MIXING_DIMENSION;
-       index += TRANSFORM_THREADS) {
+       index += THREADS_PER_THREADGROUP) {
     shared_mixing[index] = mixing[index];
   }
 
@@ -221,8 +210,11 @@ PUBLIC KERNEL(TrellisTransform)(
     );
   }
 
-  const float maximum =
-      reduce_activation_quantization_row_maximum<TRANSFORM_SIMDGROUPS>(local_maximum, simdgroup_maxima, thread_context);
+  const float maximum = reduce_activation_quantization_row_maximum<SIMDGROUPS_PER_THREADGROUP>(
+      local_maximum,
+      simdgroup_maxima,
+      thread_context
+  );
   const float scale = int8_activation_scale(maximum);
 
   int local_column_group_sums[trellis::COLUMN_GROUP_COUNT] = {};
@@ -251,13 +243,13 @@ PUBLIC KERNEL(TrellisTransform)(
   threadgroup_barrier(mem_flags::mem_threadgroup);
   if (thread_index == 0) {
     float4 token_column_group_sums = float4(0.0f);
-    for (uint source_simdgroup = 0; source_simdgroup < TRANSFORM_SIMDGROUPS; ++source_simdgroup) {
-      const uint first_group_sum = trellis::COLUMN_GROUP_COUNT * source_simdgroup;
+    for (uint source_simdgroup = 0; source_simdgroup < SIMDGROUPS_PER_THREADGROUP; ++source_simdgroup) {
+      const uint first_group_sum_index = trellis::COLUMN_GROUP_COUNT * source_simdgroup;
       token_column_group_sums += float4(
-          scratch[first_group_sum],
-          scratch[first_group_sum + 1],
-          scratch[first_group_sum + 2],
-          scratch[first_group_sum + 3]
+          scratch[first_group_sum_index],
+          scratch[first_group_sum_index + 1],
+          scratch[first_group_sum_index + 2],
+          scratch[first_group_sum_index + 3]
       );
     }
     column_group_sums[token] = token_column_group_sums;
