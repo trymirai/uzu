@@ -20,6 +20,20 @@ pub async fn dir_create_all(path: &str) -> Result<(), io::Error> {
     Ok(())
 }
 
+pub async fn dir_entries(path: &str) -> Result<Vec<String>, io::Error> {
+    let root = get_root_dir().await?;
+    let (parent, name) = resolve_parent(&root, path).await?;
+    let directory = get_dir_handle(&parent, &name, false).await?;
+    let entries = directory.entries().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
+    Ok(entries.into_iter().map(|(name, _)| name).collect())
+}
+
+pub async fn dir_remove_all(path: &str) -> Result<(), io::Error> {
+    let root = get_root_dir().await?;
+    let (parent, name) = resolve_parent(&root, path).await?;
+    parent.remove_entry_with_options(&name, true).await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))
+}
+
 pub async fn exists(path: &str) -> Result<bool, io::Error> {
     let root = get_root_dir().await?;
     let (parent, name) = match resolve_parent(&root, path).await {

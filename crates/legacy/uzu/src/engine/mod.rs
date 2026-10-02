@@ -579,8 +579,8 @@ impl Engine {
     }
 
     async fn handle_registry_refresh(&self) -> Result<(), EngineError> {
-        let models = self.registry.lock().await.models().await?;
-        self.storage.refresh(&models).await?;
+        let (models, complete) = self.registry.lock().await.listing().await?;
+        self.storage.refresh(&models, complete).await?;
         if let Some(callback) = self.callback.lock().await.as_ref().cloned() {
             callback.on_event();
         };

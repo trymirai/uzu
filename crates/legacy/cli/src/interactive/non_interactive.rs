@@ -44,9 +44,12 @@ pub async fn run_non_interactive(
                 announced = true;
             }
         }
-        if !engine.download_state(&model).await.is_some_and(|state| matches!(state.phase, DownloadPhase::Downloaded {}))
-        {
-            bail!("Model download did not complete: {}", model.identifier);
+        match engine.download_state(&model).await.map(|state| state.phase) {
+            Some(DownloadPhase::Downloaded {}) => {},
+            Some(DownloadPhase::Error {
+                message,
+            }) => bail!("Model download failed: {}: {message}", model.identifier),
+            _ => bail!("Model download did not complete: {}", model.identifier),
         }
     }
 
