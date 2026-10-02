@@ -42,6 +42,25 @@ Also DFlash is supported
 uv run --project engine-mlx bench-mlx -m "mlx-community/Qwen3.5-0.8B-4bit"
 ```
 
+### [mlx-serve](https://github.com/ddalcu/mlx-serve)
+
+```bash
+./engine-mlxserve/run.sh -m "mlx-community/Qwen3.5-0.8B-4bit"
+```
+
+Supported native MTP heads are detected and loaded automatically from the target checkpoint, including sidecars. A detected head that fails to load or bind produces an error. Models without a supported head use ordinary autoregressive decoding.
+
+Pass a compatible DFlash or Gemma assistant checkpoint with `--draft-model` (or `-d`) to use external speculative decoding. Both paths accept local directories or Hugging Face repositories; an explicit draft model takes precedence over MTP.
+
+```bash
+./engine-mlxserve/run.sh -m "mlx-community/Qwen3.6-27B-4bit" \
+    --draft-model "z-lab/Qwen3.6-27B-DFlash"
+```
+
+Omit `speculative_depth` in the JSON request for the decoder's default depth, set it to `0` for ordinary decoding, or supply a positive depth within the decoder's supported range. DFlash uses upstream's hardware-dependent default block size. Depth counts proposed tokens; a DFlash verification block contains one additional target token. Upstream's adaptive acceptance gates can reduce speculation during a request. Inference runs directly through Zig sources, without HTTP.
+
+`tokens_per_forward_pass` counts emitted tokens per target forward, including prefill, verification, and any replay. Draft-head forwards are excluded. Each run starts with fresh generation caches and adaptive timing/acceptance history.
+
 ### [MTPLX](https://github.com/youssofal/mtplx)
 ```bash
 uv run --project engine-mtplx bench-mtplx -m "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed"
@@ -101,4 +120,4 @@ Specific engine test
 uv run pytest --engine uzu
 ```
 
-The default suite also checks engine pins against the latest stable releases on PyPI and GitHub, including Python lockfiles. 
+The default suite also checks engine pins against the latest stable releases on PyPI and GitHub, including Python lockfiles.
