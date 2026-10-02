@@ -5,7 +5,7 @@ use crate::{
 };
 
 const GEMM_GROUPED_HEAD_DIMS: [u32; 2] = [128, 256];
-const GEMM_GROUPED_DECODE_SUFFIX_MIN: u32 = 16;
+const GEMM_GROUPED_DECODE_SUFFIX_MIN: u32 = 2;
 const GEMM_GROUPED_DECODE_SUFFIX_MAX: u32 = 64;
 const GEMM_GROUPED_PREFILL_SUFFIX_MAX: u32 = 1024;
 const GEMM_GROUPED_MIN_KV_LENGTH: u32 = 1024;
@@ -42,7 +42,8 @@ pub fn should_encode(
 
 type MeasuredSplits = (u32, u32, &'static [(u32, u32)]);
 
-const MEASURED_SUFFIX_MIN: u32 = 16;
+// Reuse S=16 tuning values to choose KV splits for suffixes 2..15.
+const MEASURED_SUFFIX_MIN: u32 = 2;
 const MEASURED_SUFFIX_MAX: u32 = 64;
 
 // TODO: validate this table per chip (M1-M5) before changing the policy.

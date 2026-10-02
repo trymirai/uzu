@@ -29,6 +29,9 @@ fn splits(
 #[uzu_test]
 fn measured_and_fallback_boundaries() {
     for (cores, head_dim, suffix, kv, expected) in [
+        (40, 256, 2, 16_384, 18),
+        (40, 256, 8, 16_384, 9),
+        (40, 256, 12, 61_440, 6),
         (40, 256, 16, 5_120, 6),
         (40, 256, 32, 32_768, 10),
         (40, 128, 64, 32_768, 10),
@@ -45,10 +48,14 @@ fn measured_and_fallback_boundaries() {
 #[uzu_test]
 fn should_encode_boundaries() {
     for (head_dim, mask, suffix_length, kv_length, expected) in [
+        (256, MaskKind::Causal, 1, 150_001, false),
+        (256, MaskKind::Causal, 2, 1_023, false),
+        (256, MaskKind::Causal, 2, 1_024, true),
+        (128, MaskKind::Trie, 15, 1_024, true),
         (128, MaskKind::Causal, 16, 1_024, true),
         (128, MaskKind::Causal, 32, 1_023, false),
         (256, MaskKind::Causal, 16, 1_023, false),
-        (256, MaskKind::Causal, 8, 150_001, false),
+        (256, MaskKind::Causal, 8, 150_001, true),
         (256, MaskKind::Causal, 1_024, 1_024, true),
         (256, MaskKind::None, 1_024, 1_024, false),
         (256, MaskKind::Trie, 65, 1_024, false),
