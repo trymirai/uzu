@@ -574,6 +574,17 @@ impl CpuCompiler {
         encode_args_defs
             .push(quote! { command_buffer: &mut <<crate::backends::cpu::Cpu as crate::backends::common::Backend>::CommandBuffer as crate::backends::common::CommandBuffer>::Encoding });
 
+        let specialization_validation = function_arguments.iter().filter_map(|argument| {
+            if !matches!(argument.ty, FunctionArgumentType::Specialization(_)) {
+                return None;
+            }
+            let condition = argument.conditional.as_ref()?;
+            let name = &argument.name;
+            Some(quote! {
+                assert_eq!(#name.is_some(), #condition, concat!("invalid presence for specialization ", stringify!(#name)));
+            })
+        });
+
         let tokens = quote! {
             #[allow(non_snake_case)]
             pub struct #struct_ident {
@@ -585,6 +596,7 @@ impl CpuCompiler {
                 type Backend = crate::backends::cpu::Cpu;
 
                 fn new(#[allow(unused)] context: &crate::backends::cpu::context::CpuContext #(, #parameter_args)*) -> Result<Self, crate::backends::cpu::error::CpuError> {
+                    #(#specialization_validation)*
                     Ok(Self {
                         #(#struct_fields_sets ,)*
                     })
