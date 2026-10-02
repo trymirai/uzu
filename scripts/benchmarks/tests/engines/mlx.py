@@ -2,6 +2,8 @@
 
 import pytest
 
+from .engine_tests import EngineTests
+
 MODEL = "mlx-community/Qwen3.5-0.8B-4bit"
 
 
@@ -10,5 +12,9 @@ def add_options(parser: pytest.Parser) -> None:
     group.addoption("--mlx-model", default=MODEL, help="Target model local path or HuggingFace id.")
 
 
-def command(config: pytest.Config) -> list[str]:
-    return ["uv", "run", "mlx", "--model", config.getoption("mlx_model")]
+class TestMLX(EngineTests):
+    engine_name = "mlx"
+
+    @staticmethod
+    def command(config: pytest.Config) -> list[str]:
+        return ["uv", "run", "mlx", "--model", config.getoption("mlx_model")]

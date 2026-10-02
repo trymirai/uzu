@@ -4,7 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from tests.engines import llamacpp, mlx, mtplx, omlx, splash
+from tests.engines import llamacpp, mlx, mtplx, omlx, splash, uzu
+
+ENGINE_TEST_CLASSES = {
+    "llamacpp": "TestLlamaCpp",
+    "mlx": "TestMLX",
+    "mtplx": "TestMTPLX",
+    "omlx": "TestOMLX",
+    "splash": "TestSplash",
+    "uzu": "TestUzu",
+}
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -12,7 +21,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption(
         "--engine",
         action="append",
-        choices=["llamacpp", "mlx", "mtplx", "omlx", "splash"],
+        choices=list(ENGINE_TEST_CLASSES),
         default=[],
         help="Engine to test (repeatable).",
     )
@@ -22,21 +31,21 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     mtplx.add_options(parser)
     omlx.add_options(parser)
     splash.add_options(parser)
+    uzu.add_options(parser)
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Allow engine names as shortcuts to select and enable engine tests."""
+    """Allow engine names or 'engines' to select and enable engine tests."""
     engines = config.getoption("engine")
-    for name, test_class in {
-        "llamacpp": "TestLlamaCpp",
-        "mlx": "TestMLX",
-        "mtplx": "TestMTPLX",
-        "omlx": "TestOMLX",
-        "splash": "TestSplash",
-    }.items():
+    test_file = Path(__file__).with_name("test_engines.py")
+    if "engines" in config.args:
+        config.args[:] = [str(test_file) if arg == "engines" else arg for arg in config.args]
+        engines.extend(name for name in ENGINE_TEST_CLASSES if name not in engines)
+
+    for name, test_class in ENGINE_TEST_CLASSES.items():
         if name not in config.args:
             continue
-        target = f"{Path(__file__).with_name('test_engines.py')}::{test_class}"
+        target = f"{test_file}::{test_class}"
         config.args[:] = [target if arg == name else arg for arg in config.args]
         if name not in engines:
             engines.append(name)

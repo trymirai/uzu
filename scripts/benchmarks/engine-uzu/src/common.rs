@@ -51,12 +51,12 @@ pub async fn run_loop(engine: &mut UzuEngine) -> anyhow::Result<()> {
 }
 
 // Redirect the file descriptor so engine output cannot corrupt the JSON protocol.
-struct StdoutRedirect {
+pub(crate) struct StdoutRedirect {
     original: Option<OwnedFd>,
 }
 
 impl StdoutRedirect {
-    fn to_stderr() -> io::Result<Self> {
+    pub(crate) fn to_stderr() -> io::Result<Self> {
         io::stdout().flush()?;
         let original = io::stdout().as_fd().try_clone_to_owned()?;
         Self::redirect_to(io::stderr().as_raw_fd())?;
@@ -78,7 +78,7 @@ impl StdoutRedirect {
         }
     }
 
-    fn restore(&mut self) -> io::Result<()> {
+    pub(crate) fn restore(&mut self) -> io::Result<()> {
         if let Some(original) = &self.original {
             // Restore stdout even if flushing engine output fails.
             let flushed = io::stdout().flush();

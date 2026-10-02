@@ -2,6 +2,8 @@
 
 import pytest
 
+from .engine_tests import EngineTests
+
 MODEL = "mlx-community/SmolLM-135M-Instruct-4bit"
 
 
@@ -11,8 +13,12 @@ def add_options(parser: pytest.Parser) -> None:
     group.addoption("--omlx-draft-model", help="DFlash draft model local path or HuggingFace id.")
 
 
-def command(config: pytest.Config) -> list[str]:
-    args = ["uv", "run", "omlx", "--model", config.getoption("omlx_model")]
-    if draft := config.getoption("omlx_draft_model"):
-        args.extend(["--draft-model", draft])
-    return args
+class TestOMLX(EngineTests):
+    engine_name = "omlx"
+
+    @staticmethod
+    def command(config: pytest.Config) -> list[str]:
+        args = ["uv", "run", "omlx", "--model", config.getoption("omlx_model")]
+        if draft := config.getoption("omlx_draft_model"):
+            args.extend(["--draft-model", draft])
+        return args
