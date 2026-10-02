@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # llama.cpp
+set(LLAMA_VERSION v0.5.0)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries")
 set(LLAMA_BUILD_COMMON ON CACHE BOOL "Build common utilities")
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "Build upstream tests")
@@ -18,7 +19,7 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "Build upstream application")
 FetchContent_Declare(
     llama_cpp
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
-    GIT_TAG v0.5.0
+    GIT_TAG ${LLAMA_VERSION}
 )
 FetchContent_MakeAvailable(llama_cpp)
 
