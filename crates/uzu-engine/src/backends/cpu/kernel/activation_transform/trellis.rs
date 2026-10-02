@@ -1,50 +1,34 @@
 use half::bf16;
 use uzu_engine_macros::kernel;
 
-use super::{min_max_symmetric_divisor, quantize_symmetric_i8};
-use crate::backends::common::{gpu_types::trellis, kernel::mixing_order};
-
-const COLUMN_CLASS_COUNT: usize = trellis::COLUMN_CLASS_COUNT as usize;
-const TOKEN_STATISTICS_LEN: usize = trellis::TOKEN_STATISTICS_LEN as usize;
-const SHORT_HADAMARD_SIZE: usize = trellis::SHORT_HADAMARD_SIZE as usize;
-const LONG_HADAMARD_SIZE: usize = trellis::LONG_HADAMARD_SIZE as usize;
+use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8};
+use crate::backends::common::{
+    gpu_types::trellis::{COLUMN_GROUP_COUNT, COLUMN_GROUP_SUMS_AND_SCALE_LEN},
+    kernel::mixing_dimension,
+};
 
 fn rotate_token(
     input: &[bf16],
-    signs: &[f32],
+    rht_factors: &[f32],
     mixing: &[f32],
-    mixing_order: usize,
+    mixing_dimension: usize,
 ) -> Vec<f32> {
     let columns = input.len();
-    let hadamard_size = columns / mixing_order;
-    let normalization = if hadamard_size == LONG_HADAMARD_SIZE {
-        std::f32::consts::FRAC_1_SQRT_2 / (SHORT_HADAMARD_SIZE as f32).sqrt()
-    } else {
-        1.0 / (SHORT_HADAMARD_SIZE as f32).sqrt()
-    };
+    let hadamard_size = columns / mixing_dimension;
     let mut rotated = vec![0.0f32; columns];
-    for output_mixing_index in 0..mixing_order {
+    for output_mixing_index in 0..mixing_dimension {
         let mut hadamard_values: Vec<f32> = (0..hadamard_size)
             .map(|hadamard_index| {
-                (0..mixing_order).fold(0.0f32, |accumulated, mixing_index| {
-                    let column = hadamard_index * mixing_order + mixing_index;
-                    (input[column].to_f32() * signs[column])
-                        .mul_add(mixing[output_mixing_index * mixing_order + mixing_index], accumulated)
+                (0..mixing_dimension).fold(0.0f32, |accumulated, mixing_index| {
+                    let column = hadamard_index * mixing_dimension + mixing_index;
+                    (input[column].to_f32() * rht_factors[column])
+                        .mul_add(mixing[output_mixing_index * mixing_dimension + mixing_index], accumulated)
                 })
             })
             .collect();
-        let mut stride = 1;
-        while stride < hadamard_size {
-            for lower_index in (0..hadamard_size).filter(|index| index & stride == 0) {
-                let (lower, upper) = (hadamard_values[lower_index], hadamard_values[lower_index + stride]);
-                hadamard_values[lower_index] = lower + upper;
-                hadamard_values[lower_index + stride] = lower - upper;
-            }
-            stride <<= 1;
-        }
+        hadamard_transform(&mut hadamard_values);
         for (hadamard_index, value) in hadamard_values.into_iter().enumerate() {
-            rotated[hadamard_index * mixing_order + output_mixing_index] =
-                bf16::from_f32(value * normalization).to_f32();
+            rotated[hadamard_index * mixing_dimension + output_mixing_index] = bf16::from_f32(value).to_f32();
         }
     }
     rotated
@@ -54,34 +38,37 @@ fn rotate_token(
 #[variants(DIMENSION, 5120, 6144, 17408)]
 pub fn trellis_transform<const DIMENSION: u32>(
     input: *const bf16,
-    signs: *const f32,
+    rht_factors: *const f32,
     mixing: *const f32,
     activations: *mut i8,
-    token_statistics: *mut f32,
+    column_group_sums_and_scale: *mut f32,
     batch: u32,
 ) {
     let columns = DIMENSION as usize;
-    let mixing_order = mixing_order(DIMENSION) as usize;
-    let signs = unsafe { std::slice::from_raw_parts(signs, columns) };
-    let mixing = unsafe { std::slice::from_raw_parts(mixing, mixing_order * mixing_order) };
+    let mixing_dimension = mixing_dimension(DIMENSION) as usize;
+    let rht_factors = unsafe { std::slice::from_raw_parts(rht_factors, columns) };
+    let mixing = unsafe { std::slice::from_raw_parts(mixing, mixing_dimension * mixing_dimension) };
 
     for token in 0..batch as usize {
         let row = unsafe { std::slice::from_raw_parts(input.add(token * columns), columns) };
         let quantized_row = unsafe { std::slice::from_raw_parts_mut(activations.add(token * columns), columns) };
         let statistics = unsafe {
-            std::slice::from_raw_parts_mut(token_statistics.add(TOKEN_STATISTICS_LEN * token), TOKEN_STATISTICS_LEN)
+            std::slice::from_raw_parts_mut(
+                column_group_sums_and_scale.add(COLUMN_GROUP_SUMS_AND_SCALE_LEN as usize * token),
+                COLUMN_GROUP_SUMS_AND_SCALE_LEN as usize,
+            )
         };
 
-        let rotated = rotate_token(row, signs, mixing, mixing_order);
+        let rotated = rotate_token(row, rht_factors, mixing, mixing_dimension);
         let scale = min_max_symmetric_divisor(&rotated);
-        let mut class_sums = [0i32; COLUMN_CLASS_COUNT];
+        let mut column_group_sums = [0i32; COLUMN_GROUP_COUNT as usize];
         for (column, (quantized, &value)) in quantized_row.iter_mut().zip(&rotated).enumerate() {
             *quantized = quantize_symmetric_i8(value, scale);
-            class_sums[column % COLUMN_CLASS_COUNT] += i32::from(*quantized);
+            column_group_sums[column % COLUMN_GROUP_COUNT as usize] += i32::from(*quantized);
         }
 
-        let (class_sums_out, scale_out) = statistics.split_at_mut(COLUMN_CLASS_COUNT);
-        class_sums_out.copy_from_slice(&class_sums.map(|sum| sum as f32));
+        let (column_group_sums_out, scale_out) = statistics.split_at_mut(COLUMN_GROUP_COUNT as usize);
+        column_group_sums_out.copy_from_slice(&column_group_sums.map(|sum| sum as f32));
         scale_out[0] = scale;
         scale_out[1..].fill(0.0);
     }

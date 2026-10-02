@@ -1,8 +1,6 @@
 pub mod activation_transform;
 pub(super) mod trellis;
 
-use crate::backends::common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE;
-
 pub const INT8_SYMMETRIC_QUANTIZATION_MAXIMUM: f32 = 127.0;
 
 pub use activation_transform::quantize_transformed_row;
@@ -25,10 +23,10 @@ pub fn quantize_symmetric_i8(
     (value / divisor).round().clamp(-INT8_SYMMETRIC_QUANTIZATION_MAXIMUM, INT8_SYMMETRIC_QUANTIZATION_MAXIMUM) as i8
 }
 
-pub(crate) fn hadamard_transform(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize]) {
+pub fn hadamard_transform(values: &mut [f32]) {
     let mut stride = 1;
-    while stride < HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
-        for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
+    while stride < values.len() {
+        for lane in 0..values.len() {
             if lane & stride == 0 {
                 let a = values[lane];
                 let b = values[lane | stride];
@@ -38,7 +36,7 @@ pub(crate) fn hadamard_transform(values: &mut [f32; HADAMARD_TRANSFORM_BLOCK_SIZ
         }
         stride <<= 1;
     }
-    let scale = 1.0 / (HADAMARD_TRANSFORM_BLOCK_SIZE as f32).sqrt();
+    let scale = 1.0 / (values.len() as f32).sqrt();
     for v in values.iter_mut() {
         *v *= scale;
     }
