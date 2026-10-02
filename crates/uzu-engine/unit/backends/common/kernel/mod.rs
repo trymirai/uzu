@@ -6,7 +6,6 @@ mod gated_act_mul_test;
 mod gdn;
 mod logit_transform_test;
 mod matmul;
-mod moe;
 mod normalization_test;
 mod pooling;
 mod radix_top_k_small_test;
