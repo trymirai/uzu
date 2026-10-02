@@ -14,9 +14,12 @@ use crate::{
                 GemmParams,
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform},
             },
-            kernel::matmul::{
-                Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulError, MatmulShape,
-                QuantParamsLayout, QuantParamsStrides, QuantizedB,
+            kernel::{
+                activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
+                matmul::{
+                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulError, MatmulShape,
+                    QuantParamsLayout, QuantParamsStrides, QuantizedB,
+                },
             },
         },
         metal::{
@@ -69,11 +72,16 @@ impl GemmKernel {
                     specialization.tiling,
                     specialization.transpose_b,
                     specialization.use_mxu,
-                    specialization.b_prologue,
+                    if specialization.a_prologue == GemmAPrologueKind::Int8Symmetric {
+                        specialization.b_prologue
+                    } else {
+                        GemmBPrologueKind::FullPrecision
+                    },
                     specialization.bits_per_b.unwrap_or(0),
                     specialization.b_group_size.unwrap_or(0),
                     specialization.a_prologue,
                     specialization.a_group_size.unwrap_or(0),
+                    specialization.b_prologue,
                     specialization.output_transform,
                     specialization.alignment,
                     specialization.signed_codes,
@@ -465,7 +473,7 @@ fn validate_int8_left_operand(
                 | GemmBPrologueKind::ScaleBiasDequant
                 | GemmBPrologueKind::ScaleZeroPointDequant
         )
-        && matches!(a_group_size, 32 | 64 | 128)
+        && a_group_size == ACTIVATION_SCALE_GROUP_SIZE
         && shape.k.is_multiple_of(a_group_size)
         && shape
             .b_group_size
@@ -473,7 +481,7 @@ fn validate_int8_left_operand(
     if !compatible {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "symmetric int8 left operands require group-major metadata and supported 32/64/128 groups",
+            reason: "symmetric int8 left operands require 128-element activation groups and group-major 32/64/128 weight groups",
         }
         .into());
     }

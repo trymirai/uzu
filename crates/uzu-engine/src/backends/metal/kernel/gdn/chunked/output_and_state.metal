@@ -32,12 +32,12 @@ using namespace uzu::matmul;
 // 3. out = exp(g) * Q * S^T + qk_scaled * Vnew.
 // 4. S^T = exp(g_last) * S^T + (exp(g_last - g) * K)^T * Vnew.
 template <typename T, typename O, typename ScratchT, uint HEAD_K_DIM, uint VT, bool USE_MXU>
-VARIANTS(T, float, bfloat)
-VARIANTS(O, float, bfloat)
-VARIANTS(ScratchT, float, bfloat)
+VARIANTS(T, bfloat)
+VARIANTS(O, bfloat)
+VARIANTS(ScratchT, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 VARIANTS(VT, 32)
-VARIANTS(USE_MXU, false, true)
+VARIANTS(USE_MXU, true)
 KERNEL(DeltaNetChunkedOutputAndState)(
     device const float* q_norm,
     device const float* k_norm,

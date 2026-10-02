@@ -131,6 +131,11 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     invalid_layout.a_full_precision = false;
     assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Mxu);
     assert_eq!(problem(quant(shape(64, 4096, 4095)), DataType::BF16).select_plan().engine, Simdgroup);
+    let mut small_group = quant(shape(64, 4096, 4096));
+    small_group.b_group_size = Some(16);
+    let small_group_plan = problem(small_group, DataType::BF16).select_plan();
+    assert_eq!(small_group_plan.engine, Simdgroup);
+    assert_eq!(small_group_plan.tiling, Tile64x64x16_Simdgroups2x2);
 
     let mut large_group = quant(shape(512, 4096, 4096));
     large_group.a_full_precision = false;
@@ -185,15 +190,14 @@ fn gemv_gemm_route_boundaries_are_preserved() {
     for (shape, data_type, prefer_gemm) in [
         (shape(4, 4096, 8192), DataType::BF16, true),
         (shape(4, 8192, 4096), DataType::BF16, false),
-        (shape(4, 4096, 4096), DataType::F32, false),
         (shape(3, 4096, 8192), DataType::BF16, false),
         (shape(5, 4096, 8192), DataType::BF16, false),
     ] {
         let plan = GemmProblem::new(shape, data_type, data_type, true, MTLGPUFamily::Apple7).select_plan();
-        assert_eq!(MatmulMetalKernel::prefer_gemm_over_gemv(shape, plan, data_type, data_type, data_type), prefer_gemm);
+        assert_eq!(MatmulMetalKernel::prefer_gemm_over_gemv(shape, plan, data_type, data_type), prefer_gemm);
     }
     let mut gathered = shape(4, 4096, 8192);
     gathered.gathered = true;
     let plan = problem(gathered, DataType::BF16).select_plan();
-    assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16, DataType::BF16,));
+    assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16));
 }

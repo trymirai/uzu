@@ -2,7 +2,7 @@
 #include "../common/dsl.h"
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(TensorAddScale)(
     const device T* input OPTIONAL(!in_place),
     const device T* bias,

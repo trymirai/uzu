@@ -4,7 +4,7 @@
 // Mean pooling: Average across sequence [batch, seq_len, hidden_dim] → [batch,
 // hidden_dim]
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(PoolingMean) (
     const device T* input,
     device T* output,

@@ -191,6 +191,5 @@ fn test_build_tree_out_paths() {
     };
     for shape in [small, gdn] {
         check_shape::<bf16>(shape, 5e-3);
-        check_shape::<f32>(shape, 5e-4);
     }
 }

@@ -5,7 +5,7 @@
 using namespace uzu::activation_type;
 
 template <typename T>
-VARIANTS(T, half, float, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(Activation) (
     const device T* input OPTIONAL(!in_place),
     device T* output,

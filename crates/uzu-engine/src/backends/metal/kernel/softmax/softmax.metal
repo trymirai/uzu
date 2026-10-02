@@ -13,7 +13,7 @@
 #define SOFTMAX_ELEMENTS_PER_THREAD 4
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(Softmax)(
     device T* values,
     const device T* sinks OPTIONAL(has_sinks),

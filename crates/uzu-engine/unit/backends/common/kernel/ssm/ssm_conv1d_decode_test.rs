@@ -1,6 +1,5 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -304,36 +303,4 @@ fn test_identity_activation_f32() {
 #[uzu_test]
 fn test_gelu_activation_f32() {
     test_gelu_activation::<f32>();
-}
-
-// f16
-#[uzu_test]
-fn test_basic_f16() {
-    test_basic::<f16>();
-}
-
-#[uzu_test]
-fn test_small_kernel_f16() {
-    test_small_kernel::<f16>();
-}
-
-#[uzu_test]
-fn test_large_f16() {
-    test_large::<f16>();
-}
-
-// bf16
-#[uzu_test]
-fn test_basic_bf16() {
-    test_basic::<bf16>();
-}
-
-#[uzu_test]
-fn test_small_kernel_bf16() {
-    test_small_kernel::<bf16>();
-}
-
-#[uzu_test]
-fn test_large_bf16() {
-    test_large::<bf16>();
 }

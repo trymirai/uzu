@@ -20,7 +20,7 @@ use crate::{
 };
 
 const BT: u32 = 16;
-const BVS: &[u32] = &[16, 32];
+const BVS: &[u32] = &[32];
 
 #[derive(Clone, Copy)]
 struct SolveCase {
@@ -187,18 +187,6 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
 
 #[uzu_test]
 fn test_tree_update_solve_cases() {
-    for &bv in BVS {
-        for &use_h0 in &[true, false] {
-            for &case in CASES {
-                let expected = run_case::<Cpu, f32>(case, bv, use_h0, DataType::F32, |x| x);
-                for_each_non_cpu_backend!(|B| {
-                    let output = run_case::<B, f32>(case, bv, use_h0, DataType::F32, |x| x);
-                    assert_eq_float(&expected, &output, 1e-4, &format!("{} BV{bv} h0={use_h0}", case.name));
-                });
-            }
-        }
-    }
-
     for &bv in BVS {
         for &use_h0 in &[true, false] {
             for &case in CASES {

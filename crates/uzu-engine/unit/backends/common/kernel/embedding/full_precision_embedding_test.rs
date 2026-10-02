@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -84,16 +84,6 @@ fn test<T: ArrayElement + Float + Debug>() {
         let output = get_output::<T, B>(&input);
         assert_eq!(output, expected, "Results are not equals for backend {}", std::any::type_name::<B>());
     });
-}
-
-#[uzu_test]
-fn test_f32() {
-    test::<f32>()
-}
-
-#[uzu_test]
-fn test_f16() {
-    test::<f16>()
 }
 
 #[uzu_test]

@@ -18,7 +18,7 @@ use crate::{
         batch_topology::BatchTopology,
         sampling::{Sampling, SamplingMethod},
     },
-    tests::proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
+    tests::proptest::{ComparableTestResults, TestContextes, for_each_context},
 };
 
 struct SamplingTestResults(Vec<u32>);
@@ -124,7 +124,7 @@ struct SamplingCase {
 }
 
 fn sampling_case() -> impl Strategy<Value = SamplingCase> {
-    (kernel_data_type(), any::<u64>().no_shrink(), 1usize..=7, 1usize..=123456, any::<bool>()).prop_flat_map(
+    (Just(DataType::BF16), any::<u64>().no_shrink(), 1usize..=7, 1usize..=123456, any::<bool>()).prop_flat_map(
         |(data_type, seed, batch_size, vocab_size, bitmask)| {
             let temperature = prop_oneof![Just(None), (0.05f32..=4.0).prop_map(Some),];
 

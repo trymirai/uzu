@@ -33,6 +33,10 @@ struct GemvParams {
   uint batch_size;
   float ab_scale;
   float soft_cap;
+  uint group_size;
+  uint group_lanes;
+  bool input_aligned;
+  GemmBPrologueKind b_prologue;
   GemmDTransform output_transform;
   bool gathered;
   bool signed_codes;

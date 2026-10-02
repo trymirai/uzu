@@ -6,7 +6,7 @@
 namespace uzu {
 namespace gemm {
 
-template <typename Tile, typename AT, typename BT, typename DT, bool INPUT_ALIGNED, bool FULL_TILE>
+template <typename Tile, typename AT, typename BT, typename DT, bool FULL_TILE>
 struct FullPrecisionBSource {
   using U = float;
 
@@ -55,7 +55,7 @@ struct FullPrecisionBSource {
       input += k_stride;
     }
 
-    if constexpr (Tile::K_SPLIT == 1 && !INPUT_ALIGNED) {
+    if (Tile::K_SPLIT == 1 && !params.input_aligned) {
       const uint thread_offset = tile.reduction_lane * VALUES_PER_THREAD;
       const int remaining =
           k + thread_offset < params.in_vec_size

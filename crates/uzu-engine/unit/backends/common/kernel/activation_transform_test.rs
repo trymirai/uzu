@@ -109,12 +109,12 @@ fn input_and_output_rht_bf16() {
 }
 
 #[uzu_test]
-fn output_rht_fused_bias_matches_separate_mixed_dtype() {
+fn output_rht_fused_bias_matches_separate() {
     for_each_backend!(|B| {
         let context = <B as Backend>::Context::new().expect("context");
         let channels = 2 * BLOCK_SIZE as usize;
         let data: Vec<bf16> = (0..2 * channels).map(|i| bf16::from_f32((i as f32 * 0.17).sin() * 2.0)).collect();
-        let bias_data: Vec<f32> = (0..channels).map(|i| (i as f32 * 0.31).cos() * 0.03).collect();
+        let bias_data: Vec<bf16> = (0..channels).map(|i| bf16::from_f32((i as f32 * 0.31).cos() * 0.03)).collect();
         let factors_data: Vec<i32> = (0..channels)
             .map(|i| {
                 if i % 3 == 0 {
@@ -127,14 +127,14 @@ fn output_rht_fused_bias_matches_separate_mixed_dtype() {
         let expected: Vec<_> = run::<bf16, B>(&data, &factors_data, channels, TransformOrder::Output, true)
             .into_iter()
             .enumerate()
-            .map(|(i, value)| bf16::from_f32(value.to_f32() + bias_data[i % channels]))
+            .map(|(i, value)| bf16::from_f32(value.to_f32() + bias_data[i % channels].to_f32()))
             .collect();
         let mut fused = create_buffer_with_data::<B, bf16>(context.as_ref(), &data);
-        let bias = create_buffer_with_data::<B, f32>(context.as_ref(), &bias_data);
+        let bias = create_buffer_with_data::<B, bf16>(context.as_ref(), &bias_data);
         let factors = create_buffer_with_data::<B, i32>(context.as_ref(), &factors_data);
 
         let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-        ActivationTransform::<B>::output_rht(context.as_ref(), bf16::data_type(), Some(f32::data_type()), true)
+        ActivationTransform::<B>::output_rht(context.as_ref(), bf16::data_type(), Some(bf16::data_type()), true)
             .expect("fused transform")
             .encode_fp_in_place(&mut fused, &factors, Some(&bias), 2, channels as u32, &mut command_buffer);
         command_buffer.end_encoding().submit().wait_until_completed().unwrap();
@@ -294,9 +294,7 @@ mod quantize {
     }
 
     #[uzu_test]
-    fn quantize_scale_g32_and_g64_match_cpu() {
-        check_quantize(32, false, None, Int8CodeLayout::Sequential);
-        check_quantize(64, false, None, Int8CodeLayout::Sequential);
+    fn quantize_grouped_by_nibble_matches_cpu() {
         check_quantize(128, false, None, Int8CodeLayout::GroupedByNibble);
     }
 }

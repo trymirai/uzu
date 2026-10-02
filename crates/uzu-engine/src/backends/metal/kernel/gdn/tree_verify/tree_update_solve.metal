@@ -27,8 +27,8 @@ using namespace uzu::matmul;
 // A and Ainv are kept in f32: the (I + A)^-1 forward-substitution cascade is
 // precision-sensitive.
 template <typename T, uint BV>
-VARIANTS(T, float, bfloat)
-VARIANTS(BV, 16, 32)
+VARIANTS(T, bfloat)
+VARIANTS(BV, 32)
 PUBLIC KERNEL(TreeUpdateSolve)(
     const device float* kh0 OPTIONAL(use_h0),
     const device T* v,

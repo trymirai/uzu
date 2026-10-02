@@ -2,7 +2,7 @@
 #include "../common/dsl.h"
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(ShortConvPack)(
     device const T* state_in,
     device const T* in_proj,
@@ -33,7 +33,7 @@ PUBLIC KERNEL(ShortConvPack)(
 }
 
 template <typename T, typename WeightT>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 VARIANTS(WeightT, float)
 PUBLIC KERNEL(ShortConvPrefill)(
     device const T* padded,
@@ -95,7 +95,7 @@ PUBLIC KERNEL(ShortConvPrefill)(
 }
 
 template <typename T, typename WeightT>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 VARIANTS(WeightT, float)
 PUBLIC KERNEL(ShortConvDecode)(
     device const T* in_proj,
@@ -155,7 +155,7 @@ PUBLIC KERNEL(ShortConvDecode)(
 }
 
 template <typename T, typename WeightT>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 VARIANTS(WeightT, float)
 PUBLIC KERNEL(ShortConvTrie)(
     device const T* in_proj,

@@ -16,7 +16,7 @@ using namespace uzu::matmul;
 // MXU did not improve e2e vs simdgroup.
 template <uint HEAD_K_DIM, uint CHUNK_SIZE>
 VARIANTS(HEAD_K_DIM, 128)
-VARIANTS(CHUNK_SIZE, 32, 64)
+VARIANTS(CHUNK_SIZE, 64)
 KERNEL(DeltaNetChunkedGram)(
     device const float* q_norm,
     device const float* k_norm,

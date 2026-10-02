@@ -34,20 +34,21 @@ struct QuantChunk {
     decode_words(word0, word1, values, origin, signed_codes);
   }
 
-  template <bool ALIGNED, typename AT>
+  template <typename AT>
   static METAL_FUNC void load(
       const device AT* source,
       thread float (&values)[VALUES],
       uint offset,
       uint extent,
-      uint row
+      uint row,
+      bool aligned
   ) {
     static_assert(
         metal::is_same_v<AT, bfloat> || metal::is_same_v<AT, float>,
         "GEMV quantized input must be bfloat or float; half cannot use bfloat widening"
     );
     constexpr bool EXPANDS_BF16 = metal::is_same_v<AT, bfloat>;
-    if constexpr (ALIGNED) {
+    if (aligned) {
       load_values<false, EXPANDS_BF16>(source, values, VALUES);
     } else {
       const uint valid = offset < extent ? min(extent - offset, VALUES) : 0u;

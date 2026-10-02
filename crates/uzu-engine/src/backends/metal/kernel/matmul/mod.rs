@@ -45,7 +45,7 @@ enum MatmulDispatch {
 
 pub struct MatmulOutputWork {
     output_rht: ActivationTransform<Metal>,
-    output_rht_with_bias: ActivationTransform<Metal>,
+    output_rht_with_bias: Option<ActivationTransform<Metal>>,
 }
 
 impl MatmulOutputWork {
@@ -56,12 +56,9 @@ impl MatmulOutputWork {
     ) -> Result<Self, MetalError> {
         Ok(Self {
             output_rht: ActivationTransform::output_rht(context, output_data_type, None, true)?,
-            output_rht_with_bias: ActivationTransform::output_rht(
-                context,
-                output_data_type,
-                Some(weights_data_type),
-                true,
-            )?,
+            output_rht_with_bias: (weights_data_type == output_data_type)
+                .then(|| ActivationTransform::output_rht(context, output_data_type, Some(weights_data_type), true))
+                .transpose()?,
         })
     }
 
@@ -75,7 +72,7 @@ impl MatmulOutputWork {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) {
         let transform = if bias.is_some() {
-            &self.output_rht_with_bias
+            self.output_rht_with_bias.as_ref().expect("output RHT with bias requires matching weight and output types")
         } else {
             &self.output_rht
         };
@@ -91,17 +88,14 @@ impl MatmulMetalKernel {
     fn prefer_gemm_over_gemv(
         shape: MatmulShape,
         plan: GemmPlan,
-        weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> bool {
         if shape.gathered || plan.engine != gemm::GemmEngine::Mxu {
             return false;
         }
-        match (shape.m, shape.n == shape.k, (weights_data_type, input_data_type, output_data_type)) {
-            (4, true, (DataType::F32, DataType::F32, DataType::F32))
-            | (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
-            _ => {},
+        if shape.m == 5 && input_data_type == DataType::BF16 && output_data_type == DataType::BF16 {
+            return false;
         }
         match shape.m {
             0..=3 => return false,
@@ -151,9 +145,7 @@ impl MatmulMetalKernel {
         let plan = problem.select_plan();
         match gemv {
             None => MatmulDispatch::Gemm(plan),
-            Some(_)
-                if Self::prefer_gemm_over_gemv(*shape, plan, weights_data_type, input_data_type, output_data_type) =>
-            {
+            Some(_) if Self::prefer_gemm_over_gemv(*shape, plan, input_data_type, output_data_type) => {
                 MatmulDispatch::Gemm(plan)
             },
             Some(gemv) => MatmulDispatch::Gemv(gemv),
@@ -191,6 +183,16 @@ impl MatmulKernel for MatmulMetalKernel {
             if !matches!(data_type, DataType::BF16 | DataType::F32) {
                 return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
             }
+        }
+        if weights_data_type != DataType::BF16 {
+            return Err(MatmulError::<Metal>::UnsupportedDataType(weights_data_type).into());
+        }
+        if input_data_type == DataType::F32 && output_data_type == DataType::F32 {
+            return Err(MatmulError::<Metal>::IncompatibleA {
+                path: "Matmul",
+                reason: "float inputs require bfloat outputs",
+            }
+            .into());
         }
 
         let output_work = MatmulOutputWork::new(context, weights_data_type, output_data_type)?;
@@ -274,6 +276,12 @@ impl MatmulKernel for MatmulMetalKernel {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
+        if !shape.b_transpose && (self.input_data_type != DataType::BF16 || self.output_data_type != DataType::BF16) {
+            return Err(MatmulError::<Metal>::UnsupportedLayout {
+                path: "MixedPrecisionMatmul",
+            }
+            .into());
+        }
         let plan = match self.select_dispatch(&shape, command_buffer.context()) {
             MatmulDispatch::Gemv(gemv) => {
                 return self.gemv.encode(arguments, gemv, &self.output_work, command_buffer).map_err(MetalError::from);

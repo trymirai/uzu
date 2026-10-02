@@ -88,7 +88,7 @@ METAL_FUNC void tree_kh0(
 // kh0:      k @ h0[h0_idx[batch]]^T, [B, T, HV, head_v_dim] f32; skipped when
 //           h0_idx[batch] < 0
 template <typename T, bool USE_MXU>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 VARIANTS(USE_MXU, false, true)
 PUBLIC KERNEL(BuildTreeGram)(
     const device T* q,

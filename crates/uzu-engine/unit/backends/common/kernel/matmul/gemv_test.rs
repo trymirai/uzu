@@ -182,23 +182,6 @@ fn group_major_gemv_bf16(
     assert_eq_float(&reference, &actual, 0.05, &format!("GroupOutput GEMV W{bits} {method:?}"));
 }
 
-#[rstest]
-#[test_attr(uzu_test)]
-#[case::m1(1, 128, 64)]
-#[case::batched(4, 128, 64)]
-#[case::max_batch(8, 128, 64)]
-#[case::unaligned_k(1, 33, 64)]
-#[case::unaligned_n(1, 128, 11)]
-#[case::large(1, 4096, 2048)]
-#[case::small_n(1, 128, 3)]
-fn gemv_f32(
-    #[case] m: usize,
-    #[case] k: usize,
-    #[case] n: usize,
-) {
-    test::<f32>(m, k, n, 0.01);
-}
-
 fn assert_gather<T: ArrayElement + Float + Debug + Display>(
     dense: &[T],
     gather: &[T],
@@ -281,10 +264,8 @@ fn quant_gather_case(
 
 #[uzu_test]
 fn gemv_gather() {
-    // Full precision: one call per dtype (generic over T, so bf16/f32 can't be a runtime loop).
     for soft_cap in [None, Some(15.0)] {
         fp_gather_case::<bf16>(soft_cap, 0.1);
-        fp_gather_case::<f32>(soft_cap, 0.01);
     }
     // Quantized (bf16, per bits/method) — inline, since it isn't type-generic.
     for (bits, method, signed_codes) in [

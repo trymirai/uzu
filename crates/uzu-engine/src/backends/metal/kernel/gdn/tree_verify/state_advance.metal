@@ -11,7 +11,7 @@ using namespace metal;
 #define STATE_ADVANCE_DV_GROUPS 8
 
 template <typename T, uint HEAD_K_DIM>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(StateAdvance)(
     // [tree_size, num_k_heads, HEAD_K_DIM]

@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -197,15 +197,6 @@ fn test_in_place<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // basic tests
-#[uzu_test]
-fn test_basic_f32() {
-    test_basic::<f32>();
-}
-
-#[uzu_test]
-fn test_basic_f16() {
-    test_basic::<f16>();
-}
 
 #[uzu_test]
 fn test_basic_bf16() {
@@ -213,15 +204,6 @@ fn test_basic_bf16() {
 }
 
 // large tests
-#[uzu_test]
-fn test_large_f32() {
-    test_large::<f32>();
-}
-
-#[uzu_test]
-fn test_large_f16() {
-    test_large::<f16>();
-}
 
 #[uzu_test]
 fn test_large_bf16() {
@@ -229,29 +211,10 @@ fn test_large_bf16() {
 }
 
 // edge tests
-#[uzu_test]
-fn test_edge_f32() {
-    test_edge::<f32>();
-}
-
-#[uzu_test]
-fn test_edge_f16() {
-    test_edge::<f16>();
-}
 
 #[uzu_test]
 fn test_edge_bf16() {
     test_edge::<bf16>();
-}
-
-#[uzu_test]
-fn test_in_place_f32() {
-    test_in_place::<f32>();
-}
-
-#[uzu_test]
-fn test_in_place_f16() {
-    test_in_place::<f16>();
 }
 
 #[uzu_test]

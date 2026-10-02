@@ -2,7 +2,7 @@ use super::{GemmEngine, GemmPlan, error::GemmSpecializationError};
 use crate::{
     backends::common::{
         gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
-        kernel::matmul::MatmulShape,
+        kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
     },
     data_type::DataType,
 };
@@ -54,7 +54,7 @@ impl GemmSpecialization {
     pub(super) fn validate(&self) -> Result<(), GemmSpecializationError> {
         let valid_activation_group = match self.a_prologue {
             GemmAPrologueKind::FullPrecision => self.a_group_size.is_none(),
-            GemmAPrologueKind::Int8Symmetric => matches!(self.a_group_size, Some(32 | 64 | 128)),
+            GemmAPrologueKind::Int8Symmetric => self.a_group_size == Some(ACTIVATION_SCALE_GROUP_SIZE),
         };
         if !valid_activation_group {
             return Err(GemmSpecializationError::InvalidAGroupSize {

@@ -206,7 +206,6 @@ fn test_build_tree_gram_matches_cpu() {
 
     for tree_size in [17, 64, 128] {
         let i = make_inputs(tree_size);
-        check_type::<f32>(&i, tree_size, scale);
         check_type::<bf16>(&i, tree_size, scale);
     }
 }

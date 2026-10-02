@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -146,15 +146,6 @@ fn test_activation_large<T: ArrayElement + Float + Debug + Display>(
 }
 
 // SILU out-of-place tests
-#[uzu_test]
-fn test_silu_f32() {
-    test_activation::<f32>(ActivationType::SILU, false);
-}
-
-#[uzu_test]
-fn test_silu_f16() {
-    test_activation::<f16>(ActivationType::SILU, false);
-}
 
 #[uzu_test]
 fn test_silu_bf16() {
@@ -162,15 +153,6 @@ fn test_silu_bf16() {
 }
 
 // SILU in-place tests
-#[uzu_test]
-fn test_silu_in_place_f32() {
-    test_activation::<f32>(ActivationType::SILU, true);
-}
-
-#[uzu_test]
-fn test_silu_in_place_f16() {
-    test_activation::<f16>(ActivationType::SILU, true);
-}
 
 #[uzu_test]
 fn test_silu_in_place_bf16() {
@@ -178,15 +160,6 @@ fn test_silu_in_place_bf16() {
 }
 
 // GELU out-of-place tests
-#[uzu_test]
-fn test_gelu_f32() {
-    test_activation::<f32>(ActivationType::GELUApprox, false);
-}
-
-#[uzu_test]
-fn test_gelu_f16() {
-    test_activation::<f16>(ActivationType::GELUApprox, false);
-}
 
 #[uzu_test]
 fn test_gelu_bf16() {
@@ -194,15 +167,6 @@ fn test_gelu_bf16() {
 }
 
 // Exact GELU out-of-place tests
-#[uzu_test]
-fn test_gelu_exact_f32() {
-    test_activation::<f32>(ActivationType::GELUExact, false);
-}
-
-#[uzu_test]
-fn test_gelu_exact_f16() {
-    test_activation::<f16>(ActivationType::GELUExact, false);
-}
 
 #[uzu_test]
 fn test_gelu_exact_bf16() {
@@ -210,15 +174,6 @@ fn test_gelu_exact_bf16() {
 }
 
 // GELU in-place tests
-#[uzu_test]
-fn test_gelu_in_place_f32() {
-    test_activation::<f32>(ActivationType::GELUApprox, true);
-}
-
-#[uzu_test]
-fn test_gelu_in_place_f16() {
-    test_activation::<f16>(ActivationType::GELUApprox, true);
-}
 
 #[uzu_test]
 fn test_gelu_in_place_bf16() {
@@ -226,15 +181,6 @@ fn test_gelu_in_place_bf16() {
 }
 
 // Large SILU tests
-#[uzu_test]
-fn test_silu_large_f32() {
-    test_activation_large::<f32>(ActivationType::SILU, false);
-}
-
-#[uzu_test]
-fn test_silu_large_f16() {
-    test_activation_large::<f16>(ActivationType::SILU, false);
-}
 
 #[uzu_test]
 fn test_silu_large_bf16() {
@@ -242,15 +188,6 @@ fn test_silu_large_bf16() {
 }
 
 // Large GELU tests
-#[uzu_test]
-fn test_gelu_large_f32() {
-    test_activation_large::<f32>(ActivationType::GELUApprox, false);
-}
-
-#[uzu_test]
-fn test_gelu_large_f16() {
-    test_activation_large::<f16>(ActivationType::GELUApprox, false);
-}
 
 #[uzu_test]
 fn test_gelu_large_bf16() {
@@ -259,11 +196,11 @@ fn test_gelu_large_bf16() {
 
 // Large in-place tests
 #[uzu_test]
-fn test_silu_in_place_large_f32() {
-    test_activation_large::<f32>(ActivationType::SILU, true);
+fn test_silu_in_place_large_bf16() {
+    test_activation_large::<bf16>(ActivationType::SILU, true);
 }
 
 #[uzu_test]
-fn test_gelu_in_place_large_f32() {
-    test_activation_large::<f32>(ActivationType::GELUApprox, true);
+fn test_gelu_in_place_large_bf16() {
+    test_activation_large::<bf16>(ActivationType::GELUApprox, true);
 }

@@ -1,6 +1,5 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -231,8 +230,6 @@ fn test_shape(
         test_internal(&input, &expected, label);
     }
     run::<f32>(suffix_len, num_heads, head_dim, state_dim, group_size, label);
-    run::<f16>(suffix_len, num_heads, head_dim, state_dim, group_size, label);
-    run::<bf16>(suffix_len, num_heads, head_dim, state_dim, group_size, label);
 }
 
 // --- Prefill ---

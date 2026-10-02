@@ -11,9 +11,9 @@ using namespace metal;
 // - One SIMD-group (32 threads) processes one head.
 // - One threadgroup (one SIMD-group) is dispatched per head.
 template <typename InputT, typename ScaleT, typename OutputT, typename AccumT>
-VARIANTS(InputT, float, bfloat)
-VARIANTS(ScaleT, float, bfloat)
-VARIANTS(OutputT, float, bfloat)
+VARIANTS(InputT, bfloat)
+VARIANTS(ScaleT, float)
+VARIANTS(OutputT, bfloat)
 VARIANTS(AccumT, float)
 PUBLIC KERNEL(QKVNorm)(
     const device InputT* qkvg_input OPTIONAL(!in_place),

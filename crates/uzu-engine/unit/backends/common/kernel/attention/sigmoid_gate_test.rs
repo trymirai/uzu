@@ -118,28 +118,6 @@ fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {
 }
 
 #[uzu_test]
-fn test_sigmoid_gate_f32() {
-    run_test::<f32>(&Config {
-        num_heads: 8,
-        num_kv_heads: 2,
-        head_dim: 64,
-        suffix_length: 4,
-    });
-    run_test::<f32>(&Config {
-        num_heads: 16,
-        num_kv_heads: 4,
-        head_dim: 256,
-        suffix_length: 1,
-    });
-    run_test::<f32>(&Config {
-        num_heads: 2,
-        num_kv_heads: 1,
-        head_dim: 64,
-        suffix_length: 8,
-    });
-}
-
-#[uzu_test]
 fn test_sigmoid_gate_bf16() {
     run_test::<bf16>(&Config {
         num_heads: 8,
@@ -152,5 +130,11 @@ fn test_sigmoid_gate_bf16() {
         num_kv_heads: 4,
         head_dim: 256,
         suffix_length: 1,
+    });
+    run_test::<bf16>(&Config {
+        num_heads: 2,
+        num_kv_heads: 1,
+        head_dim: 64,
+        suffix_length: 8,
     });
 }

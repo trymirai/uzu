@@ -153,6 +153,9 @@ pub(super) fn outer_block_k(
 }
 
 fn mxu_is_eligible(shape: MatmulShape) -> bool {
+    if shape.b_group_size == Some(16) {
+        return false;
+    }
     if !shape.a_full_precision || shape.b_prologue == GemmBPrologueKind::FullPrecision {
         return true;
     }

@@ -49,7 +49,7 @@ struct SimdReduceMaxLogit {
 
 // NOTE: top_k + top_p combination is not exactly matching lalamo ("parallel" here, should be top-k then top-p)
 template <typename T>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(UnifiedSampling) (
   const device T* logits,
   device uint32_t* output,

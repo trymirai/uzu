@@ -6,9 +6,10 @@ use crate::array::ArrayElement;
 
 #[kernel(QKVNorm)]
 #[variants(InputT, f32, bf16)]
-#[variants(ScaleT, f32, bf16)]
+#[variants(ScaleT, f32)]
 #[variants(OutputT, f32, bf16)]
 #[variants(AccumT, f32)]
+#[constraint(InputT == OutputT)]
 pub fn qkv_norm<
     InputT: ArrayElement + Float,
     ScaleT: ArrayElement + Float,

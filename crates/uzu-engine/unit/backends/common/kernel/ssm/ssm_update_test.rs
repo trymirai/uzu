@@ -1,6 +1,5 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -285,46 +284,4 @@ fn test_minimal_f32() {
 #[uzu_test]
 fn test_group_per_head_f32() {
     test_group_per_head::<f32>();
-}
-
-// f16
-#[uzu_test]
-fn test_basic_f16() {
-    test_basic::<f16>();
-}
-
-#[uzu_test]
-fn test_multi_batch_f16() {
-    test_multi_batch::<f16>();
-}
-
-#[uzu_test]
-fn test_state_in_place_f16() {
-    test_state_in_place::<f16>();
-}
-
-#[uzu_test]
-fn test_large_f16() {
-    test_large::<f16>();
-}
-
-// bf16
-#[uzu_test]
-fn test_basic_bf16() {
-    test_basic::<bf16>();
-}
-
-#[uzu_test]
-fn test_multi_batch_bf16() {
-    test_multi_batch::<bf16>();
-}
-
-#[uzu_test]
-fn test_state_in_place_bf16() {
-    test_state_in_place::<bf16>();
-}
-
-#[uzu_test]
-fn test_large_bf16() {
-    test_large::<bf16>();
 }

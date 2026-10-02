@@ -13,34 +13,21 @@ template <
     typename AT,
     typename BT,
     typename DT,
-    GemmBPrologueKind B_PROLOGUE,
-    uint GROUP_SIZE,
     uint BITS,
-    bool INPUT_ALIGNED,
     bool FULL_TILE>
 struct QuantSlice {
   using U = float;
 
 public:
-  UZU_CONST uint VALUES_PER_LANE = GROUP_SIZE / Tile::GROUP_LANES;
+  // Single-row tiles stage one lane's group share; batched tiles stage at most
+  // 32 values at a time, including both slices of a 64-value group.
+  UZU_CONST uint SLICE_VALUES = Tile::INPUT_ROWS > 1 ? 32 : (BITS == 4 ? 16 : 8);
 
 private:
   UZU_CONST uint CHUNK_VALUES = QuantChunk<BITS>::VALUES;
-  UZU_CONST uint MAX_SLICE_VALUES = 32;
-  UZU_CONST uint SLICE_VALUES = VALUES_PER_LANE > MAX_SLICE_VALUES ? MAX_SLICE_VALUES : VALUES_PER_LANE;
-
-public:
-  UZU_CONST uint SLICES_PER_LANE = VALUES_PER_LANE / SLICE_VALUES;
-
-private:
   UZU_CONST uint SLICE_BYTES = SLICE_VALUES * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
   UZU_CONST uint SLICE_WORDS = (SLICE_BYTES + QuantChunk<BITS>::VECTOR_BYTES - 1) / QuantChunk<BITS>::VECTOR_BYTES;
   UZU_CONST uint CHUNKS_PER_SLICE = SLICE_VALUES / CHUNK_VALUES;
-
-  static_assert(GROUP_SIZE % Tile::GROUP_LANES == 0, "group lanes must divide the quantization group");
-  static_assert(VALUES_PER_LANE % CHUNK_VALUES == 0, "group lane slices must contain complete chunks");
-  static_assert(SLICE_VALUES <= MAX_SLICE_VALUES, "QMV slice exceeds its staged-value limit");
-  static_assert(VALUES_PER_LANE % SLICE_VALUES == 0, "a lane loads complete group slices");
 
   uint4 weights[Tile::ROWS_PER_LANE][SLICE_WORDS];
 
@@ -54,15 +41,16 @@ public:
       const device uint8_t* weights_base,
       const thread uint (&weight_row_indices)[Tile::ROWS_PER_LANE],
       uint row_stride,
-      uint group_offset
+      uint group_offset,
+      const thread GemvParams& params
   ) thread {
-    const uint k = position.group * GROUP_SIZE + group_offset + position.slice * SLICE_VALUES;
+    const uint k = position.group * params.group_size + group_offset + position.slice * SLICE_VALUES;
     const uint offset_bytes = k * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
       const uint row = weight_row_indices[R];
       const device uint8_t* source = weights_base + row * row_stride + offset_bytes;
-      if constexpr (INPUT_ALIGNED) {
+      if (params.input_aligned) {
         load_words<false>(weights[R], source);
       } else {
         const uint valid_bytes = offset_bytes < row_stride ? min(row_stride - offset_bytes, SLICE_BYTES) : 0u;
@@ -86,7 +74,7 @@ public:
       const thread OutputTile<Tile, FULL_TILE>& tile,
       uint group_offset,
       uint batch_remaining,
-      const thread QuantMetadata<Tile, AT, BT, DT, B_PROLOGUE, BITS>& metadata
+      const thread QuantMetadata<Tile, AT, BT, DT, BITS>& metadata
   ) const thread {
     float partial[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
     float input_sum[Tile::INPUT_ROWS] = {0};
@@ -101,12 +89,12 @@ public:
         constexpr uint I = decltype(input_index)::value;
         const uint source_row = FULL_TILE ? I : min(I, batch_remaining - 1);
         const uint k =
-            position.group * GROUP_SIZE + group_offset + position.slice * SLICE_VALUES + chunk * CHUNK_VALUES;
+            position.group * params.group_size + group_offset + position.slice * SLICE_VALUES + chunk * CHUNK_VALUES;
         const uint input_row = tile.input_row + source_row;
         const device AT* input = ops.a + input_row * params.in_vec_size + k;
         float input_values[CHUNK_VALUES];
-        QuantChunk<BITS>::template load<INPUT_ALIGNED>(input, input_values, k, params.in_vec_size, input_row);
-        if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
+        QuantChunk<BITS>::load(input, input_values, k, params.in_vec_size, input_row, params.input_aligned);
+        if (params.b_prologue == GemmBPrologueKind::ScaleBiasDequant) {
           METAL_PRAGMA_UNROLL
           for (uint i = 0; i < CHUNK_VALUES; i++) {
             input_sum[I] += input_values[i];

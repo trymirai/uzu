@@ -79,7 +79,6 @@ fn make_buffers<T: ArrayElement + Float>(
 fn bench_build_tree_out(c: &mut Criterion) {
     let context = <Metal as Backend>::Context::new().expect("metal context");
     bench_build_tree_out_type::<bf16>(c, &context, "BF16");
-    bench_build_tree_out_type::<f32>(c, &context, "F32");
 }
 
 fn bench_build_tree_out_type<T: ArrayElement + Float>(

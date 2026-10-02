@@ -157,7 +157,7 @@ fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
 
     let input: Vec<T> =
         (0..(batch_size * element_count)).map(|index| T::from(0.5f32 + (index as f32) * 0.01).unwrap()).collect();
-    let scales: Vec<T> = (0..element_count).map(|index| T::from(1.0f32 + (index as f32) * 0.001).unwrap()).collect();
+    let scales: Vec<f32> = (0..element_count).map(|index| 1.0 + (index as f32) * 0.001).collect();
     let hadamard_factors: Vec<i32> = (0..element_count)
         .map(|index| {
             if index % 3 == 0 {
@@ -168,7 +168,7 @@ fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
         })
         .collect();
 
-    let plain = get_output::<Cpu, T, T, T>(&input, Some(&scales), batch_size, element_count, epsilon, true, None);
+    let plain = get_output::<Cpu, T, f32, T>(&input, Some(&scales), batch_size, element_count, epsilon, true, None);
 
     let context = <Cpu as Backend>::Context::new().expect("Failed to create Context");
     let input_rht = ActivationTransform::<Cpu>::input_rht(context.as_ref(), T::data_type(), false)
@@ -195,7 +195,7 @@ fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
     };
 
     for_each_backend!(|B| {
-        let actual = get_output::<B, T, T, T>(
+        let actual = get_output::<B, T, f32, T>(
             &input,
             Some(&scales),
             batch_size,
@@ -210,21 +210,11 @@ fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
 }
 
 #[uzu_test]
-fn test_normalization_hadamard_f32() {
-    test_hadamard::<f32>();
-}
-
-#[uzu_test]
 fn test_normalization_hadamard_bf16() {
     test_hadamard::<bf16>();
 }
 
 #[uzu_test]
-fn test_normalization_f32_f32_f32() {
-    test_normalization::<f32, f32, f32>();
-}
-
-#[uzu_test]
-fn test_normalization_bf16_bf16_bf16() {
-    test_normalization::<bf16, bf16, bf16>();
+fn test_normalization_bf16_f32_bf16() {
+    test_normalization::<bf16, f32, bf16>();
 }

@@ -1,6 +1,5 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -200,46 +199,4 @@ fn test_large_f32() {
 #[uzu_test]
 fn test_minimal_f32() {
     test_minimal::<f32>();
-}
-
-// f16
-#[uzu_test]
-fn test_basic_f16() {
-    test_basic::<f16>();
-}
-
-#[uzu_test]
-fn test_single_token_f16() {
-    test_single_token::<f16>();
-}
-
-#[uzu_test]
-fn test_many_tokens_f16() {
-    test_many_tokens::<f16>();
-}
-
-#[uzu_test]
-fn test_large_f16() {
-    test_large::<f16>();
-}
-
-// bf16
-#[uzu_test]
-fn test_basic_bf16() {
-    test_basic::<bf16>();
-}
-
-#[uzu_test]
-fn test_single_token_bf16() {
-    test_single_token::<bf16>();
-}
-
-#[uzu_test]
-fn test_many_tokens_bf16() {
-    test_many_tokens::<bf16>();
-}
-
-#[uzu_test]
-fn test_large_bf16() {
-    test_large::<bf16>();
 }

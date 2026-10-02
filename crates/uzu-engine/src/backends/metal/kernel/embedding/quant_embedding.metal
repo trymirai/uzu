@@ -8,7 +8,7 @@ using namespace uzu::quantization_method;
 using namespace uzu::quantization;
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(QuantizedEmbeddingLookup) (
     const device uint32_t* token_ids,   // [batch_size]
     const device uint8_t* weights,      // [vocab_size, model_dim/packing_divisor] packed

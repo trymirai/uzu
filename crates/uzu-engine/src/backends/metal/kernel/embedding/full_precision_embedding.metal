@@ -4,7 +4,7 @@
 #define BLOCK_SIZE 256
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(FullPrecisionEmbeddingLookup) (
     const device uint32_t* token_ids, // [batch_size]
     const device T* weights,          // [vocab_size, model_dim]

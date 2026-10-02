@@ -5,7 +5,7 @@
 using namespace uzu::activation_type;
 
 template <typename StateT, typename InputT>
-VARIANTS(StateT, float, bfloat)
+VARIANTS(StateT, float)
 VARIANTS(InputT, float, bfloat)
 PUBLIC KERNEL(Conv1dPack)(
     device const StateT* state_in,
@@ -30,7 +30,7 @@ PUBLIC KERNEL(Conv1dPack)(
 }
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float)
 PUBLIC KERNEL(Conv1dDecode)(
     device const T* x,
     device const T* w,
@@ -106,7 +106,7 @@ PUBLIC KERNEL(Conv1dDecode)(
 }
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float)
 PUBLIC KERNEL(Conv1dScan)(
     device const T* padded, // (prefix+suffix, channels)
     device const T* w,      // (channels, kernel)

@@ -12,8 +12,8 @@ using namespace uzu::matmul;
 // Materializes dense T = (I + A)^-1 as bf16 for output and state. This is block
 // forward substitution over a_packed plus the per-block inverses from ADiagInv.
 template <uint CHUNK_SIZE, uint BV>
-VARIANTS(CHUNK_SIZE, 32, 64)
-VARIANTS(BV, 16, 32)
+VARIANTS(CHUNK_SIZE, 64)
+VARIANTS(BV, 32)
 KERNEL(DeltaNetChunkedCausalInv)(
     device const float* a_packed,
     device const float* a_inv,

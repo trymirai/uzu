@@ -7,13 +7,14 @@
 namespace uzu {
 namespace gemm {
 
-template <typename Tile, typename AT, typename BT, typename DT, GemmBPrologueKind B_PROLOGUE, uint BITS>
+template <typename Tile, typename AT, typename BT, typename DT, uint BITS>
 struct QuantMetadata {
 private:
   float scale[Tile::ROWS_PER_LANE];
   float origin[Tile::ROWS_PER_LANE];
   float bias[Tile::ROWS_PER_LANE];
   bool signed_codes;
+  bool has_bias;
 
 public:
   static METAL_FUNC uint group_count(const thread GemvParams& params, uint group_size) {
@@ -27,12 +28,13 @@ public:
       const thread GemvParams& params
   ) thread {
     signed_codes = params.signed_codes;
+    has_bias = params.b_prologue == GemmBPrologueKind::ScaleBiasDequant;
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
       const uint row = weight_rows[R];
       const uint scale_index = row * params.scale_output_stride + group_index * params.scale_group_stride;
       scale[R] = float(ops.scales[scale_index]);
-      if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
+      if (params.b_prologue == GemmBPrologueKind::ScaleZeroPointDequant) {
         constexpr uint ZERO_POINTS_PER_BYTE = QuantChunk<BITS>::BITS_PER_BYTE / BITS;
         const uint zero_point_index =
             row * params.zero_point_output_stride + group_index * params.zero_point_group_stride;
@@ -41,11 +43,10 @@ public:
         origin[R] = QuantChunk<BITS>::MANTISSA_BASE +
                     float(decode_zero_point<BITS>(ops.zero_points + zero_point_row, packed_index));
         bias[R] = 0.0f;
-      } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant) {
+      } else if (params.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant) {
         origin[R] = QuantChunk<BITS>::MANTISSA_BASE + float(symmetric_zero_point<BITS>());
         bias[R] = 0.0f;
       } else {
-        static_assert(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant);
         origin[R] = QuantChunk<BITS>::MANTISSA_BASE;
         bias[R] = float(ops.biases[scale_index]);
       }
@@ -79,7 +80,7 @@ public:
 private:
   METAL_FUNC float finish(float prior, float partial, float input_sum, uint row) const thread {
     float result = fma(scale[row], partial, prior);
-    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
+    if (has_bias) {
       result = fma(bias[row], input_sum, result);
     }
     return result;

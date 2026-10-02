@@ -2,8 +2,8 @@
 #include "../common/dsl.h"
 
 template <typename T, typename BiasT>
-VARIANTS(T, float, half, bfloat)
-VARIANTS(BiasT, float, half, bfloat)
+VARIANTS(T, bfloat)
+VARIANTS(BiasT, bfloat)
 PUBLIC KERNEL(TensorAddBias)(
     const device T* input OPTIONAL(!in_place),
     const device BiasT* bias,

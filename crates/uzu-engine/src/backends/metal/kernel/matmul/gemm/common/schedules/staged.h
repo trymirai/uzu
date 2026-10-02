@@ -8,8 +8,7 @@
 #include "../../../common/mxu_gemm_loop.h"
 #include "../gemm_alignment.h"
 #include "../operands.h"
-#include "../quant_scale_bias.h"
-#include "../quant_scale_zero_point.h"
+#include "../quantized_loader.h"
 #include "tile_context.h"
 
 using namespace metal;
@@ -37,79 +36,33 @@ static METAL_FUNC auto make_staged_loader(
   const device uint8_t* values = right.codes + size_t(block_col) * row_stride +
                                  size_t(k_offset) * size_t(get_bytes_per_pack<RightOperand::BITS>()) /
                                      size_t(get_pack_factor<RightOperand::BITS>());
-  if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant) {
-    const device Element* biases = right.bias() + params_offset;
-    using Loader = QuantizedBlockLoaderScaleBias<
-        Element,
-        Core::THREADGROUP_BLOCK_N,
-        Core::THREADGROUP_BLOCK_K,
-        Core::SHARED_STRIDE_B,
-        Core::THREADGROUP_THREADS,
-        RightOperand::GROUP_SIZE,
-        RightOperand::BITS>;
-    return Loader(
-        values,
-        scales,
-        biases,
-        right.signed_codes,
-        int(params->K),
-        int(params->scale_group_stride),
-        int(params->scale_output_stride),
-        staging,
-        thread_context.simdgroup_index,
-        thread_context.simd_lane_id
-    );
-  } else if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant) {
-    using Loader = QuantizedBlockLoaderScaleZeroPoint<
-        Element,
-        Core::THREADGROUP_BLOCK_N,
-        Core::THREADGROUP_BLOCK_K,
-        Core::SHARED_STRIDE_B,
-        Core::THREADGROUP_THREADS,
-        RightOperand::GROUP_SIZE,
-        RightOperand::BITS,
-        false>;
-    return Loader(
-        values,
-        scales,
-        right.zp(),
-        right.signed_codes,
-        int(params->K),
-        int(params->scale_group_stride),
-        int(params->scale_output_stride),
-        params->zero_point_output_stride,
-        params->zero_point_group_stride,
-        uint(block_col) * params->zero_point_output_stride + first_group * params->zero_point_group_stride,
-        staging,
-        thread_context.simdgroup_index,
-        thread_context.simd_lane_id
-    );
-  } else {
-    static_assert(
-        RightOperand::SCHEME == GemmBPrologueKind::ScaleSymmetricDequant,
-        "staged loader requires a quantized weight scheme"
-    );
-    using Loader = QuantizedBlockLoaderScaleZeroPoint<
-        Element,
-        Core::THREADGROUP_BLOCK_N,
-        Core::THREADGROUP_BLOCK_K,
-        Core::SHARED_STRIDE_B,
-        Core::THREADGROUP_THREADS,
-        RightOperand::GROUP_SIZE,
-        RightOperand::BITS,
-        true>;
-    return Loader(
-        values,
-        scales,
-        right.signed_codes,
-        int(params->K),
-        int(params->scale_group_stride),
-        int(params->scale_output_stride),
-        staging,
-        thread_context.simdgroup_index,
-        thread_context.simd_lane_id
-    );
-  }
+  const device Element* biases =
+      right.scheme == GemmBPrologueKind::ScaleBiasDequant ? right.biases + params_offset : nullptr;
+  using Loader = QuantizedBlockLoader<
+      Element,
+      Core::THREADGROUP_BLOCK_N,
+      Core::THREADGROUP_BLOCK_K,
+      Core::SHARED_STRIDE_B,
+      Core::THREADGROUP_THREADS,
+      RightOperand::GROUP_SIZE,
+      RightOperand::BITS>;
+  return Loader(
+      values,
+      scales,
+      biases,
+      right.zero_points,
+      right.signed_codes,
+      right.scheme,
+      int(params->K),
+      int(params->scale_group_stride),
+      int(params->scale_output_stride),
+      params->zero_point_output_stride,
+      params->zero_point_group_stride,
+      uint(block_col) * params->zero_point_output_stride + first_group * params->zero_point_group_stride,
+      staging,
+      thread_context.simdgroup_index,
+      thread_context.simd_lane_id
+  );
 }
 
 template <bool ALIGNED_N, typename Loader>

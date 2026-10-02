@@ -6,6 +6,7 @@ use crate::{
             gpu_types::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
+                activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{Int8CodeLayout, MatmulA, MatmulArguments, MatmulError, MatmulKernel},
             },
         },
@@ -121,7 +122,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 scale_group_size: a_group_size,
                 code_layout,
             } => {
-                let compatible = matches!(a_group_size, 32 | 64 | 128)
+                let compatible = a_group_size == ACTIVATION_SCALE_GROUP_SIZE
                     && k.is_multiple_of(a_group_size)
                     && matches!(b.group_size(), Some(32 | 64 | 128))
                     && b.quantized()
@@ -129,7 +130,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 if !compatible {
                     return Err(MatmulError::IncompatibleA {
                         path: "CpuMatmul",
-                        reason: "symmetric int8 activations require a supported 32/64/128 activation and weight group",
+                        reason: "symmetric int8 activations require 128-element activation groups and 32/64/128 weight groups",
                     }
                     .into());
                 }

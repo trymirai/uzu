@@ -6,6 +6,7 @@
 #include "../../common/defines.h"
 #include "../../common/quant_pack.h"
 #include "../../common/quant_unpack.h"
+#include "../../../generated/gemm.h"
 
 using namespace metal;
 
@@ -19,9 +20,8 @@ template <
     short DESTINATION_LEADING_DIMENSION,
     short THREADGROUP_SIZE,
     short GROUP_SIZE,
-    short BITS,
-    bool SCALE_SYMMETRIC = false>
-struct QuantizedBlockLoaderScaleZeroPoint {
+    short BITS>
+struct QuantizedBlockLoader {
   static_assert(THREADGROUP_TILE_COLS <= GROUP_SIZE, "Group size should be larger than columns");
   static_assert(GROUP_SIZE % THREADGROUP_TILE_COLS == 0, "Group size should be divisible by columns");
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
@@ -48,15 +48,19 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   threadgroup T* dst;
   const device uint8_t* src;
   const device T* scales;
+  const device T* biases;
   const device uint8_t* zero_points_row_start;
   uint zero_point_index;
   const bool signed_codes;
+  const GemmBPrologueKind scheme;
 
-  QuantizedBlockLoaderScaleZeroPoint(
+  QuantizedBlockLoader(
       const device uint8_t* src_,
       const device T* scales_,
+      const device T* biases_,
       const device uint8_t* zero_points_row_start_,
       const bool signed_codes_,
+      const GemmBPrologueKind scheme_,
       const int src_leading_dim_,
       const int params_group_stride_,
       const int params_output_stride_,
@@ -75,51 +79,26 @@ struct QuantizedBlockLoaderScaleZeroPoint {
         dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * PACK_FACTOR),
         src(src_ + tile_row_index * src_leading_dim_ * BYTES_PER_PACK / PACK_FACTOR + tile_col_index * BYTES_PER_PACK),
         scales(scales_ + tile_row_index * params_output_stride_),
-        zero_points_row_start(SCALE_SYMMETRIC ? nullptr : zero_points_row_start_),
+        biases(scheme_ == GemmBPrologueKind::ScaleBiasDequant ? biases_ + tile_row_index * params_output_stride_ : nullptr),
+        zero_points_row_start(zero_points_row_start_),
         zero_point_index(zero_point_index_ + uint(tile_row_index) * zero_point_output_stride_),
-        signed_codes(signed_codes_) {}
-
-  QuantizedBlockLoaderScaleZeroPoint(
-      const device uint8_t* src_,
-      const device T* scales_,
-      const bool signed_codes_,
-      const int src_leading_dim_,
-      const int params_group_stride_,
-      const int params_output_stride_,
-      threadgroup T* dst_,
-      ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-      ushort simd_lane_id [[thread_index_in_simdgroup]]
-  )
-      : QuantizedBlockLoaderScaleZeroPoint(
-            src_,
-            scales_,
-            static_cast<const device uint8_t*>(nullptr),
-            signed_codes_,
-            src_leading_dim_,
-            params_group_stride_,
-            params_output_stride_,
-            0,
-            0,
-            0,
-            dst_,
-            simd_group_id,
-            simd_lane_id
-        ) {
-    static_assert(SCALE_SYMMETRIC, "zero-point-free loader construction requires symmetric quantization");
-  }
+        signed_codes(signed_codes_), scheme(scheme_) {}
 
   inline void current_scale_bias(thread T& out_scale, thread T& out_bias) const {
+    const T scale_value = *scales;
+    out_scale = scale_value;
+    if (scheme == GemmBPrologueKind::ScaleBiasDequant) {
+      out_bias = *biases;
+      return;
+    }
     uint zero_point_value;
-    T scale_value;
-    scale_value = *scales;
-    if constexpr (SCALE_SYMMETRIC) {
+    if (scheme == GemmBPrologueKind::ScaleSymmetricDequant) {
       zero_point_value = symmetric_zero_point<ushort(BITS)>();
     } else {
       const uint byte_index = zero_point_index / uint(PACK_FACTOR);
       const uint packed_index = zero_point_index % uint(PACK_FACTOR);
       zero_point_value = decode_zero_point<ushort(BITS)>(zero_points_row_start[byte_index], packed_index);
     }
-    out_scale = scale_value;
     out_bias = static_cast<T>(-scale_value * static_cast<T>(zero_point_value));
   }
 
@@ -185,7 +164,9 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       group_step_counter = 0;
     }
     scales += group_stride;
-    if constexpr (!SCALE_SYMMETRIC) {
+    if (scheme == GemmBPrologueKind::ScaleBiasDequant) {
+      biases += group_stride;
+    } else if (scheme == GemmBPrologueKind::ScaleZeroPointDequant) {
       zero_point_index += zero_point_group_stride;
     }
   }

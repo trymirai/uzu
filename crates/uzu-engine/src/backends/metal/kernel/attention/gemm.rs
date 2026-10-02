@@ -55,7 +55,7 @@ fn retile_params(
 
 impl AttentionGemm {
     pub fn is_supported(config: &AttentionKernelConfig) -> bool {
-        matches!(config.head_dim, 64 | 128 | 256) && matches!(config.data_type, DataType::BF16 | DataType::F32)
+        matches!(config.head_dim, 64 | 128 | 256) && config.data_type == DataType::BF16
     }
 
     pub fn new(config: &AttentionKernelConfig) -> Self {

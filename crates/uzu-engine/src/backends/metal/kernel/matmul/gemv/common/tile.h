@@ -19,7 +19,6 @@ template <
     uint INPUT_ROW_TILE_,
     uint OUTPUT_ROW_TILE_,
     uint REDUCTION_LANES_,
-    uint GROUP_LANES_,
     uint NUM_SIMDGROUPS_,
     uint K_SPLIT_>
 struct GemvTile {
@@ -27,13 +26,11 @@ struct GemvTile {
   UZU_CONST uint INPUT_ROWS = INPUT_ROW_TILE_;
   UZU_CONST uint OUTPUT_ROWS = OUTPUT_ROW_TILE_;
   UZU_CONST uint REDUCTION_LANES = REDUCTION_LANES_;
-  UZU_CONST uint GROUP_LANES = GROUP_LANES_;
   UZU_CONST uint NUM_SIMDGROUPS = NUM_SIMDGROUPS_;
   UZU_CONST uint K_SPLIT = K_SPLIT_;
   UZU_CONST uint ROW_BLOCKS = METAL_SIMD_SIZE / REDUCTION_LANES;
   UZU_CONST uint SIMDGROUP_OUTPUT_ROWS = OUTPUT_ROWS / (NUM_SIMDGROUPS / K_SPLIT);
   UZU_CONST uint ROWS_PER_LANE = SIMDGROUP_OUTPUT_ROWS / ROW_BLOCKS;
-  UZU_CONST uint GROUPS_PER_STEP = REDUCTION_LANES / GROUP_LANES;
 
   static_assert(INPUT_ROWS > 0 && OUTPUT_ROWS > 0, "GEMV tiles must be non-empty");
   static_assert(
@@ -41,7 +38,6 @@ struct GemvTile {
       "reduction lanes must divide one simdgroup"
   );
   static_assert(METAL_SIMD_SIZE % REDUCTION_LANES == 0, "reduction lanes must divide one simdgroup");
-  static_assert(GROUP_LANES > 0 && REDUCTION_LANES % GROUP_LANES == 0, "group lanes must divide reduction lanes");
   static_assert(NUM_SIMDGROUPS > 0 && NUM_SIMDGROUPS % K_SPLIT == 0, "K split must divide simdgroups");
   static_assert(OUTPUT_ROWS % (NUM_SIMDGROUPS / K_SPLIT) == 0, "output rows must divide row groups");
   static_assert(SIMDGROUP_OUTPUT_ROWS % ROW_BLOCKS == 0, "output rows must divide reduction blocks");

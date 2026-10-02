@@ -107,11 +107,6 @@ fn test_gated_act_mul_interleaved_hadamard_bf16() {
 }
 
 #[uzu_test]
-fn test_gated_act_mul_interleaved_silu_f32() {
-    interleaved_test::<f32>(ActivationType::SILU);
-}
-
-#[uzu_test]
 fn test_gated_act_mul_interleaved_silu_bf16() {
     interleaved_test::<bf16>(ActivationType::SILU);
 }
@@ -156,18 +151,13 @@ fn test_gated_act_mul_nibble_grouped_quantization_matches_cpu() {
 }
 
 #[uzu_test]
-fn test_gated_act_mul_interleaved_gelu_f32() {
-    interleaved_test::<f32>(ActivationType::GELUApprox);
-}
-
-#[uzu_test]
 fn test_gated_act_mul_interleaved_gelu_bf16() {
     interleaved_test::<bf16>(ActivationType::GELUApprox);
 }
 
 #[uzu_test]
-fn test_gated_act_mul_interleaved_gelu_exact_f32() {
-    interleaved_test::<f32>(ActivationType::GELUExact);
+fn test_gated_act_mul_interleaved_gelu_exact_bf16() {
+    interleaved_test::<bf16>(ActivationType::GELUExact);
 }
 
 struct SeparateInput<T: ArrayElement + Float> {
@@ -240,11 +230,6 @@ fn separate_test<T: ArrayElement + Float + Debug>() {
 }
 
 #[uzu_test]
-fn test_gated_act_mul_separate_f32() {
-    separate_test::<f32>();
-}
-
-#[uzu_test]
 fn test_gated_act_mul_separate_bf16() {
     separate_test::<bf16>();
 }
@@ -314,26 +299,10 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[uzu_test]
-fn test_gated_act_mul_transforms_f32() {
-    transformed_interleaved_test::<f32>(
-        serde_json::from_str("[-1.0,2.0]").unwrap(),
-        serde_json::from_str("[-2.0,3.0]").unwrap(),
-    );
-}
-
-#[uzu_test]
 fn test_gated_act_mul_transforms_bf16() {
     transformed_interleaved_test::<bf16>(
         serde_json::from_str("[-1.0,2.0]").unwrap(),
         serde_json::from_str("[-2.0,3.0]").unwrap(),
-    );
-}
-
-#[uzu_test]
-fn test_gated_act_mul_one_sided_clipping_f32() {
-    transformed_interleaved_test::<f32>(
-        serde_json::from_str("[-1.0,null]").unwrap(),
-        serde_json::from_str("[null,3.0]").unwrap(),
     );
 }
 

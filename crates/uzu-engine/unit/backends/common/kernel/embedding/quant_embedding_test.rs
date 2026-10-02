@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -388,15 +388,6 @@ fn test_oob<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // UINT4 tests
-#[uzu_test]
-fn test_uint4_f32() {
-    test_quant_mode::<f32>(QuantizationMode::U4);
-}
-
-#[uzu_test]
-fn test_uint4_f16() {
-    test_quant_mode::<f16>(QuantizationMode::U4);
-}
 
 #[uzu_test]
 fn test_uint4_bf16() {
@@ -415,25 +406,11 @@ fn test_uint4_zero_point_group16_hadamard_bf16_constructor() {
 }
 
 #[uzu_test]
-fn test_uint4_zero_point_group16_hadamard_f32() {
-    test_zero_point_group16_hadamard::<f32>();
-}
-
-#[uzu_test]
 fn test_uint4_zero_point_group16_hadamard_bf16() {
     test_zero_point_group16_hadamard::<bf16>();
 }
 
 // INT8 tests
-#[uzu_test]
-fn test_int8_f32() {
-    test_quant_mode::<f32>(QuantizationMode::I8);
-}
-
-#[uzu_test]
-fn test_int8_f16() {
-    test_quant_mode::<f16>(QuantizationMode::I8);
-}
 
 #[uzu_test]
 fn test_int8_bf16() {
@@ -441,15 +418,6 @@ fn test_int8_bf16() {
 }
 
 // UINT8 tests
-#[uzu_test]
-fn test_uint8_f32() {
-    test_quant_mode::<f32>(QuantizationMode::U8);
-}
-
-#[uzu_test]
-fn test_uint8_f16() {
-    test_quant_mode::<f16>(QuantizationMode::U8);
-}
 
 #[uzu_test]
 fn test_uint8_bf16() {
@@ -462,15 +430,6 @@ fn test_uint8_symmetric_bf16() {
 }
 
 // OOB tests
-#[uzu_test]
-fn test_oob_f32() {
-    test_oob::<f32>();
-}
-
-#[uzu_test]
-fn test_oob_f16() {
-    test_oob::<f16>();
-}
 
 #[uzu_test]
 fn test_oob_bf16() {

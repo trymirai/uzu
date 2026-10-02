@@ -18,6 +18,7 @@ using namespace uzu::activation_transform;
 template <typename T, typename BiasT>
 VARIANTS(T, float, bfloat)
 VARIANTS(BiasT, float, bfloat)
+CONSTRAINT(T == BiasT)
 PUBLIC KERNEL(ActivationTransform)(
     const device T* input OPTIONAL(!in_place),
     device T* fp_out OPTIONAL(!QUANTIZED),

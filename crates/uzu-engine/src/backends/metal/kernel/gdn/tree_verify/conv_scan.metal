@@ -7,7 +7,7 @@ using namespace metal;
 // Applies short convolution along each proposal-tree path and records every
 // node's pending convolution state. Other projection channels pass through.
 template <typename T>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(ConvTreeScan)(
     // [suffix_len, total_proj_dim]
     device const T* in_proj,

@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -289,15 +289,6 @@ fn test_edge_kernel<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // basic tests
-#[uzu_test]
-fn test_basic_f32() {
-    test_basic::<f32>();
-}
-
-#[uzu_test]
-fn test_basic_f16() {
-    test_basic::<f16>();
-}
 
 #[uzu_test]
 fn test_basic_bf16() {
@@ -305,15 +296,6 @@ fn test_basic_bf16() {
 }
 
 // large tests
-#[uzu_test]
-fn test_large_f32() {
-    test_large::<f32>();
-}
-
-#[uzu_test]
-fn test_large_f16() {
-    test_large::<f16>();
-}
 
 #[uzu_test]
 fn test_large_bf16() {
@@ -321,15 +303,6 @@ fn test_large_bf16() {
 }
 
 // edge: small dimensions
-#[uzu_test]
-fn test_edge_small_f32() {
-    test_edge_small::<f32>();
-}
-
-#[uzu_test]
-fn test_edge_small_f16() {
-    test_edge_small::<f16>();
-}
 
 #[uzu_test]
 fn test_edge_small_bf16() {
@@ -337,15 +310,6 @@ fn test_edge_small_bf16() {
 }
 
 // edge: kernel_size=1 (no state taps)
-#[uzu_test]
-fn test_edge_kernel_f32() {
-    test_edge_kernel::<f32>();
-}
-
-#[uzu_test]
-fn test_edge_kernel_f16() {
-    test_edge_kernel::<f16>();
-}
 
 #[uzu_test]
 fn test_edge_kernel_bf16() {

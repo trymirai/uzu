@@ -85,11 +85,6 @@ fn matches_cpu_reference_bf16(
 }
 
 #[uzu_test]
-fn matches_cpu_reference_f32() {
-    run_matrix::<f32>(Case::new, 0.01);
-}
-
-#[uzu_test]
 fn b_transpose_false_bf16() {
     run_matrix::<bf16>(
         |shape| Case {
@@ -204,18 +199,9 @@ fn small_m_square_tile_parity() {
         bf16::data_type(),
     )
     .expect("MatmulKernel");
-    let mut f32_kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
-        &context,
-        f32::data_type(),
-        f32::data_type(),
-        f32::data_type(),
-    )
-    .expect("MatmulKernel");
-
     for shape in [Shape::new(8, 256, 256), Shape::new(8, 512, 256)] {
         for engine in gemm_engines_for_hw(&context) {
             check_case::<bf16>(&context, &mut bf16_kernel, Some(engine), Case::new(shape), 1.0);
-            check_case::<f32>(&context, &mut f32_kernel, Some(engine), Case::new(shape), 0.01);
         }
     }
 }

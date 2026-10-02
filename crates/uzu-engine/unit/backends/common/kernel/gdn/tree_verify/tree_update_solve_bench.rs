@@ -22,7 +22,7 @@ use crate::{
 const NUM_V_HEADS: usize = 48;
 const HEAD_V_DIM: usize = 128;
 const BT: usize = 16;
-const BVS: &[usize] = &[16, 32];
+const BVS: &[usize] = &[32];
 
 const BENCH_SHAPES: &[(usize, usize)] = &[
     (1, 32),

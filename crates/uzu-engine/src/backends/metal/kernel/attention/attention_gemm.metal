@@ -37,13 +37,13 @@ struct AttentionGemmLayout {
 };
 
 template <typename T, uint BK, uint BD, bool USE_MXU>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 VARIANTS(BK, 16, 32)
 VARIANTS(BD, 64, 128, 256)
 VARIANTS(USE_MXU, false, true)
 CONSTRAINT(!USE_MXU || BK == 32)
-CONSTRAINT(!USE_MXU || T != "float")
 CONSTRAINT(!USE_MXU || BD != 256)
+CONSTRAINT(USE_MXU || (BD == 64 && BK == 32) || (BD != 64 && BK == 16))
 KERNEL(AttentionGemm)(
     const device T* q,
     const device T* k,

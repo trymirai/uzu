@@ -6,7 +6,7 @@
 using namespace metal;
 
 template <typename T, typename QKT, uint HEAD_K_DIM>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 VARIANTS(QKT, float, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(DeltaNetPrefillPrep)(

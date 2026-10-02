@@ -23,8 +23,8 @@ use crate::{
 };
 
 #[cfg(backend = "metal")]
-fn run_conv_update<B: Backend>(
-    in_proj: &[f32],
+fn run_conv_update<B: Backend, T: ArrayElement>(
+    in_proj: &[T],
     w: &[f32],
     b: &[f32],
     state: &[f32],
@@ -36,10 +36,10 @@ fn run_conv_update<B: Backend>(
 
     let w_array = create_buffer_with_data::<B, f32>(&context, w);
     let b_array = create_buffer_with_data::<B, f32>(&context, b);
-    let mut in_out = create_buffer_with_data::<B, f32>(&context, in_proj);
+    let mut in_out = create_buffer_with_data::<B, T>(&context, in_proj);
     let mut state_buffer = create_buffer_with_data::<B, f32>(&context, state);
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(&context, DataType::F32, true)
+    let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(&context, T::data_type(), true)
         .expect("Failed to create kernel");
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
@@ -55,7 +55,10 @@ fn run_conv_update<B: Backend>(
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let out = buffer_prefix_to_vec::<B, f32>(&in_out, conv_dim as usize);
+    let out = buffer_prefix_to_vec::<B, T>(&in_out, conv_dim as usize)
+        .into_iter()
+        .map(|value| value.to_f32().expect("output to f32"))
+        .collect();
     let new_state = buffer_to_vec::<B, f32>(&state_buffer);
     (out, new_state)
 }
@@ -135,15 +138,15 @@ fn test_delta_net_conv_update_small() {
     let kernel_size = 4;
     let tap_count = kernel_size - 1;
 
-    let in_proj: Vec<f32> = (0..conv_dim).map(|i| ((i % 7) as f32) * 0.1 - 0.3).collect();
+    let in_proj: Vec<bf16> = (0..conv_dim).map(|i| bf16::from_f32(((i % 7) as f32) * 0.1 - 0.3)).collect();
     let w: Vec<f32> = (0..conv_dim * kernel_size).map(|i| ((i % 11) as f32) * 0.05 - 0.2).collect();
     let b: Vec<f32> = (0..conv_dim).map(|i| ((i % 5) as f32) * 0.01).collect();
     let state: Vec<f32> = (0..conv_dim * tap_count).map(|i| ((i % 13) as f32) * 0.02 - 0.1).collect();
 
     let (cpu_out, cpu_state) =
-        run_conv_update::<Cpu>(&in_proj, &w, &b, &state, kernel_size as u32, conv_dim as u32, tap_count as u32);
+        run_conv_update::<Cpu, bf16>(&in_proj, &w, &b, &state, kernel_size as u32, conv_dim as u32, tap_count as u32);
     let (gpu_out, gpu_state) =
-        run_conv_update::<Metal>(&in_proj, &w, &b, &state, kernel_size as u32, conv_dim as u32, tap_count as u32);
+        run_conv_update::<Metal, bf16>(&in_proj, &w, &b, &state, kernel_size as u32, conv_dim as u32, tap_count as u32);
 
     assert_close(&cpu_out, &gpu_out, 1e-4, 1e-3, "ConvUpdate output");
     assert_close(&cpu_state, &gpu_state, 1e-5, 1e-4, "ConvUpdate state");
@@ -173,7 +176,7 @@ fn test_delta_net_conv_scan() {
     let mut ref_outputs = vec![0.0f32; suffix_len * conv_dim];
     for t in 0..suffix_len {
         let token_in: Vec<f32> = in_proj_f32[t * total_proj_dim..t * total_proj_dim + conv_dim].to_vec();
-        let (out, new_state) = run_conv_update::<Cpu>(
+        let (out, new_state) = run_conv_update::<Cpu, f32>(
             &token_in,
             &w,
             &b,
@@ -304,11 +307,6 @@ fn test_delta_net_update_impl<T: ArrayElement>(
         assert_close(&ref_out, &out, output_atol, output_rtol, &format!("{label} output on {backend}"));
         assert_close(&ref_state, &new_state, 1e-4, 1e-3, &format!("{label} state on {backend}"));
     });
-}
-
-#[uzu_test]
-fn test_delta_net_update_qwen35_shapes() {
-    test_delta_net_update_impl::<f32>(48, 16, 128, 128, 1e-3, 1e-2, "DeltaNetUpdate Qwen3.5");
 }
 
 #[uzu_test]
@@ -493,11 +491,6 @@ fn test_prefill_norm_gate_impl<T: ArrayElement>(
 }
 
 #[uzu_test]
-fn test_delta_net_prefill_qwen35_shapes() {
-    test_prefill_norm_gate_impl::<f32>(48, 16, 128, 128, 32, 1e-3, 1e-2, "Prefill+NormGate Qwen3.5");
-}
-
-#[uzu_test]
 fn test_delta_net_prefill_qwen35_shapes_bf16() {
     test_prefill_norm_gate_impl::<bf16>(48, 16, 128, 128, 32, 2e-2, 5e-2, "Prefill+NormGate Qwen3.5 BF16");
 }
@@ -643,17 +636,18 @@ fn bench_delta_net_prefill() {
     let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
     let state_size = num_v_heads * head_k_dim * head_v_dim;
 
-    let in_proj: Vec<f32> = (0..suffix_len * total_proj_dim).map(|i| ((i % 37) as f32) * 0.02 - 0.3).collect();
+    let in_proj: Vec<bf16> =
+        (0..suffix_len * total_proj_dim).map(|i| bf16::from_f32(((i % 37) as f32) * 0.02 - 0.3)).collect();
     let a_log: Vec<f32> = (0..num_v_heads).map(|i| -1.5 + (i as f32) * 0.05).collect();
     let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.3 + (i as f32) * 0.02).collect();
     let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
 
     let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = create_buffer_with_data::<Metal, f32>(&context, &in_proj);
+    let in_proj_array = create_buffer_with_data::<Metal, bf16>(&context, &in_proj);
     let a_log_array = create_buffer_with_data::<Metal, f32>(&context, &a_log);
     let dt_bias_array = create_buffer_with_data::<Metal, f32>(&context, &dt_bias);
     let norm_weight_array = create_buffer_with_data::<Metal, f32>(&context, &norm_weight);
-    let mut out_array = create_buffer::<Metal, f32>(&context, suffix_len * value_dim);
+    let mut out_array = create_buffer::<Metal, bf16>(&context, suffix_len * value_dim);
     let mut q_norm_array = create_buffer::<Metal, f32>(&context, suffix_len * key_dim);
     let mut k_norm_array = create_buffer::<Metal, f32>(&context, suffix_len * key_dim);
 
@@ -664,7 +658,7 @@ fn bench_delta_net_prefill() {
 
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
-        DataType::F32,
+        DataType::BF16,
         DataType::F32,
         head_k_dim as u32,
         false,
@@ -673,12 +667,12 @@ fn bench_delta_net_prefill() {
     .unwrap();
     let prefill_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(
         &context,
-        DataType::F32,
+        DataType::BF16,
         head_k_dim as u32,
     )
     .unwrap();
     let norm_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::F32).unwrap();
+        <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::BF16).unwrap();
 
     eprintln!("\n=== DeltaNet Prefill Benchmark (Qwen3.5 shapes) ===");
     eprintln!(

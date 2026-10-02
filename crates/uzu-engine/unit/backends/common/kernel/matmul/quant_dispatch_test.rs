@@ -597,7 +597,8 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
         return;
     }
 
-    for (activation_group_size, weight_group_size) in [(32u32, 32u32), (64, 64), (128, 32), (128, 64), (128, 128)] {
+    for weight_group_size in [32u32, 64, 128] {
+        let activation_group_size = ACTIVATION_SCALE_GROUP_SIZE;
         for (bits, method) in [
             (4, QuantizationMethod::ScaleSymmetric),
             (8, QuantizationMethod::ScaleSymmetric),

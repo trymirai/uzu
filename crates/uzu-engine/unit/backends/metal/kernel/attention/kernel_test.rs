@@ -132,13 +132,14 @@ fn create_test_data(
 
     let mut random = StdRng::seed_from_u64(seed);
 
-    let queries =
-        Array4::from_shape_fn((batch_size, num_heads, sequence_length, head_dim), |_| random.random_range(-0.5..0.5));
+    let queries = Array4::from_shape_fn((batch_size, num_heads, sequence_length, head_dim), |_| {
+        bf16::from_f32(random.random_range(-0.5..0.5)).to_f32()
+    });
     let keys = Array4::from_shape_fn((batch_size, num_kv_heads, sequence_length, head_dim), |_| {
-        random.random_range(-0.5..0.5)
+        bf16::from_f32(random.random_range(-0.5..0.5)).to_f32()
     });
     let values = Array4::from_shape_fn((batch_size, num_kv_heads, sequence_length, head_dim), |_| {
-        random.random_range(-0.5..0.5)
+        bf16::from_f32(random.random_range(-0.5..0.5)).to_f32()
     });
 
     (queries, keys, values)
@@ -149,13 +150,13 @@ fn create_query_buffer(
     context: &<Metal as Backend>::Context,
 ) -> <Metal as Backend>::GlobalBuffer {
     let (_batch_size, num_heads, sequence_length, head_dim) = queries.dim();
-    let mut values = vec![0.0_f32; num_heads * sequence_length * head_dim];
+    let mut values = vec![bf16::ZERO; num_heads * sequence_length * head_dim];
 
     for head_index in 0..num_heads {
         for sequence_index in 0..sequence_length {
             for dim_index in 0..head_dim {
                 let flat_index = head_index * sequence_length * head_dim + sequence_index * head_dim + dim_index;
-                values[flat_index] = queries[[0, head_index, sequence_index, dim_index]];
+                values[flat_index] = bf16::from_f32(queries[[0, head_index, sequence_index, dim_index]]);
             }
         }
     }
@@ -169,13 +170,13 @@ fn create_attention_cache_buffer(
     context: &<Metal as Backend>::Context,
 ) -> <Metal as Backend>::GlobalBuffer {
     let (_batch_size, num_kv_heads, sequence_length, head_dim) = values.dim();
-    let mut cache = vec![0.0_f32; max_sequence_length * num_kv_heads * head_dim];
+    let mut cache = vec![bf16::ZERO; max_sequence_length * num_kv_heads * head_dim];
 
     for sequence_index in 0..sequence_length {
         for head_index in 0..num_kv_heads {
             for dim_index in 0..head_dim {
                 let flat_index = sequence_index * num_kv_heads * head_dim + head_index * head_dim + dim_index;
-                cache[flat_index] = values[[0, head_index, sequence_index, dim_index]];
+                cache[flat_index] = bf16::from_f32(values[[0, head_index, sequence_index, dim_index]]);
             }
         }
     }
@@ -187,11 +188,11 @@ fn create_sinks_buffer(
     sinks: &[f32],
     context: &<Metal as Backend>::Context,
 ) -> <Metal as Backend>::GlobalBuffer {
-    create_buffer_with_data::<Metal, _>(context, sinks)
+    create_buffer_with_data::<Metal, _>(context, &sinks.iter().copied().map(bf16::from_f32).collect::<Vec<_>>())
 }
 
 fn convert_kernel_output(
-    output: &[f32],
+    output: &[bf16],
     batch_size: usize,
     num_heads: usize,
     sequence_length: usize,
@@ -203,7 +204,7 @@ fn convert_kernel_output(
         for sequence_index in 0..sequence_length {
             for dim_index in 0..head_dim {
                 let flat_index = (sequence_index * num_heads + head_index) * head_dim + dim_index;
-                kernel_output[[0, head_index, sequence_index, dim_index]] = output[flat_index];
+                kernel_output[[0, head_index, sequence_index, dim_index]] = output[flat_index].to_f32();
             }
         }
     }
@@ -240,12 +241,12 @@ fn run_single_pass_attention(
         },
         &mut command_buffer,
     )?;
-    let mut output_buffer = create_buffer::<Metal, f32>(context, num_heads * seq_len * head_dim);
+    let mut output_buffer = create_buffer::<Metal, bf16>(context, num_heads * seq_len * head_dim);
     command_buffer.encode_copy(&pooled_output, &mut output_buffer);
     drop(pooled_output);
     submit_command_buffer(command_buffer);
 
-    let output_slice: Vec<f32> = buffer_to_vec(&output_buffer);
+    let output_slice: Vec<bf16> = buffer_to_vec(&output_buffer);
     let kernel_output = convert_kernel_output(&output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
@@ -258,7 +259,7 @@ fn create_single_pass_kernel(
     has_sinks: bool,
     is_causal: bool,
 ) -> super::single_pass::AttentionSinglePass {
-    let mut config = super::default_attention_config::<f32>(head_dim, num_q_heads, num_groups, is_causal);
+    let mut config = super::default_attention_config::<bf16>(head_dim, num_q_heads, num_groups, is_causal);
     config.has_sinks = has_sinks;
     config.scale = None;
     super::single_pass::AttentionSinglePass::new(&config)
@@ -270,7 +271,7 @@ fn create_two_pass_kernel(
     num_groups: usize,
     is_causal: bool,
 ) -> super::two_pass::AttentionTwoPass {
-    let config = super::default_attention_config::<f32>(head_dim, num_q_heads, num_groups, is_causal);
+    let config = super::default_attention_config::<bf16>(head_dim, num_q_heads, num_groups, is_causal);
     super::two_pass::AttentionTwoPass::new(&config)
 }
 
@@ -286,7 +287,7 @@ fn run_gemm_attention(
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
     let (_batch_size, num_kv_heads, _seq_len, _head_dim) = keys.dim();
 
-    let mut config = super::default_attention_config::<f32>(head_dim, num_heads, num_kv_heads, is_causal);
+    let mut config = super::default_attention_config::<bf16>(head_dim, num_heads, num_kv_heads, is_causal);
     config.has_sinks = sinks.is_some();
     config.scale = Some(scale);
     let kernel = super::gemm::AttentionGemm::new(&config);
@@ -309,13 +310,13 @@ fn run_gemm_attention(
     };
 
     let pooled_output = kernel.encode(args, &mut command_buffer)?;
-    let mut output_buffer = create_buffer::<Metal, f32>(context, num_heads * seq_len * head_dim);
+    let mut output_buffer = create_buffer::<Metal, bf16>(context, num_heads * seq_len * head_dim);
     command_buffer.encode_copy(&pooled_output, &mut output_buffer);
     let completed = command_buffer.end_encoding().submit().wait_until_completed()?;
     drop(pooled_output);
     drop(completed);
 
-    let output: Vec<f32> = buffer_to_vec(&output_buffer);
+    let output: Vec<bf16> = buffer_to_vec(&output_buffer);
 
     let kernel_output = convert_kernel_output(&output, batch_size, num_heads, seq_len, head_dim);
 
@@ -492,12 +493,12 @@ fn run_two_pass_attention(
         },
         &mut command_buffer,
     )?;
-    let mut output_buffer = create_buffer::<Metal, f32>(context, num_heads * seq_len * head_dim);
+    let mut output_buffer = create_buffer::<Metal, bf16>(context, num_heads * seq_len * head_dim);
     command_buffer.encode_copy(&pooled_output, &mut output_buffer);
     drop(pooled_output);
     submit_command_buffer(command_buffer);
 
-    let output_slice: Vec<f32> = buffer_to_vec(&output_buffer);
+    let output_slice: Vec<bf16> = buffer_to_vec(&output_buffer);
     let kernel_output = convert_kernel_output(&output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)

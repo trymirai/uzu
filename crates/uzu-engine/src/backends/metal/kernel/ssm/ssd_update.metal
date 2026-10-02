@@ -5,7 +5,7 @@
 using namespace metal;
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float)
 PUBLIC KERNEL(SSDUpdate)(
     // Input
     device const T* x,      // (b, h, dh)

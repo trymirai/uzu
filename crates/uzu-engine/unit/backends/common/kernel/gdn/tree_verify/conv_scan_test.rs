@@ -4,7 +4,6 @@ use std::{mem::size_of, time::Duration};
 
 #[cfg(backend = "metal")]
 use criterion::Criterion;
-#[cfg(backend = "metal")]
 use half::bf16;
 #[cfg(backend = "metal")]
 use uzu_engine_macros::uzu_bench;
@@ -64,7 +63,7 @@ fn run<B: Backend>(
     let context = B::Context::new().expect("context");
     let kernel = <<B as Backend>::Kernels as Kernels>::ConvTreeScanKernel::new(
         &context,
-        DataType::F32,
+        DataType::BF16,
         KERNEL_SIZE as u32,
         true,
     )
@@ -77,12 +76,13 @@ fn run<B: Backend>(
     let bias = (0..CONV_DIM).map(|i| i as f32 * 0.003 - 0.04).collect::<Vec<_>>();
     let base_state = (0..CONV_DIM * STATE_STRIDE).map(|i| (i % 13) as f32 * 0.01 - 0.05).collect::<Vec<_>>();
 
-    let input = create_buffer_with_data::<B, f32>(&context, &input);
+    let input = input.into_iter().map(bf16::from_f32).collect::<Vec<_>>();
+    let input = create_buffer_with_data::<B, bf16>(&context, &input);
     let weights = create_buffer_with_data::<B, f32>(&context, &weights);
     let bias = create_buffer_with_data::<B, f32>(&context, &bias);
     let base_state_buffer = create_buffer_with_data::<B, f32>(&context, &base_state);
     let parents = create_buffer_with_data::<B, i32>(&context, &parents(tree_size, shape));
-    let mut output = create_buffer::<B, f32>(&context, tree_size * TOTAL_PROJ_DIM);
+    let mut output = create_buffer::<B, bf16>(&context, tree_size * TOTAL_PROJ_DIM);
     let mut suffix_state = create_buffer::<B, f32>(&context, tree_size * CONV_DIM * STATE_STRIDE);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
@@ -101,7 +101,7 @@ fn run<B: Backend>(
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     assert_eq_float(&base_state, &buffer_to_vec(&base_state_buffer), 0.0, &format!("base state {shape} T={tree_size}"));
-    (buffer_to_vec(&output), buffer_to_vec(&suffix_state))
+    (buffer_to_vec::<B, bf16>(&output).into_iter().map(f32::from).collect(), buffer_to_vec(&suffix_state))
 }
 
 #[uzu_test]
@@ -112,7 +112,7 @@ fn test_conv_tree_scan() {
             let label = format!("{shape} T={tree_size}");
             for_each_non_cpu_backend!(|B| {
                 let actual = run::<B>(tree_size, shape, false);
-                assert_eq_float(&expected.0, &actual.0, 1e-5, &format!("output {label}"));
+                assert_eq_float(&expected.0, &actual.0, 3e-3, &format!("output {label}"));
                 assert_eq_float(&expected.1, &actual.1, 1e-6, &format!("suffix state {label}"));
             });
         }

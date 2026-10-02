@@ -12,9 +12,9 @@ using namespace metal;
 // TODO: Are numerics of subtract_mean fine?
 
 template <typename InputT, typename AffineT, typename OutputT, typename AccumT>
-VARIANTS(InputT, float, half, bfloat)
-VARIANTS(AffineT, float, half, bfloat)
-VARIANTS(OutputT, float, half, bfloat)
+VARIANTS(InputT, bfloat)
+VARIANTS(AffineT, float)
+VARIANTS(OutputT, bfloat)
 VARIANTS(AccumT, float)
 PUBLIC KERNEL(Normalization)(
     const device InputT* input OPTIONAL(!in_place),

@@ -103,6 +103,25 @@ impl GemvSpecialization {
             return None;
         }
         let bits = shape.b_bits.unwrap_or(0);
+        let group_size = shape.b_group_size.unwrap_or(0);
+        let valid_group = if !is_quant {
+            group_size == 0 && tile.group_lanes == 1
+        } else if !matches!(group_size, 16 | 32 | 64 | 128) || !matches!(bits, 4 | 8) {
+            false
+        } else if tile.input_row_tile == 1 {
+            tile.group_lanes
+                * (if bits == 4 {
+                    16
+                } else {
+                    8
+                })
+                == group_size
+        } else {
+            tile.group_lanes == 1 && matches!(group_size, 32 | 64)
+        };
+        if !valid_group {
+            return None;
+        }
         if !is_quant {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
@@ -118,13 +137,16 @@ impl GemvSpecialization {
             256
         };
         let input_aligned = shape.k.is_multiple_of(block_size);
+        if !input_aligned && (tile.k_split > 1 || tile.input_row_tile > 1) {
+            return None;
+        }
         // Gathered quantized rows cannot share one input tile.
         if is_quant && shape.gathered && tile.input_row_tile > 1 {
             return None;
         }
         let specialization = Self {
             b_prologue: shape.b_prologue,
-            group_size: shape.b_group_size.unwrap_or(0),
+            group_size,
             bits,
             output_transform,
             input_aligned,
@@ -161,16 +183,16 @@ impl GemvSpecialization {
             input_data_type,
             weights_data_type,
             output_data_type,
-            self.b_prologue,
-            self.group_size,
             self.bits,
             self.k_split,
-            self.input_aligned,
             self.input_row_tile,
             self.output_row_tile(),
             self.reduction_lanes,
-            self.group_lanes,
             self.num_simdgroups,
+            self.group_size,
+            self.group_lanes,
+            self.input_aligned,
+            self.b_prologue,
             self.output_transform,
             self.gathered,
             self.signed_codes,

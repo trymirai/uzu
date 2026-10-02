@@ -21,7 +21,7 @@ use crate::{
 };
 
 struct Input<T: ArrayElement + Float> {
-    state_in: Box<[T]>,
+    state_in: Box<[f32]>,
     x: Box<[T]>,
     state_stride: u32,
     row_stride: u32,
@@ -38,7 +38,7 @@ fn get_input<T: ArrayElement + Float>(
     let state_size = num_channels as usize * state_stride as usize;
     let x_size = suffix_len as usize * row_stride as usize;
 
-    let state_in: Vec<T> = (0..state_size).map(|i| T::from(0.1 * (i as f64 + 1.0)).unwrap()).collect();
+    let state_in: Vec<f32> = (0..state_size).map(|i| 0.1 * (i as f32 + 1.0)).collect();
     let x: Vec<T> = (0..x_size).map(|i| T::from(-0.05 * (i as f64 + 1.0)).unwrap()).collect();
 
     Input {
@@ -51,17 +51,17 @@ fn get_input<T: ArrayElement + Float>(
     }
 }
 
-fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
+fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<f32> {
     let context = B::Context::new().expect("Failed to create Context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, T::data_type(), T::data_type())
+    let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, DataType::F32, T::data_type())
         .expect("Failed to create Conv1dPackKernel");
 
     let total_rows = input.state_stride as usize + input.suffix_len as usize;
     let padded_size = total_rows * input.row_stride as usize;
 
-    let state = create_buffer_with_data::<B, T>(&context, &input.state_in);
+    let state = create_buffer_with_data::<B, f32>(&context, &input.state_in);
     let x = create_buffer_with_data::<B, T>(&context, &input.x);
-    let mut padded = create_buffer::<B, T>(&context, padded_size);
+    let mut padded = create_buffer::<B, f32>(&context, padded_size);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
@@ -84,7 +84,7 @@ fn get_test_data<T: ArrayElement + Float>(
     row_stride: u32,
     suffix_len: u32,
     num_channels: u32,
-) -> (Input<T>, Vec<T>) {
+) -> (Input<T>, Vec<f32>) {
     let input = get_input::<T>(state_stride, row_stride, suffix_len, num_channels);
     let expected = get_output::<Cpu, T>(&input);
     (input, expected)
@@ -92,7 +92,7 @@ fn get_test_data<T: ArrayElement + Float>(
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(
     input: &Input<T>,
-    expected: &[T],
+    expected: &[f32],
     label: &str,
 ) {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
@@ -104,7 +104,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     for_each_non_cpu_backend!(|B| {
         let output = get_output::<B, T>(input);
         let msg = format!("Conv1dPack {} {} (type={})", std::any::type_name::<B>(), label, std::any::type_name::<T>(),);
-        assert_eq_float::<T>(expected, &output, eps, &msg);
+        assert_eq_float::<f32>(expected, &output, eps, &msg);
     });
 }
 

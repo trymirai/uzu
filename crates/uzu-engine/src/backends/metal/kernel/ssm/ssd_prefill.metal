@@ -9,7 +9,7 @@ using namespace metal;
 constant ushort SSM_PREFILL_MAX_STATE = 256;
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float)
 PUBLIC KERNEL(SSDPrefill64)(
     device const T* x,      // (suffix, h, dh)
     device const T* dt_raw, // (suffix, h) - raw dt values
@@ -98,7 +98,7 @@ PUBLIC KERNEL(SSDPrefill64)(
 }
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float)
 PUBLIC KERNEL(SSDPrefill)(
     device const T* x,      // (suffix, h, dh)
     device const T* dt_raw, // (suffix, h) - raw dt values

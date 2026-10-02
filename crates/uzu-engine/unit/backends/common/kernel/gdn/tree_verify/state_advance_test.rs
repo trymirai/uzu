@@ -83,7 +83,6 @@ fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32
 fn test_state_advance() {
     for path in [&PATH[..1], &PATH[..8], PATH] {
         for_each_non_cpu_backend!(|B| {
-            assert_eq_float(&run::<Cpu, f32>(path), &run::<B, f32>(path), 2e-5, "F32 state");
             assert_eq_float(&run::<Cpu, bf16>(path), &run::<B, bf16>(path), 2e-5, "BF16 state");
         });
     }

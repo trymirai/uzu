@@ -318,14 +318,17 @@ fn test_v_addressing<
 
 #[uzu_test]
 fn test_gated_row_stride() {
-    let (input, _) = get_test_data::<f32, f32, f32, f32>(0, 4, false, false);
+    let (input, _) = get_test_data::<bf16, f32, bf16, f32>(0, 4, false, false);
     let qkv_row = input.qkvg.to_vec();
     let gate_len = (input.num_q_heads * input.head_dim) as usize;
     let qkv_len = qkv_row.len();
     let input_row_stride = qkv_len + gate_len;
     let qkvg = (0..2)
         .flat_map(|batch| {
-            qkv_row.iter().copied().chain((0..gate_len).map(move |index| 10.0 + batch as f32 + index as f32 * 0.01))
+            qkv_row
+                .iter()
+                .copied()
+                .chain((0..gate_len).map(move |index| bf16::from_f32(10.0 + batch as f32 + index as f32 * 0.01)))
         })
         .collect::<Vec<_>>()
         .into_boxed_slice();
@@ -336,7 +339,7 @@ fn test_gated_row_stride() {
         ..input
     };
 
-    let assert_addressing = |output: &[f32], backend: &str| {
+    let assert_addressing = |output: &[bf16], backend: &str| {
         for batch in 0..input.batch_size as usize {
             let row_offset = batch * input_row_stride;
             for index in row_offset..row_offset + (input.num_q_heads * input.head_dim) as usize {
@@ -348,59 +351,39 @@ fn test_gated_row_stride() {
         }
     };
 
-    let expected = get_output::<Cpu, f32, f32, f32, f32>(&input);
+    let expected = get_output::<Cpu, bf16, f32, bf16, f32>(&input);
     assert_addressing(&expected, "CPU");
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<B, f32, f32, f32, f32>(&input);
+        let output = get_output::<B, bf16, f32, bf16, f32>(&input);
         assert_addressing(&output, std::any::type_name::<B>());
-        assert_eq_float(&expected, &output, 1e-5, "QKVG row stride mismatch");
+        assert_eq_float(&expected, &output, 1e-2, "QKVG row stride mismatch");
     });
 }
 
 // Q norm tests
 #[uzu_test]
-fn test_q_norm_f32_f32_f32_f32() {
-    test_q_norm::<f32, f32, f32, f32>();
-}
-
-#[uzu_test]
-fn test_q_norm_bf16_bf16_bf16_f32() {
-    test_q_norm::<bf16, bf16, bf16, f32>();
+fn test_q_norm_bf16_f32_bf16_f32() {
+    test_q_norm::<bf16, f32, bf16, f32>();
 }
 
 // K norm tests
 #[uzu_test]
-fn test_k_norm_f32_f32_f32_f32() {
-    test_k_norm::<f32, f32, f32, f32>();
+fn test_k_norm_bf16_f32_bf16_f32() {
+    test_k_norm::<bf16, f32, bf16, f32>();
 }
 
 #[uzu_test]
-fn test_k_norm_bf16_bf16_bf16_f32() {
-    test_k_norm::<bf16, bf16, bf16, f32>();
-}
-
-#[uzu_test]
-fn test_v_norm_no_scales_f32_f32_f32_f32() {
-    test_v_norm_no_scales::<f32, f32, f32, f32>();
-}
-
-#[uzu_test]
-fn test_v_norm_no_scales_bf16_bf16_bf16_f32() {
-    test_v_norm_no_scales::<bf16, bf16, bf16, f32>();
+fn test_v_norm_no_scales_bf16_f32_bf16_f32() {
+    test_v_norm_no_scales::<bf16, f32, bf16, f32>();
 }
 
 // Addressing tests (Q norm should not touch K/V)
 #[uzu_test]
-fn test_addressing_f32_f32_f32_f32() {
-    test_addressing::<f32, f32, f32, f32>();
+fn test_addressing_bf16_f32_bf16_f32() {
+    test_addressing::<bf16, f32, bf16, f32>();
 }
 
 #[uzu_test]
-fn test_v_addressing_f32_f32_f32_f32() {
-    test_v_addressing::<f32, f32, f32, f32>();
-}
-
-#[uzu_test]
-fn test_v_addressing_bf16_bf16_bf16_f32() {
-    test_v_addressing::<bf16, bf16, bf16, f32>();
+fn test_v_addressing_bf16_f32_bf16_f32() {
+    test_v_addressing::<bf16, f32, bf16, f32>();
 }

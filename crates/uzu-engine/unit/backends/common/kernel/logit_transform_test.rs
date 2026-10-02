@@ -66,28 +66,13 @@ fn test_logit_transform<T: ArrayElement + Float + Display>(
 }
 
 #[uzu_test]
-fn test_soft_cap_f32() {
-    test_logit_transform::<f32>(1.0, Some(30.0));
-}
-
-#[uzu_test]
 fn test_soft_cap_bf16() {
     test_logit_transform::<bf16>(1.0, Some(30.0));
 }
 
 #[uzu_test]
-fn test_scale_f32() {
-    test_logit_transform::<f32>(2.5, None);
-}
-
-#[uzu_test]
 fn test_scale_bf16() {
     test_logit_transform::<bf16>(2.5, None);
-}
-
-#[uzu_test]
-fn test_scale_and_soft_cap_f32() {
-    test_logit_transform::<f32>(2.5, Some(30.0));
 }
 
 #[uzu_test]

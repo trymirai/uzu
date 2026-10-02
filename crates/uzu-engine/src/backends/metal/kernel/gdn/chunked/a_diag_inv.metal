@@ -19,7 +19,7 @@ using namespace metal;
 // writes packed column-pair blocks through the diagonal pair, copies the
 // diagonal block into threadgroup memory, then writes (I + A_diag)^-1 to a_inv.
 template <uint CHUNK_SIZE>
-VARIANTS(CHUNK_SIZE, 32, 64)
+VARIANTS(CHUNK_SIZE, 64)
 KERNEL(DeltaNetChunkedADiagInv)(
     device const float* kk,
     device const float* beta,

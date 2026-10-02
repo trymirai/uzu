@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
@@ -84,15 +84,6 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 // Basic tests
-#[uzu_test]
-fn test_basic_f32() {
-    test_internal::<f32>(2, 16, 64);
-}
-
-#[uzu_test]
-fn test_basic_f16() {
-    test_internal::<f16>(2, 16, 64);
-}
 
 #[uzu_test]
 fn test_basic_bf16() {
@@ -100,15 +91,6 @@ fn test_basic_bf16() {
 }
 
 // Single batch
-#[uzu_test]
-fn test_single_batch_f32() {
-    test_internal::<f32>(1, 32, 128);
-}
-
-#[uzu_test]
-fn test_single_batch_f16() {
-    test_internal::<f16>(1, 32, 128);
-}
 
 #[uzu_test]
 fn test_single_batch_bf16() {
@@ -116,15 +98,6 @@ fn test_single_batch_bf16() {
 }
 
 // Single token sequence — mean of one element equals that element
-#[uzu_test]
-fn test_single_token_f32() {
-    test_internal::<f32>(2, 1, 64);
-}
-
-#[uzu_test]
-fn test_single_token_f16() {
-    test_internal::<f16>(2, 1, 64);
-}
 
 #[uzu_test]
 fn test_single_token_bf16() {
@@ -133,26 +106,17 @@ fn test_single_token_bf16() {
 
 // Large hidden dim
 #[uzu_test]
-fn test_large_hidden_dim_f32() {
-    test_internal::<f32>(2, 8, 512);
+fn test_large_hidden_dim_bf16() {
+    test_internal::<bf16>(2, 8, 512);
 }
 
 // Long sequence — more accumulation, tests precision
 #[uzu_test]
-fn test_long_seq_f32() {
-    test_internal::<f32>(1, 256, 64);
+fn test_long_seq_bf16() {
+    test_internal::<bf16>(1, 256, 64);
 }
 
 // Non-aligned hidden dim
-#[uzu_test]
-fn test_non_aligned_f32() {
-    test_internal::<f32>(3, 10, 100);
-}
-
-#[uzu_test]
-fn test_non_aligned_f16() {
-    test_internal::<f16>(3, 10, 100);
-}
 
 #[uzu_test]
 fn test_non_aligned_bf16() {

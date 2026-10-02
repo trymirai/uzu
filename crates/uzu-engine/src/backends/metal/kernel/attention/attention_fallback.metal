@@ -11,7 +11,7 @@ using namespace uzu::ring;
 using namespace uzu::trie;
 
 template <typename T>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 KERNEL(AttentionFallbackScatterScores)(
     const device T* group_scores,
     device T* scores,
@@ -59,7 +59,7 @@ KERNEL(AttentionFallbackScatterScores)(
 }
 
 template <typename T>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 KERNEL(AttentionFallbackScatterValues)(
     const device T* group_output,
     device T* out,

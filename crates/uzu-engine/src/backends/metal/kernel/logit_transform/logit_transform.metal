@@ -3,7 +3,7 @@
 #include "../common/soft_cap.h"
 
 template <typename T>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(LogitTransform)(
     device T* logits,
     constant uint& length,

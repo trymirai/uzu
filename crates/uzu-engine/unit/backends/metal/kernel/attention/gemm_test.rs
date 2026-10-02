@@ -206,18 +206,8 @@ fn test_unaligned<T: ArrayElement + Float + Debug + Display>() {
 }
 
 #[uzu_test]
-fn test_basic_f32() {
-    test_basic::<f32>();
-}
-
-#[uzu_test]
 fn test_basic_bf16() {
     test_basic::<bf16>();
-}
-
-#[uzu_test]
-fn test_causal_f32() {
-    test_causal::<f32>();
 }
 
 #[uzu_test]
@@ -226,28 +216,13 @@ fn test_causal_bf16() {
 }
 
 #[uzu_test]
-fn test_gqa_f32() {
-    test_gqa::<f32>();
-}
-
-#[uzu_test]
 fn test_gqa_bf16() {
     test_gqa::<bf16>();
 }
 
 #[uzu_test]
-fn test_head_dim_128_f32() {
-    test_head_dim::<f32>(128);
-}
-
-#[uzu_test]
 fn test_head_dim_128_bf16() {
     test_head_dim::<bf16>(128);
-}
-
-#[uzu_test]
-fn test_unaligned_f32() {
-    test_unaligned::<f32>();
 }
 
 #[uzu_test]

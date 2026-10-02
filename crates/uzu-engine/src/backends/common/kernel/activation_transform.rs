@@ -30,7 +30,7 @@ impl ActivationQuantization {
         emit_group_sums: bool,
         code_layout: Int8CodeLayout,
     ) -> Option<Self> {
-        (matches!(scale_group_size, 32 | 64 | 128)
+        (scale_group_size == ACTIVATION_SCALE_GROUP_SIZE
             && matches!(weight_group_size, 32 | 64 | 128)
             && scale_group_size >= weight_group_size)
             .then_some(Self {

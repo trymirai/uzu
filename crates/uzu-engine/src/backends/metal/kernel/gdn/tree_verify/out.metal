@@ -25,8 +25,8 @@ using namespace uzu::matmul;
 // o[row, value] = exp(prefix[row]) * scale * dot(q[row], h0[value])
 //                 + sum_j qkd[row, j] * u[j, value]
 template <typename QKT, typename OutputT, bool use_mxu, bool transposed_h0>
-VARIANTS(QKT, float, bfloat)
-VARIANTS(OutputT, float, bfloat)
+VARIANTS(QKT, bfloat)
+VARIANTS(OutputT, bfloat)
 VARIANTS(use_mxu, false, true)
 VARIANTS(transposed_h0, false, true)
 CONSTRAINT(!(use_mxu && transposed_h0))
