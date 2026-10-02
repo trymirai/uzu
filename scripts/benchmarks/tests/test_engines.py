@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from bench import BenchRequest, BenchResponse, BenchSampling, ChatMessage, ChatRole
 
-from .engines import llamacpp, mlx, mtplx, omlx
+from .engines import llamacpp, mlx, mtplx, omlx, splash
 from .engines.engine_process import EngineProcess, run_engine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +69,20 @@ def omlx_engine(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPat
 
     stderr_log = tmp_path_factory.mktemp("engine-omlx") / "stderr.log"
     with run_engine(omlx.command(request.config), ROOT, stderr_log, timeout) as process:
+        yield process
+
+
+@pytest.fixture(scope="class")
+def splash_engine(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> Iterator[EngineProcess]:
+    if "splash" not in request.config.getoption("engine"):
+        pytest.skip("Enable Splash tests with --engine splash")
+
+    timeout = request.config.getoption("engine_timeout")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise pytest.UsageError("--engine-timeout must be finite and greater than zero")
+
+    stderr_log = tmp_path_factory.mktemp("engine-splash") / "stderr.log"
+    with run_engine(splash.command(request.config), ROOT, stderr_log, timeout) as process:
         yield process
 
 
@@ -141,3 +155,9 @@ class TestOMLX(EngineTests):
     @pytest.fixture
     def engine(self, omlx_engine: EngineProcess) -> EngineProcess:
         return omlx_engine
+
+
+class TestSplash(EngineTests):
+    @pytest.fixture
+    def engine(self, splash_engine: EngineProcess) -> EngineProcess:
+        return splash_engine

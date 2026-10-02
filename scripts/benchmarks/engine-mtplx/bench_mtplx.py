@@ -130,9 +130,8 @@ class MTPLXEngine(InferenceEngine):
         def update_memory(*_progress: object) -> None:
             nonlocal mem_counters_max
             counters = get_memory_counters()
-            mem_counters_max.phys_footprint = max(mem_counters_max.phys_footprint, counters.phys_footprint)
-            mem_counters_max.resident_size = max(mem_counters_max.resident_size, counters.resident_size)
-            mem_counters_max.graphics_total = max(mem_counters_max.graphics_total, counters.graphics_total)
+            if counters.graphics_total > mem_counters_max.graphics_total:
+                mem_counters_max = counters
 
         def token_callback(token_ids: list[int]) -> None:
             nonlocal time_first_token

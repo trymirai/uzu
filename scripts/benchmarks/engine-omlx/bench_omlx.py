@@ -230,10 +230,9 @@ class OMLXEngine(InferenceEngine):
                     time_last_token = response.generated_until if response.generated_until is not None else generated_at
                     completion_tokens = response.completion_tokens
 
-                mem_counters = get_memory_counters()
-                mem_counters_max.phys_footprint = max(mem_counters_max.phys_footprint, mem_counters.phys_footprint)
-                mem_counters_max.resident_size = max(mem_counters_max.resident_size, mem_counters.resident_size)
-                mem_counters_max.graphics_total = max(mem_counters_max.graphics_total, mem_counters.graphics_total)
+                counters = get_memory_counters()
+                if counters.graphics_total > mem_counters_max.graphics_total:
+                    mem_counters_max = counters
         time_total: float = time.perf_counter() - time_start
 
         if response is None:

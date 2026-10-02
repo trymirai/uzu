@@ -18,6 +18,7 @@ PROJECT_DIR = Path(__file__).resolve().parent
 SPLASH_DIR = PROJECT_DIR / "deps" / "splash"
 BUILD_DIR = SPLASH_DIR / "build"
 SPLASH_BINARY = BUILD_DIR / "splash"
+MEMORY_SAMPLE_INTERVAL = 0.1
 
 
 def get_model_path(model: str | Path) -> Path:
@@ -27,7 +28,8 @@ def get_model_path(model: str | Path) -> Path:
     if path.is_dir():
         root = path.resolve()
     else:
-        selection = models.Selection.of(paths.MODELS, str(model))
+        # Benchmark requests contain text only; skip vision weights and warmup.
+        selection = models.Selection.of(paths.MODELS, str(model), language_only=True)
         upstream.prepare(selection)
         root = selection.link.resolve()
 
@@ -118,7 +120,8 @@ class SplashEngine(InferenceEngine):
                 self.backend,
                 str(model),
                 ready.max_context_tokens,
-                256,
+                # With no output limit, use all remaining context until EOS.
+                ready.max_context_tokens,
                 1800.0,
                 ready.max_concurrent_requests,
                 constraint_factory=ConstraintFactory(self.tokenizer),
@@ -127,7 +130,7 @@ class SplashEngine(InferenceEngine):
                 vision=ready.vision,
             )
             # Fail before accepting requests if child-process accounting is unavailable.
-            self._memory()
+            self._get_memory_counters()
         except BaseException:
             self.close()
             raise
@@ -166,11 +169,12 @@ class SplashEngine(InferenceEngine):
         if request.speculative_depth not in (None, 7):
             raise ValueError("Splash 1.1.0 uses a fixed speculative_depth of 7; it cannot disable or resize drafting")
 
-        max_tokens = request.max_tokens if request.max_tokens is not None else 256
-        if max_tokens < 1:
-            raise ValueError("max_tokens must be 1 or greater")
+        if request.max_tokens is not None and request.max_tokens < 0:
+            raise ValueError("max_tokens must be 0 or greater")
 
-        body = {"max_tokens": max_tokens, **sampling_options(request.sampling)}
+        body: dict = sampling_options(request.sampling)
+        if request.max_tokens:
+            body["max_tokens"] = request.max_tokens
         if request.prompt_text is None:
             if request.prompt_chat is None:
                 raise ValueError("prompt_text and prompt_chat are None")
@@ -190,13 +194,16 @@ class SplashEngine(InferenceEngine):
         tokens = self.frontend.tokenize({"content": request.prompt_text, "add_special": True}, deadline=deadline)
         if not tokens:
             raise ValueError("Input prompt is empty")
-        if len(tokens) + body["max_tokens"] > self.frontend.max_context:
+        # Native Splash requires a positive, context-bounded output budget.
+        # Its EOS handling still stops generation before this limit.
+        max_tokens = body.get("max_tokens", self.frontend.max_context - len(tokens))
+        if max_tokens < 1 or len(tokens) + max_tokens > self.frontend.max_context:
             raise ValueError("prompt and max_tokens exceed the context window")
 
         return self._job_type(
             request_id=next(self.frontend.ids),
             prompt_tokens=tokens,
-            max_new_tokens=body["max_tokens"],
+            max_new_tokens=max_tokens,
             seed=secrets.randbits(64),
             temperature=body["temperature"],
             top_p=body["top_p"],
@@ -217,7 +224,7 @@ class SplashEngine(InferenceEngine):
             raise RuntimeError("Splash status does not match the current schema")
         return snapshot
 
-    def _memory(self):
+    def _get_memory_counters(self):
         process = self.process
         if process is None or process.poll() is not None:
             raise RuntimeError("Splash process is not running")
@@ -237,7 +244,8 @@ class SplashEngine(InferenceEngine):
         process = self.process
         restarts = self.runtime.restart_count
         before = self._status()
-        memory = self._memory()
+        memory = self._get_memory_counters()
+        next_memory_sample = time.monotonic() + MEMORY_SAMPLE_INTERVAL
         chunks = []
         submitted = False
         submission_complete = False
@@ -266,9 +274,14 @@ class SplashEngine(InferenceEngine):
                 if self.process is not process or self.runtime.restart_count != restarts:
                     raise RuntimeError("Splash restarted during the benchmark")
 
-                current = self._memory()
-                if current.graphics_total > memory.graphics_total:
-                    memory = current
+                # Detokenization can emit several text fragments per native
+                # batch. Keep Mach queries off that per-fragment hot path.
+                now = time.monotonic()
+                if kind in ("start", "done") or now >= next_memory_sample:
+                    current = self._get_memory_counters()
+                    if current.graphics_total > memory.graphics_total:
+                        memory = current
+                    next_memory_sample = now + MEMORY_SAMPLE_INTERVAL
                 if kind == "text":
                     chunks.append(value)
                 elif kind == "done":
