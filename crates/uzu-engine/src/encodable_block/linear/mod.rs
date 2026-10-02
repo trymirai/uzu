@@ -1,3 +1,4 @@
+use derive_more::Debug;
 use thiserror::Error;
 
 mod input_rht;
