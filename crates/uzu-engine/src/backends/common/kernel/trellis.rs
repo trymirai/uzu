@@ -16,8 +16,10 @@ pub fn mixing_dimension(columns: u32) -> u32 {
 pub struct RotatedInput<B: Backend> {
     /// i8 `[batch, columns]`
     pub activations: B::ScratchBuffer,
-    /// f32 `[batch, column group sums.., scale, 0, 0, 0]`
-    pub column_group_sums_and_scale: B::ScratchBuffer,
+    /// f32 `[batch, 4]`
+    pub column_group_sums: B::ScratchBuffer,
+    /// f32 `[batch]`
+    pub scales: B::ScratchBuffer,
     pub batch: u32,
     pub columns: u32,
 }
@@ -32,6 +34,7 @@ impl<B: Backend> TrellisTransform<B> {
         context: &B::Context,
         columns: u32,
     ) -> Result<Option<Self>, B::Error> {
+        // TODO: a columns agnostic kernel?
         if !SUPPORTED_COLUMNS.contains(&columns) {
             return Ok(None);
         }
@@ -51,20 +54,23 @@ impl<B: Backend> TrellisTransform<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<RotatedInput<B>, B::Error> {
         let mut activations = command_buffer.allocate_scratch_for_shape(&[batch, self.columns], DataType::I8)?;
-        let mut column_group_sums_and_scale = command_buffer
-            .allocate_scratch_for_shape(&[batch, trellis::COLUMN_GROUP_SUMS_AND_SCALE_LEN], DataType::F32)?;
+        let mut column_group_sums =
+            command_buffer.allocate_scratch_for_shape(&[batch, trellis::COLUMN_GROUP_COUNT], DataType::F32)?;
+        let mut scales = command_buffer.allocate_scratch_for_shape(&[batch], DataType::F32)?;
         self.kernel.encode(
             input,
             rht_factors,
             mixing,
             &mut activations,
-            &mut column_group_sums_and_scale,
+            &mut column_group_sums,
+            &mut scales,
             batch,
             command_buffer,
         );
         Ok(RotatedInput {
             activations,
-            column_group_sums_and_scale,
+            column_group_sums,
+            scales,
             batch,
             columns: self.columns,
         })

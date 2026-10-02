@@ -2,10 +2,7 @@ use half::bf16;
 use uzu_engine_macros::kernel;
 
 use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8};
-use crate::backends::common::{
-    gpu_types::trellis::{COLUMN_GROUP_COUNT, COLUMN_GROUP_SUMS_AND_SCALE_LEN},
-    kernel::mixing_dimension,
-};
+use crate::backends::common::{gpu_types::trellis::COLUMN_GROUP_COUNT, kernel::mixing_dimension};
 
 fn rotate_token(
     input: &[bf16],
@@ -41,7 +38,8 @@ pub fn trellis_transform<const DIMENSION: u32>(
     rht_factors: *const f32,
     mixing: *const f32,
     activations: *mut i8,
-    column_group_sums_and_scale: *mut f32,
+    column_group_sums: *mut f32,
+    scales: *mut f32,
     batch: u32,
 ) {
     let columns = DIMENSION as usize;
@@ -52,24 +50,22 @@ pub fn trellis_transform<const DIMENSION: u32>(
     for token in 0..batch as usize {
         let row = unsafe { std::slice::from_raw_parts(input.add(token * columns), columns) };
         let quantized_row = unsafe { std::slice::from_raw_parts_mut(activations.add(token * columns), columns) };
-        let statistics = unsafe {
+        let column_group_sums_row = unsafe {
             std::slice::from_raw_parts_mut(
-                column_group_sums_and_scale.add(COLUMN_GROUP_SUMS_AND_SCALE_LEN as usize * token),
-                COLUMN_GROUP_SUMS_AND_SCALE_LEN as usize,
+                column_group_sums.add(COLUMN_GROUP_COUNT as usize * token),
+                COLUMN_GROUP_COUNT as usize,
             )
         };
 
         let rotated = rotate_token(row, rht_factors, mixing, mixing_dimension);
         let scale = min_max_symmetric_divisor(&rotated);
-        let mut column_group_sums = [0i32; COLUMN_GROUP_COUNT as usize];
+        let mut token_column_group_sums = [0i32; COLUMN_GROUP_COUNT as usize];
         for (column, (quantized, &value)) in quantized_row.iter_mut().zip(&rotated).enumerate() {
             *quantized = quantize_symmetric_i8(value, scale);
-            column_group_sums[column % COLUMN_GROUP_COUNT as usize] += i32::from(*quantized);
+            token_column_group_sums[column % COLUMN_GROUP_COUNT as usize] += i32::from(*quantized);
         }
 
-        let (column_group_sums_out, scale_out) = statistics.split_at_mut(COLUMN_GROUP_COUNT as usize);
-        column_group_sums_out.copy_from_slice(&column_group_sums.map(|sum| sum as f32));
-        scale_out[0] = scale;
-        scale_out[1..].fill(0.0);
+        column_group_sums_row.copy_from_slice(&token_column_group_sums.map(|sum| sum as f32));
+        unsafe { *scales.add(token) = scale };
     }
 }

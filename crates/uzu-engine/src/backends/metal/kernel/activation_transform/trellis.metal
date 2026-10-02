@@ -20,10 +20,6 @@ UZU_CONST uint NARROW_PASS_COLUMNS = 2;
 UZU_CONST uint WIDE_PASS_COLUMNS = 4;
 UZU_CONST uint WIDE_PASS_MIXING_DIMENSION_THRESHOLD = 8;
 
-UZU_CONST uint COLUMN_GROUP_SUMS_AND_SCALE_VECTORS =
-    trellis::COLUMN_GROUP_SUMS_AND_SCALE_LEN / trellis::COLUMN_GROUP_COUNT;
-UZU_CONST uint COLUMN_GROUP_SUMS_VECTOR = 0;
-UZU_CONST uint SCALE_VECTOR = 1;
 static_assert(trellis::COLUMN_GROUP_COUNT == 4, "column group sums are stored as one float4");
 
 static METAL_FUNC float butterfly(float value, ushort lane, ushort lane_stride) {
@@ -174,7 +170,8 @@ PUBLIC KERNEL(TrellisTransform)(
     device const float* rht_factors,
     device const float* mixing,
     device int8_t* activations,
-    device float4* column_group_sums_and_scale,
+    device float4* column_group_sums,
+    device float* scales,
     constant uint& batch,
     threadgroup float scratch[TransformPassLayout<DIMENSION>::SCRATCH_SIZE],
     threadgroup float simdgroup_maxima[TRANSFORM_SIMDGROUPS],
@@ -243,7 +240,7 @@ PUBLIC KERNEL(TrellisTransform)(
       reduce_activation_quantization_row_maximum<TRANSFORM_SIMDGROUPS>(local_maximum, simdgroup_maxima, thread_context);
   const float scale = int8_activation_scale(maximum);
 
-  int column_group_sums[trellis::COLUMN_GROUP_COUNT] = {0, 0, 0, 0};
+  int local_column_group_sums[trellis::COLUMN_GROUP_COUNT] = {0, 0, 0, 0};
   METAL_PRAGMA_UNROLL
   for (uint mixing_index = 0; mixing_index < MIXING_DIMENSION; ++mixing_index) {
     METAL_PRAGMA_UNROLL
@@ -254,14 +251,14 @@ PUBLIC KERNEL(TrellisTransform)(
       activations[token * DIMENSION + column] = quantized;
       METAL_PRAGMA_UNROLL
       for (uint column_group_index = 0; column_group_index < trellis::COLUMN_GROUP_COUNT; ++column_group_index) {
-        column_group_sums[column_group_index] +=
+        local_column_group_sums[column_group_index] +=
             (column % trellis::COLUMN_GROUP_COUNT) == column_group_index ? int(quantized) : 0;
       }
     }
   }
   METAL_PRAGMA_UNROLL
   for (uint column_group_index = 0; column_group_index < trellis::COLUMN_GROUP_COUNT; ++column_group_index) {
-    const int simdgroup_sum = simd_sum(column_group_sums[column_group_index]);
+    const int simdgroup_sum = simd_sum(local_column_group_sums[column_group_index]);
     if (lane == 0) {
       scratch[trellis::COLUMN_GROUP_COUNT * simdgroup + column_group_index] = float(simdgroup_sum);
     }
@@ -270,17 +267,15 @@ PUBLIC KERNEL(TrellisTransform)(
   if (thread_index == 0) {
     float4 token_column_group_sums = float4(0.0f);
     for (uint source_simdgroup = 0; source_simdgroup < TRANSFORM_SIMDGROUPS; ++source_simdgroup) {
-      const uint first_class_sum = trellis::COLUMN_GROUP_COUNT * source_simdgroup;
+      const uint first_group_sum = trellis::COLUMN_GROUP_COUNT * source_simdgroup;
       token_column_group_sums += float4(
-          scratch[first_class_sum],
-          scratch[first_class_sum + 1],
-          scratch[first_class_sum + 2],
-          scratch[first_class_sum + 3]
+          scratch[first_group_sum],
+          scratch[first_group_sum + 1],
+          scratch[first_group_sum + 2],
+          scratch[first_group_sum + 3]
       );
     }
-    column_group_sums_and_scale[token * COLUMN_GROUP_SUMS_AND_SCALE_VECTORS + COLUMN_GROUP_SUMS_VECTOR] =
-        token_column_group_sums;
-    column_group_sums_and_scale[token * COLUMN_GROUP_SUMS_AND_SCALE_VECTORS + SCALE_VECTOR] =
-        float4(scale, 0.0f, 0.0f, 0.0f);
+    column_group_sums[token] = token_column_group_sums;
+    scales[token] = scale;
   }
 }
