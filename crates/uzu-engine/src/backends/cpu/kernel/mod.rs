@@ -12,7 +12,6 @@ mod gated_act_mul;
 mod gdn;
 mod logit_transform;
 mod matmul;
-mod moe;
 mod normalization;
 mod pooling;
 mod radix_top_k_small;
