@@ -5,7 +5,10 @@ mod memory;
 
 use clap::Parser;
 
-use crate::{common::run_loop, engine::UzuEngine};
+use crate::{
+    common::{StdoutRedirect, run_loop},
+    engine::UzuEngine,
+};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -16,7 +19,9 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    let mut redirect = StdoutRedirect::to_stderr()?;
     let mut engine = UzuEngine::new(args.model.as_str()).await?;
+    redirect.restore()?;
     run_loop(&mut engine).await?;
     Ok(())
 }

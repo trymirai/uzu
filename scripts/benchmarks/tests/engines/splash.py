@@ -2,6 +2,8 @@
 
 import pytest
 
+from .engine_tests import EngineTests
+
 MODEL = "unsloth/Qwen3.8-27B-GGUF:UD-IQ1_S"
 
 
@@ -12,5 +14,9 @@ def add_options(parser: pytest.Parser) -> None:
     )
 
 
-def command(config: pytest.Config) -> list[str]:
-    return ["uv", "run", "splash", "--model", config.getoption("splash_model")]
+class TestSplash(EngineTests):
+    engine_name = "splash"
+
+    @staticmethod
+    def command(config: pytest.Config) -> list[str]:
+        return ["uv", "run", "splash", "--model", config.getoption("splash_model")]

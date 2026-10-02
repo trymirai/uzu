@@ -29,7 +29,8 @@ pub struct UzuEngine {
 
 impl UzuEngine {
     pub async fn new(model: &str) -> anyhow::Result<Self> {
-        let engine = Engine::new(EngineConfig::default()).await?;
+        let config = EngineConfig::default().with_allow_ollama_usage(false).with_allow_lmstudio_usage(false);
+        let engine = Engine::new(config).await?;
         let model = engine.model(model.to_string()).await?.context("Model not found")?;
         ensure!(model.is_on_device(), "Uzu benchmarks require an on-device model");
 
@@ -81,7 +82,6 @@ impl UzuEngine {
     ) -> anyhow::Result<BenchResponse> {
         // share model weights, but give every run a fresh KV cache and sampling state.
         let mut state = self.instance.state().await.map_err(anyhow::Error::msg)?;
-        let max_tokens = config.token_limit.context("Missing token limit")? as usize;
         let mut memory = MemoryCounters::collect()?;
         let mut output = Vec::new();
         let mut tokens_generated = 0;
@@ -90,7 +90,7 @@ impl UzuEngine {
 
         let started = Instant::now();
         let mut stream = self.instance.stream(tokens, state.as_mut(), config, CancellationToken::new());
-        while tokens_generated < max_tokens {
+        loop {
             let metrics = stream.metrics();
             let Some(event) = stream.next().await else {
                 break;
@@ -146,7 +146,7 @@ impl InferenceEngine for UzuEngine {
         ensure!(!tokens.is_empty(), "Prompt must contain at least one token");
 
         let context_length =
-            tokens.len().checked_add(config.token_limit.unwrap() as usize).context("Context size overflow")?;
+            tokens.len().checked_add(config.token_limit.unwrap_or(0) as usize).context("Context size overflow")?;
         if let Some(limit) = self.instance.max_context_length() {
             ensure!(
                 context_length <= limit,
@@ -173,8 +173,12 @@ fn get_config(request: &BenchRequest) -> anyhow::Result<(usize, ChatReplyConfig)
         "speculative_depth is not configurable through the Uzu API; omit it to use the model default"
     );
 
-    let max_tokens = request.max_tokens.unwrap_or(256) as u32;
-    ensure!(max_tokens > 0, "max_tokens must be 1 or greater");
+    let max_tokens = request
+        .max_tokens
+        .filter(|count| *count != 0)
+        .map(u32::try_from)
+        .transpose()
+        .context("max_tokens exceeds the Uzu API limit (u32::MAX)")?;
 
     let sampling = match &request.sampling {
         None => SamplingMethod::Greedy {},
@@ -189,7 +193,7 @@ fn get_config(request: &BenchRequest) -> anyhow::Result<(usize, ChatReplyConfig)
         },
     };
 
-    let config = ChatReplyConfig::default().with_token_limit(Some(max_tokens)).with_sampling_method(sampling);
+    let config = ChatReplyConfig::default().with_token_limit(max_tokens).with_sampling_method(sampling);
     Ok((num_runs, config))
 }
 

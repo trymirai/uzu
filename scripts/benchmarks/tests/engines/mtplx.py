@@ -2,6 +2,8 @@
 
 import pytest
 
+from .engine_tests import EngineTests
+
 MODEL = "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed"
 
 
@@ -12,5 +14,9 @@ def add_options(parser: pytest.Parser) -> None:
     )
 
 
-def command(config: pytest.Config) -> list[str]:
-    return ["uv", "run", "mtplx", "--model", config.getoption("mtplx_model")]
+class TestMTPLX(EngineTests):
+    engine_name = "mtplx"
+
+    @staticmethod
+    def command(config: pytest.Config) -> list[str]:
+        return ["uv", "run", "mtplx", "--model", config.getoption("mtplx_model")]
