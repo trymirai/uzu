@@ -56,8 +56,6 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
     let context = <B as Backend>::Context::new().unwrap();
     let context = context.as_ref();
     let bytes = |data: &[u8]| create_buffer_with_data::<B, u8>(context, data);
-    let (mode, method, group_size) = quantization.unwrap_or((U4, ScaleSymmetric, 128));
-
     let (mut scales, mut zero_points, mut biases) = (None, None, None);
     let (mut ladder_indices, mut ladder, mut codebook) = (None, None, None);
     let values = match table_kind {
@@ -65,6 +63,7 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
             bytes(bytemuck::cast_slice(&floats::<T>(VOCAB_SIZE * MODEL_DIM, |index| (index as f32 * 0.37).sin() * 3.0)))
         },
         Quantized => {
+            let (mode, method, group_size) = quantization.expect("quantization settings");
             let groups = MODEL_DIM.div_ceil(group_size);
             let group_values =
                 |value: fn(u32) -> f32| create_buffer_with_data::<B, T>(context, &floats(VOCAB_SIZE * groups, value));
@@ -104,6 +103,8 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
         None
     };
 
+    let (mode, method, group_size) = quantization
+        .map_or((None, None, None), |(mode, method, group_size)| (Some(mode), Some(method), Some(group_size)));
     let kernel = <<B as Backend>::Kernels as Kernels>::InputEmbeddingLookupKernel::new(
         context,
         T::data_type(),

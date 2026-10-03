@@ -30,9 +30,15 @@ pub fn input_embedding_lookup<T: ArrayElement + Float>(
     model_dim: u32,
     input_scale: f32,
     #[specialize] table_kind: EmbeddingTableKind,
-    #[specialize] group_size: u32,
-    #[specialize] quantization_mode: QuantizationMode,
-    #[specialize] quantization_method: QuantizationMethod,
+    #[specialize]
+    #[optional(table_kind == EmbeddingTableKind::Quantized)]
+    group_size: Option<u32>,
+    #[specialize]
+    #[optional(table_kind == EmbeddingTableKind::Quantized)]
+    quantization_mode: Option<QuantizationMode>,
+    #[specialize]
+    #[optional(table_kind == EmbeddingTableKind::Quantized)]
+    quantization_method: Option<QuantizationMethod>,
     #[specialize] use_hadamard: bool,
 ) {
     let factors = if use_hadamard {
@@ -41,11 +47,14 @@ pub fn input_embedding_lookup<T: ArrayElement + Float>(
         None
     };
     let dim = model_dim as usize;
-    let (num_groups, weights_stride) = if table_kind == EmbeddingTableKind::Quantized {
-        (dim.div_ceil(group_size as usize), dim / quantization_mode.packing_divisor() as usize)
-    } else {
-        (0, 0)
-    };
+    let quantization =
+        if let (Some(group_size), Some(mode), Some(method)) = (group_size, quantization_mode, quantization_method) {
+            let num_groups = dim.div_ceil(group_size as usize);
+            let weights_stride = dim / mode.packing_divisor() as usize;
+            Some((group_size, mode, method, num_groups, weights_stride))
+        } else {
+            None
+        };
     let dense_scale = T::from(input_scale).unwrap();
     for batch in 0..batch_size as usize {
         let row = unsafe { std::slice::from_raw_parts_mut(output.add(batch * dim), dim) };
@@ -61,6 +70,8 @@ pub fn input_embedding_lookup<T: ArrayElement + Float>(
                     (*(values as *const T).add(token * dim + column) * dense_scale).to_f32().unwrap()
                 },
                 EmbeddingTableKind::Quantized => {
+                    let (group_size, quantization_mode, quantization_method, num_groups, weights_stride) =
+                        quantization.expect("quantization settings");
                     let scales = scales.expect("quantized lookup requires scales");
                     let group = column / group_size as usize;
                     let index = token * num_groups + group;

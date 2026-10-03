@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
-        gpu_types::{EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode, d4s4},
+        gpu_types::{EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, d4s4},
         kernel::InputEmbeddingLookupKernel,
     },
     config::weight_matrix::{
@@ -13,7 +13,7 @@ use crate::{
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
-    encodable_block::weight_matrix::{QuantizationInfo, WeightMatrix, WeightMatrixError},
+    encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -142,17 +142,9 @@ impl<B: Backend> EmbeddingTable<B> {
                 }
             },
         };
-        // TODO: optional specialization?
-        let ignored_by_unquantized_lookup = QuantizationInfo {
-            mode: QuantizationMode::U4,
-            method: QuantizationMethod::ScaleSymmetric,
-            group_size: 128,
-        };
-        let QuantizationInfo {
-            mode,
-            method,
-            group_size,
-        } = quantization.unwrap_or(ignored_by_unquantized_lookup);
+        let group_size = quantization.map(|info| info.group_size);
+        let mode = quantization.map(|info| info.mode);
+        let method = quantization.map(|info| info.method);
         let use_hadamard = output_hadamard_factors.is_some();
         let lookup = LookupKernel::<B>::new(context, data_type, table_kind, group_size, mode, method, use_hadamard)
             .map_err(EmbeddingTableError::BackendError)?;
