@@ -1,5 +1,6 @@
 use uzu_engine_macros::{uzu_config, uzu_config_abstract};
 
+pub mod d4s4_spec;
 pub mod full_precision_spec;
 pub mod hybrid_spec;
 pub mod int_spec;
@@ -18,6 +19,7 @@ pub enum Layout {
     low_rank_spec::LowRankSpec,
     hybrid_spec::HybridSpec,
     int_spec::IntSpec,
-    mlx_spec::MLXSpec
+    mlx_spec::MLXSpec,
+    d4s4_spec::D4S4Spec
 )]
 pub struct WeightMatrixSpec;

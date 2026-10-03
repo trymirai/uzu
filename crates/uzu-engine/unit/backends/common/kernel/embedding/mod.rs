@@ -1,2 +1,1 @@
-mod full_precision_embedding_test;
-mod quant_embedding_test;
+mod input_embedding_lookup_test;
