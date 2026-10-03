@@ -1,0 +1,136 @@
+/* Light values live in @theme so Tailwind generates the utilities; the .dark
+   block below overrides the same variables, so every color utility follows
+   the theme without a dark: twin. */
+@theme {
+  --font-sans:
+    InterVariable, Inter, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono:
+    "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --breakpoint-lg: 1050px;
+  --ease-spring: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* Gray scale replaces Tailwind's so only these steps exist. */
+  --color-gray-*: initial;
+  --color-gray-50: #fff;
+  --color-gray-100: #fcfcfc;
+  --color-gray-200: #f9f9f9;
+  --color-gray-300: #f0f0f0;
+  --color-gray-500: #e0e0e0;
+  --color-gray-600: #d9d9d9;
+  --color-gray-700: #cecece;
+  --color-gray-1000: #838383;
+  --color-gray-1100: #646464;
+  --color-gray-1200: #202020;
+
+  --color-red-500: #fb2c36;
+  --color-red-600: #e40014;
+  --color-green-500: #00c758;
+  --color-blue-500: #3080ff;
+  --color-amber-500: #f99c00;
+
+  --color-background: #fcfcfc;
+  --color-primary: var(--color-gray-1200);
+  --color-primary-hover: var(--color-gray-1100);
+  --color-primary-active: var(--color-gray-1000);
+  --color-primary-contrast: var(--color-gray-50);
+  --color-secondary: var(--color-gray-50);
+  --color-secondary-hover: var(--color-gray-200);
+  --color-secondary-active: var(--color-gray-300);
+  --color-secondary-contrast: var(--color-gray-1200);
+  --color-tertiary-hover: var(--color-gray-200);
+  --color-control-surface-hover: var(--color-gray-500);
+  --color-control-surface-active: var(--color-gray-500);
+  --color-danger: var(--color-red-500);
+  --color-danger-hover: var(--color-red-600);
+  --color-danger-active: #c70010;
+  --color-danger-contrast: #ffffff;
+  --color-danger-bg: rgb(from var(--color-red-500) r g b / 0.08);
+  --color-success: var(--color-green-500);
+  --color-success-bg: rgb(from var(--color-green-500) r g b / 0.08);
+  --color-success-border: rgb(from var(--color-green-500) r g b / 0.4);
+  --color-text-primary: var(--color-gray-1200);
+  --color-text-secondary: var(--color-gray-1100);
+  --color-text-muted: var(--color-gray-1000);
+  --color-text-disabled: var(--color-gray-700);
+  --color-border-default: rgb(from var(--color-black) r g b / 0.1);
+  --color-border-strong: rgb(from var(--color-black) r g b / 0.2);
+  --color-border-outlined: rgb(from var(--color-black) r g b / 0.15);
+  --color-border-outlined-hover: rgb(from var(--color-black) r g b / 0.22);
+  --color-slider-track: var(--color-gray-500);
+  --color-surface-secondary: var(--color-gray-100);
+  --color-surface-tertiary: var(--color-gray-300);
+  --color-surface-elevated: var(--color-gray-50);
+  --color-overlay: rgba(0, 0, 0, 0.4);
+
+  --color-bg-sidebar: #f5f5f5;
+  --color-bg-hover: #e5e5e5;
+  --color-bg-sub: #f4f5f5;
+  --color-bg-modal: #ffffff;
+  --color-card-hover: #f6f8f8;
+  --color-button-border: #dfe1e2;
+  --color-cell-border: #e5e5e5;
+  --color-label-title: #000000;
+  --color-label-muted: #526168;
+  --color-blue: #33bbff;
+  --color-error: #ff2020;
+  --color-progress: #ff6a20;
+
+  --shadow-sm:
+    0px 0px 0px 1px rgb(from var(--color-black) r g b / 0.06),
+    0px 1px 2px -1px rgb(from var(--color-black) r g b / 0.06),
+    0px 2px 4px 0px rgb(from var(--color-black) r g b / 0.04);
+  --shadow-md:
+    0px 0px 0px 1px rgb(from var(--color-black) r g b / 0.06),
+    0px 2px 4px -1px rgb(from var(--color-black) r g b / 0.06),
+    0px 4px 8px -1px rgb(from var(--color-black) r g b / 0.06);
+  --shadow-lg:
+    0px 0px 0px 1px rgb(from var(--color-black) r g b / 0.04),
+    0px 4px 8px -2px rgb(from var(--color-black) r g b / 0.06),
+    0px 8px 16px -4px rgb(from var(--color-black) r g b / 0.08);
+  --shadow-xl:
+    0px 0px 0px 1px rgb(from var(--color-black) r g b / 0.04),
+    0px 8px 16px -4px rgb(from var(--color-black) r g b / 0.08),
+    0px 16px 32px -8px rgb(from var(--color-black) r g b / 0.1);
+  --shadow-custom: var(--shadow-sm);
+  --shadow-custom-hover: var(--shadow-md);
+  --shadow-focus: 0 0 0 2px #fff, 0 0 0 4px #0969da;
+}
+
+.dark {
+  --color-gray-50: #0f0f0f;
+  --color-gray-100: #111;
+  --color-gray-200: #191919;
+  --color-gray-300: #222;
+  --color-gray-500: #313131;
+  --color-gray-600: #3a3a3a;
+  --color-gray-700: #484848;
+  --color-gray-1000: #7b7b7b;
+  --color-gray-1100: #b5b5b5;
+  --color-gray-1200: #eee;
+
+  --color-background: #0a0a0a;
+  --color-border-default: rgb(from var(--color-white) r g b / 0.07);
+  --color-border-strong: rgb(from var(--color-white) r g b / 0.2);
+  --color-border-outlined: rgb(from var(--color-white) r g b / 0.12);
+  --color-border-outlined-hover: rgb(from var(--color-white) r g b / 0.2);
+  --color-surface-tertiary: var(--color-gray-200);
+  --color-surface-elevated: var(--color-gray-100);
+  --color-overlay: rgba(0, 0, 0, 0.7);
+
+  --color-bg-sidebar: #050506;
+  --color-bg-hover: #181a1b;
+  --color-bg-sub: #1f1f1f;
+  --color-bg-modal: #141414;
+  --color-card-hover: #1f1f1f;
+  --color-button-border: #343434;
+  --color-cell-border: #212227;
+  --color-label-title: #ffffff;
+  --color-label-muted: #9198a1;
+
+  --shadow-sm: 0 0 0 1px rgb(from var(--color-white) r g b / 0.1);
+  --shadow-md: 0 0 0 1px rgb(from var(--color-white) r g b / 0.15);
+  --shadow-lg: 0 0 0 1px rgb(from var(--color-white) r g b / 0.1);
+  --shadow-xl: 0 0 0 1px rgb(from var(--color-white) r g b / 0.1);
+  --shadow-focus: 0 0 0 2px #0b0b0b, 0 0 0 4px #58a6ff;
+}

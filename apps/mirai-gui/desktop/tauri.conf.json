@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Mirai",
+  "mainBinaryName": "Mirai",
+  "version": "../package.json",
+  "identifier": "com.mirai.tech.chat",
+  "build": {
+    "beforeDevCommand": "pnpm run client:dev",
+    "devUrl": "http://localhost:3002",
+    "beforeBuildCommand": "pnpm run client:build",
+    "frontendDist": "../client/dist-tauri"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://assets.trymirai.com; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU4RjRBNEIxRDVCNjEzMkQKUldRdEU3YlZzYVQwNkxkeWw5cFlRUE5veE1mdmMwdDVFcEQvSXdsVVZKNVhGUFovWDZOK0tKYloK",
+      "endpoints": []
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/icon.png", "icons/icon.icns"],
+    "category": "public.app-category.productivity",
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "26.4",
+      "dmg": {
+        "background": "dmg-background.tiff",
+        "windowSize": { "width": 638, "height": 398 },
+        "appPosition": { "x": 165, "y": 200 },
+        "applicationFolderPosition": { "x": 473, "y": 200 }
+      }
+    }
+  }
+}

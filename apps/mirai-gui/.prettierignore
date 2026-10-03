@@ -1,0 +1,5 @@
+client/src/route-tree.gen.ts
+client/dist-*/
+desktop/target/
+desktop/gen/
+pnpm-lock.yaml
