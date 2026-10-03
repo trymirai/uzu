@@ -20,14 +20,6 @@ struct SimdReduceMax {
   static T simd_reduce(T x) { return simd_max(x); }
 };
 
-template <typename T>
-struct SimdReduceMin {
-  using value_type = T;
-  static constant constexpr T identity =
-      numeric_limits<T>::has_infinity ? numeric_limits<T>::infinity() : numeric_limits<T>::max();
-  static T simd_reduce(T x) { return simd_min(x); }
-};
-
 template <typename Op, ushort BLOCK_SIZE>
 static typename Op::value_type threadgroup_cooperative_reduce(
     typename Op::value_type value,

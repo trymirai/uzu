@@ -7,7 +7,7 @@ use syn::{Ident, Type};
 
 use super::super::{
     ast::{MetalArgumentType, MetalKernelInfo},
-    enum_path_rewrite::gpu_type_kind_for_c_type,
+    enum_path_rewrite::{gpu_type_kind_for_c_type, rewrite_for_rust},
 };
 use crate::common::enum_paths::{EnumPaths, GpuTypeKind};
 
@@ -22,10 +22,12 @@ struct SpecializeArgument {
     rust_type: Type,
     function_constant_index: usize,
     lowering: SpecializeLowering,
+    optional: bool,
 }
 
 pub struct SpecializeEmission {
     arguments: Vec<SpecializeArgument>,
+    pub presence_checks: Vec<TokenStream>,
 }
 
 pub struct RetainedSpecializations {
@@ -39,6 +41,7 @@ pub fn parse(
     kernel_name: &str,
     enum_paths: &EnumPaths,
 ) -> Result<SpecializeEmission> {
+    let mut presence_checks = Vec::new();
     let arguments = kernel
         .arguments
         .iter()
@@ -58,17 +61,25 @@ pub fn parse(
                 Some(GpuTypeKind::OptionSet) => SpecializeLowering::OptionSet,
                 None => SpecializeLowering::Direct,
             };
+            if let Some(condition) = argument.condition.as_deref() {
+                let condition = rewrite_for_rust(enum_paths, condition)?;
+                presence_checks.push(quote! {
+                    assert_eq!(#name.is_some(), #condition, concat!("invalid presence for specialization ", stringify!(#name)));
+                });
+            }
             Ok(SpecializeArgument {
                 name,
                 rust_type,
                 function_constant_index,
                 lowering,
+                optional: argument.condition.is_some(),
             })
         })
         .collect::<Result<_>>()?;
 
     Ok(SpecializeEmission {
         arguments,
+        presence_checks,
     })
 }
 
@@ -120,7 +131,7 @@ impl SpecializeEmission {
             .map(|argument| {
                 let name = &argument.name;
                 let index = argument.function_constant_index;
-                match &argument.lowering {
+                let assignment = match &argument.lowering {
                     SpecializeLowering::Direct => {
                         quote! { function_constants.set_value(&#name, #index); }
                     },
@@ -130,6 +141,11 @@ impl SpecializeEmission {
                     SpecializeLowering::OptionSet => {
                         quote! { function_constants.set_value(&#name.bits(), #index); }
                     },
+                };
+                if argument.optional {
+                    quote! { if let Some(#name) = #name { #assignment } }
+                } else {
+                    assignment
                 }
             })
             .collect();
