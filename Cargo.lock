@@ -504,6 +504,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
+name = "benchmarks-uzu"
+version = "0.5.30"
+dependencies = [
+ "anyhow",
+ "cc",
+ "clap",
+ "futures",
+ "hanashi",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "uzu",
+]
+
+[[package]]
 name = "binascii"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

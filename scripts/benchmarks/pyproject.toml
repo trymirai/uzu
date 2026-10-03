@@ -1,0 +1,30 @@
+[project]
+name = "benchmarks"
+version = "0.0.1"
+readme = "README.md"
+requires-python = ">=3.13.7"
+
+dependencies = ["benchmarks-common"]
+
+[dependency-groups]
+dev = ["packaging>=26.3", "pytest>=9.0.3", "ruff>=0.16.8", "ty>=0.0.84"]
+
+[tool.uv.sources]
+benchmarks-common = { path = "common-py", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["common-py/src"]
+markers = [
+    "integration: runs real inference engines (opt in with --engine)",
+    "engine_versions: checks engine pins against upstream releases (requires network)",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+extend-select = ["E501"]
+
+[tool.ty.environment]
+extra-paths = ["engine-splash/deps"]
