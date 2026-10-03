@@ -19,6 +19,7 @@ using namespace metal;
 #define KERNEL(NAME) DSL_META("dsl.kernel") void NAME
 
 #define SPECIALIZE DSL_META("dsl.specialize")
+#define SPECIALIZE_IF(EXPR) DSL_META("dsl.specialize_if", DSL_XSTR(EXPR))
 #define OPTIONAL(EXPR) DSL_META("dsl.optional", DSL_XSTR(EXPR))
 
 #define AXIS(TDS, TPG) DSL_META("dsl.axis", DSL_XSTR(TDS), DSL_XSTR(TPG))

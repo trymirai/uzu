@@ -42,7 +42,7 @@ pub fn bindgen(
     let conditional_buffer_fields: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.struct_field()).collect();
     let conditional_buffer_initializers: Vec<TokenStream> =
-        argument_emissions.iter().filter_map(|argument| argument.struct_initializer()).collect();
+        argument_emissions.iter().filter_map(|argument| argument.struct_initializer(kernel)).collect();
     let mut encode_argument_definitions: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.encode_argument_definition()).collect();
     let encode_deconstructs: Vec<TokenStream> =
@@ -61,6 +61,7 @@ pub fn bindgen(
     let entry_name = dynamic_mangle(kernel_name, variant_kernel_format);
 
     let specialize_arguments = specialize_emission.constructor_arguments();
+    let specialization_validation = &specialize_emission.presence_checks;
     let specialize::RetainedSpecializations {
         wrapper_fields: retained_specialization_fields,
         wrapper_initializers: retained_specialization_initializers,
@@ -104,6 +105,7 @@ pub fn bindgen(
                 #(, #variant_constructor_arguments)*
                 #(, #specialize_arguments)*
             ) -> Result<Self, MetalError> {
+                #(#specialization_validation)*
                 let entry_name = #entry_name;
                 #function_constants_initialization
                 let pipeline = context.compute_pipeline_state(#library_data, #library_compressed, #cache_key, &entry_name, #function_constants_argument)?;

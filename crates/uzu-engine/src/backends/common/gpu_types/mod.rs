@@ -16,7 +16,6 @@ pub mod matmul;
 pub mod quantization;
 pub mod quantization_method;
 pub mod ring;
-pub mod router_topk;
 pub mod trie;
 pub mod weaver;
 
