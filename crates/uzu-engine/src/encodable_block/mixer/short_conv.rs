@@ -38,7 +38,6 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
         &mut self,
         _context_length: u32,
         _suffix_length: u32,
-        _context: &B::Context,
     ) -> Result<(), B::Error> {
         Ok(())
     }
@@ -291,13 +290,8 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         let mut conv_state =
             context.create_buffer(size_for_shape(&[self.kernel_size - 1, self.hidden_dim], self.data_type))?;
 
-        let suffix_capacity = 1024; // TODO: remove hardcoded suffix capacity
-        let mut suffix_state = context
-            .create_buffer(size_for_shape(&[suffix_capacity, self.kernel_size - 1, self.hidden_dim], self.data_type))?;
-
         let mut zero_command_buffer = context.create_command_buffer(None, None)?;
         zero_command_buffer.encode_fill(&mut conv_state, 0);
-        zero_command_buffer.encode_fill(&mut suffix_state, 0);
         zero_command_buffer.end_encoding().submit().wait_until_completed()?;
 
         Ok(Box::new(ShortConvState {

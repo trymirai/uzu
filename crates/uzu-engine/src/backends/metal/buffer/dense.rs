@@ -1,18 +1,19 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
-use metal::{MTLBuffer, MTLDeviceExt, MTLResidencySet, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLResidencySet, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
+use parking_lot::Mutex;
 
 use crate::backends::metal::{MetalContext, error::MetalError};
 
 pub struct MetalDenseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
-    context: Arc<MetalContext>,
+    residency_set: Arc<Mutex<Retained<ProtocolObject<dyn MTLResidencySet>>>>,
 }
 
 impl MetalDenseBuffer {
     pub(in crate::backends::metal) fn new(
-        context: &Arc<MetalContext>,
+        context: &MetalContext,
         size: usize,
     ) -> Result<Self, MetalError> {
         let buffer = context
@@ -26,11 +27,11 @@ impl MetalDenseBuffer {
         residency_set_locked.request_residency();
         drop(residency_set_locked);
 
-        context.update_peak_memory_usage();
+        context.peak_memory_usage.fetch_max(context.device.current_allocated_size(), Ordering::Relaxed);
 
         Ok(Self {
             buffer,
-            context: context.clone(),
+            residency_set: context.residency_set.clone(),
         })
     }
 
@@ -41,7 +42,7 @@ impl MetalDenseBuffer {
 
 impl Drop for MetalDenseBuffer {
     fn drop(&mut self) {
-        let residency_set_locked = self.context.residency_set.lock();
+        let residency_set_locked = self.residency_set.lock();
         residency_set_locked.remove_allocation(self.buffer.as_ref());
         residency_set_locked.commit();
     }
