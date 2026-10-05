@@ -6,6 +6,139 @@
 
 <a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](crates/legacy/uzu/bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.6.0)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.6.0)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](crates/legacy/uzu/bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.6.0)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.6.0)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](crates/legacy/uzu/bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
 
+# uzu on AMD GPUs: branch `nakhodnov/amdgpu`
+
+This branch adds a third backend, `amdgpu`, next to `metal` and `cpu`. With it uzu runs natively on Windows with GPU
+acceleration on AMD GPUs, through the HIP runtime that ships with the AMD graphics driver. It was developed and tested on
+a laptop with a Radeon 890M (RDNA 3.5, `gfx1150`). Everything else in this README describes upstream uzu.
+
+- **Kernels: single source.** The existing Metal (MSL) kernels are compiled by stock clang, through its C++ for OpenCL
+  front end, straight to AMDGPU ISA.
+  - A compat layer (`crates/uzu-engine/src/backends/amdgpu/kernel/compat/`) maps `metal_stdlib` onto AMDGPU builtins:
+    types, address spaces, SIMD-group functions, barriers, `simdgroup_matrix`.
+  - `build/amdgpu` reuses the Metal DSL analysis, compiles one code object per kernel file and generates the bindings.
+    The shared trait generator checks that the signatures match the other backends.
+  - Changes to the Metal sources are mechanical and do not change Metal behaviour.
+- **Native kernels** for the hot paths where the Metal tiling does not suit RDNA (`src/backends/amdgpu/kernel/native/`):
+  - 4-bit GEMV for decode (one token);
+  - a WMMA quantized matmul with int8 activations for verifying speculative trees (2–47 tokens);
+  - a WMMA GEMM for prefill.
+- **Runtime:**
+  - HIP is loaded at run time (`amdhip64_7.dll` / `libamdhip64.so`), so no HIP SDK is needed to build.
+  - Global buffers live in coarse-grained pinned host memory, which keeps the engine's unified-memory contract;
+    scratch buffers live in device memory.
+  - A command buffer is a sequence of kernel launches on one stream.
+- **Engine changes** are small and leave Metal unchanged:
+  - Windows build fixes: positional file reads, `strftime`, the temp directory, path handling;
+  - the speculator is skipped, instead of panicking, where tree verification is unsupported;
+  - `UZU_SPECULATOR_SHAPE` selects a speculation tree shape;
+  - `cli bench` also reports tokens per forward pass and the reasoning text.
+- **Correctness:** the shared kernel tests run every kernel against the CPU reference on `amdgpu`, plus backend tests:
+  `cargo test -p uzu-engine --features amdgpu --lib` passes (349 tests).
+
+## Building on Windows
+
+Prerequisites:
+
+- **AMD graphics driver** (Adrenalin). It provides the HIP runtime `amdhip64_7.dll`.
+- **clang ≥ 23 with the AMDGPU target.** The official LLVM Windows builds do not include AMDGPU; the conda-forge
+  packages do:
+  ```powershell
+  conda create -p C:\llvm-amdgpu -c conda-forge clang=23.1.2 lld=23.1.2 llvm-tools=23.1.2
+  ```
+- **Build tools:** Rust through `rustup` (the toolchain comes from `rust-toolchain.toml`, so run cargo from the
+  repository root), Visual Studio Build Tools 2022 with the Windows SDK, CMake and Git.
+- **Symlinks:** the `trymirai/cxx` dependency contains symlinks. Enable Developer Mode and run
+  `git config --global core.symlinks true` before the first build.
+
+Build:
+
+```powershell
+$env:UZU_AMDGPU_LLVM = 'C:\llvm-amdgpu\Library\bin'    # clang and ld.lld with AMDGPU
+$env:CXXFLAGS_x86_64_pc_windows_msvc = '/std:c++20'    # xgrammar needs C++20 with MSVC
+$env:CARGO_NET_GIT_FETCH_WITH_CLI = 'true'              # if cargo cannot fetch git dependencies
+cargo build --locked -p cli --features backend-amdgpu
+```
+
+- **First build:** it compiles all kernels and takes several minutes. Set `UZU_AMDGPU_JOBS` to limit parallel kernel
+  compiles.
+- **Other GPUs:** kernels are built for `gfx1150` by default. Set `UZU_AMDGPU_TARGETS` for another GPU; this is
+  untested.
+
+Run:
+
+```powershell
+$env:UZU_BACKEND = 'amdgpu'
+$env:UZU_SPECULATOR_SHAPE = 'Apple M5'   # the bundled speculator's shapes.json lists only Apple devices
+target\debug\cli.exe --model 'qwen3.5:9b' -m 'Write a short paragraph about the history of Paris.'
+```
+
+Without `UZU_SPECULATOR_SHAPE` the model runs without speculative decoding.
+
+Tests:
+
+```powershell
+cargo test --locked -p uzu-engine --features amdgpu --lib
+```
+
+## Results: speculative decoding against llama.cpp
+
+Paired comparison on 60 prompts, both engines with speculative decoding.
+
+| Dataset | Tasks | Prompt tokens, median | Prefill uzu, tok/s | Prefill llama.cpp, tok/s | Prefill uzu / llama.cpp | Decode uzu, tok/s | Decode llama.cpp, tok/s | Decode uzu / llama.cpp | uzu tokens per pass | llama.cpp draft acceptance |
+|---|---|---|---|---|---|---|---|---|---|---|
+| MT-Bench | 8 | 42 | 211 | 103 | ×2.32 | 22.4 | 17.2 | ×1.39 | 5.44 | 63% |
+| GSM8K | 8 | 71 | 147 | 86 | ×1.72 | 26.0 | 22.0 | ×1.18 | 7.25 | 76% |
+| MATH-500 | 8 | 52 | 168 | 73 | ×2.34 | 28.0 | 17.6 | ×1.65 | 7.25 | 71% |
+| AIME 2025 | 6 | 152 | 219 | 186 | ×1.31 | 23.7 | 17.8 | ×1.34 | 7.04 | 77% |
+| HumanEval | 8 | 161 | 260 | 165 | ×1.67 | 28.4 | 20.3 | ×1.40 | 7.29 | 74% |
+| MBPP | 8 | 121 | 205 | 142 | ×1.57 | 32.0 | 22.4 | ×1.31 | 7.88 | 76% |
+| LiveCodeBench | 6 | 523 | 301 | 231 | ×1.28 | 23.1 | 19.3 | ×1.17 | 6.34 | 74% |
+| ShareChat | 8 | 67 | 230 | 165 | ×1.51 | 19.0 | 16.2 | ×1.20 | 5.49 | 64% |
+| **Average** | **60** | **88** | **234** | **156** | **×1.71** | **24.2** | **18.4** | **×1.33** | **6.55** | **71%** |
+
+How the columns are computed:
+
+- **Speeds:** total tokens over total time within the group. Decode is generated tokens over generation time; prefill
+  is prompt tokens over time to first token.
+- **uzu / llama.cpp:** the geometric mean of per-prompt ratios. Over all 60 pairs the decode ratio is ×1.33 (95%
+  bootstrap interval ×1.26–×1.41), and uzu is faster on 52 of 60 prompts.
+
+Setup:
+
+- **Device:** Asus Zenbook S16 (UM5606WA): Ryzen AI 9 HX 370, Radeon 890M iGPU (RDNA 3.5, 16 CUs), 32 GB LPDDR5X-7500
+  shared with the GPU. Windows 11, AMD Adrenalin 26.8.1 (HIP 7.2).
+- **uzu:** this branch, `cli bench`, dev profile (optimized).
+  - Model `alibaba:qwen3.5:9b:mirai:mirai-m:4` (`trymirai/Qwen3.5-9B-M`): 4-bit weights with 4-bit zero points and
+    bf16 scales, group 32.
+  - Speculative decoding: the model's bundled DFlash draft model with Weaver trees, tree shape `Apple M5` (budget of 16
+    tokens). Tree verification uses int8 activations.
+- **llama.cpp:** b11381, Vulkan backend, `unsloth/Qwen3.5-9B-MTP-GGUF` Q4_0.
+  - `llama-server -ngl 99 -fa on -c 8192 -np 1 --spec-type draft-mtp --spec-draft-n-max 3`: multi-token prediction
+    with up to 3 draft tokens.
+- **Sampling:** the model's generation config: temperature 0.6, top-k 20, top-p 0.95, min-p 0. Thinking is on (the
+  model default).
+- **Generation limit:** up to 4096 output tokens in an 8192-token context, stopping on the model's stop tokens, as in
+  the speculative-decoding profiles of [trymirai/performance-benchmarks](https://github.com/trymirai/performance-benchmarks).
+- **Prompts:** first turns selected by performance-benchmarks' own suite code (`datasets/all_datasets.json`,
+  category-stratified, seed 0): 8 prompts from each dataset, 6 from AIME 2025 and LiveCodeBench.
+- **Protocol:**
+  - one engine in memory at a time, and the engine order alternates between prompts;
+  - every measured request starts after the APU has cooled to 66 °C;
+  - each request is preceded by a 1-token warm-up (llama.cpp: `/completion` with `cache_prompt: false`);
+  - speeds are the engines' own timings.
+
+Notes:
+
+- **Prefill:** the prompts are short, so the prefill numbers mostly reflect the fixed per-request overhead: about 0.23 s
+  for uzu against 0.56 s for llama.cpp. Per token the two engines are close: ~335 against ~305 tok/s. On long prompts
+  of several thousand tokens llama.cpp prefill is still faster.
+- **Where the decode gain comes from:** it grows with how predictable the text is for the draft model. It is ×1.53 on
+  prompts where uzu accepts 8 or more tokens per forward pass (code, math), and ×1.08 where it accepts fewer
+  than 6 (free chat).
+
+---
+
 # uzu
 
 A high-performance inference engine for AI models. It allows you to deploy AI directly in your app with **zero latency**, **full data privacy**, and **no inference costs**. Key features:
