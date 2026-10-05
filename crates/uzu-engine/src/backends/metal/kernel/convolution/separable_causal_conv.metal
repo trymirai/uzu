@@ -34,7 +34,7 @@ PUBLIC KERNEL(SeparableCausalConv)(
   const uint group = channel / group_size;
   AccumulatorBlock output_value = 0.0f;
   if (has_bias) {
-    output_value = AccumulatorBlock(*reinterpret_cast<const device ValueBlock*>(bias + channel));
+    output_value = vector_cast<AccumulatorBlock>(*reinterpret_cast<const device ValueBlock*>(bias + channel));
   }
 
   METAL_PRAGMA_UNROLL
@@ -43,16 +43,16 @@ PUBLIC KERNEL(SeparableCausalConv)(
     const uint input_index = input_token * model_dim + channel;
     const uint stored_weight = kernel_size - 1u - tokens_back;
     const uint coefficient_index = token * coefficient_row_stride + tokens_back * num_groups + group;
-    const AccumulatorBlock weight = AccumulatorBlock(
+    const AccumulatorBlock weight = AccumulatorBlock{
         float(weights[(channel + 0u) * kernel_size + stored_weight]),
         float(weights[(channel + 1u) * kernel_size + stored_weight]),
         float(weights[(channel + 2u) * kernel_size + stored_weight]),
         float(weights[(channel + 3u) * kernel_size + stored_weight])
-    );
+    };
 
     output_value += (weight + float(coefficient_deltas[coefficient_index])) *
-                    AccumulatorBlock(*reinterpret_cast<const device ValueBlock*>(input + input_index));
+                    vector_cast<AccumulatorBlock>(*reinterpret_cast<const device ValueBlock*>(input + input_index));
   }
 
-  *reinterpret_cast<device ValueBlock*>(output + token * model_dim + channel) = ValueBlock(output_value);
+  *reinterpret_cast<device ValueBlock*>(output + token * model_dim + channel) = vector_cast<ValueBlock>(output_value);
 }

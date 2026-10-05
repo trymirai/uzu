@@ -1,0 +1,20 @@
+// Metal Shading Language compatibility layer for compiling uzu's MSL kernels as C++ for OpenCL
+// (clang -x clcpp -cl-std=clc++2021 --target=amdgcn-amd-amdhsa) without device libraries.
+// Everything is implemented on top of clang builtins; wave32 (RDNA3/3.5) is assumed.
+#pragma once
+
+#include "metal_compat_types.h"
+#include "metal_compat_vector.h"
+#include "metal_compat_simd.h"
+#include "metal_compat_math.h"
+#include "metal_compat_atomic.h"
+#include "metal_compat_simdgroup_matrix.h"
+#include "uzu_amdgpu_dequant.h"
+
+// matmul/common/threadgroup_tile.h includes the WMMA tile (uzu_amdgpu_wmma_tile.h) under this flag.
+#define UZU_AMDGPU_WMMA 1
+
+// matmul/common/loader.h copies tile rows through a byte struct aligned to the element size; LLVM then
+// splits the copy into 2-byte loads and stores. The AMD GEMM only runs on rows that are 16-byte aligned
+// (amdgpu/kernel/matmul/gemm.rs), so the copy may use b128 accesses.
+#define UZU_LOADER_READ_ALIGNMENT(element_bytes, reads, alignment)   ((element_bytes) * (reads) >= 16 ? 16 : (element_bytes) * (reads))

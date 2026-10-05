@@ -1,0 +1,371 @@
+// Quantized matrix times one activation row (decode, M = 1) for the checkpoint layout of uzu's quantized
+// models: W4 codes (row n of K/2 bytes, low nibble first), a bf16 scale and a 4-bit zero point (or the
+// symmetric zero point 8) per (group, row), scales and zero points stored group-major ([groups, N], two zero
+// points per byte, even row in the low nibble).
+//
+// The MSL GEMV (gemv/common/quant_*.h) loads per group and row a scalar scale and a zero-point byte, then
+// the group's codes, and waits for all of it before the math: per lane 8 metadata loads and 4 code loads of 8
+// bytes per 64 weights, nothing in flight during the math. With zero points that costs 17-35% of the matmul
+// time against symmetric weights for 3% more bytes (perf_token_matmuls_qwen9b, UZU_PERF_QUANT). Here:
+//
+// - A wave owns ROWS consecutive output rows over all of K; lane l reads bytes [512 s + 16 l, +16) of each row
+//   at step s: one 16-byte load per row per 32 weights, and a wave reads 512 contiguous bytes of every row.
+// - The lane's ROWS scales are one 8- or 16-byte load and its ROWS zero points one 2- or 4-byte load (the rows
+//   are consecutive and group-major metadata keeps them adjacent).
+// - Everything a step needs (codes, its 32 activations, scales, zero points) is loaded one step ahead,
+//   unconditionally (the last step reloads itself) and behind a scheduling barrier, so the math of a step
+//   overlaps the loads of the next and has no memory wait inside.
+// - Lane sums are reduced with ds_swizzle; one wave per 32 rows applies the epilogue of the MSL GEMV: x ab_scale,
+//   then either + bias, or bf16 rounding, the output random Hadamard transform and + bias.
+//
+// Requirements (checked on the host): K a multiple of 32 and of the group size, group size 32 or 64, N a
+// multiple of 4 (of 32 with the RHT), 16-byte aligned code rows and activation rows.
+
+// built without the OpenCL headers (-cl-no-stdinc), as the MSL kernels
+typedef unsigned char uchar;
+typedef unsigned short ushort;
+typedef unsigned int uint;
+typedef unsigned long ulong;
+
+typedef uint __gemv_u32x2 __attribute__((ext_vector_type(2)));
+typedef uint __gemv_u32x4 __attribute__((ext_vector_type(4)));
+
+#define GEMV_WAVES 8
+#define GEMV_LANE_VALUES 32
+
+#define GEMV_FLAG_SIGNED_CODES 1u
+#define GEMV_FLAG_SCALE 2u
+#define GEMV_FLAG_BIAS 4u
+#define GEMV_FLAG_RHT 8u
+
+#define GEMV_MANTISSA_BASE_BITS 0x4b000000u // 2^23 as a float: (code | bits) - (2^23 + zero point) = code - zero point
+#define GEMV_MANTISSA_BASE 8388608.0f
+
+static inline uint gemv_min(uint a, uint b) { return a < b ? a : b; }
+
+static inline ushort gemv_round_bf16(float value) {
+  uint bits = __builtin_bit_cast(uint, value);
+  if ((bits & 0x7fffffffu) > 0x7f800000u) {
+    return (ushort)((bits >> 16) | 0x40u);
+  }
+  bits += 0x7fffu + ((bits >> 16) & 1u);
+  return (ushort)(bits >> 16);
+}
+
+static inline float gemv_float(ushort bf16) { return __builtin_bit_cast(float, (uint)bf16 << 16); }
+
+// Output random Hadamard transform over the 32 lanes of a wave (lane = output row within the 32-block), as
+// `simdgroup_output_random_hadamard_transform` of the MSL kernels and qmv_output_rht of qmv_wmma.clcpp.
+static inline float gemv_output_rht(uint lane, float value, int factor) {
+#pragma unroll
+  for (uint stride = 1; stride < 32u; stride <<= 1) {
+    const float partner = __builtin_bit_cast(
+        float, __builtin_amdgcn_ds_bpermute((int)((lane ^ stride) << 2), __builtin_bit_cast(int, value))
+    );
+    value = (lane & stride) ? partner - value : partner + value;
+  }
+  return value * 0.17677669529663687f * (float)factor;
+}
+
+// sum over aligned groups of LANES lanes (ds_swizzle bit-mask mode: lane ^ x)
+template <int LANES>
+static inline float gemv_lane_sum(float value) {
+  if constexpr (LANES >= 32) {
+    value += __builtin_bit_cast(float, __builtin_amdgcn_ds_swizzle(__builtin_bit_cast(int, value), 0x1f | (16 << 10)));
+  }
+  if constexpr (LANES >= 16) {
+    value += __builtin_bit_cast(float, __builtin_amdgcn_ds_swizzle(__builtin_bit_cast(int, value), 0x1f | (8 << 10)));
+  }
+  value += __builtin_bit_cast(float, __builtin_amdgcn_ds_swizzle(__builtin_bit_cast(int, value), 0x1f | (4 << 10)));
+  value += __builtin_bit_cast(float, __builtin_amdgcn_ds_swizzle(__builtin_bit_cast(int, value), 0x1f | (2 << 10)));
+  value += __builtin_bit_cast(float, __builtin_amdgcn_ds_swizzle(__builtin_bit_cast(int, value), 0x1f | (1 << 10)));
+  return value;
+}
+
+template <int GROUP, bool ZERO_POINT, int ROWS, int LANES, bool META_LDS>
+static inline void gemv_w4_kernel(
+    const __global uchar* codes,
+    const __global ushort* scales,
+    const __global uchar* zero_points,
+    const __global ushort* a,
+    __global ushort* d,
+    const __global ushort* output_bias,
+    const __global int* rht_factors,
+    uint n,
+    uint k,
+    uint scale_group_stride,
+    uint zero_point_group_stride,
+    float ab_scale,
+    uint flags,
+    __local float* results,
+    __local uint* meta
+) {
+  static_assert(ROWS == 4 || ROWS == 8, "a lane's metadata is one 8- or 16-byte scale load");
+  static_assert(LANES == 8 || LANES == 16 || LANES == 32, "lanes per row set");
+  static_assert(!META_LDS || LANES == 32, "the cooperative metadata load assumes one row set per wave");
+  // A wave holds 32 / LANES row sets of ROWS rows; the LANES lanes of a set read consecutive 32-value slices of
+  // its rows. Fewer lanes per set means fewer distinct groups per step, so fewer metadata cache lines (group-
+  // major metadata of one group and consecutive rows is contiguous).
+  constexpr uint SETS = 32 / LANES;
+  constexpr uint WAVE_ROWS = SETS * ROWS;
+  constexpr uint STEP_VALUES = LANES * GEMV_LANE_VALUES;
+  const uint thread = __builtin_amdgcn_workitem_id_x();
+  const uint wave = thread / 32u;
+  const uint lane = thread % 32u;
+  const uint set = lane / LANES;
+  const uint slice = lane % LANES;
+  const uint n0 = __builtin_amdgcn_workgroup_id_x() * (GEMV_WAVES * WAVE_ROWS);
+  const uint a_row = __builtin_amdgcn_workgroup_id_y();
+  // the wave's rows; a tile past N repeats the last ROWS rows (N is a multiple of 4, so they stay aligned)
+  const uint r0 = gemv_min(n0 + wave * WAVE_ROWS + set * ROWS, n - ROWS);
+  const uint row_bytes = k / 2u;
+  const uint xor_mask = (flags & GEMV_FLAG_SIGNED_CODES) ? 0x88888888u : 0u;
+
+  struct Step {
+    __gemv_u32x4 codes[ROWS];
+    __gemv_u32x4 activations[4];
+    ushort scales[ROWS];
+    uint zero_points; // ROWS nibbles, row r0 + i in bits [4 i, 4 i + 4)
+  };
+  const uint steps = (k + STEP_VALUES - 1) / STEP_VALUES;
+  // a lane past K in the last step reads (and drops) its own first values instead
+  auto load_step = [&](uint step, struct Step& target) __attribute__((always_inline)) {
+    uint k0 = step * STEP_VALUES + slice * GEMV_LANE_VALUES;
+    k0 = k0 < k ? k0 : slice * GEMV_LANE_VALUES % k;
+#pragma unroll
+    for (int r = 0; r < ROWS; ++r) {
+      target.codes[r] = *(const __global __gemv_u32x4*)(codes + (ulong)(r0 + r) * row_bytes + k0 / 2u);
+    }
+    const __global __gemv_u32x4* activations = (const __global __gemv_u32x4*)(a + (ulong)a_row * k + k0);
+#pragma unroll
+    for (int v = 0; v < 4; ++v) {
+      target.activations[v] = activations[v];
+    }
+    if constexpr (META_LDS) {
+      return;
+    }
+    const uint group = k0 / GROUP;
+    const __global ushort* scale_row = scales + (ulong)group * scale_group_stride + r0;
+    if constexpr (ROWS == 4) {
+      const __gemv_u32x2 packed = *(const __global __gemv_u32x2*)scale_row;
+#pragma unroll
+      for (int i = 0; i < 2; ++i) {
+        target.scales[2 * i] = (ushort)(packed[i] & 0xffffu);
+        target.scales[2 * i + 1] = (ushort)(packed[i] >> 16);
+      }
+    } else {
+      const __gemv_u32x4 packed = *(const __global __gemv_u32x4*)scale_row;
+#pragma unroll
+      for (int i = 0; i < 4; ++i) {
+        target.scales[2 * i] = (ushort)(packed[i] & 0xffffu);
+        target.scales[2 * i + 1] = (ushort)(packed[i] >> 16);
+      }
+    }
+    if constexpr (ZERO_POINT) {
+      const ulong nibble = (ulong)group * zero_point_group_stride + r0;
+      target.zero_points = ROWS == 4 ? (uint)*(const __global ushort*)(zero_points + nibble / 2u)
+                                     : *(const __global uint*)(zero_points + nibble / 2u);
+    } else {
+      target.zero_points = ROWS == 4 ? 0x8888u : 0x88888888u;
+    }
+  };
+
+  // Cooperative metadata (META_LDS): a step's groups for all rows of the workgroup are loaded by thread t as
+  // group t / 8 and row set t % 8, i.e. 8 neighbouring threads read one group's contiguous run of 8 * ROWS
+  // scales (and zero points) instead of every lane of every wave fetching its own group's cache line, and are
+  // handed to the lanes through LDS ([buffer][row set][group]), double buffered with one barrier per step.
+  constexpr uint STEP_GROUPS = STEP_VALUES / GROUP;
+  constexpr uint SCALE_WORDS = ROWS / 2;
+  __local uint* meta_scales = meta;                              // [2][8][STEP_GROUPS][SCALE_WORDS]
+  __local uint* meta_zero_points = meta + 2 * 8 * 32 * 4;        // [2][8][STEP_GROUPS]
+  const uint meta_group = thread / 8u;
+  const uint meta_set = thread % 8u;
+  const uint meta_r0 = gemv_min(n0 + meta_set * ROWS, n - ROWS);
+  const uint groups = k / GROUP;
+  struct Meta {
+    uint scales[SCALE_WORDS];
+    uint zero_points;
+  };
+  auto load_meta = [&](uint step, struct Meta& target) __attribute__((always_inline)) {
+    const uint group = gemv_min(step * STEP_GROUPS + gemv_min(meta_group, STEP_GROUPS - 1u), groups - 1u);
+    const __global uint* scale_words = (const __global uint*)(scales + (ulong)group * scale_group_stride + meta_r0);
+#pragma unroll
+    for (int i = 0; i < (int)SCALE_WORDS; ++i) {
+      target.scales[i] = scale_words[i];
+    }
+    if constexpr (ZERO_POINT) {
+      const ulong nibble = (ulong)group * zero_point_group_stride + meta_r0;
+      target.zero_points = ROWS == 4 ? (uint)*(const __global ushort*)(zero_points + nibble / 2u)
+                                     : *(const __global uint*)(zero_points + nibble / 2u);
+    } else {
+      target.zero_points = ROWS == 4 ? 0x8888u : 0x88888888u;
+    }
+  };
+  auto store_meta = [&](const struct Meta& source, uint buffer) __attribute__((always_inline)) {
+    if (meta_group < STEP_GROUPS) {
+      const uint slot = (buffer * 8u + meta_set) * STEP_GROUPS + meta_group;
+#pragma unroll
+      for (int i = 0; i < (int)SCALE_WORDS; ++i) {
+        meta_scales[slot * SCALE_WORDS + i] = source.scales[i];
+      }
+      meta_zero_points[slot] = source.zero_points;
+    }
+  };
+  // orders LDS only: a fence over all memory waits for every global load in flight, the prefetched step too
+  auto workgroup_barrier = [&]() __attribute__((always_inline)) {
+    __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup", "local");
+    __builtin_amdgcn_s_barrier();
+    __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup", "local");
+  };
+
+  float sums[ROWS];
+#pragma unroll
+  for (int r = 0; r < ROWS; ++r) {
+    sums[r] = 0.0f;
+  }
+  struct Step current;
+  if constexpr (META_LDS) {
+    struct Meta first;
+    load_meta(0, first);
+    store_meta(first, 0);
+  }
+  load_step(0, current);
+  if constexpr (META_LDS) {
+    workgroup_barrier();
+  }
+  for (uint step = 0; step < steps; ++step) {
+    struct Meta next_meta;
+    if constexpr (META_LDS) {
+      // this step's metadata of the lane's group and rows
+      const uint slot = ((step % 2u) * 8u + wave) * STEP_GROUPS + slice * GEMV_LANE_VALUES / GROUP;
+#pragma unroll
+      for (int i = 0; i < (int)SCALE_WORDS; ++i) {
+        const uint word = meta_scales[slot * SCALE_WORDS + i];
+        current.scales[2 * i] = (ushort)(word & 0xffffu);
+        current.scales[2 * i + 1] = (ushort)(word >> 16);
+      }
+      current.zero_points = meta_zero_points[slot];
+      // the next step's metadata first, so writing it to LDS does not wait for the codes
+      load_meta(gemv_min(step + 1u, steps - 1u), next_meta);
+    }
+    struct Step next;
+    load_step(gemv_min(step + 1u, steps - 1u), next);
+    __builtin_amdgcn_sched_barrier(0);
+
+    const bool active = step * STEP_VALUES + slice * GEMV_LANE_VALUES < k;
+    float activations[GEMV_LANE_VALUES];
+#pragma unroll
+    for (int v = 0; v < 4; ++v) {
+#pragma unroll
+      for (int i = 0; i < 4; ++i) {
+        activations[8 * v + 2 * i] = __builtin_bit_cast(float, current.activations[v][i] << 16);
+        activations[8 * v + 2 * i + 1] = __builtin_bit_cast(float, current.activations[v][i] & 0xffff0000u);
+      }
+    }
+#pragma unroll
+    for (int r = 0; r < ROWS; ++r) {
+      const float origin = GEMV_MANTISSA_BASE + (float)((current.zero_points >> (4 * r)) & 15u);
+      float partial = 0.0f;
+#pragma unroll
+      for (int w = 0; w < 4; ++w) {
+        const uint word = current.codes[r][w] ^ xor_mask;
+#pragma unroll
+        for (int i = 0; i < 8; ++i) {
+          const float weight = __builtin_bit_cast(float, ((word >> (4 * i)) & 15u) | GEMV_MANTISSA_BASE_BITS) - origin;
+          partial = __builtin_fmaf(activations[8 * w + i], weight, partial);
+        }
+      }
+      sums[r] = active ? __builtin_fmaf(gemv_float(current.scales[r]), partial, sums[r]) : sums[r];
+    }
+    if constexpr (META_LDS) {
+      store_meta(next_meta, (step + 1u) % 2u);
+      workgroup_barrier();
+    }
+    current = next;
+  }
+
+  // lane sums -> row sums; lane r < ROWS stores row r0 + r in the wave's slot (a clamped wave past N stores rows
+  // the epilogue does not write)
+#pragma unroll
+  for (int r = 0; r < ROWS; ++r) {
+    sums[r] = gemv_lane_sum<LANES>(sums[r]);
+  }
+  if (slice < (uint)ROWS) {
+    float value = sums[0];
+#pragma unroll
+    for (int r = 1; r < ROWS; ++r) {
+      value = slice == (uint)r ? sums[r] : value;
+    }
+    results[wave * WAVE_ROWS + set * ROWS + slice] = value;
+  }
+  __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");
+  __builtin_amdgcn_s_barrier();
+  __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");
+
+  // epilogue: wave w < (tile rows) / 32 stores rows [32 w, 32 w + 32) of the tile, lane = row
+  if (wave * 32u >= GEMV_WAVES * WAVE_ROWS || n0 + wave * 32u >= n) {
+    return;
+  }
+  const uint row = n0 + wave * 32u + lane;
+  float value = results[wave * 32u + lane];
+  if (flags & GEMV_FLAG_SCALE) {
+    value *= ab_scale;
+  }
+  if (flags & GEMV_FLAG_RHT) {
+    // N is a multiple of 32 here, so every lane holds a row of the block
+    value = gemv_output_rht(lane, gemv_float(gemv_round_bf16(value)), rht_factors[row]);
+    if (flags & GEMV_FLAG_BIAS) {
+      value = gemv_float(gemv_round_bf16(value)) + gemv_float(output_bias[row]);
+    }
+  } else if (flags & GEMV_FLAG_BIAS) {
+    value += gemv_float(output_bias[gemv_min(row, n - 1u)]);
+  }
+  if (row < n) {
+    d[(ulong)a_row * n + row] = gemv_round_bf16(value);
+  }
+}
+
+// Kernel arguments as qmv_wmma.clcpp (biases and a_scales unused; grid y = activation row).
+#define GEMV_ENTRY(NAME, GROUP, ZERO_POINT, ROWS, LANES, META_LDS)                                                  \
+  __kernel __attribute__((reqd_work_group_size(32 * GEMV_WAVES, 1, 1))) void NAME(                               \
+      const __global uchar* codes,                                                                              \
+      const __global ushort* scales,                                                                            \
+      const __global uchar* zero_points,                                                                        \
+      const __global ushort* biases,                                                                            \
+      const __global ushort* a,                                                                                 \
+      const __global float* a_scales,                                                                           \
+      __global ushort* d,                                                                                       \
+      const __global ushort* output_bias,                                                                       \
+      const __global int* rht_factors,                                                                          \
+      uint m,                                                                                                   \
+      uint n,                                                                                                   \
+      uint k,                                                                                                   \
+      uint scale_output_stride,                                                                                 \
+      uint scale_group_stride,                                                                                  \
+      uint zero_point_output_stride,                                                                            \
+      uint zero_point_group_stride,                                                                             \
+      float ab_scale,                                                                                           \
+      uint flags                                                                                                \
+  ) {                                                                                                           \
+    __local float results[GEMV_WAVES * (32 / LANES) * ROWS] __attribute__((aligned(16)));                           \
+    __local uint meta[META_LDS ? 2 * 8 * 32 * 4 + 2 * 8 * 32 : 1] __attribute__((aligned(16)));                     \
+    gemv_w4_kernel<GROUP, ZERO_POINT, ROWS, LANES, META_LDS>(                                                       \
+        codes, scales, zero_points, a, d, output_bias, rht_factors, n, k, scale_group_stride,                   \
+        zero_point_group_stride, ab_scale, flags, results, meta                                                 \
+    );                                                                                                          \
+  }
+
+// LANES = 32: on the 890M (gemv_ab.py, interleaved, 9B token shapes with RHT) 16 and 8 lanes per row set
+// (two or four row sets per wave, fewer groups per step) were slower: 63.6 and 79.1 against 59.8 ms per token.
+#define GEMV_ENTRIES(GROUP)                                                                                         \
+  GEMV_ENTRY(gemv_w4_g##GROUP##_zero_point_r4, GROUP, true, 4, 32, false)                                           \
+  GEMV_ENTRY(gemv_w4_g##GROUP##_zero_point_r8, GROUP, true, 8, 32, false)                                           \
+  GEMV_ENTRY(gemv_w4_g##GROUP##_symmetric_r4, GROUP, false, 4, 32, false)                                           \
+  GEMV_ENTRY(gemv_w4_g##GROUP##_symmetric_r8, GROUP, false, 8, 32, false)                                           \
+  GEMV_ENTRY(gemv_w4_g##GROUP##_zero_point_r4_meta, GROUP, true, 4, 32, true)                                       \
+  GEMV_ENTRY(gemv_w4_g##GROUP##_zero_point_r8_meta, GROUP, true, 8, 32, true)                                       \
+  GEMV_ENTRY(gemv_w4_g##GROUP##_symmetric_r4_meta, GROUP, false, 4, 32, true)                                       \
+  GEMV_ENTRY(gemv_w4_g##GROUP##_symmetric_r8_meta, GROUP, false, 8, 32, true)
+
+GEMV_ENTRIES(32)
+GEMV_ENTRIES(64)

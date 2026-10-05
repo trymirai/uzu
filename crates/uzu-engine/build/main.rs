@@ -10,6 +10,9 @@ mod cpu;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
 
+#[cfg(feature = "amdgpu")]
+mod amdgpu;
+
 fn main() -> anyhow::Result<ExitCode> {
     println!("cargo::rerun-if-changed=build");
 
@@ -20,7 +23,7 @@ fn main() -> anyhow::Result<ExitCode> {
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH")?;
     let target_os = env::var("CARGO_CFG_TARGET_OS")?;
 
-    println!("cargo::rustc-check-cfg=cfg(backend, values(\"cpu\", \"metal\"))");
+    println!("cargo::rustc-check-cfg=cfg(backend, values(\"cpu\", \"metal\", \"amdgpu\"))");
 
     let backend_cpu = cfg!(feature = "cpu");
     if backend_cpu {
@@ -30,6 +33,11 @@ fn main() -> anyhow::Result<ExitCode> {
     let backend_metal = cfg!(feature = "metal") && matches!(target_os.as_ref(), "macos" | "ios" | "tvos" | "visionos");
     if backend_metal {
         println!("cargo::rustc-cfg=backend=\"metal\"");
+    }
+
+    let backend_amdgpu = cfg!(feature = "amdgpu") && target_arch != "wasm32";
+    if backend_amdgpu {
+        println!("cargo::rustc-cfg=backend=\"amdgpu\"");
     }
 
     let grammar = cfg!(feature = "grammar") && target_arch != "wasm32";
@@ -65,13 +73,22 @@ fn main() -> anyhow::Result<ExitCode> {
         compilers.push(Box::new(metal::MetalCompiler::new()?));
     }
 
-    if compilers.is_empty() {
+    if compilers.is_empty() && !backend_amdgpu {
         println!("cargo::error=uzu requires at least one backend to be compiled in!");
         return Ok(ExitCode::FAILURE);
     }
 
-    let backends_kernels =
+    #[allow(unused_mut)]
+    let mut backends_kernels =
         compilers.iter().map(|c| c.build(&gpu_types, &enum_paths)).collect::<anyhow::Result<Vec<_>>>()?;
+
+    // The AMDGPU compiler runs last: kernels it cannot analyze yet get stubs with the signatures the
+    // other backends already produced.
+    #[cfg(feature = "amdgpu")]
+    if backend_amdgpu {
+        let compiler = amdgpu::AmdgpuCompiler::new(backends_kernels.first().cloned())?;
+        backends_kernels.push(compiler.build(&gpu_types, &enum_paths)?);
+    }
 
     debug_log!("backend build end");
 

@@ -31,7 +31,10 @@ struct ThreadgroupLoader {
   threadgroup T* destination;
   const device T* source;
 
-  struct alignas(ALIGNMENT * sizeof(T)) ReadVector {
+#ifndef UZU_LOADER_READ_ALIGNMENT
+#define UZU_LOADER_READ_ALIGNMENT(element_bytes, reads, alignment) ((alignment) * (element_bytes))
+#endif
+  struct alignas(UZU_LOADER_READ_ALIGNMENT(sizeof(T), READS_PER_THREAD, ALIGNMENT)) ReadVector {
     uint8_t bytes[sizeof(T) * READS_PER_THREAD];
   };
 

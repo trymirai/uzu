@@ -79,9 +79,7 @@ struct QuantizedBlockLoaderScaleBias {
 
     T scale = *scales;
     T bias = *biases;
-    for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, PACK_FACTOR, BITS>(src + i * BYTES_PER_PACK, scale, bias, dst + i * PACK_FACTOR, signed_codes);
-    }
+    dequantize_contiguous<T, PACK_FACTOR, BITS, READS_PER_THREAD>(src, scale, bias, dst, signed_codes);
   }
 
   void load_safe(short2 src_tile_dim) const {

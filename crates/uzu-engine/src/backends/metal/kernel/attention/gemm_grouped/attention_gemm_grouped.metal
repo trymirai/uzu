@@ -288,7 +288,7 @@ KERNEL(AttentionGemmGrouped)(
     }
 
     AccumType block_max[ROWS_PER_LANE];
-    score.row_reduce(block_max, -INFINITY, [](AccumType a, AccumType b) { return metal::max(a, b); });
+    score.template row_reduce<AccumType>(block_max, -INFINITY, [](AccumType a, AccumType b) { return metal::max(a, b); });
     METAL_PRAGMA_UNROLL
     for (int r = 0; r < ROWS_PER_LANE; ++r) {
       block_max[r] *= score_scale;
@@ -309,7 +309,7 @@ KERNEL(AttentionGemmGrouped)(
     });
 
     AccumType block_sum[ROWS_PER_LANE];
-    score.row_reduce(block_sum, AccumType(0), [](AccumType a, AccumType b) { return a + b; });
+    score.template row_reduce<AccumType>(block_sum, AccumType(0), [](AccumType a, AccumType b) { return a + b; });
     METAL_PRAGMA_UNROLL
     for (int r = 0; r < ROWS_PER_LANE; ++r) {
       sum_score[r] += block_sum[r];

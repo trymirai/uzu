@@ -54,5 +54,5 @@ KERNEL(GemmSplitKReduce)(
     accumulator += float4(*reinterpret_cast<const device vec<T, 4>*>(output_bias + column));
   }
 
-  output_vectors[vector_index] = vec<T, 4>(accumulator);
+  output_vectors[vector_index] = vector_cast<vec<T, 4>>(accumulator);
 }

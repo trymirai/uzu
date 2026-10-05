@@ -54,12 +54,12 @@ public:
 
   template <uint WORDS>
   METAL_FUNC void decode(
-      const thread uint4 (&words)[WORDS],
+      const thread vec<uint, 4> (&words)[WORDS],
       uint chunk,
       uint row,
       thread float (&values)[QuantChunk<BITS>::VALUES]
   ) const thread {
-    QuantChunk<BITS>::decode(words, chunk, values, origin[row], signed_codes);
+    QuantChunk<BITS>::template decode<WORDS>(words, chunk, values, origin[row], signed_codes);
   }
 
   METAL_FUNC void fold(

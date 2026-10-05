@@ -1,0 +1,78 @@
+// Byte copies and fills as kernels on the command buffer's stream. HIP's hipMemcpyAsync / hipMemsetAsync on
+// pinned host memory cost ~85-150 us each on Windows (a host-to-host copy, a fill done on the CPU side), and the
+// engine's accept step issues dozens of small copies per speculation pass (~11 ms of a ~170 ms pass).
+//
+// Each work-item moves 16 bytes; 16-byte aligned ranges use one vector load and store, the rest go byte by byte.
+
+typedef unsigned char uchar;
+typedef unsigned int uint;
+typedef unsigned long ulong;
+typedef uint __copy_u32x4 __attribute__((ext_vector_type(4)));
+
+static inline ulong copy_fill_offset() {
+  return ((ulong)__builtin_amdgcn_workgroup_id_x() * 256u + __builtin_amdgcn_workitem_id_x()) * 16u;
+}
+
+__kernel __attribute__((reqd_work_group_size(256, 1, 1))) void uzu_copy_bytes(
+    const __global uchar* source,
+    __global uchar* destination,
+    ulong bytes
+) {
+  const ulong offset = copy_fill_offset();
+  if (offset >= bytes) {
+    return;
+  }
+  const bool aligned = (((ulong)source | (ulong)destination) & 15u) == 0;
+  if (aligned && offset + 16u <= bytes) {
+    *(__global __copy_u32x4*)(destination + offset) = *(const __global __copy_u32x4*)(source + offset);
+    return;
+  }
+  for (ulong index = offset; index < offset + 16u && index < bytes; ++index) {
+    destination[index] = source[index];
+  }
+}
+
+__kernel __attribute__((reqd_work_group_size(256, 1, 1))) void uzu_fill_bytes(
+    __global uchar* destination,
+    uint value,
+    ulong bytes
+) {
+  const ulong offset = copy_fill_offset();
+  if (offset >= bytes) {
+    return;
+  }
+  const uint word = (value & 0xffu) * 0x01010101u;
+  if ((((ulong)destination) & 15u) == 0 && offset + 16u <= bytes) {
+    *(__global __copy_u32x4*)(destination + offset) = (__copy_u32x4)(word);
+    return;
+  }
+  for (ulong index = offset; index < offset + 16u && index < bytes; ++index) {
+    destination[index] = (uchar)value;
+  }
+}
+
+// Many small copies in one launch: workgroup g copies descriptor g (source address, destination address, bytes).
+// The engine's DFlash accept step copies one hidden-state row per accepted token and captured layer (thousands for
+// a prefill); the command buffer batches runs of non-overlapping copies into this kernel.
+__kernel __attribute__((reqd_work_group_size(256, 1, 1))) void uzu_copy_batch(
+    const __global ulong* descriptors,
+    uint count
+) {
+  const uint copy = __builtin_amdgcn_workgroup_id_x();
+  if (copy >= count) {
+    return;
+  }
+  const __global uchar* source = (const __global uchar*)descriptors[3u * copy];
+  __global uchar* destination = (__global uchar*)descriptors[3u * copy + 1u];
+  const ulong bytes = descriptors[3u * copy + 2u];
+  const bool aligned = (((ulong)source | (ulong)destination) & 15u) == 0;
+  for (ulong offset = (ulong)__builtin_amdgcn_workitem_id_x() * 16u; offset < bytes; offset += 256u * 16u) {
+    if (aligned && offset + 16u <= bytes) {
+      *(__global __copy_u32x4*)(destination + offset) = *(const __global __copy_u32x4*)(source + offset);
+    } else {
+      for (ulong index = offset; index < offset + 16u && index < bytes; ++index) {
+        destination[index] = source[index];
+      }
+    }
+  }
+}

@@ -114,5 +114,22 @@ inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* 
   }
 }
 
+// Dequantizes PACKS consecutive packs of one row into consecutive threadgroup values. Backends with
+// wide memory accesses replace it (UZU_DEQUANTIZE_CONTIGUOUS) to move the run as whole words.
+#ifndef UZU_DEQUANTIZE_CONTIGUOUS
+template <typename U, int N, int bits, int PACKS>
+inline void dequantize_contiguous(
+    const device uint8_t* w,
+    U scale,
+    U bias,
+    threadgroup U* w_local,
+    const bool signed_codes
+) {
+  for (int i = 0; i < PACKS; i++) {
+    dequantize<U, N, bits>(w + i * get_bytes_per_pack<bits>(), scale, bias, w_local + i * N, signed_codes);
+  }
+}
+#endif
+
 } // namespace gemm
 } // namespace uzu

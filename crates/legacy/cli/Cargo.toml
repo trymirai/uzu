@@ -16,6 +16,7 @@ path = "src/main.rs"
 default = ["backend-cpu", "backend-metal", "capability-grammar"]
 backend-cpu = ["uzu/backend-cpu"]
 backend-metal = ["uzu/backend-metal"]
+backend-amdgpu = ["uzu/backend-amdgpu"]
 capability-grammar = ["uzu/capability-grammar"]
 
 [dependencies]

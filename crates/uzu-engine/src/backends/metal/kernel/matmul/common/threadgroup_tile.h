@@ -170,3 +170,8 @@ struct ThreadgroupTile {
 
 } // namespace matmul
 } // namespace uzu
+
+// AMDGPU builds swap in a WMMA accumulator for bf16 tiles (backends/amdgpu/kernel/compat).
+#ifdef UZU_AMDGPU_WMMA
+#include "uzu_amdgpu_wmma_tile.h"
+#endif

@@ -1,0 +1,460 @@
+// Quantized matrix times a few activation rows (up to 16 per workgroup row) on RDNA3 WMMA.
+//
+// D[m][n] = sum_k A[m][k] * W[n][k], W stored as 4-bit codes, row n of K/2 bytes (two codes per byte, low
+// nibble first), with a bf16 scale and either a 4-bit zero point, the symmetric zero point 8, or a bf16 bias
+// per (row, group): the layout of uzu's quantized matmuls (GemvSpecialization on the MSL side).
+//
+// The MSL GEMV dequantizes every weight and spends one FMA per weight and activation row, so on RDNA its time
+// grows with M (8 rows cost ~3x one). Here a weight is decoded once into a WMMA operand and 16 activation rows
+// go through one v_wmma_f32_16x16x16_bf16 per 16 x 16 x 16 block, so up to 16 rows cost about as much as one
+// and the kernel stays bound by reading the weights.
+//
+// - A wave owns a 16-row x 16*TILES-column output tile over an eighth of K; the eight waves of a workgroup add
+//   their partial sums in LDS (8 waves beat 4 on the 9B down projection: 0.50 against 0.62 ms).
+// - The WMMA operand of lane l is row l % 16 (A) or column l % 16 (B), 16 consecutive K values, and wave32
+//   needs both halves of the wave to hold the same operand: both halves load the same K range (the cache
+//   serves the repeated addresses) and decode it, which keeps the operands in place without cross-lane moves.
+// - A load instruction thus reads 16 bytes from each of 16 weight rows. Reading a row 16 bytes per 32-wide
+//   step let L2 evict its 128-byte lines between steps (each line fetched up to 8 times: 4.7 GB/s); the
+//   weights are read 128 K values (64 bytes per row) at a time, four loads back to back, and decoded in
+//   32-wide steps from registers.
+// - Weights enter the WMMA as exact integers (code - zero point, or the code itself for scale-bias) and the
+//   scale multiplies each 32-wide partial sum, so the products are exact before the f32 accumulation. Scale-bias
+//   adds bias * sum_k A[m][k], the activation sums coming from one more WMMA against ones.
+// - The kernel is bound by WMMA issue more than by memory (doubling the WMMAs per step adds ~0.4 ms on the 9B
+//   gate_up, loads alone run at ~95 GB/s); below 16 rows the WMMA work on padding rows is wasted.
+//
+// Int8 activations (`A8`, uzu's A8 path: int8 codes with one scale per 128 values of a row, GroupedByNibble
+// order) use v_wmma_i32_16x16x16_iu8 instead: a word of 4-bit codes splits into its even and odd codes with two
+// masks, which is the order of the activations, and the zero point comes off in the bytes, so a step costs a
+// fraction of the bf16 decode. Weights scale the integer products per group, activations once per 128-K block.
+//
+// Requirements (checked on the host): K a multiple of 128, group size 32 or 64, 16-byte aligned rows.
+//
+// Speed (890M, coarse-grained pinned memory, Qwen3.5-9B shapes, M = 1..16): gate_up 24576 x 4096 in 1.0-1.3 ms,
+// down 4096 x 12288 in 0.47-0.57 ms, ~50-60 GB/s of weights; the load pattern alone reaches ~70 GB/s.
+
+// built without the OpenCL headers (-cl-no-stdinc), as the MSL kernels
+typedef unsigned char uchar;
+typedef unsigned short ushort;
+typedef unsigned int uint;
+typedef unsigned long ulong;
+
+typedef short __qmv_bf16x16 __attribute__((ext_vector_type(16)));
+typedef float __qmv_f32x8 __attribute__((ext_vector_type(8)));
+typedef uint __qmv_u32x4 __attribute__((ext_vector_type(4)));
+typedef uint __qmv_u32x8 __attribute__((ext_vector_type(8)));
+typedef int __qmv_i32x4 __attribute__((ext_vector_type(4)));
+typedef int __qmv_i32x8 __attribute__((ext_vector_type(8)));
+
+#define QMV_WAVES 8
+#define QMV_K_BLOCK 128
+#define QMV_K_STEP 32
+
+#define QMV_PROLOGUE_ZERO_POINT 0
+#define QMV_PROLOGUE_SYMMETRIC 1
+#define QMV_PROLOGUE_SCALE_BIAS 2
+
+#define QMV_FLAG_SIGNED_CODES 1u
+#define QMV_FLAG_SCALE 2u
+#define QMV_FLAG_BIAS 4u
+#define QMV_FLAG_RHT 8u
+
+static inline uint qmv_min(uint a, uint b) { return a < b ? a : b; }
+
+static inline ushort qmv_round_bf16(float value) {
+  uint bits = __builtin_bit_cast(uint, value);
+  if ((bits & 0x7fffffffu) > 0x7f800000u) {
+    return (ushort)((bits >> 16) | 0x40u);
+  }
+  bits += 0x7fffu + ((bits >> 16) & 1u);
+  return (ushort)(bits >> 16);
+}
+
+static inline float qmv_float(ushort bf16) { return __builtin_bit_cast(float, (uint)bf16 << 16); }
+
+// Output random Hadamard transform over the 32 lanes of a wave, lane = output column within the 32-block:
+// `simdgroup_output_random_hadamard_transform` of the MSL kernels (Walsh-Hadamard butterfly, / sqrt(32),
+// times the column's sign factor).
+static inline float qmv_output_rht(uint lane, float value, int factor) {
+#pragma unroll
+  for (uint stride = 1; stride < 32u; stride <<= 1) {
+    const float partner = __builtin_bit_cast(
+        float, __builtin_amdgcn_ds_bpermute((int)((lane ^ stride) << 2), __builtin_bit_cast(int, value))
+    );
+    value = (lane & stride) ? partner - value : partner + value;
+  }
+  return value * 0.17677669529663687f * (float)factor;
+}
+
+// 16 codes (two words) as the exact bf16 integers code - offset, K order. Measured against building 128 + code
+// with bit operations (0x4300 | code) and removing (128 + zero point) * sum_k A afterwards: the kernel is bound
+// by WMMA issue, and the two extra WMMAs per step for the activation sums cost more than these conversions.
+static inline __qmv_bf16x16 qmv_decode(uint word0, uint word1, uint xor_mask, int offset) {
+  __qmv_bf16x16 operand;
+  const uint words[2] = {word0 ^ xor_mask, word1 ^ xor_mask};
+#pragma unroll
+  for (int w = 0; w < 2; ++w) {
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
+      const float value = (float)((int)((words[w] >> (4 * j)) & 15u) - offset);
+      operand[8 * w + j] = (short)(__builtin_bit_cast(uint, value) >> 16);
+    }
+  }
+  return operand;
+}
+
+// 16 bf16 activations from eight words.
+static inline __qmv_bf16x16 qmv_activations(__qmv_u32x4 low, __qmv_u32x4 high) {
+  __qmv_bf16x16 operand;
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    operand[2 * i] = (short)(low[i] & 0xffffu);
+    operand[2 * i + 1] = (short)(low[i] >> 16);
+    operand[8 + 2 * i] = (short)(high[i] & 0xffffu);
+    operand[8 + 2 * i + 1] = (short)(high[i] >> 16);
+  }
+  return operand;
+}
+
+// 16 codes (two words) as the signed int8 values code - zero point, in the order of int8 activations quantized
+// with the GroupedByNibble layout (per 8 K: the even K, then the odd K): the low nibbles of a word are its even
+// codes and the high nibbles its odd codes, so no byte shuffles. The zero point comes off per byte without
+// borrows: 128 + code - zero point stays in [113, 143], and the XOR maps it back to two's complement.
+static inline __qmv_i32x4 qmv_decode_i8(uint word0, uint word1, uint xor_mask, uint zero_points) {
+  __qmv_i32x4 dwords;
+  const uint words[2] = {word0 ^ xor_mask, word1 ^ xor_mask};
+#pragma unroll
+  for (int w = 0; w < 2; ++w) {
+    const uint low = words[w] & 0x0f0f0f0fu;
+    const uint high = (words[w] >> 4) & 0x0f0f0f0fu;
+    dwords[2 * w] = (int)(((low | 0x80808080u) - zero_points) ^ 0x80808080u);
+    dwords[2 * w + 1] = (int)(((high | 0x80808080u) - zero_points) ^ 0x80808080u);
+  }
+  return dwords;
+}
+
+template <int GROUP, int PROLOGUE, int TILES, bool A8>
+static inline void qmv_wmma_kernel(
+    const __global uchar* codes,
+    const __global ushort* scales,
+    const __global uchar* zero_points,
+    const __global ushort* biases,
+    const __global ushort* a,
+    const __global float* a_scales,
+    __global ushort* d,
+    const __global ushort* output_bias,
+    const __global int* rht_factors,
+    uint m,
+    uint n,
+    uint k,
+    uint scale_output_stride,
+    uint scale_group_stride,
+    uint zero_point_output_stride,
+    uint zero_point_group_stride,
+    float ab_scale,
+    uint flags,
+    __local float* partials
+) {
+  const uint thread = __builtin_amdgcn_workitem_id_x();
+  const uint wave = thread / 32u;
+  const uint lane = thread % 32u;
+  const uint upper = lane / 16u; // which 16-lane half of the wave
+  const uint column = lane % 16u;
+  const uint n0 = __builtin_amdgcn_workgroup_id_x() * (16u * TILES);
+  const uint m0 = __builtin_amdgcn_workgroup_id_y() * 16u;
+
+  const uint blocks = k / QMV_K_BLOCK;
+  const uint block_begin = blocks * wave / QMV_WAVES;
+  const uint block_end = blocks * (wave + 1u) / QMV_WAVES;
+  const uint row_bytes = k / 2u;
+  const uint xor_mask = (flags & QMV_FLAG_SIGNED_CODES) ? 0x88888888u : 0u;
+
+  // B rows (weight rows) of this lane, clamped into the matrix; the clamped columns are never stored
+  uint weight_rows[TILES];
+#pragma unroll
+  for (int t = 0; t < TILES; ++t) {
+    weight_rows[t] = qmv_min(n0 + 16u * t + column, n - 1u);
+  }
+  // A row (activation row) of this lane. Rows past M repeat the last one: WMMA rows are independent and
+  // those output rows are never stored.
+  const uint a_row = qmv_min(m0 + column, m - 1u);
+  const __global __qmv_u32x4* a_source = (const __global __qmv_u32x4*)(a + (ulong)a_row * k); // bf16 A
+
+  __qmv_bf16x16 ones;
+#pragma unroll
+  for (int i = 0; i < 16; ++i) {
+    ones[i] = (short)0x3f80;
+  }
+
+  __qmv_f32x8 accumulators[TILES];
+#pragma unroll
+  for (int t = 0; t < TILES; ++t) {
+    accumulators[t] = (__qmv_f32x8)(0.0f);
+  }
+
+  // One 128-wide K block of this lane's weight rows: 64 bytes of codes per row and the scales and zero points
+  // of its groups, all loaded before the block's steps (per-step parameter loads left every step waiting for
+  // memory, 4.5x slower). The next block loads after the current one's math. With int8 activations the block
+  // also holds this lane's 128 activations and their scale: loaded in the same batch, the block waits for
+  // memory once instead of once per step (-7% over Qwen3.5-9B shapes, probe/README.md section 7).
+  struct Block {
+    __qmv_u32x4 packed[TILES][QMV_K_BLOCK / QMV_K_STEP];
+    float scales[TILES][QMV_K_BLOCK / QMV_K_STEP];
+    float biases[TILES][QMV_K_BLOCK / QMV_K_STEP];
+    int offsets[TILES][QMV_K_BLOCK / QMV_K_STEP];
+    __qmv_i32x4 activations[QMV_K_BLOCK / 16]; // A8 only
+    float activation_scale;                    // A8 only
+  };
+  auto load_block = [&](uint block, struct Block& target) __attribute__((always_inline)) {
+    if constexpr (A8) {
+      const __global __qmv_i32x4* source =
+          (const __global __qmv_i32x4*)((const __global uchar*)a + (ulong)a_row * k + block * QMV_K_BLOCK);
+#pragma unroll
+      for (int v = 0; v < QMV_K_BLOCK / 16; ++v) {
+        target.activations[v] = source[v];
+      }
+      target.activation_scale = a_scales[(ulong)a_row * (k / QMV_K_BLOCK) + block];
+    }
+#pragma unroll
+    for (int t = 0; t < TILES; ++t) {
+      const uint row = weight_rows[t];
+      const __global __qmv_u32x4* source =
+          (const __global __qmv_u32x4*)(codes + (ulong)row * row_bytes + block * (QMV_K_BLOCK / 2u));
+#pragma unroll
+      for (int v = 0; v < QMV_K_BLOCK / QMV_K_STEP; ++v) {
+        target.packed[t][v] = source[v];
+      }
+#pragma unroll
+      for (int step = 0; step < QMV_K_BLOCK / QMV_K_STEP; ++step) {
+        const uint group = (block * QMV_K_BLOCK + step * QMV_K_STEP) / GROUP;
+        const uint parameter = row * scale_output_stride + group * scale_group_stride;
+        target.scales[t][step] = qmv_float(scales[parameter]);
+        target.biases[t][step] = PROLOGUE == QMV_PROLOGUE_SCALE_BIAS ? qmv_float(biases[parameter]) : 0.0f;
+        if (PROLOGUE == QMV_PROLOGUE_ZERO_POINT) {
+          const uint index = row * zero_point_output_stride + group * zero_point_group_stride;
+          target.offsets[t][step] = (int)((zero_points[index / 2u] >> (4u * (index % 2u))) & 15u);
+        } else {
+          target.offsets[t][step] = PROLOGUE == QMV_PROLOGUE_SYMMETRIC ? 8 : 0;
+        }
+      }
+    }
+  };
+
+  struct Block current;
+  if (block_begin < block_end) {
+    load_block(block_begin, current);
+  }
+
+  for (uint block = block_begin; block < block_end; ++block) {
+    if constexpr (A8) {
+      // Int8 activations (row a_row, 128-wide scale groups): the K block is one activation scale group, so the
+      // integer products of a step are scaled by the weight group's scale and the activation scale applies once
+      // per block, per accumulator row (element i of lane l: row 2i + l / 16).
+      // each lane holds the scale of its own A row (row l % 16); accumulator row 2i + upper comes from that lane
+      const float own_scale = current.activation_scale;
+      float row_scales[8];
+#pragma unroll
+      for (int i = 0; i < 8; ++i) {
+        row_scales[i] = __builtin_bit_cast(
+            float, __builtin_amdgcn_ds_bpermute((int)((2u * i + upper) << 2), __builtin_bit_cast(int, own_scale))
+        );
+      }
+      __qmv_f32x8 block_sums[TILES];
+#pragma unroll
+      for (int t = 0; t < TILES; ++t) {
+        block_sums[t] = (__qmv_f32x8)(0.0f);
+      }
+#pragma unroll
+      for (int step = 0; step < QMV_K_BLOCK / QMV_K_STEP; ++step) {
+        const __qmv_i32x4 a0 = current.activations[2 * step];
+        const __qmv_i32x4 a1 = current.activations[2 * step + 1];
+#pragma unroll
+        for (int t = 0; t < TILES; ++t) {
+          const __qmv_u32x4 words = current.packed[t][step];
+          const uint zero_points = (uint)current.offsets[t][step] * 0x01010101u;
+          __qmv_i32x8 product = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(
+              true, a0, true, qmv_decode_i8(words.x, words.y, xor_mask, zero_points), (__qmv_i32x8)(0), false
+          );
+          product = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(
+              true, a1, true, qmv_decode_i8(words.z, words.w, xor_mask, zero_points), product, false
+          );
+          block_sums[t] += current.scales[t][step] * __builtin_convertvector(product, __qmv_f32x8);
+        }
+        __builtin_amdgcn_sched_barrier(0);
+      }
+#pragma unroll
+      for (int t = 0; t < TILES; ++t) {
+#pragma unroll
+        for (int i = 0; i < 8; ++i) {
+          accumulators[t][i] += row_scales[i] * block_sums[t][i];
+        }
+      }
+      if (block + 1u < block_end) {
+        load_block(block + 1u, current);
+      }
+      continue;
+    }
+
+#pragma unroll
+    for (int step = 0; step < QMV_K_BLOCK / QMV_K_STEP; ++step) {
+      const uint k0 = block * QMV_K_BLOCK + step * QMV_K_STEP;
+
+      __qmv_u32x4 a_words[4];
+#pragma unroll
+      for (int v = 0; v < 4; ++v) {
+        a_words[v] = a_source[k0 / 8u + v];
+      }
+      const __qmv_bf16x16 a0 = qmv_activations(a_words[0], a_words[1]);
+      const __qmv_bf16x16 a1 = qmv_activations(a_words[2], a_words[3]);
+
+      // scale-bias: sum_k A[m][k] over the step, every column of the accumulator layout
+      __qmv_f32x8 sums = (__qmv_f32x8)(0.0f);
+      if (PROLOGUE == QMV_PROLOGUE_SCALE_BIAS) {
+        sums = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a0, ones, sums);
+        sums = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a1, ones, sums);
+      }
+
+#pragma unroll
+      for (int t = 0; t < TILES; ++t) {
+        const __qmv_u32x4 words = current.packed[t][step];
+        const int offset = current.offsets[t][step];
+        // Each half of the wave decodes one of the step's two 16-wide operands and v_permlanex16 brings the other
+        // half's (decoding both in both halves cost 20% more VALU, the bound of this kernel).
+        const __qmv_u32x8 mine = __builtin_bit_cast(
+            __qmv_u32x8, qmv_decode(upper ? words.z : words.x, upper ? words.w : words.y, xor_mask, offset)
+        );
+        __qmv_u32x8 other;
+#pragma unroll
+        for (int i = 0; i < 8; ++i) {
+          other[i] = (uint)__builtin_amdgcn_permlanex16(mine[i], mine[i], 0x76543210u, 0xfedcba98u, false, false);
+        }
+        const __qmv_bf16x16 b0 = __builtin_bit_cast(__qmv_bf16x16, upper ? other : mine);
+        const __qmv_bf16x16 b1 = __builtin_bit_cast(__qmv_bf16x16, upper ? mine : other);
+        __qmv_f32x8 partial = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a0, b0, (__qmv_f32x8)(0.0f));
+        partial = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a1, b1, partial);
+        accumulators[t] += current.scales[t][step] * partial;
+        if (PROLOGUE == QMV_PROLOGUE_SCALE_BIAS) {
+          accumulators[t] += current.biases[t][step] * sums;
+        }
+      }
+      // keep the scheduler from hoisting the next steps' activation loads and decodes (register pressure)
+      __builtin_amdgcn_sched_barrier(0);
+    }
+    if (block + 1u < block_end) {
+      load_block(block + 1u, current);
+    }
+  }
+
+  // partial sums of the four waves: [wave][tile][element][lane]
+#pragma unroll
+  for (int t = 0; t < TILES; ++t) {
+#pragma unroll
+    for (int i = 0; i < 8; ++i) {
+      partials[((wave * TILES + t) * 8 + i) * 32 + lane] = accumulators[t][i];
+    }
+  }
+  __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");
+  __builtin_amdgcn_s_barrier();
+  __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");
+
+  if constexpr (TILES == 2) {
+    if (flags & QMV_FLAG_RHT) {
+      // The workgroup's 32 columns are one Hadamard block: wave w takes output rows 2w and 2w + 1 with lane L on
+      // column L. As the MSL GEMV epilogue: scale, round to the output type, transform, add the bias.
+      static_assert(QMV_WAVES == 8, "one wave per pair of the 16 output rows");
+      const uint tile = lane / 16u;
+      const int factor = rht_factors[n0 + lane];
+      const float bias = (flags & QMV_FLAG_BIAS) ? qmv_float(output_bias[n0 + lane]) : 0.0f;
+#pragma unroll
+      for (uint j = 0; j < 2u; ++j) {
+        float value = 0.0f;
+#pragma unroll
+        for (int w = 0; w < QMV_WAVES; ++w) {
+          // row 2 * wave + j is accumulator element `wave` of the lanes in half j
+          value += partials[((w * TILES + tile) * 8 + wave) * 32 + column + 16u * j];
+        }
+        if (flags & QMV_FLAG_SCALE) {
+          value *= ab_scale;
+        }
+        value = qmv_output_rht(lane, qmv_float(qmv_round_bf16(value)), factor);
+        if (flags & QMV_FLAG_BIAS) {
+          value = qmv_float(qmv_round_bf16(value)) + bias;
+        }
+        const uint output_row = m0 + 2u * wave + j;
+        if (output_row < m) {
+          d[(ulong)output_row * n + n0 + lane] = qmv_round_bf16(value);
+        }
+      }
+      return;
+    }
+  }
+
+  // wave w stores accumulator elements [w * E, (w + 1) * E) of every tile, E = 8 / waves
+#pragma unroll
+  for (int t = 0; t < TILES; ++t) {
+    const uint output_column = n0 + 16u * t + column;
+#pragma unroll
+    for (int j = 0; j < 8 / QMV_WAVES; ++j) {
+      const uint i = (8u / QMV_WAVES) * wave + j;
+      float value = 0.0f;
+#pragma unroll
+      for (int w = 0; w < QMV_WAVES; ++w) {
+        value += partials[((w * TILES + t) * 8 + i) * 32 + lane];
+      }
+      const uint output_row = m0 + 2u * i + upper; // accumulator element i of lane l: row 2i + l / 16
+      if (output_row < m && output_column < n) {
+        if (flags & QMV_FLAG_SCALE) {
+          value *= ab_scale;
+        }
+        if (flags & QMV_FLAG_BIAS) {
+          value += qmv_float(output_bias[output_column]);
+        }
+        d[(ulong)output_row * n + output_column] = qmv_round_bf16(value);
+      }
+    }
+  }
+}
+
+#define QMV_ENTRY(NAME, GROUP, PROLOGUE, TILES, A8)                                                                   \
+  __kernel __attribute__((reqd_work_group_size(32 * QMV_WAVES, 1, 1))) void NAME(                                \
+      const __global uchar* codes,                                                                              \
+      const __global ushort* scales,                                                                            \
+      const __global uchar* zero_points,                                                                        \
+      const __global ushort* biases,                                                                            \
+      const __global ushort* a,                                                                                 \
+      const __global float* a_scales,                                                                           \
+      __global ushort* d,                                                                                       \
+      const __global ushort* output_bias,                                                                       \
+      const __global int* rht_factors,                                                                          \
+      uint m,                                                                                                   \
+      uint n,                                                                                                   \
+      uint k,                                                                                                   \
+      uint scale_output_stride,                                                                                 \
+      uint scale_group_stride,                                                                                  \
+      uint zero_point_output_stride,                                                                            \
+      uint zero_point_group_stride,                                                                             \
+      float ab_scale,                                                                                           \
+      uint flags                                                                                                \
+  ) {                                                                                                           \
+    __local float partials[QMV_WAVES * TILES * 8 * 32] __attribute__((aligned(16)));                           \
+    qmv_wmma_kernel<GROUP, PROLOGUE, TILES, A8>(                                                                    \
+        codes, scales, zero_points, biases, a, a_scales, d, output_bias, rht_factors, m, n, k, scale_output_stride, scale_group_stride, \
+        zero_point_output_stride, zero_point_group_stride, ab_scale, flags, partials                            \
+    );                                                                                                          \
+  }
+
+#define QMV_ENTRIES(GROUP)                                                                                        \
+  QMV_ENTRY(qmv_wmma_w4_g##GROUP##_zero_point_t1, GROUP, QMV_PROLOGUE_ZERO_POINT, 1, false)                       \
+  QMV_ENTRY(qmv_wmma_w4_g##GROUP##_zero_point_t2, GROUP, QMV_PROLOGUE_ZERO_POINT, 2, false)                       \
+  QMV_ENTRY(qmv_wmma_w4_g##GROUP##_symmetric_t1, GROUP, QMV_PROLOGUE_SYMMETRIC, 1, false)                         \
+  QMV_ENTRY(qmv_wmma_w4_g##GROUP##_symmetric_t2, GROUP, QMV_PROLOGUE_SYMMETRIC, 2, false)                         \
+  QMV_ENTRY(qmv_wmma_w4_g##GROUP##_scale_bias_t1, GROUP, QMV_PROLOGUE_SCALE_BIAS, 1, false)                       \
+  QMV_ENTRY(qmv_wmma_w4_g##GROUP##_scale_bias_t2, GROUP, QMV_PROLOGUE_SCALE_BIAS, 2, false)                       \
+  QMV_ENTRY(qmv_wmma_a8_w4_g##GROUP##_zero_point_t1, GROUP, QMV_PROLOGUE_ZERO_POINT, 1, true)                     \
+  QMV_ENTRY(qmv_wmma_a8_w4_g##GROUP##_zero_point_t2, GROUP, QMV_PROLOGUE_ZERO_POINT, 2, true)                     \
+  QMV_ENTRY(qmv_wmma_a8_w4_g##GROUP##_symmetric_t1, GROUP, QMV_PROLOGUE_SYMMETRIC, 1, true)                       \
+  QMV_ENTRY(qmv_wmma_a8_w4_g##GROUP##_symmetric_t2, GROUP, QMV_PROLOGUE_SYMMETRIC, 2, true)
+
+QMV_ENTRIES(32)
+QMV_ENTRIES(64)

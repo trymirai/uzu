@@ -22,7 +22,7 @@ struct QuantChunk {
 
   template <uint WORDS>
   static METAL_FUNC void decode(
-      const thread uint4 (&words)[WORDS],
+      const thread vec<uint, 4> (&words)[WORDS],
       uint chunk,
       thread float (&values)[VALUES],
       float origin,

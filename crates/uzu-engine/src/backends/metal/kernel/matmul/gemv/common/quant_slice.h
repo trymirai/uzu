@@ -95,7 +95,7 @@ public:
       float weight_values[Tile::ROWS_PER_LANE][CHUNK_VALUES];
       Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
         constexpr uint R = decltype(output_index)::value;
-        metadata.decode(weights[R], chunk, R, weight_values[R]);
+        metadata.template decode<SLICE_WORDS>(weights[R], chunk, R, weight_values[R]);
       });
       Tile::for_each_input_row([&](auto input_index) UZU_ALWAYS_INLINE {
         constexpr uint I = decltype(input_index)::value;
@@ -127,7 +127,7 @@ public:
 private:
   template <bool BOUNDED>
   static METAL_FUNC void load_words(
-      thread uint4 (&words)[SLICE_WORDS],
+      thread vec<uint, 4> (&words)[SLICE_WORDS],
       const device uint8_t* source,
       uint valid_bytes = SLICE_BYTES
   ) {

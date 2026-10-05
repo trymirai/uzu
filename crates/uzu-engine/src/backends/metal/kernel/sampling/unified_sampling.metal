@@ -17,7 +17,9 @@ struct Logit {
   float value;
   uint32_t index;
 
-  static const constant Logit LOWEST;
+  static constexpr Logit lowest() {
+    return {.value = -numeric_limits<float>::infinity(), .index = numeric_limits<uint32_t>::max()};
+  }
 
   template <typename T>
   static inline Logit load(const device T* logits, uint32_t index) {
@@ -27,12 +29,9 @@ struct Logit {
   inline bool operator>(Logit rhs) const { return value > rhs.value || (value == rhs.value && index < rhs.index); }
 };
 
-constexpr constant Logit
-    Logit::LOWEST{.value = -numeric_limits<float>::infinity(), .index = numeric_limits<uint32_t>::max()};
-
 struct SimdReduceMaxLogit {
   using value_type = Logit;
-  static constant constexpr Logit identity = Logit::LOWEST;
+  static constexpr Logit identity() { return Logit::lowest(); }
 
   static Logit simd_reduce(Logit x) {
     METAL_PRAGMA_UNROLL
@@ -95,7 +94,7 @@ PUBLIC KERNEL(UnifiedSampling) (
 
   float thread_pre_filter_logit_max = -INFINITY;
   float thread_pre_filter_logit_norm = 0.0;
-  Logit thread_post_gumbel_logit_max = Logit::LOWEST;
+  Logit thread_post_gumbel_logit_max = Logit::lowest();
   for (uint32_t logit_index = thread_idx; logit_index < vocab_size; logit_index += THREADGROUP_SIZE) {
     Logit logit = Logit::load(logits, logit_index);
 
@@ -162,7 +161,7 @@ PUBLIC KERNEL(UnifiedSampling) (
 
     uint32_t thread_num_above_candidate = 0;
     float thread_mass_above_candidate = 0.0;
-    Logit thread_next_candidate_logit_post_gumbel = Logit::LOWEST;
+    Logit thread_next_candidate_logit_post_gumbel = Logit::lowest();
     for (uint32_t logit_index = thread_idx; logit_index < vocab_size; logit_index += THREADGROUP_SIZE) {
       Logit logit = Logit::load(logits, logit_index);
 

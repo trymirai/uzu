@@ -42,13 +42,13 @@ struct FullPrecisionBSource {
 
     uint k = k_start;
     for (; k + BLOCK_SIZE <= params.in_vec_size; k += k_stride) {
-      const float4 input_values = static_cast<float4>(*reinterpret_cast<const device I4*>(input));
+      const float4 input_values = vector_cast<float4>(*reinterpret_cast<const device I4*>(input));
       METAL_PRAGMA_UNROLL
       for (uint output_index = 0; output_index < Tile::ROWS_PER_LANE; output_index++) {
         const uint global_row = tile.row0 + output_index;
         if (FULL_TILE || global_row < params.out_vec_size) {
           result[0][output_index] +=
-              dot(static_cast<float4>(*reinterpret_cast<const device W4*>(weight_rows[output_index])), input_values);
+              dot(vector_cast<float4>(*reinterpret_cast<const device W4*>(weight_rows[output_index])), input_values);
         }
         weight_rows[output_index] += k_stride;
       }

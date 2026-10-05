@@ -1,0 +1,305 @@
+// Quantized GEMM for prefill on RDNA3 WMMA: D[m][n] = sum_k A[m][k] * W[n][k] with W in the checkpoint layout of
+// uzu's quantized models (W4 codes, row n of K/2 bytes, low nibble first; a bf16 scale and a 4-bit zero point,
+// or the symmetric zero point 8, per (row, group); scale index n * so + g * sg, zero-point nibble n * zo + g * zg).
+//
+// The MSL GEMM compiles for AMD only with 32x32 and 64x64 tiles of 4 SIMD groups (its larger tilings are K-256
+// MXU tilings that do not fit 64 KB of LDS) and reaches ~2 TFLOPS on 9B prefill shapes. Here:
+//
+// - A workgroup owns a 128 x 128 output tile; its 8 waves form a 2 x 4 grid of 64 x 32 tiles, 4 x 2 WMMA
+//   accumulators of 16 x 16 each.
+// - K advances 32 per step. A step's A rows (128 x 32 bf16) and weights are staged in LDS, double buffered with
+//   one barrier per step (ordering LDS only); global loads are issued two steps ahead, so they are in flight
+//   during two steps of WMMAs. The weights are staged once per tile as the exact integers code - zero point
+//   (exact in bf16); a step is one 32-value K slice of one group, so its WMMA products are scaled per column
+//   afterwards (as qmv_wmma.clcpp) and stay exact until the f32 accumulation.
+// - LDS rows are padded to 40 bf16 (80 bytes) so the 16 rows a WMMA operand load touches spread over banks.
+// - Epilogue: the accumulators (element e of lane l: row 2e + l / 16, column l % 16) are turned, one exchange
+//   between the wave halves per row pair, into rows with lane = column; a wave's 32 columns are one Hadamard
+//   block, so x ab_scale, the output RHT and the bias follow the MSL GEMV epilogue (qmv_wmma.clcpp) exactly.
+//
+// Requirements (checked on the host): K a multiple of 32 and of the group size, N a multiple of 32, 16-byte
+// aligned rows of A and W.
+
+// built without the OpenCL headers (-cl-no-stdinc), as the MSL kernels
+typedef unsigned char uchar;
+typedef unsigned short ushort;
+typedef unsigned int uint;
+typedef unsigned long ulong;
+
+typedef short __gemm_bf16x16 __attribute__((ext_vector_type(16)));
+typedef float __gemm_f32x8 __attribute__((ext_vector_type(8)));
+typedef uint __gemm_u32x2 __attribute__((ext_vector_type(2)));
+typedef uint __gemm_u32x4 __attribute__((ext_vector_type(4)));
+
+#define GEMM_WAVES 8
+#define GEMM_BM 128
+#define GEMM_BN 128
+#define GEMM_BK 32
+#define GEMM_LDS_STRIDE 40 // bf16 per staged row: 32 + 8 padding
+#define GEMM_LDS_TILE (GEMM_BM * GEMM_LDS_STRIDE)
+#define GEMM_LDS_BUFFER (2 * GEMM_LDS_TILE) // A, then W
+#define GEMM_LDS_SCALES (2 * 2 * GEMM_BN)    // after the two buffers: 2 x GEMM_BN f32 scales, as ushorts
+
+#define GEMM_FLAG_SIGNED_CODES 1u
+#define GEMM_FLAG_SCALE 2u
+#define GEMM_FLAG_BIAS 4u
+#define GEMM_FLAG_RHT 8u
+
+static inline uint gemm_min(uint a, uint b) { return a < b ? a : b; }
+
+static inline ushort gemm_round_bf16(float value) {
+  uint bits = __builtin_bit_cast(uint, value);
+  if ((bits & 0x7fffffffu) > 0x7f800000u) {
+    return (ushort)((bits >> 16) | 0x40u);
+  }
+  bits += 0x7fffu + ((bits >> 16) & 1u);
+  return (ushort)(bits >> 16);
+}
+
+static inline float gemm_float(ushort bf16) { return __builtin_bit_cast(float, (uint)bf16 << 16); }
+
+static inline float gemm_lane_value(float value, uint source_lane) {
+  return __builtin_bit_cast(
+      float, __builtin_amdgcn_ds_bpermute((int)(source_lane << 2), __builtin_bit_cast(int, value))
+  );
+}
+
+// Output random Hadamard transform over the 32 lanes of a wave (lane = column within the 32-block), as
+// `simdgroup_output_random_hadamard_transform` of the MSL kernels.
+static inline float gemm_output_rht(uint lane, float value, int factor) {
+#pragma unroll
+  for (uint stride = 1; stride < 32u; stride <<= 1) {
+    const float partner = gemm_lane_value(value, lane ^ stride);
+    value = (lane & stride) ? partner - value : partner + value;
+  }
+  return value * 0.17677669529663687f * (float)factor;
+}
+
+template <int GROUP, bool ZERO_POINT>
+static inline void gemm_w4_kernel(
+    const __global uchar* codes,
+    const __global ushort* scales,
+    const __global uchar* zero_points,
+    const __global ushort* a,
+    __global ushort* d,
+    const __global ushort* output_bias,
+    const __global int* rht_factors,
+    uint m,
+    uint n,
+    uint k,
+    uint scale_output_stride,
+    uint scale_group_stride,
+    uint zero_point_output_stride,
+    uint zero_point_group_stride,
+    float ab_scale,
+    uint flags,
+    __local ushort* lds
+) {
+  const uint thread = __builtin_amdgcn_workitem_id_x();
+  const uint wave = thread / 32u;
+  const uint lane = thread % 32u;
+  const uint wave_m = wave / 4u; // 64-row half of the tile
+  const uint wave_n = wave % 4u; // 32-column quarter of the tile
+  const uint m0 = __builtin_amdgcn_workgroup_id_y() * GEMM_BM;
+  const uint n0 = __builtin_amdgcn_workgroup_id_x() * GEMM_BN;
+  const uint xor_mask = (flags & GEMM_FLAG_SIGNED_CODES) ? 0x88888888u : 0u;
+
+  // global loads of a step: thread t stages 16 values of A row t / 2 and 16 codes of W row t / 2, half t % 2;
+  // rows past M or N repeat the last one (their outputs are not stored)
+  const uint stage_row = thread / 2u;
+  const uint stage_half = thread % 2u;
+  const __global ushort* a_row = a + (ulong)gemm_min(m0 + stage_row, m - 1u) * k + stage_half * 16u;
+  const uint w_row = gemm_min(n0 + stage_row, n - 1u);
+  const __global uchar* code_row = codes + (ulong)w_row * (k / 2u) + stage_half * 8u;
+
+  struct Fetch {
+    __gemm_u32x4 a[2];
+    __gemm_u32x2 codes;
+    float scale;
+    float origin; // zero point (or 8)
+  };
+  auto fetch = [&](uint k0, struct Fetch& target) __attribute__((always_inline)) {
+    const __global __gemm_u32x4* a_source = (const __global __gemm_u32x4*)(a_row + k0);
+    target.a[0] = a_source[0];
+    target.a[1] = a_source[1];
+    target.codes = *(const __global __gemm_u32x2*)(code_row + k0 / 2u);
+    const uint group = k0 / GROUP;
+    target.scale = gemm_float(scales[(ulong)w_row * scale_output_stride + (ulong)group * scale_group_stride]);
+    if constexpr (ZERO_POINT) {
+      const ulong nibble = (ulong)w_row * zero_point_output_stride + (ulong)group * zero_point_group_stride;
+      target.origin = (float)((zero_points[nibble / 2u] >> (4u * (uint)(nibble % 2u))) & 15u);
+    } else {
+      target.origin = 8.0f;
+    }
+  };
+  auto store = [&](const struct Fetch& source, uint buffer) __attribute__((always_inline)) {
+    __local ushort* a_tile = lds + buffer * GEMM_LDS_BUFFER;
+    __local ushort* w_tile = a_tile + GEMM_LDS_TILE;
+    __local __gemm_u32x4* a_target = (__local __gemm_u32x4*)(a_tile + stage_row * GEMM_LDS_STRIDE + stage_half * 16u);
+    a_target[0] = source.a[0];
+    a_target[1] = source.a[1];
+    // weights as the exact integers code - zero point (a bf16 holds them exactly: the upper half of the f32);
+    // the step's scale multiplies the WMMA products of its 32 K values
+    __gemm_u32x4 weights[2];
+#pragma unroll
+    for (int w = 0; w < 2; ++w) {
+      const uint word = source.codes[w] ^ xor_mask;
+#pragma unroll
+      for (int i = 0; i < 4; ++i) {
+        const float low = (float)((word >> (8 * i)) & 15u) - source.origin;
+        const float high = (float)((word >> (8 * i + 4)) & 15u) - source.origin;
+        weights[w][i] = (__builtin_bit_cast(uint, low) >> 16) | (__builtin_bit_cast(uint, high) & 0xffff0000u);
+      }
+    }
+    __local __gemm_u32x4* w_target = (__local __gemm_u32x4*)(w_tile + stage_row * GEMM_LDS_STRIDE + stage_half * 16u);
+    w_target[0] = weights[0];
+    w_target[1] = weights[1];
+    if (stage_half == 0u) {
+      ((__local float*)(lds + 2 * GEMM_LDS_BUFFER))[buffer * GEMM_BN + stage_row] = source.scale;
+    }
+  };
+
+  __gemm_f32x8 accumulators[4][2];
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+#pragma unroll
+    for (int j = 0; j < 2; ++j) {
+      accumulators[i][j] = (__gemm_f32x8)(0.0f);
+    }
+  }
+
+  // A step: per 16 x 16 tile two WMMAs over the step's 32 K values with exact integer weights, then
+  // accumulator += scale of the tile column * products (the column is lane % 16 in every accumulator element).
+  auto compute = [&](uint buffer) __attribute__((always_inline)) {
+    const __local ushort* a_tile = lds + buffer * GEMM_LDS_BUFFER;
+    const __local ushort* w_tile = a_tile + GEMM_LDS_TILE;
+    const __local float* step_scales = (const __local float*)(lds + 2 * GEMM_LDS_BUFFER) + buffer * GEMM_BN;
+    __gemm_bf16x16 w_operands[2][2];
+    float column_scales[2];
+#pragma unroll
+    for (int j = 0; j < 2; ++j) {
+      const uint column = wave_n * 32u + j * 16u + lane % 16u;
+      column_scales[j] = step_scales[column];
+#pragma unroll
+      for (uint k_half = 0; k_half < 2u; ++k_half) {
+        w_operands[k_half][j] = *(const __local __gemm_bf16x16*)(w_tile + column * GEMM_LDS_STRIDE + k_half * 16u);
+      }
+    }
+#pragma unroll
+    for (int i = 0; i < 4; ++i) {
+      const uint row = wave_m * 64u + i * 16u + lane % 16u;
+      const __gemm_bf16x16 a_low = *(const __local __gemm_bf16x16*)(a_tile + row * GEMM_LDS_STRIDE);
+      const __gemm_bf16x16 a_high = *(const __local __gemm_bf16x16*)(a_tile + row * GEMM_LDS_STRIDE + 16u);
+#pragma unroll
+      for (int j = 0; j < 2; ++j) {
+        __gemm_f32x8 products =
+            __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a_low, w_operands[0][j], (__gemm_f32x8)(0.0f));
+        products = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a_high, w_operands[1][j], products);
+        accumulators[i][j] += column_scales[j] * products;
+      }
+    }
+  };
+  // The barrier orders LDS only ("local"): a workgroup fence over all memory waits for every global load in
+  // flight (s_waitcnt vmcnt(0)), which drained the prefetched steps at each barrier.
+  auto barrier = [&]() __attribute__((always_inline)) {
+    __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup", "local");
+    __builtin_amdgcn_s_barrier();
+    __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup", "local");
+  };
+
+  // Two steps of loads in flight: global latency under load is about one step's math (prefetching one step ahead
+  // ran at half the speed of the same kernel without global loads). The loop is unrolled by two so the register
+  // sets alternate without copies (a copy would wait for the loads); each set is refetched unconditionally (the
+  // last steps refetch themselves) and behind a scheduling barrier.
+  const uint steps = k / GEMM_BK;
+  struct Fetch even, odd;
+  fetch(0, even);
+  fetch(gemm_min(1u, steps - 1u) * GEMM_BK, odd);
+  for (uint step = 0; step < steps; step += 2u) {
+    store(even, 0);
+    barrier();
+    fetch(gemm_min(step + 2u, steps - 1u) * GEMM_BK, even);
+    __builtin_amdgcn_sched_barrier(0);
+    compute(0);
+    if (step + 1u < steps) {
+      store(odd, 1);
+      barrier();
+      fetch(gemm_min(step + 3u, steps - 1u) * GEMM_BK, odd);
+      __builtin_amdgcn_sched_barrier(0);
+      compute(1);
+    }
+  }
+
+  // epilogue: the wave's 32 columns, lane = column
+  const uint column = n0 + wave_n * 32u + lane;
+  if (n0 + wave_n * 32u >= n) {
+    return;
+  }
+  const int factor = (flags & GEMM_FLAG_RHT) ? rht_factors[column] : 1;
+  const float bias = (flags & GEMM_FLAG_BIAS) ? gemm_float(output_bias[column]) : 0.0f;
+  const bool upper = lane >= 16u;
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+#pragma unroll
+    for (int e = 0; e < 8; ++e) {
+      // rows 2e (lanes 0-15 of both column tiles) and 2e + 1 (lanes 16-31) of the 16-row tile i
+      const float left = accumulators[i][0][e];
+      const float right = accumulators[i][1][e];
+      const float exchanged = gemm_lane_value(upper ? left : right, lane ^ 16u);
+      float values[2] = {upper ? exchanged : left, upper ? right : exchanged};
+#pragma unroll
+      for (int r = 0; r < 2; ++r) {
+        const uint row = m0 + wave_m * 64u + i * 16u + 2u * e + r;
+        float value = values[r];
+        if (flags & GEMM_FLAG_SCALE) {
+          value *= ab_scale;
+        }
+        if (flags & GEMM_FLAG_RHT) {
+          value = gemm_output_rht(lane, gemm_float(gemm_round_bf16(value)), factor);
+          if (flags & GEMM_FLAG_BIAS) {
+            value = gemm_float(gemm_round_bf16(value)) + bias;
+          }
+        } else if (flags & GEMM_FLAG_BIAS) {
+          value += bias;
+        }
+        if (row < m) {
+          d[(ulong)row * n + column] = gemm_round_bf16(value);
+        }
+      }
+    }
+  }
+}
+
+// Kernel arguments as qmv_wmma.clcpp (biases and a_scales unused); grid (N / 128, M / 128), 256 threads.
+#define GEMM_ENTRY(NAME, GROUP, ZERO_POINT)                                                                       \
+  __kernel __attribute__((reqd_work_group_size(32 * GEMM_WAVES, 1, 1))) void NAME(                               \
+      const __global uchar* codes,                                                                              \
+      const __global ushort* scales,                                                                            \
+      const __global uchar* zero_points,                                                                        \
+      const __global ushort* biases,                                                                            \
+      const __global ushort* a,                                                                                 \
+      const __global float* a_scales,                                                                           \
+      __global ushort* d,                                                                                       \
+      const __global ushort* output_bias,                                                                       \
+      const __global int* rht_factors,                                                                          \
+      uint m,                                                                                                   \
+      uint n,                                                                                                   \
+      uint k,                                                                                                   \
+      uint scale_output_stride,                                                                                 \
+      uint scale_group_stride,                                                                                  \
+      uint zero_point_output_stride,                                                                            \
+      uint zero_point_group_stride,                                                                             \
+      float ab_scale,                                                                                           \
+      uint flags                                                                                                \
+  ) {                                                                                                           \
+    __local ushort lds[2 * GEMM_LDS_BUFFER + GEMM_LDS_SCALES] __attribute__((aligned(16)));                                      \
+    gemm_w4_kernel<GROUP, ZERO_POINT>(                                                                          \
+        codes, scales, zero_points, a, d, output_bias, rht_factors, m, n, k, scale_output_stride,               \
+        scale_group_stride, zero_point_output_stride, zero_point_group_stride, ab_scale, flags, lds             \
+    );                                                                                                          \
+  }
+
+GEMM_ENTRY(gemm_w4_g32_zero_point, 32, true)
+GEMM_ENTRY(gemm_w4_g32_symmetric, 32, false)
+GEMM_ENTRY(gemm_w4_g64_zero_point, 64, true)
+GEMM_ENTRY(gemm_w4_g64_symmetric, 64, false)

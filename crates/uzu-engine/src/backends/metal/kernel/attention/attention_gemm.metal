@@ -273,7 +273,7 @@ KERNEL(AttentionGemm)(
     }
 
     AccumType block_max[ROWS_PER_LANE];
-    score_fragment.row_reduce(block_max, -INFINITY, [](AccumType a, AccumType b) { return metal::max(a, b); });
+    score_fragment.template row_reduce<AccumType>(block_max, -INFINITY, [](AccumType a, AccumType b) { return metal::max(a, b); });
 
     AccumType new_max[ROWS_PER_LANE];
     AccumType factor[ROWS_PER_LANE];
@@ -288,7 +288,7 @@ KERNEL(AttentionGemm)(
     score_fragment.map_rows(new_max, [](AccumType v, AccumType m) { return fast::exp2(v - m); });
 
     AccumType block_sum[ROWS_PER_LANE];
-    score_fragment.row_reduce(block_sum, AccumType(0), [](AccumType a, AccumType b) { return a + b; });
+    score_fragment.template row_reduce<AccumType>(block_sum, AccumType(0), [](AccumType a, AccumType b) { return a + b; });
     METAL_PRAGMA_UNROLL
     for (int r = 0; r < ROWS_PER_LANE; ++r) {
       sum_score[r] += block_sum[r];

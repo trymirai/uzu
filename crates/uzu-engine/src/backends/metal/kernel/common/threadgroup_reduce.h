@@ -8,15 +8,16 @@ using namespace metal;
 template <typename T>
 struct SimdReduceSum {
   using value_type = T;
-  static constant constexpr T identity = static_cast<T>(0);
+  static constexpr T identity() { return static_cast<T>(0); }
   static T simd_reduce(T x) { return simd_sum(x); }
 };
 
 template <typename T>
 struct SimdReduceMax {
   using value_type = T;
-  static constant constexpr T identity =
-      numeric_limits<T>::has_infinity ? -numeric_limits<T>::infinity() : numeric_limits<T>::lowest();
+  static constexpr T identity() {
+    return numeric_limits<T>::has_infinity ? -numeric_limits<T>::infinity() : numeric_limits<T>::lowest();
+  }
   static T simd_reduce(T x) { return simd_max(x); }
 };
 
@@ -36,10 +37,10 @@ static typename Op::value_type threadgroup_cooperative_reduce(
 
   // Phase 2: first simdgroup reduces across simdgropus
   if (thread_context.simdgroup_index == 0) {
-    typename Op::value_type total =
-        thread_context.simd_lane_id < (BLOCK_SIZE + thread_context.simdgroup_size - 1) / thread_context.simdgroup_size
-            ? shared[thread_context.simd_lane_id]
-            : Op::identity;
+    typename Op::value_type total = Op::identity();
+    if (thread_context.simd_lane_id < (BLOCK_SIZE + thread_context.simdgroup_size - 1) / thread_context.simdgroup_size) {
+      total = shared[thread_context.simd_lane_id];
+    }
     total = Op::simd_reduce(total);
 
     if (thread_context.simd_lane_id == 0) {

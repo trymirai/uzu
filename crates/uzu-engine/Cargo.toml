@@ -30,6 +30,15 @@ metal = [
     "dep:metal",
 ]
 
+# AMD GPUs through the HIP runtime (loaded at run time); kernels are the MSL sources compiled with clang.
+amdgpu = [
+    "dep:rayon",
+    "dep:clang-ast",
+    "dep:serde_json",
+    "dep:blake3",
+    "dep:libloading",
+]
+
 grammar = ["dep:xgrammar", "dep:schemars"]
 
 [build-dependencies]
@@ -52,6 +61,12 @@ tempfile = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
 blake3 = { workspace = true, optional = true }
 xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos")))'.build-dependencies]
+rayon = { workspace = true, optional = true }
+clang-ast = { workspace = true, optional = true }
+serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
+blake3 = { workspace = true, optional = true }
 
 [dependencies]
 uzu-engine-macros.workspace = true
@@ -78,6 +93,7 @@ xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 metal = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libloading = { workspace = true, optional = true }
 xgrammar = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 

@@ -1,5 +1,7 @@
 pub mod common;
 
+#[cfg(backend = "amdgpu")]
+pub mod amdgpu;
 #[cfg(backend = "cpu")]
 pub mod cpu;
 #[cfg(backend = "metal")]
@@ -20,6 +22,8 @@ pub fn select_backend<S: BackendSelection>(
 ) -> Result<S::Output, S::Error> {
     let default = if cfg!(backend = "metal") {
         "metal"
+    } else if cfg!(backend = "amdgpu") {
+        "amdgpu"
     } else if cfg!(backend = "cpu") {
         "cpu"
     } else {
@@ -32,6 +36,8 @@ pub fn select_backend<S: BackendSelection>(
         "cpu" => selection.select::<cpu::Cpu>(),
         #[cfg(backend = "metal")]
         "metal" => selection.select::<metal::Metal>(),
+        #[cfg(backend = "amdgpu")]
+        "amdgpu" => selection.select::<amdgpu::Amdgpu>(),
         _ => Err(unknown),
     }
 }

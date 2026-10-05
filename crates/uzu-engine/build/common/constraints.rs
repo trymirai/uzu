@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-#[cfg(all(feature = "metal", target_os = "macos"))]
+#[cfg(any(all(feature = "metal", target_os = "macos"), feature = "amdgpu"))]
 use rhai::EvalAltResult;
 use rhai::{AST, Dynamic, Engine, Module, Scope};
 
@@ -71,7 +71,7 @@ impl Constraints {
     }
 
     /// Test partial bindings, treating a missing variable as a constraint that may still become true.
-    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[cfg(any(all(feature = "metal", target_os = "macos"), feature = "amdgpu"))]
     pub fn could_satisfy(
         &self,
         bindings: impl IntoIterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
