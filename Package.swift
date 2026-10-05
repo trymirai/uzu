@@ -6,6 +6,7 @@ let package = Package(
     platforms: [
         .iOS("26.4"),
         .macOS("26.4"),
+        .macCatalyst("26.4"),
     ],
     products: [
         .library(name: "Uzu", targets: ["Uzu"]),
@@ -31,7 +32,7 @@ let package = Package(
                 .linkedFramework("Metal"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
-                .linkedFramework("AVFAudio", .when(platforms: [.iOS])),
+                .linkedFramework("AVFAudio", .when(platforms: [.iOS, .macCatalyst])),
             ]
         ),
         .target(
