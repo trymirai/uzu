@@ -144,7 +144,10 @@ pub fn restore_from_settings(app: &AppHandle) {
     let settings = crate::storage::settings_load().unwrap_or_else(|_| serde_json::json!({}));
     if let Some(accelerator) = settings.get("quickEntryAccelerator").and_then(|v| v.as_str())
         && !accelerator.is_empty()
+        && !apply_quick_entry_shortcut(app, accelerator)
     {
-        let _ = apply_quick_entry_shortcut(app, accelerator);
+        // Otherwise settings keep showing a shortcut that does not work.
+        crate::logger::warn("shortcut:restore-failed", Some(serde_json::json!({ "accelerator": accelerator })));
+        persist_quick_entry_accelerator(None);
     }
 }
