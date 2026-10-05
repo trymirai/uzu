@@ -413,7 +413,12 @@ impl Command {
             Configuration::Debug => command,
             Configuration::Release => command.with_argument("--release"),
         };
-        command
+        command.with_arguments(vec![
+            "--platforms".to_string(),
+            "macos".to_string(),
+            "ios".to_string(),
+            "maccatalyst".to_string(),
+        ])
     }
 
     pub fn xcodebuild() -> Self {
