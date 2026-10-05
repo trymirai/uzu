@@ -146,7 +146,7 @@ fn build_empty_dispatch_guards(dispatch_size_expressions: &[TokenStream]) -> Tok
         .reduce(|left, right| quote! { #left || #right });
 
     match combined_guard {
-        Some(guard) => quote! { if #guard { return; }; },
+        Some(guard) => quote! { if #guard { return Ok(()); }; },
         None => quote! {},
     }
 }

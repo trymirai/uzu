@@ -372,9 +372,10 @@ impl GemvKernel {
                 });
             },
         }
+        .map_err(MatmulError::BackendError)?;
 
         if let Some(factors) = deferred_factors {
-            output_work.apply(d, factors, output_bias, m, n, command_buffer);
+            output_work.apply(d, factors, output_bias, m, n, command_buffer).map_err(MatmulError::BackendError)?;
         }
 
         Ok(())

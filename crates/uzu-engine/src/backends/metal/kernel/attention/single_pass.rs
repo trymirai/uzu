@@ -85,7 +85,7 @@ impl AttentionSinglePass {
             config.num_q_heads,
             arguments.suffix_length,
             command_buffer,
-        );
+        )?;
         Ok(output)
     }
 }

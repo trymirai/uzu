@@ -86,19 +86,21 @@ fn run<B: Backend>(
     let mut suffix_state = create_buffer::<B, f32>(&context, tree_size * CONV_DIM * STATE_STRIDE);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    kernel.encode(
-        &input,
-        &weights,
-        Some(&bias),
-        &base_state_buffer,
-        &parents,
-        &mut output,
-        &mut suffix_state,
-        tree_size as u32,
-        TOTAL_PROJ_DIM as u32,
-        CONV_DIM as u32,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &input,
+            &weights,
+            Some(&bias),
+            &base_state_buffer,
+            &parents,
+            &mut output,
+            &mut suffix_state,
+            tree_size as u32,
+            TOTAL_PROJ_DIM as u32,
+            CONV_DIM as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     assert_eq_float(&base_state, &buffer_to_vec(&base_state_buffer), 0.0, &format!("base state {shape} T={tree_size}"));
     (buffer_to_vec(&output), buffer_to_vec(&suffix_state))
@@ -170,19 +172,21 @@ fn bench_conv_tree_scan(c: &mut Criterion) {
                 &format!("{BENCHMARK}/T{tree_size}"),
                 |command_buffer| {
                     let buffers = buffers.next_mut();
-                    kernel.encode(
-                        &buffers.input,
-                        &weights,
-                        Some(&bias),
-                        &base_state,
-                        &parents,
-                        &mut buffers.output,
-                        &mut buffers.suffix_state,
-                        tree_size as u32,
-                        BENCH_TOTAL_PROJ_DIM as u32,
-                        BENCH_CONV_DIM as u32,
-                        command_buffer,
-                    );
+                    kernel
+                        .encode(
+                            &buffers.input,
+                            &weights,
+                            Some(&bias),
+                            &base_state,
+                            &parents,
+                            &mut buffers.output,
+                            &mut buffers.suffix_state,
+                            tree_size as u32,
+                            BENCH_TOTAL_PROJ_DIM as u32,
+                            BENCH_CONV_DIM as u32,
+                            command_buffer,
+                        )
+                        .expect("kernel encoding failed");
                 },
             );
         });

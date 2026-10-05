@@ -133,8 +133,8 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
             args.value_dim,
             suffix_len,
             command_buffer,
-        );
-        self.cumsum.encode(&log_decay, &mut g, args.num_heads, suffix_len, command_buffer);
+        )?;
+        self.cumsum.encode(&log_decay, &mut g, args.num_heads, suffix_len, command_buffer)?;
         self.gram.encode(
             &q_norm,
             &k_norm,
@@ -146,7 +146,7 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
             args.key_dim,
             suffix_len,
             command_buffer,
-        );
+        )?;
         self.a_diag_inv.encode(
             &kk,
             &beta,
@@ -157,8 +157,8 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
             args.num_groups,
             suffix_len,
             command_buffer,
-        );
-        self.causal_inv.encode(&a_packed, &a_inv, &mut t_mat, args.num_heads, suffix_len, command_buffer);
+        )?;
+        self.causal_inv.encode(&a_packed, &a_inv, &mut t_mat, args.num_heads, suffix_len, command_buffer)?;
         self.output_and_state.encode(
             &q_norm,
             &k_norm,
@@ -176,7 +176,7 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
             args.value_dim,
             suffix_len,
             command_buffer,
-        );
+        )?;
         Ok(())
     }
 }

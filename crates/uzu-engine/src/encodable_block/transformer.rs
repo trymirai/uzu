@@ -168,7 +168,7 @@ impl<B: Backend> Transformer<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let mut output = command_buffer.allocate_scratch(hidden.size())?;
         let elements = batch_size * self.model_dim;
-        self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, command_buffer);
+        self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, command_buffer)?;
         Ok(output)
     }
 

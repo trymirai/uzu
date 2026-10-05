@@ -280,7 +280,7 @@ impl MatmulKernel for MatmulCpuKernel {
         });
 
         if let Some(factors) = post_rht {
-            self.output_rht.encode_fp_in_place(d.reborrow(), factors, None, m, n, command_buffer);
+            self.output_rht.encode_fp_in_place(d.reborrow(), factors, None, m, n, command_buffer)?;
             if let Some(bias) = bias_buffer {
                 let output_length = m.checked_mul(n).expect("matmul output length must fit in u32");
                 self.bias_add.encode(
@@ -290,7 +290,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     n,
                     output_length,
                     command_buffer,
-                );
+                )?;
             }
         }
 

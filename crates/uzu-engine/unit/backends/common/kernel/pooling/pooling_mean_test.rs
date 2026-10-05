@@ -58,7 +58,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let mut output = create_buffer::<B, T>(&context, output_len);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(&input_buffer, &mut output, input.seq_len, input.hidden_dim, input.batch_size, &mut command_buffer);
+    kernel
+        .encode(&input_buffer, &mut output, input.seq_len, input.hidden_dim, input.batch_size, &mut command_buffer)
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     buffer_to_vec(&output)

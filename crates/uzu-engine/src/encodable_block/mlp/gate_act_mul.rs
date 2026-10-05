@@ -89,7 +89,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 batch_dim,
                 self.activation.act_type(),
                 command_buffer,
-            );
+            )?;
             LinearInput::Int8Symmetric {
                 values,
                 scales,
@@ -111,7 +111,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 0,
                 self.activation.act_type(),
                 command_buffer,
-            );
+            )?;
             LinearInput::FullPrecision(hidden)
         };
 

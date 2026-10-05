@@ -116,13 +116,13 @@ impl TrellisGemm {
             };
         }
         if split_k == 1 {
-            encode_gemm!(arguments.output.values);
+            encode_gemm!(arguments.output.values)?;
             return Ok(());
         }
 
         let partial_count = split_k as usize * m as usize * n as usize;
         let mut partial_sums = command_buffer.allocate_scratch(partial_count * std::mem::size_of::<i32>())?;
-        encode_gemm!(&mut partial_sums);
+        encode_gemm!(&mut partial_sums)?;
         let reduce_kernel = match &mut self.reduce_kernel {
             Some(kernel) => kernel,
             empty => empty.insert(GemmTrellisReduceMetalKernel::new(command_buffer.context())?),
@@ -139,7 +139,7 @@ impl TrellisGemm {
             split_k,
             output_stride,
             command_buffer,
-        );
+        )?;
         Ok(())
     }
 }

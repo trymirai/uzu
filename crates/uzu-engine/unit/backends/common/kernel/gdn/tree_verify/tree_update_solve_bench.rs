@@ -214,19 +214,21 @@ fn encode(
     tree_size: usize,
     command_buffer: &mut <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding,
 ) {
-    kernel.encode(
-        Some(&buffers.kh0),
-        &buffers.v,
-        &buffers.prefix,
-        &buffers.beta,
-        &buffers.a,
-        &buffers.a_inv,
-        Some(&buffers.h0_idx),
-        &mut buffers.u,
-        batch_size as u32,
-        tree_size as u32,
-        NUM_V_HEADS as u32,
-        HEAD_V_DIM as u32,
-        command_buffer,
-    );
+    kernel
+        .encode(
+            Some(&buffers.kh0),
+            &buffers.v,
+            &buffers.prefix,
+            &buffers.beta,
+            &buffers.a,
+            &buffers.a_inv,
+            Some(&buffers.h0_idx),
+            &mut buffers.u,
+            batch_size as u32,
+            tree_size as u32,
+            NUM_V_HEADS as u32,
+            HEAD_V_DIM as u32,
+            command_buffer,
+        )
+        .expect("kernel encoding failed");
 }

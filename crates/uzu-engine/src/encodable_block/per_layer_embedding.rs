@@ -123,7 +123,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             batch_dim,
             self.fused_token_scale,
             command_buffer,
-        );
+        )?;
 
         let mut model_projection_input =
             command_buffer.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
@@ -148,7 +148,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             total_elements,
             1.0,
             command_buffer,
-        );
+        )?;
 
         command_buffer.pop_debug_group();
 
@@ -256,7 +256,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             length,
             length,
             command_buffer,
-        );
+        )?;
 
         let mut gate_input = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
         command_buffer.encode_copy(outputs.as_ref(), &mut gate_input);
@@ -274,7 +274,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             self.num_layers * self.ple_dim,
             self.activation.act_type(),
             command_buffer,
-        );
+        )?;
 
         let projected = self.projection.encode(activated, batch_dim, command_buffer)?;
         let normed = self.norm.encode(&projected, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)?;
@@ -287,7 +287,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             length,
             self.post_layer_scalar,
             command_buffer,
-        );
+        )?;
 
         command_buffer.pop_debug_group();
 

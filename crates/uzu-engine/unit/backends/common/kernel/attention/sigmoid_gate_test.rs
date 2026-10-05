@@ -40,14 +40,16 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let gate_dim = config.num_heads * config.head_dim;
     let gate_offset = (config.num_heads + 2 * config.num_kv_heads) * config.head_dim;
     let qkvg_dim = gate_offset + gate_dim;
-    kernel.encode(
-        qkvg.subrange(gate_offset as usize * size_of::<T>()..),
-        &mut output,
-        gate_dim,
-        config.suffix_length,
-        qkvg_dim,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            qkvg.subrange(gate_offset as usize * size_of::<T>()..),
+            &mut output,
+            gate_dim,
+            config.suffix_length,
+            qkvg_dim,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     buffer_to_vec(&output)

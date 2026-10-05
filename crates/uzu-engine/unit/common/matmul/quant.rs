@@ -249,16 +249,18 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let transform = ActivationTransform::<Cpu>::quantize(&context, T::data_type(), quantization)
             .expect("CPU activation quantization transform");
         let mut command_buffer = context.create_command_buffer(None, None).expect("CPU command buffer");
-        transform.encode_quantize(
-            &input,
-            &mut values,
-            &mut scales,
-            group_sums.as_mut(),
-            &factors,
-            rows,
-            columns,
-            &mut command_buffer,
-        );
+        transform
+            .encode_quantize(
+                &input,
+                &mut values,
+                &mut scales,
+                group_sums.as_mut(),
+                &factors,
+                rows,
+                columns,
+                &mut command_buffer,
+            )
+            .expect("kernel encoding failed");
         command_buffer.end_encoding().submit().wait_until_completed().expect("CPU activation quantization");
 
         self.prepared_a = Some(PreparedInt8A {

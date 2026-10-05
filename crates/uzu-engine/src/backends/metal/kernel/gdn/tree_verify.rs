@@ -125,7 +125,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             arguments.tree_size,
             self.arguments.num_v_heads,
             command_buffer,
-        );
+        )?;
         self.gram.encode(
             arguments.q,
             arguments.k,
@@ -146,7 +146,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             self.arguments.head_k_dim,
             self.arguments.head_v_dim,
             command_buffer,
-        );
+        )?;
         self.solve.encode(
             Some(&kh0),
             arguments.v,
@@ -161,7 +161,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             self.arguments.num_v_heads,
             self.arguments.head_v_dim,
             command_buffer,
-        );
+        )?;
         self.out.encode(
             arguments.q,
             &prefix,
@@ -178,7 +178,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             self.arguments.head_k_dim,
             self.arguments.head_v_dim,
             command_buffer,
-        );
+        )?;
         Ok(output)
     }
 }

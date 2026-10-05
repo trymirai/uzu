@@ -114,7 +114,7 @@ impl<B: Backend> Attention<B> {
                 batch_dim.size(),
                 self.projection_dim,
                 command_buffer,
-            );
+            )?;
         }
         self.out_projection.encode(attention_output, batch_dim.size(), command_buffer)
     }
@@ -210,7 +210,7 @@ impl<B: Backend> Attention<B> {
             input_row_stride,
             batch_dim,
             command_buffer,
-        );
+        )?;
         Ok(queries)
     }
 
@@ -238,7 +238,7 @@ impl<B: Backend> Attention<B> {
             self.projection_dim,
             batch_dim,
             command_buffer,
-        );
+        )?;
         Ok(queries)
     }
 }

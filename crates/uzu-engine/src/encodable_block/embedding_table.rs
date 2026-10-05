@@ -174,7 +174,7 @@ impl<B: Backend> EmbeddingTable<B> {
         batch_dim: u32,
         scale: f32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) {
+    ) -> Result<(), B::Error> {
         let bindings = self.storage.lookup_bindings();
         self.lookup.encode(
             token_ids,
@@ -192,7 +192,7 @@ impl<B: Backend> EmbeddingTable<B> {
             self.embedding_dim,
             scale,
             command_buffer,
-        );
+        )
     }
 }
 

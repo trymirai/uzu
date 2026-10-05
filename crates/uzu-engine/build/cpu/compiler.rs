@@ -602,9 +602,10 @@ impl CpuCompiler {
                     })
                 }
 
-                fn encode(&self, #(#encode_args_defs),*) {
+                fn encode(&self, #(#encode_args_defs),*) -> Result<(), crate::backends::cpu::error::CpuError> {
                     #(#argument_copies)*
                     #encode_body
+                    Ok(())
                 }
             }
         };

@@ -52,15 +52,17 @@ fn bench_build_tree_prefix(c: &mut Criterion) {
             );
             iter_encode_loop_named::<Metal, _>(&context, bencher, &benchmark_path, |command_buffer| {
                 let buffers = buffers.next_mut();
-                kernel.encode(
-                    &buffers.trie,
-                    &buffers.log_decay,
-                    &mut buffers.prefix,
-                    batch_size as u32,
-                    tree_size as u32,
-                    value_heads as u32,
-                    command_buffer,
-                );
+                kernel
+                    .encode(
+                        &buffers.trie,
+                        &buffers.log_decay,
+                        &mut buffers.prefix,
+                        batch_size as u32,
+                        tree_size as u32,
+                        value_heads as u32,
+                        command_buffer,
+                    )
+                    .expect("kernel encoding failed");
             });
         });
     }

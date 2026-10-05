@@ -392,29 +392,31 @@ impl<B: Backend> Weaver<B> {
         let frontier_capacity = tree_slot_count * shape.expand_width;
 
         if batch_start_slot > 0 {
-            self.frontier_select.encode(
-                frontier.reborrow(),
-                packed_tree.reborrow(),
-                slot_ancestors,
-                node_token_ids.reborrow(),
-                node_metadata.reborrow(),
-                node_ancestor_indices.reborrow(),
-                node_valid.reborrow(),
-                candidate_ids,
-                candidate_logits,
-                node_candidate_ids.reborrow(),
-                node_candidate_logits.reborrow(),
-                frontier_capacity,
-                tree_slot_count,
-                batch_node_count,
-                batch_start_slot,
-                ancestor_stride,
-                self.max_depth,
-                shape.max_depth - 1,
-                shape.dflash_depth - 1,
-                self.candidate_pool_size,
-                command_buffer,
-            );
+            self.frontier_select
+                .encode(
+                    frontier.reborrow(),
+                    packed_tree.reborrow(),
+                    slot_ancestors,
+                    node_token_ids.reborrow(),
+                    node_metadata.reborrow(),
+                    node_ancestor_indices.reborrow(),
+                    node_valid.reborrow(),
+                    candidate_ids,
+                    candidate_logits,
+                    node_candidate_ids.reborrow(),
+                    node_candidate_logits.reborrow(),
+                    frontier_capacity,
+                    tree_slot_count,
+                    batch_node_count,
+                    batch_start_slot,
+                    ancestor_stride,
+                    self.max_depth,
+                    shape.max_depth - 1,
+                    shape.dflash_depth - 1,
+                    self.candidate_pool_size,
+                    command_buffer,
+                )
+                .map_err(WeaverEncodeError::Backend)?;
         }
         let (batch_candidate_ids, batch_candidate_logits) = if batch_start_slot == 0 {
             (candidate_ids.subrange(..), candidate_logits.subrange(..))
@@ -450,25 +452,28 @@ impl<B: Backend> Weaver<B> {
             let mut attention_output = command_buffer
                 .allocate_scratch_for_shape(&[batch_node_count, self.model_dim], DATA_TYPE)
                 .map_err(WeaverEncodeError::Backend)?;
-            layer.ancestor_attention.encode(
-                prefix_kv_layers.next().expect("missing prefix KV layer"),
-                node_kv_layers.next().expect("missing node KV layer"),
-                &current_qkv,
-                &rope.cosines,
-                &rope.sines,
-                node_metadata,
-                node_ancestor_indices.as_ref(),
-                node_metadata.subrange(MetadataIdx::AncestorCount as usize * metadata_field_bytes..),
-                node_metadata.subrange(MetadataIdx::TreeSlot as usize * metadata_field_bytes..),
-                &mut attention_output,
-                batch_node_count,
-                shape.dflash_depth,
-                ancestor_stride,
-                tree_slot_count,
-                layer.max_depth,
-                layer.attention_scale,
-                command_buffer,
-            );
+            layer
+                .ancestor_attention
+                .encode(
+                    prefix_kv_layers.next().expect("missing prefix KV layer"),
+                    node_kv_layers.next().expect("missing node KV layer"),
+                    &current_qkv,
+                    &rope.cosines,
+                    &rope.sines,
+                    node_metadata,
+                    node_ancestor_indices.as_ref(),
+                    node_metadata.subrange(MetadataIdx::AncestorCount as usize * metadata_field_bytes..),
+                    node_metadata.subrange(MetadataIdx::TreeSlot as usize * metadata_field_bytes..),
+                    &mut attention_output,
+                    batch_node_count,
+                    shape.dflash_depth,
+                    ancestor_stride,
+                    tree_slot_count,
+                    layer.max_depth,
+                    layer.attention_scale,
+                    command_buffer,
+                )
+                .map_err(WeaverEncodeError::Backend)?;
             residual_input = layer
                 .encode_post_attention(attention_output, &mut residual_state, batch_node_count, command_buffer)
                 .map_err(WeaverEncodeError::Backend)?;
@@ -506,38 +511,42 @@ impl<B: Backend> Weaver<B> {
         } else {
             &self.top_children
         };
-        top_children.encode(
-            &logit_residuals,
-            batch_candidate_logits,
-            batch_candidate_ids,
-            depth_seeds_buffer,
-            node_metadata,
-            &mut child_token_ids,
-            &mut child_logprobs,
-            child_prune_logprobs.as_mut(),
-            batch_node_count,
-            self.candidate_pool_size,
-            shape.expand_width,
-            target_embedding.vocab_size(),
-            shape.prune_noise_scale,
-            command_buffer,
-        );
+        top_children
+            .encode(
+                &logit_residuals,
+                batch_candidate_logits,
+                batch_candidate_ids,
+                depth_seeds_buffer,
+                node_metadata,
+                &mut child_token_ids,
+                &mut child_logprobs,
+                child_prune_logprobs.as_mut(),
+                batch_node_count,
+                self.candidate_pool_size,
+                shape.expand_width,
+                target_embedding.vocab_size(),
+                shape.prune_noise_scale,
+                command_buffer,
+            )
+            .map_err(WeaverEncodeError::Backend)?;
 
         // The edge lane feeds only final pruning; without prune noise it keeps the model logprobs.
-        self.frontier_insert_children.encode(
-            packed_tree.as_ref(),
-            node_metadata,
-            node_valid.as_ref(),
-            &child_token_ids,
-            &child_logprobs,
-            child_prune_logprobs.as_ref().unwrap_or(&child_logprobs),
-            frontier,
-            frontier_capacity,
-            tree_slot_count,
-            batch_node_count,
-            shape.expand_width,
-            command_buffer,
-        );
+        self.frontier_insert_children
+            .encode(
+                packed_tree.as_ref(),
+                node_metadata,
+                node_valid.as_ref(),
+                &child_token_ids,
+                &child_logprobs,
+                child_prune_logprobs.as_ref().unwrap_or(&child_logprobs),
+                frontier,
+                frontier_capacity,
+                tree_slot_count,
+                batch_node_count,
+                shape.expand_width,
+                command_buffer,
+            )
+            .map_err(WeaverEncodeError::Backend)?;
 
         Ok(())
     }

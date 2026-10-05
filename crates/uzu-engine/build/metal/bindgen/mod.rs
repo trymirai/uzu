@@ -120,7 +120,7 @@ pub fn bindgen(
             #method_visibility fn encode(
                 &self,
                 #(#encode_argument_definitions),*
-            ) {
+            ) -> Result<(), MetalError> {
                 #empty_dispatch_guards
                 command_buffer.push_debug_group(#kernel_name);
                 #(#encode_deconstructs)*
@@ -129,6 +129,7 @@ pub fn bindgen(
                 #(#encode_set_calls)*
                 #dispatch_code
                 command_buffer.pop_debug_group();
+                Ok(())
             }
         }
     };

@@ -89,7 +89,7 @@ impl RadixTopKSmall for MetalRadixTopKSmall {
                 k,
                 pass,
                 command_buffer,
-            );
+            )?;
         }
         self.collect.encode(
             input,
@@ -102,7 +102,7 @@ impl RadixTopKSmall for MetalRadixTopKSmall {
             rows as u32,
             k,
             command_buffer,
-        );
+        )?;
         Ok(())
     }
 }

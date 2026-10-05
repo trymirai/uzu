@@ -180,27 +180,29 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                 group.bench_function(benchmark_id, |bencher| {
                     iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |command_buffer| {
                         let buffers = buffers.next_mut();
-                        kernel.encode(
-                            &buffers.q,
-                            &buffers.k,
-                            &buffers.trie,
-                            &buffers.prefix,
-                            &buffers.beta,
-                            Some(&buffers.h0),
-                            Some(&buffers.h0_idx),
-                            &mut buffers.a_packed,
-                            &mut buffers.qkd,
-                            &mut buffers.a_inv,
-                            Some(&mut buffers.kh0),
-                            scale,
-                            batch_size as u32,
-                            tree_size as u32,
-                            K_HEADS as u32,
-                            VALUE_HEADS as u32,
-                            HEAD_K_DIM as u32,
-                            HEAD_V_DIM as u32,
-                            command_buffer,
-                        );
+                        kernel
+                            .encode(
+                                &buffers.q,
+                                &buffers.k,
+                                &buffers.trie,
+                                &buffers.prefix,
+                                &buffers.beta,
+                                Some(&buffers.h0),
+                                Some(&buffers.h0_idx),
+                                &mut buffers.a_packed,
+                                &mut buffers.qkd,
+                                &mut buffers.a_inv,
+                                Some(&mut buffers.kh0),
+                                scale,
+                                batch_size as u32,
+                                tree_size as u32,
+                                K_HEADS as u32,
+                                VALUE_HEADS as u32,
+                                HEAD_K_DIM as u32,
+                                HEAD_V_DIM as u32,
+                                command_buffer,
+                            )
+                            .expect("kernel encoding failed");
                     });
                 });
             }

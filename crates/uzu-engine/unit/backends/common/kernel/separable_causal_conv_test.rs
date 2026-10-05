@@ -49,16 +49,18 @@ fn run_kernel<B: Backend>() -> Vec<bf16> {
     let mut output = create_buffer::<B, bf16>(&context, (SEQUENCE_LENGTH * MODEL_DIM) as usize);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    kernel.encode(
-        &input,
-        &coefficient_deltas,
-        &weights,
-        None::<&B::GlobalBuffer>,
-        &mut output,
-        SEQUENCE_LENGTH,
-        COEFFICIENT_ROW_STRIDE,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &input,
+            &coefficient_deltas,
+            &weights,
+            None::<&B::GlobalBuffer>,
+            &mut output,
+            SEQUENCE_LENGTH,
+            COEFFICIENT_ROW_STRIDE,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     buffer_to_vec::<B, bf16>(&output)

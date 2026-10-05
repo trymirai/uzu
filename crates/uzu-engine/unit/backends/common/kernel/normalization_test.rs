@@ -61,20 +61,22 @@ fn get_output<
     let mut output_buffer = create_buffer_with_data::<B, OutputT>(&context, &vec![OutputT::zero(); input.len()]);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(
-        Some(&input_buffer),
-        scales_buffer.as_ref(),
-        None::<&B::GlobalBuffer>,
-        &mut output_buffer,
-        None::<&mut B::GlobalBuffer>,
-        hadamard_factors_buffer.as_ref(),
-        batch_size,
-        element_count,
-        epsilon,
-        0.0,
-        1.0,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            Some(&input_buffer),
+            scales_buffer.as_ref(),
+            None::<&B::GlobalBuffer>,
+            &mut output_buffer,
+            None::<&mut B::GlobalBuffer>,
+            hadamard_factors_buffer.as_ref(),
+            batch_size,
+            element_count,
+            epsilon,
+            0.0,
+            1.0,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     buffer_to_vec::<B, OutputT>(&output_buffer)
@@ -177,14 +179,16 @@ fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
     let hadamard_factors_buffer = create_buffer_with_data::<Cpu, i32>(&context, &hadamard_factors);
     let mut expected_buffer = create_buffer::<Cpu, T>(&context, plain.len());
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    input_rht.encode_fp(
-        &plain_buffer,
-        &mut expected_buffer,
-        &hadamard_factors_buffer,
-        batch_size,
-        element_count,
-        &mut command_buffer,
-    );
+    input_rht
+        .encode_fp(
+            &plain_buffer,
+            &mut expected_buffer,
+            &hadamard_factors_buffer,
+            batch_size,
+            element_count,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
     let expected = buffer_to_vec::<Cpu, T>(&expected_buffer);
 

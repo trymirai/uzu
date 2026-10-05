@@ -279,7 +279,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
             self.inner_dim,
             self.num_heads,
             command_buffer,
-        );
+        )?;
 
         let mut conv_x = command_buffer
             .allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
@@ -307,7 +307,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 self.num_groups * self.state_dim,
                 self.activation_type,
                 command_buffer,
-            );
+            )?;
         } else {
             let mut padded = command_buffer
                 .allocate_scratch_for_shape(&[batch_dim.size() + state_stride, self.conv_dim], INNER_DATA_TYPE)?;
@@ -320,7 +320,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 batch_dim.size(),
                 self.conv_dim,
                 command_buffer,
-            );
+            )?;
             self.conv_scan.encode(
                 &padded,
                 &self.conv_weight,
@@ -338,7 +338,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 self.num_groups * self.state_dim,
                 self.activation_type,
                 command_buffer,
-            );
+            )?;
         }
 
         let mut ssd_output =
@@ -370,7 +370,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 self.num_heads,
                 self.head_dim,
                 command_buffer,
-            );
+            )?;
         } else {
             let state_strides = [self.head_dim * self.state_dim, self.state_dim, 1];
             match &self.ssd_prefill {
@@ -414,7 +414,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                     self.head_dim,
                     command_buffer,
                 ),
-            }
+            }?;
         }
 
         state.suffix_length = Some(batch_dim.size());

@@ -326,13 +326,16 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 }
 
                 if let Some(suffix_repetition_length) = options.sampling_method.suffix_repetition_length() {
-                    model.context_ring_update.encode(
-                        &token_ids,
-                        context_ring.as_mut().unwrap(),
-                        suffix_repetition_length,
-                        input_chunk.len() as u32,
-                        &mut command_buffer,
-                    );
+                    model
+                        .context_ring_update
+                        .encode(
+                            &token_ids,
+                            context_ring.as_mut().unwrap(),
+                            suffix_repetition_length,
+                            input_chunk.len() as u32,
+                            &mut command_buffer,
+                        )
+                        .map_err(LanguageModelStreamError::Backend)?;
                 }
 
                 model_state.tokens.extend(input_chunk);
@@ -494,13 +497,16 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                                     .collect::<Box<[u32]>>(),
                             )
                             .map_err(LanguageModelStreamError::Backend)?;
-                        self.model.context_ring_update.encode(
-                            &accepted_input_token_ids_const,
-                            self.context_ring.as_mut().unwrap(),
-                            suffix_repetition_length,
-                            full.len() as u32,
-                            &mut command_buffer,
-                        );
+                        self.model
+                            .context_ring_update
+                            .encode(
+                                &accepted_input_token_ids_const,
+                                self.context_ring.as_mut().unwrap(),
+                                suffix_repetition_length,
+                                full.len() as u32,
+                                &mut command_buffer,
+                            )
+                            .map_err(LanguageModelStreamError::Backend)?;
                         command_buffer.pop_debug_group();
                     }
                     if let Some(capture_span) = capture_span {
@@ -748,13 +754,16 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             }
 
             if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
-                self.model.context_ring_update.encode(
-                    token_ids,
-                    self.context_ring.as_mut().unwrap(),
-                    suffix_repetition_length,
-                    batch_dim.size(),
-                    &mut command_buffer,
-                );
+                self.model
+                    .context_ring_update
+                    .encode(
+                        token_ids,
+                        self.context_ring.as_mut().unwrap(),
+                        suffix_repetition_length,
+                        batch_dim.size(),
+                        &mut command_buffer,
+                    )
+                    .map_err(LanguageModelStreamError::Backend)?;
             }
         }
 

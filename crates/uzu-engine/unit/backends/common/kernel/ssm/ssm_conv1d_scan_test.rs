@@ -105,24 +105,26 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let mut state_out = create_buffer::<B, T>(&context, state_size);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(
-        &padded,
-        &w,
-        b.as_ref(),
-        &mut x_out,
-        &mut b_out,
-        &mut c_out,
-        &mut state_out,
-        input.suffix_len,
-        input.kernel_size,
-        input.row_stride,
-        input.state_stride,
-        input.num_channels,
-        input.inner_dim,
-        input.proj_dim,
-        input.activation_type,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &padded,
+            &w,
+            b.as_ref(),
+            &mut x_out,
+            &mut b_out,
+            &mut c_out,
+            &mut state_out,
+            input.suffix_len,
+            input.kernel_size,
+            input.row_stride,
+            input.state_stride,
+            input.num_channels,
+            input.inner_dim,
+            input.proj_dim,
+            input.activation_type,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {

@@ -143,7 +143,7 @@ impl<B: Backend> Sampling<B> {
                 sampling_range.start,
                 sampling_length,
                 command_buffer,
-            );
+            )?;
             Some(logits_copy)
         } else {
             None
@@ -192,7 +192,7 @@ impl<B: Backend> Sampling<B> {
             self.vocab_size,
             sampling_length,
             command_buffer,
-        );
+        )?;
 
         command_buffer.pop_debug_group();
 
