@@ -17,7 +17,7 @@ pub enum MatmulError<B: Backend> {
         bit: GemmDTransform,
         path: &'static str,
     },
-    #[error("Unsupported B layout on path {path}")]
+    #[error("Unsupported layout on path {path}")]
     UnsupportedLayout {
         path: &'static str,
     },

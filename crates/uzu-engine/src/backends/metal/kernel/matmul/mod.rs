@@ -19,8 +19,8 @@ use crate::{
                 ActivationQuantization, ActivationTransform,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
-                    ActivationFormat, Int8CodeLayout, MatmulArguments, MatmulError, MatmulKernel, MatmulShape,
-                    QuantParamsLayout,
+                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel,
+                    MatmulShape, QuantParamsLayout,
                 },
             },
         },
@@ -273,6 +273,12 @@ impl MatmulKernel for MatmulMetalKernel {
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
+        if matches!(&arguments.a, MatmulA::Trellis { .. }) != matches!(&arguments.b, MatmulB::Trellis { .. }) {
+            return Err(MatmulError::UnsupportedLayout {
+                path: "GemmTrellis",
+            }
+            .into());
+        }
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, command_buffer.context()) {
             MatmulDispatch::Gemv(gemv) => {
