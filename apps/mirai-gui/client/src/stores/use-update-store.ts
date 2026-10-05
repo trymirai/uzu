@@ -8,6 +8,12 @@ export const UpdatePhase = {
 } as const;
 export type UpdatePhase = (typeof UpdatePhase)[keyof typeof UpdatePhase];
 
+export const UpdateCheckOutcome = {
+  Checked: "checked",
+  Failed: "failed",
+} as const;
+export type UpdateCheckOutcome = (typeof UpdateCheckOutcome)[keyof typeof UpdateCheckOutcome];
+
 export type UpdateDownloadStatus =
   | { phase: typeof UpdatePhase.Idle; downloadError?: string }
   | { phase: typeof UpdatePhase.Available; version: string }
@@ -18,8 +24,8 @@ type UpdateState = {
   status: UpdateDownloadStatus;
   _downloadListenersCleanup: (() => void) | null;
 
-  initUpdateCheck(): Promise<void>;
-  checkForUpdate(): Promise<void>;
+  initUpdateCheck(): Promise<UpdateCheckOutcome>;
+  checkForUpdate(): Promise<UpdateCheckOutcome>;
   startDownload(version: string): Promise<void>;
   watchDownload(version: string): void;
   _reconcileDownload(version: string): Promise<void>;
@@ -32,7 +38,7 @@ export const useUpdateStore = create<UpdateState>()((set, get) => ({
   _downloadListenersCleanup: null,
 
   async initUpdateCheck() {
-    await get().checkForUpdate();
+    const outcome = await get().checkForUpdate();
     try {
       const status = await getPlatform().updater.getUpdateStatus();
       // Hydrate every backend phase, not only Downloaded: a webview reload while
@@ -47,22 +53,24 @@ export const useUpdateStore = create<UpdateState>()((set, get) => ({
     } catch (e) {
       console.warn("[update] status hydration failed", e);
     }
+    return outcome;
   },
 
   async checkForUpdate() {
     try {
       const updater = getPlatform().updater;
       const res = await updater.checkForUpdate();
-
-      if (!res.hasUpdate || !res.latestVersion || !res.hasDownloadable) return;
+      if (res.reason) return UpdateCheckOutcome.Failed;
+      if (!res.hasUpdate || !res.latestVersion || !res.hasDownloadable) return UpdateCheckOutcome.Checked;
 
       const controllerStatus = await updater.getUpdateStatus();
       const updateAlreadyInFlight = controllerStatus.phase !== UpdateStatusPhase.Idle;
-      if (updateAlreadyInFlight) return;
+      if (updateAlreadyInFlight) return UpdateCheckOutcome.Checked;
 
       set({ status: { phase: UpdatePhase.Available, version: res.latestVersion } });
+      return UpdateCheckOutcome.Checked;
     } catch {
-      // Offline or a bad manifest simply means no update to offer.
+      return UpdateCheckOutcome.Failed;
     }
   },
 

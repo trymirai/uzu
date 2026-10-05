@@ -6,7 +6,6 @@ export type CheckForUpdateResult = {
   hasUpdate: boolean;
   hasDownloadable?: boolean;
   reason?: string;
-  source: "gcs" | "error";
 };
 
 export type UpdaterService = {

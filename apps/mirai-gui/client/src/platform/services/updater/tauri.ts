@@ -10,7 +10,6 @@ type RustCheck = {
   hasUpdate: boolean;
   hasDownloadable: boolean;
   reason?: string;
-  source: "gcs" | "error";
 };
 
 const state = {

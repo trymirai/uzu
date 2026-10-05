@@ -1,7 +1,5 @@
-mod gcs;
 mod staging;
 
-use gcs::ensure_bucket;
 use serde::Serialize;
 use staging::{clean_stale_staging, staging_path};
 use tauri::{AppHandle, Emitter};
@@ -32,7 +30,6 @@ pub struct UpdaterState {
 
 #[derive(Default)]
 struct UpdaterInner {
-    bucket: String,
     phase: Phase,
     pending: Option<Update>,
     // Staging to disk makes a failed apply retryable; the plugin still buffers the
@@ -52,7 +49,6 @@ pub struct CheckResult {
     has_downloadable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
-    source: &'static str,
 }
 
 fn current_version(app: &AppHandle) -> String {
@@ -69,7 +65,6 @@ fn check_error(
         has_update: false,
         has_downloadable: false,
         reason: Some(reason),
-        source: "error",
     }
 }
 
@@ -87,17 +82,7 @@ pub async fn update_check(
         }
     }
 
-    let bucket = match ensure_bucket(&state).await {
-        Ok(v) => v,
-        Err(reason) => return Ok(check_error(current, reason)),
-    };
-
-    let endpoint = format!("https://storage.googleapis.com/{bucket}/latest.json");
-    let url = match endpoint.parse() {
-        Ok(u) => u,
-        Err(_) => return Ok(check_error(current, "bad-endpoint".to_string())),
-    };
-    let updater = match app.updater_builder().endpoints(vec![url]).and_then(|b| b.build()) {
+    let updater = match app.updater() {
         Ok(u) => u,
         Err(e) => return Ok(check_error(current, e.to_string())),
     };
@@ -121,7 +106,6 @@ pub async fn update_check(
                 has_update: true,
                 has_downloadable: true,
                 reason: None,
-                source: "gcs",
             })
         },
         Ok(None) => Ok(CheckResult {
@@ -130,7 +114,6 @@ pub async fn update_check(
             has_update: false,
             has_downloadable: false,
             reason: None,
-            source: "gcs",
         }),
         Err(e) => {
             crate::logger::warn("update:error", Some(serde_json::json!({ "phase": "check", "error": e.to_string() })));
@@ -140,7 +123,6 @@ pub async fn update_check(
                 has_update: false,
                 has_downloadable: false,
                 reason: Some(e.to_string()),
-                source: "error",
             })
         },
     }
