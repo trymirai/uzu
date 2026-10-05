@@ -90,7 +90,7 @@ pub fn bindgen(
 
     let kernel_tokens = quote! {
         pub struct #struct_name {
-            pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+            pipeline: MetalPipeline,
             #(#conditional_buffer_fields,)*
             #(#variant_struct_fields,)*
             #(#retained_specialization_fields,)*
@@ -108,7 +108,7 @@ pub fn bindgen(
                 #(#specialization_validation)*
                 let entry_name = #entry_name;
                 #function_constants_initialization
-                let pipeline = context.compute_pipeline_state(#library_data, #library_compressed, #cache_key, &entry_name, #function_constants_argument)?;
+                let pipeline = context.schedule_compute_pipeline_state(#library_data, #library_compressed, #cache_key, &entry_name, #function_constants_argument)?;
                 Ok(Self {
                     pipeline
                     #(, #conditional_buffer_initializers)*
@@ -122,10 +122,11 @@ pub fn bindgen(
                 #(#encode_argument_definitions),*
             ) -> Result<(), MetalError> {
                 #empty_dispatch_guards
+                let pipeline = self.pipeline.wait()?;
                 command_buffer.push_debug_group(#kernel_name);
                 #(#encode_deconstructs)*
                 #encode_accesses_call
-                command_buffer.compute_encoder.set_compute_pipeline_state(&self.pipeline);
+                command_buffer.compute_encoder.set_compute_pipeline_state(pipeline);
                 #(#encode_set_calls)*
                 #dispatch_code
                 command_buffer.pop_debug_group();
@@ -156,11 +157,7 @@ pub fn bindgen_global(kernels: &[(impl AsRef<std::path::Path>, &[Kernel])]) -> R
     });
 
     let tokens = quote! {
-        use metal::{
-            MTL4ArgumentTable, MTL4ComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues,
-            MTLSize,
-        };
-        use objc2::{rc::Retained, runtime::ProtocolObject};
+        use metal::{MTL4ArgumentTable, MTL4ComputeCommandEncoder, MTLFunctionConstantValues, MTLSize};
 
         use crate::backends::{
             common::{BufferRef, CommandBufferEncoding, BufferMut},
@@ -168,6 +165,7 @@ pub fn bindgen_global(kernels: &[(impl AsRef<std::path::Path>, &[Kernel])]) -> R
                 context::MetalContext,
                 error::MetalError,
                 metal_extensions::{FunctionConstantValuesSetValue, MetalDataTypeExt},
+                pipeline::MetalPipeline,
             },
         };
 
