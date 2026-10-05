@@ -21,6 +21,8 @@ pub enum MetalError {
     CannotCreateCommandQueue,
     #[error("Cannot create buffer")]
     CannotCreateBuffer,
+    #[error("Cannot create heap")]
+    CannotCreateHeap,
     #[error("Cannot create command buffer")]
     CannotCreateCommandBuffer,
     #[error("Cannot create argument table: {0}")]
@@ -36,10 +38,6 @@ pub enum MetalError {
         function_name: String,
         error: String,
     },
-    #[error("Can not allocate buffer with size={0}")]
-    SparseBufferAlloc(usize),
-    #[error("Can not allocate heap with size={0} and page size={1}")]
-    SparseHeapAlloc(usize, usize),
     #[error("Kernel dispatch failed: {0}")]
     KernelDispatchFailed(#[source] Box<dyn StdError + Send + Sync + 'static>),
 }
