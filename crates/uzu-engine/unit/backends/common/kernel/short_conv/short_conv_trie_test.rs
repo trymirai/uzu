@@ -65,7 +65,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let parents = create_buffer_with_data::<B, i32>(&context, &input.parents);
 
     let suffix_state_size = suffix_len * model_dim * state_stride;
-    let mut suffix_state = create_buffer::<B, T>(&context, suffix_state_size.max(1));
+    // zeroed: with kernel_size = 1 the kernel writes no state, and the comparison must not read
+    // uninitialized memory
+    let mut suffix_state = create_buffer_with_data::<B, T>(&context, &vec![T::zero(); suffix_state_size.max(1)]);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(

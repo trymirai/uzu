@@ -1,4 +1,4 @@
-#![cfg(backend = "metal")]
+#![cfg(any(backend = "metal", backend = "amdgpu"))]
 
 use half::bf16;
 use uzu_engine_macros::uzu_test;

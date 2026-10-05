@@ -1,4 +1,4 @@
-#![cfg(backend = "metal")]
+#![cfg(any(backend = "metal", backend = "amdgpu"))]
 
 use std::{sync::Arc, time::Duration};
 
@@ -12,11 +12,10 @@ use crate::{
             Context, Kernels, gpu_types::weaver::MetadataIdx, kernel::AncestorAttentionKernel,
         },
         cpu::Cpu,
-        metal::Metal,
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
     },
 };
 
@@ -149,22 +148,25 @@ fn ancestor_attention_matches_cpu() {
     let expected_output = buffer_to_vec::<Cpu, bf16>(&cpu.output);
     let expected_node_kv = buffer_to_vec::<Cpu, bf16>(&cpu.node_kv);
 
-    let mut metal = Runner::<Metal>::new(4, 5, 3, 16);
-    metal.encode(1);
-    let actual_output = buffer_to_vec::<Metal, bf16>(&metal.output);
-    let actual_node_kv = buffer_to_vec::<Metal, bf16>(&metal.node_kv);
+    for_each_non_cpu_backend!(|B| {
+        let mut gpu = Runner::<B>::new(4, 5, 3, 16);
+        gpu.encode(1);
+        let actual_output = buffer_to_vec::<B, bf16>(&gpu.output);
+        let actual_node_kv = buffer_to_vec::<B, bf16>(&gpu.node_kv);
 
-    assert_eq_float(&expected_output, &actual_output, 0.02, "AncestorAttention output");
-    assert_eq!(actual_node_kv, expected_node_kv);
+        assert_eq_float(&expected_output, &actual_output, 0.02, "AncestorAttention output");
+        assert_eq!(actual_node_kv, expected_node_kv);
+    });
 }
 
+#[cfg(backend = "metal")]
 #[uzu_test]
 #[ignore]
 fn benchmark_ancestor_attention() {
     const BATCH: u32 = 32;
     const SAMPLES: usize = 50;
 
-    let mut runner = Runner::<Metal>::new(8, 16, 8, 65);
+    let mut runner = Runner::<crate::backends::metal::Metal>::new(8, 16, 8, 65);
     let mut run = || runner.encode(BATCH).div_f64(BATCH as f64);
     let warmup = std::time::Instant::now();
     while warmup.elapsed() < std::time::Duration::from_millis(500) {

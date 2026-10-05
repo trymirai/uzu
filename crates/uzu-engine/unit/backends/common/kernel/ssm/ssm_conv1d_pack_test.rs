@@ -16,7 +16,7 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -61,7 +61,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
 
     let state = create_buffer_with_data::<B, T>(&context, &input.state_in);
     let x = create_buffer_with_data::<B, T>(&context, &input.x);
-    let mut padded = create_buffer::<B, T>(&context, padded_size);
+    // Zero-filled: the kernel leaves channels past num_channels untouched and the whole buffer is compared.
+    let mut padded = create_buffer_with_data::<B, T>(&context, &vec![T::zero(); padded_size]);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(

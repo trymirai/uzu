@@ -63,7 +63,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let mut next_state = if state_in_place {
         create_buffer_with_data::<B, T>(&context, &state_data)
     } else {
-        create_buffer::<B, T>(&context, state_buffer_size)
+        // zeroed: with kernel_size = 1 the kernel writes no state, and the comparison must not read
+        // uninitialized memory
+        create_buffer_with_data::<B, T>(&context, &vec![T::zero(); state_buffer_size])
     };
 
     let state = (!state_in_place).then(|| create_buffer_with_data::<B, T>(&context, &state_data));

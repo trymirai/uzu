@@ -1,9 +1,11 @@
-#![cfg(backend = "metal")]
+#![cfg(any(backend = "metal", backend = "amdgpu"))]
 
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::metal::Metal;
 use crate::{
     array::ArrayElement,
     backends::{
@@ -12,7 +14,6 @@ use crate::{
             kernel::BuildTreeOutKernel,
         },
         cpu::Cpu,
-        metal::Metal,
     },
     tests::{
         assert::assert_eq_float,
@@ -149,6 +150,7 @@ fn check_shape<T: ArrayElement + Float + std::fmt::Display>(
             }
         });
 
+        #[cfg(backend = "metal")]
         if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu {
             for &(path, use_mxu, transposed_h0) in BUILD_TREE_OUT_PATHS {
                 if !use_mxu || transposed_h0 && !use_h0 {

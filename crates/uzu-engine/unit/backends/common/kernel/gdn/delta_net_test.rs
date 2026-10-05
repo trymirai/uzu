@@ -1,6 +1,8 @@
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::metal::Metal;
 use crate::{
     array::ArrayElement,
     backends::{
@@ -13,16 +15,13 @@ use crate::{
     data_type::DataType,
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
 };
-#[cfg(backend = "metal")]
+#[cfg(any(backend = "metal", backend = "amdgpu"))]
 use crate::{
-    backends::{
-        common::kernel::{Conv1dPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel},
-        metal::Metal,
-    },
-    tests::helpers::buffer_prefix_to_vec,
+    backends::common::kernel::{Conv1dPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel},
+    tests::helpers::{buffer_prefix_to_vec, for_each_non_cpu_backend},
 };
 
-#[cfg(backend = "metal")]
+#[cfg(any(backend = "metal", backend = "amdgpu"))]
 fn run_conv_update<B: Backend>(
     in_proj: &[f32],
     w: &[f32],
@@ -128,7 +127,7 @@ fn assert_close(
 
 // DeltaNetConvUpdate
 
-#[cfg(backend = "metal")]
+#[cfg(any(backend = "metal", backend = "amdgpu"))]
 #[uzu_test]
 fn test_delta_net_conv_update_small() {
     let conv_dim = 32;
@@ -142,16 +141,18 @@ fn test_delta_net_conv_update_small() {
 
     let (cpu_out, cpu_state) =
         run_conv_update::<Cpu>(&in_proj, &w, &b, &state, kernel_size as u32, conv_dim as u32, tap_count as u32);
-    let (gpu_out, gpu_state) =
-        run_conv_update::<Metal>(&in_proj, &w, &b, &state, kernel_size as u32, conv_dim as u32, tap_count as u32);
+    for_each_non_cpu_backend!(|B| {
+        let (gpu_out, gpu_state) =
+            run_conv_update::<B>(&in_proj, &w, &b, &state, kernel_size as u32, conv_dim as u32, tap_count as u32);
 
-    assert_close(&cpu_out, &gpu_out, 1e-4, 1e-3, "ConvUpdate output");
-    assert_close(&cpu_state, &gpu_state, 1e-5, 1e-4, "ConvUpdate state");
+        assert_close(&cpu_out, &gpu_out, 1e-4, 1e-3, "ConvUpdate output");
+        assert_close(&cpu_state, &gpu_state, 1e-5, 1e-4, "ConvUpdate state");
+    });
 }
 
 // DeltaNetConvScan
 
-#[cfg(backend = "metal")]
+#[cfg(any(backend = "metal", backend = "amdgpu"))]
 #[uzu_test]
 fn test_delta_net_conv_scan() {
     let conv_dim = 32;
@@ -187,62 +188,64 @@ fn test_delta_net_conv_scan() {
     }
     let ref_outputs: Vec<f32> = ref_outputs.iter().copied().map(|value| f32::from(bf16::from_f32(value))).collect();
 
-    // Test: Conv1dPack + DeltaNetConvScan on Metal
-    let context = <Metal as Backend>::Context::new().expect("context");
-    let state_array = create_buffer_with_data::<Metal, f32>(&context, &init_state);
-    let mut in_proj_array = create_buffer_with_data::<Metal, bf16>(&context, &in_proj);
-    let w_array = create_buffer_with_data::<Metal, f32>(&context, &w);
-    let b_array = create_buffer_with_data::<Metal, f32>(&context, &b);
+    // Test: Conv1dPack + DeltaNetConvScan on each GPU backend
+    for_each_non_cpu_backend!(|B| {
+        let context = <B as Backend>::Context::new().expect("context");
+        let state_array = create_buffer_with_data::<B, f32>(&context, &init_state);
+        let mut in_proj_array = create_buffer_with_data::<B, bf16>(&context, &in_proj);
+        let w_array = create_buffer_with_data::<B, f32>(&context, &w);
+        let b_array = create_buffer_with_data::<B, f32>(&context, &b);
 
-    let padded_len = (tap_count + suffix_len) * total_proj_dim;
-    let mut padded_array = create_buffer::<Metal, f32>(&context, padded_len);
-    let mut state_out_array = create_buffer::<Metal, f32>(&context, conv_dim * tap_count);
+        let padded_len = (tap_count + suffix_len) * total_proj_dim;
+        let mut padded_array = create_buffer::<B, f32>(&context, padded_len);
+        let mut state_out_array = create_buffer::<B, f32>(&context, conv_dim * tap_count);
 
-    let pack_kernel =
-        <<Metal as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, DataType::F32, DataType::BF16)
-            .expect("pack");
-    let scan_kernel =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetConvScanKernel::new(&context, DataType::BF16, true)
-            .expect("scan");
+        let pack_kernel =
+            <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, DataType::F32, DataType::BF16)
+                .expect("pack");
+        let scan_kernel =
+            <<B as Backend>::Kernels as Kernels>::DeltaNetConvScanKernel::new(&context, DataType::BF16, true)
+                .expect("scan");
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    pack_kernel.encode(
-        &state_array,
-        &in_proj_array,
-        &mut padded_array,
-        tap_count as u32,
-        total_proj_dim as u32,
-        suffix_len as u32,
-        conv_dim as u32,
-        &mut command_buffer,
-    );
-    scan_kernel.encode(
-        &padded_array,
-        &w_array,
-        Some(&b_array),
-        &mut in_proj_array,
-        &mut state_out_array,
-        suffix_len as u32,
-        kernel_size as u32,
-        total_proj_dim as u32,
-        tap_count as u32,
-        conv_dim as u32,
-        total_proj_dim as u32,
-        &mut command_buffer,
-    );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+        pack_kernel.encode(
+            &state_array,
+            &in_proj_array,
+            &mut padded_array,
+            tap_count as u32,
+            total_proj_dim as u32,
+            suffix_len as u32,
+            conv_dim as u32,
+            &mut command_buffer,
+        );
+        scan_kernel.encode(
+            &padded_array,
+            &w_array,
+            Some(&b_array),
+            &mut in_proj_array,
+            &mut state_out_array,
+            suffix_len as u32,
+            kernel_size as u32,
+            total_proj_dim as u32,
+            tap_count as u32,
+            conv_dim as u32,
+            total_proj_dim as u32,
+            &mut command_buffer,
+        );
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let in_proj_result: Vec<bf16> = buffer_to_vec(&in_proj_array);
-    let in_proj_result: Vec<f32> = in_proj_result.into_iter().map(f32::from).collect();
-    let mut scan_outputs = vec![0.0f32; suffix_len * conv_dim];
-    for t in 0..suffix_len {
-        scan_outputs[t * conv_dim..(t + 1) * conv_dim]
-            .copy_from_slice(&in_proj_result[t * total_proj_dim..t * total_proj_dim + conv_dim]);
-    }
-    let scan_state: Vec<f32> = buffer_to_vec(&state_out_array);
+        let in_proj_result: Vec<bf16> = buffer_to_vec(&in_proj_array);
+        let in_proj_result: Vec<f32> = in_proj_result.into_iter().map(f32::from).collect();
+        let mut scan_outputs = vec![0.0f32; suffix_len * conv_dim];
+        for t in 0..suffix_len {
+            scan_outputs[t * conv_dim..(t + 1) * conv_dim]
+                .copy_from_slice(&in_proj_result[t * total_proj_dim..t * total_proj_dim + conv_dim]);
+        }
+        let scan_state: Vec<f32> = buffer_to_vec(&state_out_array);
 
-    assert_close(&ref_outputs, &scan_outputs, 1e-4, 1e-3, "ConvScan output");
-    assert_close(&ref_state, &scan_state, 1e-5, 1e-4, "ConvScan state");
+        assert_close(&ref_outputs, &scan_outputs, 1e-4, 1e-3, "ConvScan output");
+        assert_close(&ref_state, &scan_state, 1e-5, 1e-4, "ConvScan state");
+    });
 }
 
 // DeltaNetUpdate (decode)
@@ -502,7 +505,7 @@ fn test_delta_net_prefill_qwen35_shapes_bf16() {
     test_prefill_norm_gate_impl::<bf16>(48, 16, 128, 128, 32, 2e-2, 5e-2, "Prefill+NormGate Qwen3.5 BF16");
 }
 
-#[cfg(backend = "metal")]
+#[cfg(any(backend = "metal", backend = "amdgpu"))]
 #[uzu_test]
 fn test_delta_net_prefill_prep() {
     let num_v_heads = 48usize;
@@ -571,58 +574,60 @@ fn test_delta_net_prefill_prep() {
         .collect::<Vec<_>>();
     assert_eq!(ref_v, expected_v);
 
-    // Metal
-    let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = create_buffer_with_data::<Metal, bf16>(&context, &in_proj);
-    let a_log_array = create_buffer_with_data::<Metal, f32>(&context, &a_log);
-    let dt_bias_array = create_buffer_with_data::<Metal, f32>(&context, &dt_bias);
-    let mut q_norm_array = create_buffer::<Metal, bf16>(&context, suffix_len * key_dim);
-    let mut k_norm_array = create_buffer::<Metal, bf16>(&context, suffix_len * key_dim);
-    let mut compact_v_array = create_buffer::<Metal, bf16>(&context, suffix_len * value_dim);
+    // GPU backends
+    for_each_non_cpu_backend!(|B| {
+        let context = <B as Backend>::Context::new().expect("context");
+        let in_proj_array = create_buffer_with_data::<B, bf16>(&context, &in_proj);
+        let a_log_array = create_buffer_with_data::<B, f32>(&context, &a_log);
+        let dt_bias_array = create_buffer_with_data::<B, f32>(&context, &dt_bias);
+        let mut q_norm_array = create_buffer::<B, bf16>(&context, suffix_len * key_dim);
+        let mut k_norm_array = create_buffer::<B, bf16>(&context, suffix_len * key_dim);
+        let mut compact_v_array = create_buffer::<B, bf16>(&context, suffix_len * value_dim);
 
-    let mut beta_array = create_buffer::<Metal, f32>(&context, suffix_len * num_v_heads);
-    let mut decay_array = create_buffer::<Metal, f32>(&context, suffix_len * num_v_heads);
+        let mut beta_array = create_buffer::<B, f32>(&context, suffix_len * num_v_heads);
+        let mut decay_array = create_buffer::<B, f32>(&context, suffix_len * num_v_heads);
 
-    let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
-        &context,
-        DataType::BF16,
-        DataType::BF16,
-        head_k_dim as u32,
-        false,
-        true,
-    )
-    .unwrap();
+        let prep_k = <<B as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
+            &context,
+            DataType::BF16,
+            DataType::BF16,
+            head_k_dim as u32,
+            false,
+            true,
+        )
+        .unwrap();
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    prep_k.encode(
-        &in_proj_array,
-        &a_log_array,
-        &dt_bias_array,
-        &mut q_norm_array,
-        &mut k_norm_array,
-        Some(&mut compact_v_array),
-        &mut beta_array,
-        &mut decay_array,
-        num_v_heads as u32,
-        num_k_heads as u32,
-        key_dim as u32,
-        value_dim as u32,
-        suffix_len as u32,
-        &mut command_buffer,
-    );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+        prep_k.encode(
+            &in_proj_array,
+            &a_log_array,
+            &dt_bias_array,
+            &mut q_norm_array,
+            &mut k_norm_array,
+            Some(&mut compact_v_array),
+            &mut beta_array,
+            &mut decay_array,
+            num_v_heads as u32,
+            num_k_heads as u32,
+            key_dim as u32,
+            value_dim as u32,
+            suffix_len as u32,
+            &mut command_buffer,
+        );
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let gpu_q = buffer_to_vec::<Metal, bf16>(&q_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
-    let gpu_k = buffer_to_vec::<Metal, bf16>(&k_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
-    let gpu_v: Vec<bf16> = buffer_to_vec(&compact_v_array);
-    let gpu_beta: Vec<f32> = buffer_to_vec(&beta_array);
-    let gpu_decay: Vec<f32> = buffer_to_vec(&decay_array);
+        let gpu_q = buffer_to_vec::<B, bf16>(&q_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
+        let gpu_k = buffer_to_vec::<B, bf16>(&k_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
+        let gpu_v: Vec<bf16> = buffer_to_vec(&compact_v_array);
+        let gpu_beta: Vec<f32> = buffer_to_vec(&beta_array);
+        let gpu_decay: Vec<f32> = buffer_to_vec(&decay_array);
 
-    assert_close(&gpu_q, &ref_q, 1e-4, 1e-3, "prep q_norm");
-    assert_close(&gpu_k, &ref_k, 1e-4, 1e-3, "prep k_norm");
-    assert_eq!(gpu_v, ref_v);
-    assert_close(&gpu_beta, &ref_beta, 1e-4, 1e-3, "prep beta");
-    assert_close(&gpu_decay, &ref_decay, 1e-4, 1e-3, "prep decay");
+        assert_close(&gpu_q, &ref_q, 1e-4, 1e-3, "prep q_norm");
+        assert_close(&gpu_k, &ref_k, 1e-4, 1e-3, "prep k_norm");
+        assert_eq!(gpu_v, ref_v);
+        assert_close(&gpu_beta, &ref_beta, 1e-4, 1e-3, "prep beta");
+        assert_close(&gpu_decay, &ref_decay, 1e-4, 1e-3, "prep decay");
+    });
 }
 
 #[cfg(backend = "metal")]

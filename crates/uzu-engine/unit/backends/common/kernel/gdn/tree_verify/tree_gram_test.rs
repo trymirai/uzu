@@ -1,4 +1,4 @@
-#![cfg(backend = "metal")]
+#![cfg(any(backend = "metal", backend = "amdgpu"))]
 
 use half::bf16;
 use num_traits::Float;
@@ -12,14 +12,14 @@ use crate::{
             kernel::BuildTreeGramKernel,
         },
         cpu::Cpu,
-        metal::Metal,
     },
-    data_type::DataType,
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
+#[cfg(backend = "metal")]
+use crate::{backends::metal::Metal, data_type::DataType};
 
 const BATCH_SIZE: usize = 2;
 const K_HEADS: usize = 2;
@@ -161,6 +161,7 @@ fn check_type<T: ArrayElement + Float>(
         assert_eq_float::<f32>(&expected.3, &actual.3, 2e-4, &format!("kh0 {msg}"));
     });
 
+    #[cfg(backend = "metal")]
     if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu {
         let actual = get_output::<Metal, T>(
             &q,
