@@ -26,6 +26,9 @@ impl SyncTask for SwiftPackageSyncTask {
 
         let mut output = input.to_string();
         output = Regex::new(r#"\.iOS\("[^"]*"\)"#)?.replace(&output, format!(r#".iOS("{ios}")"#).as_str()).into_owned();
+        output = Regex::new(r#"\.macCatalyst\("[^"]*"\)"#)?
+            .replace(&output, format!(r#".macCatalyst("{ios}")"#).as_str())
+            .into_owned();
         output = Regex::new(r#"\.macOS\("[^"]*"\)"#)?
             .replace(&output, format!(r#".macOS("{macos}")"#).as_str())
             .into_owned();

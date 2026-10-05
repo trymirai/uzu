@@ -116,7 +116,7 @@ fn test_gated_act_mul_interleaved_silu_bf16() {
     interleaved_test::<bf16>(ActivationType::SILU);
 }
 
-fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> Vec<i8> {
+fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (Vec<i8>, Vec<f32>) {
     let context = B::Context::new().expect("create context");
     let act_operand = create_buffer_with_data::<B, bf16>(&context, &input.fused_up);
     let factors = create_buffer_with_data::<B, i32>(&context, &input.hadamard_factors);
@@ -143,15 +143,29 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> V
         &mut command_buffer,
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-    buffer_to_vec(&values)
+    (buffer_to_vec(&values), buffer_to_vec(&scales))
 }
 
 #[uzu_test]
 fn test_gated_act_mul_nibble_grouped_quantization_matches_cpu() {
     let input = interleaved_input::<bf16>(ActivationType::SILU);
-    let expected_values = run_nibble_grouped_quantized::<Cpu>(&input);
+    let (expected_values, expected_scales) = run_nibble_grouped_quantized::<Cpu>(&input);
     for_each_non_cpu_backend!(|B| {
-        assert_eq!(run_nibble_grouped_quantized::<B>(&input), expected_values, "gated activation bytes differ");
+        let (actual_values, actual_scales) = run_nibble_grouped_quantized::<B>(&input);
+        let group_size = input.gated_dim as usize;
+        // Boundary rounding can shift one code; normalize dequantized error by group peak.
+        for (index, (&actual, &expected)) in actual_values.iter().zip(&expected_values).enumerate() {
+            let group = index / group_size;
+            let (actual_scale, expected_scale) = (actual_scales[group], expected_scales[group]);
+            if index % group_size == 0 {
+                let scale_error = (actual_scale - expected_scale).abs() / expected_scale;
+                assert!(scale_error < 1e-3, "scale {group}: {actual_scale} != {expected_scale}");
+            }
+            let actual = actual as f32 * actual_scale;
+            let expected = expected as f32 * expected_scale;
+            let error = (actual - expected).abs() / (127.0 * actual_scale.max(expected_scale));
+            assert!(error <= 1e-2, "gated activation value {index}: {actual} != {expected} (error {error})");
+        }
     });
 }
 

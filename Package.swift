@@ -6,6 +6,7 @@ let package = Package(
     platforms: [
         .iOS("26.4"),
         .macOS("26.4"),
+        .macCatalyst("26.4"),
     ],
     products: [
         .library(name: "Uzu", targets: ["Uzu"]),
@@ -17,8 +18,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "uzu",
-            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.6.0.zip",
-            checksum: "71514d3141db6e6d03b7ff692a26815708ada99d08f8a6f58eb81164c39ba9c0"
+            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.6.1.zip",
+            checksum: "4f41d33d98d54ad41bd44da3f4edb2df98b511d5f38c493ad1c091c82c2bc8e7"
         ),
         .target(
             name: "Uzu",
@@ -31,7 +32,7 @@ let package = Package(
                 .linkedFramework("Metal"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
-                .linkedFramework("AVFAudio", .when(platforms: [.iOS])),
+                .linkedFramework("AVFAudio", .when(platforms: [.iOS, .macCatalyst])),
             ]
         ),
         .target(
