@@ -364,6 +364,13 @@ impl GemvKernel {
                 soft_cap,
                 command_buffer,
             ),
+            MatmulB::Trellis {
+                ..
+            } => {
+                return Err(MatmulError::UnsupportedLayout {
+                    path: "Gemv",
+                });
+            },
         }
 
         if let Some(factors) = deferred_factors {

@@ -19,8 +19,8 @@ use crate::{
                 ActivationQuantization, ActivationTransform,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
-                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulKernel,
-                    MatmulShape, QuantParamsLayout,
+                    ActivationFormat, Int8CodeLayout, MatmulArguments, MatmulError, MatmulKernel, MatmulShape,
+                    QuantParamsLayout,
                 },
             },
         },
@@ -31,7 +31,7 @@ use crate::{
 
 pub struct MatmulMetalKernel {
     gemv: GemvKernel,
-    pub gemm: GemmKernel,
+    gemm: GemmKernel,
     output_work: MatmulOutputWork,
     weights_data_type: DataType,
     input_data_type: DataType,
@@ -130,6 +130,10 @@ impl MatmulMetalKernel {
         let all_bf16 = weights_data_type == DataType::BF16
             && input_data_type == DataType::BF16
             && output_data_type == DataType::BF16;
+        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, apple_gpu_family);
+        if shape.b_is_trellis {
+            return MatmulDispatch::Gemm(problem.select_plan());
+        }
         if let Some(route) = qmv::route(device_name, apple_gpu_family, supports_mxu, shape, all_bf16) {
             return match route {
                 QmvRoute::Tuned(tile) | QmvRoute::MainGemv(tile) => MatmulDispatch::Gemv(
@@ -147,7 +151,6 @@ impl MatmulMetalKernel {
             gpu_core_count,
             apple_gpu_family,
         );
-        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, apple_gpu_family);
         let plan = problem.select_plan();
         match gemv {
             None => MatmulDispatch::Gemm(plan),
@@ -273,31 +276,13 @@ impl MatmulKernel for MatmulMetalKernel {
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
-        if matches!(&arguments.a, MatmulA::Trellis { .. }) != matches!(&arguments.b, MatmulB::Trellis { .. }) {
-            return Err(MatmulError::UnsupportedLayout {
-                path: "GemmTrellis",
-            }
-            .into());
-        }
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = match self.select_dispatch(&shape, command_buffer.context()) {
+        match self.select_dispatch(&shape, command_buffer.context()) {
             MatmulDispatch::Gemv(gemv) => {
-                return self.gemv.encode(arguments, gemv, &self.output_work, command_buffer).map_err(MetalError::from);
+                self.gemv.encode(arguments, gemv, &self.output_work, command_buffer).map_err(MetalError::from)
             },
-            MatmulDispatch::Gemm(plan) => plan,
-        };
-
-        // TODO: remove after GatherGEMM is supported
-        if arguments.gather_indices.is_some() {
-            return Err(MetalError::KernelDispatchFailed(
-                format!(
-                    "gathered readout requires the GEMV path, but shape (m={}, n={}) routes to GEMM",
-                    arguments.m, arguments.n
-                )
-                .into(),
-            ));
+            MatmulDispatch::Gemm(plan) => self.gemm.encode_plan(arguments, plan, &self.output_work, command_buffer),
         }
-        self.gemm.encode_plan(arguments, plan, &self.output_work, command_buffer)
     }
 }
 

@@ -95,6 +95,10 @@ impl<TB: BufferRef> QuantizedB<TB> {
 }
 
 impl<TB: BufferRef> MatmulB<TB> {
+    pub fn is_trellis(&self) -> bool {
+        matches!(self, Self::Trellis { .. })
+    }
+
     pub fn quantized(&self) -> Option<&QuantizedB<TB>> {
         match self {
             Self::FullPrecision {

@@ -159,6 +159,7 @@ impl<B: Backend> LinearMatmul<B> {
             b_transpose: true,
             b_leading_dimension: None,
             b_prologue: b.b_prologue(),
+            b_is_trellis: b.is_trellis(),
             b_bits: b.bits_per_b(),
             b_group_size: b.group_size(),
             signed_codes: b.signed_codes(),

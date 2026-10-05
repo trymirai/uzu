@@ -146,6 +146,14 @@ impl MatmulKernel for MatmulCpuKernel {
                     code_layout,
                 }
             },
+            MatmulA::Trellis {
+                ..
+            } => {
+                return Err(MatmulError::UnsupportedLayout {
+                    path: "CpuMatmul",
+                }
+                .into());
+            },
         };
         let bias_ptr = bias_buffer.map(|bias| SendPtr(bias.cpu_ptr().as_ptr().cast::<u8>().cast_const()));
         let gather_ptr = gather_indices.map(|indices| {

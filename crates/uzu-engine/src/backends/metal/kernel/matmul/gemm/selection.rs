@@ -25,8 +25,8 @@ pub struct GemmProblem {
 pub(super) enum GemmPlanError {
     #[error("MXU engine is not available for this GEMM")]
     MxuUnavailable,
-    #[error("quantized GEMM requires transposed contiguous B")]
-    UnsupportedQuantLayout,
+    #[error("GEMM input layout is unsupported: {0}")]
+    UnsupportedLayout(&'static str),
 }
 
 impl GemmProblem {
@@ -47,6 +47,9 @@ impl GemmProblem {
     }
 
     pub fn select_plan(self) -> GemmPlan {
+        if self.shape.b_is_trellis {
+            return select_trellis_plan(self.shape.m, self.shape.n, self.shape.k);
+        }
         let engine = if self.supports_mxu && mxu_is_eligible(self.shape) {
             GemmEngine::Mxu
         } else {
@@ -60,6 +63,11 @@ impl GemmProblem {
         self,
         engine: GemmEngine,
     ) -> Result<GemmPlan, GemmPlanError> {
+        if self.shape.b_is_trellis {
+            let mut plan = select_trellis_plan(self.shape.m, self.shape.n, self.shape.k);
+            plan.engine = engine;
+            return Ok(plan);
+        }
         self.validate_engine(engine)?;
         Ok(self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family)))
     }
@@ -72,7 +80,10 @@ impl GemmProblem {
             return Err(GemmPlanError::MxuUnavailable);
         }
         if self.shape.is_quant() && (!self.shape.b_transpose || self.shape.b_leading_dimension.is_some()) {
-            return Err(GemmPlanError::UnsupportedQuantLayout);
+            return Err(GemmPlanError::UnsupportedLayout("quantized weights require transposed contiguous B"));
+        }
+        if self.shape.b_is_trellis && !self.shape.k.is_multiple_of(TRELLIS_K_STEP) {
+            return Err(GemmPlanError::UnsupportedLayout("Trellis K must be divisible by 64"));
         }
         Ok(())
     }
