@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+VERSION="1.2.1"
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$PROJECT_DIR/deps/splash"
 PARALLEL_JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1\n')"
@@ -12,7 +13,7 @@ fi
 
 if [[ ! -e "$SOURCE_DIR" ]]; then
     mkdir -p "$PROJECT_DIR/deps"
-    git clone --depth 1 --branch 1.1.0 https://github.com/incoai/splash.git "$SOURCE_DIR" >&2
+    git clone --depth 1 --branch "$VERSION" https://github.com/incoai/splash.git "$SOURCE_DIR" >&2
 fi
 
 make -C "$SOURCE_DIR" --no-print-directory \

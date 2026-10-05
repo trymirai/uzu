@@ -132,6 +132,9 @@ def test_splash_uses_latest_version() -> None:
     clones = [shlex.split(line, comments=True) for line in source.splitlines() if re.match(r"\s*git\s+clone\s", line)]
     assert len(clones) == 1 and "--branch" in clones[0], f"{path.name}: expected a git clone with a pinned --branch"
     command = clones[0]
-    current = command[command.index("--branch") + 1]
+    assert command[command.index("--branch") + 1] == "$VERSION", f"{path.name}: --branch must use VERSION"
+    version = re.search(r'^VERSION="([^"]+)"$', source, re.MULTILINE)
+    assert version, f"{path.name}: missing VERSION"
+    current = version[1]
     latest = latest_github_tag("incoai/splash")
-    assert current == latest, f"engine-splash/bootstrap.sh: --branch is {current}, latest release is {latest}"
+    assert current == latest, f"engine-splash/bootstrap.sh: VERSION is {current}, latest release is {latest}"
