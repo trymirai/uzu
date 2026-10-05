@@ -12,6 +12,8 @@ use super::{
     error::ParameterLoaderError,
     safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata},
 };
+#[cfg(windows)]
+use crate::utils::windows_fs::FileExt;
 use crate::{
     array::{ArrayElement, size_for_shape},
     backends::common::{Backend, BufferMut, Context},

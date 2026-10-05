@@ -5,3 +5,5 @@ pub mod maybe_mut;
 pub mod pointers;
 pub mod strict_serde;
 pub mod version;
+#[cfg(windows)]
+pub mod windows_fs;

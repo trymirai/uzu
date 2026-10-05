@@ -147,11 +147,8 @@ impl CpuCompiler {
             .strip_prefix(&self.src_dir)
             .context("source is not in src_dir")?
             .with_extension("")
-            .as_os_str()
-            .to_str()
-            .unwrap()
-            .split("/")
-            .map(|s| s.to_string())
+            .components()
+            .map(|component| component.as_os_str().to_str().unwrap().to_string())
             .collect();
 
         let source_contents = fs::read_to_string(&source_path).context("cannot read the source file")?;

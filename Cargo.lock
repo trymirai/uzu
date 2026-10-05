@@ -2431,8 +2431,8 @@ dependencies = [
 name = "hanashi"
 version = "0.6.0"
 dependencies = [
+ "chrono",
  "indexmap 2.14.0",
- "libc",
  "minijinja",
  "minijinja-contrib",
  "openai-harmony",

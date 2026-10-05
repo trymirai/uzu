@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::data_type::DataType;
+#[cfg(windows)]
+use crate::utils::windows_fs::FileExt;
 
 #[derive(Debug, Error)]
 pub enum HeaderLoadingError {

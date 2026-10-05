@@ -81,7 +81,11 @@ impl<B: Backend> CaptureManager<B> {
     }
 
     fn capture_path(suffix: &str) -> PathBuf {
-        PathBuf::from("/tmp").join(format!("uzu-capture-{}-{}", B::NAME, suffix))
+        #[cfg(unix)]
+        let directory = PathBuf::from("/tmp");
+        #[cfg(not(unix))]
+        let directory = std::env::temp_dir();
+        directory.join(format!("uzu-capture-{}-{}", B::NAME, suffix))
     }
 
     pub fn maybe_capture_prefill_step(&self) -> Option<CaptureRequest<B>> {
