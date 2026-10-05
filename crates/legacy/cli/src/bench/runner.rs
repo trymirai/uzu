@@ -46,6 +46,10 @@ impl BenchRunner {
             .canonicalize()
             .with_context(|| format!("Can not open model path: {}", self.model_path))?;
         let model_path_string = model_path.to_string_lossy().into_owned();
+        // On Windows canonicalize() returns a verbatim path (\\?\C:\...), which never equals the engine's model paths
+        #[cfg(windows)]
+        let model_path_string =
+            model_path_string.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(model_path_string);
         // Path lookup already handles unregistered directories. Registering the
         // parent would duplicate models that are also in the download cache.
         let engine_config = EngineConfig::default();
@@ -86,7 +90,14 @@ impl BenchRunner {
             let mut time_to_first_token = 0.0f64;
             let mut prompt_tokens_per_second = 0.0f64;
             let mut generate_tokens_per_second = Vec::new();
+            let mut speculated_tokens = 0.0f64;
+            let mut forward_passes = 0u32;
             for reply in replies.iter() {
+                if let Some(speculator_stats) = reply.stats.speculator_stats.as_ref() {
+                    speculated_tokens += speculator_stats.tokens_per_forward_pass
+                        * f64::from(speculator_stats.num_decode_forward_passes);
+                    forward_passes += speculator_stats.num_decode_forward_passes;
+                }
                 tokens_count_input += reply.stats.tokens_count_input.unwrap_or(0) as u64;
                 tokens_count_output += reply.stats.tokens_count_output.unwrap_or(0) as u64;
                 time_to_first_token += reply.stats.time_to_first_token.unwrap_or(0.0f64);
@@ -97,11 +108,13 @@ impl BenchRunner {
             }
 
             let mut text: Option<String> = None;
+            let mut reasoning: Option<String> = None;
             if !replies.is_empty() {
                 let replies_count = replies.len() as f64;
                 time_to_first_token /= replies_count;
                 prompt_tokens_per_second /= replies_count;
                 text = replies.last().unwrap().message.text();
+                reasoning = replies.last().unwrap().message.reasoning();
             }
             let generate_tokens_per_second = mean(&generate_tokens_per_second);
 
@@ -129,6 +142,9 @@ impl BenchRunner {
                 output_energy,
                 joules_per_token,
                 text: text.unwrap_or("".to_string()),
+                reasoning,
+                tokens_per_forward_pass: (forward_passes > 0).then(|| speculated_tokens / f64::from(forward_passes)),
+                num_forward_passes: (forward_passes > 0).then_some(forward_passes),
             };
             results.push(result);
 

@@ -91,6 +91,14 @@ pub struct BenchResult {
     pub output_energy: Option<ChatReplyEnergy>,
     pub joules_per_token: Option<f64>,
     pub text: String,
+    /// The reply's reasoning (thinking) text; `text` holds only the answer after it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    /// Generated tokens per forward pass of the target model, with a speculator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_per_forward_pass: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_forward_passes: Option<u32>,
 }
 
 #[cfg(test)]
