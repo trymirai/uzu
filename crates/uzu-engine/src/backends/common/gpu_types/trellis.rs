@@ -1,2 +1,0 @@
-pub const COLUMN_GROUP_COUNT: u32 = 4;
-pub const COLUMN_GROUP_SUMS_AND_SCALE_LEN: u32 = 8;
