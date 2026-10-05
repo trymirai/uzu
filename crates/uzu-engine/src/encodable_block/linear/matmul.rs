@@ -7,7 +7,10 @@ use crate::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{
             ActivationQuantization, Kernels,
-            matmul::{ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulShape},
+            matmul::{
+                ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
+                MatmulShape,
+            },
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -131,8 +134,7 @@ impl<B: Backend> LinearMatmul<B> {
                 b: self.matmul_b(),
                 b_leading_dimension: None,
                 b_transpose: true,
-                d: &mut output,
-                d_transform: self.d_ops(),
+                output: MatmulOutput::new(&mut output, self.d_ops()),
                 gather_indices,
                 m: batch_dim,
                 n: output_dim,

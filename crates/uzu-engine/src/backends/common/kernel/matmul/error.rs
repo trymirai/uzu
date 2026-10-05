@@ -21,6 +21,12 @@ pub enum MatmulError<B: Backend> {
     UnsupportedLayout {
         path: &'static str,
     },
+    #[error("Unsupported output row stride {stride} for {columns} columns on path {path}")]
+    UnsupportedOutputStride {
+        path: &'static str,
+        stride: u32,
+        columns: u32,
+    },
     #[error("Incompatible A operand for {path}: {reason}")]
     IncompatibleA {
         path: &'static str,

@@ -15,7 +15,7 @@ use crate::{
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform},
             },
             kernel::matmul::{
-                Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulError, MatmulShape,
+                Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulOutput, MatmulShape,
                 QuantParamsLayout, QuantParamsStrides, QuantizedB,
             },
         },
@@ -143,7 +143,7 @@ impl GemmKernel {
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))?;
 
         if !matches!(arguments.b, MatmulB::FullPrecision { .. })
-            && arguments.d_transform.mask().contains(GemmDTransform::ACCUMULATE)
+            && arguments.output.ops.mask().contains(GemmDTransform::ACCUMULATE)
         {
             return Err(MatmulError::UnsupportedDOp {
                 bit: GemmDTransform::ACCUMULATE,
@@ -155,20 +155,18 @@ impl GemmKernel {
         let MatmulArguments {
             a,
             b,
-            d,
-            d_transform,
+            output,
             ..
         } = arguments;
         match b {
             MatmulB::FullPrecision {
                 b: weights,
-            } => self.encode_weights(a, weights, None, d, d_transform, shape, plan, output_work, command_buffer),
+            } => self.encode_weights(a, weights, None, output, shape, plan, output_work, command_buffer),
             MatmulB::Quantized(quantized) => self.encode_weights(
                 a,
                 quantized.codes,
                 Some(quantized),
-                d,
-                d_transform,
+                output,
                 shape,
                 plan,
                 output_work,
@@ -182,14 +180,14 @@ impl GemmKernel {
         a: MatmulA<impl BufferRef<Backend = Metal>>,
         weights: WB,
         quantized: Option<QuantizedB<WB>>,
-        mut d: impl BufferMut<Backend = Metal>,
-        d_transform: MatmulDOps<'_, Metal>,
+        output: MatmulOutput<'_, Metal, impl BufferMut<Backend = Metal>>,
         shape: MatmulShape,
         plan: GemmPlan,
         output_work: &MatmulOutputWork,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let (m, n, k) = (shape.m, shape.n, shape.k);
+        let (mut d, d_transform) = output.into_contiguous(n, "Gemm")?;
         let ab_scale = d_transform.ab_scale;
         let output_bias = d_transform.bias;
         let rht_factors = d_transform.rht_factors;

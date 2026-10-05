@@ -271,27 +271,27 @@ impl GemvKernel {
         output_work: &MatmulOutputWork,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulError<Metal>> {
-        let ab_scale = arguments.d_transform.ab_scale;
-        let output_bias = arguments.d_transform.bias;
-        let rht_factors = arguments.d_transform.rht_factors;
-        let soft_cap = arguments.d_transform.soft_cap;
-        let deferred_factors = rht_factors.filter(|_| !specialization.fuses_rht());
-        let (gemv_bias, gemv_rht_factors) = if deferred_factors.is_some() {
-            (None, None)
-        } else {
-            (output_bias, rht_factors)
-        };
-
         let MatmulArguments {
             a,
             b,
-            mut d,
+            output,
             m,
             n,
             k,
             gather_indices,
             ..
         } = arguments;
+        let (mut d, ops) = output.into_contiguous(n, "Gemv")?;
+        let ab_scale = ops.ab_scale;
+        let output_bias = ops.bias;
+        let rht_factors = ops.rht_factors;
+        let soft_cap = ops.soft_cap;
+        let deferred_factors = rht_factors.filter(|_| !specialization.fuses_rht());
+        let (gemv_bias, gemv_rht_factors) = if deferred_factors.is_some() {
+            (None, None)
+        } else {
+            (output_bias, rht_factors)
+        };
         let MatmulA::FullPrecision {
             values: a,
             offset: a_offset,

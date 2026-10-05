@@ -51,7 +51,7 @@ impl MatmulShape {
             a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
             gathered: arguments.gather_indices.is_some(),
             params_layout: arguments.b.quant_params_layout(),
-            d_transform: arguments.d_transform.mask(),
+            d_transform: arguments.output.ops.mask(),
         }
     }
 

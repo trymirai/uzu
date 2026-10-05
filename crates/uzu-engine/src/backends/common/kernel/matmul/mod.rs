@@ -4,6 +4,7 @@ mod error;
 mod kernel;
 mod matmul_a;
 mod matmul_b;
+mod output;
 pub mod routing;
 
 pub use arguments::MatmulArguments;
@@ -12,6 +13,7 @@ pub use error::MatmulError;
 pub use kernel::MatmulKernel;
 pub use matmul_a::{Int8CodeLayout, MatmulA};
 pub use matmul_b::{MatmulB, QuantizedB, QuantizedCorrection};
+pub use output::MatmulOutput;
 pub use routing::{ActivationFormat, MatmulShape};
 
 use crate::backends::common::gpu_types::{QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT, QuantizationMode};

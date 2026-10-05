@@ -10,7 +10,7 @@ use crate::{
             Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
             },
         },
         cpu::Cpu,
@@ -170,8 +170,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
             },
             b_leading_dimension: None,
             b_transpose: input.case.b_transpose,
-            d: &mut d_buffer,
-            d_transform,
+            output: MatmulOutput::new(&mut d_buffer, d_transform),
             gather_indices: None,
             m,
             n,

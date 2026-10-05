@@ -21,7 +21,10 @@ use crate::{
             kernel::{
                 Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{MatmulDOps, MatmulError, MatmulKernel, QuantParams, QuantParamsLayout, QuantParamsStrides},
+                matmul::{
+                    MatmulDOps, MatmulError, MatmulKernel, MatmulOutput, QuantParams, QuantParamsLayout,
+                    QuantParamsStrides,
+                },
             },
         },
         cpu::Cpu,
@@ -207,7 +210,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let mut args = quant_arguments(&mut buffers, &input);
-    args.d_transform = MatmulDOps {
+    args.output.ops = MatmulDOps {
         bias: Some(&bias_pp_buf),
         ..MatmulDOps::none()
     };
@@ -257,7 +260,7 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let mut args = quant_arguments(&mut buffers, &input);
-    args.d_transform = MatmulDOps {
+    args.output.ops = MatmulDOps {
         ab_scale: scale,
         bias: Some(&bias_buf),
         ..MatmulDOps::none()
@@ -362,7 +365,7 @@ fn parity_bf16_quant_rht(
     .expect("MatmulCpuKernel");
     let mut cpu_command_buffer = cpu_context.create_command_buffer(None, None).expect("cpu command buffer");
     let mut cpu_args = quant_arguments(&mut cpu_buffers, &input);
-    cpu_args.d_transform = MatmulDOps {
+    cpu_args.output.ops = MatmulDOps {
         bias: with_bias.then_some(&cpu_bias),
         rht_factors: Some(&cpu_rht),
         ..MatmulDOps::none()
@@ -383,7 +386,7 @@ fn parity_bf16_quant_rht(
     .expect("MatmulMetalKernel");
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let mut args = quant_arguments(&mut buffers, &input);
-    args.d_transform = MatmulDOps {
+    args.output.ops = MatmulDOps {
         bias: with_bias.then_some(&metal_bias),
         rht_factors: Some(&metal_rht),
         ..MatmulDOps::none()
@@ -434,7 +437,7 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let mut args = quant_arguments(&mut buffers, &input);
-    args.d_transform = MatmulDOps {
+    args.output.ops = MatmulDOps {
         accumulate: true,
         ..MatmulDOps::none()
     };
@@ -726,7 +729,7 @@ fn a8w_mxu_output_bias_parity_bf16(
     .expect("CPU matmul kernel");
     let mut cpu_command_buffer = cpu_context.create_command_buffer(None, None).expect("CPU command buffer");
     let mut cpu_arguments = quant_arguments(&mut cpu_buffers, &reference_input);
-    cpu_arguments.d_transform = MatmulDOps {
+    cpu_arguments.output.ops = MatmulDOps {
         rht_factors: cpu_output_hadamard_factors.as_ref(),
         ..MatmulDOps::none()
     };
@@ -753,7 +756,7 @@ fn a8w_mxu_output_bias_parity_bf16(
     .expect("Metal matmul kernel");
     let mut metal_command_buffer = context.create_command_buffer(None, None).unwrap();
     let mut metal_arguments = quant_arguments(&mut metal_buffers, &input);
-    metal_arguments.d_transform = MatmulDOps {
+    metal_arguments.output.ops = MatmulDOps {
         bias: Some(&metal_output_bias),
         rht_factors: metal_output_hadamard_factors.as_ref(),
         ..MatmulDOps::none()
@@ -795,8 +798,7 @@ fn run_widened_f32<B: Backend>(
                 b,
                 b_leading_dimension: None,
                 b_transpose: true,
-                d: &mut y,
-                d_transform: MatmulDOps::none(),
+                output: MatmulOutput::new(&mut y, MatmulDOps::none()),
                 gather_indices: None::<&B::GlobalBuffer>,
                 m: input.m,
                 n: input.n,
