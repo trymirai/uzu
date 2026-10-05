@@ -3,7 +3,7 @@
 static struct PyModuleDef module = {
     .m_base = PyModuleDef_HEAD_INIT,
     .m_name = "mach._mach",
-    .m_doc = "Native macOS Mach memory collection.",
+    .m_doc = "Native macOS memory and Apple Silicon temperature collection.",
     .m_size = 0,
 };
 

@@ -25,6 +25,13 @@ When `max_tokens` is omitted, `null`, or `0`, decoding continues until an EOS to
 
 ## Engines
 
+To send a JSON request to an OpenAI-compatible HTTP server, use
+[evaluation](evaluation/src/main.py). `--input` must be the path to a UTF-8 JSON file:
+
+```bash
+uv run evaluation --host 127.0.0.1 --port 8000 --input evaluation/tasks/london-summary.json
+```
+
 ### [llama.cpp](https://github.com/ggml-org/llama.cpp)
 
 ```bash

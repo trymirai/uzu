@@ -1,5 +1,3 @@
-"""Collect process memory usage using macOS Mach APIs."""
-
 import ctypes
 
 from . import _mach
@@ -61,6 +59,22 @@ class MemoryCounters(ctypes.Structure):
         return f"{type(self).__name__}(\n  {formatted_fields}\n)"
 
 
+class AppleTempSensors(ctypes.Structure):
+    """Python-owned apple_temp_sensors_t; sensor averages are in degrees Celsius."""
+
+    cpu_avg: float
+    gpu_avg: float
+
+    # Keep field types and order identical to apple_temp_sensors_t in apple_temp_sensors.h.
+    _fields_ = [
+        ("cpu_avg", ctypes.c_double),
+        ("gpu_avg", ctypes.c_double),
+    ]
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(cpu_avg={self.cpu_avg}, gpu_avg={self.gpu_avg})"
+
+
 _library = ctypes.CDLL(_mach.__file__)
 _library.get_memory_counters.argtypes = [ctypes.POINTER(MemoryCounters), ctypes.c_bool]
 _library.get_memory_counters.restype = ctypes.c_int
@@ -68,6 +82,10 @@ _library.get_memory_counters_for_pid.argtypes = [ctypes.POINTER(MemoryCounters),
 _library.get_memory_counters_for_pid.restype = ctypes.c_int
 _library.memory_counters_error_string.argtypes = [ctypes.c_int]
 _library.memory_counters_error_string.restype = ctypes.c_char_p
+_library.get_temp_sensors.argtypes = [ctypes.POINTER(AppleTempSensors)]
+_library.get_temp_sensors.restype = ctypes.c_int
+_library.mach_error_string.argtypes = [ctypes.c_int]
+_library.mach_error_string.restype = ctypes.c_char_p
 
 
 def get_memory_counters(with_malloc_zone_stats: bool = False, *, pid: int | None = None) -> MemoryCounters:
@@ -92,3 +110,17 @@ def get_memory_counters(with_malloc_zone_stats: bool = False, *, pid: int | None
         detail = message.decode("utf-8", errors="replace") if message else "Unknown error"
         raise RuntimeError(f"get_memory_counters failed ({result}): {detail}")
     return counters
+
+
+def get_temp_sensors() -> AppleTempSensors:
+    """Return CPU/GPU sensor averages in Celsius on supported Apple Silicon Macs.
+
+    Raise RuntimeError if sensor access fails or either average is unavailable.
+    """
+    sensors = AppleTempSensors()
+    result = _library.get_temp_sensors(ctypes.byref(sensors))
+    if result != 0:
+        message = _library.mach_error_string(result)
+        detail = message.decode("utf-8", errors="replace") if message else "Unknown error"
+        raise RuntimeError(f"get_temp_sensors failed ({result}): {detail}")
+    return sensors
