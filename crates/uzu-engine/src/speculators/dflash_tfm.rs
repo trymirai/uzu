@@ -74,6 +74,8 @@ pub enum DFlashTfmTreeConstructionMethod {
 /// The final pruning noise scale calibrated for DFlash + Weaver trees.
 pub const DEFAULT_PRUNE_SIGMA: f32 = 1.5;
 
+const SHAPE_OVERRIDE_ENV: &str = "UZU_SPECULATOR_SHAPE";
+
 fn default_prune_sigma() -> Option<f32> {
     Some(DEFAULT_PRUNE_SIGMA)
 }
@@ -104,11 +106,20 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             File::open(model_path.join("shapes.json"))?,
         ))?;
 
-        let Some(shape) = context
-            .device_name()
-            .and_then(|device_name| shapes.remove(device_name))
-            .or_else(|| shapes.remove("default"))
-        else {
+        // UZU_SPECULATOR_SHAPE overrides the device lookup: a key of shapes.json or a shape as a JSON object.
+        // It lets devices without a tuned entry (and shape tuning) run the speculator.
+        let override_shape = std::env::var(SHAPE_OVERRIDE_ENV).ok().map(|value| {
+            serde_json::from_str::<DFlashTfmTreeShape>(&value)
+                .ok()
+                .or_else(|| shapes.remove(value.as_str()))
+                .ok_or_else(|| io::Error::other(format!("{SHAPE_OVERRIDE_ENV}={value} is neither a shape nor a key")))
+        });
+        let Some(shape) = override_shape.transpose()?.or_else(|| {
+            context
+                .device_name()
+                .and_then(|device_name| shapes.remove(device_name))
+                .or_else(|| shapes.remove("default"))
+        }) else {
             return Ok(None);
         };
 

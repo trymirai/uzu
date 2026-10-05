@@ -83,10 +83,15 @@ impl<B: Backend> Engine<B> {
             data_type,
         )?;
 
-        assert!(
-            speculator_path.is_none() || decoder.speculation_supported(),
-            "attempted to load speculator for a model that doesn't support one"
-        );
+        // Speculation also depends on the backend: without DeltaNet tree verification the decoder cannot
+        // verify draft trees, so the model runs without its speculator.
+        let speculator_path = speculator_path.filter(|_| {
+            let supported = decoder.speculation_supported();
+            if !supported {
+                eprintln!("Speculator skipped: the decoder cannot verify draft trees on this backend");
+            }
+            supported
+        });
 
         let speculator = speculator_path
             .as_deref()

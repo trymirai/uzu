@@ -106,16 +106,6 @@ impl<B: Backend> WeaverLayer<B> {
             &parameter_tree.subtree("pre_attention_norm"),
             context,
         )?;
-        let pre_mlp_norm = Normalization::new(
-            model_dim,
-            None,
-            ShortcutMode::Add,
-            PostLayerScalar::None,
-            DATA_TYPE,
-            norm_config,
-            &parameter_tree.subtree("pre_mlp_norm"),
-            context,
-        )?;
         let mlp_config = AnyMLPConfig::DenseMLPConfig(DenseMLPConfig::unclipped(
             linear_config.clone(),
             AnyActivation::SiLU(SiLU::default()),
@@ -124,7 +114,18 @@ impl<B: Backend> WeaverLayer<B> {
         ));
         let (mlp, up_input_hadamard_factors) =
             <dyn Mlp<B>>::new(&mlp_config, model_dim, hidden_dim, context, &parameter_tree.subtree("mlp"), DATA_TYPE)?;
-        assert!(up_input_hadamard_factors.is_none(), "Weaver MLP does not support input Hadamard factors");
+        // Without prequantized (A8) activations the up projection leaves its input Hadamard transform to the
+        // caller; the pre-MLP norm applies it, as in the decoder's transformer layers.
+        let pre_mlp_norm = Normalization::new(
+            model_dim,
+            up_input_hadamard_factors,
+            ShortcutMode::Add,
+            PostLayerScalar::None,
+            DATA_TYPE,
+            norm_config,
+            &parameter_tree.subtree("pre_mlp_norm"),
+            context,
+        )?;
         let ancestor_attention = <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim, num_heads)
             .map_err(WeaverNewError::Backend)?;
         Ok(Self {
