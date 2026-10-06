@@ -21,11 +21,7 @@ use crate::{
     },
 };
 #[cfg(backend = "metal")]
-use crate::{
-    backends::metal::Metal,
-    data_type::DataType,
-    tests::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec},
-};
+use crate::{backends::metal::Metal, data_type::DataType};
 
 struct Input<T: ArrayElement + Float> {
     keys: Box<[T]>,
@@ -282,7 +278,7 @@ fn apply_copies_3d<T: Clone>(
 
 #[cfg(backend = "metal")]
 #[uzu_test]
-fn test_sparse_random_pattern_f32() {
+fn test_random_pattern_f32() {
     let context = match <Metal as Backend>::Context::new() {
         Ok(context) => context,
         Err(error) => {
@@ -355,8 +351,8 @@ fn test_sparse_random_pattern_f32() {
     apply_copies_3d(&mut expected_keys, &copies);
     apply_copies_3d(&mut expected_values, &copies);
 
-    let mut key_buffer = sparse_buffer_create_with::<Metal, f32>(&context, key_data.as_slice().unwrap());
-    let mut value_buffer = sparse_buffer_create_with::<Metal, f32>(&context, value_data.as_slice().unwrap());
+    let mut key_buffer = create_buffer_with_data::<Metal, f32>(&context, key_data.as_slice().unwrap());
+    let mut value_buffer = create_buffer_with_data::<Metal, f32>(&context, value_data.as_slice().unwrap());
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
@@ -369,12 +365,11 @@ fn test_sparse_random_pattern_f32() {
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let elements_count = seq_len * num_heads * head_dim;
-    let key_values: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &key_buffer, elements_count);
+    let key_values: Vec<f32> = buffer_to_vec(&key_buffer);
     let key_result = Array::from_shape_vec((seq_len, num_heads, head_dim), key_values)
         .expect("Failed to convert key result to ndarray");
 
-    let value_values: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &value_buffer, elements_count);
+    let value_values: Vec<f32> = buffer_to_vec(&value_buffer);
     let value_result = Array::from_shape_vec((seq_len, num_heads, head_dim), value_values)
         .expect("Failed to convert value result to ndarray");
 

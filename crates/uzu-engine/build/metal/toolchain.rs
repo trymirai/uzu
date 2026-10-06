@@ -53,8 +53,7 @@ impl MetalSdk {
 
     pub fn to_str(&self) -> &'static str {
         match self {
-            Self::MacOSX => "macosx",
-            Self::MacCatalyst => "maccatalyst",
+            Self::MacOSX | Self::MacCatalyst => "macosx",
             Self::IPhoneOS => "iphoneos",
             Self::IPhoneSimulator => "iphonesimulator",
         }
