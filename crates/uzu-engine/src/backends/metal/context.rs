@@ -8,11 +8,9 @@ use std::{
 };
 
 use metal::{
-    MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor, MTLCaptureDescriptor,
-    MTLCaptureDestination, MTLCaptureManager, MTLCaptureTarget,
-    MTLComputePipelineState, MTLDevice, MTLDeviceExt,
-    MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary,
-    MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
+    MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor, MTLCaptureDescriptor, MTLCaptureDestination,
+    MTLCaptureManager, MTLCaptureTarget, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLFunctionConstantValues,
+    MTLGPUFamily, MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
