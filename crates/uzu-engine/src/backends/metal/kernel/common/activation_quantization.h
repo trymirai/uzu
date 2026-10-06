@@ -10,6 +10,10 @@ UZU_CONST uint ACTIVATION_QUANT_TILE_SIZE = 128;
 UZU_CONST float ACTIVATION_QUANT_INT8_MAX = 127.0f;
 #define ACTIVATION_QUANT_SIMDGROUPS 4
 
+static METAL_FUNC int8_t quantize_activation_int8(const float value, const float scale) {
+  return static_cast<int8_t>(clamp(round(value / scale), -ACTIVATION_QUANT_INT8_MAX, ACTIVATION_QUANT_INT8_MAX));
+}
+
 static METAL_FUNC uint nibble_grouped_index(const uint index) {
   constexpr uint NIBBLES_PER_BYTE = 2;
   constexpr uint CODES_PER_WORD = sizeof(uint) * NIBBLES_PER_BYTE;
@@ -47,6 +51,23 @@ METAL_FUNC T reduce_activation_quantization_group(
     result = combine(result, partials[simdgroup_base + index]);
   }
   return result;
+}
+
+template <uint SIMDGROUPS>
+METAL_FUNC float reduce_activation_quantization_row_maximum(
+    const float magnitude,
+    threadgroup float* partials,
+    const thread ThreadContext& thread_context
+) {
+  static_assert(SIMDGROUPS <= METAL_SIMD_SIZE, "one lane per simdgroup partial");
+  const ushort lane_index = thread_context.simd_lane_id;
+  const float simdgroup_maximum = simd_max(magnitude);
+  if (lane_index == 0) {
+    partials[thread_context.simdgroup_index] = simdgroup_maximum;
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  // magnitudes are non-negative, so 0 is the identity of the maximum
+  return simd_max(lane_index < SIMDGROUPS ? partials[lane_index] : 0.0f);
 }
 
 template <typename T>
