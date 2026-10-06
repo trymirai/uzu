@@ -121,6 +121,7 @@ impl<B: Backend> Classifier<B> {
     ) -> Result<B::ScratchBuffer, ClassifierError<B>> {
         let name = format!("{parent}/classifier");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim, &name, command_buffer)?;
 
@@ -157,9 +158,9 @@ impl<B: Backend> Classifier<B> {
             .map_err(ClassifierError::Backend)?;
         self.pooling.encode(&hidden, &mut pooled, batch_dim, self.hidden_dim, 1, command_buffer);
 
-        command_buffer.sample_timestamp(&name);
         let logits = self.prediction_head.encode(pooled, 1, &name, command_buffer).map_err(ClassifierError::Backend)?;
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(logits)

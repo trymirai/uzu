@@ -255,6 +255,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let name = format!("{parent}/accept");
+        command_buffer.sample_start_timestamp(&name);
         let copies = self.cache.accept(accepted_indices);
 
         if !copies.is_empty() {
@@ -266,9 +267,9 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                 self.element_dim,
                 command_buffer,
             );
-            command_buffer.sample_timestamp(&name);
         }
 
+        command_buffer.sample_end_timestamp(&name);
         Ok(())
     }
 }

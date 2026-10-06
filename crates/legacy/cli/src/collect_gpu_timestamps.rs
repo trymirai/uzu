@@ -8,7 +8,11 @@ use std::{
 
 use anyhow::{Error, Result, anyhow};
 use uzu_engine::{
-    backends::{BackendSelection, common::Backend, select_backend},
+    backends::{
+        BackendSelection,
+        common::{Backend, TimestampSampleEntry},
+        select_backend,
+    },
     engine::{Engine, language_model::stream::SamplingMethod},
 };
 
@@ -19,10 +23,10 @@ struct CollectGpuTimestamps {
 }
 
 impl BackendSelection for CollectGpuTimestamps {
-    type Output = Vec<Box<[(String, Instant)]>>;
+    type Output = Vec<Box<[(TimestampSampleEntry, Instant)]>>;
     type Error = Error;
 
-    fn select<B: Backend>(self) -> Result<Vec<Box<[(String, Instant)]>>> {
+    fn select<B: Backend>(self) -> Result<Vec<Box<[(TimestampSampleEntry, Instant)]>>> {
         let engine = Engine::<B>::new().map_err(|error| anyhow!("{error}"))?;
         let model = engine.load_language_model(&self.model_path).map_err(|error| anyhow!("{error}"))?;
         let input = model
@@ -61,15 +65,19 @@ pub fn run(
         anyhow!("Unable to open any backend"),
     )?;
     let mut file = BufWriter::new(File::create(&output_path)?);
-    writeln!(file, "command_buffer,name,timestamp_us")?;
-    for (command_buffer, blocks) in command_buffers.iter().enumerate() {
-        let Some(&(_, origin)) = blocks.first() else {
+    writeln!(file, "command_buffer,name,kind,timestamp_us")?;
+    for (command_buffer, timestamps) in command_buffers.iter().enumerate() {
+        let Some(&(_, origin)) = timestamps.first() else {
             continue;
         };
-        for (name, timestamp) in blocks {
+        for (entry, timestamp) in timestamps {
+            let (kind, name) = match entry {
+                TimestampSampleEntry::Start(name) => ("start", name),
+                TimestampSampleEntry::End(name) => ("end", name),
+            };
             writeln!(
                 file,
-                "{command_buffer},\"{}\",{:.3}",
+                "{command_buffer},\"{}\",{kind},{:.3}",
                 name.replace('"', "\"\""),
                 timestamp.duration_since(origin).as_secs_f64() * 1e6,
             )?;
@@ -78,7 +86,7 @@ pub fn run(
     file.flush()?;
     println!(
         "Wrote {} timestamps from {} command buffers to {}",
-        command_buffers.iter().map(|blocks| blocks.len()).sum::<usize>(),
+        command_buffers.iter().map(|timestamps| timestamps.len()).sum::<usize>(),
         command_buffers.len(),
         output_path.display()
     );

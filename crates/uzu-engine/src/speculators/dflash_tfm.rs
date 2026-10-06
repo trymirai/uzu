@@ -17,7 +17,7 @@ use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context,
-        gpu_types::trie::TrieNode as GpuTrieNode,
+        TimestampSampleEntry, gpu_types::trie::TrieNode as GpuTrieNode,
     },
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
@@ -172,7 +172,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let name = format!("{parent}/accept");
-        self.dflash.encode_accept(state, target_features, accepted_indices, &name, command_buffer)
+        command_buffer.sample_start_timestamp(&name);
+        self.dflash.encode_accept(state, target_features, accepted_indices, &name, command_buffer)?;
+        command_buffer.sample_end_timestamp(&name);
+        Ok(())
     }
 
     pub fn make_shape(
@@ -221,7 +224,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
         prng: &PRng,
         allocation_pool: Arc<B::AllocationPool>,
-        timestamps: Option<&Sender<Box<[(String, Instant)]>>>,
+        timestamps: Option<&Sender<Box<[(TimestampSampleEntry, Instant)]>>>,
     ) -> Result<TrieNode, DFlashTreeError<B>> {
         assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
 

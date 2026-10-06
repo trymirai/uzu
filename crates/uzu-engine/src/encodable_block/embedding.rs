@@ -160,6 +160,7 @@ impl<B: Backend> Embedding<B> {
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
         let name = format!("{parent}/embedding lookup");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
@@ -177,6 +178,7 @@ impl<B: Backend> Embedding<B> {
         };
         table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, &name, command_buffer);
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)
@@ -194,6 +196,7 @@ impl<B: Backend> Embedding<B> {
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
         let name = format!("{parent}/embedding readout");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
         let mut output_buffer = match &self.tying {
@@ -231,7 +234,6 @@ impl<B: Backend> Embedding<B> {
                     k: self.model_dim,
                 };
                 readout.lock().encode(arguments, command_buffer).map_err(EmbeddingError::BackendError)?;
-                command_buffer.sample_timestamp(&name);
                 output
             },
         };
@@ -245,9 +247,9 @@ impl<B: Backend> Embedding<B> {
                 logit_transform.soft_cap.unwrap_or(0.0),
                 command_buffer,
             );
-            command_buffer.sample_timestamp(&name);
         }
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output_buffer)

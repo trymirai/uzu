@@ -96,6 +96,7 @@ impl<B: Backend> PredictionHead<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/prediction head");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let mut hidden = self.dense_projection.encode(input, batch_dim, &name, command_buffer)?;
         self.activation_kernel.encode(
@@ -105,11 +106,11 @@ impl<B: Backend> PredictionHead<B> {
             self.activation,
             command_buffer,
         );
-        command_buffer.sample_timestamp(&name);
         let normalized =
             self.normalization.encode(&hidden, 0, batch_dim, None::<&mut B::ScratchBuffer>, &name, command_buffer)?;
         let logits = self.readout.encode(normalized, batch_dim, &name, command_buffer)?;
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(logits)

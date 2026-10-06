@@ -7,7 +7,7 @@ use bytemuck::{AnyBitPattern, NoUninit};
 
 use crate::{
     array::size_for_shape,
-    backends::common::{Backend, BufferMut, BufferRef},
+    backends::common::{Backend, BufferMut, BufferRef, TimestampSampleEntry},
     data_type::DataType,
 };
 
@@ -86,7 +86,13 @@ pub trait CommandBufferEncoding {
     fn enable_timestamps(&mut self) -> Result<(), <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error>;
 
     #[allow(clippy::ptr_arg)]
-    fn sample_timestamp(
+    fn sample_start_timestamp(
+        &mut self,
+        name: &String,
+    );
+
+    #[allow(clippy::ptr_arg)]
+    fn sample_end_timestamp(
         &mut self,
         name: &String,
     );
@@ -116,7 +122,7 @@ pub trait CommandBufferCompleted: Send {
 
     fn gpu_execution_time(&self) -> Duration;
 
-    fn timestamps(&self) -> &[(String, Instant)];
+    fn timestamps(&self) -> &[(TimestampSampleEntry, Instant)];
 }
 
 #[cfg(test)]

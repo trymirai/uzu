@@ -131,6 +131,7 @@ impl<B: Backend> TransformerLayerConv<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
         let name = format!("{parent}/pre convolution");
+        command_buffer.sample_start_timestamp(&name);
         let mut projection_input = command_buffer.allocate_scratch(input.size())?;
         command_buffer.encode_copy(input, &mut projection_input);
         let coefficients = self.kernel_projection.encode(projection_input, sequence_length, &name, command_buffer)?;
@@ -145,8 +146,8 @@ impl<B: Backend> TransformerLayerConv<B> {
         )?;
         if let Some((transform, factors)) = &self.input_rht {
             transform.encode_fp_in_place(&mut output, factors, None, sequence_length, self.model_dim, command_buffer);
-            command_buffer.sample_timestamp(&name);
         }
+        command_buffer.sample_end_timestamp(&name);
         Ok((output, coefficients))
     }
 
@@ -159,7 +160,8 @@ impl<B: Backend> TransformerLayerConv<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/post convolution");
-        self.post_conv.encode(
+        command_buffer.sample_start_timestamp(&name);
+        let output = self.post_conv.encode(
             input,
             coefficients,
             2 * self.coefficient_count,
@@ -167,7 +169,9 @@ impl<B: Backend> TransformerLayerConv<B> {
             sequence_length,
             &name,
             command_buffer,
-        )
+        )?;
+        command_buffer.sample_end_timestamp(&name);
+        Ok(output)
     }
 }
 
@@ -360,6 +364,7 @@ impl<B: Backend> TransformerLayer<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/transformer layer {}", self.layer_index);
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let mut hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
             pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut.reborrow()), &name, command_buffer)?
@@ -443,6 +448,7 @@ impl<B: Backend> TransformerLayer<B> {
             command_buffer.encode_fill(&mut hidden, 0);
         }
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(hidden)

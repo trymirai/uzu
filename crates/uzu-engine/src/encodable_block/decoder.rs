@@ -146,6 +146,7 @@ impl<B: Backend> Decoder<B> {
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         let name = format!("{parent}/decoder");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), &name, command_buffer)?;
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
@@ -200,6 +201,7 @@ impl<B: Backend> Decoder<B> {
             transformer_output.output
         };
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(DecoderEncodeOutput {

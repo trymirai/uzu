@@ -302,6 +302,7 @@ impl<B: Backend> Weaver<B> {
     ) -> Result<Vec<B::ScratchBuffer>, WeaverEncodeError<B>> {
         let name = format!("{parent}/weaver prefix");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let hidden_row_bytes = size_for_shape(&[self.target_model_dim], DATA_TYPE);
         let mut prefix_hidden = command_buffer
@@ -349,7 +350,6 @@ impl<B: Backend> Weaver<B> {
                     command_buffer,
                 )
                 .map_err(WeaverEncodeError::Backend)?;
-            command_buffer.sample_timestamp(&name);
             residual_input = layer
                 .encode_post_attention(attention_output, &mut residual_state, depth, &name, command_buffer)
                 .map_err(WeaverEncodeError::Backend)?;
@@ -362,6 +362,7 @@ impl<B: Backend> Weaver<B> {
                 .kv_cache,
         );
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(prefix_kv_layers)
@@ -392,6 +393,7 @@ impl<B: Backend> Weaver<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), WeaverEncodeError<B>> {
         let name = format!("{parent}/step");
+        command_buffer.sample_start_timestamp(&name);
         let tree_slot_count = shape.slot_count();
         let ancestor_stride = self.max_depth;
         let frontier_capacity = tree_slot_count * shape.expand_width;
@@ -420,7 +422,6 @@ impl<B: Backend> Weaver<B> {
                 self.candidate_pool_size,
                 command_buffer,
             );
-            command_buffer.sample_timestamp(&name);
         }
         let (batch_candidate_ids, batch_candidate_logits) = if batch_start_slot == 0 {
             (candidate_ids.subrange(..), candidate_logits.subrange(..))
@@ -475,7 +476,6 @@ impl<B: Backend> Weaver<B> {
                 layer.attention_scale,
                 command_buffer,
             );
-            command_buffer.sample_timestamp(&name);
             residual_input = layer
                 .encode_post_attention(attention_output, &mut residual_state, batch_node_count, &name, command_buffer)
                 .map_err(WeaverEncodeError::Backend)?;
@@ -547,7 +547,7 @@ impl<B: Backend> Weaver<B> {
             command_buffer,
         );
 
-        command_buffer.sample_timestamp(&name);
+        command_buffer.sample_end_timestamp(&name);
         Ok(())
     }
 
@@ -565,6 +565,7 @@ impl<B: Backend> Weaver<B> {
     ) -> Result<EncodedWeaverTree<B>, WeaverEncodeError<B>> {
         let name = format!("{parent}/weaver tree");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let tree_slot_count = shape.slot_count();
         let ancestor_stride = self.max_depth;
@@ -611,9 +612,8 @@ impl<B: Backend> Weaver<B> {
             )
             .map_err(WeaverEncodeError::Backend)?;
 
-        command_buffer.sample_timestamp(&name);
         let rope_positions = (0..=self.max_depth).collect::<Box<[_]>>();
-        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &rope_positions, command_buffer)
+        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &rope_positions, &name, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
 
         let prefix_kv_layers =
@@ -691,6 +691,7 @@ impl<B: Backend> Weaver<B> {
             };
             let step_name = format!("{name}/weaver step");
             command_buffer.push_debug_group(&step_name);
+            command_buffer.sample_start_timestamp(&step_name);
             self.encode_step(
                 target_embedding,
                 prefix_kv_layers.iter(),
@@ -714,10 +715,12 @@ impl<B: Backend> Weaver<B> {
                 &step_name,
                 command_buffer,
             )?;
+            command_buffer.sample_end_timestamp(&step_name);
             command_buffer.pop_debug_group();
             batch_start_slot += batch_node_count;
         }
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         let mut packed_tree_readback =

@@ -154,6 +154,7 @@ impl<B: Backend> WeaverLayer<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<PreparedPrefixAttention<B>, B::Error> {
         let name = format!("{parent}/prefix attention");
+        command_buffer.sample_start_timestamp(&name);
         let attention_input = self.pre_attention_norm.encode(
             residual_input,
             0,
@@ -184,7 +185,7 @@ impl<B: Backend> WeaverLayer<B> {
             token_count,
             command_buffer,
         );
-        command_buffer.sample_timestamp(&name);
+        command_buffer.sample_end_timestamp(&name);
         Ok(PreparedPrefixAttention {
             queries,
             kv_cache,
@@ -200,6 +201,7 @@ impl<B: Backend> WeaverLayer<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/post attention");
+        command_buffer.sample_start_timestamp(&name);
         let projected_attention = self.out_projection.encode(attention_output, token_count, &name, command_buffer)?;
         let mlp_input = self.pre_mlp_norm.encode(
             &projected_attention,
@@ -209,6 +211,8 @@ impl<B: Backend> WeaverLayer<B> {
             &name,
             command_buffer,
         )?;
-        self.mlp.encode(mlp_input, token_count, &name, command_buffer)
+        let output = self.mlp.encode(mlp_input, token_count, &name, command_buffer)?;
+        command_buffer.sample_end_timestamp(&name);
+        Ok(output)
     }
 }

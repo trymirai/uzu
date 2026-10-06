@@ -113,6 +113,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/per layer embedding");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let total_ple_dim = self.num_layers * self.ple_dim;
         let total_rows = batch_dim * self.num_layers;
@@ -154,7 +155,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             command_buffer,
         );
 
-        command_buffer.sample_timestamp(&name);
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(per_layer_inputs)
@@ -253,6 +254,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
     ) -> Result<(), B::Error> {
         let name = format!("{parent}/per layer embedding projection");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let length = batch_dim * self.model_dim;
 
@@ -264,7 +266,6 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             length,
             command_buffer,
         );
-        command_buffer.sample_timestamp(&name);
 
         let mut gate_input = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
         command_buffer.encode_copy(outputs.as_ref(), &mut gate_input);
@@ -283,7 +284,6 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             self.activation.act_type(),
             command_buffer,
         );
-        command_buffer.sample_timestamp(&name);
 
         let projected = self.projection.encode(activated, batch_dim, &name, command_buffer)?;
         let normed =
@@ -299,7 +299,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             command_buffer,
         );
 
-        command_buffer.sample_timestamp(&name);
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(())

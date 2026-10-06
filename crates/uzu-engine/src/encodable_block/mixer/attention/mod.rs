@@ -224,6 +224,7 @@ impl<B: Backend> Mixer<B> for Attention<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/attention");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
 
@@ -231,6 +232,7 @@ impl<B: Backend> Mixer<B> for Attention<B> {
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
         let output = self.attend(hidden, precalculated_rope, batch_dim, state, &name, command_buffer)?;
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)

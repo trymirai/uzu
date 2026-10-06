@@ -63,6 +63,7 @@ impl<B: Backend> TransformerState<B> {
     ) -> Result<(), B::Error> {
         let name = format!("{parent}/transformer accept");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         for layer_state in &mut self.layer_states {
             let TransformerLayerStateType::Owned(layer_state) = layer_state else {
@@ -74,6 +75,7 @@ impl<B: Backend> TransformerState<B> {
 
         self.context_length += accepted_indices.len() as u32;
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(())
@@ -170,10 +172,11 @@ impl<B: Backend> Transformer<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/capture residual");
+        command_buffer.sample_start_timestamp(&name);
         let mut output = command_buffer.allocate_scratch(hidden.size())?;
         let elements = batch_size * self.model_dim;
         self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, command_buffer);
-        command_buffer.sample_timestamp(&name);
+        command_buffer.sample_end_timestamp(&name);
         Ok(output)
     }
 
@@ -242,6 +245,7 @@ impl<B: Backend> Transformer<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
         let name = format!("{parent}/transformer");
+        command_buffer.sample_start_timestamp(&name);
         let mut hidden = input;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
@@ -259,7 +263,7 @@ impl<B: Backend> Transformer<B> {
         let precalculated_ropes = self
             .ropes
             .iter()
-            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
+            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, &name, command_buffer))
             .collect::<Result<Box<[_]>, B::Error>>()?;
 
         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
@@ -319,6 +323,7 @@ impl<B: Backend> Transformer<B> {
         });
 
         let Some(output_range) = output_range else {
+            command_buffer.sample_end_timestamp(&name);
             return Ok(TransformerEncodeOutput {
                 output: None,
                 hidden_features,
@@ -334,6 +339,7 @@ impl<B: Backend> Transformer<B> {
             command_buffer,
         )?;
 
+        command_buffer.sample_end_timestamp(&name);
         Ok(TransformerEncodeOutput {
             output: Some(output_normalized),
             hidden_features,

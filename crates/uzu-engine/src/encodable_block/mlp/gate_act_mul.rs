@@ -61,6 +61,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
     ) -> Result<LinearInput<B>, B::Error> {
         let name = format!("{parent}/gate act mul");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
@@ -117,7 +118,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             LinearInput::FullPrecision(hidden)
         };
 
-        command_buffer.sample_timestamp(&name);
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(input)

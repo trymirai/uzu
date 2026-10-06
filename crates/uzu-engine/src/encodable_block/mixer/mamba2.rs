@@ -42,10 +42,13 @@ impl<B: Backend> MixerState<B> for Mamba2State<B> {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-        _parent: &str,
-        _command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        parent: &str,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), <B as Backend>::Error> {
+        let name = format!("{parent}/accept");
+        command_buffer.sample_start_timestamp(&name);
         assert!(self.suffix_length.take() == Some(*accepted_indices.last().unwrap() + 1));
+        command_buffer.sample_end_timestamp(&name);
         Ok(())
     }
 }
@@ -247,6 +250,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/mamba2");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         assert!(precalculated_rope.is_none(), "unexpected rope for mamba2 mixer");
 
@@ -422,9 +426,9 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         state.suffix_length = Some(batch_dim.size());
 
-        command_buffer.sample_timestamp(&name);
         let output = self.out_projection.encode(ssd_output, batch_dim.size(), &name, command_buffer)?;
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)

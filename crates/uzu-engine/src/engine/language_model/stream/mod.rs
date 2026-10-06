@@ -6,7 +6,7 @@ use thiserror::Error;
 #[cfg(grammar)]
 use crate::engine::language_model::grammar::{Grammar, GrammarError};
 use crate::{
-    backends::common::Backend,
+    backends::common::{Backend, TimestampSampleEntry},
     encodable_block::decoder::DecoderError,
     engine::language_model::{LanguageModel, state::LanguageModelState},
     speculators::dflash_tfm::DFlashTreeError,
@@ -19,7 +19,7 @@ mod stream;
 
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,
-    pub timestamps: Option<Sender<Box<[(String, Instant)]>>>,
+    pub timestamps: Option<Sender<Box<[(TimestampSampleEntry, Instant)]>>>,
     #[cfg(grammar)]
     pub grammar: Option<Grammar>,
 }

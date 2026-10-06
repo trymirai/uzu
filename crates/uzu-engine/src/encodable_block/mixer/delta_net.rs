@@ -70,6 +70,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let name = format!("{parent}/accept");
+        command_buffer.sample_start_timestamp(&name);
         let suffix_status = self.suffix_status.take().expect("delta net state has no suffix to accept");
         let accepted_index = *accepted_indices.last().expect("delta net state attempted to accept zero indices");
 
@@ -109,9 +110,9 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                     accepted_indices.len() as u32,
                     command_buffer,
                 );
-                command_buffer.sample_timestamp(&name);
             },
         }
+        command_buffer.sample_end_timestamp(&name);
         Ok(())
     }
 }
@@ -339,6 +340,7 @@ impl<B: Backend> DeltaNet<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/tree verify");
+        command_buffer.sample_start_timestamp(&name);
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
         let parents = command_buffer.allocate_constant_from_slice(batch_dim.parents())?;
@@ -413,7 +415,6 @@ impl<B: Backend> DeltaNet<B> {
             command_buffer,
         );
 
-        command_buffer.sample_timestamp(&name);
         let output = self.out_projection.encode(delta_output, tree_size, &name, command_buffer)?;
         state.suffix_status = Some(DeltaNetSuffixStatus::Tree {
             conv_states,
@@ -423,6 +424,7 @@ impl<B: Backend> DeltaNet<B> {
             beta,
             parents: batch_dim.parents().into(),
         });
+        command_buffer.sample_end_timestamp(&name);
         Ok(output)
     }
 }
@@ -479,6 +481,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/delta net");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         assert!(precalculated_rope.is_none(), "unexpected rope for delta net mixer");
 
@@ -497,6 +500,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
 
             command_buffer.pop_debug_group();
 
+            command_buffer.sample_end_timestamp(&name);
             return Ok(output);
         }
 
@@ -637,9 +641,9 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             suffix_length: batch_dim.size(),
         });
 
-        command_buffer.sample_timestamp(&name);
         let output = self.out_projection.encode(delta_output, batch_dim.size(), &name, command_buffer)?;
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)

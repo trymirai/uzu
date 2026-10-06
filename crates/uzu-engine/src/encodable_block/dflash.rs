@@ -210,6 +210,7 @@ impl<B: Backend> DFlash<B> {
 
         let name = format!("{parent}/dflash accept");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let num_tokens = accepted_indices.len() as u32;
         let captured_layer_count = self.target_feature_input_dim / self.model_dim;
@@ -245,7 +246,7 @@ impl<B: Backend> DFlash<B> {
             command_buffer,
         )?;
         let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
-        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)?;
+        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, &name, command_buffer)?;
 
         let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens, &name, command_buffer)?;
         let layer_kv_bytes = size_for_shape(&[self.layer_kv_dim], self.data_type);
@@ -277,6 +278,7 @@ impl<B: Backend> DFlash<B> {
 
         state.context_length += num_tokens;
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(())
@@ -293,6 +295,7 @@ impl<B: Backend> DFlash<B> {
     ) -> Result<DFlashOutput<B>, DFlashEncodeError<B>> {
         let name = format!("{parent}/dflash draft");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         assert!(batch_size >= 2 && batch_size <= self.block_size, "batch size exceeds DFlash block size");
         assert!(
@@ -315,7 +318,7 @@ impl<B: Backend> DFlash<B> {
             .collect::<Box<[_]>>();
         let batch_topology = BatchTopology::new(&nodes, true);
         let token_positions = (state.context_length..state.context_length + batch_size).collect::<Box<[_]>>();
-        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)
+        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, &name, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
 
         let mut hidden = token_embeddings;
@@ -355,6 +358,7 @@ impl<B: Backend> DFlash<B> {
             command_buffer,
         )?;
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(DFlashOutput {

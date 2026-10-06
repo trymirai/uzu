@@ -95,6 +95,7 @@ impl<B: Backend> Sampling<B> {
     ) -> Result<B::GlobalBuffer, B::Error> {
         let name = format!("{parent}/sampling");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let sampling_length = sampling_range.end - sampling_range.start;
 
@@ -196,7 +197,7 @@ impl<B: Backend> Sampling<B> {
             command_buffer,
         );
 
-        command_buffer.sample_timestamp(&name);
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)

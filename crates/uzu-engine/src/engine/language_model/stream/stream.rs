@@ -14,7 +14,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context,
-        gpu_types::trie::TrieNode as GpuTrieNode, kernel::ContextRingUpdateKernel,
+        TimestampSampleEntry, gpu_types::trie::TrieNode as GpuTrieNode, kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
     encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
@@ -42,7 +42,7 @@ impl<B: Backend> ForwardPassChaining<B> {
     fn resolve<'a>(
         &'a mut self,
         tokens: &mut Vec<u64>,
-        timestamps: Option<&Sender<Box<[(String, Instant)]>>>,
+        timestamps: Option<&Sender<Box<[(TimestampSampleEntry, Instant)]>>>,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
     ) -> Result<(u64, Option<&'a B::ScratchBuffer>), LanguageModelStreamError<B>> {
         match self {
@@ -501,6 +501,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
                         let name = "decode/update repetition penalty ring".to_string();
                         command_buffer.push_debug_group(&name);
+                        command_buffer.sample_start_timestamp(&name);
                         let accepted_input_token_ids_const = command_buffer
                             .allocate_constant_from_slice(
                                 &accepted_input_token_ids
@@ -516,7 +517,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             full.len() as u32,
                             &mut command_buffer,
                         );
-                        command_buffer.sample_timestamp(&name);
+                        command_buffer.sample_end_timestamp(&name);
                         command_buffer.pop_debug_group();
                     }
                     if let Some(capture_span) = capture_span {

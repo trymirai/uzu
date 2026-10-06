@@ -123,6 +123,7 @@ impl<B: Backend> Normalization<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/normalization");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let row_size = size_for_shape(&[self.element_count], self.data_type);
         let row_offset_bytes = row_offset as usize * row_size;
@@ -143,7 +144,7 @@ impl<B: Backend> Normalization<B> {
             command_buffer,
         );
 
-        command_buffer.sample_timestamp(&name);
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)

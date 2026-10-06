@@ -182,7 +182,10 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/rht linear wrapper");
-        self.encode_input(LinearInput::FullPrecision(input), batch_dim, &name, command_buffer)
+        command_buffer.sample_start_timestamp(&name);
+        let output = self.encode_input(LinearInput::FullPrecision(input), batch_dim, &name, command_buffer)?;
+        command_buffer.sample_end_timestamp(&name);
+        Ok(output)
     }
 
     fn encode_input(
@@ -194,11 +197,13 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/linear (rht)");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let input = match input {
             LinearInput::FullPrecision(input) => input,
             input => {
                 let output = self.inner_linear.encode_input(input, batch_dim, &name, command_buffer);
+                command_buffer.sample_end_timestamp(&name);
                 command_buffer.pop_debug_group();
                 return output;
             },
@@ -213,6 +218,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             command_buffer,
         )?;
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
         Ok(output)
     }

@@ -38,12 +38,14 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let name = format!("{parent}/mlp (dense)");
         command_buffer.push_debug_group(&name);
+        command_buffer.sample_start_timestamp(&name);
 
         let fused_up = self.up.encode(input, batch_dim, &name, command_buffer)?;
         let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
         let down_input = self.gate.encode_for_linear(command_buffer, &fused_up, batch_dim, act_format, &name)?;
         let output = self.down.encode_input(down_input, batch_dim, &name, command_buffer)?;
 
+        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)

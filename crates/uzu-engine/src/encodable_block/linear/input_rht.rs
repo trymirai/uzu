@@ -47,6 +47,7 @@ impl<B: Backend> InputRht<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
         let name = format!("{parent}/prepare");
+        command_buffer.sample_start_timestamp(&name);
         if format == ActivationFormat::Int8
             && let Some(quantizer) = &self.quantizer
         {
@@ -72,7 +73,7 @@ impl<B: Backend> InputRht<B> {
                 command_buffer,
             );
 
-            command_buffer.sample_timestamp(&name);
+            command_buffer.sample_end_timestamp(&name);
             return Ok(LinearInput::Int8Symmetric {
                 values,
                 scales,
@@ -85,7 +86,7 @@ impl<B: Backend> InputRht<B> {
         let input_dim = self.input_dim();
         let mut transformed = command_buffer.allocate_scratch(input.size())?;
         self.rht.encode_fp(input, &mut transformed, &self.rht_signs, batch_dim, input_dim, command_buffer);
-        command_buffer.sample_timestamp(&name);
+        command_buffer.sample_end_timestamp(&name);
         Ok(LinearInput::FullPrecision(transformed))
     }
 
@@ -98,13 +99,16 @@ impl<B: Backend> InputRht<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
         let name = format!("{parent}/prepare in place");
+        command_buffer.sample_start_timestamp(&name);
         if format == ActivationFormat::Int8 && self.quantizer.is_some() {
-            return self.prepare(&input, batch_dim, format, &name, command_buffer);
+            let output = self.prepare(&input, batch_dim, format, &name, command_buffer)?;
+            command_buffer.sample_end_timestamp(&name);
+            return Ok(output);
         }
 
         let input_dim = self.input_dim();
         self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer);
-        command_buffer.sample_timestamp(&name);
+        command_buffer.sample_end_timestamp(&name);
         Ok(LinearInput::FullPrecision(input))
     }
 
