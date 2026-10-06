@@ -7,11 +7,24 @@ use crate::{
     data_type::DataType,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TrellisFormat {
+    pub vector_width: u32,
+    pub transition_bits: u32,
+    pub restart_columns: Option<u32>,
+}
+
 pub enum MatmulB<TB: BufferRef> {
     FullPrecision {
         b: TB,
     },
     Quantized(QuantizedB<TB>),
+    Trellis {
+        codes: TB,
+        row_scales: TB,
+        codebook: TB,
+        format: TrellisFormat,
+    },
 }
 
 pub struct QuantizedB<TB: BufferRef> {
@@ -82,9 +95,16 @@ impl<TB: BufferRef> QuantizedB<TB> {
 }
 
 impl<TB: BufferRef> MatmulB<TB> {
+    pub fn is_trellis(&self) -> bool {
+        matches!(self, Self::Trellis { .. })
+    }
+
     pub fn quantized(&self) -> Option<&QuantizedB<TB>> {
         match self {
             Self::FullPrecision {
+                ..
+            }
+            | Self::Trellis {
                 ..
             } => None,
             Self::Quantized(quantized) => Some(quantized),

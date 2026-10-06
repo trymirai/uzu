@@ -13,7 +13,7 @@ use crate::{
             gpu_types::QuantizationMethod,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
             },
         },
         cpu::Cpu,
@@ -88,11 +88,13 @@ fn run_gemv<B: Backend, T: ArrayElement + Float>(
                 b,
                 b_leading_dimension: None,
                 b_transpose: true,
-                d: &mut d,
-                d_transform: MatmulDOps {
-                    soft_cap,
-                    ..MatmulDOps::none()
-                },
+                output: MatmulOutput::new(
+                    &mut d,
+                    MatmulDOps {
+                        soft_cap,
+                        ..MatmulDOps::none()
+                    },
+                ),
                 gather_indices,
                 m: m as u32,
                 n: n_out as u32,

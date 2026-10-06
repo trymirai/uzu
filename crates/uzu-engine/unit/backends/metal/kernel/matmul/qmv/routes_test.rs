@@ -1,5 +1,3 @@
-use std::fmt::Write;
-
 use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 use xxhash_rust::xxh3::xxh3_64;
@@ -58,6 +56,7 @@ fn problem(
         b_transpose: true,
         b_leading_dimension: None,
         b_prologue: prologue,
+        b_is_trellis: false,
         b_bits: Some(bits),
         b_group_size: Some(group),
         signed_codes: false,
@@ -72,9 +71,6 @@ fn problem(
 fn table_is_complete_and_fingerprint_is_stable() {
     let mut canonical = Vec::new();
     let mut matched_rows = vec![false; ROWS.len()];
-    let mut tuned = 0;
-    let mut main_gemv = 0;
-    let mut main_gemm = 0;
     for &(device_label, device_name, gpu_core_count, apple_gpu_family, supports_mxu) in &DEVICES {
         for &(format_name, bits, group, prologue) in &FORMATS {
             for m in 2..=7 {
@@ -96,11 +92,6 @@ fn table_is_complete_and_fingerprint_is_stable() {
                     let (row_index, row) = matches[0];
                     matched_rows[row_index] = true;
                     let selected = row.route;
-                    match selected {
-                        QmvRoute::Tuned(_) => tuned += 1,
-                        QmvRoute::MainGemv(_) => main_gemv += 1,
-                        QmvRoute::MainGemm(_) => main_gemm += 1,
-                    }
                     canonical.push(format!("{device_label}|{format_name}|{shape_name}|{m}|{n}|{k}|{selected:?}"));
                     let problem = problem(m, n, k, bits, group, prologue);
                     assert_eq!(route(device_name, apple_gpu_family, supports_mxu, &problem, true), Some(selected));
@@ -134,14 +125,7 @@ fn table_is_complete_and_fingerprint_is_stable() {
     assert!(matched_rows.into_iter().all(|matched| matched), "route table contains an orphaned row");
     canonical.sort();
     assert_eq!(canonical.len(), 1176);
-    let mut expanded = String::new();
-    for line in canonical {
-        writeln!(&mut expanded, "{line}").expect("writing to a String must succeed");
-    }
-    assert_eq!(tuned, 864);
-    assert_eq!(main_gemv, 221);
-    assert_eq!(main_gemm, 91);
-    assert_eq!(xxh3_64(expanded.trim_end().as_bytes()), FROZEN_PLAN_FINGERPRINT);
+    assert_eq!(xxh3_64(canonical.join("\n").as_bytes()), FROZEN_PLAN_FINGERPRINT);
 }
 
 #[uzu_test]
@@ -229,23 +213,18 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
 #[uzu_test]
 fn family_lookup_requires_one_unanimous_route() {
     let m1_route = problem(4, 8192, 5120, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
-    let measured_m1 = route("Apple M1", MTLGPUFamily::Apple7, false, &m1_route, true);
-    for device_name in ["Apple M1 Pro", "Apple M1 Max", "Apple M1 Ultra"] {
-        assert_eq!(route(device_name, MTLGPUFamily::Apple7, false, &m1_route, true), measured_m1);
-    }
-
     let unanimous = problem(6, 5120, 17408, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
-    let measured_m2 = route("Apple M2", MTLGPUFamily::Apple8, false, &unanimous, true);
-    for device_name in ["Apple M2 Max", "Apple M2 Ultra"] {
-        assert_eq!(route(device_name, MTLGPUFamily::Apple8, false, &unanimous, true), measured_m2);
-    }
-    let measured_m3_max = route("Apple M3 Max", MTLGPUFamily::Apple9, false, &unanimous, true);
-    for device_name in ["Apple M3", "Apple M3 Pro", "Apple M4 Max"] {
-        assert_eq!(route(device_name, MTLGPUFamily::Apple9, false, &unanimous, true), measured_m3_max);
-    }
-    let measured_m5_max = route("Apple M5 Max", MTLGPUFamily::Apple10, true, &unanimous, true);
-    for device_name in ["Apple M5", "Apple M5 Pro"] {
-        assert_eq!(route(device_name, MTLGPUFamily::Apple10, true, &unanimous, true), measured_m5_max);
+    let families: [(&MatmulShape, MTLGPUFamily, bool, &str, &[&str]); 4] = [
+        (&m1_route, MTLGPUFamily::Apple7, false, "Apple M1", &["Apple M1 Pro", "Apple M1 Max", "Apple M1 Ultra"]),
+        (&unanimous, MTLGPUFamily::Apple8, false, "Apple M2", &["Apple M2 Max", "Apple M2 Ultra"]),
+        (&unanimous, MTLGPUFamily::Apple9, false, "Apple M3 Max", &["Apple M3", "Apple M3 Pro", "Apple M4 Max"]),
+        (&unanimous, MTLGPUFamily::Apple10, true, "Apple M5 Max", &["Apple M5", "Apple M5 Pro"]),
+    ];
+    for (shape, family, supports_mxu, measured_device, aliases) in families {
+        let measured = route(measured_device, family, supports_mxu, shape, true);
+        for device in aliases {
+            assert_eq!(route(device, family, supports_mxu, shape, true), measured);
+        }
     }
 
     let disagreement = problem(3, 5120, 6144, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);

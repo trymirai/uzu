@@ -17,8 +17,8 @@ use crate::{
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
-                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, QuantParams,
-                    QuantParamsLayout, QuantizedB, QuantizedCorrection,
+                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
+                    QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection,
                 },
             },
         },
@@ -445,8 +445,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         b,
         b_leading_dimension: None,
         b_transpose: true,
-        d: y,
-        d_transform: MatmulDOps::none(),
+        output: MatmulOutput::new(y, MatmulDOps::none()),
         gather_indices: None,
         m: input.m,
         n: input.n,

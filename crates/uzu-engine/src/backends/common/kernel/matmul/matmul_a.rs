@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use crate::backends::common::{BufferRef, gpu_types::gemm::GemmAPrologueKind};
+use crate::backends::common::BufferRef;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Int8CodeLayout {
@@ -58,17 +58,9 @@ pub enum MatmulA<T: BufferRef> {
         scale_group_size: u32,
         code_layout: Int8CodeLayout,
     },
-}
-
-impl<T: BufferRef> MatmulA<T> {
-    pub fn prologue_kind(&self) -> GemmAPrologueKind {
-        match self {
-            Self::FullPrecision {
-                ..
-            } => GemmAPrologueKind::FullPrecision,
-            Self::Int8Symmetric {
-                ..
-            } => GemmAPrologueKind::Int8Symmetric,
-        }
-    }
+    Trellis {
+        values: T,
+        column_group_sums: T,
+        scales: T,
+    },
 }

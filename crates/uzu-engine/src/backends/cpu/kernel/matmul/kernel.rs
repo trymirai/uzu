@@ -67,24 +67,24 @@ impl MatmulKernel for MatmulCpuKernel {
         >,
         command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<(), CpuError> {
-        let output_scale = arguments.d_transform.ab_scale;
-        let accumulate = arguments.d_transform.accumulate;
-        let bias_buffer = arguments.d_transform.bias;
-        let post_rht = arguments.d_transform.rht_factors;
-        let soft_cap = arguments.d_transform.soft_cap;
-
         let MatmulArguments {
             a,
             b,
             b_leading_dimension,
             b_transpose,
-            mut d,
+            output,
             m,
             n,
             k,
             gather_indices,
             ..
         } = arguments;
+        let (mut d, ops) = output.into_contiguous(n, "CpuMatmul")?;
+        let output_scale = ops.ab_scale;
+        let accumulate = ops.accumulate;
+        let bias_buffer = ops.bias;
+        let post_rht = ops.rht_factors;
+        let soft_cap = ops.soft_cap;
 
         let m_u = m as usize;
         let n_u = n as usize;
@@ -145,6 +145,14 @@ impl MatmulKernel for MatmulCpuKernel {
                     group_size: a_group_size as usize,
                     code_layout,
                 }
+            },
+            MatmulA::Trellis {
+                ..
+            } => {
+                return Err(MatmulError::UnsupportedLayout {
+                    path: "CpuMatmul",
+                }
+                .into());
             },
         };
         let bias_ptr = bias_buffer.map(|bias| SendPtr(bias.cpu_ptr().as_ptr().cast::<u8>().cast_const()));

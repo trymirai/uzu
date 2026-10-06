@@ -3,6 +3,7 @@ mod kernel;
 mod policy;
 mod selection;
 mod specialization;
+mod trellis;
 
 pub use error::GemmSpecializationError;
 pub use kernel::GemmKernel;

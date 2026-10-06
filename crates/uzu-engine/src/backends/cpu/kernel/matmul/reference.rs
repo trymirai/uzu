@@ -57,6 +57,11 @@ impl WeightData {
                     transpose: b_transpose,
                 })
             },
+            MatmulB::Trellis {
+                ..
+            } => Err(MatmulError::UnsupportedLayout {
+                path: "CpuMatmul",
+            }),
             MatmulB::Quantized(quantized) => Ok(WeightData::Quantized {
                 weights: buffer_ptr(quantized.codes),
                 scales: buffer_ptr(quantized.scales),

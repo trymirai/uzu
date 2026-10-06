@@ -7,7 +7,7 @@ use crate::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{
             LogitTransformKernel,
-            matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel},
+            matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulOutput},
         },
     },
     config::{embedding::AnyEmbeddingConfig, weight_matrix::AnyWeightMatrixSpec},
@@ -218,8 +218,7 @@ impl<B: Backend> Embedding<B> {
                     b: table.as_matrix().expect("tied embedding tables are matrices").matmul_b(),
                     b_leading_dimension: None,
                     b_transpose: true,
-                    d: &mut output,
-                    d_transform: MatmulDOps::none(),
+                    output: MatmulOutput::new(&mut output, MatmulDOps::none()),
                     gather_indices,
                     m: batch_dim,
                     n: output_dim,

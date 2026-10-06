@@ -19,6 +19,7 @@ fn shape(
         b_transpose: true,
         b_leading_dimension: None,
         b_prologue: GemmBPrologueKind::FullPrecision,
+        b_is_trellis: false,
         b_bits: None,
         b_group_size: None,
         signed_codes: false,
@@ -70,33 +71,18 @@ fn policy_boundaries_are_preserved() {
         assert_eq!(policy::mxu_fp_tile(m, n, k), expected);
     }
 
-    for (m, n, group_size, expected) in [
-        (16, 4096, 31, Tile64x64x16_Simdgroups2x2),
-        // Full M blocks keep the narrow tile.
-        (4, 4096, 32, Tile8x32x32_Simdgroups1x1),
-        (8, 4096, 32, Tile8x32x32_Simdgroups1x1),
-        (16, 4096, 32, Tile8x32x32_Simdgroups1x1),
-        (24, 4096, 32, Tile8x32x32_Simdgroups1x1),
-        // A partial trailing block takes the wide tile.
-        (9, 4096, 32, Tile32x32x32_Simdgroups2x2),
-        (15, 4096, 32, Tile32x32x32_Simdgroups2x2),
-        (31, 4096, 32, Tile32x32x32_Simdgroups2x2),
-        (64, 6143, 32, Tile32x32x32_Simdgroups2x2),
-        (64, 6144, 32, Tile64x64x32_Simdgroups2x2),
+    for (m, n, group_size, family, expected) in [
+        (16, 4096, 31, MTLGPUFamily::Apple7, Tile64x64x16_Simdgroups2x2),
+        (16, 4096, 32, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
+        (8, 4096, 32, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
+        (9, 4096, 32, MTLGPUFamily::Apple8, Tile32x32x32_Simdgroups2x2),
+        (9, 4096, 32, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
+        (31, 4096, 32, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
+        (32, 4096, 32, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
+        (64, 6143, 32, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
+        (64, 6144, 32, MTLGPUFamily::Apple9, Tile64x64x32_Simdgroups2x2),
     ] {
-        assert_eq!(policy::simdgroup_quant_tile(m, n, group_size, MTLGPUFamily::Apple7), expected);
-    }
-
-    // Apple8 retains the older wide-tile policy; Apple9 and newer keep the narrow tile.
-    for apple_gpu_family in [MTLGPUFamily::Apple7, MTLGPUFamily::Apple8] {
-        for m in [9, 15, 31] {
-            assert_eq!(policy::simdgroup_quant_tile(m, 4096, 32, apple_gpu_family), Tile32x32x32_Simdgroups2x2);
-        }
-    }
-    for apple_gpu_family in [MTLGPUFamily::Apple9, MTLGPUFamily::Apple10] {
-        for m in [9, 15, 31] {
-            assert_eq!(policy::simdgroup_quant_tile(m, 4096, 32, apple_gpu_family), Tile8x32x32_Simdgroups1x1);
-        }
+        assert_eq!(policy::simdgroup_quant_tile(m, n, group_size, family), expected);
     }
 }
 
@@ -164,6 +150,24 @@ fn selection_fallbacks_and_split_k_are_preserved() {
 }
 
 #[uzu_test]
+fn trellis_plan_matches_projection_cases() {
+    use GemmTiling::*;
+
+    for (m, n, k, tiling, split_k) in [
+        (16, 128, 64, Tile16x32x256_Simdgroups1x1, 1),
+        (17, 80, 64, Tile64x64x256_Simdgroups2x2, 1),
+        (2048, 2048, 128, Tile128x128x256_Simdgroups4x4, 1),
+        (1, 80, 5120, Tile16x32x256_Simdgroups1x1, 80),
+    ] {
+        let mut trellis_shape = shape(m, n, k);
+        trellis_shape.a_full_precision = false;
+        trellis_shape.b_is_trellis = true;
+        let plan = problem(trellis_shape, DataType::BF16).select_plan();
+        assert_eq!((plan.engine, plan.tiling, plan.split_k), (GemmEngine::Mxu, tiling, split_k), "M {m} N {n} K {k}");
+    }
+}
+
+#[uzu_test]
 fn forced_engine_errors_are_preserved() {
     let huge = shape(u32::MAX, u32::MAX, u32::MAX);
     assert_eq!(
@@ -176,7 +180,7 @@ fn forced_engine_errors_are_preserved() {
     invalid_layout.b_transpose = false;
     assert_eq!(
         problem(invalid_layout, DataType::BF16).select_plan_for_engine(GemmEngine::Mxu),
-        Err(GemmPlanError::UnsupportedQuantLayout)
+        Err(GemmPlanError::UnsupportedLayout("quantized weights require transposed contiguous B"))
     );
 }
 

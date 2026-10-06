@@ -6,7 +6,7 @@ use crate::{
             Backend, BufferRef, CommandBufferEncoding, Kernels,
             kernel::{
                 AttentionArguments, AttentionKernelConfig, SoftmaxKernel,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
             },
         },
         metal::{
@@ -119,11 +119,13 @@ impl AttentionFallback {
                     },
                     b_leading_dimension: Some(self.num_groups * self.head_dim),
                     b_transpose: true,
-                    d: &mut group_scores,
-                    d_transform: MatmulDOps {
-                        ab_scale: scale,
-                        ..MatmulDOps::none()
-                    },
+                    output: MatmulOutput::new(
+                        &mut group_scores,
+                        MatmulDOps {
+                            ab_scale: scale,
+                            ..MatmulDOps::none()
+                        },
+                    ),
                     gather_indices: None::<&<Metal as Backend>::ScratchBuffer>,
                     m: gqa_factor * suffix_length,
                     n: sequence_length,
@@ -168,8 +170,7 @@ impl AttentionFallback {
                     },
                     b_leading_dimension: Some(self.num_groups * self.head_dim),
                     b_transpose: false,
-                    d: &mut group_output,
-                    d_transform: MatmulDOps::none(),
+                    output: MatmulOutput::new(&mut group_output, MatmulDOps::none()),
                     gather_indices: None::<&<Metal as Backend>::ScratchBuffer>,
                     m: gqa_factor * suffix_length,
                     n: self.head_dim,

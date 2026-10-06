@@ -109,15 +109,15 @@ struct MxuMmaCore {
             ? SIMDGROUP_BLOCK_N
             : short(min(int(SIMDGROUP_BLOCK_N), int(params->N) - int(geometry.block_col_start + tile_col_offset)));
 
-    schedules::TileContext tile_context;
-    tile_context.simdgroup_limit_m = simdgroup_limit_m;
-    tile_context.simdgroup_limit_n = simdgroup_limit_n;
-    tile_context.block_col = block_col;
-    tile_context.tile_col_offset = tile_col_offset;
-    tile_context.tile_block_cols =
-        ushort(min(int(THREADGROUP_BLOCK_N), int(params->N) - int(geometry.block_col_start)));
-    tile_context.k_offset = k_offset;
-    tile_context.abs_row_base = uint(geometry.block_row_start) + tile_row_offset;
+    const schedules::TileContext tile_context{
+        .simdgroup_limit_m = simdgroup_limit_m,
+        .simdgroup_limit_n = simdgroup_limit_n,
+        .block_col = block_col,
+        .tile_col_offset = tile_col_offset,
+        .tile_block_cols = ushort(min(int(THREADGROUP_BLOCK_N), int(params->N) - int(geometry.block_col_start))),
+        .k_offset = k_offset,
+        .abs_row_base = uint(geometry.block_row_start) + tile_row_offset,
+    };
 
     const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
     const bool apply_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
