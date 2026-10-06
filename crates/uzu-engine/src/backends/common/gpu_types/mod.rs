@@ -6,6 +6,8 @@
 pub mod activation_transform;
 pub mod activation_type;
 pub mod attention;
+pub mod d4s4;
+pub mod embedding;
 pub mod gated_act_mul;
 pub mod gemm;
 pub mod hadamard_order;
@@ -14,13 +16,13 @@ pub mod matmul;
 pub mod quantization;
 pub mod quantization_method;
 pub mod ring;
-pub mod router_topk;
 pub mod trie;
 pub mod weaver;
 
 pub use activation_transform::*;
 pub use activation_type::*;
 pub use attention::*;
+pub use embedding::*;
 pub use gated_act_mul::*;
 pub use hadamard_order::*;
 pub use kv_cache_update::*;

@@ -1,5 +1,6 @@
 use std::{any::Any, range::Range};
 
+use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
@@ -261,7 +262,7 @@ impl<B: Backend> DFlash<B> {
         for ((layer, mixer_state), mut key_value) in
             self.layers.iter().zip(state.layer_states.iter_mut()).zip(layer_key_values)
         {
-            mixer_state.prepare(state.context_length, num_tokens, command_buffer.context())?;
+            mixer_state.prepare(state.context_length, num_tokens)?;
             let attention = (layer.mixer.as_ref() as &dyn Any)
                 .downcast_ref::<Attention<B>>()
                 .expect("DFlash draft layers must use attention mixers");
@@ -315,9 +316,7 @@ impl<B: Backend> DFlash<B> {
         let mut hidden = token_embeddings;
         let mut residual = command_buffer.allocate_scratch(hidden.size()).map_err(DFlashEncodeError::Backend)?;
         for (layer, mixer_state) in self.layers.iter().zip(state.layer_states.iter_mut()) {
-            mixer_state
-                .prepare(state.context_length, batch_size, command_buffer.context())
-                .map_err(DFlashEncodeError::Backend)?;
+            mixer_state.prepare(state.context_length, batch_size).map_err(DFlashEncodeError::Backend)?;
             hidden = layer
                 .encode(
                     hidden,

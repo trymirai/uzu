@@ -71,7 +71,7 @@ impl SpecializeBinding<'_> {
     }
 
     fn alias_target(&self) -> String {
-        if self.enum_type.is_some() {
+        if self.enum_type.is_some() || self.argument.condition.is_some() {
             self.typed_name()
         } else {
             self.slot_name()
@@ -116,7 +116,14 @@ fn kernel_header(
     }
 
     for binding in bindings.iter() {
-        if let Some(enum_type) = &binding.enum_type {
+        let ty = binding.argument.c_type.trim_start_matches("const ").trim();
+        let slot = binding.slot_name();
+        if binding.argument.condition.is_some() {
+            lines.push(format!(
+                "constant {ty} {name} = is_function_constant_defined({slot}) ? static_cast<{ty}>({slot}) : static_cast<{ty}>(0);",
+                name = binding.typed_name(),
+            ));
+        } else if let Some(enum_type) = &binding.enum_type {
             lines.push(format!(
                 "constant {ty} {name} = {ty}({slot});",
                 ty = enum_type,

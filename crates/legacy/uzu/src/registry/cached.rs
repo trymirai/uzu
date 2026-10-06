@@ -7,14 +7,14 @@ use crate::registry::RegistryError;
 
 pub struct CachedRegistry {
     registry: Box<dyn Registry<Error = RegistryError>>,
-    models: Mutex<Option<Vec<Model>>>,
+    listing: Mutex<Option<(Vec<Model>, bool)>>,
 }
 
 impl CachedRegistry {
     pub fn new(registry: Box<dyn Registry<Error = RegistryError>>) -> Self {
         Self {
             registry,
-            models: Mutex::new(None),
+            listing: Mutex::new(None),
         }
     }
 }
@@ -27,14 +27,18 @@ impl Registry for CachedRegistry {
     }
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
+        Box::pin(async { Ok(self.listing().await?.0) })
+    }
+
+    fn listing(&self) -> Pin<Box<dyn Future<Output = Result<(Vec<Model>, bool), RegistryError>> + Send + '_>> {
         Box::pin(async {
-            let mut cached_models = self.models.lock().await;
-            if let Some(cached_models) = cached_models.as_ref() {
-                Ok(cached_models.clone())
+            let mut cached_listing = self.listing.lock().await;
+            if let Some(cached_listing) = cached_listing.as_ref() {
+                Ok(cached_listing.clone())
             } else {
-                let models = self.registry.models().await?;
-                *cached_models = Some(models.clone());
-                Ok(models)
+                let listing = self.registry.listing().await?;
+                *cached_listing = Some(listing.clone());
+                Ok(listing)
             }
         })
     }

@@ -3,6 +3,7 @@
 #include <metal_stdlib>
 
 #include "../../common/defines.h"
+#include "../../common/packed.h"
 
 using namespace metal;
 
@@ -59,7 +60,7 @@ template <ushort BITS>
 METAL_FUNC uint decode_zero_point(uint8_t packed, uint group_index) {
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 zero points supported");
   if constexpr (BITS == 4) {
-    return (uint(packed) >> ((group_index & 1u) * 4u)) & 0x0Fu;
+    return read_packed<4>(packed, group_index);
   } else {
     return uint(packed);
   }
@@ -67,8 +68,11 @@ METAL_FUNC uint decode_zero_point(uint8_t packed, uint group_index) {
 
 template <ushort BITS>
 METAL_FUNC uint decode_zero_point(const device uint8_t* zero_points_row, uint group_index) {
-  const uint byte_index = BITS == 4 ? group_index >> 1 : group_index;
-  return decode_zero_point<BITS>(zero_points_row[byte_index], group_index);
+  if constexpr (BITS == 4) {
+    return read_packed<4>(zero_points_row, group_index);
+  } else {
+    return decode_zero_point<BITS>(zero_points_row[group_index], group_index);
+  }
 }
 
 UZU_CONST ushort W4_BITS = 4;

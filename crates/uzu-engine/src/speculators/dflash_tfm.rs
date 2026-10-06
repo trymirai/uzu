@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use derive_more::Debug;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

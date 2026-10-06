@@ -1,27 +1,20 @@
+use derive_more::Debug;
 use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             LogitTransformKernel,
             matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel},
         },
     },
-    config::{
-        embedding::AnyEmbeddingConfig,
-        weight_matrix::{
-            AnyWeightMatrixSpec,
-            hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
-        },
-    },
+    config::{embedding::AnyEmbeddingConfig, weight_matrix::AnyWeightMatrixSpec},
     data_type::DataType,
     encodable_block::{
-        embedding_table::{EmbeddingTable, EmbeddingTableError},
+        embedding_table::{EmbeddingTable, EmbeddingTableError, read_output_signs},
         linear::{Gather, LinearMatmulError, UntiedReadout},
-        weight_matrix::WeightMatrixError,
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -36,8 +29,6 @@ pub enum EmbeddingError<B: Backend> {
     UnsupportedConfiguration(String),
     #[error("Embedding table error: {0}")]
     EmbeddingTable(#[from] EmbeddingTableError<B>),
-    #[error("Weight matrix error: {0}")]
-    WeightMatrix(#[from] WeightMatrixError<B>),
     #[error(transparent)]
     LinearMatmul(#[from] LinearMatmulError<B>),
 }
@@ -88,116 +79,31 @@ impl<B: Backend> Embedding<B> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
-                let embedding_spec = embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-
-                let (tying, readout_input_hadamard_factors) = match embedding_spec {
-                    spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
-                    | AnyWeightMatrixSpec::MLXSpec(_)
-                    | AnyWeightMatrixSpec::IntSpec(_)) => {
-                        let table = EmbeddingTable::load_with_spec(
-                            context,
-                            &embedding_tree,
-                            vocab_size,
-                            model_dim,
-                            data_type,
-                            spec,
-                            None,
-                        )?;
-
-                        (
-                            EmbeddingTying::Tied {
-                                table,
-                                readout: readout_kernel(context, data_type)?,
-                            },
-                            None,
-                        )
+                let table = EmbeddingTable::load(context, &embedding_tree, vocab_size, model_dim, data_type)?;
+                if table.as_matrix().is_none() {
+                    return Err(EmbeddingError::UnsupportedConfiguration("tied embeddings need a matrix table".into()));
+                }
+                // The output norm fuses the readout's input rotation, so it needs its own copy of the factors.
+                let readout_input_hadamard_factors =
+                    if let AnyWeightMatrixSpec::HybridSpec(_) = embedding_tree.metadata("spec")? {
+                        Some(read_output_signs(&embedding_tree, model_dim)?)
+                    } else {
+                        None
+                    };
+                (
+                    EmbeddingTying::Tied {
+                        table,
+                        readout: readout_kernel(context, data_type)?,
                     },
-                    AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                        quantization_spec,
-                        adapter_spec: None,
-                        incoherence_block_size: Some(block_size),
-                        incoherence_processing_mode: IncoherenceProcessingMode::Output,
-                        ..
-                    }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => {
-                        let incoherence_signs_tree = embedding_tree.subtree("incoherence_signs");
-                        let output_hadamard_factors = Some(
-                            incoherence_signs_tree
-                                .leaf("output_signs")?
-                                .validate(&[model_dim], DataType::I32)?
-                                .read_buffer()?,
-                        );
-                        let readout_input_hadamard_factors = Some(
-                            incoherence_signs_tree
-                                .leaf("output_signs")?
-                                .validate(&[model_dim], DataType::I32)?
-                                .read_buffer()?,
-                        );
-
-                        let table = EmbeddingTable::load_with_spec(
-                            context,
-                            &embedding_tree.subtree("quantized"),
-                            vocab_size,
-                            model_dim,
-                            data_type,
-                            *quantization_spec,
-                            output_hadamard_factors,
-                        )?;
-                        (
-                            EmbeddingTying::Tied {
-                                table,
-                                readout: readout_kernel(context, data_type)?,
-                            },
-                            readout_input_hadamard_factors,
-                        )
-                    },
-                    spec => return Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
-                };
-
-                (tying, readout_input_hadamard_factors)
+                    readout_input_hadamard_factors,
+                )
             },
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
                 let input_embedding_tree = parameter_tree.subtree("input_embedding");
-                let input_embedding_spec = input_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-
-                let input_table = match input_embedding_spec {
-                    AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                        quantization_spec,
-                        adapter_spec: None,
-                        incoherence_block_size: Some(block_size),
-                        incoherence_processing_mode: IncoherenceProcessingMode::Output,
-                        ..
-                    }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => {
-                        let output_hadamard_factors = Some(
-                            input_embedding_tree
-                                .subtree("incoherence_signs")
-                                .leaf("output_signs")?
-                                .validate(&[model_dim], DataType::I32)?
-                                .read_buffer()?,
-                        );
-                        EmbeddingTable::load_with_spec(
-                            context,
-                            &input_embedding_tree.subtree("quantized"),
-                            vocab_size,
-                            model_dim,
-                            data_type,
-                            *quantization_spec,
-                            output_hadamard_factors,
-                        )?
-                    },
-                    spec => EmbeddingTable::load_with_spec(
-                        context,
-                        &input_embedding_tree,
-                        vocab_size,
-                        model_dim,
-                        data_type,
-                        spec,
-                        None,
-                    )?,
-                };
-
+                let input_table =
+                    EmbeddingTable::load(context, &input_embedding_tree, vocab_size, model_dim, data_type)?;
                 let output_embedding_tree = parameter_tree.subtree("output_embedding");
-                let output_embedding_spec = output_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-
+                let output_embedding_spec = output_embedding_tree.metadata("spec")?;
                 let output = UntiedReadout::load(
                     context,
                     &output_embedding_tree,
@@ -206,7 +112,6 @@ impl<B: Backend> Embedding<B> {
                     model_dim,
                     data_type,
                 )?;
-
                 (
                     EmbeddingTying::Untied {
                         input_table,
@@ -310,7 +215,7 @@ impl<B: Backend> Embedding<B> {
                         values: input_buffer,
                         offset: 0,
                     },
-                    b: table.matrix().matmul_b(),
+                    b: table.as_matrix().expect("tied embedding tables are matrices").matmul_b(),
                     b_leading_dimension: None,
                     b_transpose: true,
                     d: &mut output,

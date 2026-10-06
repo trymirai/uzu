@@ -1,5 +1,6 @@
 use std::any::Any;
 
+use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
@@ -29,7 +30,6 @@ pub trait MixerState<B: Backend>: Any + Send {
         &mut self,
         context_length: u32,
         suffix_length: u32,
-        context: &B::Context,
     ) -> Result<(), B::Error>;
 
     fn encode_accept(

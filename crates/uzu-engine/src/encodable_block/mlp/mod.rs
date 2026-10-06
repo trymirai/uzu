@@ -1,10 +1,9 @@
 mod dense;
 mod gate_act_mul;
-mod moe;
 
 pub use dense::DenseMlp;
+use derive_more::Debug;
 use gate_act_mul::MlpGateActMulEncodable;
-pub use moe::{MoeBlock, MoeBlockError};
 use thiserror::Error;
 
 use crate::{
@@ -30,8 +29,8 @@ pub enum MlpBlockError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Linear block error: {0}")]
     LinearBlockError(#[from] LinearBlockError<B>),
-    #[error("MoeBlock error: {0}")]
-    MoeBlockError(#[from] MoeBlockError<B>),
+    #[error("Mixture of experts is not supported")]
+    UnsupportedMixtureOfExperts,
 }
 
 impl<B: Backend> dyn Mlp<B> {
@@ -76,16 +75,7 @@ impl<B: Backend> dyn Mlp<B> {
 
                 Ok((Box::new(DenseMlp::new(up_projection, gate, down_projection)), up_input_hadamard_factors))
             },
-            AnyMLPConfig::MixtureOfExpertsConfig(mixture_of_experts_config) => Ok((
-                Box::new(MoeBlock::new(
-                    context,
-                    mixture_of_experts_config,
-                    model_dimension,
-                    data_type,
-                    parameter_tree,
-                )?),
-                None,
-            )),
+            AnyMLPConfig::MixtureOfExpertsConfig(_) => Err(MlpBlockError::UnsupportedMixtureOfExperts),
         }
     }
 }

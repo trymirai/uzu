@@ -1,5 +1,6 @@
 use std::range::Range;
 
+use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
@@ -42,14 +43,13 @@ impl<B: Backend> TransformerState<B> {
         &mut self,
         context_length: u32,
         suffix_length: u32,
-        context: &B::Context,
     ) -> Result<(), B::Error> {
         for layer_state in &mut self.layer_states {
             let TransformerLayerStateType::Owned(layer_state) = layer_state else {
                 continue;
             };
 
-            layer_state.prepare(context_length, suffix_length, context)?;
+            layer_state.prepare(context_length, suffix_length)?;
         }
 
         Ok(())

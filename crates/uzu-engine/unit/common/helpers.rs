@@ -3,8 +3,8 @@ use std::{mem::size_of, sync::Arc};
 use crate::{
     array::ArrayElement,
     backends::common::{
-        Backend, Buffer, BufferCpuAccessible, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferPending, Context, SparseBuffer,
+        Backend, BufferCpuAccessible, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferPending, Context,
     },
 };
 
@@ -84,32 +84,6 @@ pub fn submit_command_buffer<E: CommandBufferEncoding>(command_buffer: E) {
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 }
 
-pub fn sparse_buffer_create<B: Backend>(
-    context: &B::Context,
-    capacity: usize,
-) -> B::SparseBuffer {
-    context.create_sparse_buffer(capacity).expect("Failed to create sparse buffer")
-}
-
-pub fn sparse_buffer_create_and_map<B: Backend>(
-    context: &B::Context,
-    capacity: usize,
-) -> B::SparseBuffer {
-    let mut buffer = sparse_buffer_create::<B>(context, capacity);
-    buffer.map(context, 0..buffer.total_pages()).expect("Failed to map sparse buffer");
-    buffer
-}
-
-pub fn sparse_buffer_create_with<B: Backend, T: ArrayElement>(
-    context: &B::Context,
-    data: &[T],
-) -> B::SparseBuffer {
-    let capacity_bytes = buffer_size_bytes::<T>(data.len());
-    let mut buffer = sparse_buffer_create_and_map::<B>(context, capacity_bytes);
-    sparse_buffer_write::<B, T>(context, &mut buffer, data);
-    buffer
-}
-
 pub fn buffer_readback<B: Backend>(
     context: &B::Context,
     buffer: impl BufferRef<Backend = B>,
@@ -121,26 +95,4 @@ pub fn buffer_readback<B: Backend>(
     submit_command_buffer(command_buffer);
 
     output_buffer
-}
-
-pub fn sparse_buffer_read_vec<B: Backend, T: ArrayElement>(
-    context: &B::Context,
-    buffer: impl BufferRef<Backend = B>,
-    elements_count: usize,
-) -> Vec<T> {
-    let dense_buffer =
-        buffer_readback::<B>(context, buffer.subrange(..elements_count * T::data_type().size_in_bytes()));
-    buffer_to_vec(&dense_buffer)
-}
-
-pub fn sparse_buffer_write<B: Backend, T: ArrayElement>(
-    context: &B::Context,
-    buffer: impl BufferMut<Backend = B>,
-    data: &[T],
-) {
-    let data_buffer = create_buffer_with_data::<B, T>(context, data);
-
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    command_buffer.encode_copy(&data_buffer, buffer.subrange_mut(..data_buffer.size()));
-    submit_command_buffer(command_buffer);
 }
