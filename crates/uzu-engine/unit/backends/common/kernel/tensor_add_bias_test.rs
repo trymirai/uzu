@@ -78,14 +78,16 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     };
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(
-        input_buffer.as_ref(),
-        &bias_buffer,
-        &mut output_buffer,
-        input.num_cols,
-        input.length,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            input_buffer.as_ref(),
+            &bias_buffer,
+            &mut output_buffer,
+            input.num_cols,
+            input.length,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     buffer_to_vec::<B, T>(&output_buffer)

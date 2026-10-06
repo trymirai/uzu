@@ -213,7 +213,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 batch_dim,
                 self.input_dim,
                 command_buffer,
-            );
+            )?;
             base_input
         } else {
             input
@@ -258,7 +258,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 batch_dim,
                 self.output_dim,
                 command_buffer,
-            );
+            )?;
         }
 
         command_buffer.pop_debug_group();

@@ -59,22 +59,24 @@ fn top_children<B: Backend>(
     let mut output_prune_logprobs = prune_noise_scale.map(|_| create_buffer::<B, f32>(&context, rows * CHILDREN));
     let kernel = <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(&context, prune_noise_scale.is_some()).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    kernel.encode(
-        &residual,
-        &candidate_logits,
-        &ids,
-        &depth_seeds,
-        &node_metadata,
-        &mut output_token_ids,
-        &mut output_model_logprobs,
-        output_prune_logprobs.as_mut(),
-        rows as u32,
-        CANDIDATES as u32,
-        CHILDREN as u32,
-        VOCAB_SIZE,
-        prune_noise_scale,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &residual,
+            &candidate_logits,
+            &ids,
+            &depth_seeds,
+            &node_metadata,
+            &mut output_token_ids,
+            &mut output_model_logprobs,
+            output_prune_logprobs.as_mut(),
+            rows as u32,
+            CANDIDATES as u32,
+            CHILDREN as u32,
+            VOCAB_SIZE,
+            prune_noise_scale,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     (
         buffer_to_vec(&output_token_ids),

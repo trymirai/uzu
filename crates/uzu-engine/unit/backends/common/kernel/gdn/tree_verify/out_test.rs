@@ -100,23 +100,25 @@ fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
         create_buffer::<B, T>(&context, shape.batch_size * shape.tree_size * shape.value_heads * shape.head_v_dim);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(
-        &q,
-        &prefix,
-        &qkd,
-        &u,
-        h0.as_ref(),
-        h0_indices.as_ref(),
-        &mut o,
-        (shape.head_k_dim as f32).sqrt().recip(),
-        shape.batch_size as u32,
-        shape.tree_size as u32,
-        shape.qk_heads as u32,
-        shape.value_heads as u32,
-        shape.head_k_dim as u32,
-        shape.head_v_dim as u32,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &q,
+            &prefix,
+            &qkd,
+            &u,
+            h0.as_ref(),
+            h0_indices.as_ref(),
+            &mut o,
+            (shape.head_k_dim as f32).sqrt().recip(),
+            shape.batch_size as u32,
+            shape.tree_size as u32,
+            shape.qk_heads as u32,
+            shape.value_heads as u32,
+            shape.head_k_dim as u32,
+            shape.head_v_dim as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     buffer_to_vec(&o)
 }

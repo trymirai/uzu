@@ -115,7 +115,7 @@ impl AttentionGemmGroupedMetal {
                 q_replicas,
                 1,
                 command_buffer,
-            );
+            )?;
             return Ok(());
         }
 
@@ -139,7 +139,7 @@ impl AttentionGemmGroupedMetal {
             q_replicas,
             num_splits,
             command_buffer,
-        );
+        )?;
 
         self.combine.encode(
             &partials,
@@ -154,7 +154,7 @@ impl AttentionGemmGroupedMetal {
             q_replicas,
             num_splits,
             command_buffer,
-        );
+        )?;
         Ok(())
     }
 

@@ -93,7 +93,7 @@ impl<B: Backend> SeparableCausalConv<B> {
             sequence_length,
             coefficient_row_stride,
             command_buffer,
-        );
+        )?;
 
         command_buffer.pop_debug_group();
         Ok(output)

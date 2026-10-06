@@ -104,7 +104,8 @@ fn run_prefill<T: ArrayElement>(
                 case.value_dim as u32,
                 case.suffix_len as u32,
                 &mut command_buffer,
-            );
+            )
+            .expect("kernel encoding failed");
             <BackendKernels<Metal> as Kernels>::DeltaNetPrefillKernel::new(context, T::data_type(), HEAD_K_DIM as u32)
                 .expect("prefill")
                 .encode(
@@ -123,7 +124,8 @@ fn run_prefill<T: ArrayElement>(
                     case.suffix_len as u32,
                     HEAD_V_DIM.div_ceil(16) as u32,
                     &mut command_buffer,
-                );
+                )
+                .expect("kernel encoding failed");
         },
         PrefillMode::Chunked => {
             <BackendKernels<Metal> as Kernels>::DeltaNetChunkedPrefill::new(context, T::data_type(), HEAD_K_DIM as u32)
@@ -149,19 +151,22 @@ fn run_prefill<T: ArrayElement>(
         },
     }
 
-    <BackendKernels<Metal> as Kernels>::DeltaNetNormGateKernel::new(context, T::data_type()).expect("norm").encode(
-        &mut out,
-        &in_proj,
-        &norm_weight,
-        NUM_V_HEADS as u32,
-        HEAD_V_DIM as u32,
-        case.value_dim as u32,
-        (2 * case.key_dim + case.value_dim) as u32,
-        case.total_proj_dim as u32,
-        1e-6,
-        case.suffix_len as u32,
-        &mut command_buffer,
-    );
+    <BackendKernels<Metal> as Kernels>::DeltaNetNormGateKernel::new(context, T::data_type())
+        .expect("norm")
+        .encode(
+            &mut out,
+            &in_proj,
+            &norm_weight,
+            NUM_V_HEADS as u32,
+            HEAD_V_DIM as u32,
+            case.value_dim as u32,
+            (2 * case.key_dim + case.value_dim) as u32,
+            case.total_proj_dim as u32,
+            1e-6,
+            case.suffix_len as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     (buffer_to_vec::<Metal, T>(&out).into_iter().map(|value| cast(value).unwrap()).collect(), buffer_to_vec(&state))

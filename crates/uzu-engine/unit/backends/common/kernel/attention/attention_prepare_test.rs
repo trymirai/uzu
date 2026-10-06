@@ -40,22 +40,24 @@ fn run<B: Backend>() -> Output {
     let mut values = create_buffer::<B, bf16>(&context, 4);
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
 
-    kernel.encode(
-        &qkvg,
-        &mut queries,
-        Some(&mut keys),
-        Some(&mut values),
-        None::<&B::GlobalBuffer>,
-        None::<&B::GlobalBuffer>,
-        2,
-        Some(1),
-        2,
-        None,
-        Some(0),
-        12,
-        2,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &qkvg,
+            &mut queries,
+            Some(&mut keys),
+            Some(&mut values),
+            None::<&B::GlobalBuffer>,
+            None::<&B::GlobalBuffer>,
+            2,
+            Some(1),
+            2,
+            None,
+            Some(0),
+            12,
+            2,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
@@ -94,22 +96,24 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
     let mut queries = create_buffer::<B, bf16>(&context, 8);
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
 
-    kernel.encode(
-        &qg,
-        &mut queries,
-        None::<&mut B::GlobalBuffer>,
-        None::<&mut B::GlobalBuffer>,
-        None::<&B::GlobalBuffer>,
-        None::<&B::GlobalBuffer>,
-        2,
-        None,
-        2,
-        None,
-        None,
-        8,
-        2,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &qg,
+            &mut queries,
+            None::<&mut B::GlobalBuffer>,
+            None::<&mut B::GlobalBuffer>,
+            None::<&B::GlobalBuffer>,
+            None::<&B::GlobalBuffer>,
+            2,
+            None,
+            2,
+            None,
+            None,
+            8,
+            2,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     buffer_to_vec(&queries)

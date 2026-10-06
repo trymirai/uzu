@@ -263,7 +263,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                 copies.len() as u32,
                 self.element_dim,
                 command_buffer,
-            );
+            )?;
         }
 
         Ok(())

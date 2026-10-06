@@ -139,7 +139,7 @@ impl<B: Backend> Normalization<B> {
             self.scale_offset.unwrap_or(0.0),
             self.post_layer_scalar_value,
             command_buffer,
-        );
+        )?;
 
         command_buffer.pop_debug_group();
 

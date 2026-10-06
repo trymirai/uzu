@@ -118,25 +118,27 @@ impl<B: Backend> Runner<B> {
     ) -> Duration {
         let mut command_buffer = self.context.create_command_buffer(None, None).unwrap();
         for _ in 0..repetitions {
-            self.kernel.encode(
-                &self.prefix_kv,
-                &mut self.node_kv,
-                &self.current_qkv,
-                &self.cosines,
-                &self.sines,
-                &self.node_metadata,
-                &self.ancestor_indices,
-                &self.ancestor_counts,
-                &self.node_indices,
-                &mut self.output,
-                self.rows,
-                self.prefix_length,
-                self.ancestor_stride,
-                self.node_capacity,
-                MAX_DEPTH,
-                1.0 / (HEAD_DIM as f32).sqrt(),
-                &mut command_buffer,
-            );
+            self.kernel
+                .encode(
+                    &self.prefix_kv,
+                    &mut self.node_kv,
+                    &self.current_qkv,
+                    &self.cosines,
+                    &self.sines,
+                    &self.node_metadata,
+                    &self.ancestor_indices,
+                    &self.ancestor_counts,
+                    &self.node_indices,
+                    &mut self.output,
+                    self.rows,
+                    self.prefix_length,
+                    self.ancestor_stride,
+                    self.node_capacity,
+                    MAX_DEPTH,
+                    1.0 / (HEAD_DIM as f32).sqrt(),
+                    &mut command_buffer,
+                )
+                .expect("kernel encoding failed");
         }
         command_buffer.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
     }

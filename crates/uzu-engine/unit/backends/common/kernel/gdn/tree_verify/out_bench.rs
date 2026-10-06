@@ -117,23 +117,25 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
                 .expect("BuildTreeOutKernel");
                 group.bench_function(benchmark_id, |bencher| {
                     iter_encode_loop_named::<Metal, _>(context, bencher, &benchmark_path, |command_buffer| {
-                        kernel.encode(
-                            &buffers.q,
-                            &buffers.prefix,
-                            &buffers.qkd,
-                            &buffers.u,
-                            Some(&buffers.h0),
-                            Some(&buffers.h0_indices),
-                            &mut buffers.o,
-                            (HEAD_K_DIM as f32).sqrt().recip(),
-                            batch_size as u32,
-                            tree_size as u32,
-                            QK_HEADS as u32,
-                            VALUE_HEADS as u32,
-                            HEAD_K_DIM as u32,
-                            HEAD_V_DIM as u32,
-                            command_buffer,
-                        );
+                        kernel
+                            .encode(
+                                &buffers.q,
+                                &buffers.prefix,
+                                &buffers.qkd,
+                                &buffers.u,
+                                Some(&buffers.h0),
+                                Some(&buffers.h0_indices),
+                                &mut buffers.o,
+                                (HEAD_K_DIM as f32).sqrt().recip(),
+                                batch_size as u32,
+                                tree_size as u32,
+                                QK_HEADS as u32,
+                                VALUE_HEADS as u32,
+                                HEAD_K_DIM as u32,
+                                HEAD_V_DIM as u32,
+                                command_buffer,
+                            )
+                            .expect("kernel encoding failed");
                     });
                 });
             }

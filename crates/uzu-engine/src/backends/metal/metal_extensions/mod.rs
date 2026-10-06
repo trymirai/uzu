@@ -5,7 +5,7 @@ mod function_constant_values_extensions_set_value;
 mod gpu_family_extensions;
 mod sparse_page_size_extensions;
 
-pub use compiler_extensions_pipeline::CompilerPipelineExtensions;
+pub use compiler_extensions_pipeline::MTL4CompilerExtensions;
 pub use data_type::MetalDataTypeExt;
 pub use device_extensions::DeviceExt;
 pub use function_constant_values_extensions_set_value::FunctionConstantValuesSetValue;

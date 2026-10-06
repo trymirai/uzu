@@ -176,7 +176,7 @@ impl<B: Backend> QKVNorm<B> {
                 head_count,
                 head.config.upcast_mode == UpcastMode::FullLayer,
                 command_buffer,
-            );
+            )?;
         }
 
         command_buffer.pop_debug_group();

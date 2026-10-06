@@ -173,7 +173,9 @@ impl<B: Backend> Embedding<B> {
                 ..
             } => input_table,
         };
-        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
+        table
+            .encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer)
+            .map_err(EmbeddingError::BackendError)?;
 
         command_buffer.pop_debug_group();
 
@@ -231,13 +233,16 @@ impl<B: Backend> Embedding<B> {
 
         if apply_logit_transform && let Some(logit_transform) = &self.logit_transform {
             let length = batch_dim * output_dim;
-            logit_transform.kernel.encode(
-                &mut output_buffer,
-                length,
-                logit_transform.scale,
-                logit_transform.soft_cap.unwrap_or(0.0),
-                command_buffer,
-            );
+            logit_transform
+                .kernel
+                .encode(
+                    &mut output_buffer,
+                    length,
+                    logit_transform.scale,
+                    logit_transform.soft_cap.unwrap_or(0.0),
+                    command_buffer,
+                )
+                .map_err(EmbeddingError::BackendError)?;
         }
 
         command_buffer.pop_debug_group();

@@ -43,16 +43,18 @@ fn run_conv_update<B: Backend>(
         .expect("Failed to create kernel");
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(
-        &w_array,
-        Some(&b_array),
-        &mut in_out,
-        &mut state_buffer,
-        kernel_size,
-        conv_dim,
-        state_stride,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &w_array,
+            Some(&b_array),
+            &mut in_out,
+            &mut state_buffer,
+            kernel_size,
+            conv_dim,
+            state_stride,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let out = buffer_prefix_to_vec::<B, f32>(&in_out, conv_dim as usize);
@@ -86,21 +88,23 @@ fn run_delta_net_update<B: Backend, T: ArrayElement>(
         .expect("Failed to create kernel");
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(
-        &in_proj_array,
-        &a_log_array,
-        &dt_bias_array,
-        &norm_weight_array,
-        &mut state_buffer,
-        &mut out,
-        num_v_heads,
-        num_k_heads,
-        head_v_dim,
-        key_dim,
-        value_dim,
-        1e-6f32,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &in_proj_array,
+            &a_log_array,
+            &dt_bias_array,
+            &norm_weight_array,
+            &mut state_buffer,
+            &mut out,
+            num_v_heads,
+            num_k_heads,
+            head_v_dim,
+            key_dim,
+            value_dim,
+            1e-6f32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let out = buffer_to_vec::<B, T>(&out).into_iter().map(|value| value.to_f32().expect("output to f32")).collect();
@@ -206,30 +210,34 @@ fn test_delta_net_conv_scan() {
             .expect("scan");
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    pack_kernel.encode(
-        &state_array,
-        &in_proj_array,
-        &mut padded_array,
-        tap_count as u32,
-        total_proj_dim as u32,
-        suffix_len as u32,
-        conv_dim as u32,
-        &mut command_buffer,
-    );
-    scan_kernel.encode(
-        &padded_array,
-        &w_array,
-        Some(&b_array),
-        &mut in_proj_array,
-        &mut state_out_array,
-        suffix_len as u32,
-        kernel_size as u32,
-        total_proj_dim as u32,
-        tap_count as u32,
-        conv_dim as u32,
-        total_proj_dim as u32,
-        &mut command_buffer,
-    );
+    pack_kernel
+        .encode(
+            &state_array,
+            &in_proj_array,
+            &mut padded_array,
+            tap_count as u32,
+            total_proj_dim as u32,
+            suffix_len as u32,
+            conv_dim as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
+    scan_kernel
+        .encode(
+            &padded_array,
+            &w_array,
+            Some(&b_array),
+            &mut in_proj_array,
+            &mut state_out_array,
+            suffix_len as u32,
+            kernel_size as u32,
+            total_proj_dim as u32,
+            tap_count as u32,
+            conv_dim as u32,
+            total_proj_dim as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let in_proj_result: Vec<bf16> = buffer_to_vec(&in_proj_array);
@@ -364,52 +372,58 @@ fn run_prefill_with_norm_gate_typed<B: Backend, T: ArrayElement>(
     let norm_k = <<B as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, T::data_type()).unwrap();
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    prep_k.encode(
-        &in_proj_array,
-        &a_log_array,
-        &dt_bias_array,
-        &mut q_norm_array,
-        &mut k_norm_array,
-        None::<&mut B::GlobalBuffer>,
-        &mut beta_array,
-        &mut decay_array,
-        num_v_heads as u32,
-        num_k_heads as u32,
-        key_dim as u32,
-        value_dim as u32,
-        suffix_len as u32,
-        &mut command_buffer,
-    );
-    prefill_k.encode(
-        &q_norm_array,
-        &k_norm_array,
-        &beta_array,
-        &decay_array,
-        &in_proj_array,
-        &mut state_array,
-        &mut out_array,
-        num_v_heads as u32,
-        num_k_heads as u32,
-        head_v_dim as u32,
-        key_dim as u32,
-        value_dim as u32,
-        suffix_len as u32,
-        num_dv_groups,
-        &mut command_buffer,
-    );
-    norm_k.encode(
-        &mut out_array,
-        &in_proj_array,
-        &norm_weight_array,
-        num_v_heads as u32,
-        head_v_dim as u32,
-        value_dim as u32,
-        conv_dim as u32,
-        total_proj_dim as u32,
-        1e-6f32,
-        suffix_len as u32,
-        &mut command_buffer,
-    );
+    prep_k
+        .encode(
+            &in_proj_array,
+            &a_log_array,
+            &dt_bias_array,
+            &mut q_norm_array,
+            &mut k_norm_array,
+            None::<&mut B::GlobalBuffer>,
+            &mut beta_array,
+            &mut decay_array,
+            num_v_heads as u32,
+            num_k_heads as u32,
+            key_dim as u32,
+            value_dim as u32,
+            suffix_len as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
+    prefill_k
+        .encode(
+            &q_norm_array,
+            &k_norm_array,
+            &beta_array,
+            &decay_array,
+            &in_proj_array,
+            &mut state_array,
+            &mut out_array,
+            num_v_heads as u32,
+            num_k_heads as u32,
+            head_v_dim as u32,
+            key_dim as u32,
+            value_dim as u32,
+            suffix_len as u32,
+            num_dv_groups,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
+    norm_k
+        .encode(
+            &mut out_array,
+            &in_proj_array,
+            &norm_weight_array,
+            num_v_heads as u32,
+            head_v_dim as u32,
+            value_dim as u32,
+            conv_dim as u32,
+            total_proj_dim as u32,
+            1e-6f32,
+            suffix_len as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let out: Vec<T> = buffer_to_vec(&out_array);
@@ -542,22 +556,24 @@ fn test_delta_net_prefill_prep() {
     )
     .unwrap();
     let mut cpu_enc = cpu_ctx.create_command_buffer(None, None).expect("command buffer");
-    cpu_prep.encode(
-        &cpu_in_proj,
-        &cpu_a_log,
-        &cpu_dt_bias,
-        &mut cpu_q,
-        &mut cpu_k,
-        Some(&mut cpu_v),
-        &mut cpu_beta,
-        &mut cpu_decay,
-        num_v_heads as u32,
-        num_k_heads as u32,
-        key_dim as u32,
-        value_dim as u32,
-        suffix_len as u32,
-        &mut cpu_enc,
-    );
+    cpu_prep
+        .encode(
+            &cpu_in_proj,
+            &cpu_a_log,
+            &cpu_dt_bias,
+            &mut cpu_q,
+            &mut cpu_k,
+            Some(&mut cpu_v),
+            &mut cpu_beta,
+            &mut cpu_decay,
+            num_v_heads as u32,
+            num_k_heads as u32,
+            key_dim as u32,
+            value_dim as u32,
+            suffix_len as u32,
+            &mut cpu_enc,
+        )
+        .expect("kernel encoding failed");
     cpu_enc.end_encoding().submit().wait_until_completed().unwrap();
 
     let ref_q = buffer_to_vec::<Cpu, bf16>(&cpu_q).into_iter().map(f32::from).collect::<Vec<_>>();
@@ -594,22 +610,24 @@ fn test_delta_net_prefill_prep() {
     .unwrap();
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    prep_k.encode(
-        &in_proj_array,
-        &a_log_array,
-        &dt_bias_array,
-        &mut q_norm_array,
-        &mut k_norm_array,
-        Some(&mut compact_v_array),
-        &mut beta_array,
-        &mut decay_array,
-        num_v_heads as u32,
-        num_k_heads as u32,
-        key_dim as u32,
-        value_dim as u32,
-        suffix_len as u32,
-        &mut command_buffer,
-    );
+    prep_k
+        .encode(
+            &in_proj_array,
+            &a_log_array,
+            &dt_bias_array,
+            &mut q_norm_array,
+            &mut k_norm_array,
+            Some(&mut compact_v_array),
+            &mut beta_array,
+            &mut decay_array,
+            num_v_heads as u32,
+            num_k_heads as u32,
+            key_dim as u32,
+            value_dim as u32,
+            suffix_len as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let gpu_q = buffer_to_vec::<Metal, bf16>(&q_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
@@ -688,22 +706,24 @@ fn bench_delta_net_prefill() {
 
     let prep_result = run_perf_with_warmup("prep_only", 5, 50, || {
         let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-        prep_k.encode(
-            &in_proj_array,
-            &a_log_array,
-            &dt_bias_array,
-            &mut q_norm_array,
-            &mut k_norm_array,
-            None::<&mut <Metal as Backend>::GlobalBuffer>,
-            &mut beta_array,
-            &mut decay_array,
-            num_v_heads as u32,
-            num_k_heads as u32,
-            key_dim as u32,
-            value_dim as u32,
-            suffix_len as u32,
-            &mut command_buffer,
-        );
+        prep_k
+            .encode(
+                &in_proj_array,
+                &a_log_array,
+                &dt_bias_array,
+                &mut q_norm_array,
+                &mut k_norm_array,
+                None::<&mut <Metal as Backend>::GlobalBuffer>,
+                &mut beta_array,
+                &mut decay_array,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut command_buffer,
+            )
+            .expect("kernel encoding failed");
         command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     });
     prep_result.print();
@@ -714,52 +734,58 @@ fn bench_delta_net_prefill() {
     let prefill_result = run_perf_with_warmup("prep+prefill+norm_gate", 5, 50, || {
         let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
         command_buffer.encode_fill(&mut state_array, 0);
-        prep_k.encode(
-            &in_proj_array,
-            &a_log_array,
-            &dt_bias_array,
-            &mut q_norm_array,
-            &mut k_norm_array,
-            None::<&mut <Metal as Backend>::GlobalBuffer>,
-            &mut beta_array,
-            &mut decay_array,
-            num_v_heads as u32,
-            num_k_heads as u32,
-            key_dim as u32,
-            value_dim as u32,
-            suffix_len as u32,
-            &mut command_buffer,
-        );
-        prefill_k.encode(
-            &q_norm_array,
-            &k_norm_array,
-            &beta_array,
-            &decay_array,
-            &in_proj_array,
-            &mut state_array,
-            &mut out_array,
-            num_v_heads as u32,
-            num_k_heads as u32,
-            head_v_dim as u32,
-            key_dim as u32,
-            value_dim as u32,
-            suffix_len as u32,
-            num_dv_groups,
-            &mut command_buffer,
-        );
-        norm_k.encode(
-            &mut out_array,
-            &in_proj_array,
-            &norm_weight_array,
-            num_v_heads as u32,
-            head_v_dim as u32,
-            value_dim as u32,
-            conv_dim as u32,
-            total_proj_dim as u32,
-            1e-6f32,
-            suffix_len as u32,
-            &mut command_buffer,
-        );
+        prep_k
+            .encode(
+                &in_proj_array,
+                &a_log_array,
+                &dt_bias_array,
+                &mut q_norm_array,
+                &mut k_norm_array,
+                None::<&mut <Metal as Backend>::GlobalBuffer>,
+                &mut beta_array,
+                &mut decay_array,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                &mut command_buffer,
+            )
+            .expect("kernel encoding failed");
+        prefill_k
+            .encode(
+                &q_norm_array,
+                &k_norm_array,
+                &beta_array,
+                &decay_array,
+                &in_proj_array,
+                &mut state_array,
+                &mut out_array,
+                num_v_heads as u32,
+                num_k_heads as u32,
+                head_v_dim as u32,
+                key_dim as u32,
+                value_dim as u32,
+                suffix_len as u32,
+                num_dv_groups,
+                &mut command_buffer,
+            )
+            .expect("kernel encoding failed");
+        norm_k
+            .encode(
+                &mut out_array,
+                &in_proj_array,
+                &norm_weight_array,
+                num_v_heads as u32,
+                head_v_dim as u32,
+                value_dim as u32,
+                conv_dim as u32,
+                total_proj_dim as u32,
+                1e-6f32,
+                suffix_len as u32,
+                &mut command_buffer,
+            )
+            .expect("kernel encoding failed");
         command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     });
     prefill_result.print();

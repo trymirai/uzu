@@ -118,23 +118,25 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
     let token_ids = create_buffer_with_data::<B, u32>(context, &TOKEN_IDS);
     let mut output = create_buffer::<B, T>(context, TOKEN_IDS.len() * MODEL_DIM as usize);
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    kernel.encode(
-        &token_ids,
-        &values,
-        scales.as_ref(),
-        zero_points.as_ref(),
-        biases.as_ref(),
-        hadamard_factors.as_ref(),
-        ladder_indices.as_ref(),
-        ladder.as_ref(),
-        codebook.as_ref(),
-        &mut output,
-        TOKEN_IDS.len() as u32,
-        VOCAB_SIZE,
-        MODEL_DIM,
-        1.5,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &token_ids,
+            &values,
+            scales.as_ref(),
+            zero_points.as_ref(),
+            biases.as_ref(),
+            hadamard_factors.as_ref(),
+            ladder_indices.as_ref(),
+            ladder.as_ref(),
+            codebook.as_ref(),
+            &mut output,
+            TOKEN_IDS.len() as u32,
+            VOCAB_SIZE,
+            MODEL_DIM,
+            1.5,
+            &mut command_buffer,
+        )
+        .unwrap();
     submit_command_buffer(command_buffer);
     buffer_to_vec::<B, T>(&output)
 }

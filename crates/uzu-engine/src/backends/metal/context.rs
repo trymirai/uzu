@@ -8,11 +8,9 @@ use std::{
 };
 
 use metal::{
-    MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor, MTLCaptureDescriptor,
-    MTLCaptureDestination, MTLCaptureManager, MTLCaptureTarget,
-    MTLComputePipelineState, MTLDevice, MTLDeviceExt,
-    MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary,
-    MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
+    MTL4CommandQueue, MTL4CommandQueueExt, MTL4Compiler, MTL4CompilerDescriptor, MTLCaptureDescriptor,
+    MTLCaptureDestination, MTLCaptureManager, MTLCaptureTarget, MTLDevice, MTLDeviceExt, MTLFunctionConstantValues,
+    MTLGPUFamily, MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
@@ -29,7 +27,8 @@ use crate::backends::{
         decompression,
         error::MetalError,
         heaps::MetalHeaps,
-        metal_extensions::{CompilerPipelineExtensions, DeviceExt},
+        metal_extensions::{DeviceExt, MTL4CompilerExtensions},
+        pipeline::{MetalPipeline, MetalPipelineCache},
     },
 };
 
@@ -49,7 +48,7 @@ pub struct MetalContext {
     pub(super) peak_memory_usage: Arc<AtomicUsize>,
     pub(super) command_buffer_cache: Mutex<Vec<MetalCommandBufferCache>>,
     library_cache: Mutex<HashMap<usize, Retained<ProtocolObject<dyn MTLLibrary>>>>,
-    pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
+    pipeline_cache: MetalPipelineCache,
     weak_self: Weak<MetalContext>,
 }
 
@@ -82,21 +81,26 @@ impl MetalContext {
         Ok(library)
     }
 
-    pub(super) fn compute_pipeline_state(
+    pub(super) fn schedule_compute_pipeline_state(
         &self,
         library_data: &'static [u8],
         library_compressed: bool,
         cache_key: &str,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
-        if let Some(pipeline) = self.pipeline_cache.lock().get(cache_key) {
-            return Ok(pipeline.clone());
+    ) -> Result<MetalPipeline, MetalError> {
+        if let Some(pipeline) = self.pipeline_cache.get(cache_key) {
+            return Ok(pipeline);
         }
 
         let library = self.library(library_data, library_compressed)?;
-        let pipeline = self.compiler.compute_pipeline_state(&library, function_name, constants)?;
-        self.pipeline_cache.lock().insert(cache_key.to_string(), pipeline.clone());
+        let (pipeline, inserted) = self.pipeline_cache.insert_if_absent(cache_key, function_name);
+        if inserted {
+            let pending = pipeline.clone();
+            self.compiler.schedule_compute_pipeline_state(&library, function_name, constants, move |result| {
+                pending.complete(result);
+            });
+        }
 
         Ok(pipeline)
     }
@@ -145,7 +149,7 @@ impl Context for MetalContext {
             peak_memory_usage,
             command_buffer_cache: Mutex::new(Vec::with_capacity(32)),
             library_cache: Mutex::new(HashMap::new()),
-            pipeline_cache: Mutex::new(HashMap::new()),
+            pipeline_cache: MetalPipelineCache::default(),
             weak_self: weak_self.clone(),
         }))
     }

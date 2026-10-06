@@ -140,20 +140,22 @@ fn get_output<
     let scales = input.has_scales.then(|| create_buffer_with_data::<B, ScaleT>(&context, &input.scales));
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(
-        None::<&B::GlobalBuffer>,
-        scales.as_ref(),
-        &mut qkvg,
-        input.batch_size,
-        input.input_row_stride,
-        input.head_dim,
-        input.epsilon,
-        input.scale_offset,
-        input.head_offset,
-        input.head_count,
-        input.full_layer,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            None::<&B::GlobalBuffer>,
+            scales.as_ref(),
+            &mut qkvg,
+            input.batch_size,
+            input.input_row_stride,
+            input.head_dim,
+            input.epsilon,
+            input.scale_offset,
+            input.head_offset,
+            input.head_count,
+            input.full_layer,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     buffer_to_vec(&qkvg)

@@ -81,7 +81,7 @@ impl AttentionKernel for AttentionCpuKernel {
             config.num_q_heads,
             arguments.suffix_length,
             command_buffer,
-        );
+        )?;
         command_buffer.pop_debug_group();
         Ok(output)
     }

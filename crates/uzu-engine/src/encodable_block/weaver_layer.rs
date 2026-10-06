@@ -175,7 +175,7 @@ impl<B: Backend> WeaverLayer<B> {
             3 * self.model_dim,
             token_count,
             command_buffer,
-        );
+        )?;
         Ok(PreparedPrefixAttention {
             queries,
             kv_cache,

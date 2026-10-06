@@ -53,14 +53,16 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let mut values = create_buffer_with_data::<B, T>(&context, &input.values);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
-    kernel.encode(
-        &mut keys,
-        &mut values,
-        &input.copies,
-        input.copies.len() as u32,
-        input.element_dim,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &mut keys,
+            &mut values,
+            &input.copies,
+            input.copies.len() as u32,
+            input.element_dim,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     (buffer_to_vec(&keys), buffer_to_vec(&values))
@@ -355,14 +357,16 @@ fn test_random_pattern_f32() {
     let mut value_buffer = create_buffer_with_data::<Metal, f32>(&context, value_data.as_slice().unwrap());
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    kernel.encode(
-        &mut key_buffer,
-        &mut value_buffer,
-        &copies,
-        copies.len() as u32,
-        element_dim as u32,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &mut key_buffer,
+            &mut value_buffer,
+            &copies,
+            copies.len() as u32,
+            element_dim as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let key_values: Vec<f32> = buffer_to_vec(&key_buffer);

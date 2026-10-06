@@ -68,7 +68,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
             #[allow(non_snake_case)]
             fn new(context: &<Self::Backend as crate::backends::common::Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as crate::backends::common::Backend>::Error>;
 
-            fn encode(&self, #(#args),*);
+            fn encode(&self, #(#args),*) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error>;
         }
     };
 

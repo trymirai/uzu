@@ -165,51 +165,55 @@ fn run_prefill_kernel_mode<B: Backend>(
         SSDPrefillMode::Universal => {
             let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(ctx, DataType::F32)
                 .expect("Failed to create SSD prefill kernel");
-            kernel.encode(
-                &x_buf,
-                &dt_buf,
-                &b_buf,
-                &c_buf,
-                &d_buf,
-                &z_buf,
-                &mut state_buf,
-                &mut y_buf,
-                fixture.suffix_len as u32,
-                fixture.group_size as u32,
-                fixture.state_dim as u32,
-                &x_strides,
-                &dt_strides,
-                &cb_strides,
-                &state_strides,
-                fixture.num_heads as u32,
-                fixture.head_dim as u32,
-                &mut command_buffer,
-            );
+            kernel
+                .encode(
+                    &x_buf,
+                    &dt_buf,
+                    &b_buf,
+                    &c_buf,
+                    &d_buf,
+                    &z_buf,
+                    &mut state_buf,
+                    &mut y_buf,
+                    fixture.suffix_len as u32,
+                    fixture.group_size as u32,
+                    fixture.state_dim as u32,
+                    &x_strides,
+                    &dt_strides,
+                    &cb_strides,
+                    &state_strides,
+                    fixture.num_heads as u32,
+                    fixture.head_dim as u32,
+                    &mut command_buffer,
+                )
+                .expect("kernel encoding failed");
         },
         SSDPrefillMode::Special64 => {
             assert_eq!(fixture.state_dim, 64);
             let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefill64Kernel::new(ctx, DataType::F32)
                 .expect("Failed to create SSD prefill64 kernel");
-            kernel.encode(
-                &x_buf,
-                &dt_buf,
-                &b_buf,
-                &c_buf,
-                &d_buf,
-                &z_buf,
-                &mut state_buf,
-                &mut y_buf,
-                fixture.suffix_len as u32,
-                fixture.group_size as u32,
-                fixture.state_dim as u32,
-                &x_strides,
-                &dt_strides,
-                &cb_strides,
-                &state_strides,
-                fixture.num_heads as u32,
-                fixture.head_dim as u32,
-                &mut command_buffer,
-            );
+            kernel
+                .encode(
+                    &x_buf,
+                    &dt_buf,
+                    &b_buf,
+                    &c_buf,
+                    &d_buf,
+                    &z_buf,
+                    &mut state_buf,
+                    &mut y_buf,
+                    fixture.suffix_len as u32,
+                    fixture.group_size as u32,
+                    fixture.state_dim as u32,
+                    &x_strides,
+                    &dt_strides,
+                    &cb_strides,
+                    &state_strides,
+                    fixture.num_heads as u32,
+                    fixture.head_dim as u32,
+                    &mut command_buffer,
+                )
+                .expect("kernel encoding failed");
         },
     }
     let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
@@ -269,24 +273,26 @@ fn run_conv_scan_once<B: Backend>(
     if use_scratch && tap_count > 0 {
         command_buffer.encode_fill(&mut scratch_buf, 0);
     }
-    kernel.encode(
-        &padded_buf,
-        &w_buf,
-        Some(&b_buf),
-        &mut y_buf,
-        &mut b_out_buf,
-        &mut c_out_buf,
-        &mut state_buf,
-        suffix_len as u32,
-        kernel_size as u32,
-        channels as u32,
-        tap_count as u32,
-        channels as u32,
-        channels as u32,
-        0u32,
-        ActivationType::SILU,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &padded_buf,
+            &w_buf,
+            Some(&b_buf),
+            &mut y_buf,
+            &mut b_out_buf,
+            &mut c_out_buf,
+            &mut state_buf,
+            suffix_len as u32,
+            kernel_size as u32,
+            channels as u32,
+            tap_count as u32,
+            channels as u32,
+            channels as u32,
+            0u32,
+            ActivationType::SILU,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
 
     if use_scratch && tap_count > 0 {
         command_buffer.encode_copy(&scratch_buf, &mut state_buf);

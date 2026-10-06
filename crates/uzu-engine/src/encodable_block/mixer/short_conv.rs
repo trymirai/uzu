@@ -197,7 +197,7 @@ impl<B: Backend> ShortConv<B> {
             self.kernel_size - 1,
             self.hidden_dim,
             command_buffer,
-        );
+        )?;
         Ok(conv_output)
     }
 
@@ -221,7 +221,7 @@ impl<B: Backend> ShortConv<B> {
             self.hidden_dim * 3,
             self.hidden_dim,
             command_buffer,
-        );
+        )?;
 
         let mut conv_output =
             command_buffer.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
@@ -238,7 +238,7 @@ impl<B: Backend> ShortConv<B> {
             state_stride,
             self.hidden_dim,
             command_buffer,
-        );
+        )?;
         Ok(conv_output)
     }
 
@@ -268,7 +268,7 @@ impl<B: Backend> ShortConv<B> {
             self.kernel_size - 1,
             self.hidden_dim,
             command_buffer,
-        );
+        )?;
         Ok((conv_output, conv_states))
     }
 }

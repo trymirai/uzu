@@ -145,7 +145,7 @@ impl AttentionFallback {
                 suffix_length,
                 gqa_factor * suffix_length * sequence_length,
                 command_buffer,
-            );
+            )?;
         }
 
         self.softmax.encode(
@@ -155,7 +155,7 @@ impl AttentionFallback {
             self.num_q_heads,
             suffix_length,
             command_buffer,
-        );
+        )?;
         let mut group_output =
             command_buffer.allocate_scratch_for_shape(&[gqa_factor * suffix_length, self.head_dim], self.data_type)?;
         for group_index in 0..self.num_groups {
@@ -188,7 +188,7 @@ impl AttentionFallback {
                 self.head_dim,
                 gqa_factor * suffix_length * self.head_dim,
                 command_buffer,
-            );
+            )?;
         }
         Ok(output)
     }

@@ -118,25 +118,27 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         let mut next_state = create_buffer_with_data::<B, T>(&context, &input.state);
 
         let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-        kernel.encode(
-            &x,
-            &w,
-            b.as_ref(),
-            None::<&B::GlobalBuffer>,
-            &mut x_out,
-            &mut b_out,
-            &mut c_out,
-            &mut next_state,
-            input.kernel_size,
-            input.row_stride,
-            input.state_stride,
-            input.num_channels,
-            input.suffix_len,
-            input.inner_dim,
-            input.proj_dim,
-            input.activation_type,
-            &mut command_buffer,
-        );
+        kernel
+            .encode(
+                &x,
+                &w,
+                b.as_ref(),
+                None::<&B::GlobalBuffer>,
+                &mut x_out,
+                &mut b_out,
+                &mut c_out,
+                &mut next_state,
+                input.kernel_size,
+                input.row_stride,
+                input.state_stride,
+                input.num_channels,
+                input.suffix_len,
+                input.inner_dim,
+                input.proj_dim,
+                input.activation_type,
+                &mut command_buffer,
+            )
+            .expect("kernel encoding failed");
         command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
@@ -150,25 +152,27 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         let mut next_state = create_buffer::<B, T>(&context, state_size);
 
         let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-        kernel.encode(
-            &x,
-            &w,
-            b.as_ref(),
-            Some(&state),
-            &mut x_out,
-            &mut b_out,
-            &mut c_out,
-            &mut next_state,
-            input.kernel_size,
-            input.row_stride,
-            input.state_stride,
-            input.num_channels,
-            input.suffix_len,
-            input.inner_dim,
-            input.proj_dim,
-            input.activation_type,
-            &mut command_buffer,
-        );
+        kernel
+            .encode(
+                &x,
+                &w,
+                b.as_ref(),
+                Some(&state),
+                &mut x_out,
+                &mut b_out,
+                &mut c_out,
+                &mut next_state,
+                input.kernel_size,
+                input.row_stride,
+                input.state_stride,
+                input.num_channels,
+                input.suffix_len,
+                input.inner_dim,
+                input.proj_dim,
+                input.activation_type,
+                &mut command_buffer,
+            )
+            .expect("kernel encoding failed");
         command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {

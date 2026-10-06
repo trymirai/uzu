@@ -73,13 +73,14 @@ impl MatmulOutputWork {
         m: u32,
         n: u32,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) {
+    ) -> Result<(), MetalError> {
         let transform = if bias.is_some() {
             &self.output_rht_with_bias
         } else {
             &self.output_rht
         };
-        transform.encode_fp_in_place(output, factors, bias, m, n, command_buffer);
+        transform.encode_fp_in_place(output, factors, bias, m, n, command_buffer)?;
+        Ok(())
     }
 }
 

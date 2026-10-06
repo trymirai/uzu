@@ -168,16 +168,18 @@ fn encode_step(
 ) {
     match path {
         BenchPath::A8GemmMxu => {
-            prepare.encode_quantize(
-                &data.activations,
-                &mut data.a_int8,
-                &mut data.a_scales,
-                None::<&mut <Metal as Backend>::GlobalBuffer>,
-                &data.rht_factors,
-                data.m,
-                data.k,
-                command_buffer,
-            );
+            prepare
+                .encode_quantize(
+                    &data.activations,
+                    &mut data.a_int8,
+                    &mut data.a_scales,
+                    None::<&mut <Metal as Backend>::GlobalBuffer>,
+                    &data.rht_factors,
+                    data.m,
+                    data.k,
+                    command_buffer,
+                )
+                .expect("kernel encoding failed");
             let args =
                 MatmulArguments::<Metal, _, &<Metal as Backend>::GlobalBuffer, _, &<Metal as Backend>::GlobalBuffer> {
                     a: MatmulA::Int8Symmetric {
@@ -213,13 +215,17 @@ fn encode_step(
         },
         BenchPath::Bf16GemmMxu => {
             command_buffer.encode_copy(&data.activations, &mut data.a_working);
-            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, None, data.m, data.k, command_buffer);
+            hadamard
+                .encode_fp_in_place(&mut data.a_working, &data.rht_factors, None, data.m, data.k, command_buffer)
+                .expect("kernel encoding failed");
             let args = data.bf16_arguments(output);
             matmul.encode_with_gemm_engine(args, GemmEngine::Mxu, command_buffer).expect("bf16 gemm mxu encode");
         },
         BenchPath::Bf16Routed => {
             command_buffer.encode_copy(&data.activations, &mut data.a_working);
-            hadamard.encode_fp_in_place(&mut data.a_working, &data.rht_factors, None, data.m, data.k, command_buffer);
+            hadamard
+                .encode_fp_in_place(&mut data.a_working, &data.rht_factors, None, data.m, data.k, command_buffer)
+                .expect("kernel encoding failed");
             let args = data.bf16_arguments(output);
             matmul.encode(args, command_buffer).expect("routed bf16 matmul encode");
         },

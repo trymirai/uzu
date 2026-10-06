@@ -65,16 +65,18 @@ fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32
     let mut committed_state = create_buffer_with_data::<B, f32>(&context, &initial_state);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    kernel.encode(
-        &k_norm,
-        &v,
-        &log_decay,
-        &beta,
-        &accepted_indices,
-        &mut committed_state,
-        accepted_len as u32,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &k_norm,
+            &v,
+            &log_decay,
+            &beta,
+            &accepted_indices,
+            &mut committed_state,
+            accepted_len as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     buffer_to_vec(&committed_state)
 }
@@ -130,16 +132,18 @@ fn bench_state_advance(c: &mut Criterion) {
                 bencher,
                 &format!("{BENCHMARK}/L{accepted_len}"),
                 |command_buffer| {
-                    kernel.encode(
-                        &k_norm,
-                        &v,
-                        &log_decay,
-                        &beta,
-                        &accepted_indices,
-                        committed_states.next_mut(),
-                        accepted_len as u32,
-                        command_buffer,
-                    );
+                    kernel
+                        .encode(
+                            &k_norm,
+                            &v,
+                            &log_decay,
+                            &beta,
+                            &accepted_indices,
+                            committed_states.next_mut(),
+                            accepted_len as u32,
+                            command_buffer,
+                        )
+                        .expect("kernel encoding failed");
                 },
             );
         });

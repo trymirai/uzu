@@ -102,7 +102,7 @@ impl<B: Backend> PredictionHead<B> {
             self.hidden_dim,
             self.activation,
             command_buffer,
-        );
+        )?;
         let normalized =
             self.normalization.encode(&hidden, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)?;
         let logits = self.readout.encode(normalized, batch_dim, command_buffer)?;

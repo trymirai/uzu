@@ -45,14 +45,18 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     if input.in_place {
         let mut output_buffer = create_buffer_with_data::<B, T>(&context, &input.data);
         let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
-        kernel.encode(None::<&B::GlobalBuffer>, &mut output_buffer, n as u32, input.act_type, &mut command_buffer);
+        kernel
+            .encode(None::<&B::GlobalBuffer>, &mut output_buffer, n as u32, input.act_type, &mut command_buffer)
+            .expect("kernel encoding failed");
         command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         buffer_to_vec::<B, T>(&output_buffer)
     } else {
         let input_buffer = create_buffer_with_data::<B, T>(&context, &input.data);
         let mut output_buffer = create_buffer::<B, T>(&context, n);
         let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
-        kernel.encode(Some(&input_buffer), &mut output_buffer, n as u32, input.act_type, &mut command_buffer);
+        kernel
+            .encode(Some(&input_buffer), &mut output_buffer, n as u32, input.act_type, &mut command_buffer)
+            .expect("kernel encoding failed");
         command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         buffer_to_vec::<B, T>(&output_buffer)
     }

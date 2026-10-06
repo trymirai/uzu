@@ -152,7 +152,9 @@ impl<B: Backend> Classifier<B> {
         let mut pooled = command_buffer
             .allocate_scratch_for_shape(&[self.hidden_dim], self.data_type)
             .map_err(ClassifierError::Backend)?;
-        self.pooling.encode(&hidden, &mut pooled, batch_dim, self.hidden_dim, 1, command_buffer);
+        self.pooling
+            .encode(&hidden, &mut pooled, batch_dim, self.hidden_dim, 1, command_buffer)
+            .map_err(ClassifierError::Backend)?;
 
         let logits = self.prediction_head.encode(pooled, 1, command_buffer).map_err(ClassifierError::Backend)?;
 

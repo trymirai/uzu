@@ -165,21 +165,23 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
     let mut u = create_buffer::<B, f32>(&context, u_len);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    kernel.encode(
-        use_h0.then_some(&kh0),
-        &v,
-        &prefix,
-        &beta,
-        &a,
-        &a_inv,
-        use_h0.then_some(&h0_idx),
-        &mut u,
-        case.batch_size,
-        case.tree_size,
-        case.num_v_heads,
-        case.head_v_dim,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            use_h0.then_some(&kh0),
+            &v,
+            &prefix,
+            &beta,
+            &a,
+            &a_inv,
+            use_h0.then_some(&h0_idx),
+            &mut u,
+            case.batch_size,
+            case.tree_size,
+            case.num_v_heads,
+            case.head_v_dim,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     buffer_to_vec(&u)

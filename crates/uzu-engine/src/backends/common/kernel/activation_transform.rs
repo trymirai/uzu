@@ -142,7 +142,7 @@ impl<B: Backend> ActivationTransform<B> {
         batch_size: u32,
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) {
+    ) -> Result<(), B::Error> {
         assert!(self.quantization.is_none() && !self.in_place && !self.has_bias);
         assert_row_width(element_count);
         self.kernel.encode(
@@ -156,7 +156,8 @@ impl<B: Backend> ActivationTransform<B> {
             batch_size,
             element_count,
             command_buffer,
-        );
+        )?;
+        Ok(())
     }
 
     pub fn encode_fp_in_place(
@@ -167,7 +168,7 @@ impl<B: Backend> ActivationTransform<B> {
         batch_size: u32,
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) {
+    ) -> Result<(), B::Error> {
         assert!(self.quantization.is_none() && self.in_place && self.has_bias == bias.is_some());
         assert_row_width(element_count);
         self.kernel.encode(
@@ -181,7 +182,8 @@ impl<B: Backend> ActivationTransform<B> {
             batch_size,
             element_count,
             command_buffer,
-        );
+        )?;
+        Ok(())
     }
 
     pub fn encode_quantize(
@@ -194,7 +196,7 @@ impl<B: Backend> ActivationTransform<B> {
         batch_size: u32,
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) {
+    ) -> Result<(), B::Error> {
         let quantization = self.quantization.expect("quantized activation transform required");
         assert_row_width(element_count);
         assert!(
@@ -216,6 +218,7 @@ impl<B: Backend> ActivationTransform<B> {
             batch_size,
             element_count,
             command_buffer,
-        );
+        )?;
+        Ok(())
     }
 }

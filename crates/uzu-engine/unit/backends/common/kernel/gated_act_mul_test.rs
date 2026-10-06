@@ -63,18 +63,20 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
     let mut output = create_buffer::<B, T>(&context, output_length);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
-    kernel.encode_fp(
-        &fused_up,
-        None::<&<B as Backend>::GlobalBuffer>,
-        &mut output,
-        use_hadamard.then_some(&hadamard_factors),
-        input.gated_dim,
-        input.batch_dim,
-        0,
-        0,
-        input.act_type,
-        &mut command_buffer,
-    );
+    kernel
+        .encode_fp(
+            &fused_up,
+            None::<&<B as Backend>::GlobalBuffer>,
+            &mut output,
+            use_hadamard.then_some(&hadamard_factors),
+            input.gated_dim,
+            input.batch_dim,
+            0,
+            0,
+            input.act_type,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     buffer_to_vec::<B, T>(&output)
@@ -131,17 +133,19 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
     )
     .expect("create quantized GatedActMul");
     let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
-    kernel.encode_quantized(
-        &act_operand,
-        &mut values,
-        &mut scales,
-        None::<&mut B::GlobalBuffer>,
-        &factors,
-        input.gated_dim,
-        input.batch_dim,
-        input.act_type,
-        &mut command_buffer,
-    );
+    kernel
+        .encode_quantized(
+            &act_operand,
+            &mut values,
+            &mut scales,
+            None::<&mut B::GlobalBuffer>,
+            &factors,
+            input.gated_dim,
+            input.batch_dim,
+            input.act_type,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     (buffer_to_vec(&values), buffer_to_vec(&scales))
 }
@@ -228,18 +232,20 @@ fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -
     let mut output = create_buffer::<B, T>(&context, (input.batch_dim * input.gated_dim) as usize);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
-    kernel.encode_fp(
-        &gate_out,
-        Some(&per_layer_input),
-        &mut output,
-        None::<&B::GlobalBuffer>,
-        input.gated_dim,
-        input.batch_dim,
-        input.value_offset,
-        input.value_row_stride,
-        input.act_type,
-        &mut command_buffer,
-    );
+    kernel
+        .encode_fp(
+            &gate_out,
+            Some(&per_layer_input),
+            &mut output,
+            None::<&B::GlobalBuffer>,
+            input.gated_dim,
+            input.batch_dim,
+            input.value_offset,
+            input.value_row_stride,
+            input.act_type,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     buffer_to_vec::<B, T>(&output)
@@ -303,18 +309,20 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
         let fused_up = create_buffer_with_data::<B, T>(&context, &fused_up);
         let mut output = create_buffer::<B, T>(&context, GATED_DIM as usize);
         let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
-        kernel.encode_fp(
-            &fused_up,
-            None::<&<B as Backend>::GlobalBuffer>,
-            &mut output,
-            None::<&<B as Backend>::GlobalBuffer>,
-            GATED_DIM,
-            1,
-            0,
-            0,
-            ActivationType::SILU,
-            &mut command_buffer,
-        );
+        kernel
+            .encode_fp(
+                &fused_up,
+                None::<&<B as Backend>::GlobalBuffer>,
+                &mut output,
+                None::<&<B as Backend>::GlobalBuffer>,
+                GATED_DIM,
+                1,
+                0,
+                0,
+                ActivationType::SILU,
+                &mut command_buffer,
+            )
+            .expect("kernel encoding failed");
         command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
         let output = buffer_to_vec::<B, T>(&output);

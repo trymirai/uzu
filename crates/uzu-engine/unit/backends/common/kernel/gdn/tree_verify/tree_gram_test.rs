@@ -95,27 +95,29 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     let mut kh0 = create_buffer_with_data::<B, f32>(&context, &vec![0.0f32; kh0_len]);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(
-        &q,
-        &k,
-        &trie,
-        &prefix,
-        &beta,
-        Some(&h0),
-        Some(&h0_idx),
-        &mut a_packed,
-        &mut qkd,
-        &mut a_inv,
-        Some(&mut kh0),
-        scale,
-        BATCH_SIZE as u32,
-        tree_size as u32,
-        K_HEADS as u32,
-        VALUE_HEADS as u32,
-        HEAD_K_DIM as u32,
-        HEAD_V_DIM as u32,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &q,
+            &k,
+            &trie,
+            &prefix,
+            &beta,
+            Some(&h0),
+            Some(&h0_idx),
+            &mut a_packed,
+            &mut qkd,
+            &mut a_inv,
+            Some(&mut kh0),
+            scale,
+            BATCH_SIZE as u32,
+            tree_size as u32,
+            K_HEADS as u32,
+            VALUE_HEADS as u32,
+            HEAD_K_DIM as u32,
+            HEAD_V_DIM as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     (buffer_to_vec(&a_packed), buffer_to_vec(&qkd), buffer_to_vec(&a_inv), buffer_to_vec(&kh0))

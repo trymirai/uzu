@@ -32,7 +32,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
 
     let mut logits_buffer = create_buffer_with_data::<B, T>(&context, logits);
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(&mut logits_buffer, logits.len() as u32, scale, soft_cap.unwrap_or(0.0), &mut command_buffer);
+    kernel
+        .encode(&mut logits_buffer, logits.len() as u32, scale, soft_cap.unwrap_or(0.0), &mut command_buffer)
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     buffer_to_vec::<B, T>(&logits_buffer)

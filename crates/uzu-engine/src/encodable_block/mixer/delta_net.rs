@@ -106,7 +106,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                     &mut self.ssm_state,
                     accepted_indices.len() as u32,
                     command_buffer,
-                );
+                )?;
             },
         }
         Ok(())
@@ -362,7 +362,7 @@ impl<B: Backend> DeltaNet<B> {
             self.total_proj_dim,
             self.conv_dim,
             command_buffer,
-        );
+        )?;
 
         self.delta_net_tree_prep.encode(
             &tree_projected,
@@ -379,7 +379,7 @@ impl<B: Backend> DeltaNet<B> {
             self.value_dim,
             tree_size,
             command_buffer,
-        );
+        )?;
 
         let mut delta_output = tree_verify.encode(
             TreeVerifyEncodeArguments {
@@ -406,7 +406,7 @@ impl<B: Backend> DeltaNet<B> {
             self.norm_epsilon,
             tree_size,
             command_buffer,
-        );
+        )?;
 
         let output = self.out_projection.encode(delta_output, tree_size, command_buffer)?;
         state.suffix_status = Some(DeltaNetSuffixStatus::Tree {
@@ -504,7 +504,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.conv_dim,
                 self.kernel_size - 1,
                 command_buffer,
-            );
+            )?;
 
             self.delta_net_update.encode(
                 &in_projected,
@@ -520,7 +520,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.value_dim,
                 self.norm_epsilon,
                 command_buffer,
-            );
+            )?;
         } else {
             let mut padded = command_buffer.allocate_scratch_for_shape(
                 &[batch_dim.size() + self.kernel_size - 1, self.total_proj_dim],
@@ -535,7 +535,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 batch_dim.size(),
                 self.conv_dim,
                 command_buffer,
-            );
+            )?;
             self.conv_scan.encode(
                 &padded,
                 &self.conv_weight,
@@ -549,7 +549,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.conv_dim,
                 self.total_proj_dim,
                 command_buffer,
-            );
+            )?;
             if let Some(chunked) = self.chunked.as_ref().filter(|chunked| chunked.should_use(batch_dim.size())) {
                 chunked.encode(
                     DeltaNetChunkedPrefillArgs {
@@ -591,7 +591,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                     self.value_dim,
                     batch_dim.size(),
                     command_buffer,
-                );
+                )?;
                 self.delta_net_prefill.encode(
                     &prep_q_norm,
                     &prep_k_norm,
@@ -608,7 +608,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                     batch_dim.size(),
                     self.value_head_dim.div_ceil(16),
                     command_buffer,
-                );
+                )?;
             }
             self.delta_net_norm_gate.encode(
                 &mut delta_output,
@@ -622,7 +622,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.norm_epsilon,
                 batch_dim.size(),
                 command_buffer,
-            );
+            )?;
         }
 
         state.suffix_status = Some(DeltaNetSuffixStatus::Flat {

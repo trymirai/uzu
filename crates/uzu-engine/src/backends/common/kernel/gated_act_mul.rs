@@ -110,7 +110,7 @@ impl<B: Backend> GatedActMul<B> {
         value_row_stride: u32,
         act_type: ActivationType,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) {
+    ) -> Result<(), B::Error> {
         assert!(self.quantization.is_none());
         assert_eq!(self.options.contains(GatedActMulOptions::INTERLEAVED), value_operand.is_none());
         assert_eq!(self.options.contains(GatedActMulOptions::HADAMARD), hadamard_factors.is_some());
@@ -139,7 +139,8 @@ impl<B: Backend> GatedActMul<B> {
             value_clip_min,
             value_clip_max,
             command_buffer,
-        );
+        )?;
+        Ok(())
     }
 
     pub fn encode_quantized(
@@ -153,7 +154,7 @@ impl<B: Backend> GatedActMul<B> {
         batch_dim: u32,
         act_type: ActivationType,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) {
+    ) -> Result<(), B::Error> {
         let quantization = self.quantization.expect("quantized gated activation required");
         assert!(self.options.contains(GatedActMulOptions::INTERLEAVED));
         assert!(self.options.contains(GatedActMulOptions::HADAMARD));
@@ -184,6 +185,7 @@ impl<B: Backend> GatedActMul<B> {
             value_clip_min,
             value_clip_max,
             command_buffer,
-        );
+        )?;
+        Ok(())
     }
 }

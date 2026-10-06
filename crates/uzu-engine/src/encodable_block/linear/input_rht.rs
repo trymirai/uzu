@@ -68,7 +68,7 @@ impl<B: Backend> InputRht<B> {
                 batch_dim,
                 input_dim,
                 command_buffer,
-            );
+            )?;
 
             return Ok(LinearInput::Int8Symmetric {
                 values,
@@ -81,7 +81,7 @@ impl<B: Backend> InputRht<B> {
 
         let input_dim = self.input_dim();
         let mut transformed = command_buffer.allocate_scratch(input.size())?;
-        self.rht.encode_fp(input, &mut transformed, &self.rht_signs, batch_dim, input_dim, command_buffer);
+        self.rht.encode_fp(input, &mut transformed, &self.rht_signs, batch_dim, input_dim, command_buffer)?;
         Ok(LinearInput::FullPrecision(transformed))
     }
 
@@ -97,7 +97,7 @@ impl<B: Backend> InputRht<B> {
         }
 
         let input_dim = self.input_dim();
-        self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer);
+        self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer)?;
         Ok(LinearInput::FullPrecision(input))
     }
 

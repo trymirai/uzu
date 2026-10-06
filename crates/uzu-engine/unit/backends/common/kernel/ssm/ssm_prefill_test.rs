@@ -110,26 +110,28 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(&context, T::data_type())
         .expect("Failed to create SSDPrefillKernel");
-    kernel.encode(
-        &x,
-        &dt,
-        &b,
-        &c,
-        &d,
-        &z,
-        &mut state,
-        &mut y,
-        input.suffix_len as u32,
-        input.group_size,
-        input.state_dim as u32,
-        &x_strides,
-        &dt_strides,
-        &cb_strides,
-        &state_strides,
-        input.num_heads as u32,
-        input.head_dim as u32,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &x,
+            &dt,
+            &b,
+            &c,
+            &d,
+            &z,
+            &mut state,
+            &mut y,
+            input.suffix_len as u32,
+            input.group_size,
+            input.state_dim as u32,
+            &x_strides,
+            &dt_strides,
+            &cb_strides,
+            &state_strides,
+            input.num_heads as u32,
+            input.head_dim as u32,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {

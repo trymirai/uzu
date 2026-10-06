@@ -64,16 +64,18 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let mut padded = create_buffer::<B, T>(&context, padded_size);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(
-        &state,
-        &x,
-        &mut padded,
-        input.state_stride,
-        input.row_stride,
-        input.suffix_len,
-        input.num_channels,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &state,
+            &x,
+            &mut padded,
+            input.state_stride,
+            input.row_stride,
+            input.suffix_len,
+            input.num_channels,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     buffer_to_vec(&padded)

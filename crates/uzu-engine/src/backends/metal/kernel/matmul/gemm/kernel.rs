@@ -306,7 +306,7 @@ impl GemmKernel {
                 command_buffer,
             )?;
             if let Some(factors) = rht_factors {
-                output_work.apply(d.reborrow(), factors, bias_after_rht, m, n, command_buffer);
+                output_work.apply(d.reborrow(), factors, bias_after_rht, m, n, command_buffer)?;
             }
             return Ok(());
         }
@@ -367,7 +367,7 @@ impl GemmKernel {
             group_count_y,
             1,
             command_buffer,
-        );
+        )?;
 
         Ok(())
     }
@@ -454,7 +454,7 @@ impl GemmKernel {
             base_gy,
             split_k,
             command_buffer,
-        );
+        )?;
 
         debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
         let group_count = ((elem as u32) / 4).div_ceil(256);
@@ -471,7 +471,17 @@ impl GemmKernel {
             None
         };
         let reduce = self.get_or_create_split_k_reduce(command_buffer.context(), reduce_transform)?;
-        reduce.encode(&temp, d.reborrow(), bias_arg, elem as u32, split_k, group_count, n, scale_arg, command_buffer);
+        reduce.encode(
+            &temp,
+            d.reborrow(),
+            bias_arg,
+            elem as u32,
+            split_k,
+            group_count,
+            n,
+            scale_arg,
+            command_buffer,
+        )?;
 
         Ok(())
     }

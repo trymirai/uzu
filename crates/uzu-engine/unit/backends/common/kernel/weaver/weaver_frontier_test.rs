@@ -46,29 +46,31 @@ fn select<B: Backend>() -> Vec<u32> {
     let mut candidate_scores = create_buffer_with_data::<B, f32>(&context, &[0.0; 4 * 3]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(&context).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    kernel.encode(
-        &mut frontier,
-        &mut tree,
-        &mut slot_ancestors,
-        &mut token,
-        &mut metadata,
-        &mut ancestors,
-        &mut valid,
-        &candidate_pool_ids,
-        &candidate_pool_scores,
-        &mut candidate_ids,
-        &mut candidate_scores,
-        8,
-        7,
-        4,
-        2,
-        3,
-        4,
-        3,
-        4,
-        3,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(
+            &mut frontier,
+            &mut tree,
+            &mut slot_ancestors,
+            &mut token,
+            &mut metadata,
+            &mut ancestors,
+            &mut valid,
+            &candidate_pool_ids,
+            &candidate_pool_scores,
+            &mut candidate_ids,
+            &mut candidate_scores,
+            8,
+            7,
+            4,
+            2,
+            3,
+            4,
+            3,
+            4,
+            3,
+            &mut command_buffer,
+        )
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     [frontier, tree, slot_ancestors, token, metadata, ancestors, valid, candidate_ids]
         .iter()
@@ -98,20 +100,9 @@ fn insert_children<B: Backend>() -> Vec<u32> {
     let mut frontier = create_buffer_with_data::<B, u32>(&context, &[42; FrontierIdx::COUNT * 16]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(&context).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    kernel.encode(
-        &tree,
-        &metadata,
-        &valid,
-        &ids,
-        &scores,
-        &prune_scores,
-        &mut frontier,
-        16,
-        4,
-        3,
-        3,
-        &mut command_buffer,
-    );
+    kernel
+        .encode(&tree, &metadata, &valid, &ids, &scores, &prune_scores, &mut frontier, 16, 4, 3, 3, &mut command_buffer)
+        .expect("kernel encoding failed");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     buffer_to_vec(&frontier)
 }

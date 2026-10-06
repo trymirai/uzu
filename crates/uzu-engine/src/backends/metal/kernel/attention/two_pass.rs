@@ -116,7 +116,7 @@ impl AttentionTwoPass {
             config.sliding_window_size,
             arguments.sinks,
             command_buffer,
-        );
+        )?;
         let mut output = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, config.head_dim],
             config.data_type,
@@ -130,7 +130,7 @@ impl AttentionTwoPass {
             config.num_q_heads,
             arguments.suffix_length,
             command_buffer,
-        );
+        )?;
         Ok(output)
     }
 }
