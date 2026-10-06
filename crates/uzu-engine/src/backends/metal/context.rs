@@ -8,12 +8,12 @@ use std::{
 };
 
 use metal::{
-    MTL4CommandQueue, MTL4CommandQueueExt, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager,
-    MTLCaptureTarget, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLFunctionConstantValues, MTLGPUFamily,
-    MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
+    MTL4CommandQueue, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCaptureTarget,
+    MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary,
+    MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use parking_lot::{Mutex, MutexGuard};
+use parking_lot::Mutex;
 
 use crate::backends::{
     common::{
@@ -22,13 +22,11 @@ use crate::backends::{
     },
     metal::{
         Metal,
-        buffer::{
-            dense::MetalDenseBuffer,
-            sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
-        },
+        buffer::{dense::MetalDenseBuffer, sparse::MetalSparseBuffer},
         command_buffer::{MetalCommandBufferCache, MetalCommandBufferEncoding},
         decompression,
         error::MetalError,
+        heaps::MetalHeaps,
         metal_extensions::{DeviceExt, LibraryPipelineExtensions},
     },
 };
@@ -41,22 +39,18 @@ pub struct MetalContext {
     pub apple_gpu_family: MTLGPUFamily,
     pub supports_mxu: bool,
     pub device_name: String,
-    pub(super) residency_set: Mutex<Retained<ProtocolObject<dyn MTLResidencySet>>>,
+    pub(super) residency_set: Arc<Mutex<Retained<ProtocolObject<dyn MTLResidencySet>>>>,
     pub command_queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     pub(super) block_allocator: Arc<BlockAllocator<MetalDenseBuffer>>,
-    peak_memory_usage: AtomicUsize,
+    pub(super) heaps: Arc<MetalHeaps>,
+    pub(super) peak_memory_usage: Arc<AtomicUsize>,
     pub(super) command_buffer_cache: Mutex<Vec<MetalCommandBufferCache>>,
     library_cache: Mutex<HashMap<usize, Retained<ProtocolObject<dyn MTLLibrary>>>>,
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
-    sparse_heap_pool: Mutex<MetalSparseHeapPool>,
     weak_self: Weak<MetalContext>,
 }
 
 impl MetalContext {
-    pub(super) fn update_peak_memory_usage(&self) {
-        self.peak_memory_usage.fetch_max(self.device.current_allocated_size(), Ordering::Relaxed);
-    }
-
     fn library(
         &self,
         data: &'static [u8],
@@ -103,19 +97,6 @@ impl MetalContext {
 
         Ok(pipeline)
     }
-
-    pub(super) fn sparse_heap_pool(&self) -> MutexGuard<'_, MetalSparseHeapPool> {
-        self.sparse_heap_pool.lock()
-    }
-
-    pub(super) fn sparse_update_mappings(
-        &self,
-        mappings: &[MetalSparseMappingOpsBatch],
-    ) {
-        for op in mappings {
-            self.command_queue.update_buffer_mappings(&op.buffer, Some(op.heap.lock().heap()), &op.mtl_operations);
-        }
-    }
 }
 
 impl Context for MetalContext {
@@ -128,6 +109,8 @@ impl Context for MetalContext {
         let apple_gpu_family = device.newest_supported_apple_gpu_family();
         let supports_mxu = device.supports_mxu();
 
+        let peak_memory_usage = Arc::new(AtomicUsize::new(0));
+
         let residency_set_descriptor = MTLResidencySetDescriptor::new();
         residency_set_descriptor.set_initial_capacity(1024);
         let residency_set = device
@@ -139,9 +122,7 @@ impl Context for MetalContext {
 
         let block_allocator = BlockAllocator::new(16 * 1024);
 
-        let page_size = MTLSparsePageSize::KB256;
-        let heap_capacity = 8 * 1024 * 1024;
-        let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
+        let heaps = MetalHeaps::new(device.clone(), peak_memory_usage.clone(), MTLSparsePageSize::KB256, 256);
 
         Ok(Arc::new_cyclic(|weak_self: &Weak<Self>| Self {
             device,
@@ -149,14 +130,14 @@ impl Context for MetalContext {
             apple_gpu_family,
             supports_mxu,
             device_name,
-            residency_set: Mutex::new(residency_set),
+            residency_set: Arc::new(Mutex::new(residency_set)),
             command_queue,
             block_allocator,
-            peak_memory_usage: AtomicUsize::new(0),
+            heaps,
+            peak_memory_usage,
             command_buffer_cache: Mutex::new(Vec::with_capacity(32)),
             library_cache: Mutex::new(HashMap::new()),
             pipeline_cache: Mutex::new(HashMap::new()),
-            sparse_heap_pool: Mutex::new(sparse_pool),
             weak_self: weak_self.clone(),
         }))
     }
@@ -184,9 +165,7 @@ impl Context for MetalContext {
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        let sparse_page_size = self.sparse_heap_pool.lock().page_size();
-        let context = self.weak_self.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
-        MetalSparseBuffer::new(context, capacity, sparse_page_size)
+        MetalSparseBuffer::new(self, capacity)
     }
 
     fn create_allocation_pool(&self) -> Arc<<Metal as Backend>::AllocationPool> {

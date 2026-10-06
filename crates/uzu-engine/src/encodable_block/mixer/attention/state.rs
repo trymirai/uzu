@@ -161,7 +161,6 @@ impl KVCacheState {
 }
 
 pub struct AttentionState<B: Backend> {
-    pub elements_prepared: u32,
     pub element_dim: u32,
     pub data_type: DataType,
     cache: KVCacheState,
@@ -199,8 +198,8 @@ impl<B: Backend> AttentionState<B> {
         let cache = attention.ring_capacity.map_or_else(KVCacheState::full, KVCacheState::ring);
 
         let max_elements = max_prefix_elements + ATTENTION_SUFFIX_CAPACITY;
-        let element_size = attention.num_kv_heads.unwrap() * attention.head_dim;
-        let kv_buffer_bytes = size_for_shape(&[max_elements, element_size], data_type);
+        let element_dim = attention.num_kv_heads.unwrap() * attention.head_dim;
+        let kv_buffer_bytes = size_for_shape(&[max_elements, element_dim], data_type);
 
         let is_sparse = context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS);
 
@@ -216,8 +215,7 @@ impl<B: Backend> AttentionState<B> {
         let kv_cache_update = <B::Kernels as Kernels>::KVCacheUpdateKernel::new(context, data_type)?;
 
         Ok(Self {
-            elements_prepared: 0,
-            element_dim: element_size,
+            element_dim,
             data_type,
             cache,
             is_sparse,
@@ -233,31 +231,19 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         &mut self,
         context_length: u32,
         suffix_length: u32,
-        context: &B::Context,
     ) -> Result<(), B::Error> {
-        if !self.is_sparse {
-            return Ok(());
-        }
-
         assert!(suffix_length <= ATTENTION_SUFFIX_CAPACITY, "suffix exceeds capacity");
-        let elements_required = self.cache.required_prefix_len(context_length) + suffix_length;
-        let bytes_required = size_for_shape(&[elements_required, self.element_dim], self.data_type);
-        let bytes_prepared = size_for_shape(&[self.elements_prepared, self.element_dim], self.data_type);
 
-        let keys = (self.keys.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>().unwrap();
-        let values = (self.values.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>().unwrap();
+        if self.is_sparse {
+            let elements_required = self.cache.required_prefix_len(context_length) + suffix_length;
+            let bytes_required = size_for_shape(&[elements_required, self.element_dim], self.data_type);
 
-        for buffer in [keys, values] {
-            let buffer_page_size = buffer.page_size_bytes();
-            let buffer_start_page = bytes_prepared.div_ceil(buffer_page_size);
-            let buffer_end_page = bytes_required.div_ceil(buffer_page_size);
+            let keys = (self.keys.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>().unwrap();
+            let values = (self.values.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>().unwrap();
 
-            if buffer_end_page > buffer_start_page {
-                buffer.map(context, buffer_start_page..buffer_end_page)?;
-            }
+            keys.map(bytes_required)?;
+            values.map(bytes_required)?;
         }
-
-        self.elements_prepared = elements_required;
 
         Ok(())
     }

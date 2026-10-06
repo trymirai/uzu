@@ -209,7 +209,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 .prepare(
                     model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
                     usize::min(max_batch_size, input.len()) as u32,
-                    &model.engine.context,
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
@@ -639,7 +638,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         self.model_state
             .transformer_state
-            .prepare(self.model_state.transformer_state.context_length(), batch_dim.size(), &self.model.engine.context)
+            .prepare(self.model_state.transformer_state.context_length(), batch_dim.size())
             .map_err(LanguageModelStreamError::Backend)?;
 
         let hidden_feature_layer_indices =

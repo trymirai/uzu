@@ -59,7 +59,6 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
         &mut self,
         _context_length: u32,
         _suffix_length: u32,
-        _context: &B::Context,
     ) -> Result<(), B::Error> {
         Ok(())
     }
