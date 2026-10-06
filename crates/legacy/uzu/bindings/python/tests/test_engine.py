@@ -1,6 +1,6 @@
 import asyncio
 
-from uzu import ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig
+from uzu import ChatConfig, ChatMessage, ChatReplyConfig, DownloadPhase, Engine, EngineConfig
 
 
 def test_chat_reply_produces_text() -> None:
@@ -12,6 +12,10 @@ def test_chat_reply_produces_text() -> None:
 
         async for update in (await engine.download(model)).iterator():
             print(f"Download progress: {update.progress}")
+
+        state = await engine.download_state(model)
+        assert state is not None, "Download state not found"
+        assert isinstance(state.phase, DownloadPhase.Downloaded), getattr(state.phase, "message", state.name)
 
         session = await engine.chat(model, ChatConfig.create())
 
