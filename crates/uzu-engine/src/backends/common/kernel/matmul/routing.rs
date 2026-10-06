@@ -18,6 +18,7 @@ pub struct MatmulShape {
     pub b_transpose: bool,
     pub b_leading_dimension: Option<u32>,
     pub b_prologue: GemmBPrologueKind,
+    pub b_is_trellis: bool,
     pub b_bits: Option<u32>,
     pub b_group_size: Option<u32>,
     pub signed_codes: bool,
@@ -45,13 +46,14 @@ impl MatmulShape {
             b_transpose: arguments.b_transpose,
             b_leading_dimension: arguments.b_leading_dimension,
             b_prologue: arguments.b.b_prologue(),
+            b_is_trellis: arguments.b.is_trellis(),
             b_bits: arguments.b.bits_per_b(),
             b_group_size: arguments.b.group_size(),
             signed_codes: arguments.b.signed_codes(),
             a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
             gathered: arguments.gather_indices.is_some(),
             params_layout: arguments.b.quant_params_layout(),
-            d_transform: arguments.d_transform.mask(),
+            d_transform: arguments.output.ops.mask(),
         }
     }
 

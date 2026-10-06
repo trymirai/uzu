@@ -11,7 +11,7 @@ use crate::{
             Backend,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
             },
         },
         metal::{GemmEngine, Metal},
@@ -63,8 +63,7 @@ fn bench_gemm(c: &mut Criterion) {
                                 },
                                 b_leading_dimension: None,
                                 b_transpose: true,
-                                d: &mut d,
-                                d_transform: MatmulDOps::none(),
+                                output: MatmulOutput::new(&mut d, MatmulDOps::none()),
                                 gather_indices: None::<&<Metal as Backend>::GlobalBuffer>,
                                 m,
                                 n,

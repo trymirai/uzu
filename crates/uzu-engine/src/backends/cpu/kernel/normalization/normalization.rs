@@ -126,7 +126,7 @@ pub fn normalization<
         // Input RHT like the Metal kernel: apply the factors, then transform each block, before output scaling
         if let Some(factors) = hadamard_factors {
             for block_start in (0..element_count).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
-                let mut block = std::array::from_fn(|lane| {
+                let mut block: [f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize] = std::array::from_fn(|lane| {
                     let factor = unsafe { *factors.add(block_start + lane) } as f32;
                     row[block_start + lane].to_f32().unwrap() * factor
                 });

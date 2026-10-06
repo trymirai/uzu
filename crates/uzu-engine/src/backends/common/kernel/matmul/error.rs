@@ -17,9 +17,15 @@ pub enum MatmulError<B: Backend> {
         bit: GemmDTransform,
         path: &'static str,
     },
-    #[error("Unsupported B layout on path {path}")]
+    #[error("Unsupported layout on path {path}")]
     UnsupportedLayout {
         path: &'static str,
+    },
+    #[error("Unsupported output row stride {stride} for {columns} columns on path {path}")]
+    UnsupportedOutputStride {
+        path: &'static str,
+        stride: u32,
+        columns: u32,
     },
     #[error("Incompatible A operand for {path}: {reason}")]
     IncompatibleA {

@@ -1,4 +1,4 @@
-use super::{d_ops::MatmulDOps, matmul_a::MatmulA, matmul_b::MatmulB};
+use super::{MatmulOutput, matmul_a::MatmulA, matmul_b::MatmulB};
 use crate::backends::common::{Backend, BufferMut, BufferRef};
 
 pub struct MatmulArguments<
@@ -13,8 +13,7 @@ pub struct MatmulArguments<
     pub b: MatmulB<TB>,
     pub b_leading_dimension: Option<u32>,
     pub b_transpose: bool,
-    pub d: TD,
-    pub d_transform: MatmulDOps<'d, B>,
+    pub output: MatmulOutput<'d, B, TD>,
     pub gather_indices: Option<TI>,
     pub m: u32,
     pub n: u32,

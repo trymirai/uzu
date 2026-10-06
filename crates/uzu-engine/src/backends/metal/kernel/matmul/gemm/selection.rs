@@ -10,6 +10,8 @@ use crate::{
     data_type::DataType,
 };
 
+pub(super) const TRELLIS_K_STEP: u32 = 64;
+
 #[derive(Clone, Copy)]
 pub struct GemmProblem {
     shape: MatmulShape,
@@ -23,8 +25,8 @@ pub struct GemmProblem {
 pub(super) enum GemmPlanError {
     #[error("MXU engine is not available for this GEMM")]
     MxuUnavailable,
-    #[error("quantized GEMM requires transposed contiguous B")]
-    UnsupportedQuantLayout,
+    #[error("GEMM input layout is unsupported: {0}")]
+    UnsupportedLayout(&'static str),
 }
 
 impl GemmProblem {
@@ -45,6 +47,9 @@ impl GemmProblem {
     }
 
     pub fn select_plan(self) -> GemmPlan {
+        if self.shape.b_is_trellis {
+            return select_trellis_plan(self.shape.m, self.shape.n, self.shape.k);
+        }
         let engine = if self.supports_mxu && mxu_is_eligible(self.shape) {
             GemmEngine::Mxu
         } else {
@@ -58,6 +63,11 @@ impl GemmProblem {
         self,
         engine: GemmEngine,
     ) -> Result<GemmPlan, GemmPlanError> {
+        if self.shape.b_is_trellis {
+            let mut plan = select_trellis_plan(self.shape.m, self.shape.n, self.shape.k);
+            plan.engine = engine;
+            return Ok(plan);
+        }
         self.validate_engine(engine)?;
         Ok(self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family)))
     }
@@ -70,7 +80,10 @@ impl GemmProblem {
             return Err(GemmPlanError::MxuUnavailable);
         }
         if self.shape.is_quant() && (!self.shape.b_transpose || self.shape.b_leading_dimension.is_some()) {
-            return Err(GemmPlanError::UnsupportedQuantLayout);
+            return Err(GemmPlanError::UnsupportedLayout("quantized weights require transposed contiguous B"));
+        }
+        if self.shape.b_is_trellis && !self.shape.k.is_multiple_of(TRELLIS_K_STEP) {
+            return Err(GemmPlanError::UnsupportedLayout("Trellis K must be divisible by 64"));
         }
         Ok(())
     }
@@ -137,6 +150,36 @@ impl GemmProblem {
         }
         !output_transform.contains(GemmDTransform::BIAS)
             || (self.shape.n.is_multiple_of(4) && self.weights_data_type == self.output_data_type)
+    }
+}
+
+pub(super) fn select_trellis_plan(
+    m: u32,
+    n: u32,
+    k: u32,
+) -> GemmPlan {
+    let (tiling, target_workgroups) = match policy::mxu_mn_tile(true, m, n) {
+        GemmTiling::Tile16x32x256_Simdgroups1x1 => {
+            (GemmTiling::Tile16x32x256_Simdgroups1x1, policy::SPLIT_K_TARGET_TILES_A8_TILE16X32)
+        },
+        GemmTiling::Tile32x64x256_Simdgroups2x2 => {
+            (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8_TILE32_W4)
+        },
+        GemmTiling::Tile128x128x256_Simdgroups4x4 => {
+            (GemmTiling::Tile128x128x256_Simdgroups4x4, policy::SPLIT_K_TARGET_TILES_A8)
+        },
+        _ => (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8),
+    };
+    let output_workgroups = (n.div_ceil(tiling.block_n()) * m.div_ceil(tiling.block_m())).max(1);
+    let k_steps = (k / TRELLIS_K_STEP).max(1);
+    let mut split_k = (target_workgroups / output_workgroups).clamp(1, k_steps);
+    while !k_steps.is_multiple_of(split_k) {
+        split_k -= 1;
+    }
+    GemmPlan {
+        engine: GemmEngine::Mxu,
+        tiling,
+        split_k,
     }
 }
 
