@@ -577,6 +577,7 @@ source = { editable = "server" }
 dependencies = [
     { name = "benchmarks-common" },
     { name = "httpx2" },
+    { name = "huggingface-hub" },
     { name = "openai" },
     { name = "typer" },
 ]
@@ -585,6 +586,7 @@ dependencies = [
 requires-dist = [
     { name = "benchmarks-common", editable = "common-py" },
     { name = "httpx2", specifier = ">=2.13.1" },
+    { name = "huggingface-hub", specifier = ">=0.36" },
     { name = "openai", specifier = ">=3.24.0" },
     { name = "typer", specifier = ">=0.27.2" },
 ]

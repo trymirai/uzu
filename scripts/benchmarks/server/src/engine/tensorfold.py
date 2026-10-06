@@ -13,7 +13,7 @@ from . import ServerEngine
 
 
 class TensorFoldServerEngine(ServerEngine):
-    PROJECT_DIR = Path(__file__).resolve().parents[2] / "tensorfold"
+    PROJECT_DIR = Path(__file__).resolve().parents[2] / "engine" / "tensorfold"
 
     def create_process(self) -> subprocess.Popen:
         model_path = Path(self.model).expanduser()

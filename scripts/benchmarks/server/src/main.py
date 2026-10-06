@@ -10,6 +10,7 @@ from openai.types.chat import ChatCompletion
 from pydantic import BaseModel
 
 from .engine import ServerEngine, ServerEngineType
+from .engine.magnitude import MagnitudeServerEngine
 from .engine.tensorfold import TensorFoldServerEngine
 from .engine.uzu import UzuServerEngine
 from .util import await_cooldown, get_openai_base_url, load_input
@@ -67,6 +68,8 @@ def run_engine(
         engine = UzuServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
     elif engine_type == ServerEngineType.TENSORFOLD:
         engine = TensorFoldServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
+    elif engine_type == ServerEngineType.MAGNITUDE:
+        engine = MagnitudeServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
     else:
         raise ValueError(f"Engine {engine_type} is not supported")
 
