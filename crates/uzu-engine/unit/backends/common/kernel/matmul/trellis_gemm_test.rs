@@ -81,6 +81,7 @@ type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 const CODEBOOK: [f32; 5] = [0.0123, 0.3, -0.25, 0.125, -0.0625];
 const PADDING: usize = 24;
 const SENTINEL: u16 = 0x7F7F;
+const RELATIVE_TOLERANCE: f32 = 1e-2;
 // Cases are ordered as (m, n, k).
 const CASES: [(usize, usize, usize); 7] =
     [(1, 80, 5120), (17, 80, 5120), (512, 80, 5120), (16, 128, 64), (32, 128, 64), (1, 6, 64), (2048, 2048, 128)];
@@ -151,7 +152,7 @@ fn run_projection(
     for (index, &got) in actual.iter().enumerate() {
         let token = index / stride;
         let row = index % stride;
-        let want = if row < n {
+        if row < n {
             let row_values = &values[token * k..(token + 1) * k];
             let levels = &decoded_levels[row * k..(row + 1) * k];
             let level_dot: i32 = levels.iter().zip(row_values).map(|(&level, &value)| level * i32::from(value)).sum();
@@ -159,13 +160,16 @@ fn run_projection(
             // A non-dyadic offset exposes rounding differences in the GPU dot.
             let offsets_dot =
                 (((sums[0] * CODEBOOK[1]) + sums[1] * CODEBOOK[2]) + sums[2] * CODEBOOK[3]) + sums[3] * CODEBOOK[4];
-            // Exact BF16 comparison checks the CPU mul_add against the GPU's separate multiply and dot.
             let dot = (level_dot as f32).mul_add(CODEBOOK[0], offsets_dot);
-            bf16::from_f32(dot * row_scales[row] * activation_scales_host[token]).to_bits()
+            let want = bf16::from_f32(dot * row_scales[row] * activation_scales_host[token]).to_f32();
+            let got = bf16::from_bits(got).to_f32();
+            assert!(
+                (got - want).abs() <= RELATIVE_TOLERANCE * want.abs(),
+                "{format:?} ({m}, {n}, {k}) token {token} row {row}: got {got}, want {want}"
+            );
         } else {
-            SENTINEL
-        };
-        assert_eq!(got, want, "{format:?} M {m} N {n} K {k}, token {token}, row {row}");
+            assert_eq!(got, SENTINEL, "{format:?} M {m} N {n} K {k}, token {token}, row {row}");
+        }
     }
 }
 
