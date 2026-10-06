@@ -273,7 +273,12 @@ struct Fragment {
     );
   }
 
-  template <class Ptr, class FragmentRowStride = Int<1>, class FragmentColStride = Int<1>>
+  template <
+      bool ALIGNED_M = false,
+      bool ALIGNED_N = false,
+      class Ptr,
+      class FragmentRowStride = Int<1>,
+      class FragmentColStride = Int<1>>
   METAL_FUNC void store_safe(
       const ushort simd_lane_id,
       Ptr destination,
@@ -282,7 +287,7 @@ struct Fragment {
       FragmentRowStride fragment_row_stride = {},
       FragmentColStride fragment_col_stride = {}
   ) thread {
-    transfer<STORE, SAFE>(
+    transfer<STORE, SAFE, ALIGNED_M, ALIGNED_N>(
         simd_lane_id,
         destination,
         leading_dimension,
@@ -346,6 +351,8 @@ private:
   template <
       bool IS_LOAD,
       bool IS_SAFE,
+      bool ALIGNED_M = false,
+      bool ALIGNED_N = false,
       class Ptr,
       class RowStride,
       class ColStride,
@@ -384,14 +391,14 @@ private:
 
         if constexpr (IS_LOAD) {
           if constexpr (IS_SAFE) {
-            const bool in_bounds = (row < local_row_limit) && (col < local_col_limit);
+            const bool in_bounds = (ALIGNED_M || row < local_row_limit) && (ALIGNED_N || col < local_col_limit);
             frag[element_index] = in_bounds ? static_cast<T>(ptr[offset]) : T(0);
           } else {
             frag[element_index] = static_cast<T>(ptr[offset]);
           }
         } else {
           if constexpr (IS_SAFE) {
-            if ((row < local_row_limit) && (col < local_col_limit)) {
+            if ((ALIGNED_M || row < local_row_limit) && (ALIGNED_N || col < local_col_limit)) {
               ptr[offset] = static_cast<U>(frag[element_index]);
             }
           } else {
@@ -426,6 +433,20 @@ METAL_FUNC void fragment_mma(thread OutputFragment& output, thread LeftFragment&
       "fragment_mma requires output, left, and right fragments to use the same FragmentOps"
   );
   OutputFragment::FragmentOpsType::template fragment_mma<LeftFragment::MMA_TRANSPOSE, RightFragment::MMA_TRANSPOSE>(
+      output,
+      left,
+      right
+  );
+}
+
+template <class OutputFragment, class LeftFragment, class RightFragment>
+METAL_FUNC void fragment_mm(thread OutputFragment& output, thread LeftFragment& left, thread RightFragment& right) {
+  static_assert(
+      metal::is_same_v<typename OutputFragment::FragmentOpsType, typename LeftFragment::FragmentOpsType> &&
+          metal::is_same_v<typename OutputFragment::FragmentOpsType, typename RightFragment::FragmentOpsType>,
+      "fragment_mm requires output, left, and right fragments to use the same FragmentOps"
+  );
+  OutputFragment::FragmentOpsType::template fragment_mm<LeftFragment::MMA_TRANSPOSE, RightFragment::MMA_TRANSPOSE>(
       output,
       left,
       right

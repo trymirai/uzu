@@ -36,11 +36,21 @@ pub struct GemmKernel {
     input_data_type: DataType,
     output_data_type: DataType,
     trellis: TrellisGemm,
-    kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
-    split_k_reduce: HashMap<GemmDTransform, GemmSplitKReduceMetalKernel>,
+    kernels: HashMap<(GemmSpecialization, DataType), GemmMetalKernel>,
+    split_k_reduce: HashMap<(GemmDTransform, DataType), GemmSplitKReduceMetalKernel>,
 }
 
 impl GemmKernel {
+    pub fn requires_activation_group_sums(shape: &MatmulShape) -> bool {
+        match shape.b_prologue {
+            GemmBPrologueKind::ScaleBiasDequant => true,
+            GemmBPrologueKind::ScaleZeroPointDequant => {
+                !matches!((shape.b_bits, shape.b_group_size), (Some(4), Some(32 | 64)))
+            },
+            _ => false,
+        }
+    }
+
     pub fn new(
         weights_data_type: DataType,
         input_data_type: DataType,
@@ -60,15 +70,16 @@ impl GemmKernel {
         &mut self,
         context: &MetalContext,
         specialization: GemmSpecialization,
+        output_data_type: DataType,
     ) -> Result<&GemmMetalKernel, MetalError> {
-        match self.kernels.entry(specialization) {
+        match self.kernels.entry((specialization, output_data_type)) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
                 let kernel = GemmMetalKernel::new(
                     context,
                     self.input_data_type,
                     self.weights_data_type,
-                    self.output_data_type,
+                    output_data_type,
                     specialization.tiling,
                     specialization.transpose_b,
                     specialization.use_mxu,
@@ -90,11 +101,17 @@ impl GemmKernel {
         &mut self,
         context: &MetalContext,
         output_transform: GemmDTransform,
+        partial_data_type: DataType,
     ) -> Result<&GemmSplitKReduceMetalKernel, MetalError> {
-        match self.split_k_reduce.entry(output_transform) {
+        match self.split_k_reduce.entry((output_transform, partial_data_type)) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let kernel = GemmSplitKReduceMetalKernel::new(context, self.output_data_type, output_transform)?;
+                let kernel = GemmSplitKReduceMetalKernel::new(
+                    context,
+                    partial_data_type,
+                    self.output_data_type,
+                    output_transform,
+                )?;
                 Ok(entry.insert(kernel))
             },
         }
@@ -288,6 +305,8 @@ impl GemmKernel {
             },
         };
 
+        let a_group_sums = a_group_sums.filter(|_| Self::requires_activation_group_sums(&shape));
+
         if plan.split_k > 1 {
             self.encode_split_k(
                 a,
@@ -312,8 +331,12 @@ impl GemmKernel {
         }
 
         let tiling = plan.tiling;
-        let alignment =
-            GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
+        let (alignment_m, alignment_n) = if use_mxu && a_int8.is_some() {
+            (tiling.block_m() / tiling.simdgroups_m(), tiling.block_n() / tiling.simdgroups_n())
+        } else {
+            (tiling.block_m(), tiling.block_n())
+        };
+        let alignment = GemmAlignment::new(m % alignment_m == 0, n % alignment_n == 0, k % tiling.block_k() == 0);
         let mut params = gemm_params(shape, plan, ab_scale, scale_strides, zero_point_strides);
         let threadgroups_per_row = n.div_ceil(tiling.block_n());
         let threadgroups_per_column = m.div_ceil(tiling.block_m());
@@ -349,7 +372,7 @@ impl GemmKernel {
             a_prologue,
             a_group_size,
         )?;
-        let kernel = self.get_or_create(command_buffer.context(), specialization)?;
+        let kernel = self.get_or_create(command_buffer.context(), specialization, self.output_data_type)?;
         kernel.encode(
             a_full_precision,
             weights,
@@ -413,6 +436,7 @@ impl GemmKernel {
                 .into());
             },
         };
+        let a_group_sums = a_group_sums.filter(|_| Self::requires_activation_group_sums(&shape));
         let tiling = plan.tiling;
         let split_k = plan.split_k;
         let kp = k / split_k;
@@ -432,11 +456,16 @@ impl GemmKernel {
         )?;
 
         let elem = (m as usize) * (n as usize);
-        let slice_bytes = elem * self.output_data_type.size_in_bytes();
+        let partial_data_type = if plan.engine == GemmEngine::Mxu {
+            DataType::F32
+        } else {
+            self.output_data_type
+        };
+        let slice_bytes = elem * partial_data_type.size_in_bytes();
         let mut temp = command_buffer.allocate_scratch(split_k as usize * slice_bytes)?;
         let mut params = gemm_params(shape, plan, 1.0, scale_strides, zero_point_strides);
         params.aligned_inner_iterations = kp / k_step;
-        let part_kernel = self.get_or_create(command_buffer.context(), part_spec)?;
+        let part_kernel = self.get_or_create(command_buffer.context(), part_spec, partial_data_type)?;
         part_kernel.encode(
             a_full_precision,
             weights,
@@ -470,7 +499,8 @@ impl GemmKernel {
         } else {
             None
         };
-        let reduce = self.get_or_create_split_k_reduce(command_buffer.context(), reduce_transform)?;
+        let reduce =
+            self.get_or_create_split_k_reduce(command_buffer.context(), reduce_transform, partial_data_type)?;
         reduce.encode(&temp, d.reborrow(), bias_arg, elem as u32, split_k, group_count, n, scale_arg, command_buffer);
 
         Ok(())
@@ -491,9 +521,7 @@ fn validate_int8_left_operand(
         }
         .into());
     }
-    let needs_group_sums =
-        matches!(shape.b_prologue, GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant);
-    if needs_group_sums && !has_group_sums {
+    if GemmKernel::requires_activation_group_sums(&shape) && !has_group_sums {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
             reason: "quantized correction requires left group sums",

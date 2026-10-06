@@ -118,7 +118,18 @@ impl GemmProblem {
             return 1;
         };
         let align = step.max(ACTIVATION_SCALE_GROUP_SIZE);
-        let target_tiles = policy::split_k_target_tiles(!shape.a_full_precision, tiling, shape.b_bits);
+        let is_small_group_symmetric =
+            matches!(shape.b_group_size, Some(32 | 64)) && shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant;
+        let target_tiles = if engine == GemmEngine::Mxu
+            && !shape.a_full_precision
+            && tiling == GemmTiling::Tile32x64x256_Simdgroups2x2
+            && shape.b_bits == Some(8)
+            && is_small_group_symmetric
+        {
+            256
+        } else {
+            policy::split_k_target_tiles(!shape.a_full_precision, tiling, shape.b_bits)
+        };
         let mut split_k = (target_tiles / base_tiles).max(1).min((shape.k / align).max(1));
         if !shape.a_full_precision && engine == GemmEngine::Mxu && tiling.block_k() != 0 {
             split_k = split_k.min((shape.k / tiling.block_k()).max(1));
@@ -203,11 +214,26 @@ fn select_tiling(
     match engine {
         GemmEngine::Simdgroup if shape.is_quant() => policy::simdgroup_quant_tile(shape.m, shape.n, apple_gpu_family),
         GemmEngine::Simdgroup => policy::simdgroup_fp_tile(shape.m, shape.n, shape.k),
-        GemmEngine::Mxu if !shape.a_full_precision || shape.is_quant() => {
-            policy::mxu_mn_tile(!shape.a_full_precision, shape.m, shape.n)
-        },
+        GemmEngine::Mxu if !shape.a_full_precision || shape.is_quant() => select_mxu_quant_tiling(shape),
         GemmEngine::Mxu if shape.b_transpose => policy::mxu_fp_tile(shape.m, shape.n, shape.k),
         GemmEngine::Mxu => policy::mxu_mn_tile(false, shape.m, shape.n),
+    }
+}
+
+fn select_mxu_quant_tiling(shape: MatmulShape) -> GemmTiling {
+    let is_w8_group64 = shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant
+        && shape.b_bits == Some(8)
+        && shape.b_group_size == Some(64);
+    let is_w4_group32 = shape.b_prologue == GemmBPrologueKind::ScaleZeroPointDequant
+        && shape.b_bits == Some(4)
+        && shape.b_group_size == Some(32);
+    let is_deep_quantized = !shape.a_full_precision && shape.m >= 512 && shape.n >= 128 && shape.k / 2 >= shape.n;
+    if is_deep_quantized && is_w4_group32 {
+        GemmTiling::Tile32x64x256_Simdgroups2x2
+    } else if is_deep_quantized && is_w8_group64 {
+        GemmTiling::Tile64x64x256_Simdgroups2x2
+    } else {
+        policy::mxu_mn_tile(!shape.a_full_precision, shape.m, shape.n)
     }
 }
 #[cfg(test)]
