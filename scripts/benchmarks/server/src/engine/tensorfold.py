@@ -13,6 +13,10 @@ from . import ServerEngine
 
 
 class TensorFoldServerEngine(ServerEngine):
+    """
+    https://github.com/ashhart/TensorFold
+    """
+
     PROJECT_DIR = Path(__file__).resolve().parents[2] / "engine" / "tensorfold"
 
     def create_process(self) -> subprocess.Popen:

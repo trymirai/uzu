@@ -33,7 +33,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "tensorfold", git = "https://github.com/ashhart/TensorFold.git?rev=cb2ebf0540f42604e2759b2ddef497861e928248" }]
+requires-dist = [{ name = "tensorfold", git = "https://github.com/ashhart/TensorFold.git?tag=v0.6.6" }]
 
 [[package]]
 name = "certifi"
@@ -406,7 +406,7 @@ wheels = [
 [[package]]
 name = "tensorfold"
 version = "0.6.6"
-source = { git = "https://github.com/ashhart/TensorFold.git?rev=cb2ebf0540f42604e2759b2ddef497861e928248#cb2ebf0540f42604e2759b2ddef497861e928248" }
+source = { git = "https://github.com/ashhart/TensorFold.git?tag=v0.6.6#cb2ebf0540f42604e2759b2ddef497861e928248" }
 dependencies = [
     { name = "huggingface-hub" },
     { name = "jinja2", marker = "sys_platform != 'darwin'" },

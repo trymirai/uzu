@@ -69,6 +69,10 @@ def resolve_model(model: str) -> Path:
 
 
 class MagnitudeServerEngine(ServerEngine):
+    """
+    https://github.com/magnitudedev/magnitude
+    """
+
     PROJECT_DIR = Path(__file__).resolve().parents[2] / "engine" / "magnitude"
 
     def create_process(self) -> subprocess.Popen:
