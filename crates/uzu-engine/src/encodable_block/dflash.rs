@@ -201,13 +201,15 @@ impl<B: Backend> DFlash<B> {
         state: &mut DFlashState<B>,
         target_features: impl ExactSizeIterator<Item = impl BufferRef<Backend = B>>,
         accepted_indices: &[u32],
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         if accepted_indices.is_empty() {
             return Ok(());
         }
 
-        command_buffer.push_debug_group("dflash accept");
+        let name = format!("{parent}/dflash accept");
+        command_buffer.push_debug_group(&name);
 
         let num_tokens = accepted_indices.len() as u32;
         let captured_layer_count = self.target_feature_input_dim / self.model_dim;
@@ -233,18 +235,19 @@ impl<B: Backend> DFlash<B> {
             }
         }
         let projected_features =
-            self.target_feature_projection.encode(packed_target_features, num_tokens, command_buffer)?;
+            self.target_feature_projection.encode(packed_target_features, num_tokens, &name, command_buffer)?;
         let normalized_features = self.projected_feature_norm.encode(
             &projected_features,
             0,
             num_tokens,
             None::<&mut B::ScratchBuffer>,
+            &name,
             command_buffer,
         )?;
         let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)?;
 
-        let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens, command_buffer)?;
+        let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens, &name, command_buffer)?;
         let layer_kv_bytes = size_for_shape(&[self.layer_kv_dim], self.data_type);
         let kv_chunk =
             |chunk_index: usize| Range::from(chunk_index * layer_kv_bytes..(chunk_index + 1) * layer_kv_bytes);
@@ -269,7 +272,7 @@ impl<B: Backend> DFlash<B> {
             let attention_state = (mixer_state.as_mut() as &mut dyn Any)
                 .downcast_mut::<AttentionState<B>>()
                 .expect("DFlash draft layer states must be attention states");
-            attention.append_projected_kv(&mut key_value, &rope, num_tokens, attention_state, command_buffer)?;
+            attention.append_projected_kv(&mut key_value, &rope, num_tokens, attention_state, &name, command_buffer)?;
         }
 
         state.context_length += num_tokens;
@@ -285,9 +288,11 @@ impl<B: Backend> DFlash<B> {
         target_output_token: u32,
         target_embedding: &Embedding<B>,
         batch_size: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DFlashOutput<B>, DFlashEncodeError<B>> {
-        command_buffer.push_debug_group("dflash draft");
+        let name = format!("{parent}/dflash draft");
+        command_buffer.push_debug_group(&name);
 
         assert!(batch_size >= 2 && batch_size <= self.block_size, "batch size exceeds DFlash block size");
         assert!(
@@ -299,7 +304,7 @@ impl<B: Backend> DFlash<B> {
         tokens[0] = target_output_token;
         let token_ids = command_buffer.allocate_constant_from_slice(&tokens).map_err(DFlashEncodeError::Backend)?;
 
-        let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, command_buffer)?;
+        let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, &name, command_buffer)?;
 
         let nodes = (0..batch_size)
             .map(|index| TrieNode {
@@ -325,13 +330,14 @@ impl<B: Backend> DFlash<B> {
                     Some(&rope),
                     &batch_topology,
                     Some(MaybeMut::Mut(mixer_state.as_mut())),
+                    &name,
                     command_buffer,
                 )
                 .map_err(DFlashEncodeError::Backend)?;
         }
         let draft_hidden = self
             .output_norm
-            .encode(&hidden, 0, batch_size, Some(&mut residual), command_buffer)
+            .encode(&hidden, 0, batch_size, Some(&mut residual), &name, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
 
         let row_bytes = size_for_shape(&[target_embedding.model_dim()], DataType::BF16);
@@ -345,6 +351,7 @@ impl<B: Backend> DFlash<B> {
             target_embedding.vocab_size(),
             None::<&B::ScratchBuffer>,
             false,
+            &name,
             command_buffer,
         )?;
 

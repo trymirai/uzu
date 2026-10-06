@@ -3,7 +3,7 @@ use std::any::Any;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, CommandBuffer, Context, DeviceCapabilities, Kernels, SparseBuffer,
+        Backend, Buffer, CommandBuffer, CommandBufferEncoding, Context, DeviceCapabilities, Kernels, SparseBuffer,
         gpu_types::{Copy, ring::RingParams},
         kernel::KVCacheUpdateKernel,
     },
@@ -251,8 +251,10 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
+        let name = format!("{parent}/accept");
         let copies = self.cache.accept(accepted_indices);
 
         if !copies.is_empty() {
@@ -264,6 +266,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                 self.element_dim,
                 command_buffer,
             );
+            command_buffer.sample_timestamp(&name);
         }
 
         Ok(())

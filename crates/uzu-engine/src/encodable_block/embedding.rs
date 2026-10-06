@@ -155,9 +155,11 @@ impl<B: Backend> Embedding<B> {
         &self,
         token_ids: impl BufferRef<Backend = B>,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
-        command_buffer.push_debug_group("embedding lookup");
+        let name = format!("{parent}/embedding lookup");
+        command_buffer.push_debug_group(&name);
 
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
@@ -173,7 +175,7 @@ impl<B: Backend> Embedding<B> {
                 ..
             } => input_table,
         };
-        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
+        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, &name, command_buffer);
 
         command_buffer.pop_debug_group();
 
@@ -187,9 +189,11 @@ impl<B: Backend> Embedding<B> {
         output_dim: u32,
         gather_indices: Option<impl BufferRef<Backend = B>>,
         apply_logit_transform: bool,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
-        command_buffer.push_debug_group("embedding readout");
+        let name = format!("{parent}/embedding readout");
+        command_buffer.push_debug_group(&name);
 
         assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
         let mut output_buffer = match &self.tying {
@@ -201,7 +205,9 @@ impl<B: Backend> Embedding<B> {
                     indices,
                     output_dim,
                 });
-                output.encode(input_buffer, batch_dim, gather, command_buffer).map_err(EmbeddingError::BackendError)?
+                output
+                    .encode(input_buffer, batch_dim, gather, &name, command_buffer)
+                    .map_err(EmbeddingError::BackendError)?
             },
             EmbeddingTying::Tied {
                 table,
@@ -225,6 +231,7 @@ impl<B: Backend> Embedding<B> {
                     k: self.model_dim,
                 };
                 readout.lock().encode(arguments, command_buffer).map_err(EmbeddingError::BackendError)?;
+                command_buffer.sample_timestamp(&name);
                 output
             },
         };
@@ -238,6 +245,7 @@ impl<B: Backend> Embedding<B> {
                 logit_transform.soft_cap.unwrap_or(0.0),
                 command_buffer,
             );
+            command_buffer.sample_timestamp(&name);
         }
 
         command_buffer.pop_debug_group();

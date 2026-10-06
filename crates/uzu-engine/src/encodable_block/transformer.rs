@@ -58,16 +58,18 @@ impl<B: Backend> TransformerState<B> {
     pub fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        command_buffer.push_debug_group("transformer accept");
+        let name = format!("{parent}/transformer accept");
+        command_buffer.push_debug_group(&name);
 
         for layer_state in &mut self.layer_states {
             let TransformerLayerStateType::Owned(layer_state) = layer_state else {
                 continue;
             };
 
-            layer_state.encode_accept(accepted_indices, command_buffer)?;
+            layer_state.encode_accept(accepted_indices, &name, command_buffer)?;
         }
 
         self.context_length += accepted_indices.len() as u32;
@@ -164,11 +166,14 @@ impl<B: Backend> Transformer<B> {
         shortcut: impl BufferRef<Backend = B>,
         hidden: impl BufferRef<Backend = B>,
         batch_size: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        let name = format!("{parent}/capture residual");
         let mut output = command_buffer.allocate_scratch(hidden.size())?;
         let elements = batch_size * self.model_dim;
         self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, command_buffer);
+        command_buffer.sample_timestamp(&name);
         Ok(output)
     }
 
@@ -233,8 +238,10 @@ impl<B: Backend> Transformer<B> {
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
+        let name = format!("{parent}/transformer");
         let mut hidden = input;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
@@ -281,13 +288,15 @@ impl<B: Backend> Transformer<B> {
                 precalculated_rope,
                 batch_dim,
                 layer_state,
+                &name,
                 command_buffer,
             )?;
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
                     if layer_index == layer.layer_index {
-                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), command_buffer)?;
+                        let feature =
+                            self.capture_residual(&shortcut, &hidden, batch_dim.size(), &name, command_buffer)?;
                         hidden_features[feature_index] = Some(feature);
                     }
                 }
@@ -321,6 +330,7 @@ impl<B: Backend> Transformer<B> {
             output_range.start,
             output_range.end - output_range.start,
             Some(&mut shortcut),
+            &name,
             command_buffer,
         )?;
 

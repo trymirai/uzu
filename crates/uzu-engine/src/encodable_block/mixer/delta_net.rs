@@ -66,8 +66,10 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
+        let name = format!("{parent}/accept");
         let suffix_status = self.suffix_status.take().expect("delta net state has no suffix to accept");
         let accepted_index = *accepted_indices.last().expect("delta net state attempted to accept zero indices");
 
@@ -107,6 +109,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                     accepted_indices.len() as u32,
                     command_buffer,
                 );
+                command_buffer.sample_timestamp(&name);
             },
         }
         Ok(())
@@ -332,8 +335,10 @@ impl<B: Backend> DeltaNet<B> {
         in_projected: impl BufferRef<Backend = B>,
         batch_dim: &BatchTopology,
         state: &mut DeltaNetState<B>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        let name = format!("{parent}/tree verify");
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
         let parents = command_buffer.allocate_constant_from_slice(batch_dim.parents())?;
@@ -408,7 +413,8 @@ impl<B: Backend> DeltaNet<B> {
             command_buffer,
         );
 
-        let output = self.out_projection.encode(delta_output, tree_size, command_buffer)?;
+        command_buffer.sample_timestamp(&name);
+        let output = self.out_projection.encode(delta_output, tree_size, &name, command_buffer)?;
         state.suffix_status = Some(DeltaNetSuffixStatus::Tree {
             conv_states,
             k,
@@ -468,9 +474,11 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("delta net");
+        let name = format!("{parent}/delta net");
+        command_buffer.push_debug_group(&name);
 
         assert!(precalculated_rope.is_none(), "unexpected rope for delta net mixer");
 
@@ -482,10 +490,10 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
 
         assert!(state.suffix_status.is_none(), "delta net called with state with an unaccepted suffix");
 
-        let mut in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
+        let mut in_projected = self.in_projection.encode(hidden, batch_dim.size(), &name, command_buffer)?;
 
         if !batch_dim.full_accept() {
-            let output = self.encode_tree_verify(&in_projected, batch_dim, state, command_buffer)?;
+            let output = self.encode_tree_verify(&in_projected, batch_dim, state, &name, command_buffer)?;
 
             command_buffer.pop_debug_group();
 
@@ -629,7 +637,8 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             suffix_length: batch_dim.size(),
         });
 
-        let output = self.out_projection.encode(delta_output, batch_dim.size(), command_buffer)?;
+        command_buffer.sample_timestamp(&name);
+        let output = self.out_projection.encode(delta_output, batch_dim.size(), &name, command_buffer)?;
 
         command_buffer.pop_debug_group();
 

@@ -173,9 +173,11 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         &self,
         input: B::ScratchBuffer,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("linear (qlora)");
+        let name = format!("{parent}/linear (qlora)");
+        command_buffer.push_debug_group(&name);
 
         let mut intermediate =
             command_buffer.allocate_scratch_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type)?;
@@ -219,7 +221,8 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             input
         };
 
-        let mut output = self.base_linear.encode(base_input, batch_dim, command_buffer)?;
+        command_buffer.sample_timestamp(&name);
+        let mut output = self.base_linear.encode(base_input, batch_dim, &name, command_buffer)?;
 
         {
             let mut adapter_kernel = self.adapter_up_kernel.lock();
@@ -261,6 +264,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             );
         }
 
+        command_buffer.sample_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)

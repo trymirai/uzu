@@ -77,9 +77,11 @@ impl<B: Backend> SeparableCausalConv<B> {
         coefficient_row_stride: u32,
         coefficient_column_offset: u32,
         sequence_length: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("SeparableCausalConv");
+        let name = format!("{parent}/SeparableCausalConv");
+        command_buffer.push_debug_group(&name);
 
         let mut output =
             command_buffer.allocate_scratch_for_shape(&[sequence_length, self.model_dim], self.data_type)?;
@@ -95,6 +97,7 @@ impl<B: Backend> SeparableCausalConv<B> {
             command_buffer,
         );
 
+        command_buffer.sample_timestamp(&name);
         command_buffer.pop_debug_group();
         Ok(output)
     }

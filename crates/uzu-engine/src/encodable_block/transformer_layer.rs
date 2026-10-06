@@ -127,21 +127,25 @@ impl<B: Backend> TransformerLayerConv<B> {
         &self,
         input: impl BufferRef<Backend = B>,
         sequence_length: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
+        let name = format!("{parent}/pre convolution");
         let mut projection_input = command_buffer.allocate_scratch(input.size())?;
         command_buffer.encode_copy(input, &mut projection_input);
-        let coefficients = self.kernel_projection.encode(projection_input, sequence_length, command_buffer)?;
+        let coefficients = self.kernel_projection.encode(projection_input, sequence_length, &name, command_buffer)?;
         let mut output = self.pre_conv.encode(
             input,
             &coefficients,
             2 * self.coefficient_count,
             0,
             sequence_length,
+            &name,
             command_buffer,
         )?;
         if let Some((transform, factors)) = &self.input_rht {
             transform.encode_fp_in_place(&mut output, factors, None, sequence_length, self.model_dim, command_buffer);
+            command_buffer.sample_timestamp(&name);
         }
         Ok((output, coefficients))
     }
@@ -151,14 +155,17 @@ impl<B: Backend> TransformerLayerConv<B> {
         input: impl BufferRef<Backend = B>,
         coefficients: impl BufferRef<Backend = B>,
         sequence_length: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        let name = format!("{parent}/post convolution");
         self.post_conv.encode(
             input,
             coefficients,
             2 * self.coefficient_count,
             self.coefficient_count,
             sequence_length,
+            &name,
             command_buffer,
         )
     }
@@ -348,12 +355,14 @@ impl<B: Backend> TransformerLayer<B> {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&format!("transformer layer {}", self.layer_index));
+        let name = format!("{parent}/transformer layer {}", self.layer_index);
+        command_buffer.push_debug_group(&name);
 
         let mut hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
-            pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)?
+            pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut.reborrow()), &name, command_buffer)?
         } else {
             assert!(self.layer_index == 0);
             command_buffer.encode_copy(&input, shortcut.reborrow());
@@ -362,7 +371,7 @@ impl<B: Backend> TransformerLayer<B> {
 
         let mixer_coefficients = if let Some(convolution) = &self.mixer_conv {
             let (output, coefficients) =
-                convolution.encode_pre_convolution(&hidden, batch_dim.size(), command_buffer)?;
+                convolution.encode_pre_convolution(&hidden, batch_dim.size(), &name, command_buffer)?;
             hidden = output;
             Some(coefficients)
         } else {
@@ -370,39 +379,54 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
-        hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
+        hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, &name, command_buffer)?;
 
         if let Some(coefficients) = mixer_coefficients {
             let convolution = self.mixer_conv.as_ref().expect("mixer convolution required");
-            hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), command_buffer)?;
+            hidden =
+                convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), &name, command_buffer)?;
         }
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
-            hidden =
-                post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)?;
+            hidden = post_mixer_norm.encode(
+                &hidden,
+                0,
+                batch_dim.size(),
+                None::<&mut B::ScratchBuffer>,
+                &name,
+                command_buffer,
+            )?;
         }
 
-        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)?;
+        hidden =
+            self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut.reborrow()), &name, command_buffer)?;
 
         let mlp_coefficients = if let Some(convolution) = &self.mlp_conv {
             let (output, coefficients) =
-                convolution.encode_pre_convolution(&hidden, batch_dim.size(), command_buffer)?;
+                convolution.encode_pre_convolution(&hidden, batch_dim.size(), &name, command_buffer)?;
             hidden = output;
             Some(coefficients)
         } else {
             None
         };
 
-        hidden = self.mlp.encode(hidden, batch_dim.size(), command_buffer)?;
+        hidden = self.mlp.encode(hidden, batch_dim.size(), &name, command_buffer)?;
 
         if let Some(coefficients) = mlp_coefficients {
             let convolution = self.mlp_conv.as_ref().expect("mlp convolution required");
-            hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), command_buffer)?;
+            hidden =
+                convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), &name, command_buffer)?;
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            hidden =
-                post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)?;
+            hidden = post_mlp_norm.encode(
+                &hidden,
+                0,
+                batch_dim.size(),
+                None::<&mut B::ScratchBuffer>,
+                &name,
+                command_buffer,
+            )?;
         }
 
         if let Some(ple_projection) = &self.ple_projection {
@@ -413,6 +437,7 @@ impl<B: Backend> TransformerLayer<B> {
                 shortcut,
                 &hidden,
                 batch_dim.size(),
+                &name,
                 command_buffer,
             )?;
             command_buffer.encode_fill(&mut hidden, 0);

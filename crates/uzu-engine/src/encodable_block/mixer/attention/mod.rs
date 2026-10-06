@@ -219,15 +219,17 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("attention");
+        let name = format!("{parent}/attention");
+        command_buffer.push_debug_group(&name);
 
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        let output = self.attend(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
+        let output = self.attend(hidden, precalculated_rope, batch_dim, state, &name, command_buffer)?;
 
         command_buffer.pop_debug_group();
 

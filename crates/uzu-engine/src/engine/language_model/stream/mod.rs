@@ -1,3 +1,5 @@
+use std::{sync::mpsc::Sender, time::Instant};
+
 use derive_more::Debug;
 use thiserror::Error;
 
@@ -17,6 +19,7 @@ mod stream;
 
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,
+    pub timestamps: Option<Sender<Box<[(String, Instant)]>>>,
     #[cfg(grammar)]
     pub grammar: Option<Grammar>,
 }
@@ -44,6 +47,7 @@ impl<B: Backend> LanguageModel<B> {
     pub fn default_stream_options(&self) -> LanguageModelStreamOptions {
         LanguageModelStreamOptions {
             sampling_method: self.default_sampling_method(),
+            timestamps: None,
             #[cfg(grammar)]
             grammar: None,
         }

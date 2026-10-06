@@ -19,6 +19,7 @@ pub trait Mlp<B: Backend>: Send + Sync {
         &self,
         input: B::ScratchBuffer,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error>;
 }

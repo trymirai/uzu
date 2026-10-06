@@ -70,6 +70,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
             method,
             &batch_topology,
             (0..batch_size).into(),
+            "test",
             &mut command_buffer,
         )
         .unwrap();

@@ -118,9 +118,11 @@ impl<B: Backend> Normalization<B> {
         row_offset: u32,
         row_count: u32,
         shortcut: Option<impl BufferMut<Backend = B>>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("normalization");
+        let name = format!("{parent}/normalization");
+        command_buffer.push_debug_group(&name);
 
         let row_size = size_for_shape(&[self.element_count], self.data_type);
         let row_offset_bytes = row_offset as usize * row_size;
@@ -141,6 +143,7 @@ impl<B: Backend> Normalization<B> {
             command_buffer,
         );
 
+        command_buffer.sample_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)

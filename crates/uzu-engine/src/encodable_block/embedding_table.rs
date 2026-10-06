@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         gpu_types::{EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, d4s4},
         kernel::InputEmbeddingLookupKernel,
     },
@@ -173,8 +173,10 @@ impl<B: Backend> EmbeddingTable<B> {
         output: impl BufferMut<Backend = B>,
         batch_dim: u32,
         scale: f32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
+        let name = format!("{parent}/lookup");
         let bindings = self.storage.lookup_bindings();
         self.lookup.encode(
             token_ids,
@@ -193,6 +195,7 @@ impl<B: Backend> EmbeddingTable<B> {
             scale,
             command_buffer,
         );
+        command_buffer.sample_timestamp(&name);
     }
 }
 

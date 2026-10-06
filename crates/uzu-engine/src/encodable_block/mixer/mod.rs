@@ -35,6 +35,7 @@ pub trait MixerState<B: Backend>: Any + Send {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error>;
 }
@@ -65,6 +66,7 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error>;
 }

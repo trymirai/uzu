@@ -33,14 +33,16 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         &self,
         input: B::ScratchBuffer,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("mlp (dense)");
+        let name = format!("{parent}/mlp (dense)");
+        command_buffer.push_debug_group(&name);
 
-        let fused_up = self.up.encode(input, batch_dim, command_buffer)?;
+        let fused_up = self.up.encode(input, batch_dim, &name, command_buffer)?;
         let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
-        let down_input = self.gate.encode_for_linear(command_buffer, &fused_up, batch_dim, act_format)?;
-        let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
+        let down_input = self.gate.encode_for_linear(command_buffer, &fused_up, batch_dim, act_format, &name)?;
+        let output = self.down.encode_input(down_input, batch_dim, &name, command_buffer)?;
 
         command_buffer.pop_debug_group();
 

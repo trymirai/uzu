@@ -80,14 +80,16 @@ impl<B: Backend> UntiedReadout<B> {
         input: impl BufferRef<Backend = B>,
         batch_dim: u32,
         gather: Option<Gather<impl BufferRef<Backend = B>>>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        let name = format!("{parent}/untied readout");
         let Some(input_rht) = &self.input_rht else {
             let a = MatmulA::FullPrecision {
                 values: input,
                 offset: 0,
             };
-            return self.linear.encode_with_a(a, batch_dim, gather, command_buffer);
+            return self.linear.encode_with_a(a, batch_dim, gather, &name, command_buffer);
         };
 
         let format = if gather.is_some() {
@@ -95,7 +97,7 @@ impl<B: Backend> UntiedReadout<B> {
         } else {
             self.linear.select_activation_format(batch_dim, command_buffer.context())
         };
-        let input = input_rht.prepare(input, batch_dim, format, command_buffer)?;
-        self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, command_buffer)
+        let input = input_rht.prepare(input, batch_dim, format, &name, command_buffer)?;
+        self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, &name, command_buffer)
     }
 }

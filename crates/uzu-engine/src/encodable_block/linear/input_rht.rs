@@ -43,8 +43,10 @@ impl<B: Backend> InputRht<B> {
         input: impl BufferRef<Backend = B>,
         batch_dim: u32,
         format: ActivationFormat,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
+        let name = format!("{parent}/prepare");
         if format == ActivationFormat::Int8
             && let Some(quantizer) = &self.quantizer
         {
@@ -70,6 +72,7 @@ impl<B: Backend> InputRht<B> {
                 command_buffer,
             );
 
+            command_buffer.sample_timestamp(&name);
             return Ok(LinearInput::Int8Symmetric {
                 values,
                 scales,
@@ -82,6 +85,7 @@ impl<B: Backend> InputRht<B> {
         let input_dim = self.input_dim();
         let mut transformed = command_buffer.allocate_scratch(input.size())?;
         self.rht.encode_fp(input, &mut transformed, &self.rht_signs, batch_dim, input_dim, command_buffer);
+        command_buffer.sample_timestamp(&name);
         Ok(LinearInput::FullPrecision(transformed))
     }
 
@@ -90,14 +94,17 @@ impl<B: Backend> InputRht<B> {
         mut input: B::ScratchBuffer,
         batch_dim: u32,
         format: ActivationFormat,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
+        let name = format!("{parent}/prepare in place");
         if format == ActivationFormat::Int8 && self.quantizer.is_some() {
-            return self.prepare(&input, batch_dim, format, command_buffer);
+            return self.prepare(&input, batch_dim, format, &name, command_buffer);
         }
 
         let input_dim = self.input_dim();
         self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer);
+        command_buffer.sample_timestamp(&name);
         Ok(LinearInput::FullPrecision(input))
     }
 

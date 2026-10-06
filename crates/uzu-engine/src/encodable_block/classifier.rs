@@ -116,15 +116,17 @@ impl<B: Backend> Classifier<B> {
         &self,
         token_ids: impl BufferRef<Backend = B>,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, ClassifierError<B>> {
-        command_buffer.push_debug_group("classifier");
+        let name = format!("{parent}/classifier");
+        command_buffer.push_debug_group(&name);
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim, command_buffer)?;
+        let embedded = self.embedding.encode_lookup(token_ids, batch_dim, &name, command_buffer)?;
 
         let hidden = self
             .embedding_norm
-            .encode(&embedded, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)
+            .encode(&embedded, 0, batch_dim, None::<&mut B::ScratchBuffer>, &name, command_buffer)
             .map_err(ClassifierError::Backend)?;
 
         let nodes = (0..batch_dim)
@@ -143,6 +145,7 @@ impl<B: Backend> Classifier<B> {
                 Some((0..batch_dim).into()),
                 None,
                 None,
+                &name,
                 command_buffer,
             )
             .map_err(ClassifierError::Backend)?
@@ -154,7 +157,8 @@ impl<B: Backend> Classifier<B> {
             .map_err(ClassifierError::Backend)?;
         self.pooling.encode(&hidden, &mut pooled, batch_dim, self.hidden_dim, 1, command_buffer);
 
-        let logits = self.prediction_head.encode(pooled, 1, command_buffer).map_err(ClassifierError::Backend)?;
+        command_buffer.sample_timestamp(&name);
+        let logits = self.prediction_head.encode(pooled, 1, &name, command_buffer).map_err(ClassifierError::Backend)?;
 
         command_buffer.pop_debug_group();
 

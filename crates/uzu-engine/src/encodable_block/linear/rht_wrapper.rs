@@ -178,33 +178,38 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         &self,
         input: B::ScratchBuffer,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        self.encode_input(LinearInput::FullPrecision(input), batch_dim, command_buffer)
+        let name = format!("{parent}/rht linear wrapper");
+        self.encode_input(LinearInput::FullPrecision(input), batch_dim, &name, command_buffer)
     }
 
     fn encode_input(
         &self,
         input: LinearInput<B>,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("linear (rht)");
+        let name = format!("{parent}/linear (rht)");
+        command_buffer.push_debug_group(&name);
 
         let input = match input {
             LinearInput::FullPrecision(input) => input,
             input => {
-                let output = self.inner_linear.encode_input(input, batch_dim, command_buffer);
+                let output = self.inner_linear.encode_input(input, batch_dim, &name, command_buffer);
                 command_buffer.pop_debug_group();
                 return output;
             },
         };
         let format = self.inner_linear.select_activation_format(batch_dim, command_buffer.context());
-        let input = self.input_rht.prepare_in_place(input, batch_dim, format, command_buffer)?;
+        let input = self.input_rht.prepare_in_place(input, batch_dim, format, &name, command_buffer)?;
         let output = self.inner_linear.encode_with_a(
             input.as_matmul_a(),
             batch_dim,
             None::<super::Gather<&B::ScratchBuffer>>,
+            &name,
             command_buffer,
         )?;
 

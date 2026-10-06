@@ -141,14 +141,16 @@ impl<B: Backend> Decoder<B> {
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         state: &mut TransformerState<B>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
-        command_buffer.push_debug_group("decoder");
+        let name = format!("{parent}/decoder");
+        command_buffer.push_debug_group(&name);
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
+        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), &name, command_buffer)?;
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
             embedding_norm
-                .encode(&embedded, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)
+                .encode(&embedded, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, &name, command_buffer)
                 .map_err(DecoderError::Backend)?
         } else {
             embedded
@@ -157,7 +159,7 @@ impl<B: Backend> Decoder<B> {
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
             Some(
                 per_layer_embedding
-                    .encode(token_ids, &embedded, batch_dim.size(), command_buffer)
+                    .encode(token_ids, &embedded, batch_dim.size(), &name, command_buffer)
                     .map_err(DecoderError::Backend)?,
             )
         } else {
@@ -173,6 +175,7 @@ impl<B: Backend> Decoder<B> {
                 output_range,
                 hidden_feature_layer_indices,
                 Some(state),
+                &name,
                 command_buffer,
             )
             .map_err(DecoderError::Backend)?;
@@ -185,6 +188,7 @@ impl<B: Backend> Decoder<B> {
                 self.embedding.vocab_size(),
                 None::<&B::ScratchBuffer>,
                 true,
+                &name,
                 command_buffer,
             )?)
         } else {

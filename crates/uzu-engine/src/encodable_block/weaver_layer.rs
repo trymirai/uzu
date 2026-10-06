@@ -150,11 +150,19 @@ impl<B: Backend> WeaverLayer<B> {
         residual_state: impl BufferMut<Backend = B>,
         rope: &PrecalculatedRoPE<B>,
         token_count: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<PreparedPrefixAttention<B>, B::Error> {
-        let attention_input =
-            self.pre_attention_norm.encode(residual_input, 0, token_count, Some(residual_state), command_buffer)?;
-        let qkv = self.qkv_projection.encode(attention_input, token_count, command_buffer)?;
+        let name = format!("{parent}/prefix attention");
+        let attention_input = self.pre_attention_norm.encode(
+            residual_input,
+            0,
+            token_count,
+            Some(residual_state),
+            &name,
+            command_buffer,
+        )?;
+        let qkv = self.qkv_projection.encode(attention_input, token_count, &name, command_buffer)?;
         let mut queries =
             command_buffer.allocate_scratch_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE)?;
         let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], DATA_TYPE);
@@ -176,6 +184,7 @@ impl<B: Backend> WeaverLayer<B> {
             token_count,
             command_buffer,
         );
+        command_buffer.sample_timestamp(&name);
         Ok(PreparedPrefixAttention {
             queries,
             kv_cache,
@@ -187,11 +196,19 @@ impl<B: Backend> WeaverLayer<B> {
         attention_output: B::ScratchBuffer,
         residual_state: impl BufferMut<Backend = B>,
         token_count: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let projected_attention = self.out_projection.encode(attention_output, token_count, command_buffer)?;
-        let mlp_input =
-            self.pre_mlp_norm.encode(&projected_attention, 0, token_count, Some(residual_state), command_buffer)?;
-        self.mlp.encode(mlp_input, token_count, command_buffer)
+        let name = format!("{parent}/post attention");
+        let projected_attention = self.out_projection.encode(attention_output, token_count, &name, command_buffer)?;
+        let mlp_input = self.pre_mlp_norm.encode(
+            &projected_attention,
+            0,
+            token_count,
+            Some(residual_state),
+            &name,
+            command_buffer,
+        )?;
+        self.mlp.encode(mlp_input, token_count, &name, command_buffer)
     }
 }

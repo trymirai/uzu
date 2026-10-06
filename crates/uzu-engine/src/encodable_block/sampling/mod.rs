@@ -90,9 +90,11 @@ impl<B: Backend> Sampling<B> {
         sampling_method: &SamplingMethod,
         batch_dim: &BatchTopology,
         sampling_range: Range<u32>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::GlobalBuffer, B::Error> {
-        command_buffer.push_debug_group("sampling");
+        let name = format!("{parent}/sampling");
+        command_buffer.push_debug_group(&name);
 
         let sampling_length = sampling_range.end - sampling_range.start;
 
@@ -194,6 +196,7 @@ impl<B: Backend> Sampling<B> {
             command_buffer,
         );
 
+        command_buffer.sample_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)

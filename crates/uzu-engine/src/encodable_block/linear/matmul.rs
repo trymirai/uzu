@@ -123,8 +123,10 @@ impl<B: Backend> LinearMatmul<B> {
         a: MatmulA<impl BufferRef<Backend = B>>,
         batch_dim: u32,
         gather: Option<Gather<impl BufferRef<Backend = B>>>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        let name = format!("{parent}/with a");
         let (output_dim, gather_indices) =
             gather.map_or((self.output_dim, None), |gather| (gather.output_dim, Some(gather.indices)));
         let mut output = command_buffer.allocate_scratch_for_shape(&[batch_dim, output_dim], self.output_data_type)?;
@@ -143,6 +145,7 @@ impl<B: Backend> LinearMatmul<B> {
             command_buffer,
         )?;
 
+        command_buffer.sample_timestamp(&name);
         Ok(output)
     }
 
@@ -188,9 +191,11 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         &self,
         input: B::ScratchBuffer,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("matmul");
+        let name = format!("{parent}/matmul");
+        command_buffer.push_debug_group(&name);
 
         let output = self.encode_with_a(
             MatmulA::FullPrecision {
@@ -199,6 +204,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             },
             batch_dim,
             None::<Gather<&B::ScratchBuffer>>,
+            &name,
             command_buffer,
         )?;
 
@@ -211,9 +217,11 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         &self,
         input: LinearInput<B>,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        self.encode_with_a(input.as_matmul_a(), batch_dim, None::<Gather<&B::ScratchBuffer>>, command_buffer)
+        let name = format!("{parent}/input");
+        self.encode_with_a(input.as_matmul_a(), batch_dim, None::<Gather<&B::ScratchBuffer>>, &name, command_buffer)
     }
 
     fn select_activation_format(

@@ -124,18 +124,22 @@ impl<B: Backend> QKVNorm<B> {
         &self,
         qkvg: impl BufferMut<Backend = B>,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, command_buffer)
+        let name = format!("{parent}/qkv norm encode");
+        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, &name, command_buffer)
     }
 
     pub fn encode_key_value(
         &self,
         key_value: impl BufferMut<Backend = B>,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, command_buffer)
+        let name = format!("{parent}/key value");
+        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, &name, command_buffer)
     }
 
     fn encode_packed(
@@ -144,6 +148,7 @@ impl<B: Backend> QKVNorm<B> {
         batch_dim: u32,
         q_heads: u32,
         input_row_stride: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let packed_row_width = (q_heads + 2 * self.num_kv_heads) * self.head_dim;
@@ -152,7 +157,8 @@ impl<B: Backend> QKVNorm<B> {
             "QKV norm input row stride ({input_row_stride}) is smaller than its packed row width ({packed_row_width})"
         );
 
-        command_buffer.push_debug_group("qkv norm");
+        let name = format!("{parent}/qkv norm");
+        command_buffer.push_debug_group(&name);
 
         let kv = self.num_kv_heads;
         let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
@@ -179,6 +185,7 @@ impl<B: Backend> QKVNorm<B> {
             );
         }
 
+        command_buffer.sample_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(())

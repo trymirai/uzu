@@ -34,6 +34,7 @@ pub trait Linear<B: Backend>: Send + Sync {
         &self,
         input: B::ScratchBuffer,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error>;
 
@@ -41,10 +42,12 @@ pub trait Linear<B: Backend>: Send + Sync {
         &self,
         input: LinearInput<B>,
         batch_dim: u32,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        let name = format!("{parent}/input");
         match input {
-            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, command_buffer),
+            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, &name, command_buffer),
             LinearInput::Int8Symmetric {
                 ..
             } => {

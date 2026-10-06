@@ -42,6 +42,7 @@ impl<B: Backend> MixerState<B> for Mamba2State<B> {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
+        _parent: &str,
         _command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), <B as Backend>::Error> {
         assert!(self.suffix_length.take() == Some(*accepted_indices.last().unwrap() + 1));
@@ -241,9 +242,11 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("mamba2");
+        let name = format!("{parent}/mamba2");
+        command_buffer.push_debug_group(&name);
 
         assert!(precalculated_rope.is_none(), "unexpected rope for mamba2 mixer");
 
@@ -259,7 +262,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         assert!(state.suffix_length.is_none(), "mamba2 called with state with unaccepted tokens");
 
-        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
+        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), &name, command_buffer)?;
 
         let mut conv_inputs =
             command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.conv_dim], INNER_DATA_TYPE)?;
@@ -419,7 +422,8 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         state.suffix_length = Some(batch_dim.size());
 
-        let output = self.out_projection.encode(ssd_output, batch_dim.size(), command_buffer)?;
+        command_buffer.sample_timestamp(&name);
+        let output = self.out_projection.encode(ssd_output, batch_dim.size(), &name, command_buffer)?;
 
         command_buffer.pop_debug_group();
 

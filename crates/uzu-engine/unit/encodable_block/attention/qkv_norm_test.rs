@@ -57,7 +57,8 @@ fn run_key_value_row_stride_test<B: Backend>() {
 
     let mut key_value = create_buffer_with_data::<B, f32>(&context, &input);
     let mut command_buffer = context.create_command_buffer(None, None).expect("failed to create command buffer");
-    norm.encode_key_value(&mut key_value, BATCH_SIZE, &mut command_buffer).expect("failed to encode key/value norm");
+    norm.encode_key_value(&mut key_value, BATCH_SIZE, "test", &mut command_buffer)
+        .expect("failed to encode key/value norm");
     command_buffer.end_encoding().submit().wait_until_completed().expect("failed to execute key/value norm");
 
     let output = buffer_to_vec::<B, f32>(&key_value);
