@@ -25,6 +25,21 @@ use crate::{
     file_download::DownloadConfig,
 };
 
+#[cfg(target_os = "macos")]
+const CALLER_SECURITY_SESSION: u32 = u32::MAX;
+#[cfg(target_os = "macos")]
+const SESSION_IS_ROOT: u32 = 0x0001;
+
+#[cfg(target_os = "macos")]
+#[link(name = "Security", kind = "framework")]
+unsafe extern "C" {
+    fn SessionGetInfo(
+        session: u32,
+        session_id: *mut u32,
+        attributes: *mut u32,
+    ) -> i32;
+}
+
 pub struct AppleBackend {
     session: Retained<NSURLSession>,
     _delegate_protocol_object: Retained<ProtocolObject<dyn NSURLSessionDelegate>>,
@@ -42,7 +57,7 @@ impl AppleBackend {
         let delegate_protocol_object = ProtocolObject::<dyn NSURLSessionDelegate>::from_retained(
             AppleSessionDelegate::new(Arc::clone(&event_registry)),
         );
-        let bundle_id = Self::bundle_identifier();
+        let bundle_id = Self::background_bundle_identifier();
         let configuration = if bundle_id.is_empty() {
             NSURLSessionConfiguration::ephemeralSessionConfiguration()
         } else {
@@ -69,7 +84,15 @@ impl AppleBackend {
         }
     }
 
-    pub fn bundle_identifier() -> String {
+    pub fn background_bundle_identifier() -> String {
+        #[cfg(target_os = "macos")]
+        {
+            let mut attributes = 0;
+            let status = unsafe { SessionGetInfo(CALLER_SECURITY_SESSION, std::ptr::null_mut(), &mut attributes) };
+            if status != 0 || attributes & SESSION_IS_ROOT != 0 {
+                return String::new();
+            }
+        }
         NSBundle::mainBundle().bundleIdentifier().unwrap_or_default().to_string()
     }
 
