@@ -104,6 +104,19 @@ Current configuration enables DFlash only on M5, M5 Pro, and M5 Max
 cargo run --release -p benchmarks-uzu -- -m "trymirai/Qwen3.5-9B-M"
 ```
 
+## Server
+
+[./server](./server) contains tool for easy benchmarking OpenAI-compatible server
+```
+uv run bench-server uzu \
+    --model "trymirai/Qwen3.5-4B-M" \
+    --input server/tasks/ai-history-summary.json \
+    --num-runs 3
+```
+Output will show average metrics.
+By default, each run waits until CPU and GPU temperatures are at or below 60°C.
+Add `--no-wait-cooldown` to send requests without waiting for cooling.
+
 ## Tests
 Unit tests
 ```bash
@@ -119,5 +132,3 @@ Specific engine test
 ```bash
 uv run pytest --engine uzu
 ```
-
-The default suite also checks engine pins against the latest stable releases on PyPI and GitHub, including Python lockfiles.

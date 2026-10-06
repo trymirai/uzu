@@ -10,9 +10,18 @@ from mach import AppleTempSensors, get_temp_sensors
 MAX_TEMP = 60.0
 
 
+def needs_cooldown(temp: AppleTempSensors) -> bool:
+    return temp.cpu_avg > MAX_TEMP or temp.gpu_avg > MAX_TEMP
+
+
 def await_cooldown():
     temp: AppleTempSensors = get_temp_sensors()
-    while temp.cpu_avg > MAX_TEMP or temp.gpu_avg > MAX_TEMP:
+    if needs_cooldown(temp):
+        typer.echo(
+            f"Waiting for cooldown: CPU {temp.cpu_avg:.1f}°C, GPU {temp.gpu_avg:.1f}°C (target <= {MAX_TEMP:.0f}°C).",
+            err=True,
+        )
+    while needs_cooldown(temp):
         time.sleep(1.0)
         temp = get_temp_sensors()
 

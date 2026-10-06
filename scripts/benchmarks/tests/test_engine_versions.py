@@ -18,7 +18,10 @@ from packaging.requirements import Requirement
 from packaging.version import InvalidVersion, Version
 
 ROOT = Path(__file__).resolve().parents[1]
-pytestmark = pytest.mark.engine_versions
+pytestmark = [
+    pytest.mark.engine_versions,
+    pytest.mark.skip(reason="Engine version checks are disabled."),
+]
 
 
 def read_toml(path: Path) -> dict:

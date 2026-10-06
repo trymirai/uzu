@@ -42,7 +42,7 @@ class ServerEngine(ABC):
         if self.process is not None:
             raise RuntimeError("Stop the server before starting it again.")
         self.process = self.create_process()
-        self.wait_ready()
+        self.wait_ready(timeout=None)
 
     def stop(self) -> None:
         if self.process is None:

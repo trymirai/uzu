@@ -1,19 +1,17 @@
 import json
 from pathlib import Path
 from statistics import fmean
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 import typer
 from bench import BenchResponse
-from openai import OpenAI, omit
-from openai.types.chat import ChatCompletion
 from pydantic import BaseModel
 
 from .engine import ServerEngine, ServerEngineType
 from .engine.magnitude import MagnitudeServerEngine
 from .engine.tensorfold import TensorFoldServerEngine
 from .engine.uzu import UzuServerEngine
-from .util import await_cooldown, get_openai_base_url, load_input
+from .util import await_cooldown, load_input
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -51,16 +49,22 @@ def get_bench_average(responses: list[BenchResponse]) -> BenchAverage:
     )
 
 
-@app.command(name="engine")
+@app.command(name=ServerEngineType.UZU.value)
+@app.command(name=ServerEngineType.TENSORFOLD.value)
+@app.command(name=ServerEngineType.MAGNITUDE.value)
 def run_engine(
-    engine_type: ServerEngineType,
+    ctx: typer.Context,
     model: Annotated[str, typer.Option("--model", help="Model identifier, repository ID, or local model directory.")],
     input: Annotated[Path, typer.Option("--input", help="Path to a JSON file.")],
     num_runs: Annotated[int, typer.Option(min=1, help="Number of times to send the request sequentially.")] = 1,
     wait_cooling: Annotated[
-        bool, typer.Option("--wait-cooling/--no-wait-cooling", help="Wait before CPU and GPU are cooled enough.")
+        bool,
+        typer.Option(
+            "--wait-cooldown/--no-wait-cooldown", help="Wait until CPU and GPU are at or below 60°C before each run."
+        ),
     ] = True,
 ) -> None:
+    engine_type = ServerEngineType(ctx.info_name)
     request: dict[str, Any] = load_input(input)
 
     engine: ServerEngine
@@ -75,48 +79,21 @@ def run_engine(
 
     responses: list[BenchResponse] = []
     try:
+        typer.echo(f"Starting {engine_type.value} server...", err=True)
         engine.start()
-        for _ in range(num_runs):
+        typer.echo("Server ready.", err=True)
+        for run in range(1, num_runs + 1):
             if wait_cooling:
                 await_cooldown()
+            typer.echo(f"Benchmark run {run}/{num_runs}...", err=True)
             response = engine.handle_request(request)
             responses.append(response)
+            typer.echo(f"Benchmark run {run}/{num_runs} completed in {response.duration:.2f}s.", err=True)
     finally:
         engine.stop()
 
     average = get_bench_average(responses)
     typer.echo(json.dumps(average.model_dump(mode="json"), ensure_ascii=False, indent=2))
-
-
-@app.command(name="common")
-def run_server(
-    input: Annotated[Path, typer.Option("--input", help="Path to a JSON file.")],
-    model: Annotated[str | None, typer.Option("--model", help="Model name. Omit to use the server default.")] = None,
-    host: Annotated[str, typer.Option(help="Server hostname or IP address.")] = DEFAULT_HOST,
-    port: Annotated[int, typer.Option(min=1, max=65535, help="Server HTTP port.")] = DEFAULT_PORT,
-    num_runs: Annotated[int, typer.Option(min=1, help="Number of times to send the request sequentially.")] = 1,
-    wait_cooling: Annotated[
-        bool, typer.Option("--wait-cooling/--no-wait-cooling", help="Wait before CPU and GPU are cooled enough.")
-    ] = True,
-) -> None:
-    request: dict[str, Any] = load_input(input)
-    responses: list[dict[str, Any]] = []
-
-    with OpenAI(
-        base_url=get_openai_base_url(host, port),
-        api_key="not-needed",
-    ) as client:
-        for _ in range(num_runs):
-            if wait_cooling:
-                await_cooldown()
-            response: ChatCompletion = client.chat.completions.create(
-                model=model if model is not None else cast(Any, omit),
-                messages=request["messages"],
-            )
-            response_json: dict[str, Any] = response.model_dump(mode="json")
-            responses.append(response_json)
-
-    typer.echo(json.dumps(responses, ensure_ascii=False, indent=2))
 
 
 def main() -> None:
