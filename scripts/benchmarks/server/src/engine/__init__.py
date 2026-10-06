@@ -14,6 +14,7 @@ from bench import BenchResponse
 
 class ServerEngineType(StrEnum):
     UZU = "uzu"
+    TENSORFOLD = "tensorfold"
 
 
 class ServerEngine(ABC):

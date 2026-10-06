@@ -1,0 +1,11 @@
+[project]
+name = "benchmarks-tensorfold-runtime"
+version = "0.0.1"
+requires-python = ">=3.13.7,<3.14"
+dependencies = ["tensorfold"]
+
+[tool.uv.sources]
+tensorfold = { git = "https://github.com/ashhart/TensorFold.git", rev = "cb2ebf0540f42604e2759b2ddef497861e928248" }
+
+# Keep TensorFold's MLX dependencies separate from the benchmark client.
+[tool.uv.workspace]

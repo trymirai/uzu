@@ -10,6 +10,7 @@ from openai.types.chat import ChatCompletion
 from pydantic import BaseModel
 
 from .engine import ServerEngine, ServerEngineType
+from .engine.tensorfold import TensorFoldServerEngine
 from .engine.uzu import UzuServerEngine
 from .util import await_cooldown, get_openai_base_url, load_input
 
@@ -28,6 +29,7 @@ class BenchAverage(BaseModel):
     max_memory_phys_footprint: int
     max_memory_memory_resident: int
     max_memory_graphics_total: int
+    number_of_runs: int
 
 
 def get_bench_average(responses: list[BenchResponse]) -> BenchAverage:
@@ -44,6 +46,7 @@ def get_bench_average(responses: list[BenchResponse]) -> BenchAverage:
         max_memory_phys_footprint=max_memory_response.memory_phys_footprint,
         max_memory_memory_resident=max_memory_response.memory_resident,
         max_memory_graphics_total=max_memory_response.memory_graphics_total,
+        number_of_runs=len(responses),
     )
 
 
@@ -62,20 +65,21 @@ def run_engine(
     engine: ServerEngine
     if engine_type == ServerEngineType.UZU:
         engine = UzuServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
+    elif engine_type == ServerEngineType.TENSORFOLD:
+        engine = TensorFoldServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
     else:
         raise ValueError(f"Engine {engine_type} is not supported")
 
-    engine.start()
     responses: list[BenchResponse] = []
     try:
+        engine.start()
         for _ in range(num_runs):
             if wait_cooling:
                 await_cooldown()
             response = engine.handle_request(request)
             responses.append(response)
-    except Exception as error:
-        typer.echo(f"Exception: {error}")
-    engine.stop()
+    finally:
+        engine.stop()
 
     average = get_bench_average(responses)
     typer.echo(json.dumps(average.model_dump(mode="json"), ensure_ascii=False, indent=2))
