@@ -1,0 +1,84 @@
+{
+  "name": "mirai-gui",
+  "version": "0.6.1",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build --target aarch64-apple-darwin",
+    "client:dev": "vite",
+    "client:build": "vite build",
+    "web:dev": "vite --mode web",
+    "web:build": "vite build --mode web",
+    "typecheck": "tsc -p client/tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "lint:rust": "cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings",
+    "test:rust": "cargo test --manifest-path desktop/Cargo.toml",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm lint:rust && pnpm test:rust",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,css,md}\"",
+    "format:check": "prettier --check \"**/*.{js,jsx,ts,tsx,json,css,md}\""
+  },
+  "author": "Mirai Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "prettier": {
+    "singleQuote": false,
+    "trailingComma": "all",
+    "printWidth": 120
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/router-plugin": "^1.168.42",
+    "@tauri-apps/cli": "^2.12.0",
+    "@testing-library/react": "^16.3.3",
+    "@types/hast": "^3.0.5",
+    "@types/node": "^20.19.43",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.9.9",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.71.0",
+    "vite": "^5.4.21",
+    "vitest": "^3.2.7"
+  },
+  "dependencies": {
+    "@floating-ui/react-dom": "^2.1.9",
+    "@headlessui/react": "^2.2.10",
+    "@rive-app/canvas": "^2.44.0",
+    "@rive-app/react-canvas": "^4.36.0",
+    "@streamdown/cjk": "^1.0.4",
+    "@streamdown/code": "^1.1.1",
+    "@streamdown/math": "^1.0.3",
+    "@tanstack/react-router": "^1.170.41",
+    "@tauri-apps/api": "^2.12.0",
+    "@tauri-apps/plugin-dialog": "^2.8.0",
+    "date-fns": "^4.4.0",
+    "jszip": "^3.10.2",
+    "katex": "^0.16.47",
+    "lucide-react": "^0.544.0",
+    "motion": "^12.43.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-hot-toast": "^2.6.1",
+    "shiki": "^3.23.0",
+    "streamdown": "^2.7.0",
+    "tailwind-merge": "^3.7.0",
+    "uuid": "^14.0.2",
+    "zustand": "^4.5.7"
+  }
+}

@@ -1,0 +1,197 @@
+@font-face {
+  font-family: InterVariable;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/InterVariable.woff2") format("woff2");
+}
+@font-face {
+  font-family: InterVariable;
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/InterVariable-Italic.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/GeistMono-VariableFont_wght.ttf") format("truetype");
+}
+
+@import "tailwindcss";
+@import "./styles/theme.css";
+/* node_modules is skipped by source detection; streamdown ships class names. */
+@source "../../node_modules/streamdown/dist";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@utility thin-scrollbar {
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--color-gray-500);
+    border-radius: 9999px;
+  }
+}
+
+@layer base {
+  /* Tailwind 4 defaults borders to currentColor, buttons to cursor: default and
+     placeholders to a translucent currentColor; the app was designed on the
+     Tailwind 3 defaults, kept here. */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200);
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    opacity: 1;
+    color: #9ca3af;
+  }
+
+  /* Native scrollbars and form controls must follow the app theme; without
+     this WebKit draws them for the light scheme (black bar on dark lists). */
+  :root {
+    color-scheme: light;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+  :root.dark {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-label-title font-sans;
+    font-family: InterVariable, Inter, system-ui, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  }
+  code,
+  kbd,
+  samp,
+  pre {
+    @apply font-mono;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .shiki {
+    --shiki-font-family: var(--font-mono);
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+  .shiki code {
+    font-family: inherit;
+  }
+
+  a[data-streamdown="link"] {
+    @apply font-[350]! text-blue! no-underline! hover:underline!;
+    font-feature-settings:
+      "liga" 0,
+      "clig" 0;
+  }
+
+  [data-streamdown="code-block"] {
+    @apply w-full overflow-hidden border border-cell-border bg-bg-modal;
+    /* The 200px placeholder flashes a scrollbar as the block scrolls into view. */
+    content-visibility: visible !important;
+  }
+
+  [data-streamdown="code-block-header"] {
+    @apply relative border-b border-cell-border bg-bg-modal px-3 py-2 text-xs text-label-muted;
+    padding-right: 2.5rem;
+  }
+
+  [data-streamdown="code-block-actions"] {
+    border: 0 !important;
+    padding: 0 !important;
+    backdrop-filter: none !important;
+  }
+
+  [data-streamdown="code-block-actions"] button {
+    @apply min-w-6 min-h-6;
+  }
+
+  [data-streamdown="code-block-body"] {
+    @apply p-4;
+    background: transparent !important;
+    border: 0 !important;
+    font-size: 12px !important;
+    line-height: 1rem !important;
+    font-weight: 400;
+    font-variant-ligatures: none;
+  }
+
+  [data-streamdown="code-block-body"] code {
+    font-size: inherit;
+    line-height: inherit;
+    font-variant-ligatures: none;
+  }
+
+  [data-streamdown="code-block-body"]::-webkit-scrollbar {
+    @apply w-[6px];
+    height: 6px;
+  }
+
+  [data-streamdown="code-block-body"]::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  [data-streamdown="code-block-body"]::-webkit-scrollbar-thumb {
+    @apply bg-button-border rounded-full;
+  }
+
+  .dark [data-streamdown="code-block-body"]::-webkit-scrollbar-thumb {
+    @apply bg-cell-border;
+  }
+
+  [data-streamdown="code-block-body"] span::before {
+    content: none !important;
+    display: none !important;
+  }
+}
+
+@layer components {
+  .scrollbar-hide {
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .drag-layer {
+    /* Dragging is handled by data-tauri-drag-region on real containers, so this
+       overlay only needs to stay click-transparent. */
+    pointer-events: none;
+    z-index: 50;
+  }
+  .overlay-button {
+    pointer-events: auto;
+    z-index: 60;
+  }
+}
