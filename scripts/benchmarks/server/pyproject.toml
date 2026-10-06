@@ -1,5 +1,5 @@
 [project]
-name = "evaluation"
+name = "server"
 version = "0.1.0"
 description = "Send JSON requests to OpenAI-compatible completion servers."
 readme = "README.md"
@@ -16,11 +16,11 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-evaluation = "evaluation.main:main"
+server = "server.main:main"
 
 [tool.setuptools]
-packages = ["evaluation"]
-package-dir = { evaluation = "src" }
+packages = ["server", "server.engine"]
+package-dir = { server = "src" }
 
 [tool.uv.sources]
 benchmarks-common = { path = "../common-py", editable = true }

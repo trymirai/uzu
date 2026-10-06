@@ -4,19 +4,17 @@ version = "0.0.1"
 readme = "README.md"
 requires-python = ">=3.13.7"
 
-dependencies = ["benchmarks-common", "evaluation"]
+dependencies = ["benchmarks-common", "server"]
 
 [dependency-groups]
 dev = ["packaging>=26.3", "pytest>=9.0.3", "ruff>=0.16.8", "ty>=0.0.84"]
 
 [tool.uv.sources]
 benchmarks-common = { path = "common-py", editable = true }
-evaluation = { workspace = true }
+server = { workspace = true }
 
 [tool.uv.workspace]
-members = [
-    "evaluation",
-]
+members = ["server"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
