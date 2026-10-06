@@ -27,6 +27,10 @@ pub enum MetalError {
     CannotCreateBuffer,
     #[error("Cannot create heap")]
     CannotCreateHeap,
+    #[error("Cannot create counter heap: {0}")]
+    CannotCreateCounterHeap(String),
+    #[error("Cannot resolve counter heap")]
+    CannotResolveCounterHeap,
     #[error("Cannot create command buffer")]
     CannotCreateCommandBuffer,
     #[error("Cannot create argument table: {0}")]

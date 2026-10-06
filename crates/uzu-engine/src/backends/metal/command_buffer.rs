@@ -1,14 +1,15 @@
 use std::{
     range::Range,
     sync::{Arc, mpsc},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandBufferExt,
     MTL4CommandEncoder, MTL4CommandEncoderExt, MTL4CommandQueue, MTL4CommandQueueExt, MTL4CommitFeedback,
     MTL4CommitFeedbackExt, MTL4CommitFeedbackHandler, MTL4CommitOptions, MTL4ComputeCommandEncoder,
-    MTL4ComputeCommandEncoderExt, MTL4VisibilityOptions, MTLDeviceExt, MTLStages,
+    MTL4ComputeCommandEncoderExt, MTL4CounterHeap, MTL4CounterHeapDescriptor, MTL4CounterHeapExt, MTL4CounterHeapType,
+    MTL4TimestampGranularity, MTL4VisibilityOptions, MTLDevice, MTLDeviceExt, MTLStages,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeSet;
@@ -20,6 +21,8 @@ use crate::backends::{
     },
     metal::{Metal, MetalContext, buffer::MetalBufferExt, error::MetalError},
 };
+
+const COUNTER_HEAP_CAPACITY: usize = 4096;
 
 pub struct MetalCommandBuffer;
 
@@ -38,6 +41,7 @@ pub(super) struct Access {
 }
 
 pub struct MetalCommandBufferEncoding {
+    pub(super) context: Arc<MetalContext>,
     command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
     command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
     pub(super) compute_encoder: Retained<ProtocolObject<dyn MTL4ComputeCommandEncoder>>,
@@ -46,7 +50,9 @@ pub struct MetalCommandBufferEncoding {
     writes: RangeSet<u64>,
     constant_allocator: Option<BumpAllocator<<Metal as Backend>::GlobalBuffer>>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
-    pub(super) context: Arc<MetalContext>,
+    counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
+    timestamp_names: Option<Vec<String>>,
+    end_timestamp_slot: Option<usize>,
 }
 
 impl MetalCommandBufferEncoding {
@@ -55,15 +61,21 @@ impl MetalCommandBufferEncoding {
         name: Option<&str>,
         allocation_pool: Option<Arc<<Metal as Backend>::AllocationPool>>,
     ) -> Result<Self, MetalError> {
-        let (command_allocator, command_buffer) = if let mut command_buffer_cache = context.command_buffer_cache.lock()
+        let (command_allocator, command_buffer, counter_heaps) = if let mut command_buffer_cache =
+            context.command_buffer_cache.lock()
             && let Some(command_buffer_cached) = command_buffer_cache.pop()
         {
             command_buffer_cached.command_allocator.reset();
-            (command_buffer_cached.command_allocator, command_buffer_cached.command_buffer)
+            (
+                command_buffer_cached.command_allocator,
+                command_buffer_cached.command_buffer,
+                command_buffer_cached.counter_heaps,
+            )
         } else {
             (
                 context.device.new_command_allocator().ok_or(MetalError::CannotCreateCommandBuffer)?,
                 context.device.new_mtl4_command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
+                Vec::new(),
             )
         };
 
@@ -101,6 +113,9 @@ impl MetalCommandBufferEncoding {
             constant_allocator: Some(constant_allocator),
             allocation_pool,
             context,
+            counter_heaps,
+            timestamp_names: None,
+            end_timestamp_slot: None,
         })
     }
 
@@ -128,6 +143,24 @@ impl MetalCommandBufferEncoding {
                 self.reads.insert(access.range.into());
             }
         }
+    }
+
+    fn reserve_counter_heap(
+        &mut self,
+        slot: usize,
+    ) -> Result<(), MetalError> {
+        if slot / COUNTER_HEAP_CAPACITY == self.counter_heaps.len() {
+            let descriptor = MTL4CounterHeapDescriptor::new();
+            descriptor.set_type(MTL4CounterHeapType::TIMESTAMP);
+            descriptor.set_count(COUNTER_HEAP_CAPACITY);
+            self.counter_heaps.push(
+                self.context
+                    .device
+                    .new_counter_heap_with_descriptor(&descriptor)
+                    .map_err(|error| MetalError::CannotCreateCounterHeap(error.to_string()))?,
+            );
+        }
+        Ok(())
     }
 }
 
@@ -213,9 +246,38 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         self.compute_encoder.pop_debug_group();
     }
 
+    fn enable_timestamps(&mut self) -> Result<(), MetalError> {
+        assert!(self.timestamp_names.is_none(), "timing already enabled");
+        self.reserve_counter_heap(0)?;
+        self.timestamp_names = Some(Vec::new());
+        Ok(())
+    }
+
+    fn sample_timestamp(
+        &mut self,
+        name: &String,
+    ) {
+        let Some(slot) = self.timestamp_names.as_ref().map(Vec::len) else {
+            return;
+        };
+        self.reserve_counter_heap(slot).expect("Failed to create a counter heap");
+        self.compute_encoder.write_timestamp_with_granularity_into_heap_at_index(
+            MTL4TimestampGranularity::PRECISE,
+            &self.counter_heaps[slot / COUNTER_HEAP_CAPACITY],
+            slot % COUNTER_HEAP_CAPACITY,
+        );
+        self.timestamp_names.as_mut().unwrap().push(name.clone());
+    }
+
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
         let constant_allocator = self.constant_allocator.take().unwrap();
         assert!(constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
+
+        let timestamp_names = self.timestamp_names.take();
+        if let Some(names) = &timestamp_names {
+            self.reserve_counter_heap(names.len()).expect("Failed to create a counter heap");
+            self.end_timestamp_slot = Some(names.len());
+        }
 
         MetalCommandBufferExecutable {
             command_allocator: self.command_allocator.clone(),
@@ -223,6 +285,8 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
             constant_allocator,
             allocation_pool: self.allocation_pool.clone(),
             context: self.context.clone(),
+            counter_heaps: self.counter_heaps.clone(),
+            timestamp_names,
         }
     }
 }
@@ -235,6 +299,12 @@ impl Drop for MetalCommandBufferEncoding {
             MTL4VisibilityOptions::Device,
         );
         self.compute_encoder.end_encoding();
+        if let Some(slot) = self.end_timestamp_slot {
+            self.command_buffer.write_timestamp_into_heap_at_index(
+                &self.counter_heaps[slot / COUNTER_HEAP_CAPACITY],
+                slot % COUNTER_HEAP_CAPACITY,
+            );
+        }
         self.command_buffer.end_command_buffer();
     }
 }
@@ -245,6 +315,8 @@ pub struct MetalCommandBufferExecutable {
     constant_allocator: BumpAllocator<<Metal as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     context: Arc<MetalContext>,
+    counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
+    timestamp_names: Option<Vec<String>>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
@@ -266,19 +338,29 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         let command_allocator = self.command_allocator.clone();
         let command_buffer = self.command_buffer.clone();
         let context_clone = self.context.clone();
+        let counter_heaps = self.counter_heaps;
+        let timestamp_count = self.timestamp_names.as_ref().map_or(0, |names| names.len() + 1);
 
         let constant_allocator = self.constant_allocator;
         let allocation_pool = self.allocation_pool.clone();
         let feedback_handler = move |feedback: &ProtocolObject<dyn MTL4CommitFeedback>| {
             let message = if let Some(error) = feedback.error() {
-                Err(error.to_string())
+                Err(MetalError::CommandBufferExecution(error.to_string()))
             } else {
-                Ok(Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()))
+                resolve_timestamps(&context_clone.device, &counter_heaps, timestamp_count).map(|timestamps| {
+                    (Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()), timestamps)
+                })
             };
+            let resolved = message.is_ok();
             let _ = sender.send(message);
             context_clone.command_buffer_cache.lock().push(MetalCommandBufferCache {
                 command_allocator: command_allocator.clone(),
                 command_buffer: command_buffer.clone(),
+                counter_heaps: if resolved {
+                    counter_heaps.clone()
+                } else {
+                    Vec::new()
+                },
             });
             let _keep_alive = (&constant_allocator, &allocation_pool);
         };
@@ -289,26 +371,61 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 
         MetalCommandBufferPending {
             allocation_pool: self.allocation_pool,
+            timestamp_names: self.timestamp_names,
             receiver,
         }
     }
 }
 
+fn resolve_timestamps(
+    device: &ProtocolObject<dyn MTLDevice>,
+    counter_heaps: &[Retained<ProtocolObject<dyn MTL4CounterHeap>>],
+    count: usize,
+) -> Result<Vec<Instant>, MetalError> {
+    let mut ticks = Vec::with_capacity(count);
+    for (index, counter_heap) in counter_heaps.iter().enumerate().take(count.div_ceil(COUNTER_HEAP_CAPACITY)) {
+        let slots = 0..(count - index * COUNTER_HEAP_CAPACITY).min(COUNTER_HEAP_CAPACITY);
+        let bytes = counter_heap.resolve_counter_range(slots.clone()).ok_or(MetalError::CannotResolveCounterHeap)?;
+        counter_heap.invalidate_counter_range(slots);
+        let (entries, _) = bytes.as_chunks::<{ size_of::<u64>() }>();
+        ticks.extend(entries.iter().map(|entry| u64::from_ne_bytes(*entry)));
+    }
+    let frequency = device.query_timestamp_frequency() as u128;
+    let (mut cpu_now, mut gpu_now) = (0, 0);
+    let now = Instant::now();
+    device.sample_timestamps_gpu_timestamp(&mut cpu_now, &mut gpu_now);
+    let mut next = None;
+    let mut timestamps = ticks
+        .iter()
+        .rev()
+        .map(|&ticks| {
+            if ticks != 0 {
+                let nanoseconds = (ticks as u128 * 1_000_000_000 / frequency) as u64;
+                next = Some(now - Duration::from_nanos(gpu_now - nanoseconds));
+            }
+            next.ok_or(MetalError::CannotResolveCounterHeap)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    timestamps.reverse();
+    Ok(timestamps)
+}
+
 pub struct MetalCommandBufferPending {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
-    receiver: mpsc::Receiver<Result<Duration, String>>,
+    timestamp_names: Option<Vec<String>>,
+    receiver: mpsc::Receiver<Result<(Duration, Vec<Instant>), MetalError>>,
 }
 
 impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
 
     fn wait_until_completed(self) -> Result<MetalCommandBufferCompleted, MetalError> {
+        let (gpu_execution_time, timestamps) = self.receiver.recv().map_err(MetalError::CommandBufferWait)??;
         Ok(MetalCommandBufferCompleted {
-            gpu_execution_time: self
-                .receiver
-                .recv()
-                .map_err(MetalError::CommandBufferWait)?
-                .map_err(MetalError::CommandBufferExecution)?,
+            gpu_execution_time,
+            timestamps: self
+                .timestamp_names
+                .map_or_else(Box::default, |names| names.into_iter().zip(timestamps).collect()),
             _allocation_pool: self.allocation_pool,
         })
     }
@@ -316,6 +433,7 @@ impl CommandBufferPending for MetalCommandBufferPending {
 
 pub struct MetalCommandBufferCompleted {
     gpu_execution_time: Duration,
+    timestamps: Box<[(String, Instant)]>,
     _allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
 }
 
@@ -325,9 +443,14 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
     fn gpu_execution_time(&self) -> Duration {
         self.gpu_execution_time
     }
+
+    fn timestamps(&self) -> &[(String, Instant)] {
+        &self.timestamps
+    }
 }
 
 pub struct MetalCommandBufferCache {
     command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
     command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
+    counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
 }

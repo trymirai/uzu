@@ -1,4 +1,7 @@
-use std::{mem::size_of_val, time::Duration};
+use std::{
+    mem::size_of_val,
+    time::{Duration, Instant},
+};
 
 use bytemuck::{AnyBitPattern, NoUninit};
 
@@ -80,6 +83,14 @@ pub trait CommandBufferEncoding {
 
     fn pop_debug_group(&mut self);
 
+    fn enable_timestamps(&mut self) -> Result<(), <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error>;
+
+    #[allow(clippy::ptr_arg)]
+    fn sample_timestamp(
+        &mut self,
+        name: &String,
+    );
+
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
 
@@ -104,4 +115,10 @@ pub trait CommandBufferCompleted: Send {
     type CommandBuffer: CommandBuffer<Completed = Self>;
 
     fn gpu_execution_time(&self) -> Duration;
+
+    fn timestamps(&self) -> &[(String, Instant)];
 }
+
+#[cfg(test)]
+#[path = "../../../unit/backends/common/command_buffer_test.rs"]
+mod tests;

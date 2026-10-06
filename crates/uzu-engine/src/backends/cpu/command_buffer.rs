@@ -3,6 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use parking_lot::Mutex;
+
 use crate::{
     backends::{
         common::{
@@ -35,6 +37,8 @@ pub struct CpuCommandBufferEncoding {
     constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
+    timestamp_names: Option<Vec<String>>,
+    timestamps: Arc<Mutex<Vec<Instant>>>,
 }
 
 impl CpuCommandBufferEncoding {
@@ -48,6 +52,8 @@ impl CpuCommandBufferEncoding {
             constant_allocator,
             allocation_pool,
             context,
+            timestamp_names: None,
+            timestamps: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -118,6 +124,24 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn pop_debug_group(&mut self) {}
 
+    fn enable_timestamps(&mut self) -> Result<(), CpuError> {
+        assert!(self.timestamp_names.is_none(), "timing already enabled");
+        self.timestamp_names = Some(Vec::new());
+        Ok(())
+    }
+
+    fn sample_timestamp(
+        &mut self,
+        name: &String,
+    ) {
+        let Some(names) = &mut self.timestamp_names else {
+            return;
+        };
+        names.push(name.clone());
+        let timestamps = self.timestamps.clone();
+        self.push_command(move || timestamps.lock().push(Instant::now()));
+    }
+
     fn end_encoding(self) -> CpuCommandBufferExecutable {
         assert!(self.constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
         CpuCommandBufferExecutable {
@@ -125,6 +149,8 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
             constant_allocator: self.constant_allocator,
             allocation_pool: self.allocation_pool,
             context: self.context,
+            timestamp_names: self.timestamp_names,
+            timestamps: self.timestamps,
         }
     }
 }
@@ -134,6 +160,8 @@ pub struct CpuCommandBufferExecutable {
     constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
+    timestamp_names: Option<Vec<String>>,
+    timestamps: Arc<Mutex<Vec<Instant>>>,
 }
 
 impl CommandBufferExecutable for CpuCommandBufferExecutable {
@@ -156,6 +184,9 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
 
                 let completed = CpuCommandBufferCompleted {
                     gpu_execution_time,
+                    timestamps: self.timestamp_names.map_or_else(Box::default, |names| {
+                        names.into_iter().zip(self.timestamps.lock().iter().copied()).collect()
+                    }),
                     _allocation_pool: self.allocation_pool,
                 };
 
@@ -186,6 +217,7 @@ impl CommandBufferPending for CpuCommandBufferPending {
 
 pub struct CpuCommandBufferCompleted {
     gpu_execution_time: Duration,
+    timestamps: Box<[(String, Instant)]>,
     _allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
 }
 
@@ -194,5 +226,9 @@ impl CommandBufferCompleted for CpuCommandBufferCompleted {
 
     fn gpu_execution_time(&self) -> Duration {
         self.gpu_execution_time
+    }
+
+    fn timestamps(&self) -> &[(String, Instant)] {
+        &self.timestamps
     }
 }
