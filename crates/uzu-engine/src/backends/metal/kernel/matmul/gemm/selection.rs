@@ -127,7 +127,18 @@ impl GemmProblem {
             align = align.max(2_u32.saturating_mul(group_size));
         }
         let align = align.max(ACTIVATION_SCALE_GROUP_SIZE).max(group_size);
-        let target_tiles = policy::split_k_target_tiles(!shape.a_full_precision, tiling, shape.b_bits);
+        let is_small_group_symmetric =
+            matches!(shape.b_group_size, Some(32 | 64)) && shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant;
+        let target_tiles = if engine == GemmEngine::Mxu
+            && !shape.a_full_precision
+            && tiling == GemmTiling::Tile32x64x256_Simdgroups2x2
+            && shape.b_bits == Some(8)
+            && is_small_group_symmetric
+        {
+            256
+        } else {
+            policy::split_k_target_tiles(!shape.a_full_precision, tiling, shape.b_bits)
+        };
         let mut split_k = (target_tiles / base_tiles).max(1).min((shape.k / align).max(1));
         if !shape.a_full_precision && engine == GemmEngine::Mxu && tiling.block_k() != 0 {
             split_k = split_k.min((shape.k / tiling.block_k()).max(1));
@@ -221,7 +232,20 @@ fn select_tiling(
 }
 
 fn select_mxu_quant_tiling(shape: MatmulShape) -> GemmTiling {
-    let tiling = policy::mxu_mn_tile(!shape.a_full_precision, shape.m, shape.n);
+    let is_w8_group64 = shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant
+        && shape.b_bits == Some(8)
+        && shape.b_group_size == Some(64);
+    let is_w4_group32 = shape.b_prologue == GemmBPrologueKind::ScaleZeroPointDequant
+        && shape.b_bits == Some(4)
+        && shape.b_group_size == Some(32);
+    let is_deep_quantized = !shape.a_full_precision && shape.m >= 512 && shape.n >= 128 && shape.k / 2 >= shape.n;
+    let tiling = if is_deep_quantized && is_w4_group32 {
+        GemmTiling::Tile32x64x256_Simdgroups2x2
+    } else if is_deep_quantized && is_w8_group64 {
+        policy::MXU_DEFAULT_TILE
+    } else {
+        policy::mxu_mn_tile(!shape.a_full_precision, shape.m, shape.n)
+    };
     if tiling.fits_quant_group_size(shape.b_group_size.unwrap_or(0)) {
         tiling
     } else {

@@ -5,10 +5,12 @@
 using namespace metal;
 using namespace uzu::gemm;
 
-template <typename T>
+template <typename Input, typename T>
+VARIANTS(Input, float, half, bfloat)
 VARIANTS(T, float, half, bfloat)
+CONSTRAINT(Input == "float" || Input == T)
 KERNEL(GemmSplitKReduce)(
-    const device T* partial_sums,
+    const device Input* partial_sums,
     device T* output,
     const device T* output_bias
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
@@ -36,7 +38,7 @@ KERNEL(GemmSplitKReduce)(
   }
 
   device vec<T, 4>* output_vectors = reinterpret_cast<device vec<T, 4>*>(output);
-  const device vec<T, 4>* partial_sum_vectors = reinterpret_cast<const device vec<T, 4>*>(partial_sums);
+  const device vec<Input, 4>* partial_sum_vectors = reinterpret_cast<const device vec<Input, 4>*>(partial_sums);
 
   float4 accumulator = float4(0.0f);
   for (uint partition = 0u; partition < partition_count; ++partition) {

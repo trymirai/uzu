@@ -127,20 +127,27 @@ METAL_FUNC static void fragment_matmul(
   constexpr ushort output_col_count = pair_output_rows ? 1 : cols;
   constexpr ushort output_col_step = pair_output_rows ? 1 : 2;
 
+  constexpr bool interleave_rows = INTERLEAVE_INTEGER_ROWS && OUTPUT_MODE == MatmulMode::multiply_accumulate &&
+                                   rows == 2 && cols == 2 && depth == 2 &&
+                                   metal::is_same_v<typename OutputFragment::ElementType, int> &&
+                                   metal::is_same_v<typename LeftFragment::ElementType, int8_t> &&
+                                   metal::is_same_v<typename RightFragment::ElementType, int8_t>;
+
   METAL_PRAGMA_UNROLL
-  for (ushort row = 0; row < rows; row += output_row_step) {
+  for (ushort outer_index = 0; outer_index < (interleave_rows ? depth : rows); outer_index += output_row_step) {
     METAL_PRAGMA_UNROLL
     for (ushort col = 0; col < output_col_count; col += output_col_step) {
       if constexpr (OUTPUT_MODE == MatmulMode::multiply) {
-        matmul_paired_outputs(row, col, 0, uzu::integral_constant<MatmulMode, MatmulMode::multiply>{});
+        matmul_paired_outputs(outer_index, col, 0, uzu::integral_constant<MatmulMode, MatmulMode::multiply>{});
       }
       METAL_PRAGMA_UNROLL
-      for (ushort depth_index = OUTPUT_MODE == MatmulMode::multiply_accumulate ? 0 : 1; depth_index < depth;
-           ++depth_index) {
+      for (ushort inner_index = OUTPUT_MODE == MatmulMode::multiply_accumulate ? 0 : 1;
+           inner_index < (interleave_rows ? rows : depth);
+           ++inner_index) {
         matmul_paired_outputs(
-            row,
+            interleave_rows ? inner_index : outer_index,
             col,
-            depth_index,
+            interleave_rows ? outer_index : inner_index,
             uzu::integral_constant<MatmulMode, MatmulMode::multiply_accumulate>{}
         );
       }

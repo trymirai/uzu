@@ -61,7 +61,11 @@ struct MetadataContext {
 template <typename LeftOperand, typename RightOperand>
 struct IntegerSchedule {
   UZU_CONST uint RIGHT_GROUP_SIZE = uint(RightOperand::GROUP_SIZE);
-  UZU_CONST bool HAS_ZERO_POINTS = RightOperand::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant;
+  UZU_CONST bool CENTER_RIGHT_ZERO_POINTS = LeftOperand::BITS == 8 && RightOperand::BITS == 4 &&
+                                            (RIGHT_GROUP_SIZE == 32 || RIGHT_GROUP_SIZE == 64) &&
+                                            RightOperand::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant;
+  UZU_CONST bool HAS_ZERO_POINTS =
+      RightOperand::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant && !CENTER_RIGHT_ZERO_POINTS;
   UZU_CONST bool HAS_BIAS = RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant;
   UZU_CONST uchar RIGHT_CODE_OFFSET = uchar(RightOperand::CODE_ORIGIN);
 
@@ -200,12 +204,63 @@ struct IntegerSchedule {
   template <typename Core>
   using GroupProducts = uzu::matmul::Fragment<int, Core::TILES_M, Core::TILES_N, typename Core::FragmentOps>;
 
+  template <typename Core>
+  static METAL_FUNC GroupProducts<Core> multiply_device_group(
+      const typename Core::LeftStorage left,
+      const typename Core::RightStorage right,
+      const constant uzu::matmul::GemmParams* params,
+      const TileContext tile,
+      const uint k_offset
+  ) {
+    using Ops = typename Core::FragmentOps;
+    constexpr auto descriptor = mpp::tensor_ops::matmul2d_descriptor(
+        Core::SIMDGROUP_BLOCK_M,
+        Core::SIMDGROUP_BLOCK_N,
+        RIGHT_GROUP_SIZE,
+        false,
+        true,
+        true,
+        mpp::tensor_ops::matmul2d_descriptor::mode::multiply
+    );
+    mpp::tensor_ops::matmul2d<descriptor, metal::execution_simdgroup> op;
+    const device int8_t* right_origin = reinterpret_cast<const device int8_t*>(right.codes) +
+                                        size_t(tile.absolute_column_base()) * params->K + k_offset;
+    auto right_tensor = tensor(
+        const_cast<device int8_t*>(right_origin),
+        extents<int, RIGHT_GROUP_SIZE, Core::SIMDGROUP_BLOCK_N>{},
+        array<int, 2>{1, int(params->K)}
+    );
+    auto cooperative_right = op.template get_right_input_cooperative_tensor<int8_t, int8_t, int>();
+    cooperative_right.load(right_tensor);
+    const device int8_t* left_origin = left.codes + size_t(tile.abs_row_base) * params->leading_dimension_a + k_offset;
+    auto left_tensor = tensor(
+        const_cast<device int8_t*>(left_origin),
+        extents<int, RIGHT_GROUP_SIZE, Core::SIMDGROUP_BLOCK_M>{},
+        array<int, 2>{1, int(params->leading_dimension_a)}
+    );
+    auto destination =
+        op.template get_destination_cooperative_tensor<decltype(left_tensor), decltype(cooperative_right), int>();
+    op.run(left_tensor, cooperative_right, destination);
+    GroupProducts<Core> product;
+    for_each_static_index<int(Core::TILES_M) * int(Core::TILES_N) * int(Ops::ELEMENTS_PER_THREAD)>(
+        [&](const ushort element) { product.elements()[element] = destination[element]; }
+    );
+    return product;
+  }
+
   template <typename Core, typename LeftCodes, typename RightCodes>
   static METAL_FUNC GroupProducts<Core> multiply_group(thread LeftCodes& left_codes, thread RightCodes& right_codes) {
     constexpr int chunks_per_group = int(RIGHT_GROUP_SIZE) / int(Core::SIMDGROUP_BLOCK_K);
-    constexpr bool PREFETCH_INT4_CHUNKS = Core::TILES_M == 1 && chunks_per_group > 1 && RightOperand::BITS == 4;
+    constexpr bool PREFETCH_INT4_CHUNKS =
+        (Core::TILES_M == 1 || (Core::TILES_M == 2 && Core::TILES_N == 2 && CENTER_RIGHT_ZERO_POINTS)) &&
+        chunks_per_group > 1 && RightOperand::BITS == 4;
+    constexpr bool FIRST_CHUNK_MULTIPLY = RightOperand::BITS == 8 && RIGHT_GROUP_SIZE == 64 &&
+                                          RightOperand::SCHEME == GemmBPrologueKind::ScaleSymmetricDequant &&
+                                          Core::TILING == GemmTiling::Tile32x64x256_Simdgroups2x2;
     GroupProducts<Core> group_product;
-    group_product.clear();
+    if constexpr (!FIRST_CHUNK_MULTIPLY) {
+      group_product.clear();
+    }
     if constexpr (PREFETCH_INT4_CHUNKS) {
       typename RightCodes::PackedChunk packed_chunks[chunks_per_group];
       for_each_static_index<chunks_per_group>([&](const ushort chunk) {
@@ -218,9 +273,30 @@ struct IntegerSchedule {
         left_codes.advance();
         right_codes.advance();
       });
+    } else if constexpr (
+        RightOperand::BITS == 8 && RIGHT_GROUP_SIZE == 64 &&
+        RightOperand::SCHEME == GemmBPrologueKind::ScaleSymmetricDequant && Core::TILES_M == 2 && Core::TILES_N == 2
+    ) {
+      decltype(right_codes.load(0u)) right_tiles[chunks_per_group];
+      for_each_static_index<chunks_per_group>([&](const ushort chunk) {
+        right_tiles[chunk] = right_codes.load(uint(chunk));
+        right_codes.advance();
+      });
+      for_each_static_index<chunks_per_group>([&](const ushort chunk) {
+        auto left_tile = left_codes.load(uint(chunk));
+        uzu::matmul::fragment_mma(group_product, left_tile, right_tiles[chunk]);
+        left_codes.advance();
+      });
     } else {
+      if constexpr (FIRST_CHUNK_MULTIPLY) {
+        auto first_left = left_codes.load(0u);
+        auto first_right = right_codes.load(0u);
+        uzu::matmul::fragment_mm(group_product, first_left, first_right);
+        left_codes.advance();
+        right_codes.advance();
+      }
       METAL_PRAGMA_NO_UNROLL
-      for (int chunk = 0; chunk < chunks_per_group; ++chunk) {
+      for (int chunk = FIRST_CHUNK_MULTIPLY ? 1 : 0; chunk < chunks_per_group; ++chunk) {
         auto left_tile = left_codes.load(uint(chunk));
         auto right_tile = right_codes.load(uint(chunk));
         uzu::matmul::fragment_mma(group_product, left_tile, right_tile);
@@ -275,7 +351,7 @@ struct IntegerSchedule {
       threadgroup typename Core::RightElementType*,
       const constant uzu::matmul::GemmParams* params,
       const TileContext tile,
-      const GemmAlignment,
+      const GemmAlignment alignment,
       const thread ThreadContext& thread_context
   ) {
     static_assert(LeftOperand::QUANTIZED && RightOperand::QUANTIZED, "integer schedule requires quantized operands");
@@ -284,10 +360,17 @@ struct IntegerSchedule {
         LeftOperand::GROUP_SIZE % RightOperand::GROUP_SIZE == 0,
         "the left group must hold a whole number of right groups"
     );
+    if constexpr (!ALIGNED_M || !ALIGNED_N) {
+      if (tile.simdgroup_limit_m <= 0 || tile.simdgroup_limit_n <= 0) {
+        typename Core::AccumFragment empty;
+        empty.clear();
+        return empty;
+      }
+    }
 
     constexpr bool HOIST_OPERAND_ADDRESSING =
-        !(RightOperand::SCHEME == GemmBPrologueKind::ScaleSymmetricDequant &&
-          Core::TILING == GemmTiling::Tile128x128x256_Simdgroups4x4);
+        RightOperand::BITS == 8 || !(RightOperand::SCHEME == GemmBPrologueKind::ScaleSymmetricDequant &&
+                                     Core::TILING == GemmTiling::Tile128x128x256_Simdgroups4x4);
 
     auto left_codes = quantized::make_left_cursor<HOIST_OPERAND_ADDRESSING, Core, LeftOperand, ALIGNED_M>(
         left_storage,
@@ -321,15 +404,47 @@ struct IntegerSchedule {
     accumulator.clear();
 
     const int right_group_count = int(params->aligned_inner_iterations);
+    const bool prefetch_metadata = RightOperand::BITS == 8 && RIGHT_GROUP_SIZE == 64 &&
+                                   RightOperand::SCHEME == GemmBPrologueKind::ScaleSymmetricDequant &&
+                                   (Core::TILING == GemmTiling::Tile64x64x256_Simdgroups2x2 ||
+                                    Core::TILING == GemmTiling::Tile128x128x256_Simdgroups4x4) &&
+                                   alignment.contains(GemmAlignment::M) && alignment.contains(GemmAlignment::N);
     METAL_PRAGMA_NO_UNROLL
     for (int right_group_index = 0; right_group_index < right_group_count; ++right_group_index) {
       const uint absolute_right_group = first_right_group + uint(right_group_index);
       const uint right_group_offset = uint(right_group_index * int(RIGHT_GROUP_SIZE));
       left_codes.begin_k_group(right_group_offset);
       right_codes.begin_k_group(right_group_offset);
-      auto group_product = multiply_group<Core>(left_codes, right_codes);
-      left_metadata.load(left_storage, metadata_context, tile.k_offset + right_group_offset);
-      right_metadata.load(right_storage, metadata_context, absolute_right_group);
+      if (prefetch_metadata) {
+        left_metadata.load(left_storage, metadata_context, tile.k_offset + right_group_offset);
+        right_metadata.load(right_storage, metadata_context, absolute_right_group);
+      }
+      GroupProducts<Core> group_product;
+      if constexpr (
+          RightOperand::BITS == 8 && RightOperand::SCHEME == GemmBPrologueKind::ScaleSymmetricDequant &&
+          (RIGHT_GROUP_SIZE == 32 || RIGHT_GROUP_SIZE == 64) &&
+          (Core::TILING == GemmTiling::Tile128x128x256_Simdgroups4x4 ||
+           Core::TILING == GemmTiling::Tile64x64x256_Simdgroups2x2)
+      ) {
+        if (RIGHT_GROUP_SIZE == 32 ? (ALIGNED_M && ALIGNED_N)
+                                   : (alignment.contains(GemmAlignment::M) && alignment.contains(GemmAlignment::N))) {
+          group_product = multiply_device_group<Core>(
+              left_storage,
+              right_storage,
+              params,
+              tile,
+              tile.k_offset + right_group_offset
+          );
+        } else {
+          group_product = multiply_group<Core>(left_codes, right_codes);
+        }
+      } else {
+        group_product = multiply_group<Core>(left_codes, right_codes);
+      }
+      if (!prefetch_metadata) {
+        left_metadata.load(left_storage, metadata_context, tile.k_offset + right_group_offset);
+        right_metadata.load(right_storage, metadata_context, absolute_right_group);
+      }
       accumulate_group<Core, ALIGNED_M, ALIGNED_N>(accumulator, group_product, left_metadata, right_metadata);
     }
 

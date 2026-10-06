@@ -54,11 +54,27 @@ load_int8_tile(const device int8_t* src, const int row_stride, const short simdg
       }
     });
   } else {
-    auto source = uzu::matmul::fragment_source(src, row_stride);
-    if constexpr (!ALIGNED) {
-      source = source.bounded(simdgroup_limit, Fragment::COL_FRAGMENTS * Fragment::FragmentOpsType::FRAGMENT_ROWS);
-    }
-    tile.load_from(simd_lane_id, source);
+    using Ops = typename Fragment::FragmentOpsType;
+    static_assert(
+        Ops::THREAD_ELEMENT_COLS == 4 && sizeof(packed_char4) == 4 && alignof(packed_char4) == 1,
+        "INT8 fragments require four-byte, byte-aligned loads"
+    );
+    const short2 position = Ops::get_position(simd_lane_id);
+    const device int8_t* base = src + int(position.y) * row_stride + int(position.x);
+    const short row_limit = simdgroup_limit - position.y;
+    for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
+      METAL_PRAGMA_UNROLL
+      for (ushort fragment_column = 0; fragment_column < Fragment::COL_FRAGMENTS; ++fragment_column) {
+        char4 codes(0);
+        if (ALIGNED || row_offset < row_limit) {
+          codes = *reinterpret_cast<const device packed_char4*>(
+              base + int(row_offset) * row_stride + int(fragment_column) * Ops::FRAGMENT_COLS
+          );
+        }
+        reinterpret_cast<thread uint*>(&tile.fragment_at(fragment_row, fragment_column))[row_slot] =
+            as_type<uint>(codes);
+      }
+    });
   }
   return tile;
 }
@@ -100,7 +116,12 @@ struct Int8Cursor {
   }
 };
 
-template <typename Fragment, bool ALIGNED, ushort CODE_ORIGIN>
+template <
+    typename Fragment,
+    bool ALIGNED,
+    ushort CODE_ORIGIN,
+    ushort ZERO_POINT_GROUP_SIZE = 0,
+    bool PREFETCH_ZERO_POINTS = false>
 struct W4Cursor {
   using Ops = typename Fragment::FragmentOpsType;
   UZU_CONST short BLOCK_K = short(Fragment::COL_FRAGMENTS * Ops::FRAGMENT_ROWS);
@@ -121,6 +142,9 @@ struct W4Cursor {
   short tile_row_limit;
   short2 position;
   bool signed_codes;
+  const device uint8_t* zero_points = nullptr;
+  uint zero_point_group_stride_bytes = 0;
+  static_assert(ZERO_POINT_GROUP_SIZE == 0 || CODE_ORIGIN == 0, "zero-point centering requires unsigned codes");
 
   METAL_FUNC PackedChunk fetch(const uint chunk_index) const thread {
     // Padding decodes to zero after the optional sign flip and code-origin adjustment.
@@ -141,12 +165,33 @@ struct W4Cursor {
 
   METAL_FUNC Fragment decode(const thread PackedChunk& packed_chunk) const thread {
     Fragment tile;
-    for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short) {
+    uint4 zero_point_words(0u);
+    if constexpr (ZERO_POINT_GROUP_SIZE == 32 && ALIGNED && PREFETCH_ZERO_POINTS) {
+      static_assert(Fragment::ROW_FRAGMENTS * Ops::FRAGMENT_ROWS == 32, "zero-point block must cover 32 columns");
+      METAL_PRAGMA_UNROLL
+      for (ushort word = 0; word < 4; ++word) {
+        zero_point_words[word] = as_type<uint>(*reinterpret_cast<const device packed_uchar4*>(zero_points + 4u * word));
+      }
+    }
+    for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
       const uint word =
           packed_chunk.words[PackedChunk::word_index(fragment_row, row_slot)] ^ (signed_codes ? W4_SIGN_MASK : 0u);
       uint low = word & W4_NIBBLE_MASK;
       uint high = (word >> W4_BITS) & W4_NIBBLE_MASK;
-      if constexpr (CODE_ORIGIN != 0) {
+      if constexpr (ZERO_POINT_GROUP_SIZE != 0) {
+        const uint column = uint(position.y + row_offset);
+        uint zero_point = 0;
+        if constexpr (ZERO_POINT_GROUP_SIZE == 32 && ALIGNED && PREFETCH_ZERO_POINTS) {
+          zero_point = (zero_point_words[column >> 3] >> ((column & 7u) * W4_BITS)) & 15u;
+        } else if (ALIGNED || short(column) < tile_row_limit) {
+          // Hoisting these loads introduces register spills in the M5 fused-RHT specialization.
+          const device volatile uint8_t* group = zero_points;
+          zero_point = (uint(group[column >> 1]) >> ((column & 1u) * W4_BITS)) & 15u;
+        }
+        const uint bias = (128u - zero_point) * 0x01010101u;
+        low = (low + bias) ^ 0x80808080u;
+        high = (high + bias) ^ 0x80808080u;
+      } else if constexpr (CODE_ORIGIN != 0) {
         low = as_type<uint>(as_type<char4>(low) - char4(char(CODE_ORIGIN)));
         high = as_type<uint>(as_type<char4>(high) - char4(char(CODE_ORIGIN)));
       }
@@ -160,7 +205,13 @@ struct W4Cursor {
 
   METAL_FUNC void advance() thread { current += CHUNK_BYTES; }
 
-  METAL_FUNC void begin_k_group(const uint) thread {}
+  METAL_FUNC void begin_k_group(const uint k_offset) thread {
+    if constexpr (ZERO_POINT_GROUP_SIZE != 0) {
+      if (k_offset != 0) {
+        zero_points += zero_point_group_stride_bytes;
+      }
+    }
+  }
 };
 
 template <bool HOIST_OPERAND_ADDRESSING, typename Core, typename LeftOperand, bool ALIGNED>
@@ -188,7 +239,7 @@ static METAL_FUNC auto make_right_cursor(
     const schedules::TileContext tile,
     const thread ThreadContext& thread_context
 ) {
-  using Ops = uzu::matmul::MxuFragmentOps<>;
+  using Ops = typename Core::FragmentOps;
   using Fragment = uzu::matmul::Fragment<int8_t, Core::TILES_N, Core::TILES_K, Ops, uzu::matmul::ReadDirect, true>;
   const int row_stride_bytes =
       int(uint(params->K) * uint(get_bytes_per_pack<Operand::BITS>()) / uint(get_pack_factor<Operand::BITS>()));
@@ -198,12 +249,22 @@ static METAL_FUNC auto make_right_cursor(
 
   if constexpr (Operand::BITS == 4) {
     static_assert(Core::TILES_K == get_pack_factor<Operand::BITS>(), "W4 requires two K fragments");
-    return W4Cursor<Fragment, ALIGNED, Operand::CODE_ORIGIN>{
+    constexpr ushort ZERO_POINT_GROUP_SIZE = Core::Schedule::CENTER_RIGHT_ZERO_POINTS ? Operand::GROUP_SIZE : 0;
+    const device uint8_t* zero_points = nullptr;
+    const uint zero_point_group_stride_bytes = params->zero_point_group_stride / 2;
+    if constexpr (ZERO_POINT_GROUP_SIZE != 0) {
+      zero_points = source.zp() + (tile.k_offset / ZERO_POINT_GROUP_SIZE) * zero_point_group_stride_bytes +
+                    tile.absolute_column_base() / 2;
+    }
+    constexpr bool PREFETCH_ZERO_POINTS = Core::TILING == GemmTiling::Tile128x128x256_Simdgroups4x4;
+    return W4Cursor<Fragment, ALIGNED, Operand::CODE_ORIGIN, ZERO_POINT_GROUP_SIZE, PREFETCH_ZERO_POINTS>{
         current,
         row_stride_bytes,
         tile.simdgroup_limit_n,
         Ops::get_position(thread_context.simd_lane_id),
-        source.signed_codes
+        source.signed_codes,
+        zero_points,
+        zero_point_group_stride_bytes
     };
   } else {
     static_assert(Operand::BITS == 8, "integer tile cursors support 4-bit and 8-bit codes");

@@ -36,7 +36,8 @@ struct MxuMmaCore {
   using RightElementType = typename Right::ElementType;
   using LeftStorage = operands::LeftStorage<Left>;
   using RightStorage = operands::RightStorage<Right>;
-  using FragmentOps = uzu::matmul::MxuFragmentOps<>;
+  using FragmentOps =
+      uzu::matmul::MxuFragmentOps<true, schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS>;
   using Schedule = metal::conditional_t<
       !Left::QUANTIZED,
       metal::conditional_t<!Right::QUANTIZED, schedules::DenseSchedule, schedules::StagedSchedule>,
@@ -101,11 +102,11 @@ struct MxuMmaCore {
                                             tile_row_offset * params->leading_dimension_d + tile_col_offset;
 
     const short simdgroup_limit_m =
-        alignment.contains(GemmAlignment::M)
+        !Left::QUANTIZED && alignment.contains(GemmAlignment::M)
             ? SIMDGROUP_BLOCK_M
             : short(min(int(SIMDGROUP_BLOCK_M), int(params->M) - int(geometry.block_row_start + tile_row_offset)));
     const short simdgroup_limit_n =
-        alignment.contains(GemmAlignment::N)
+        !Left::QUANTIZED && alignment.contains(GemmAlignment::N)
             ? SIMDGROUP_BLOCK_N
             : short(min(int(SIMDGROUP_BLOCK_N), int(params->N) - int(geometry.block_col_start + tile_col_offset)));
 
@@ -127,10 +128,11 @@ struct MxuMmaCore {
     const device RightElementType* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
 
     dispatch_bool(
-        alignment.contains(GemmAlignment::M) || (simdgroup_limit_m == SIMDGROUP_BLOCK_M),
+        (alignment.contains(GemmAlignment::M) || (simdgroup_limit_m == SIMDGROUP_BLOCK_M)) && simdgroup_limit_m > 0,
         [&](auto aligned_m) {
           dispatch_bool(
-              alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
+              (alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N)) &&
+                  simdgroup_limit_n > 0,
               [&](auto aligned_n) {
                 AccumFragment accumulator_tile =
                     Schedule::template launch<MxuMmaCore, aligned_m.value, aligned_n.value>(
@@ -176,7 +178,7 @@ struct MxuMmaCore {
                 if constexpr (aligned_m.value && aligned_n.value) {
                   accumulator_tile.store(thread_context.simd_lane_id, d_simdgroup, int(params->leading_dimension_d));
                 } else {
-                  accumulator_tile.store_safe(
+                  accumulator_tile.template store_safe<aligned_m.value, aligned_n.value>(
                       thread_context.simd_lane_id,
                       d_simdgroup,
                       int(params->leading_dimension_d),
@@ -189,6 +191,29 @@ struct MxuMmaCore {
     );
 
     if (output_transform.contains(GemmDTransform::RHT)) {
+      if constexpr (
+          schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
+          SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE
+      ) {
+        if (alignment.contains(GemmAlignment::M) && alignment.contains(GemmAlignment::N)) {
+          if (simdgroup_limit_m <= 0 || simdgroup_limit_n <= 0) {
+            return;
+          }
+          simdgroup_barrier(mem_flags::mem_device);
+          apply_output_random_hadamard_transform<OutputElementType, RightElementType, true>(
+              d_simdgroup,
+              rht_factors + block_col + tile_col_offset,
+              bias_simdgroup,
+              apply_bias,
+              SIMDGROUP_BLOCK_M,
+              SIMDGROUP_BLOCK_N,
+              params->leading_dimension_d,
+              1,
+              thread_context
+          );
+          return;
+        }
+      }
       // Metal rejects a threadgroup barrier when the threadgroup contains one simdgroup.
       if constexpr (SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN == 1) {
         simdgroup_barrier(mem_flags::mem_device);
