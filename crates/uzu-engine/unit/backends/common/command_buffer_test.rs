@@ -61,15 +61,16 @@ fn encode_blocks<B: Backend>(
     (before, completed, Instant::now())
 }
 
-fn entries<Completed: CommandBufferCompleted>(completed: &Completed) -> Vec<(&'static str, &str, Instant)> {
-    completed
-        .timestamps()
-        .iter()
-        .map(|(entry, timestamp)| match entry {
-            TimestampSampleEntry::Start(name) => ("start", name.as_str(), *timestamp),
-            TimestampSampleEntry::End(name) => ("end", name.as_str(), *timestamp),
-        })
-        .collect()
+fn entries<Completed: CommandBufferCompleted>(completed: &Completed) -> Box<[TimestampSampleEntry]> {
+    completed.timestamps().iter().map(|(entry, _)| entry.clone()).collect()
+}
+
+fn start(name: &str) -> TimestampSampleEntry {
+    TimestampSampleEntry::Start(name.to_string())
+}
+
+fn end(name: &str) -> TimestampSampleEntry {
+    TimestampSampleEntry::End(name.to_string())
 }
 
 #[uzu_test]
@@ -79,36 +80,35 @@ fn timestamp_samples_measure_blocks() {
         let (before, completed, after) =
             encode_blocks::<B>(&context, true, Some("test/outer"), &["test/first", "test/second", "test/third"], 0);
 
-        let entries = entries(&completed);
-        let kinds_and_names = entries.iter().map(|&(kind, name, _)| (kind, name)).collect::<Vec<_>>();
         assert_eq!(
-            kinds_and_names,
+            *entries(&completed),
             [
-                ("start", "test/outer"),
-                ("start", "test/first"),
-                ("end", "test/first"),
-                ("start", "test/second"),
-                ("end", "test/second"),
-                ("start", "test/third"),
-                ("end", "test/third"),
-                ("end", "test/outer"),
+                start("test/outer"),
+                start("test/first"),
+                end("test/first"),
+                start("test/second"),
+                end("test/second"),
+                start("test/third"),
+                end("test/third"),
+                end("test/outer"),
             ],
             "on {}",
             type_name::<B>()
         );
-        for (kind, name, timestamp) in &entries {
+        let timestamps = completed.timestamps();
+        for (entry, timestamp) in timestamps {
             assert!(
                 before <= *timestamp && *timestamp <= after,
-                "{kind} {name} at {timestamp:?} outside {before:?}..{after:?} on {}",
+                "{entry:?} at {timestamp:?} outside {before:?}..{after:?} on {}",
                 type_name::<B>()
             );
         }
-        let time = |index: usize| entries[index].2;
+        let time = |index: usize| timestamps[index].1;
         for (start, end) in [(1, 2), (3, 4), (5, 6)] {
-            assert!(time(start) < time(end), "{entries:?} on {}", type_name::<B>());
+            assert!(time(start) < time(end), "{timestamps:?} on {}", type_name::<B>());
         }
-        assert!(time(2) <= time(3) && time(4) <= time(5), "{entries:?} on {}", type_name::<B>());
-        assert!(time(0) <= time(1) && time(6) <= time(7), "{entries:?} on {}", type_name::<B>());
+        assert!(time(2) <= time(3) && time(4) <= time(5), "{timestamps:?} on {}", type_name::<B>());
+        assert!(time(0) <= time(1) && time(6) <= time(7), "{timestamps:?} on {}", type_name::<B>());
     });
 }
 
@@ -118,9 +118,7 @@ fn timestamp_samples_belong_to_their_command_buffer() {
         let context = create_context::<B>();
         for name in ["test/first command buffer", "test/second command buffer"] {
             let (_, completed, _) = encode_blocks::<B>(&context, true, None, &[name], 0);
-            let kinds_and_names =
-                entries(&completed).into_iter().map(|(kind, name, _)| (kind, name)).collect::<Vec<_>>();
-            assert_eq!(kinds_and_names, [("start", name), ("end", name)], "on {}", type_name::<B>());
+            assert_eq!(*entries(&completed), [start(name), end(name)], "on {}", type_name::<B>());
         }
     });
 }
@@ -140,11 +138,11 @@ fn timestamp_samples_exclude_work_after_the_last_end() {
         let context = create_context::<B>();
         let (_, completed, _) = encode_blocks::<B>(&context, true, None, &["test/block"], 10);
 
-        let [(_, _, start), (_, _, end)] = entries(&completed)[..] else {
+        let [(_, start), (_, end)] = completed.timestamps() else {
             panic!("{:?} on {}", completed.timestamps(), type_name::<B>())
         };
         assert!(start < end, "{start:?} {end:?} on {}", type_name::<B>());
-        let block_time = end.duration_since(start);
+        let block_time = end.duration_since(*start);
         assert!(
             block_time * 3 < completed.gpu_execution_time(),
             "{block_time:?} includes the work after the block ({:?} total) on {}",
