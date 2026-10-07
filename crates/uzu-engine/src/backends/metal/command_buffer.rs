@@ -155,7 +155,8 @@ impl MetalCommandBufferEncoding {
 
     fn sample_timestamp(
         &mut self,
-        entry: TimestampSampleEntry,
+        entry: fn(String) -> TimestampSampleEntry,
+        name: &str,
     ) {
         let Some(slot) = self.timestamp_entries.as_ref().map(Vec::len) else {
             return;
@@ -167,7 +168,7 @@ impl MetalCommandBufferEncoding {
             slot % COUNTER_HEAP_CAPACITY,
         );
         let kernel_before = std::mem::replace(&mut self.kernel_since_timestamp, false);
-        self.timestamp_entries.as_mut().unwrap().push((entry, kernel_before));
+        self.timestamp_entries.as_mut().unwrap().push((entry(name.to_string()), kernel_before));
     }
 
     fn reserve_counter_heap(
@@ -282,14 +283,14 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         &mut self,
         name: &String,
     ) {
-        self.sample_timestamp(TimestampSampleEntry::Start(name.clone()));
+        self.sample_timestamp(TimestampSampleEntry::Start, name);
     }
 
     fn sample_end_timestamp(
         &mut self,
         name: &String,
     ) {
-        self.sample_timestamp(TimestampSampleEntry::End(name.clone()));
+        self.sample_timestamp(TimestampSampleEntry::End, name);
     }
 
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {

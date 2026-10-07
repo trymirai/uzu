@@ -65,11 +65,13 @@ impl CpuCommandBufferEncoding {
 
     fn sample_timestamp(
         &mut self,
-        entry: TimestampSampleEntry,
+        entry: fn(String) -> TimestampSampleEntry,
+        name: &str,
     ) {
         let Some(timestamps) = self.timestamps.clone() else {
             return;
         };
+        let entry = entry(name.to_string());
         self.push_command(move || timestamps.lock().push((entry, Instant::now())));
     }
 }
@@ -143,14 +145,14 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         &mut self,
         name: &String,
     ) {
-        self.sample_timestamp(TimestampSampleEntry::Start(name.clone()));
+        self.sample_timestamp(TimestampSampleEntry::Start, name);
     }
 
     fn sample_end_timestamp(
         &mut self,
         name: &String,
     ) {
-        self.sample_timestamp(TimestampSampleEntry::End(name.clone()));
+        self.sample_timestamp(TimestampSampleEntry::End, name);
     }
 
     fn end_encoding(self) -> CpuCommandBufferExecutable {
