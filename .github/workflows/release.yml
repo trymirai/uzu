@@ -64,6 +64,12 @@ jobs:
           done < <(security list-keychains -d user)
           security list-keychains -d user -s "${existing_keychains[@]}"
 
+          for certificate in DeveloperIDCA.cer DeveloperIDG2CA.cer; do
+            curl -fsSL "https://www.apple.com/certificateauthority/$certificate" \
+              --output "$RUNNER_TEMP/$certificate"
+            security import "$RUNNER_TEMP/$certificate" -k "$KEYCHAIN_PATH"
+          done
+
           security import "$CERT_P12" \
             -k "$KEYCHAIN_PATH" \
             -P "${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}" \
@@ -180,5 +186,6 @@ jobs:
           if [ -f "$RUNNER_TEMP/release-signing.keychain-db" ]; then
             security delete-keychain "$RUNNER_TEMP/release-signing.keychain-db" || cleanup_status=1
           fi
-          rm -f "$RUNNER_TEMP/dev_id_app.p12" || cleanup_status=1
+          rm -f "$RUNNER_TEMP/dev_id_app.p12" \
+            "$RUNNER_TEMP/DeveloperIDCA.cer" "$RUNNER_TEMP/DeveloperIDG2CA.cer" || cleanup_status=1
           exit "$cleanup_status"
