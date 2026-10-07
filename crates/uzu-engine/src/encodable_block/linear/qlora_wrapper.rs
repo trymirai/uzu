@@ -15,7 +15,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearMatmul, LinearMatmulError},
-        weight_matrix::{WeightMatrixError, parse_spec},
+        weight_matrix::WeightMatrixError,
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -78,12 +78,11 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         };
 
         let quantized_tree = weights_tree.subtree("quantized");
-        let parsed = parse_spec::<B>(&quantization_spec)?;
-        let Some(_) = parsed.quantization else {
+        if !matches!(&quantization_spec, AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) {
             return Err(QLoRALinearWrapperError::UnsupportedConfiguration(
                 "QLoRA requires a quantized base spec".into(),
             ));
-        };
+        }
         let base_linear = LinearMatmul::load(
             context,
             quantization_spec,

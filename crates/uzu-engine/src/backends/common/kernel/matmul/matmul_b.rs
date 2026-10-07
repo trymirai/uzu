@@ -11,7 +11,7 @@ use crate::{
 pub struct TrellisFormat {
     pub vector_width: u32,
     pub transition_bits: u32,
-    pub restart_columns: Option<u32>,
+    pub restart_columns: u32,
 }
 
 pub enum MatmulB<TB: BufferRef> {
@@ -22,7 +22,7 @@ pub enum MatmulB<TB: BufferRef> {
     Trellis {
         codes: TB,
         row_scales: TB,
-        codebook: TB,
+        codebook: [f32; 5],
         format: TrellisFormat,
     },
 }

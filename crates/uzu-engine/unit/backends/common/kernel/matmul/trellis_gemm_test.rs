@@ -25,17 +25,27 @@ use crate::{
 const V4_T8: TrellisFormat = TrellisFormat {
     vector_width: 4,
     transition_bits: 8,
-    restart_columns: Some(64),
+    restart_columns: 64,
 };
 const V2_T6: TrellisFormat = TrellisFormat {
     vector_width: 2,
     transition_bits: 6,
-    restart_columns: None,
+    restart_columns: 0,
+};
+const V2_T8: TrellisFormat = TrellisFormat {
+    vector_width: 2,
+    transition_bits: 8,
+    restart_columns: 0,
 };
 const V2_T4: TrellisFormat = TrellisFormat {
     vector_width: 2,
     transition_bits: 4,
-    restart_columns: None,
+    restart_columns: 0,
+};
+const V4_T8_NO_RESTART: TrellisFormat = TrellisFormat {
+    vector_width: 4,
+    transition_bits: 8,
+    restart_columns: 0,
 };
 
 fn decode_state(
@@ -44,9 +54,12 @@ fn decode_state(
     column: usize,
 ) -> u16 {
     let width = format.vector_width as usize;
-    let (block, local) =
-        format.restart_columns.map_or((0, column), |restart| (column / restart as usize, column % restart as usize));
-    let block_bytes = format.restart_columns.map_or(0, |restart| row_bytes(format, restart as usize));
+    let restart_columns = format.restart_columns as usize;
+    let (block, local, block_bytes) = if restart_columns == 0 {
+        (0, column, 0)
+    } else {
+        (column / restart_columns, column % restart_columns, row_bytes(format, restart_columns))
+    };
     let start_bit = block * block_bytes * 8 + local / width * format.transition_bits as usize;
     (start_bit..start_bit + 16).fold(0u32, |state, bit| (state << 1) | u32::from(row[bit / 8] >> (7 - bit % 8) & 1))
         as u16
@@ -56,7 +69,11 @@ fn row_bytes(
     format: TrellisFormat,
     columns: usize,
 ) -> usize {
-    let block_columns = format.restart_columns.map_or(columns, |restart| restart as usize);
+    let block_columns = if format.restart_columns == 0 {
+        columns
+    } else {
+        format.restart_columns as usize
+    };
     let transitions = block_columns / format.vector_width as usize - 1;
     let bytes_per_block = (16 + transitions * format.transition_bits as usize).div_ceil(8);
     columns.div_ceil(block_columns) * bytes_per_block
@@ -112,7 +129,6 @@ fn run_projection(
     let activation_scales = create_buffer_with_data::<Metal, f32>(context, &activation_scales_host);
     let codes = create_buffer_with_data::<Metal, u8>(context, &stored);
     let row_scales_buffer = create_buffer_with_data::<Metal, f32>(context, &row_scales);
-    let codebook = create_buffer_with_data::<Metal, f32>(context, &CODEBOOK);
     let mut output = create_buffer_with_data::<Metal, u16>(context, &vec![SENTINEL; m * (n + PADDING)]);
     let arguments = MatmulArguments {
         a: MatmulA::Trellis {
@@ -123,7 +139,7 @@ fn run_projection(
         b: MatmulB::Trellis {
             codes: &codes,
             row_scales: &row_scales_buffer,
-            codebook: &codebook,
+            codebook: CODEBOOK,
             format,
         },
         b_leading_dimension: None,
@@ -177,7 +193,9 @@ fn run_projection(
 #[test_attr(uzu_test)]
 #[case::v4_t8(V4_T8)]
 #[case::v2_t6(V2_T6)]
+#[case::v2_t8(V2_T8)]
 #[case::v2_t4(V2_T4)]
+#[case::v4_t8_no_restart(V4_T8_NO_RESTART)]
 fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
     let context = shared_metal_context();
     if !context.supports_mxu {
