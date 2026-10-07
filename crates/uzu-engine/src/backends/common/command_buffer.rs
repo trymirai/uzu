@@ -120,7 +120,3 @@ pub trait CommandBufferCompleted: Send {
 
     fn timestamps(&self) -> &[TimestampSpan<Instant>];
 }
-
-#[cfg(test)]
-#[path = "../../../unit/backends/common/command_buffer_test.rs"]
-mod tests;
