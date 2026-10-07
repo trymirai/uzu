@@ -97,6 +97,10 @@ jobs:
             openssl x509 -in "$RUNNER_TEMP/dev_id_app.pem" -noout -subject -issuer -dates
             security verify-cert -c "$RUNNER_TEMP/dev_id_app.pem" \
               -p codeSign -k "$KEYCHAIN_PATH" -L -v || true
+            security list-keychains
+            security list-keychains -d user
+            security verify-cert -c "$RUNNER_TEMP/dev_id_app.pem" -p codeSign -L -v || true
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
             exit 1
           fi
 
