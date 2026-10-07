@@ -14,7 +14,7 @@ use shader_slang::{
 };
 use walkdir::WalkDir;
 
-use super::{Dephashes, Error, SlangEntryPointAbi, SlangKernelInfo, bindgen, slang_api, wrapper};
+use super::{Dephashes, Error, SlangEntryPointAbi, SlangKernelInfo, bindgen, generate_constants, slang_api, wrapper};
 use crate::{
     common::{
         caching,
@@ -48,8 +48,10 @@ impl SlangCompiler {
             .optimization(optimization)
             .emit_spirv_directly(true)
             .vulkan_use_entry_point_name(true);
-        let search_path = CString::new(src_dir.to_string_lossy().as_bytes())?;
-        let search_paths = [search_path.as_ptr()];
+        // Kernel sources and the generated GPU type modules.
+        let search_path_strings =
+            [CString::new(src_dir.to_string_lossy().as_bytes())?, CString::new(out_dir.to_string_lossy().as_bytes())?];
+        let search_paths = search_path_strings.each_ref().map(|path| path.as_ptr());
         let targets =
             [TargetDesc::default().format(CompileTarget::Spirv).profile(global_session.find_profile("glsl_450"))];
         let desc = SessionDesc::default().options(&options).search_paths(&search_paths).targets(&targets);
@@ -211,9 +213,11 @@ impl SlangCompiler {
 impl Compiler for SlangCompiler {
     fn build(
         &self,
-        _gpu_types: &GpuTypes,
+        gpu_types: &GpuTypes,
         _enum_paths: &EnumPaths,
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
+        // Before any module loads or cache check, so cached dependency hashes see the current constants.
+        generate_constants(gpu_types, &self.out_dir).context("cannot generate Slang GPU types")?;
         println!("cargo::rerun-if-changed={}", self.src_dir.display());
         println!("cargo::rerun-if-env-changed=SLANG_DIR");
         println!("cargo::rerun-if-env-changed=LD_LIBRARY_PATH");

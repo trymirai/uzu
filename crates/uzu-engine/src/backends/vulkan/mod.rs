@@ -31,7 +31,10 @@ pub use vk_compute_pipeline::VkComputePipeline;
 pub use vk_context::VkContext;
 pub use vk_context_create_info::VkContextCreateInfo;
 pub use vk_context_error::VkContextError;
-pub use vk_kernels::{SoftmaxVulkanKernel, TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel};
+pub use vk_kernels::{
+    LogitTransformVulkanKernel, NormalizationVulkanKernel, PoolingMeanVulkanKernel, SoftmaxVulkanKernel,
+    TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel,
+};
 pub use vk_logger::VkLogger;
 pub use vk_physical_device::VkPhysicalDevice;
 pub use vk_physical_device_features::VkPhysicalDeviceFeatures;

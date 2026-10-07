@@ -122,14 +122,17 @@ impl VkCommandBufferEncoding {
     }
 
     /// Records one compute dispatch. Ownership, the push-constant size, the group-count limit and
-    /// the declared ranges are checked; nothing is recorded when a check fails.
+    /// the declared ranges are checked; nothing is recorded when a check fails. Unlike transfers, a
+    /// dispatch may declare an empty range, even at the end of its buffer: it is bounds-checked and
+    /// retained but takes part in no hazard tracking.
     ///
     /// # Safety
     /// - `push_constants` must be the exact argument block `pipeline`'s shader expects: every device
     ///   address in it points into a buffer listed in `reads` or `writes`, and every scalar is valid.
     /// - `reads` and `writes` must cover every byte the shader may read or write for these `groups`;
     ///   undeclared accesses get no hazard barriers and no lifetime retention.
-    /// - `groups` together with the shader's bounds checks must keep every access inside those ranges.
+    /// - `groups` together with the shader's bounds checks must keep every access inside those ranges;
+    ///   the shader never dereferences the address of an empty range.
     pub unsafe fn encode_dispatch<'b>(
         &mut self,
         pipeline: &Arc<VkComputePipeline>,
@@ -156,11 +159,19 @@ impl VkCommandBufferEncoding {
                 limit: limits.max_compute_work_group_count,
             });
         }
-        buffers.clone().try_for_each(|(buffer, range)| device_addresses(buffer, &range).map(drop))?;
+        for (buffer, range) in buffers.clone() {
+            if range.start > range.end || range.end > buffer.size() {
+                return Err(Error::BufferRange {
+                    start: range.start,
+                    end: range.end,
+                    size: buffer.size(),
+                });
+            }
+        }
         let address = |(buffer, range): (&Arc<VkBuffer>, Range<u64>)| {
-            buffer.device_address() + range.start..buffer.device_address() + range.end
+            (!range.is_empty()).then(|| buffer.device_address() + range.start..buffer.device_address() + range.end)
         };
-        self.access(reads.map(address), writes.map(address));
+        self.access(reads.filter_map(address), writes.filter_map(address));
         let command_buffer = self.command_buffer();
         let device = self.context.device();
         unsafe {

@@ -195,11 +195,19 @@ pub fn bindgen(
             Ok(quote! { (#(crate::data_type::DataType::#data_types,)*) => #entry_point })
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    let unsupported = (!type_parameters.is_empty()).then(|| {
-        quote! {
-            _ => return Err(Error::KernelVariant { kernel: #kernel_name, data_types: Box::new([#(#type_parameters),*]) }),
-        }
-    });
+    // A kernel without type parameters has its single entry point; the others select one by data types.
+    let entry_selection = match type_parameters.is_empty() {
+        true => {
+            let entry_point = &abi.name;
+            quote! { #entry_point }
+        },
+        false => quote! {
+            match (#(#type_parameters,)*) {
+                #(#entry_arms,)*
+                _ => return Err(Error::KernelVariant { kernel: #kernel_name, data_types: Box::new([#(#type_parameters),*]) }),
+            }
+        },
+    };
 
     let specialization_count = specializations.len();
     let specialization_names = specializations.iter().map(|(name, _)| name).collect::<Vec<_>>();
@@ -227,16 +235,13 @@ pub fn bindgen(
         }
 
         impl #struct_name {
-            #[allow(non_snake_case)]
+            #[allow(non_snake_case, clippy::too_many_arguments)]
             pub fn new(
                 context: &std::sync::Arc<VkContext>
                 #(, #type_parameters: crate::data_type::DataType)*
                 #(, #specialization_names: bool)*
             ) -> Result<Self, Error> {
-                let entry_point = match (#(#type_parameters,)*) {
-                    #(#entry_arms,)*
-                    #unsupported
-                };
+                let entry_point = #entry_selection;
                 let limits = &context.physical_device().properties.limits;
                 let size = [#group_x, #group_y, #group_z];
                 if size.iter().zip(limits.max_compute_work_group_size).any(|(&size, limit)| size > limit)
@@ -320,6 +325,7 @@ fn data_type(slang_type: &str) -> Result<Ident, Error> {
             "half" => "F16",
             "bf16" => "BF16",
             "uint" => "U32",
+            "int" => "I32",
             other => bail!("no DataType for Slang type '{other}'"),
         }
     ))

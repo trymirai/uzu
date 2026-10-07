@@ -136,7 +136,12 @@ pub fn generate_wrappers(
             .zip(["x", "y", "z"])
             .map(|(total, axis)| format!("if (__dsl_axis_idx.{axis} >= ({total})) return;"))
             .join("\n  ");
-        let body = format!("{guards}\n  {underlying_call}({underlying_arguments});");
+        // Every entry point rounds 16-bit float conversions to nearest even, the same as the CPU backend.
+        let rounding = format!(
+            "spirv_asm {{\n    OpCapability RoundingModeRTE;\n    OpExtension \"SPV_KHR_float_controls\";\n    \
+             OpExecutionMode ${wrapper_name} RoundingModeRTE 16;\n  }};"
+        );
+        let body = format!("{rounding}\n  {guards}\n  {underlying_call}({underlying_arguments});");
 
         let wrapper = format!(
             "[shader(\"compute\")]\n[numthreads({})]\nvoid {wrapper_name}({wrapper_arguments_str}) {{\n  {body}\n}}",

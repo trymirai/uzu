@@ -248,6 +248,8 @@ fn get_physical_device(
                     .supported_operations
                     .contains(vk::SubgroupFeatureFlags::BASIC | vk::SubgroupFeatureFlags::ARITHMETIC)
                 && physical_device.subgroup_properties.supported_stages.contains(vk::ShaderStageFlags::COMPUTE)
+                && physical_device.shader_rounding_mode_rte_float16
+                && physical_device.rounding_mode_independence == vk::ShaderFloatControlsIndependence::ALL
                 && physical_device
                     .memory_properties
                     .memory_types_as_slice()

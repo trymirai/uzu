@@ -2,7 +2,7 @@ use std::{
     fmt::Debug,
     mem::size_of,
     panic::{AssertUnwindSafe, catch_unwind},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use half::{bf16, f16};
@@ -89,12 +89,7 @@ fn gpu_output<T: ArrayElement + Float + Debug>(
     }
     // SAFETY: every command buffer using these buffers has completed.
     for (buffer, values) in input_buffer.iter().map(|buffer| (buffer, input)).chain([(&bias_buffer, bias)]) {
-        let read = unsafe { KernelFixture::read_guarded(buffer, sentinel) };
-        assert_eq!(
-            bytemuck::cast_slice::<T, u8>(&read),
-            bytemuck::cast_slice::<T, u8>(values),
-            "read-only data changed"
-        );
+        unsafe { KernelFixture::assert_unchanged(buffer, sentinel, values, "read-only data") };
     }
     // SAFETY: the only command buffer writing `output` has completed.
     unsafe { KernelFixture::read_guarded(&output, sentinel) }
@@ -337,32 +332,20 @@ fn throughput() {
             fixture.buffer(&vec![T::zero(); LENGTH]),
         );
         let bytes = |len: usize| 0..(len * size_of::<T>()) as u64;
-        let mut samples = (0..13)
-            .map(|_| {
-                let start = Instant::now();
-                let mut encoding = fixture.encoding();
-                // SAFETY: input/output hold LENGTH elements and bias NUM_COLS; output aliases nothing.
-                unsafe {
-                    kernel.encode(
-                        Some((&input, bytes(LENGTH))),
-                        (&bias, bytes(NUM_COLS)),
-                        (&output, bytes(LENGTH)),
-                        NUM_COLS as u32,
-                        LENGTH as u32,
-                        0.5,
-                        &mut encoding,
-                    );
-                }
-                let gpu = KernelFixture::complete(encoding).gpu_execution_time();
-                (gpu, start.elapsed())
-            })
-            .skip(3)
-            .collect::<Vec<_>>();
-        let median = |samples: &mut Vec<(Duration, Duration)>, key: fn(&(Duration, Duration)) -> Duration| {
-            samples.sort_by_key(key);
-            key(&samples[samples.len() / 2])
-        };
-        let (gpu, wall) = (median(&mut samples, |sample| sample.0), median(&mut samples, |sample| sample.1));
+        let (gpu, wall) = fixture.median_times(|encoding| {
+            // SAFETY: input/output hold LENGTH elements and bias NUM_COLS; output aliases nothing.
+            unsafe {
+                kernel.encode(
+                    Some((&input, bytes(LENGTH))),
+                    (&bias, bytes(NUM_COLS)),
+                    (&output, bytes(LENGTH)),
+                    NUM_COLS as u32,
+                    LENGTH as u32,
+                    0.5,
+                    encoding,
+                );
+            }
+        });
         let (read, written) = ((LENGTH + NUM_COLS) * size_of::<T>(), LENGTH * size_of::<T>());
         let rate = |time: Duration| (read + written) as f64 / time.as_secs_f64() / 1e9;
         eprintln!(

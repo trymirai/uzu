@@ -140,6 +140,8 @@ fn variants_for_constraint(constraint: &str) -> Option<&'static [&'static str]> 
     match constraint {
         "__BuiltinFloatingPointType" => Some(&["float", "half"]),
         "IStorageFloat" => Some(&["float", "half", "bf16"]),
+        "IFloat32" => Some(&["float"]),
+        "IModelFloat" => Some(&["float", "bf16"]),
         _ => None,
     }
 }

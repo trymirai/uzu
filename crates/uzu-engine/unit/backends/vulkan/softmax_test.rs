@@ -2,7 +2,7 @@ use std::{
     fmt::Debug,
     mem::size_of,
     panic::{AssertUnwindSafe, catch_unwind},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use half::{bf16, f16};
@@ -72,8 +72,7 @@ fn gpu_output<T: ArrayElement + Float>(
     // SAFETY: every command buffer using these buffers has completed.
     unsafe {
         if let (Some(sinks), Some(sinks_buffer)) = (sinks, &sinks_buffer) {
-            let read = KernelFixture::read_guarded(sinks_buffer, sentinel);
-            assert_eq!(bytemuck::cast_slice::<T, u8>(&read), bytemuck::cast_slice::<T, u8>(sinks), "sinks changed");
+            KernelFixture::assert_unchanged(sinks_buffer, sentinel, sinks, "sinks");
         }
         KernelFixture::read_guarded(&values_buffer, sentinel)
     }
@@ -84,20 +83,6 @@ fn kernel<T: ArrayElement>(
     has_sinks: bool,
 ) -> SoftmaxVulkanKernel {
     SoftmaxVulkanKernel::new(&fixture.context, T::data_type(), has_sinks).expect("Vulkan Softmax")
-}
-
-/// Position of a value in the total order of its storage type, so the difference counts representable steps.
-fn ordinal<T: ArrayElement>(value: T) -> i64 {
-    let (bits, sign) = match *bytemuck::bytes_of(&value) {
-        [a, b] => (i64::from(u16::from_ne_bytes([a, b])), 1 << 15),
-        [a, b, c, d] => (i64::from(u32::from_ne_bytes([a, b, c, d])), 1 << 31),
-        _ => unreachable!("Softmax storage types are 16 or 32 bits"),
-    };
-    if bits & sign != 0 {
-        -(bits & !sign)
-    } else {
-        bits
-    }
 }
 
 /// Test-only mathematical Softmax of the stored inputs: max, exponentials and normalizer in FP64, rounded to `T` only
@@ -138,14 +123,14 @@ fn compare<T: ArrayElement + Float + Debug>(
     };
     let mut max = [0.0f64; 4];
     for (index, (&expected, &actual)) in expected.iter().zip(actual).enumerate() {
-        let values =
-            format!("expected {expected:?} ({:#x}), Vulkan {actual:?} ({:#x})", ordinal(expected), ordinal(actual));
+        let (expected_ordinal, actual_ordinal) = (KernelFixture::ordinal(expected), KernelFixture::ordinal(actual));
+        let values = format!("expected {expected:?} ({expected_ordinal:#x}), Vulkan {actual:?} ({actual_ordinal:#x})");
         assert_eq!(expected.is_nan(), actual.is_nan(), "{case}: element {index}: {values}");
         if expected.is_nan() {
             continue;
         }
         let (e, a) = (expected.to_f64().unwrap(), actual.to_f64().unwrap());
-        let steps = (ordinal(actual) - ordinal(expected)).abs() as f64;
+        let steps = (actual_ordinal - expected_ordinal).abs() as f64;
         let error = [(a - e).abs(), (a - e).abs() / e.abs().max(f64::MIN_POSITIVE), steps];
         if steps > 2.0 && error[1] > relative {
             if max[3] == 0.0 {
@@ -383,30 +368,19 @@ fn throughput() {
         let kernel = kernel::<T>(fixture, false);
         let length = row_length * outer_dim * batch_dim;
         let values = fixture.buffer(&rows::<T>(row_length, outer_dim * batch_dim, 1));
-        let mut samples = (0..13)
-            .map(|_| {
-                let start = Instant::now();
-                let mut encoding = fixture.encoding();
-                // SAFETY: values hold every row; no sinks.
-                unsafe {
-                    kernel.encode(
-                        (&values, 0..(length * size_of::<T>()) as u64),
-                        None,
-                        row_length as u32,
-                        outer_dim as u32,
-                        batch_dim as u32,
-                        &mut encoding,
-                    );
-                }
-                (KernelFixture::complete(encoding).gpu_execution_time(), start.elapsed())
-            })
-            .skip(3)
-            .collect::<Vec<_>>();
-        let mut median = |key: fn(&(Duration, Duration)) -> Duration| {
-            samples.sort_by_key(key);
-            key(&samples[samples.len() / 2])
-        };
-        let (gpu, wall) = (median(|sample| sample.0), median(|sample| sample.1));
+        let (gpu, wall) = fixture.median_times(|encoding| {
+            // SAFETY: values hold every row; no sinks.
+            unsafe {
+                kernel.encode(
+                    (&values, 0..(length * size_of::<T>()) as u64),
+                    None,
+                    row_length as u32,
+                    outer_dim as u32,
+                    batch_dim as u32,
+                    encoding,
+                );
+            }
+        });
         let (read, written) = (2 * length * size_of::<T>(), length * size_of::<T>());
         let rate = |time: Duration| (read + written) as f64 / time.as_secs_f64() / 1e9;
         eprintln!(

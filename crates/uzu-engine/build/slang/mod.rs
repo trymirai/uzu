@@ -1,6 +1,7 @@
 mod bindgen;
 mod dephashes;
 mod error;
+mod gpu_types;
 mod module_with_diagnostics;
 mod slang_api;
 mod slang_argument;
@@ -14,6 +15,7 @@ mod wrapper;
 
 pub use dephashes::Dephashes;
 pub use error::Error;
+pub use gpu_types::generate_constants;
 pub use module_with_diagnostics::ModuleWithDiagnostics;
 pub use slang_argument::SlangArgument;
 pub use slang_argument_type::SlangArgumentType;

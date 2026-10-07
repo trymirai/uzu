@@ -11,6 +11,11 @@ pub struct VkPhysicalDevice {
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub features: VkPhysicalDeviceFeatures,
     pub subgroup_properties: VkPhysicalDeviceSubgroupProperties,
+    /// Whether shaders may declare round-to-nearest-even for 16-bit float conversions, as every generated kernel does.
+    pub shader_rounding_mode_rte_float16: bool,
+    /// Which widths may set rounding modes independently. The backend conservatively requires `ALL`, so declaring only
+    /// the 16-bit mode is valid whatever the other widths use.
+    pub rounding_mode_independence: vk::ShaderFloatControlsIndependence,
 }
 impl VkPhysicalDevice {
     pub fn new(
@@ -27,7 +32,10 @@ impl VkPhysicalDevice {
 
         // properties
         let mut device_subgroup_properties = vk::PhysicalDeviceSubgroupProperties::default();
-        let mut properties2 = vk::PhysicalDeviceProperties2::default().push_next(&mut device_subgroup_properties);
+        let mut float_controls_properties = vk::PhysicalDeviceFloatControlsProperties::default();
+        let mut properties2 = vk::PhysicalDeviceProperties2::default()
+            .push_next(&mut device_subgroup_properties)
+            .push_next(&mut float_controls_properties);
         let (properties, subgroup_properties) = {
             unsafe { instance.get_physical_device_properties2(physical_device, &mut properties2) }
             (
@@ -71,6 +79,8 @@ impl VkPhysicalDevice {
             features,
             subgroup_properties,
             memory_properties,
+            shader_rounding_mode_rte_float16: float_controls_properties.shader_rounding_mode_rte_float16 == 1,
+            rounding_mode_independence: float_controls_properties.rounding_mode_independence,
         })
     }
 }

@@ -119,6 +119,17 @@ fn invalid_ranges_return_errors_without_recording() {
         let result = encoding.encode_dispatch(&pipeline, &[0; 28], [u32::MAX, 1, 1], [], []);
         assert!(matches!(result, Err(Error::DispatchGroups { .. })));
         assert!(range_error(encoding.encode_dispatch(&pipeline, &[0; 28], [1, 1, 1], [(&first, 0..4097)], [])));
+        #[allow(clippy::reversed_empty_ranges)]
+        for range in [10..5, 4097..4097, 4096..4097] {
+            assert!(range_error(encoding.encode_dispatch(
+                &pipeline,
+                &[0; 28],
+                [1, 1, 1],
+                [(&first, range.clone())],
+                []
+            )));
+            assert!(range_error(encoding.encode_dispatch(&pipeline, &[0; 28], [1, 1, 1], [], [(&second, range)])));
+        }
     }
 
     encoding.encode_copy(&first, 0..100, &first, 100).unwrap();
@@ -151,6 +162,10 @@ fn foreign_context_objects_are_rejected() {
     assert!(foreign_error(encode_add(&mut encoding, &foreign_pipeline, [&local_a, &local_b, &local_output], size)));
     assert!(foreign_error(encode_add(&mut encoding, &local_pipeline, [&local_a, &foreign, &local_output], size)));
     assert!(foreign_error(encode_add(&mut encoding, &local_pipeline, [&local_a, &local_b, &foreign], size)));
+    // SAFETY: rejected before recording.
+    let empty_foreign =
+        unsafe { encoding.encode_dispatch(&local_pipeline, &[0; 28], [1, 1, 1], [(&foreign, 0..0)], []) };
+    assert!(foreign_error(empty_foreign));
 
     encode_add(&mut encoding, &local_pipeline, [&local_a, &local_b, &local_output], size).unwrap();
     KernelFixture::complete(encoding);
@@ -160,6 +175,49 @@ fn foreign_context_objects_are_rejected() {
     assert!(foreign.iter().all(|&value| value == 1.0));
     fixture.assert_clean();
     other.assert_clean();
+}
+
+/// A dispatch may declare empty read and write spans, including one at offset == size: they are bounds-checked and
+/// retained until completion, and the shader never touches them.
+#[uzu_test]
+fn dispatch_accepts_empty_spans() {
+    let fixture = KernelFixture::new();
+    let pipeline = add_pipeline(&fixture.context);
+    let size = 64u32;
+    let [a, b, output] = [(); 3].map(|_| fixture.buffer(&[1.5f32; 64]));
+    let untouched = fixture.buffer(&[3u8; 256]);
+    let pending = {
+        let spare = fixture.buffer(&[3u8; 256]);
+        let push_constants = [&a, &b, &output]
+            .iter()
+            .flat_map(|buffer| buffer.device_address().to_ne_bytes())
+            .chain(size.to_ne_bytes())
+            .collect::<Vec<_>>();
+        let mut encoding = fixture.encoding();
+        // SAFETY: the kernel reads 64 floats of a and b and writes 64 of output; the empty spans are never
+        // dereferenced.
+        unsafe {
+            encoding.encode_dispatch(
+                &pipeline,
+                &push_constants,
+                [1, 1, 1],
+                [(&a, 0..256), (&b, 0..256), (&spare, 0..0), (&untouched, 256..256)],
+                [(&output, 0..256), (&spare, 256..256), (&untouched, 128..128)],
+            )
+        }
+        .unwrap();
+        let weak = Arc::downgrade(&spare);
+        (encoding.end_encoding().unwrap().submit(), weak)
+    };
+    assert!(pending.1.upgrade().is_some(), "an empty span's buffer is retained until completion");
+    pending.0.wait_until_completed().unwrap();
+    assert!(pending.1.upgrade().is_none());
+    // SAFETY: the command buffer has completed.
+    unsafe {
+        assert_eq!(KernelFixture::read::<f32>(&output), [3.0; 64]);
+        assert_eq!(KernelFixture::read::<u8>(&untouched), [3; 256]);
+    }
+    fixture.assert_clean();
 }
 
 #[uzu_test]
@@ -341,5 +399,9 @@ fn selected_device_is_hardware() {
     let name = unsafe { CStr::from_ptr(properties.device_name.as_ptr()) }.to_string_lossy();
     assert_ne!(properties.device_type, vk::PhysicalDeviceType::CPU, "software Vulkan device {name}");
     assert!(name.starts_with("Apple M2"), "unexpected Vulkan device {name}");
+    // The selection requirements of the 16-bit round-to-nearest-even execution mode every kernel declares.
+    let physical_device = context.physical_device();
+    assert!(physical_device.shader_rounding_mode_rte_float16);
+    assert_eq!(physical_device.rounding_mode_independence, vk::ShaderFloatControlsIndependence::ALL);
     fixture.assert_clean();
 }

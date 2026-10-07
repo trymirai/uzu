@@ -1,15 +1,5 @@
 import definitions;
 
-// The pinned Slang 2026.2 SDK has no wave-index/wave-count intrinsics; load the SPIR-V SubgroupId and NumSubgroups
-// builtins directly.
-uint subgroup_id() {
-  return spirv_asm { result:$$uint = OpLoad builtin(SubgroupId:uint); };
-}
-
-uint subgroup_count() {
-  return spirv_asm { result:$$uint = OpLoad builtin(NumSubgroups:uint); };
-}
-
 // Online row-wise softmax ported from the Metal kernel: each thread accumulates a running (max, normalizer) over
 // strided chunks of the row, subgroups combine with wave reductions, and subgroups combine through shared memory.
 // `has_sinks` seeds thread 0 with (sinks[outer_index], 1) as a virtual element. Every invocation reaches every
