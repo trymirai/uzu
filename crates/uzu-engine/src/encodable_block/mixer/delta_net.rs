@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
+        Backend, BlockName, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferPending, Context, Kernels,
         kernel::{
             Conv1dPackKernel, ConvTreeScanKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel,
@@ -48,7 +48,7 @@ enum DeltaNetSuffixStatus<B: Backend> {
 }
 
 pub struct DeltaNetState<B: Backend> {
-    accept_name: String,
+    accept_name: BlockName,
     conv_state: B::GlobalBuffer,
     ssm_state: B::GlobalBuffer,
     suffix_status: Option<DeltaNetSuffixStatus<B>>,
@@ -111,14 +111,14 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                 );
             },
         }
-        command_buffer.sample_end_timestamp(&self.accept_name);
+        command_buffer.sample_end_timestamp();
         Ok(())
     }
 }
 
 pub struct DeltaNet<B: Backend> {
-    name: String,
-    tree_verify_name: String,
+    name: BlockName,
+    tree_verify_name: BlockName,
     num_heads: u32,
     head_dim: u32,
     num_groups: u32,
@@ -164,7 +164,7 @@ pub enum DeltaNetNewError<B: Backend> {
 
 impl<B: Backend> DeltaNet<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         hidden_dim: u32,
         outer_data_type: DataType,
         config: &DeltaNetConfig,
@@ -428,7 +428,7 @@ impl<B: Backend> DeltaNet<B> {
             beta,
             parents: batch_dim.parents().into(),
         });
-        command_buffer.sample_end_timestamp(&self.tree_verify_name);
+        command_buffer.sample_end_timestamp();
         Ok(output)
     }
 }
@@ -501,7 +501,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         if !batch_dim.full_accept() {
             let output = self.encode_tree_verify(&in_projected, batch_dim, state, command_buffer)?;
 
-            command_buffer.sample_end_timestamp(&self.name);
+            command_buffer.sample_end_timestamp();
             command_buffer.pop_debug_group();
 
             return Ok(output);
@@ -646,7 +646,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
 
         let output = self.out_projection.encode(delta_output, batch_dim.size(), command_buffer)?;
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)

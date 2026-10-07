@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
+        Backend, BlockName, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         gpu_types::weaver::{
             CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FrontierIdx, MetadataIdx, TreeIdx,
         },
@@ -112,9 +112,9 @@ impl<B: Backend> EncodedWeaverTree<B> {
 }
 
 pub struct Weaver<B: Backend> {
-    name: String,
-    prefix_name: String,
-    step_name: String,
+    name: BlockName,
+    prefix_name: BlockName,
+    step_name: BlockName,
     token_embedding_norm: Normalization<B>,
     token_embedding_projection: Box<dyn Linear<B>>,
     hidden_state_norm: Normalization<B>,
@@ -174,7 +174,7 @@ pub enum WeaverEncodeError<B: Backend> {
 
 impl<B: Backend> Weaver<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         config: &WeaverConfig,
         vocab_size: u32,
@@ -381,7 +381,7 @@ impl<B: Backend> Weaver<B> {
                 .kv_cache,
         );
 
-        command_buffer.sample_end_timestamp(&self.prefix_name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(prefix_kv_layers)
@@ -564,7 +564,7 @@ impl<B: Backend> Weaver<B> {
             command_buffer,
         );
 
-        command_buffer.sample_end_timestamp(&self.step_name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
         Ok(())
     }
@@ -730,7 +730,7 @@ impl<B: Backend> Weaver<B> {
             batch_start_slot += batch_node_count;
         }
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         let mut packed_tree_readback =

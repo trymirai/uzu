@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels, gpu_types::trie::TrieNode,
+        Backend, BlockName, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels, gpu_types::trie::TrieNode,
         kernel::PoolingMeanKernel,
     },
     config::classifier::{ClassifierConfig, PoolingType},
@@ -35,7 +35,7 @@ pub enum ClassifierError<B: Backend> {
 }
 
 pub struct Classifier<B: Backend> {
-    name: String,
+    name: BlockName,
     hidden_dim: u32,
     data_type: DataType,
     embedding: Embedding<B>,
@@ -47,7 +47,7 @@ pub struct Classifier<B: Backend> {
 
 impl<B: Backend> Classifier<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         config: &ClassifierConfig,
         parameter_tree: &ParameterTree<B>,
@@ -164,7 +164,7 @@ impl<B: Backend> Classifier<B> {
 
         let logits = self.prediction_head.encode(pooled, 1, command_buffer).map_err(ClassifierError::Backend)?;
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(logits)

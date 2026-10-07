@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, CommandBuffer, CommandBufferEncoding,
+        Backend, BlockName, CommandBuffer, CommandBufferEncoding,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationTransform, Kernels,
@@ -35,7 +35,7 @@ pub enum QLoRALinearWrapperError<B: Backend> {
 }
 
 pub struct QLoRALinearWrapper<B: Backend> {
-    name: String,
+    name: BlockName,
     base_linear: LinearMatmul<B>,
     input_hadamard: Option<(ActivationTransform<B>, B::GlobalBuffer)>,
     output_hadamard: Option<(ActivationTransform<B>, B::GlobalBuffer)>,
@@ -52,7 +52,7 @@ pub struct QLoRALinearWrapper<B: Backend> {
 
 impl<B: Backend> QLoRALinearWrapper<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         quantization_spec: AnyWeightMatrixSpec,
         adapter_spec: LowRankSpec,
@@ -266,7 +266,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             );
         }
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)

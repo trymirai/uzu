@@ -8,7 +8,7 @@ use parking_lot::Mutex;
 
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
+        Backend, BlockName, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         kernel::{RepetitionPenaltyKernel, UnifiedSamplingKernel},
     },
     data_type::DataType,
@@ -24,7 +24,7 @@ pub use gumbel::{gumbel_float, revidx};
 pub use prng::PRng;
 
 pub struct Sampling<B: Backend> {
-    name: String,
+    name: BlockName,
     vocab_size: u32,
     data_type: DataType,
     unified_kernels: Mutex<HashMap<UnifiedSamplingKey, <B::Kernels as Kernels>::UnifiedSamplingKernel>>,
@@ -32,7 +32,7 @@ pub struct Sampling<B: Backend> {
 
 impl<B: Backend> Sampling<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         data_type: DataType,
         vocab_size: u32,
     ) -> Self {
@@ -198,7 +198,7 @@ impl<B: Backend> Sampling<B> {
             command_buffer,
         );
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)

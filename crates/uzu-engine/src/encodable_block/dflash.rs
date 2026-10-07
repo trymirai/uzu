@@ -6,7 +6,8 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, gpu_types::trie::TrieNode,
+        Backend, BlockName, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
+        gpu_types::trie::TrieNode,
     },
     config::{dflash::DFlashDraftConfig, rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
     data_type::DataType,
@@ -41,8 +42,8 @@ impl<B: Backend> DFlashState<B> {
 }
 
 pub struct DFlash<B: Backend> {
-    accept_name: String,
-    draft_name: String,
+    accept_name: BlockName,
+    draft_name: BlockName,
     target_feature_projection: Box<dyn Linear<B>>,
     projected_feature_norm: Normalization<B>,
     state_kv_projection: Box<dyn Linear<B>>,
@@ -91,7 +92,7 @@ pub enum DFlashEncodeError<B: Backend> {
 
 impl<B: Backend> DFlash<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         config: &DFlashDraftConfig,
         parameter_tree: &ParameterTree<B>,
@@ -285,7 +286,7 @@ impl<B: Backend> DFlash<B> {
 
         state.context_length += num_tokens;
 
-        command_buffer.sample_end_timestamp(&self.accept_name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(())
@@ -361,7 +362,7 @@ impl<B: Backend> DFlash<B> {
             command_buffer,
         )?;
 
-        command_buffer.sample_end_timestamp(&self.draft_name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(DFlashOutput {

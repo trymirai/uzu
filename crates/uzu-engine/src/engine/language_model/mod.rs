@@ -5,7 +5,7 @@ use thiserror::Error;
 use tokenizers::Tokenizer;
 
 use crate::{
-    backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
+    backends::common::{Backend, BlockName, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
     config::{
         model::{generation::GenerationConfig, language_model::LanguageModelConfig},
         token_codec::AnyTokenCodecConfig,
@@ -77,7 +77,7 @@ impl<B: Backend> Engine<B> {
         let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
-            "decoder".to_string(),
+            BlockName::from("decoder"),
             self.context.as_ref(),
             &config.decoder_config,
             &weight_loader.tree().subtree("decoder"),
@@ -95,7 +95,7 @@ impl<B: Backend> Engine<B> {
             .transpose()?
             .flatten();
 
-        let sampling = Sampling::new("sampling".to_string(), data_type, config.decoder_config.vocab_size);
+        let sampling = Sampling::new(BlockName::from("sampling"), data_type, config.decoder_config.vocab_size);
 
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;

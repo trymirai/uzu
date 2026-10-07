@@ -1,7 +1,7 @@
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{AncestorAttentionKernel, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
     },
     config::{
@@ -25,8 +25,8 @@ pub struct PreparedPrefixAttention<B: Backend> {
 }
 
 pub struct WeaverLayer<B: Backend> {
-    prefix_attention_name: String,
-    post_attention_name: String,
+    prefix_attention_name: BlockName,
+    post_attention_name: BlockName,
     pub pre_attention_norm: Normalization<B>,
     pub qkv_projection: Box<dyn Linear<B>>,
     attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
@@ -44,7 +44,7 @@ pub struct WeaverLayer<B: Backend> {
 
 impl<B: Backend> WeaverLayer<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         config: &WeaverConfig,
         add_to_residual: bool,
@@ -193,7 +193,7 @@ impl<B: Backend> WeaverLayer<B> {
             token_count,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp(&self.prefix_attention_name);
+        command_buffer.sample_end_timestamp();
         Ok(PreparedPrefixAttention {
             queries,
             kv_cache,
@@ -212,7 +212,7 @@ impl<B: Backend> WeaverLayer<B> {
         let mlp_input =
             self.pre_mlp_norm.encode(&projected_attention, 0, token_count, Some(residual_state), command_buffer)?;
         let output = self.mlp.encode(mlp_input, token_count, command_buffer)?;
-        command_buffer.sample_end_timestamp(&self.post_attention_name);
+        command_buffer.sample_end_timestamp();
         Ok(output)
     }
 }

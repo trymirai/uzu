@@ -4,7 +4,8 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+        Backend, BlockName, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
+        Context, Kernels,
         gpu_types::ActivationType,
         kernel::{
             Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDPrefill64Kernel, SSDPrefillKernel,
@@ -55,7 +56,7 @@ enum Mamba2SSDPrefillVariant<B: Backend> {
 }
 
 pub struct Mamba2<B: Backend> {
-    name: String,
+    name: BlockName,
     kernel_size: u32,
     num_heads: u32,
     num_groups: u32,
@@ -92,7 +93,7 @@ pub enum Mamba2NewError<B: Backend> {
 
 impl<B: Backend> Mamba2<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         hidden_dim: u32,
         outer_data_type: DataType,
         config: &Mamba2Config,
@@ -427,7 +428,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         let output = self.out_projection.encode(ssd_output, batch_dim.size(), command_buffer)?;
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)

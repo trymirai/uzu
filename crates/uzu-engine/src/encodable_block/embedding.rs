@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        Backend, BlockName, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{
             LogitTransformKernel,
             matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulOutput},
@@ -45,7 +45,7 @@ enum EmbeddingTying<B: Backend> {
 }
 
 pub struct Embedding<B: Backend> {
-    readout_name: String,
+    readout_name: BlockName,
     tying: EmbeddingTying<B>,
     input_scale: f32,
     data_type: DataType,
@@ -70,7 +70,7 @@ impl<B: Backend> Embedding<B> {
     }
 
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         vocab_size: u32,
         model_dim: u32,
@@ -254,7 +254,7 @@ impl<B: Backend> Embedding<B> {
             );
         }
 
-        command_buffer.sample_end_timestamp(&self.readout_name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output_buffer)

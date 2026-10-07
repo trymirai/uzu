@@ -4,8 +4,8 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::common::{
-        Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferPending, Context, Kernels, TimestampSampleEntry, kernel::TensorAddScaleKernel,
+        Backend, BlockName, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferPending, Context, Kernels, kernel::TensorAddScaleKernel,
     },
     data_type::DataType,
     tests::helpers::{create_buffer_with_data, create_context, for_each_backend},
@@ -36,7 +36,7 @@ fn encode_blocks<B: Backend>(
             encoding,
         )
     };
-    let outer = outer.map(str::to_string);
+    let outer = outer.map(BlockName::from);
 
     let before = Instant::now();
     let mut encoding = context.create_command_buffer(Some("test"), None).unwrap();
@@ -46,13 +46,13 @@ fn encode_blocks<B: Backend>(
     if let Some(outer) = &outer {
         encoding.sample_start_timestamp(outer);
     }
-    for block in blocks.iter().map(|block| block.to_string()) {
+    for block in blocks.iter().copied().map(BlockName::from) {
         encoding.sample_start_timestamp(&block);
         encode_kernel(&mut encoding);
-        encoding.sample_end_timestamp(&block);
+        encoding.sample_end_timestamp();
     }
-    if let Some(outer) = &outer {
-        encoding.sample_end_timestamp(outer);
+    if outer.is_some() {
+        encoding.sample_end_timestamp();
     }
     for _ in 0..trailing_kernels {
         encode_kernel(&mut encoding);
@@ -61,70 +61,52 @@ fn encode_blocks<B: Backend>(
     (before, completed, Instant::now())
 }
 
-fn entries<Completed: CommandBufferCompleted>(completed: &Completed) -> Box<[TimestampSampleEntry]> {
-    completed.timestamps().iter().map(|(entry, _)| entry.clone()).collect()
-}
-
-fn start(name: &str) -> TimestampSampleEntry {
-    TimestampSampleEntry::Start(name.to_string())
-}
-
-fn end(name: &str) -> TimestampSampleEntry {
-    TimestampSampleEntry::End(name.to_string())
+fn names<Completed: CommandBufferCompleted>(completed: &Completed) -> Box<[&str]> {
+    completed.timestamps().iter().map(|span| span.name.as_str()).collect()
 }
 
 #[uzu_test]
-fn timestamp_samples_measure_blocks() {
+fn timestamp_spans_measure_blocks() {
     for_each_backend!(|B| {
         let context = create_context::<B>();
         let (before, completed, after) =
             encode_blocks::<B>(&context, true, Some("test/outer"), &["test/first", "test/second", "test/third"], 0);
 
         assert_eq!(
-            *entries(&completed),
-            [
-                start("test/outer"),
-                start("test/first"),
-                end("test/first"),
-                start("test/second"),
-                end("test/second"),
-                start("test/third"),
-                end("test/third"),
-                end("test/outer"),
-            ],
+            *names(&completed),
+            ["test/outer", "test/first", "test/second", "test/third"],
             "on {}",
             type_name::<B>()
         );
-        let timestamps = completed.timestamps();
-        for (entry, timestamp) in timestamps {
+        let spans = completed.timestamps();
+        for span in spans {
             assert!(
-                before <= *timestamp && *timestamp <= after,
-                "{entry:?} at {timestamp:?} outside {before:?}..{after:?} on {}",
+                before <= span.start && span.start < span.end && span.end <= after,
+                "{span:?} outside {before:?}..{after:?} on {}",
                 type_name::<B>()
             );
         }
-        let time = |index: usize| timestamps[index].1;
-        for (start, end) in [(1, 2), (3, 4), (5, 6)] {
-            assert!(time(start) < time(end), "{timestamps:?} on {}", type_name::<B>());
-        }
-        assert!(time(2) <= time(3) && time(4) <= time(5), "{timestamps:?} on {}", type_name::<B>());
-        assert!(time(0) <= time(1) && time(6) <= time(7), "{timestamps:?} on {}", type_name::<B>());
+        let [outer, first, second, third] = spans else {
+            panic!("{spans:?} on {}", type_name::<B>())
+        };
+        assert!(outer.start <= first.start && third.end <= outer.end, "{spans:?} on {}", type_name::<B>());
+        assert!(first.end <= second.start && second.end <= third.start, "{spans:?} on {}", type_name::<B>());
     });
 }
 
 #[uzu_test]
-fn timestamp_samples_belong_to_their_command_buffer() {
+fn timestamp_spans_belong_to_their_command_buffer() {
     for_each_backend!(|B| {
         let context = create_context::<B>();
         for name in ["test/first command buffer", "test/second command buffer"] {
             let (_, completed, _) = encode_blocks::<B>(&context, true, None, &[name], 0);
-            assert_eq!(*entries(&completed), [start(name), end(name)], "on {}", type_name::<B>());
+            assert_eq!(*names(&completed), [name], "on {}", type_name::<B>());
         }
     });
 }
 
 #[uzu_test]
-fn timestamp_samples_need_timing_enabled() {
+fn timestamp_spans_need_timing_enabled() {
     for_each_backend!(|B| {
         let context = create_context::<B>();
         let (_, completed, _) = encode_blocks::<B>(&context, false, None, &["test/untimed"], 0);
@@ -133,16 +115,16 @@ fn timestamp_samples_need_timing_enabled() {
 }
 
 #[uzu_test]
-fn timestamp_samples_exclude_work_after_the_last_end() {
+fn timestamp_spans_exclude_work_after_the_last_end() {
     for_each_backend!(|B| {
         let context = create_context::<B>();
         let (_, completed, _) = encode_blocks::<B>(&context, true, None, &["test/block"], 10);
 
-        let [(_, start), (_, end)] = completed.timestamps() else {
+        let [span] = completed.timestamps() else {
             panic!("{:?} on {}", completed.timestamps(), type_name::<B>())
         };
-        assert!(start < end, "{start:?} {end:?} on {}", type_name::<B>());
-        let block_time = end.duration_since(*start);
+        assert!(span.start < span.end, "{span:?} on {}", type_name::<B>());
+        let block_time = span.end.duration_since(span.start);
         assert!(
             block_time * 3 < completed.gpu_execution_time(),
             "{block_time:?} includes the work after the block ({:?} total) on {}",

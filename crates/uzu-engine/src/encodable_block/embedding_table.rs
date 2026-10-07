@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         gpu_types::{EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, d4s4},
         kernel::InputEmbeddingLookupKernel,
     },
@@ -81,7 +81,7 @@ impl<B: Backend> Storage<B> {
 }
 
 pub struct EmbeddingTable<B: Backend> {
-    name: String,
+    name: BlockName,
     storage: Storage<B>,
     output_hadamard_factors: Option<B::GlobalBuffer>,
     lookup: LookupKernel<B>,
@@ -91,7 +91,7 @@ pub struct EmbeddingTable<B: Backend> {
 
 impl<B: Backend> EmbeddingTable<B> {
     pub fn load(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         tree: &ParameterTree<B>,
         vocab_size: u32,
@@ -198,7 +198,7 @@ impl<B: Backend> EmbeddingTable<B> {
             scale,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
     }
 }

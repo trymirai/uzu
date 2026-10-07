@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{GatedActMul, GatedActMulSettings, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
     },
     config::{
@@ -32,7 +32,7 @@ pub enum PerLayerEmbeddingError<B: Backend> {
 }
 
 pub struct PerLayerEmbedding<B: Backend> {
-    name: String,
+    name: BlockName,
     token_embedding: EmbeddingTable<B>,
     model_projection: Box<dyn Linear<B>>,
     projection_norm: Normalization<B>,
@@ -46,7 +46,7 @@ pub struct PerLayerEmbedding<B: Backend> {
 
 impl<B: Backend> PerLayerEmbedding<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         config: &PLEModelConfig,
         model_dim: u32,
@@ -157,7 +157,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             command_buffer,
         );
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(per_layer_inputs)
@@ -165,7 +165,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
 }
 
 pub struct PerLayerEmbeddingProjection<B: Backend> {
-    name: String,
+    name: BlockName,
     gate: Box<dyn Linear<B>>,
     projection: Box<dyn Linear<B>>,
     norm: Normalization<B>,
@@ -182,7 +182,7 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
 
 impl<B: Backend> PerLayerEmbeddingProjection<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         config: &PLELayerConfig,
         model_dim: u32,
@@ -304,7 +304,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             command_buffer,
         );
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(())

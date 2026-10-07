@@ -4,7 +4,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, BufferRef, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, BlockName, BufferRef, CommandBuffer, CommandBufferEncoding},
     config::decoder::DecoderConfig,
     data_type::DataType,
     encodable_block::{
@@ -32,7 +32,7 @@ pub enum DecoderError<B: Backend> {
 }
 
 pub struct Decoder<B: Backend> {
-    name: String,
+    name: BlockName,
     embedding: Embedding<B>,
     embedding_norm: Option<Normalization<B>>,
     per_layer_embedding: Option<PerLayerEmbedding<B>>,
@@ -51,7 +51,7 @@ impl<B: Backend> Decoder<B> {
     }
 
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         config: &DecoderConfig,
         parameter_tree: &ParameterTree<B>,
@@ -204,7 +204,7 @@ impl<B: Backend> Decoder<B> {
             transformer_output.output
         };
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(DecoderEncodeOutput {

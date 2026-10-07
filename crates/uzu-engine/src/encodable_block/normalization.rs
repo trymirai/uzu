@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, NormalizationKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
@@ -37,7 +37,7 @@ pub enum NormalizationNewError<B: Backend> {
 }
 
 pub struct Normalization<B: Backend> {
-    name: String,
+    name: BlockName,
     epsilon: f32,
     scale_offset: Option<f32>,
     scales: Option<B::GlobalBuffer>,
@@ -51,7 +51,7 @@ pub struct Normalization<B: Backend> {
 
 impl<B: Backend> Normalization<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         element_count: u32,
         hadamard_factors: Option<B::GlobalBuffer>,
         shortcut_mode: ShortcutMode,
@@ -145,7 +145,7 @@ impl<B: Backend> Normalization<B> {
             command_buffer,
         );
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)

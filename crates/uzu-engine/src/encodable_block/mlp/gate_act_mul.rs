@@ -1,6 +1,6 @@
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BlockName, BufferRef, CommandBuffer, CommandBufferEncoding,
         gpu_types::ActivationType,
         kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::ActivationFormat},
     },
@@ -10,7 +10,7 @@ use crate::{
 };
 
 pub struct MlpGateActMulEncodable<B: Backend> {
-    name: String,
+    name: BlockName,
     fp_kernel: GatedActMul<B>,
     activation: AnyActivation,
     hidden_dim: u32,
@@ -22,7 +22,7 @@ pub struct MlpGateActMulEncodable<B: Backend> {
 
 impl<B: Backend> MlpGateActMulEncodable<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         data_type: DataType,
         activation: AnyActivation,
@@ -119,7 +119,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             LinearInput::FullPrecision(hidden)
         };
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(input)

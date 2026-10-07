@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, kernel::ActivationTransform,
+        Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, kernel::ActivationTransform,
     },
     config::transformer_layer::{TransformerLayerConfig, TransformerLayerConvConfig},
     data_type::DataType,
@@ -45,7 +45,7 @@ pub enum TransformerLayerError<B: Backend> {
 }
 
 struct TransformerLayerConv<B: Backend> {
-    pre_convolution_name: String,
+    pre_convolution_name: BlockName,
     model_dim: u32,
     pre_conv: SeparableCausalConv<B>,
     kernel_projection: Box<dyn Linear<B>>,
@@ -57,7 +57,7 @@ struct TransformerLayerConv<B: Backend> {
 // TODO: saner shortcut
 
 pub struct TransformerLayer<B: Backend> {
-    name: String,
+    name: BlockName,
     pub layer_index: u32,
     pub kv_source_layer_index: Option<u32>,
     pub pre_mixer_norm: Option<Normalization<B>>,
@@ -73,7 +73,7 @@ pub struct TransformerLayer<B: Backend> {
 
 impl<B: Backend> TransformerLayerConv<B> {
     fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         model_dim: u32,
         config: &TransformerLayerConvConfig,
@@ -151,7 +151,7 @@ impl<B: Backend> TransformerLayerConv<B> {
         if let Some((transform, factors)) = &self.input_rht {
             transform.encode_fp_in_place(&mut output, factors, None, sequence_length, self.model_dim, command_buffer);
         }
-        command_buffer.sample_end_timestamp(&self.pre_convolution_name);
+        command_buffer.sample_end_timestamp();
         Ok((output, coefficients))
     }
 
@@ -175,7 +175,7 @@ impl<B: Backend> TransformerLayerConv<B> {
 
 impl<B: Backend> TransformerLayer<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         model_dim: u32,
         hidden_dim: u32,
@@ -439,7 +439,7 @@ impl<B: Backend> TransformerLayer<B> {
             command_buffer.encode_fill(&mut hidden, 0);
         }
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(hidden)

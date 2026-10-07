@@ -18,7 +18,7 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+        Backend, BlockName, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
     },
     config::{model::classifier_model::ClassifierModelConfig, token_codec::AnyTokenCodecConfig},
     data_type::DataType,
@@ -66,7 +66,7 @@ impl<B: Backend> Engine<B> {
         let weight_loader = ParameterLoader::new(&weights_file, context.as_ref())?;
 
         let classifier = ClassifierEncodable::new(
-            "classifier".to_string(),
+            BlockName::from("classifier"),
             context.as_ref(),
             &config.classifier_config,
             &weight_loader.tree().subtree("classifier"),

@@ -4,7 +4,6 @@ use std::{
     io::{self, BufReader},
     path::Path,
     sync::{Arc, mpsc::Sender},
-    time::Instant,
 };
 
 use derive_more::Debug;
@@ -16,8 +15,8 @@ pub use crate::encodable_block::dflash::DFlashState;
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context,
-        TimestampSampleEntry, gpu_types::trie::TrieNode as GpuTrieNode,
+        Backend, BlockName, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferTimestamps, Context, gpu_types::trie::TrieNode as GpuTrieNode,
     },
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
@@ -125,7 +124,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let speculator_tree = weight_loader.tree().subtree("speculator");
 
         let dflash = DFlash::new(
-            "dflash".to_string(),
+            BlockName::from("dflash"),
             &*context,
             &config.draft_config,
             &speculator_tree.subtree("draft_model"),
@@ -136,7 +135,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             .as_ref()
             .map(|weaver_config| {
                 Weaver::new(
-                    "weaver".to_string(),
+                    BlockName::from("weaver"),
                     &*context,
                     weaver_config,
                     config.draft_config.vocab_size,
@@ -147,7 +146,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
-        let sampling = Sampling::new("sampling".to_string(), data_type, config.draft_config.vocab_size);
+        let sampling = Sampling::new(BlockName::from("sampling"), data_type, config.draft_config.vocab_size);
 
         Ok(Some(Self {
             context,
@@ -226,7 +225,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
         prng: &PRng,
         allocation_pool: Arc<B::AllocationPool>,
-        timestamps: Option<&Sender<Box<[(TimestampSampleEntry, Instant)]>>>,
+        timestamps: Option<&Sender<CommandBufferTimestamps>>,
     ) -> Result<TrieNode, DFlashTreeError<B>> {
         assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
 

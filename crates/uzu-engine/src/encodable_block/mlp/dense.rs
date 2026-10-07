@@ -1,7 +1,7 @@
 //! MLP block encodable.
 
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, BlockName, CommandBuffer, CommandBufferEncoding},
     encodable_block::{
         linear::Linear,
         mlp::{Mlp, gate_act_mul::MlpGateActMulEncodable},
@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub struct DenseMlp<B: Backend> {
-    name: String,
+    name: BlockName,
     up: Box<dyn Linear<B>>,
     gate: MlpGateActMulEncodable<B>,
     down: Box<dyn Linear<B>>,
@@ -17,7 +17,7 @@ pub struct DenseMlp<B: Backend> {
 
 impl<B: Backend> DenseMlp<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         up: Box<dyn Linear<B>>,
         gate: MlpGateActMulEncodable<B>,
         down: Box<dyn Linear<B>>,
@@ -46,7 +46,7 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         let down_input = self.gate.encode_for_linear(command_buffer, &fused_up, batch_dim, act_format)?;
         let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)

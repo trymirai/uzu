@@ -1,6 +1,6 @@
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BlockName, BufferRef, CommandBuffer, CommandBufferEncoding,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::matmul::{ActivationFormat, MatmulA},
     },
@@ -16,14 +16,14 @@ use crate::{
 };
 
 pub struct UntiedReadout<B: Backend> {
-    name: String,
+    name: BlockName,
     linear: LinearMatmul<B>,
     input_rht: Option<InputRht<B>>,
 }
 
 impl<B: Backend> UntiedReadout<B> {
     pub fn load(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         tree: &ParameterTree<B>,
         spec: AnyWeightMatrixSpec,
@@ -105,7 +105,7 @@ impl<B: Backend> UntiedReadout<B> {
                 offset: 0,
             };
             let output = self.linear.encode_with_a(a, batch_dim, gather, command_buffer)?;
-            command_buffer.sample_end_timestamp(&self.name);
+            command_buffer.sample_end_timestamp();
             return Ok(output);
         };
 
@@ -116,7 +116,7 @@ impl<B: Backend> UntiedReadout<B> {
         };
         let input = input_rht.prepare(input, batch_dim, format, command_buffer)?;
         let output = self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, command_buffer)?;
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         Ok(output)
     }
 }

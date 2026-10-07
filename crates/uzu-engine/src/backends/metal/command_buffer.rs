@@ -16,10 +16,11 @@ use rangemap::RangeSet;
 
 use crate::backends::{
     common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-        CommandBufferExecutable, CommandBufferPending, Context, TimestampSampleEntry, allocator::bump::BumpAllocator,
+        Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
+        CommandBufferExecutable, CommandBufferPending, CommandBufferTimestamps, Context, TimestampSlot, TimestampSpan,
+        TimestampSpanRecorder, allocator::bump::BumpAllocator,
     },
-    metal::{Metal, MetalContext, buffer::MetalBufferExt, error::MetalError},
+    metal::{Metal, MetalContext, buffer::MetalBufferExt, error::MetalError, preceding_work::PrecedingWork},
 };
 
 const COUNTER_HEAP_CAPACITY: usize = 4096;
@@ -51,8 +52,9 @@ pub struct MetalCommandBufferEncoding {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     pub(super) context: Arc<MetalContext>,
     counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
-    timestamp_entries: Option<Vec<(TimestampSampleEntry, bool)>>,
-    kernel_since_timestamp: bool,
+    timestamp_spans: Option<TimestampSpanRecorder>,
+    preceding_works: Vec<PrecedingWork>,
+    preceding_work: PrecedingWork,
 }
 
 impl MetalCommandBufferEncoding {
@@ -114,8 +116,9 @@ impl MetalCommandBufferEncoding {
             allocation_pool,
             context,
             counter_heaps,
-            timestamp_entries: None,
-            kernel_since_timestamp: false,
+            timestamp_spans: None,
+            preceding_works: Vec::new(),
+            preceding_work: PrecedingWork::NoKernel,
         })
     }
 
@@ -123,7 +126,7 @@ impl MetalCommandBufferEncoding {
         &mut self,
         accesses: &[Access],
     ) {
-        self.kernel_since_timestamp = true;
+        self.preceding_work = PrecedingWork::Kernel;
         self.order_accesses(accesses);
     }
 
@@ -151,6 +154,29 @@ impl MetalCommandBufferEncoding {
                 self.reads.insert(access.range.into());
             }
         }
+    }
+
+    fn write_timestamp(
+        &mut self,
+        slot: TimestampSlot,
+    ) {
+        if slot / COUNTER_HEAP_CAPACITY == self.counter_heaps.len() {
+            let descriptor = MTL4CounterHeapDescriptor::new();
+            descriptor.set_type(MTL4CounterHeapType::TIMESTAMP);
+            descriptor.set_count(COUNTER_HEAP_CAPACITY);
+            self.counter_heaps.push(
+                self.context
+                    .device
+                    .new_counter_heap_with_descriptor(&descriptor)
+                    .expect("Failed to create a counter heap"),
+            );
+        }
+        self.compute_encoder.write_timestamp_with_granularity_into_heap_at_index(
+            MTL4TimestampGranularity::PRECISE,
+            &self.counter_heaps[slot / COUNTER_HEAP_CAPACITY],
+            slot % COUNTER_HEAP_CAPACITY,
+        );
+        self.preceding_works.push(std::mem::replace(&mut self.preceding_work, PrecedingWork::NoKernel));
     }
 }
 
@@ -237,36 +263,23 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     }
 
     fn enable_timestamps(&mut self) {
-        assert!(self.timestamp_entries.is_none(), "timestamps already enabled");
-        self.timestamp_entries = Some(Vec::new());
+        assert!(self.timestamp_spans.is_none(), "timestamps already enabled");
+        self.timestamp_spans = Some(TimestampSpanRecorder::default());
     }
 
-    fn sample_timestamp(
+    fn sample_start_timestamp(
         &mut self,
-        entry: fn(String) -> TimestampSampleEntry,
-        name: &str,
+        name: &BlockName,
     ) {
-        let Some(slot) = self.timestamp_entries.as_ref().map(Vec::len) else {
-            return;
-        };
-        if slot / COUNTER_HEAP_CAPACITY == self.counter_heaps.len() {
-            let descriptor = MTL4CounterHeapDescriptor::new();
-            descriptor.set_type(MTL4CounterHeapType::TIMESTAMP);
-            descriptor.set_count(COUNTER_HEAP_CAPACITY);
-            self.counter_heaps.push(
-                self.context
-                    .device
-                    .new_counter_heap_with_descriptor(&descriptor)
-                    .expect("Failed to create a counter heap"),
-            );
+        if let Some(slot) = self.timestamp_spans.as_mut().map(|spans| spans.start(name.clone())) {
+            self.write_timestamp(slot);
         }
-        self.compute_encoder.write_timestamp_with_granularity_into_heap_at_index(
-            MTL4TimestampGranularity::PRECISE,
-            &self.counter_heaps[slot / COUNTER_HEAP_CAPACITY],
-            slot % COUNTER_HEAP_CAPACITY,
-        );
-        let kernel_before = std::mem::replace(&mut self.kernel_since_timestamp, false);
-        self.timestamp_entries.as_mut().unwrap().push((entry(name.to_string()), kernel_before));
+    }
+
+    fn sample_end_timestamp(&mut self) {
+        if let Some(slot) = self.timestamp_spans.as_mut().map(TimestampSpanRecorder::end) {
+            self.write_timestamp(slot);
+        }
     }
 
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
@@ -280,7 +293,8 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
             allocation_pool: self.allocation_pool.clone(),
             context: self.context.clone(),
             counter_heaps: self.counter_heaps.clone(),
-            timestamp_entries: self.timestamp_entries.take(),
+            timestamp_spans: self.timestamp_spans.take().map(TimestampSpanRecorder::finish),
+            preceding_works: std::mem::take(&mut self.preceding_works).into_boxed_slice(),
         }
     }
 }
@@ -304,7 +318,8 @@ pub struct MetalCommandBufferExecutable {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     context: Arc<MetalContext>,
     counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
-    timestamp_entries: Option<Vec<(TimestampSampleEntry, bool)>>,
+    timestamp_spans: Option<Box<[TimestampSpan<TimestampSlot>]>>,
+    preceding_works: Box<[PrecedingWork]>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
@@ -327,9 +342,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         let command_buffer = self.command_buffer.clone();
         let context_clone = self.context.clone();
         let counter_heaps = self.counter_heaps;
-        let (timestamp_entries, kernels_before) =
-            self.timestamp_entries.map(|entries| entries.into_iter().unzip::<_, _, Vec<_>, Vec<bool>>()).unzip();
-        let kernels_before = kernels_before.unwrap_or_default();
+        let preceding_works = self.preceding_works;
 
         let constant_allocator = self.constant_allocator;
         let allocation_pool = self.allocation_pool.clone();
@@ -337,8 +350,8 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
             let message = if let Some(error) = feedback.error() {
                 Err(MetalError::CommandBufferExecution(error.to_string()))
             } else {
-                resolve_timestamps(&context_clone.device, &counter_heaps, &kernels_before).map(|timestamps| {
-                    (Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()), timestamps)
+                resolve_timestamps(&context_clone.device, &counter_heaps, &preceding_works).map(|instants| {
+                    (Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()), instants)
                 })
             };
             let resolved = message.is_ok();
@@ -361,7 +374,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 
         MetalCommandBufferPending {
             allocation_pool: self.allocation_pool,
-            timestamp_entries,
+            timestamp_spans: self.timestamp_spans,
             receiver,
         }
     }
@@ -370,9 +383,9 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 fn resolve_timestamps(
     device: &ProtocolObject<dyn MTLDevice>,
     counter_heaps: &[Retained<ProtocolObject<dyn MTL4CounterHeap>>],
-    kernels_before: &[bool],
+    preceding_works: &[PrecedingWork],
 ) -> Result<Vec<Instant>, MetalError> {
-    let count = kernels_before.len();
+    let count = preceding_works.len();
     let mut ticks = Vec::with_capacity(count);
     for (index, counter_heap) in counter_heaps.iter().enumerate().take(count.div_ceil(COUNTER_HEAP_CAPACITY)) {
         let slots = 0..(count - index * COUNTER_HEAP_CAPACITY).min(COUNTER_HEAP_CAPACITY);
@@ -391,11 +404,11 @@ fn resolve_timestamps(
     };
     ticks
         .iter()
-        .zip(kernels_before)
+        .zip(preceding_works)
         .enumerate()
-        .scan(None, |previous_timestamp, (slot, (&slot_ticks, &kernel_before))| {
-            let timestamp = match (slot_ticks, kernel_before, *previous_timestamp) {
-                (0, false, Some(previous_timestamp)) => Ok(previous_timestamp),
+        .scan(None, |previous_timestamp, (slot, (&slot_ticks, &preceding_work))| {
+            let timestamp = match (slot_ticks, preceding_work, *previous_timestamp) {
+                (0, PrecedingWork::NoKernel, Some(previous_timestamp)) => Ok(previous_timestamp),
                 (0, ..) => Err(MetalError::UnwrittenTimestamp(slot)),
                 (slot_ticks, ..) => Ok(to_instant(slot_ticks)),
             };
@@ -407,7 +420,7 @@ fn resolve_timestamps(
 
 pub struct MetalCommandBufferPending {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
-    timestamp_entries: Option<Vec<TimestampSampleEntry>>,
+    timestamp_spans: Option<Box<[TimestampSpan<TimestampSlot>]>>,
     receiver: mpsc::Receiver<Result<(Duration, Vec<Instant>), MetalError>>,
 }
 
@@ -415,12 +428,12 @@ impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
 
     fn wait_until_completed(self) -> Result<MetalCommandBufferCompleted, MetalError> {
-        let (gpu_execution_time, timestamps) = self.receiver.recv().map_err(MetalError::CommandBufferWait)??;
+        let (gpu_execution_time, instants) = self.receiver.recv().map_err(MetalError::CommandBufferWait)??;
         Ok(MetalCommandBufferCompleted {
             gpu_execution_time,
-            timestamps: self
-                .timestamp_entries
-                .map_or_else(Box::default, |entries| entries.into_iter().zip(timestamps).collect()),
+            timestamps: self.timestamp_spans.map_or_else(Box::default, |spans| {
+                spans.into_iter().map(|span| span.map(|slot| instants[slot])).collect()
+            }),
             _allocation_pool: self.allocation_pool,
         })
     }
@@ -428,7 +441,7 @@ impl CommandBufferPending for MetalCommandBufferPending {
 
 pub struct MetalCommandBufferCompleted {
     gpu_execution_time: Duration,
-    timestamps: Box<[(TimestampSampleEntry, Instant)]>,
+    timestamps: CommandBufferTimestamps,
     _allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
 }
 
@@ -439,7 +452,7 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
         self.gpu_execution_time
     }
 
-    fn timestamps(&self) -> &[(TimestampSampleEntry, Instant)] {
+    fn timestamps(&self) -> &[TimestampSpan<Instant>] {
         &self.timestamps
     }
 }

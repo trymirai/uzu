@@ -5,7 +5,8 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels, kernel::TensorAddScaleKernel,
+        Backend, BlockName, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        kernel::TensorAddScaleKernel,
     },
     config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
     data_type::DataType,
@@ -25,7 +26,7 @@ enum TransformerLayerStateType<B: Backend> {
 }
 
 pub struct TransformerState<B: Backend> {
-    accept_name: String,
+    accept_name: BlockName,
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
 }
@@ -74,7 +75,7 @@ impl<B: Backend> TransformerState<B> {
 
         self.context_length += accepted_indices.len() as u32;
 
-        command_buffer.sample_end_timestamp(&self.accept_name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(())
@@ -92,8 +93,8 @@ pub enum TransformerNewError<B: Backend> {
 }
 
 pub struct Transformer<B: Backend> {
-    name: String,
-    capture_residual_name: String,
+    name: BlockName,
+    capture_residual_name: BlockName,
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
@@ -103,7 +104,7 @@ pub struct Transformer<B: Backend> {
 
 impl<B: Backend> Transformer<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         output_norm_hadamard_factors: Option<B::GlobalBuffer>,
         data_type: DataType,
@@ -180,7 +181,7 @@ impl<B: Backend> Transformer<B> {
         let mut output = command_buffer.allocate_scratch(hidden.size())?;
         let elements = batch_size * self.model_dim;
         self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, command_buffer);
-        command_buffer.sample_end_timestamp(&self.capture_residual_name);
+        command_buffer.sample_end_timestamp();
         Ok(output)
     }
 
@@ -324,7 +325,7 @@ impl<B: Backend> Transformer<B> {
         });
 
         let Some(output_range) = output_range else {
-            command_buffer.sample_end_timestamp(&self.name);
+            command_buffer.sample_end_timestamp();
             return Ok(TransformerEncodeOutput {
                 output: None,
                 hidden_features,
@@ -339,7 +340,7 @@ impl<B: Backend> Transformer<B> {
             command_buffer,
         )?;
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         Ok(TransformerEncodeOutput {
             output: Some(output_normalized),
             hidden_features,

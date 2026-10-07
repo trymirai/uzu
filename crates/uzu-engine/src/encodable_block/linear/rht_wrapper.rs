@@ -2,7 +2,9 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::{
+        Backend, BlockName, CommandBuffer, CommandBufferEncoding, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+    },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
@@ -27,7 +29,7 @@ pub enum RHTLinearWrapperError<B: Backend> {
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
-    name: String,
+    name: BlockName,
     input_rht: InputRht<B>,
     inner_linear: LinearMatmul<B>,
 }
@@ -46,7 +48,7 @@ fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
 
 impl<B: Backend> RHTLinearWrapper<B> {
     pub(super) fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         input_dimension: u32,
         output_dimension: u32,
@@ -87,7 +89,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
     }
 
     pub(super) fn try_new_with_input_preparation(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         input_dimension: u32,
         output_dimension: u32,
@@ -128,7 +130,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
     }
 
     fn load_inner_with_output_rht(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         input_dimension: u32,
         output_dimension: u32,
@@ -166,7 +168,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
     }
 
     fn build_self_contained(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         input_data_type: DataType,
         input_preparation: LinearInputPreparation<B>,
@@ -206,7 +208,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             LinearInput::FullPrecision(input) => input,
             input => {
                 let output = self.inner_linear.encode_input(input, batch_dim, command_buffer);
-                command_buffer.sample_end_timestamp(&self.name);
+                command_buffer.sample_end_timestamp();
                 command_buffer.pop_debug_group();
                 return output;
             },
@@ -220,7 +222,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             command_buffer,
         )?;
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
         Ok(output)
     }

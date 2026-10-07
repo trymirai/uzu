@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, CommandBuffer, CommandBufferEncoding,
+        Backend, BlockName, BufferMut, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, QKVNormKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
@@ -26,7 +26,7 @@ struct Head<B: Backend> {
 }
 
 pub struct QKVNorm<B: Backend> {
-    name: String,
+    name: BlockName,
     query: Option<Head<B>>,
     key: Option<Head<B>>,
     value: Option<Head<B>>,
@@ -38,7 +38,7 @@ pub struct QKVNorm<B: Backend> {
 
 impl<B: Backend> QKVNorm<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         context: &B::Context,
         intermediate_data_type: DataType,
         query_config: Option<NormalizationConfig>,
@@ -183,7 +183,7 @@ impl<B: Backend> QKVNorm<B> {
             );
         }
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(())

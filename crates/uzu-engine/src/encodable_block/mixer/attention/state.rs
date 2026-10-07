@@ -3,7 +3,8 @@ use std::any::Any;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, CommandBuffer, CommandBufferEncoding, Context, DeviceCapabilities, Kernels, SparseBuffer,
+        Backend, BlockName, Buffer, CommandBuffer, CommandBufferEncoding, Context, DeviceCapabilities, Kernels,
+        SparseBuffer,
         gpu_types::{Copy, ring::RingParams},
         kernel::KVCacheUpdateKernel,
     },
@@ -161,7 +162,7 @@ impl KVCacheState {
 }
 
 pub struct AttentionState<B: Backend> {
-    accept_name: String,
+    accept_name: BlockName,
     pub element_dim: u32,
     pub data_type: DataType,
     cache: KVCacheState,
@@ -269,7 +270,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
             );
         }
 
-        command_buffer.sample_end_timestamp(&self.accept_name);
+        command_buffer.sample_end_timestamp();
         Ok(())
     }
 }

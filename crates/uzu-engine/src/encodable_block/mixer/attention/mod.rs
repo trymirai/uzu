@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, CommandBuffer, CommandBufferEncoding, Kernels,
+        Backend, BlockName, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel, SigmoidGateKernel},
     },
     config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
@@ -33,11 +33,11 @@ pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCacheView};
 pub mod rope;
 
 pub struct Attention<B: Backend> {
-    name: String,
-    core_name: String,
-    prepare_kv_and_queries_name: String,
-    prepare_queries_name: String,
-    append_projected_kv_name: String,
+    name: BlockName,
+    core_name: BlockName,
+    prepare_kv_and_queries_name: BlockName,
+    prepare_queries_name: BlockName,
+    append_projected_kv_name: BlockName,
     head_dim: u32,
     num_q_heads: u32,
     num_kv_heads: Option<u32>,
@@ -67,7 +67,7 @@ pub enum AttentionNewError<B: Backend> {
 
 impl<B: Backend> Attention<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         hidden_dim: u32,
         data_type: DataType,
         rope_config: Option<&AnyRoPEConfig>,
@@ -244,7 +244,7 @@ impl<B: Backend> Mixer<B> for Attention<B> {
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
         let output = self.attend(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)

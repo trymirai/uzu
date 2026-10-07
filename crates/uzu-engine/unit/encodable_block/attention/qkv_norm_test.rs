@@ -2,7 +2,9 @@ use uzu_engine_macros::uzu_test;
 
 use super::QKVNorm;
 use crate::{
-    backends::common::{Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context},
+    backends::common::{
+        Backend, BlockName, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+    },
     config::normalization::{NormalizationConfig, UpcastMode},
     data_type::DataType,
     tests::{
@@ -30,7 +32,7 @@ fn run_key_value_row_stride_test<B: Backend>() {
     let key = QKVNorm::<B>::build_head(&context, DataType::F32, config, None, HEAD_DIM)
         .expect("failed to construct key norm");
     let norm = QKVNorm {
-        name: "test/qkv norm".to_string(),
+        name: BlockName::from("test/qkv norm"),
         query: None,
         key: Some(key),
         value: None,

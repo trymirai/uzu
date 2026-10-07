@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
+        Backend, BlockName, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferPending, Context, Kernels,
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
@@ -75,10 +75,10 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
 }
 
 pub struct ShortConv<B: Backend> {
-    name: String,
-    decode_conv_name: String,
-    prefill_conv_name: String,
-    trie_conv_name: String,
+    name: BlockName,
+    decode_conv_name: BlockName,
+    prefill_conv_name: BlockName,
+    trie_conv_name: BlockName,
     hidden_dim: u32,
     data_type: DataType,
     kernel_size: u32,
@@ -106,7 +106,7 @@ pub enum ShortConvNewError<B: Backend> {
 
 impl<B: Backend> ShortConv<B> {
     pub fn new(
-        name: String,
+        name: BlockName,
         hidden_dim: u32,
         data_type: DataType,
         config: &ShortConvConfig,
@@ -210,7 +210,7 @@ impl<B: Backend> ShortConv<B> {
             self.hidden_dim,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp(&self.decode_conv_name);
+        command_buffer.sample_end_timestamp();
         Ok(conv_output)
     }
 
@@ -253,7 +253,7 @@ impl<B: Backend> ShortConv<B> {
             self.hidden_dim,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp(&self.prefill_conv_name);
+        command_buffer.sample_end_timestamp();
         Ok(conv_output)
     }
 
@@ -285,7 +285,7 @@ impl<B: Backend> ShortConv<B> {
             self.hidden_dim,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp(&self.trie_conv_name);
+        command_buffer.sample_end_timestamp();
         Ok((conv_output, conv_states))
     }
 }
@@ -362,7 +362,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
 
         let output = self.out_projection.encode(conv_output, batch_dim.size(), command_buffer)?;
 
-        command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)

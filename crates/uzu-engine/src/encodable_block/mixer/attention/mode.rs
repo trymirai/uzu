@@ -143,7 +143,7 @@ impl<B: Backend> Attention<B> {
             command_buffer,
         )?;
         state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), command_buffer)?;
-        command_buffer.sample_end_timestamp(&self.append_projected_kv_name);
+        command_buffer.sample_end_timestamp();
         Ok(())
     }
 
@@ -173,7 +173,7 @@ impl<B: Backend> Attention<B> {
             },
             command_buffer,
         )?;
-        command_buffer.sample_end_timestamp(&self.core_name);
+        command_buffer.sample_end_timestamp();
         Ok(output)
     }
 
@@ -217,7 +217,7 @@ impl<B: Backend> Attention<B> {
             batch_dim,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp(&self.prepare_kv_and_queries_name);
+        command_buffer.sample_end_timestamp();
         Ok(queries)
     }
 
@@ -247,7 +247,7 @@ impl<B: Backend> Attention<B> {
             batch_dim,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp(&self.prepare_queries_name);
+        command_buffer.sample_end_timestamp();
         Ok(queries)
     }
 }
