@@ -57,7 +57,7 @@ jobs:
     name: release-mirai-gui
     needs: decide
     if: ${{ needs.decide.outputs.publish == 'true' }}
-    runs-on: macos-26
+    runs-on: macs-fleet-low
 
     defaults:
       run:
