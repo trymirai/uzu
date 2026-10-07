@@ -9,8 +9,8 @@ use std::{
 
 use metal::{
     MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor, MTLCaptureDescriptor, MTLCaptureDestination,
-    MTLCaptureManager, MTLCaptureTarget, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLFunctionConstantValues,
-    MTLGPUFamily, MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
+    MTLCaptureManager, MTLCaptureTarget, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent,
+    MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
@@ -33,6 +33,11 @@ use crate::backends::{
 
 pub(super) const LARGE_MIN_GPU_CORES: u32 = 30;
 
+pub(super) struct SparseState {
+    pub did_ops: bool,
+    pub event_value: u64,
+}
+
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub gpu_core_count: u32,
@@ -41,6 +46,9 @@ pub struct MetalContext {
     pub device_name: String,
     pub(super) residency_set: Arc<Mutex<Retained<ProtocolObject<dyn MTLResidencySet>>>>,
     pub command_queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
+    pub(super) sparse_queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
+    pub(super) sparse_event: Retained<ProtocolObject<dyn MTLEvent>>,
+    pub(super) sparse_state: Mutex<SparseState>,
     compiler: Retained<ProtocolObject<dyn MTL4Compiler>>,
     pub(super) block_allocator: Arc<BlockAllocator<MetalDenseBuffer>>,
     pub(super) heaps: Arc<MetalHeaps>,
@@ -121,6 +129,16 @@ impl Context for MetalContext {
         let command_queue = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueue)?;
         command_queue.add_residency_set(&residency_set);
 
+        let sparse_queue = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueue)?;
+        sparse_queue.add_residency_set(&residency_set);
+
+        let sparse_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
+
+        let sparse_state = SparseState {
+            did_ops: false,
+            event_value: 0,
+        };
+
         let compiler = device
             .new_compiler_with_descriptor(&MTL4CompilerDescriptor::new())
             .map_err(|error| MetalError::CannotCreateCompiler(error.to_string()))?;
@@ -137,6 +155,9 @@ impl Context for MetalContext {
             device_name,
             residency_set: Arc::new(Mutex::new(residency_set)),
             command_queue,
+            sparse_queue,
+            sparse_event,
+            sparse_state: Mutex::new(sparse_state),
             compiler,
             block_allocator,
             heaps,
@@ -171,7 +192,7 @@ impl Context for MetalContext {
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        MetalSparseBuffer::new(self, capacity)
+        MetalSparseBuffer::new(self.weak_self.upgrade().unwrap(), capacity)
     }
 
     fn create_allocation_pool(&self) -> Arc<<Metal as Backend>::AllocationPool> {
