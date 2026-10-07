@@ -2,20 +2,20 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use crate::backends::vulkan::{buffer::VkBuffer, context::VkContext};
+use super::{Error, VkComputeShaderLayoutBuffer, VkContext};
 
 pub struct VkComputeShaderLayoutSet {
-    device: Arc<ash::Device>,
+    context: Arc<VkContext>,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_set: vk::DescriptorSet,
     descriptor_pool: vk::DescriptorPool,
+    _buffers: Box<[VkComputeShaderLayoutBuffer]>,
 }
-
 impl VkComputeShaderLayoutSet {
     pub fn new(
-        ctx: &VkContext,
-        layout_buffers: &[VkComputeShaderLayoutBuffer],
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+        ctx: Arc<VkContext>,
+        layout_buffers: Box<[VkComputeShaderLayoutBuffer]>,
+    ) -> Result<Self, Error> {
         let layout_bindings = layout_buffers
             .iter()
             .map(|buffer| {
@@ -37,13 +37,22 @@ impl VkComputeShaderLayoutSet {
             .descriptor_count(layout_buffers.len() as u32)];
         let descriptor_pool = {
             let info = vk::DescriptorPoolCreateInfo::default().max_sets(1).pool_sizes(&descriptor_pool_sizes);
-            unsafe { ctx.device().create_descriptor_pool(&info, None)? }
+            unsafe {
+                ctx.device().create_descriptor_pool(&info, None).inspect_err(|_| {
+                    ctx.device().destroy_descriptor_set_layout(descriptor_set_layout, None);
+                })?
+            }
         };
         let descriptor_set = {
             let info = vk::DescriptorSetAllocateInfo::default()
                 .descriptor_pool(descriptor_pool)
                 .set_layouts(std::slice::from_ref(&descriptor_set_layout));
-            unsafe { ctx.device().allocate_descriptor_sets(&info)? }
+            unsafe {
+                ctx.device().allocate_descriptor_sets(&info).inspect_err(|_| {
+                    ctx.device().destroy_descriptor_pool(descriptor_pool, None);
+                    ctx.device().destroy_descriptor_set_layout(descriptor_set_layout, None);
+                })?
+            }
         }[0];
 
         // writes
@@ -64,7 +73,7 @@ impl VkComputeShaderLayoutSet {
                     .dst_set(descriptor_set)
                     .dst_binding(layout_buffer.binding)
                     .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(std::slice::from_ref(&buffer_info))
+                    .buffer_info(std::slice::from_ref(buffer_info))
             })
             .collect::<Vec<_>>();
         unsafe {
@@ -72,10 +81,11 @@ impl VkComputeShaderLayoutSet {
         }
 
         Ok(Self {
-            device: ctx.device(),
+            context: ctx,
             descriptor_set_layout,
             descriptor_set,
             descriptor_pool,
+            _buffers: layout_buffers,
         })
     }
 
@@ -87,17 +97,11 @@ impl VkComputeShaderLayoutSet {
         self.descriptor_set_layout
     }
 }
-
 impl Drop for VkComputeShaderLayoutSet {
     fn drop(&mut self) {
         unsafe {
-            self.device.destroy_descriptor_pool(self.descriptor_pool, None);
-            self.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.context.device().destroy_descriptor_pool(self.descriptor_pool, None);
+            self.context.device().destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         }
     }
-}
-
-pub struct VkComputeShaderLayoutBuffer {
-    pub buffer: VkBuffer,
-    pub binding: u32,
 }
