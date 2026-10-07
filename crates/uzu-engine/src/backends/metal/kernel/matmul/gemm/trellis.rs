@@ -20,7 +20,7 @@ use crate::backends::{
 
 #[derive(Default)]
 pub(super) struct TrellisGemm {
-    kernels: HashMap<(GemmTiling, TrellisFormat, GemmAlignment), GemmTrellisMetalKernel>,
+    kernels: HashMap<(GemmTiling, bool, TrellisFormat, GemmAlignment), GemmTrellisMetalKernel>,
     reduce_kernel: Option<GemmTrellisReduceMetalKernel>,
 }
 
@@ -62,7 +62,7 @@ impl TrellisGemm {
         let (m, n, k) = (arguments.m, arguments.n, arguments.k);
         let output_stride = arguments.output.row_stride.unwrap_or(n);
         let (tiling, split_k) = (plan.tiling, plan.split_k);
-        if plan.engine != GemmEngine::Mxu
+        if (plan.engine == GemmEngine::Mxu) != tiling.is_mxu_variant()
             || !arguments.output.ops.mask().is_empty()
             || !arguments.b_transpose
             || arguments.b_leading_dimension.is_some()
@@ -85,12 +85,14 @@ impl TrellisGemm {
         };
         let alignment =
             GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
-        let key = (tiling, format, alignment);
+        let use_mxu = plan.engine == GemmEngine::Mxu;
+        let key = (tiling, use_mxu, format, alignment);
         let kernel = match self.kernels.entry(key) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(GemmTrellisMetalKernel::new(
                 command_buffer.context(),
                 tiling,
+                use_mxu,
                 alignment,
                 format.vector_width,
                 format.transition_bits,
