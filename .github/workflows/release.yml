@@ -55,14 +55,14 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          existing_keychains=()
+          existing_keychains=("$KEYCHAIN_PATH")
           while IFS= read -r existing_keychain; do
             existing_keychain=$(printf '%s\n' "$existing_keychain" | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
             if [ -n "$existing_keychain" ] && [ "$existing_keychain" != "$KEYCHAIN_PATH" ]; then
               existing_keychains+=("$existing_keychain")
             fi
           done < <(security list-keychains -d user)
-          security list-keychains -d user -s "$KEYCHAIN_PATH" "${existing_keychains[@]}"
+          security list-keychains -d user -s "${existing_keychains[@]}"
 
           security import "$CERT_P12" \
             -k "$KEYCHAIN_PATH" \
