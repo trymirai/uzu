@@ -27,6 +27,7 @@ pub enum PredictionHeadError<B: Backend> {
 }
 
 pub struct PredictionHead<B: Backend> {
+    name: String,
     hidden_dim: u32,
     activation: ActivationType,
     dense_projection: Box<dyn Linear<B>>,
@@ -37,6 +38,7 @@ pub struct PredictionHead<B: Backend> {
 
 impl<B: Backend> PredictionHead<B> {
     pub fn new(
+        name: String,
         hidden_dim: u32,
         num_labels: u32,
         data_type: DataType,
@@ -45,6 +47,7 @@ impl<B: Backend> PredictionHead<B> {
         context: &B::Context,
     ) -> Result<Self, PredictionHeadError<B>> {
         let dense_projection = <dyn Linear<B>>::new(
+            format!("{name}/dense projection"),
             hidden_dim,
             [hidden_dim],
             config.use_dense_bias,
@@ -58,6 +61,7 @@ impl<B: Backend> PredictionHead<B> {
             .map_err(PredictionHeadError::Backend)?;
 
         let normalization = Normalization::new(
+            format!("{name}/norm"),
             hidden_dim,
             None,
             ShortcutMode::None,
@@ -69,6 +73,7 @@ impl<B: Backend> PredictionHead<B> {
         )?;
 
         let readout = <dyn Linear<B>>::new(
+            format!("{name}/readout"),
             hidden_dim,
             [num_labels],
             true,
@@ -78,6 +83,7 @@ impl<B: Backend> PredictionHead<B> {
         )?;
 
         Ok(Self {
+            name,
             hidden_dim,
             activation,
             dense_projection,
@@ -91,14 +97,12 @@ impl<B: Backend> PredictionHead<B> {
         &self,
         input: B::ScratchBuffer,
         batch_dim: u32,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let name = format!("{parent}/prediction head");
-        command_buffer.push_debug_group(&name);
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
-        let mut hidden = self.dense_projection.encode(input, batch_dim, &name, command_buffer)?;
+        let mut hidden = self.dense_projection.encode(input, batch_dim, command_buffer)?;
         self.activation_kernel.encode(
             None::<&B::ScratchBuffer>,
             &mut hidden,
@@ -107,10 +111,10 @@ impl<B: Backend> PredictionHead<B> {
             command_buffer,
         );
         let normalized =
-            self.normalization.encode(&hidden, 0, batch_dim, None::<&mut B::ScratchBuffer>, &name, command_buffer)?;
-        let logits = self.readout.encode(normalized, batch_dim, &name, command_buffer)?;
+            self.normalization.encode(&hidden, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)?;
+        let logits = self.readout.encode(normalized, batch_dim, command_buffer)?;
 
-        command_buffer.sample_end_timestamp(&name);
+        command_buffer.sample_end_timestamp(&self.name);
         command_buffer.pop_debug_group();
 
         Ok(logits)

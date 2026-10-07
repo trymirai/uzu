@@ -24,16 +24,12 @@ impl<B: Backend> LinearProjection<B> {
         &self,
         hidden: B::ScratchBuffer,
         batch_dim: u32,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let name = format!("{parent}/project");
-        command_buffer.sample_start_timestamp(&name);
-        let mut projected = self.lin.encode(hidden, batch_dim, &name, command_buffer)?;
+        let mut projected = self.lin.encode(hidden, batch_dim, command_buffer)?;
         if let Some(norm) = &self.norm {
-            norm.encode(&mut projected, batch_dim, &name, command_buffer)?;
+            norm.encode(&mut projected, batch_dim, command_buffer)?;
         }
-        command_buffer.sample_end_timestamp(&name);
         Ok(projected)
     }
 }
@@ -45,10 +41,9 @@ impl<B: Backend> Attention<B> {
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<AttentionState<B>>>,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let qkvg = self.projection.project(hidden, batch_dim.size(), parent, command_buffer)?;
+        let qkvg = self.projection.project(hidden, batch_dim.size(), command_buffer)?;
 
         let mut attention_output = match state {
             Some(MaybeMut::Mut(state)) => {
@@ -61,16 +56,14 @@ impl<B: Backend> Attention<B> {
                     self.num_q_heads,
                     precalculated_rope,
                     batch_dim.size(),
-                    parent,
                     command_buffer,
                 )?;
-                self.run_core(&queries, batch_dim, state, parent, command_buffer)?
+                self.run_core(&queries, batch_dim, state, command_buffer)?
             },
             Some(MaybeMut::Const(state)) => {
                 // KV sharing: QKVG contains queries and an optional gate only.
-                let queries =
-                    self.prepare_queries(&qkvg, precalculated_rope, batch_dim.size(), parent, command_buffer)?;
-                self.run_core(&queries, batch_dim, state, parent, command_buffer)?
+                let queries = self.prepare_queries(&qkvg, precalculated_rope, batch_dim.size(), command_buffer)?;
+                self.run_core(&queries, batch_dim, state, command_buffer)?
             },
             None => {
                 let Some(num_kv_heads) = self.num_kv_heads else {
@@ -91,7 +84,6 @@ impl<B: Backend> Attention<B> {
                     self.num_q_heads,
                     precalculated_rope,
                     batch_dim.size(),
-                    parent,
                     command_buffer,
                 )?;
 
@@ -124,7 +116,7 @@ impl<B: Backend> Attention<B> {
                 command_buffer,
             );
         }
-        self.out_projection.encode(attention_output, batch_dim.size(), parent, command_buffer)
+        self.out_projection.encode(attention_output, batch_dim.size(), command_buffer)
     }
 
     pub fn append_projected_kv(
@@ -133,13 +125,11 @@ impl<B: Backend> Attention<B> {
         precalculated_rope: &PrecalculatedRoPE<B>,
         batch_dim: u32,
         state: &mut AttentionState<B>,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        let name = format!("{parent}/append projected kv");
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.sample_start_timestamp(&self.append_projected_kv_name);
         if let Some(norm) = &self.projection.norm {
-            norm.encode_key_value(key_value.reborrow(), batch_dim, &name, command_buffer)?;
+            norm.encode_key_value(key_value.reborrow(), batch_dim, command_buffer)?;
         }
         let prefix_len = state.view().prefix_len();
         self.prepare_kv_and_queries(
@@ -150,11 +140,10 @@ impl<B: Backend> Attention<B> {
             0,
             Some(precalculated_rope),
             batch_dim,
-            &name,
             command_buffer,
         )?;
-        state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), &name, command_buffer)?;
-        command_buffer.sample_end_timestamp(&name);
+        state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), command_buffer)?;
+        command_buffer.sample_end_timestamp(&self.append_projected_kv_name);
         Ok(())
     }
 
@@ -163,11 +152,9 @@ impl<B: Backend> Attention<B> {
         queries: impl BufferRef<Backend = B>,
         batch_dim: &BatchTopology,
         state: &AttentionState<B>,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let name = format!("{parent}/run core");
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.sample_start_timestamp(&self.core_name);
         let trie = if batch_dim.is_flat() {
             None
         } else {
@@ -186,7 +173,7 @@ impl<B: Backend> Attention<B> {
             },
             command_buffer,
         )?;
-        command_buffer.sample_end_timestamp(&name);
+        command_buffer.sample_end_timestamp(&self.core_name);
         Ok(output)
     }
 
@@ -199,11 +186,9 @@ impl<B: Backend> Attention<B> {
         num_q_heads: u32,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: u32,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let name = format!("{parent}/prepare kv and queries");
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.sample_start_timestamp(&self.prepare_kv_and_queries_name);
         let num_kv_heads = self.num_kv_heads.expect("KV prepare requires KV heads");
         // Appended KV is tightly packed; attention projections may have a trailing gate segment.
         let input_row_stride = if num_q_heads == 0 {
@@ -232,7 +217,7 @@ impl<B: Backend> Attention<B> {
             batch_dim,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp(&name);
+        command_buffer.sample_end_timestamp(&self.prepare_kv_and_queries_name);
         Ok(queries)
     }
 
@@ -241,11 +226,9 @@ impl<B: Backend> Attention<B> {
         qkvg: impl BufferRef<Backend = B>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: u32,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let name = format!("{parent}/prepare queries");
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.sample_start_timestamp(&self.prepare_queries_name);
         let mut queries =
             command_buffer.allocate_scratch_for_shape(&[self.num_q_heads, batch_dim, self.head_dim], self.data_type)?;
         self.prepare.encode(
@@ -264,7 +247,7 @@ impl<B: Backend> Attention<B> {
             batch_dim,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp(&name);
+        command_buffer.sample_end_timestamp(&self.prepare_queries_name);
         Ok(queries)
     }
 }

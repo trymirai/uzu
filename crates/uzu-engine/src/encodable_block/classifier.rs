@@ -35,6 +35,7 @@ pub enum ClassifierError<B: Backend> {
 }
 
 pub struct Classifier<B: Backend> {
+    name: String,
     hidden_dim: u32,
     data_type: DataType,
     embedding: Embedding<B>,
@@ -46,12 +47,14 @@ pub struct Classifier<B: Backend> {
 
 impl<B: Backend> Classifier<B> {
     pub fn new(
+        name: String,
         context: &B::Context,
         config: &ClassifierConfig,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, ClassifierError<B>> {
         let (embedding, _) = Embedding::new(
+            format!("{name}/embedding"),
             context,
             config.vocab_size,
             config.transformer_config.model_dim,
@@ -61,6 +64,7 @@ impl<B: Backend> Classifier<B> {
         )?;
 
         let embedding_norm = Normalization::new(
+            format!("{name}/embedding norm"),
             config.transformer_config.model_dim,
             None,
             ShortcutMode::None,
@@ -72,6 +76,7 @@ impl<B: Backend> Classifier<B> {
         )?;
 
         let transformer = Transformer::new(
+            format!("{name}/transformer"),
             context,
             None,
             data_type,
@@ -89,6 +94,7 @@ impl<B: Backend> Classifier<B> {
             <B::Kernels as Kernels>::PoolingMeanKernel::new(context, data_type).map_err(ClassifierError::Backend)?;
 
         let prediction_head = PredictionHead::new(
+            format!("{name}/prediction head"),
             config.hidden_dim,
             config.num_labels,
             data_type,
@@ -98,6 +104,7 @@ impl<B: Backend> Classifier<B> {
         )?;
 
         Ok(Self {
+            name,
             hidden_dim: config.hidden_dim,
             data_type,
             embedding,
@@ -116,18 +123,16 @@ impl<B: Backend> Classifier<B> {
         &self,
         token_ids: impl BufferRef<Backend = B>,
         batch_dim: u32,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, ClassifierError<B>> {
-        let name = format!("{parent}/classifier");
-        command_buffer.push_debug_group(&name);
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim, &name, command_buffer)?;
+        let embedded = self.embedding.encode_lookup(token_ids, batch_dim, command_buffer)?;
 
         let hidden = self
             .embedding_norm
-            .encode(&embedded, 0, batch_dim, None::<&mut B::ScratchBuffer>, &name, command_buffer)
+            .encode(&embedded, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(ClassifierError::Backend)?;
 
         let nodes = (0..batch_dim)
@@ -146,7 +151,6 @@ impl<B: Backend> Classifier<B> {
                 Some((0..batch_dim).into()),
                 None,
                 None,
-                &name,
                 command_buffer,
             )
             .map_err(ClassifierError::Backend)?
@@ -158,9 +162,9 @@ impl<B: Backend> Classifier<B> {
             .map_err(ClassifierError::Backend)?;
         self.pooling.encode(&hidden, &mut pooled, batch_dim, self.hidden_dim, 1, command_buffer);
 
-        let logits = self.prediction_head.encode(pooled, 1, &name, command_buffer).map_err(ClassifierError::Backend)?;
+        let logits = self.prediction_head.encode(pooled, 1, command_buffer).map_err(ClassifierError::Backend)?;
 
-        command_buffer.sample_end_timestamp(&name);
+        command_buffer.sample_end_timestamp(&self.name);
         command_buffer.pop_debug_group();
 
         Ok(logits)

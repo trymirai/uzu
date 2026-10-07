@@ -126,12 +126,19 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let weight_loader = ParameterLoader::new(&weights_file, &*context)?;
         let speculator_tree = weight_loader.tree().subtree("speculator");
 
-        let dflash = DFlash::new(&*context, &config.draft_config, &speculator_tree.subtree("draft_model"), data_type)?;
+        let dflash = DFlash::new(
+            "dflash".to_string(),
+            &*context,
+            &config.draft_config,
+            &speculator_tree.subtree("draft_model"),
+            data_type,
+        )?;
         let weaver = config
             .weaver_config
             .as_ref()
             .map(|weaver_config| {
                 Weaver::new(
+                    "weaver".to_string(),
                     &*context,
                     weaver_config,
                     config.draft_config.vocab_size,
@@ -142,7 +149,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
-        let sampling = Sampling::new(data_type, config.draft_config.vocab_size);
+        let sampling = Sampling::new("sampling".to_string(), data_type, config.draft_config.vocab_size);
 
         Ok(Some(Self {
             context,
@@ -170,10 +177,9 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         state: &mut DFlashState<B>,
         target_features: impl ExactSizeIterator<Item = impl BufferRef<Backend = B>>,
         accepted_indices: &[u32],
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.dflash.encode_accept(state, target_features, accepted_indices, parent, command_buffer)
+        self.dflash.encode_accept(state, target_features, accepted_indices, command_buffer)
     }
 
     pub fn make_shape(
@@ -263,7 +269,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     target_output_token,
                     target_embedding,
                     dflash_depth,
-                    SPECULATOR_PROPOSE,
                     &mut command_buffer,
                 )?;
                 let topology_nodes = (0..chain_length)
@@ -285,7 +290,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         &SamplingMethod::Greedy,
                         &batch_topology,
                         (0..chain_length).into(),
-                        SPECULATOR_PROPOSE,
                         &mut command_buffer,
                     )
                     .map_err(DFlashTreeError::Backend)?;
@@ -341,7 +345,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     target_output_token,
                     target_embedding,
                     dflash_depth,
-                    SPECULATOR_PROPOSE,
                     &mut command_buffer,
                 )?;
                 let depth_seeds = (0..weaver.max_depth())
@@ -363,7 +366,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         expand_width,
                         prune_noise_scale: prune_sigma.map(f32::recip),
                     },
-                    SPECULATOR_PROPOSE,
                     &mut command_buffer,
                 )?;
                 let completed =

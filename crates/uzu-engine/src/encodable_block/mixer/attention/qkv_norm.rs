@@ -26,6 +26,7 @@ struct Head<B: Backend> {
 }
 
 pub struct QKVNorm<B: Backend> {
+    name: String,
     query: Option<Head<B>>,
     key: Option<Head<B>>,
     value: Option<Head<B>>,
@@ -37,6 +38,7 @@ pub struct QKVNorm<B: Backend> {
 
 impl<B: Backend> QKVNorm<B> {
     pub fn new(
+        name: String,
         context: &B::Context,
         intermediate_data_type: DataType,
         query_config: Option<NormalizationConfig>,
@@ -75,6 +77,7 @@ impl<B: Backend> QKVNorm<B> {
             .transpose()?;
 
         Ok(Self {
+            name,
             query,
             key,
             value,
@@ -124,20 +127,18 @@ impl<B: Backend> QKVNorm<B> {
         &self,
         qkvg: impl BufferMut<Backend = B>,
         batch_dim: u32,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, parent, command_buffer)
+        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, command_buffer)
     }
 
     pub fn encode_key_value(
         &self,
         key_value: impl BufferMut<Backend = B>,
         batch_dim: u32,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, parent, command_buffer)
+        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, command_buffer)
     }
 
     fn encode_packed(
@@ -146,7 +147,6 @@ impl<B: Backend> QKVNorm<B> {
         batch_dim: u32,
         q_heads: u32,
         input_row_stride: u32,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let packed_row_width = (q_heads + 2 * self.num_kv_heads) * self.head_dim;
@@ -155,9 +155,8 @@ impl<B: Backend> QKVNorm<B> {
             "QKV norm input row stride ({input_row_stride}) is smaller than its packed row width ({packed_row_width})"
         );
 
-        let name = format!("{parent}/qkv norm");
-        command_buffer.push_debug_group(&name);
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let kv = self.num_kv_heads;
         let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
@@ -184,7 +183,7 @@ impl<B: Backend> QKVNorm<B> {
             );
         }
 
-        command_buffer.sample_end_timestamp(&name);
+        command_buffer.sample_end_timestamp(&self.name);
         command_buffer.pop_debug_group();
 
         Ok(())

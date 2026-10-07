@@ -66,6 +66,7 @@ impl<B: Backend> Engine<B> {
         let weight_loader = ParameterLoader::new(&weights_file, context.as_ref())?;
 
         let classifier = ClassifierEncodable::new(
+            "classifier".to_string(),
             context.as_ref(),
             &config.classifier_config,
             &weight_loader.tree().subtree("classifier"),
@@ -152,7 +153,7 @@ impl<B: Backend> ClassifierModel<B> {
             .allocate_constant_from_slice(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>())
             .map_err(ClassifierModelClassifyError::Backend)?;
 
-        let logits = self.classifier.encode(&token_ids, input.len() as u32, "classify", &mut command_buffer)?;
+        let logits = self.classifier.encode(&token_ids, input.len() as u32, &mut command_buffer)?;
 
         let mut output_buffer = self
             .context

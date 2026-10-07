@@ -112,6 +112,9 @@ impl<B: Backend> EncodedWeaverTree<B> {
 }
 
 pub struct Weaver<B: Backend> {
+    name: String,
+    prefix_name: String,
+    step_name: String,
     token_embedding_norm: Normalization<B>,
     token_embedding_projection: Box<dyn Linear<B>>,
     hidden_state_norm: Normalization<B>,
@@ -171,6 +174,7 @@ pub enum WeaverEncodeError<B: Backend> {
 
 impl<B: Backend> Weaver<B> {
     pub fn new(
+        name: String,
         context: &B::Context,
         config: &WeaverConfig,
         vocab_size: u32,
@@ -199,6 +203,7 @@ impl<B: Backend> Weaver<B> {
             });
         }
         let token_embedding_norm = Normalization::new(
+            format!("{name}/token embedding norm"),
             config.target_embedding_dim,
             None,
             ShortcutMode::None,
@@ -209,6 +214,7 @@ impl<B: Backend> Weaver<B> {
             context,
         )?;
         let hidden_state_norm = Normalization::new(
+            format!("{name}/hidden state norm"),
             config.target_model_dim,
             None,
             ShortcutMode::None,
@@ -219,6 +225,7 @@ impl<B: Backend> Weaver<B> {
             context,
         )?;
         let token_embedding_projection = <dyn Linear<B>>::new(
+            format!("{name}/token embedding projection"),
             config.target_embedding_dim,
             [config.model_dim],
             true,
@@ -228,9 +235,18 @@ impl<B: Backend> Weaver<B> {
         )?;
         let layer_parameters = parameter_tree.subtree("blocks");
         let layers = (0..config.num_layers)
-            .map(|index| WeaverLayer::new(context, config, index > 0, &layer_parameters.subtree(&index.to_string())))
+            .map(|index| {
+                WeaverLayer::new(
+                    format!("{name}/layer {index}"),
+                    context,
+                    config,
+                    index > 0,
+                    &layer_parameters.subtree(&index.to_string()),
+                )
+            })
             .collect::<Result<Box<[_]>, WeaverNewError<B>>>()?;
         let readout_norm = Normalization::new(
+            format!("{name}/readout norm"),
             config.model_dim,
             None,
             ShortcutMode::Add,
@@ -241,6 +257,7 @@ impl<B: Backend> Weaver<B> {
             context,
         )?;
         let hidden_state_projection = <dyn Linear<B>>::new(
+            format!("{name}/hidden state projection"),
             config.target_model_dim,
             [config.model_dim],
             true,
@@ -249,6 +266,7 @@ impl<B: Backend> Weaver<B> {
             &parameter_tree.subtree("hidden_state_projection"),
         )?;
         let readout_query_projection = <dyn Linear<B>>::new(
+            format!("{name}/readout query projection"),
             config.model_dim,
             [config.target_model_dim],
             false,
@@ -267,6 +285,9 @@ impl<B: Backend> Weaver<B> {
         let frontier_insert_children = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(context)
             .map_err(WeaverNewError::Backend)?;
         Ok(Self {
+            prefix_name: format!("{name}/prefix"),
+            step_name: format!("{name}/step"),
+            name,
             token_embedding_norm,
             token_embedding_projection,
             hidden_state_norm,
@@ -297,12 +318,10 @@ impl<B: Backend> Weaver<B> {
         draft_hidden: impl BufferRef<Backend = B>,
         rope: &PrecalculatedRoPE<B>,
         depth: u32,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Vec<B::ScratchBuffer>, WeaverEncodeError<B>> {
-        let name = format!("{parent}/weaver prefix");
-        command_buffer.push_debug_group(&name);
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.push_debug_group(&self.prefix_name);
+        command_buffer.sample_start_timestamp(&self.prefix_name);
 
         let hidden_row_bytes = size_for_shape(&[self.target_model_dim], DATA_TYPE);
         let mut prefix_hidden = command_buffer
@@ -316,11 +335,11 @@ impl<B: Backend> Weaver<B> {
         );
         let normalized_prefix = self
             .hidden_state_norm
-            .encode(&prefix_hidden, 0, depth, None::<&mut B::ScratchBuffer>, &name, command_buffer)
+            .encode(&prefix_hidden, 0, depth, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
         let mut residual_input = self
             .hidden_state_projection
-            .encode(normalized_prefix, depth, &name, command_buffer)
+            .encode(normalized_prefix, depth, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
         let (last_layer, preceding_layers) = self.layers.split_last().expect("Weaver must have at least one layer");
         let mut residual_state =
@@ -331,7 +350,7 @@ impl<B: Backend> Weaver<B> {
                 queries,
                 kv_cache,
             } = layer
-                .encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, &name, command_buffer)
+                .encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, command_buffer)
                 .map_err(WeaverEncodeError::Backend)?;
             let cache = KVCacheView::full(0);
             let kv_plane_bytes = size_for_shape(&[depth, self.model_dim], DATA_TYPE);
@@ -351,18 +370,18 @@ impl<B: Backend> Weaver<B> {
                 )
                 .map_err(WeaverEncodeError::Backend)?;
             residual_input = layer
-                .encode_post_attention(attention_output, &mut residual_state, depth, &name, command_buffer)
+                .encode_post_attention(attention_output, &mut residual_state, depth, command_buffer)
                 .map_err(WeaverEncodeError::Backend)?;
             prefix_kv_layers.push(kv_cache);
         }
         prefix_kv_layers.push(
             last_layer
-                .encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, &name, command_buffer)
+                .encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, command_buffer)
                 .map_err(WeaverEncodeError::Backend)?
                 .kv_cache,
         );
 
-        command_buffer.sample_end_timestamp(&name);
+        command_buffer.sample_end_timestamp(&self.prefix_name);
         command_buffer.pop_debug_group();
 
         Ok(prefix_kv_layers)
@@ -389,12 +408,10 @@ impl<B: Backend> Weaver<B> {
         shape: &WeaverTreeShape,
         batch_node_count: u32,
         batch_start_slot: u32,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), WeaverEncodeError<B>> {
-        let name = format!("{parent}/weaver step");
-        command_buffer.push_debug_group(&name);
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.push_debug_group(&self.step_name);
+        command_buffer.sample_start_timestamp(&self.step_name);
         let tree_slot_count = shape.slot_count();
         let ancestor_stride = self.max_depth;
         let frontier_capacity = tree_slot_count * shape.expand_width;
@@ -433,14 +450,14 @@ impl<B: Backend> Weaver<B> {
         // Node expansion: embed the batch's tokens, run every layer against
         // the prefix KV and each node's ancestors, then pick its children.
         let token_embedding =
-            target_embedding.encode_lookup(node_token_ids.as_ref(), batch_node_count, &name, command_buffer)?;
+            target_embedding.encode_lookup(node_token_ids.as_ref(), batch_node_count, command_buffer)?;
         let normalized_embedding = self
             .token_embedding_norm
-            .encode(&token_embedding, 0, batch_node_count, None::<&mut B::ScratchBuffer>, &name, command_buffer)
+            .encode(&token_embedding, 0, batch_node_count, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
         let mut residual_input = self
             .token_embedding_projection
-            .encode(normalized_embedding, batch_node_count, &name, command_buffer)
+            .encode(normalized_embedding, batch_node_count, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
         let mut residual_state =
             command_buffer.allocate_scratch(residual_input.size()).map_err(WeaverEncodeError::Backend)?;
@@ -449,11 +466,11 @@ impl<B: Backend> Weaver<B> {
         for layer in &self.layers {
             let attention_input = layer
                 .pre_attention_norm
-                .encode(&residual_input, 0, batch_node_count, Some(&mut residual_state), &name, command_buffer)
+                .encode(&residual_input, 0, batch_node_count, Some(&mut residual_state), command_buffer)
                 .map_err(WeaverEncodeError::Backend)?;
             let current_qkv = layer
                 .qkv_projection
-                .encode(attention_input, batch_node_count, &name, command_buffer)
+                .encode(attention_input, batch_node_count, command_buffer)
                 .map_err(WeaverEncodeError::Backend)?;
             let mut attention_output = command_buffer
                 .allocate_scratch_for_shape(&[batch_node_count, self.model_dim], DATA_TYPE)
@@ -478,17 +495,17 @@ impl<B: Backend> Weaver<B> {
                 command_buffer,
             );
             residual_input = layer
-                .encode_post_attention(attention_output, &mut residual_state, batch_node_count, &name, command_buffer)
+                .encode_post_attention(attention_output, &mut residual_state, batch_node_count, command_buffer)
                 .map_err(WeaverEncodeError::Backend)?;
         }
 
         let normalized_output = self
             .readout_norm
-            .encode(&residual_input, 0, batch_node_count, Some(&mut residual_state), &name, command_buffer)
+            .encode(&residual_input, 0, batch_node_count, Some(&mut residual_state), command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
         let query = self
             .readout_query_projection
-            .encode(normalized_output, batch_node_count, &name, command_buffer)
+            .encode(normalized_output, batch_node_count, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
         let logit_residuals = target_embedding.encode_readout(
             batch_node_count,
@@ -496,7 +513,6 @@ impl<B: Backend> Weaver<B> {
             self.candidate_pool_size,
             Some(batch_candidate_ids),
             false,
-            &name,
             command_buffer,
         )?;
         let mut child_token_ids = command_buffer
@@ -548,7 +564,7 @@ impl<B: Backend> Weaver<B> {
             command_buffer,
         );
 
-        command_buffer.sample_end_timestamp(&name);
+        command_buffer.sample_end_timestamp(&self.step_name);
         command_buffer.pop_debug_group();
         Ok(())
     }
@@ -562,12 +578,10 @@ impl<B: Backend> Weaver<B> {
         depth_seeds: &[u64],
         root_token_id: u32,
         shape: WeaverTreeShape,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<EncodedWeaverTree<B>, WeaverEncodeError<B>> {
-        let name = format!("{parent}/weaver tree");
-        command_buffer.push_debug_group(&name);
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let tree_slot_count = shape.slot_count();
         let ancestor_stride = self.max_depth;
@@ -619,7 +633,7 @@ impl<B: Backend> Weaver<B> {
             .map_err(WeaverEncodeError::Backend)?;
 
         let prefix_kv_layers =
-            self.encode_prefix(target_hidden, draft_hidden, &rope, shape.dflash_depth, &name, command_buffer)?;
+            self.encode_prefix(target_hidden, draft_hidden, &rope, shape.dflash_depth, command_buffer)?;
 
         // Per-layer KV cache for tree nodes, one slot per packed-tree slot.
         let node_kv_size = size_for_shape(&[2, tree_slot_count, self.model_dim], DATA_TYPE);
@@ -711,13 +725,12 @@ impl<B: Backend> Weaver<B> {
                 &shape,
                 batch_node_count,
                 batch_start_slot,
-                &name,
                 command_buffer,
             )?;
             batch_start_slot += batch_node_count;
         }
 
-        command_buffer.sample_end_timestamp(&name);
+        command_buffer.sample_end_timestamp(&self.name);
         command_buffer.pop_debug_group();
 
         let mut packed_tree_readback =

@@ -32,6 +32,7 @@ pub enum DecoderError<B: Backend> {
 }
 
 pub struct Decoder<B: Backend> {
+    name: String,
     embedding: Embedding<B>,
     embedding_norm: Option<Normalization<B>>,
     per_layer_embedding: Option<PerLayerEmbedding<B>>,
@@ -50,12 +51,14 @@ impl<B: Backend> Decoder<B> {
     }
 
     pub fn new(
+        name: String,
         context: &B::Context,
         config: &DecoderConfig,
         parameter_tree: &ParameterTree<B>,
         data_type: DataType,
     ) -> Result<Self, DecoderError<B>> {
         let (embedding, readout_input_hadamard_factors) = Embedding::new(
+            format!("{name}/embedding"),
             context,
             config.vocab_size,
             config.transformer_config.model_dim,
@@ -69,6 +72,7 @@ impl<B: Backend> Decoder<B> {
             .as_ref()
             .map(|norm_config| {
                 Normalization::new(
+                    format!("{name}/embedding norm"),
                     config.transformer_config.model_dim,
                     None,
                     ShortcutMode::None,
@@ -88,6 +92,7 @@ impl<B: Backend> Decoder<B> {
                 "per-layer embedding num_layers must match transformer layer count"
             );
             Some(PerLayerEmbedding::new(
+                format!("{name}/per layer embedding"),
                 context,
                 ple_config,
                 config.transformer_config.model_dim,
@@ -99,6 +104,7 @@ impl<B: Backend> Decoder<B> {
         };
 
         let transformer = Transformer::new(
+            format!("{name}/transformer"),
             context,
             readout_input_hadamard_factors,
             data_type,
@@ -107,6 +113,7 @@ impl<B: Backend> Decoder<B> {
         )?;
 
         Ok(Self {
+            name,
             embedding,
             embedding_norm,
             per_layer_embedding,
@@ -141,17 +148,15 @@ impl<B: Backend> Decoder<B> {
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         state: &mut TransformerState<B>,
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
-        let name = format!("{parent}/decoder");
-        command_buffer.push_debug_group(&name);
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), &name, command_buffer)?;
+        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
             embedding_norm
-                .encode(&embedded, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, &name, command_buffer)
+                .encode(&embedded, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)
                 .map_err(DecoderError::Backend)?
         } else {
             embedded
@@ -160,7 +165,7 @@ impl<B: Backend> Decoder<B> {
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
             Some(
                 per_layer_embedding
-                    .encode(token_ids, &embedded, batch_dim.size(), &name, command_buffer)
+                    .encode(token_ids, &embedded, batch_dim.size(), command_buffer)
                     .map_err(DecoderError::Backend)?,
             )
         } else {
@@ -176,7 +181,6 @@ impl<B: Backend> Decoder<B> {
                 output_range,
                 hidden_feature_layer_indices,
                 Some(state),
-                &name,
                 command_buffer,
             )
             .map_err(DecoderError::Backend)?;
@@ -189,7 +193,6 @@ impl<B: Backend> Decoder<B> {
                 self.embedding.vocab_size(),
                 None::<&B::ScratchBuffer>,
                 true,
-                &name,
                 command_buffer,
             )?)
         } else {
@@ -201,7 +204,7 @@ impl<B: Backend> Decoder<B> {
             transformer_output.output
         };
 
-        command_buffer.sample_end_timestamp(&name);
+        command_buffer.sample_end_timestamp(&self.name);
         command_buffer.pop_debug_group();
 
         Ok(DecoderEncodeOutput {
