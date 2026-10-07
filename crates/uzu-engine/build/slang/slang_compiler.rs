@@ -54,6 +54,8 @@ impl SlangCompiler {
 
     pub fn build(&self) -> Result<(), Error> {
         println!("cargo::rerun-if-changed={}", self.src_dir.display());
+        println!("cargo::rerun-if-env-changed=SLANG_DIR");
+        println!("cargo::rerun-if-env-changed=LD_LIBRARY_PATH");
         let mut sources = WalkDir::new(&self.src_dir)
             .into_iter()
             .collect::<Result<Vec<_>, _>>()?
@@ -83,7 +85,11 @@ impl SlangCompiler {
         let wrapper_file = out_dir.join(source_name).with_extension("slang");
         let object_file = out_dir.join(source_name).with_extension("spv");
         let dephashes_file = out_dir.join(source_name).with_extension("dephashes");
-        let buildsystem_hash = *caching::build_system_hash()?.as_bytes();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(caching::build_system_hash()?.as_bytes());
+        hasher.update(self._global_session.build_tag_string().as_bytes());
+        hasher.update(env::var("OPT_LEVEL")?.as_bytes());
+        let buildsystem_hash = *hasher.finalize().as_bytes();
 
         if let Ok(contents) = fs::read(&dephashes_file)
             && let Ok(cached) = serde_json::from_slice::<Dephashes>(&contents)
@@ -91,8 +97,12 @@ impl SlangCompiler {
             && cached
                 .dependency_hashes
                 .iter()
+                .chain(&cached.artifact_hashes)
                 .all(|(path, hash)| fs::read(path).is_ok_and(|contents| blake3::hash(&contents).as_bytes() == hash))
         {
+            for path in cached.artifact_hashes.keys() {
+                println!("cargo::rerun-if-changed={path}");
+            }
             debug_log!("Slang compile cached: {}", source_file.display());
             return Ok(());
         }
@@ -121,6 +131,7 @@ impl SlangCompiler {
             .flatten()
             .collect::<Vec<_>>();
 
+        let mut artifact_hashes = HashMap::new();
         if !kernels.is_empty() {
             let blocks = kernels
                 .iter()
@@ -140,12 +151,26 @@ impl SlangCompiler {
             let compiled = loaded.component.link().context("cannot link Slang wrapper module")?;
             let blob = compiled.target_code(0).context("cannot emit SPIR-V")?;
             fs::write(&object_file, blob.as_slice())?;
+            for path in [&wrapper_file, &object_file] {
+                artifact_hashes.insert(
+                    path.to_str().context("Slang artifact path is not UTF-8")?.to_owned(),
+                    blake3::hash(&fs::read(path)?).into(),
+                );
+                println!("cargo::rerun-if-changed={}", path.display());
+            }
+        } else {
+            for path in [&wrapper_file, &object_file] {
+                if path.exists() {
+                    fs::remove_file(path)?;
+                }
+            }
         }
         fs::write(
             dephashes_file,
             serde_json::to_vec(&Dephashes {
                 buildsystem_hash,
                 dependency_hashes,
+                artifact_hashes,
             })?,
         )?;
         Ok(())

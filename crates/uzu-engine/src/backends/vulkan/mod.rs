@@ -1,5 +1,4 @@
 mod error;
-mod logger;
 mod vk_buffer;
 mod vk_buffer_create_info;
 mod vk_buffer_error;
@@ -19,7 +18,6 @@ mod vk_shader;
 mod vk_timestamp_query_pool;
 
 pub use error::Error;
-pub use logger::debug_message_callback;
 pub use vk_buffer::VkBuffer;
 pub use vk_buffer_create_info::VkBufferCreateInfo;
 pub use vk_buffer_error::VkBufferError;

@@ -4,13 +4,13 @@ use shader_slang::{
     reflection::{Decl, Function},
 };
 
-use super::{Error, SlangArgument, SlangTypeParameter, slang_api};
+use super::{Error, SlangArgument, slang_api};
 
 pub struct SlangKernelInfo<'a> {
     function: &'a Function,
     name: &'a str,
     generic_decl: Option<&'a Decl>,
-    type_parameters: Vec<SlangTypeParameter>,
+    type_parameters: Vec<&'static [&'static str]>,
 }
 
 impl<'a> SlangKernelInfo<'a> {
@@ -47,9 +47,7 @@ impl<'a> SlangKernelInfo<'a> {
                         parameter.constraints
                     );
                 };
-                type_parameters.push(SlangTypeParameter {
-                    variants,
-                });
+                type_parameters.push(variants);
             }
         }
         Ok(Some(Self {
@@ -72,14 +70,14 @@ impl<'a> SlangKernelInfo<'a> {
         self.function.parameters().map(SlangArgument::new)
     }
 
-    pub fn type_parameters(&self) -> &[SlangTypeParameter] {
+    pub fn type_parameters(&self) -> &[&'static [&'static str]] {
         &self.type_parameters
     }
 }
 
 fn variants_for_constraint(constraint: &str) -> Option<&'static [&'static str]> {
     match constraint {
-        "__BuiltinFloatingPointType" => Some(&["float", "half", "double"]),
+        "__BuiltinFloatingPointType" => Some(&["float", "half"]),
         _ => None,
     }
 }

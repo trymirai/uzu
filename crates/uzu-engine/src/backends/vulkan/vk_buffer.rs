@@ -28,7 +28,8 @@ impl VkBuffer {
         allocation_info: &vk_mem::AllocationCreateInfo,
         buffer_info: &vk::BufferCreateInfo<'_>,
     ) -> Result<Self, VkBufferError> {
-        let (buffer, allocation) = unsafe { context.memory_allocator().create_buffer(buffer_info, allocation_info) }
+        let buffer_info = (*buffer_info).usage(buffer_info.usage | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS);
+        let (buffer, allocation) = unsafe { context.memory_allocator().create_buffer(&buffer_info, allocation_info) }
             .map_err(VkBufferError::Allocation)?;
         Ok(Self {
             context,
@@ -40,6 +41,11 @@ impl VkBuffer {
 
     pub fn buffer(&self) -> vk::Buffer {
         self.buffer
+    }
+
+    pub fn device_address(&self) -> vk::DeviceAddress {
+        let info = vk::BufferDeviceAddressInfo::default().buffer(self.buffer);
+        unsafe { self.context.device().get_buffer_device_address(&info) }
     }
 
     pub fn map_action_unmap<T>(

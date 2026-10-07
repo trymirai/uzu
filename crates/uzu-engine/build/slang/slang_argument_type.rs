@@ -2,7 +2,7 @@
 pub enum SlangArgumentType {
     Ptr,
     Constant,
-    Axis(Box<str>),
+    Axis(Box<str>, Box<str>),
     Groups,
     Threads(Box<str>),
 }

@@ -8,7 +8,7 @@ impl Default for VkContextCreateInfo {
     fn default() -> Self {
         Self {
             with_validation: true,
-            logger: Box::new(VkPrintlnLogger::new()),
+            logger: Box::new(VkPrintlnLogger),
         }
     }
 }

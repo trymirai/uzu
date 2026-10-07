@@ -46,9 +46,9 @@ impl<'a> SlangArgument<'a> {
             .collect::<Result<HashMap<&str, &UserAttribute>, Error>>()?;
 
         if let Some(axis) = attrs.get("Axis") {
-            axis.argument_value_string(0).context("Axis missing arg 0")?;
+            let total = axis.argument_value_string(0).context("Axis missing arg 0")?.into();
             let per_group = axis.argument_value_string(1).context("Axis missing arg 1")?.into();
-            Ok(SlangArgumentType::Axis(per_group))
+            Ok(SlangArgumentType::Axis(total, per_group))
         } else if let Some(groups) = attrs.get("Groups") {
             groups.argument_value_string(0).context("Groups missing arg")?;
             Ok(SlangArgumentType::Groups)
@@ -59,13 +59,7 @@ impl<'a> SlangArgument<'a> {
                 TypeKind::Pointer => Ok(SlangArgumentType::Ptr),
                 TypeKind::Scalar => {
                     match ty.scalar_type() {
-                        ScalarType::Uint32
-                        | ScalarType::Int32
-                        | ScalarType::Float32
-                        | ScalarType::Float64
-                        | ScalarType::Uint64
-                        | ScalarType::Int64
-                        | ScalarType::Float16 => {},
+                        ScalarType::Uint32 | ScalarType::Int32 | ScalarType::Float32 | ScalarType::Float16 => {},
                         other => bail!("unsupported scalar type: {other:?}"),
                     }
                     Ok(SlangArgumentType::Constant)

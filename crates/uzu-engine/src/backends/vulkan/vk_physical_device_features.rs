@@ -10,6 +10,12 @@ pub struct VkPhysicalDeviceFeatures {
     // Version 1.2
     pub shader_float16: bool,
     pub shader_subgroup_extended_types: bool,
+    pub buffer_device_address: bool,
+    pub host_query_reset: bool,
+
+    // Version 1.3
+    pub maintenance4: bool,
+    pub synchronization2: bool,
 }
 impl VkPhysicalDeviceFeatures {
     pub fn contains(
@@ -21,16 +27,9 @@ impl VkPhysicalDeviceFeatures {
             && (self.storage_push_constant16 || !other.storage_push_constant16)
             && (self.shader_float16 || !other.shader_float16)
             && (self.shader_subgroup_extended_types || !other.shader_subgroup_extended_types)
-    }
-}
-impl Default for VkPhysicalDeviceFeatures {
-    fn default() -> Self {
-        Self {
-            shader_int16: true,
-            storage_buffer16_bit_access: true,
-            storage_push_constant16: true,
-            shader_float16: true,
-            shader_subgroup_extended_types: true,
-        }
+            && (self.buffer_device_address || !other.buffer_device_address)
+            && (self.host_query_reset || !other.host_query_reset)
+            && (self.maintenance4 || !other.maintenance4)
+            && (self.synchronization2 || !other.synchronization2)
     }
 }
