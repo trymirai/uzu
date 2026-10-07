@@ -14,6 +14,9 @@ struct SimdgroupSizeAttribute;
 [[__AttributeUsage(_AttributeTargets.Function)]]
 struct KernelAttribute;
 
+[[__AttributeUsage(_AttributeTargets.Function)]]
+struct PublicAttribute;
+
 
 // Kernel parameter annotation
 
@@ -32,3 +35,11 @@ struct GroupsAttribute {
 struct ThreadsAttribute {
     string threads;
 };
+
+[[__AttributeUsage(_AttributeTargets.Param)]]
+struct OptionalAttribute {
+    string condition;
+};
+
+[[__AttributeUsage(_AttributeTargets.Param)]]
+struct SpecializeAttribute;

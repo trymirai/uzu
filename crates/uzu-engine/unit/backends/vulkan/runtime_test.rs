@@ -59,7 +59,7 @@ fn add_pipeline_with_arguments(
     context: &Arc<VkContext>,
     push_constant_size: u32,
 ) -> Result<VkComputePipeline, Error> {
-    let shader = VkShader::new(context.clone(), concat!(env!("OUT_DIR"), "/vulkan/test_kernel.spv"))?;
+    let shader = VkShader::new(context.clone(), include_bytes!(concat!(env!("OUT_DIR"), "/vulkan/test_kernel.spv")))?;
     let entries = [vk::SpecializationMapEntry::default().constant_id(0).offset(0).size(4)];
     let group_bytes = GROUP_SIZE.to_ne_bytes();
     let specialization = vk::SpecializationInfo::default().map_entries(&entries).data(&group_bytes);

@@ -65,7 +65,7 @@ fn main() -> Result<(), Error> {
         .flat_map(|buffer| buffer.device_address().to_ne_bytes())
         .chain(size.to_ne_bytes())
         .collect::<Vec<_>>();
-    let shader = VkShader::new(context.clone(), concat!(env!("OUT_DIR"), "/vulkan/test_kernel.spv"))?;
+    let shader = VkShader::new(context.clone(), include_bytes!(concat!(env!("OUT_DIR"), "/vulkan/test_kernel.spv")))?;
     let entries = [vk::SpecializationMapEntry::default().constant_id(0).offset(0).size(4)];
     let group_bytes = group_size.to_ne_bytes();
     let specialization = vk::SpecializationInfo::default().map_entries(&entries).data(&group_bytes);

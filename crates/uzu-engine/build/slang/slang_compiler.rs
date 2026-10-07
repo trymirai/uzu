@@ -15,7 +15,13 @@ use shader_slang::{
 use walkdir::WalkDir;
 
 use super::{Dephashes, Error, SlangKernelInfo, slang_api, wrapper};
-use crate::{common::caching, debug_log};
+use crate::{
+    common::{
+        caching, compiler::Compiler, enum_paths::EnumPaths, gpu_types::GpuTypes, identifiers::KernelPath,
+        kernel::Kernel,
+    },
+    debug_log,
+};
 
 pub struct SlangCompiler {
     session: Session,
@@ -52,39 +58,21 @@ impl SlangCompiler {
         })
     }
 
-    pub fn build(&self) -> Result<(), Error> {
-        println!("cargo::rerun-if-changed={}", self.src_dir.display());
-        println!("cargo::rerun-if-env-changed=SLANG_DIR");
-        println!("cargo::rerun-if-env-changed=LD_LIBRARY_PATH");
-        let mut sources = WalkDir::new(&self.src_dir)
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .filter(|entry| {
-                entry.file_type().is_file() && entry.path().extension().is_some_and(|extension| extension == "slang")
-            })
-            .map(|entry| entry.into_path())
-            .collect::<Vec<_>>();
-        sources.sort();
-        for source in sources {
-            if !fs::read(&source)?.starts_with(b"implementing") {
-                self.compile(&source).with_context(|| format!("cannot compile {}", source.display()))?;
-            }
-        }
-        Ok(())
-    }
-
     fn compile(
         &self,
         source_file: &Path,
-    ) -> Result<(), Error> {
-        let source_name = source_file.file_stem().context("Slang source has no file name")?;
-        let source_dir = source_file.parent().context("Slang source has no parent")?;
-        let out_dir = self.out_dir.join(source_dir.strip_prefix(&self.src_dir)?);
-        fs::create_dir_all(&out_dir)?;
-        let wrapper_file = out_dir.join(source_name).with_extension("slang");
-        let object_file = out_dir.join(source_name).with_extension("spv");
-        let dephashes_file = out_dir.join(source_name).with_extension("dephashes");
+    ) -> Result<(KernelPath, Box<[Kernel]>), Error> {
+        let source_relative = source_file.strip_prefix(&self.src_dir)?.with_extension("");
+        let kernel_path = source_relative
+            .components()
+            .map(|component| component.as_os_str().to_str().map(str::to_owned))
+            .collect::<Option<KernelPath>>()
+            .context("Slang source path is not UTF-8")?;
+        let output_base = self.out_dir.join(&source_relative);
+        fs::create_dir_all(output_base.parent().context("Slang source has no parent")?)?;
+        let wrapper_file = output_base.with_extension("slang");
+        let object_file = output_base.with_extension("spv");
+        let dephashes_file = output_base.with_extension("dephashes");
         let mut hasher = blake3::Hasher::new();
         hasher.update(caching::build_system_hash()?.as_bytes());
         hasher.update(self._global_session.build_tag_string().as_bytes());
@@ -104,7 +92,7 @@ impl SlangCompiler {
                 println!("cargo::rerun-if-changed={path}");
             }
             debug_log!("Slang compile cached: {}", source_file.display());
-            return Ok(());
+            return Ok((kernel_path, cached.public_kernels));
         }
 
         let source_path = source_file.to_str().context("Slang source path is not UTF-8")?;
@@ -130,6 +118,13 @@ impl SlangCompiler {
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
+        let public_kernels = kernels
+            .iter()
+            .map(SlangKernelInfo::to_kernel)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Box<[Kernel]>>();
 
         let mut artifact_hashes = HashMap::new();
         if !kernels.is_empty() {
@@ -139,7 +134,8 @@ impl SlangCompiler {
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .flatten();
-            let contents = once(format!("import {source_path:?};")).chain(blocks).join("\n\n");
+            let imports = format!("import definitions;\nimport {source_path:?};");
+            let contents = once(imports).chain(blocks).join("\n\n");
             fs::write(&wrapper_file, contents)?;
             let wrapper_path = wrapper_file.to_str().context("Slang wrapper path is not UTF-8")?;
             let loaded = slang_api::load_module(&self.session, wrapper_path)?;
@@ -171,8 +167,41 @@ impl SlangCompiler {
                 buildsystem_hash,
                 dependency_hashes,
                 artifact_hashes,
+                public_kernels: public_kernels.clone(),
             })?,
         )?;
-        Ok(())
+        debug_log!("Slang compile end: {}", source_file.display());
+        Ok((kernel_path, public_kernels))
+    }
+}
+
+impl Compiler for SlangCompiler {
+    fn build(
+        &self,
+        _gpu_types: &GpuTypes,
+        _enum_paths: &EnumPaths,
+    ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
+        println!("cargo::rerun-if-changed={}", self.src_dir.display());
+        println!("cargo::rerun-if-env-changed=SLANG_DIR");
+        println!("cargo::rerun-if-env-changed=LD_LIBRARY_PATH");
+        let mut sources = WalkDir::new(&self.src_dir)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|entry| {
+                entry.file_type().is_file() && entry.path().extension().is_some_and(|extension| extension == "slang")
+            })
+            .map(|entry| entry.into_path())
+            .collect::<Vec<_>>();
+        sources.sort();
+        let mut kernels = HashMap::new();
+        for source in sources {
+            if !fs::read(&source)?.starts_with(b"implementing") {
+                let (path, file_kernels) =
+                    self.compile(&source).with_context(|| format!("cannot compile {}", source.display()))?;
+                kernels.insert(path, file_kernels);
+            }
+        }
+        Ok(kernels)
     }
 }

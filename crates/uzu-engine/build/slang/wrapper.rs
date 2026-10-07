@@ -8,9 +8,22 @@ pub fn generate_wrappers(
     kernel: &SlangKernelInfo,
     component: &ComponentType,
 ) -> Result<Vec<String>, Error> {
-    let mut wrappers = Vec::new();
+    let mut wrappers = kernel
+        .arguments()
+        .map(|a| {
+            Ok(match a.argument_type()? {
+                SlangArgumentType::Specialize(_) => Some(format!(
+                    "[[SpecializationConstant]] const {} {};",
+                    a.slang_type()?,
+                    specialization_name(kernel.name(), a.name()?)
+                )),
+                _ => None,
+            })
+        })
+        .filter_map(Result::transpose)
+        .collect::<Result<Vec<_>, Error>>()?;
 
-    let type_params = kernel.type_parameters();
+    let type_params = kernel.type_parameters().collect::<Vec<_>>();
 
     let specialization_variants: Vec<Option<Vec<&str>>> = if type_params.is_empty() {
         vec![None]
@@ -58,8 +71,8 @@ pub fn generate_wrappers(
         let mut wrapper_arguments: Vec<String> = arguments
             .iter()
             .filter_map(|(name, arg_type, slang_type)| match arg_type {
-                SlangArgumentType::Ptr => Some(format!("{} {}", slang_type, name)),
-                SlangArgumentType::Constant => Some(format!("uniform {} {}", slang_type, name)),
+                SlangArgumentType::Ptr(_) => Some(format!("{} {}", slang_type, name)),
+                SlangArgumentType::Constant(_) => Some(format!("uniform {} {}", slang_type, name)),
                 _ => None,
             })
             .collect();
@@ -85,7 +98,8 @@ pub fn generate_wrappers(
                 .iter()
                 .map(|(name, arg_type, _)| {
                     Ok(match arg_type {
-                        SlangArgumentType::Ptr | SlangArgumentType::Constant => name.clone(),
+                        SlangArgumentType::Ptr(_) | SlangArgumentType::Constant(_) => name.clone(),
+                        SlangArgumentType::Specialize(_) => specialization_name(kernel.name(), name),
                         SlangArgumentType::Axis(_, _) => {
                             format!("__dsl_axis_idx.{}", axis_letters.next().context("more than three Axis arguments")?)
                         },
@@ -140,6 +154,13 @@ fn mangle_name(
         result.push_str(&format!("_{}{}", ty.len(), ty));
     }
     result
+}
+
+fn specialization_name(
+    kernel_name: &str,
+    argument_name: &str,
+) -> String {
+    format!("__dsl_{kernel_name}_{argument_name}")
 }
 
 fn calculate_numthreads(arguments: &[(String, SlangArgumentType, String)]) -> Result<String, Error> {

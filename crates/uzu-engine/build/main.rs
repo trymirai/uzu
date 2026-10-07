@@ -55,9 +55,6 @@ fn main() -> anyhow::Result<ExitCode> {
     let gpu_types = GpuTypes::scan().context("Failed to scan gpu types")?;
     debug_log!("gpu_types scan done");
 
-    #[cfg(feature = "vulkan")]
-    slang::SlangCompiler::new()?.build()?;
-
     let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
 
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
@@ -75,6 +72,10 @@ fn main() -> anyhow::Result<ExitCode> {
         println!("cargo::error=uzu requires at least one backend to be compiled in!");
         return Ok(ExitCode::FAILURE);
     }
+
+    // Descriptor-only until the Vulkan backend exists: checked against the backends above, never one by itself.
+    #[cfg(feature = "vulkan")]
+    compilers.push(Box::new(slang::SlangCompiler::new()?));
 
     let backends_kernels =
         compilers.iter().map(|c| c.build(&gpu_types, &enum_paths)).collect::<anyhow::Result<Vec<_>>>()?;

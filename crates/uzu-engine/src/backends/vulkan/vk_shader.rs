@@ -12,10 +12,9 @@ pub struct VkShader {
 impl VkShader {
     pub fn new(
         context: Arc<VkContext>,
-        file_path: &str,
+        spirv: &[u8],
     ) -> Result<Self, Error> {
-        let bytes = std::fs::read(file_path)?;
-        let words = ash::util::read_spv(&mut Cursor::new(bytes))?;
+        let words = ash::util::read_spv(&mut Cursor::new(spirv))?;
         let info = vk::ShaderModuleCreateInfo::default().code(&words);
         let shader_module = unsafe { context.device().create_shader_module(&info, None)? };
         Ok(Self {
