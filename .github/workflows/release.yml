@@ -85,7 +85,7 @@ jobs:
             | head -n1 || true)
           if [ -z "$SIGNING_IDENTITY" ]; then
             echo "Imported keychain does not contain a valid Developer ID Application identity for team $TEAM_ID" >&2
-            security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+            security find-identity -p codesigning "$KEYCHAIN_PATH" || true
             exit 1
           fi
 
