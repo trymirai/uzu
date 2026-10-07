@@ -33,8 +33,6 @@ use crate::{
     utils::timestamps::{create_command_buffer, wait},
 };
 
-const SPECULATOR_PROPOSE: &str = "speculator propose";
-
 #[derive(Debug, Error)]
 pub enum DFlashTreeError<B: Backend> {
     #[error("backend error: {0}")]
@@ -243,7 +241,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let root_position = state.context_length();
 
         let mut command_buffer =
-            create_command_buffer::<B>(&self.context, SPECULATOR_PROPOSE, &allocation_pool, timestamps)
+            create_command_buffer::<B>(&self.context, "speculator propose", &allocation_pool, timestamps)
                 .map_err(DFlashTreeError::Backend)?;
 
         let nodes = match shape.construction_method {

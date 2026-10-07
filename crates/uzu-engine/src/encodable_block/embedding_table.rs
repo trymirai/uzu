@@ -178,6 +178,7 @@ impl<B: Backend> EmbeddingTable<B> {
         scale: f32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
+        command_buffer.push_debug_group(&self.name);
         command_buffer.sample_start_timestamp(&self.name);
         let bindings = self.storage.lookup_bindings();
         self.lookup.encode(
@@ -198,6 +199,7 @@ impl<B: Backend> EmbeddingTable<B> {
             command_buffer,
         );
         command_buffer.sample_end_timestamp(&self.name);
+        command_buffer.pop_debug_group();
     }
 }
 

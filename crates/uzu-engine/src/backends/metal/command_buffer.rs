@@ -152,42 +152,6 @@ impl MetalCommandBufferEncoding {
             }
         }
     }
-
-    fn sample_timestamp(
-        &mut self,
-        entry: fn(String) -> TimestampSampleEntry,
-        name: &str,
-    ) {
-        let Some(slot) = self.timestamp_entries.as_ref().map(Vec::len) else {
-            return;
-        };
-        self.reserve_counter_heap(slot).expect("Failed to create a counter heap");
-        self.compute_encoder.write_timestamp_with_granularity_into_heap_at_index(
-            MTL4TimestampGranularity::PRECISE,
-            &self.counter_heaps[slot / COUNTER_HEAP_CAPACITY],
-            slot % COUNTER_HEAP_CAPACITY,
-        );
-        let kernel_before = std::mem::replace(&mut self.kernel_since_timestamp, false);
-        self.timestamp_entries.as_mut().unwrap().push((entry(name.to_string()), kernel_before));
-    }
-
-    fn reserve_counter_heap(
-        &mut self,
-        slot: usize,
-    ) -> Result<(), MetalError> {
-        if slot / COUNTER_HEAP_CAPACITY == self.counter_heaps.len() {
-            let descriptor = MTL4CounterHeapDescriptor::new();
-            descriptor.set_type(MTL4CounterHeapType::TIMESTAMP);
-            descriptor.set_count(COUNTER_HEAP_CAPACITY);
-            self.counter_heaps.push(
-                self.context
-                    .device
-                    .new_counter_heap_with_descriptor(&descriptor)
-                    .map_err(|error| MetalError::CannotCreateCounterHeap(error.to_string()))?,
-            );
-        }
-        Ok(())
-    }
 }
 
 impl CommandBufferEncoding for MetalCommandBufferEncoding {
@@ -272,25 +236,37 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         self.compute_encoder.pop_debug_group();
     }
 
-    fn enable_timestamps(&mut self) -> Result<(), MetalError> {
+    fn enable_timestamps(&mut self) {
         assert!(self.timestamp_entries.is_none(), "timestamps already enabled");
-        self.reserve_counter_heap(0)?;
         self.timestamp_entries = Some(Vec::new());
-        Ok(())
     }
 
-    fn sample_start_timestamp(
+    fn sample_timestamp(
         &mut self,
-        name: &String,
+        entry: fn(String) -> TimestampSampleEntry,
+        name: &str,
     ) {
-        self.sample_timestamp(TimestampSampleEntry::Start, name);
-    }
-
-    fn sample_end_timestamp(
-        &mut self,
-        name: &String,
-    ) {
-        self.sample_timestamp(TimestampSampleEntry::End, name);
+        let Some(slot) = self.timestamp_entries.as_ref().map(Vec::len) else {
+            return;
+        };
+        if slot / COUNTER_HEAP_CAPACITY == self.counter_heaps.len() {
+            let descriptor = MTL4CounterHeapDescriptor::new();
+            descriptor.set_type(MTL4CounterHeapType::TIMESTAMP);
+            descriptor.set_count(COUNTER_HEAP_CAPACITY);
+            self.counter_heaps.push(
+                self.context
+                    .device
+                    .new_counter_heap_with_descriptor(&descriptor)
+                    .expect("Failed to create a counter heap"),
+            );
+        }
+        self.compute_encoder.write_timestamp_with_granularity_into_heap_at_index(
+            MTL4TimestampGranularity::PRECISE,
+            &self.counter_heaps[slot / COUNTER_HEAP_CAPACITY],
+            slot % COUNTER_HEAP_CAPACITY,
+        );
+        let kernel_before = std::mem::replace(&mut self.kernel_since_timestamp, false);
+        self.timestamp_entries.as_mut().unwrap().push((entry(name.to_string()), kernel_before));
     }
 
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {

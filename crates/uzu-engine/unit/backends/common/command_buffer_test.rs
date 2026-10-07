@@ -41,7 +41,7 @@ fn encode_blocks<B: Backend>(
     let before = Instant::now();
     let mut encoding = context.create_command_buffer(Some("test"), None).unwrap();
     if timing {
-        encoding.enable_timestamps().unwrap();
+        encoding.enable_timestamps();
     }
     if let Some(outer) = &outer {
         encoding.sample_start_timestamp(outer);

@@ -16,7 +16,7 @@ pub fn create_command_buffer<B: Backend>(
 ) -> Result<<B::CommandBuffer as CommandBuffer>::Encoding, B::Error> {
     let mut command_buffer = context.create_command_buffer(Some(name), Some(allocation_pool.clone()))?;
     if timestamps.is_some() {
-        command_buffer.enable_timestamps()?;
+        command_buffer.enable_timestamps();
     }
     Ok(command_buffer)
 }

@@ -62,18 +62,6 @@ impl CpuCommandBufferEncoding {
     ) {
         self.commands.push(Box::new(command))
     }
-
-    fn sample_timestamp(
-        &mut self,
-        entry: fn(String) -> TimestampSampleEntry,
-        name: &str,
-    ) {
-        let Some(timestamps) = self.timestamps.clone() else {
-            return;
-        };
-        let entry = entry(name.to_string());
-        self.push_command(move || timestamps.lock().push((entry, Instant::now())));
-    }
 }
 
 impl CommandBufferEncoding for CpuCommandBufferEncoding {
@@ -135,24 +123,21 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn pop_debug_group(&mut self) {}
 
-    fn enable_timestamps(&mut self) -> Result<(), CpuError> {
+    fn enable_timestamps(&mut self) {
         assert!(self.timestamps.is_none(), "timestamps already enabled");
         self.timestamps = Some(Arc::new(Mutex::new(Vec::new())));
-        Ok(())
     }
 
-    fn sample_start_timestamp(
+    fn sample_timestamp(
         &mut self,
-        name: &String,
+        entry: fn(String) -> TimestampSampleEntry,
+        name: &str,
     ) {
-        self.sample_timestamp(TimestampSampleEntry::Start, name);
-    }
-
-    fn sample_end_timestamp(
-        &mut self,
-        name: &String,
-    ) {
-        self.sample_timestamp(TimestampSampleEntry::End, name);
+        let Some(timestamps) = self.timestamps.clone() else {
+            return;
+        };
+        let entry = entry(name.to_string());
+        self.push_command(move || timestamps.lock().push((entry, Instant::now())));
     }
 
     fn end_encoding(self) -> CpuCommandBufferExecutable {

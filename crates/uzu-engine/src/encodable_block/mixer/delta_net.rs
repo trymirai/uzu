@@ -501,9 +501,9 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         if !batch_dim.full_accept() {
             let output = self.encode_tree_verify(&in_projected, batch_dim, state, command_buffer)?;
 
+            command_buffer.sample_end_timestamp(&self.name);
             command_buffer.pop_debug_group();
 
-            command_buffer.sample_end_timestamp(&self.name);
             return Ok(output);
         }
 

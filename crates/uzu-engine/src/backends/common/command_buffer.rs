@@ -83,19 +83,29 @@ pub trait CommandBufferEncoding {
 
     fn pop_debug_group(&mut self);
 
-    fn enable_timestamps(&mut self) -> Result<(), <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error>;
+    fn enable_timestamps(&mut self);
+
+    fn sample_timestamp(
+        &mut self,
+        entry: fn(String) -> TimestampSampleEntry,
+        name: &str,
+    );
 
     #[allow(clippy::ptr_arg)]
     fn sample_start_timestamp(
         &mut self,
         name: &String,
-    );
+    ) {
+        self.sample_timestamp(TimestampSampleEntry::Start, name);
+    }
 
     #[allow(clippy::ptr_arg)]
     fn sample_end_timestamp(
         &mut self,
         name: &String,
-    );
+    ) {
+        self.sample_timestamp(TimestampSampleEntry::End, name);
+    }
 
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }

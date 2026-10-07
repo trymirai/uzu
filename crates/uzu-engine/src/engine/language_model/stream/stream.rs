@@ -30,10 +30,6 @@ use crate::{
     utils::timestamps::{create_command_buffer, wait},
 };
 
-const PREFILL: &str = "prefill";
-const DECODE: &str = "decode";
-const DROP_ACCEPT: &str = "drop accept";
-
 enum ForwardPassChaining<B: Backend> {
     Constant {
         token: u64,
@@ -221,7 +217,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
             let mut command_buffer = create_command_buffer::<B>(
                 &model.engine.context,
-                PREFILL,
+                "prefill",
                 &allocation_pool,
                 options.timestamps.as_ref(),
             )
@@ -465,7 +461,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
                     let mut command_buffer = create_command_buffer::<B>(
                         &self.model.engine.context,
-                        DECODE,
+                        "decode",
                         &self.allocation_pool,
                         self.options.timestamps.as_ref(),
                     )
@@ -524,7 +520,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
                         command_buffer = create_command_buffer::<B>(
                             &self.model.engine.context,
-                            DECODE,
+                            "decode",
                             &self.allocation_pool,
                             self.options.timestamps.as_ref(),
                         )
@@ -624,7 +620,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         let mut command_buffer = create_command_buffer::<B>(
             &self.model.engine.context,
-            DECODE,
+            "decode",
             &self.allocation_pool,
             self.options.timestamps.as_ref(),
         )
@@ -677,7 +673,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
                 let mut command_buffer = create_command_buffer::<B>(
                     &self.model.engine.context,
-                    DECODE,
+                    "decode",
                     &self.allocation_pool,
                     self.options.timestamps.as_ref(),
                 )
@@ -838,7 +834,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 if !in_flight.full_accept {
                     let mut command_buffer = create_command_buffer::<B>(
                         &self.model.engine.context,
-                        DROP_ACCEPT,
+                        "drop accept",
                         &self.allocation_pool,
                         self.options.timestamps.as_ref(),
                     )
@@ -870,7 +866,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
 
                 let mut command_buffer = create_command_buffer::<B>(
                     &self.model.engine.context,
-                    DROP_ACCEPT,
+                    "drop accept",
                     &self.allocation_pool,
                     self.options.timestamps.as_ref(),
                 )

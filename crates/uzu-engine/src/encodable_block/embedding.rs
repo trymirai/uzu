@@ -45,7 +45,6 @@ enum EmbeddingTying<B: Backend> {
 }
 
 pub struct Embedding<B: Backend> {
-    lookup_name: String,
     readout_name: String,
     tying: EmbeddingTying<B>,
     input_scale: f32,
@@ -157,7 +156,6 @@ impl<B: Backend> Embedding<B> {
 
         Ok((
             Self {
-                lookup_name: format!("{name}/lookup"),
                 readout_name: format!("{name}/readout"),
                 tying,
                 input_scale,
@@ -176,8 +174,6 @@ impl<B: Backend> Embedding<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
-        command_buffer.push_debug_group(&self.lookup_name);
-
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
@@ -193,8 +189,6 @@ impl<B: Backend> Embedding<B> {
             } => input_table,
         };
         table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
-
-        command_buffer.pop_debug_group();
 
         Ok(output)
     }
