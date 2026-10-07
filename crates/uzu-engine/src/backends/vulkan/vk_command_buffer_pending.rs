@@ -70,9 +70,10 @@ impl VkCommandBufferPending {
 impl Drop for VkCommandBufferPending {
     fn drop(&mut self) {
         if let Err(error) = self.wait() {
+            // Retain first: a panicking logger must not let the GPU-referenced resources be freed.
+            self.retain_forever();
             let message = format!("dropped Vulkan command buffer failed to complete, retaining its resources: {error}");
             self.context.logger().e(&message);
-            self.retain_forever();
         } else if let Some(resources) = self.resources.take() {
             unsafe { self.context.recycle_command_buffer_resources(resources) };
         }

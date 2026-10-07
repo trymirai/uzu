@@ -90,8 +90,8 @@ fn main() -> Result<(), Error> {
                 &pipeline,
                 &push_constants,
                 [size.div_ceil(group_size), 1, 1],
-                &[(&buffers[0], bytes.clone()), (&buffers[1], bytes.clone())],
-                &[(&buffers[2], bytes.clone())],
+                [(&buffers[0], bytes.clone()), (&buffers[1], bytes.clone())],
+                [(&buffers[2], bytes.clone())],
             )?;
         }
         let completed = encoding.end_encoding()?.submit().wait_until_completed()?;
@@ -179,8 +179,8 @@ fn main() -> Result<(), Error> {
                         &pipeline,
                         &arguments,
                         [DISPATCH_ELEMENTS.div_ceil(group_size), 1, 1],
-                        &[(input, chain_bytes.clone()), (&ones, chain_bytes.clone())],
-                        &[(output, chain_bytes.clone())],
+                        [(input, chain_bytes.clone()), (&ones, chain_bytes.clone())],
+                        [(output, chain_bytes.clone())],
                     )?;
                 }
             }

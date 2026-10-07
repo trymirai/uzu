@@ -36,11 +36,11 @@ impl<'a> SlangArgument<'a> {
         Ok(specialized.full_name()?.as_str()?.to_string())
     }
 
-    pub fn is_optional(&self) -> Result<bool, Error> {
-        match self.attribute("Optional") {
-            Some(optional) => optional.argument_value_string(0).context("Optional missing condition").map(|_| true),
-            None => Ok(false),
-        }
+    /// Host condition under which an `[[Optional]]` argument is present.
+    pub fn condition(&self) -> Result<Option<&'a str>, Error> {
+        self.attribute("Optional")
+            .map(|optional| optional.argument_value_string(0).context("Optional missing condition"))
+            .transpose()
     }
 
     pub fn argument_type(&self) -> Result<SlangArgumentType, Error> {

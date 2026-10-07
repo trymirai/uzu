@@ -97,7 +97,7 @@ impl<'a> SlangKernelInfo<'a> {
         let mut arguments = Vec::new();
         for argument in self.arguments() {
             let name = argument.name()?;
-            let conditional = argument.is_optional()?;
+            let conditional = argument.condition()?.is_some();
             let ty = match argument.argument_type()? {
                 SlangArgumentType::Ptr(access) => KernelArgumentType::Buffer(access),
                 SlangArgumentType::Constant(ty) => KernelArgumentType::Constant(ty),

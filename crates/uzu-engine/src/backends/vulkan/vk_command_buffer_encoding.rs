@@ -75,7 +75,7 @@ impl VkCommandBufferEncoding {
         if source_addresses.start < destination_addresses.end && destination_addresses.start < source_addresses.end {
             return Err(Error::CopyOverlap);
         }
-        self.access(&[source_addresses], &[destination_addresses]);
+        self.access([source_addresses].into_iter(), [destination_addresses].into_iter());
         let region = vk::BufferCopy {
             src_offset: source_range.start,
             dst_offset: destination_offset,
@@ -107,7 +107,7 @@ impl VkCommandBufferEncoding {
                 end: range.end,
             });
         }
-        self.access(&[], &[addresses]);
+        self.access(std::iter::empty(), [addresses].into_iter());
         unsafe {
             self.context.device().cmd_fill_buffer(
                 self.command_buffer(),
@@ -130,16 +130,18 @@ impl VkCommandBufferEncoding {
     /// - `reads` and `writes` must cover every byte the shader may read or write for these `groups`;
     ///   undeclared accesses get no hazard barriers and no lifetime retention.
     /// - `groups` together with the shader's bounds checks must keep every access inside those ranges.
-    pub unsafe fn encode_dispatch(
+    pub unsafe fn encode_dispatch<'b>(
         &mut self,
         pipeline: &Arc<VkComputePipeline>,
         push_constants: &[u8],
         groups: [u32; 3],
-        reads: &[(&Arc<VkBuffer>, Range<u64>)],
-        writes: &[(&Arc<VkBuffer>, Range<u64>)],
+        reads: impl IntoIterator<Item = (&'b Arc<VkBuffer>, Range<u64>), IntoIter: Clone>,
+        writes: impl IntoIterator<Item = (&'b Arc<VkBuffer>, Range<u64>), IntoIter: Clone>,
     ) -> Result<(), Error> {
+        let (reads, writes) = (reads.into_iter(), writes.into_iter());
+        let buffers = reads.clone().chain(writes.clone());
         self.check_owned(
-            std::iter::once(pipeline.context()).chain(reads.iter().chain(writes).map(|(buffer, _)| buffer.context())),
+            std::iter::once(pipeline.context()).chain(buffers.clone().map(|(buffer, _)| buffer.context())),
         )?;
         if push_constants.len() != pipeline.push_constant_size() as usize {
             return Err(Error::PushConstantsMismatch {
@@ -154,11 +156,11 @@ impl VkCommandBufferEncoding {
                 limit: limits.max_compute_work_group_count,
             });
         }
-        let read_addresses =
-            reads.iter().map(|(buffer, range)| device_addresses(buffer, range)).collect::<Result<Vec<_>, _>>()?;
-        let write_addresses =
-            writes.iter().map(|(buffer, range)| device_addresses(buffer, range)).collect::<Result<Vec<_>, _>>()?;
-        self.access(&read_addresses, &write_addresses);
+        buffers.clone().try_for_each(|(buffer, range)| device_addresses(buffer, &range).map(drop))?;
+        let address = |(buffer, range): (&Arc<VkBuffer>, Range<u64>)| {
+            buffer.device_address() + range.start..buffer.device_address() + range.end
+        };
+        self.access(reads.map(address), writes.map(address));
         let command_buffer = self.command_buffer();
         let device = self.context.device();
         unsafe {
@@ -175,7 +177,7 @@ impl VkCommandBufferEncoding {
             device.cmd_dispatch(command_buffer, groups[0], groups[1], groups[2]);
         }
         self.retained.push(pipeline.clone());
-        self.retained.extend(reads.iter().chain(writes).map(|(buffer, _)| (*buffer).clone() as Arc<dyn Send + Sync>));
+        self.retained.extend(buffers.map(|(buffer, _)| buffer.clone() as Arc<dyn Send + Sync>));
         Ok(())
     }
 
@@ -214,11 +216,11 @@ impl VkCommandBufferEncoding {
 
     fn access(
         &mut self,
-        reads: &[Range<u64>],
-        writes: &[Range<u64>],
+        reads: impl Iterator<Item = Range<u64>> + Clone,
+        writes: impl Iterator<Item = Range<u64>> + Clone,
     ) {
-        if reads.iter().chain(writes).any(|range| self.writes.overlaps(range))
-            || writes.iter().any(|range| self.reads.overlaps(range))
+        if reads.clone().chain(writes.clone()).any(|range| self.writes.overlaps(&range))
+            || writes.clone().any(|range| self.reads.overlaps(&range))
         {
             self.memory_barrier(
                 shader_and_transfer_stages(),
@@ -232,8 +234,8 @@ impl VkCommandBufferEncoding {
             self.reads.clear();
             self.writes.clear();
         }
-        reads.iter().for_each(|range| self.reads.insert(range.clone()));
-        writes.iter().for_each(|range| self.writes.insert(range.clone()));
+        reads.for_each(|range| self.reads.insert(range));
+        writes.for_each(|range| self.writes.insert(range));
     }
 
     fn memory_barrier(

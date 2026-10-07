@@ -7,7 +7,7 @@ use super::{Error, SlangArgumentType, SlangKernelInfo, slang_api};
 pub fn generate_wrappers(
     kernel: &SlangKernelInfo,
     component: &ComponentType,
-) -> Result<Vec<String>, Error> {
+) -> Result<(Vec<String>, Vec<(String, Vec<&'static str>)>), Error> {
     let mut wrappers = kernel
         .arguments()
         .map(|a| {
@@ -25,7 +25,8 @@ pub fn generate_wrappers(
 
     let type_params = kernel.type_parameters().collect::<Vec<_>>();
 
-    let specialization_variants: Vec<Option<Vec<&str>>> = if type_params.is_empty() {
+    let mut entry_points = Vec::new();
+    let specialization_variants: Vec<Option<Vec<&'static str>>> = if type_params.is_empty() {
         vec![None]
     } else {
         type_params.iter().map(|p| p.iter().copied()).multi_cartesian_product().map(Some).collect()
@@ -140,9 +141,10 @@ pub fn generate_wrappers(
         );
 
         wrappers.push(wrapper);
+        entry_points.push((wrapper_name, specialization_variant.unwrap_or_default()));
     }
 
-    Ok(wrappers)
+    Ok((wrappers, entry_points))
 }
 
 fn mangle_name(
@@ -156,7 +158,7 @@ fn mangle_name(
     result
 }
 
-fn specialization_name(
+pub fn specialization_name(
     kernel_name: &str,
     argument_name: &str,
 ) -> String {

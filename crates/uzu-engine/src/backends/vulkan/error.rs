@@ -43,6 +43,11 @@ pub enum Error {
     },
     #[error("a buffer or pipeline belongs to a different Vulkan context than the command buffer")]
     ForeignContext,
+    #[error("kernel {kernel} has no variant for {data_types:?}")]
+    KernelVariant {
+        kernel: &'static str,
+        data_types: Box<[crate::data_type::DataType]>,
+    },
     #[error("dispatch of {groups:?} groups exceeds the device limit {limit:?}")]
     DispatchGroups {
         groups: [u32; 3],

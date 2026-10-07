@@ -10,15 +10,15 @@ use std::{
 use anyhow::Context;
 use itertools::Itertools;
 use shader_slang::{
-    CompileTarget, CompilerOptions, GlobalSession, OptimizationLevel, Session, SessionDesc, TargetDesc,
+    CompileTarget, CompilerOptions, ComponentType, GlobalSession, OptimizationLevel, Session, SessionDesc, TargetDesc,
 };
 use walkdir::WalkDir;
 
-use super::{Dephashes, Error, SlangKernelInfo, slang_api, wrapper};
+use super::{Dephashes, Error, SlangEntryPointAbi, SlangKernelInfo, bindgen, slang_api, wrapper};
 use crate::{
     common::{
-        caching, compiler::Compiler, enum_paths::EnumPaths, gpu_types::GpuTypes, identifiers::KernelPath,
-        kernel::Kernel,
+        caching, codegen::write_tokens, compiler::Compiler, enum_paths::EnumPaths, gpu_types::GpuTypes,
+        identifiers::KernelPath, kernel::Kernel,
     },
     debug_log,
 };
@@ -118,24 +118,18 @@ impl SlangCompiler {
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
-        let public_kernels = kernels
-            .iter()
-            .map(SlangKernelInfo::to_kernel)
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Box<[Kernel]>>();
+        let descriptors = kernels.iter().map(SlangKernelInfo::to_kernel).collect::<Result<Vec<_>, _>>()?;
+        let public_kernels = descriptors.iter().flatten().cloned().collect::<Box<[Kernel]>>();
 
         let mut artifact_hashes = HashMap::new();
         if !kernels.is_empty() {
-            let blocks = kernels
+            let wrappers = kernels
                 .iter()
                 .map(|kernel| wrapper::generate_wrappers(kernel, &loaded.component))
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .flatten();
+                .collect::<Result<Vec<_>, _>>()?;
             let imports = format!("import definitions;\nimport {source_path:?};");
-            let contents = once(imports).chain(blocks).join("\n\n");
+            let contents =
+                once(imports).chain(wrappers.iter().flat_map(|(blocks, _)| blocks.iter().cloned())).join("\n\n");
             fs::write(&wrapper_file, contents)?;
             let wrapper_path = wrapper_file.to_str().context("Slang wrapper path is not UTF-8")?;
             let loaded = slang_api::load_module(&self.session, wrapper_path)?;
@@ -144,10 +138,39 @@ impl SlangCompiler {
                     println!("cargo::warning={line}");
                 }
             }
-            let compiled = loaded.component.link().context("cannot link Slang wrapper module")?;
+            // Entry points must be composed explicitly for the linked program to reflect them.
+            let components = once(loaded.module.clone().into())
+                .chain(loaded.module.entry_points().map(ComponentType::from))
+                .collect::<Vec<_>>();
+            let compiled = self
+                .session
+                .create_composite_component_type(&components)
+                .context("cannot compose Slang wrapper entry points")?
+                .link()
+                .context("cannot link Slang wrapper module")?;
             let blob = compiled.target_code(0).context("cannot emit SPIR-V")?;
             fs::write(&object_file, blob.as_slice())?;
-            for path in [&wrapper_file, &object_file] {
+
+            let program = compiled.layout(0).context("linked Slang program has no layout")?;
+            let object_path = object_file.to_str().context("Slang artifact path is not UTF-8")?;
+            let mut binding_files = Vec::new();
+            for ((info, descriptor), (_, entry_points)) in kernels.iter().zip(&descriptors).zip(&wrappers) {
+                let Some(descriptor) = descriptor else {
+                    continue;
+                };
+                let variants = entry_points
+                    .iter()
+                    .map(|(name, types)| {
+                        let entry_point = program.find_entry_point_by_name(name).context("entry point not linked")?;
+                        Ok((types.clone(), SlangEntryPointAbi::from_reflection(program, entry_point)?))
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let binding_file = bindgen::binding_file(&output_base, &descriptor.name);
+                write_tokens(bindgen::bindgen(info, descriptor, &variants, object_path)?, &binding_file)
+                    .with_context(|| format!("cannot write {} binding", descriptor.name))?;
+                binding_files.push(binding_file);
+            }
+            for path in [&wrapper_file, &object_file].into_iter().chain(&binding_files) {
                 artifact_hashes.insert(
                     path.to_str().context("Slang artifact path is not UTF-8")?.to_owned(),
                     blake3::hash(&fs::read(path)?).into(),
@@ -195,13 +218,23 @@ impl Compiler for SlangCompiler {
             .collect::<Vec<_>>();
         sources.sort();
         let mut kernels = HashMap::new();
+        let mut bindings = Vec::new();
         for source in sources {
             if !fs::read(&source)?.starts_with(b"implementing") {
                 let (path, file_kernels) =
                     self.compile(&source).with_context(|| format!("cannot compile {}", source.display()))?;
+                for kernel in &file_kernels {
+                    let file = bindgen::binding_file(&self.out_dir.join(path.join("/")), &kernel.name);
+                    bindings.push((
+                        file.to_str().context("binding path is not UTF-8")?.to_owned(),
+                        kernel.name.to_string(),
+                    ));
+                }
                 kernels.insert(path, file_kernels);
             }
         }
+        write_tokens(bindgen::bindgen_umbrella(&bindings), self.out_dir.with_extension("rs"))
+            .context("cannot write Vulkan bindings")?;
         Ok(kernels)
     }
 }

@@ -7,52 +7,12 @@ use std::{
 use ash::vk;
 use uzu_engine_macros::uzu_test;
 
-use super::validation_logger::ValidationLogger;
+use super::kernel_fixture::KernelFixture;
 use crate::backends::vulkan::{
-    Error, VkBuffer, VkCommandBufferCompleted, VkCommandBufferEncoding, VkComputePipeline, VkContext,
-    VkContextCreateInfo, VkShader, VkTimestampQueryPool,
+    Error, VkBuffer, VkCommandBufferEncoding, VkComputePipeline, VkContext, VkShader, VkTimestampQueryPool,
 };
 
 const GROUP_SIZE: u32 = 64;
-
-fn context() -> (Arc<VkContext>, ValidationLogger) {
-    let logger = ValidationLogger::default();
-    let context = VkContext::new(VkContextCreateInfo {
-        with_validation: true,
-        logger: Box::new(logger.clone()),
-    })
-    .expect("Vulkan context");
-    let properties = &context.physical_device().properties;
-    let name = unsafe { CStr::from_ptr(properties.device_name.as_ptr()) };
-    eprintln!("Vulkan test device: {} ({:?})", name.to_string_lossy(), properties.device_type);
-    (Arc::new(context), logger)
-}
-
-fn buffer(
-    context: &Arc<VkContext>,
-    bytes: &[u8],
-) -> Arc<VkBuffer> {
-    let mut buffer = VkBuffer::new(context.clone(), bytes.len() as u64).expect("buffer");
-    buffer.fill(bytes).expect("host fill");
-    Arc::new(buffer)
-}
-
-fn floats(
-    context: &Arc<VkContext>,
-    values: &[f32],
-) -> Arc<VkBuffer> {
-    buffer(context, bytemuck::cast_slice(values))
-}
-
-/// # Safety
-/// Same contract as `VkBuffer::get_bytes`.
-unsafe fn read_floats(buffer: &VkBuffer) -> Vec<f32> {
-    bytemuck::cast_slice(&unsafe { buffer.get_bytes() }).to_vec()
-}
-
-fn complete(encoding: VkCommandBufferEncoding) -> VkCommandBufferCompleted {
-    encoding.end_encoding().expect("end encoding").submit().wait_until_completed().expect("completion")
-}
 
 /// `output = input_0 + input_1` over `size` floats through the shared test kernel.
 fn add_pipeline_with_arguments(
@@ -96,38 +56,40 @@ fn encode_add(
             pipeline,
             &push_constants,
             [size.div_ceil(GROUP_SIZE), 1, 1],
-            &[(input_0, bytes.clone()), (input_1, bytes.clone())],
-            &[(output, bytes)],
+            [(input_0, bytes.clone()), (input_1, bytes.clone())],
+            [(output, bytes)],
         )
     }
 }
 
 #[uzu_test]
 fn copy_and_fill_round_trip() {
-    let (context, logger) = context();
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
     let pattern = (0..4096).map(|index| (index % 251) as u8).collect::<Vec<_>>();
-    let source = buffer(&context, &pattern);
-    let destination = buffer(&context, &[0; 4096]);
+    let source = fixture.buffer(&pattern);
+    let destination = fixture.buffer(&[0u8; 4096]);
     let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
     encoding.encode_fill(&destination, 0..4096, 0xab).unwrap();
     encoding.encode_copy(&source, 256..1280, &destination, 512).unwrap();
     encoding.encode_fill(&destination, 2048..2052, 0x01).unwrap();
-    complete(encoding);
+    KernelFixture::complete(encoding);
 
     let mut expected = vec![0xab; 4096];
     expected[512..1536].copy_from_slice(&pattern[256..1280]);
     expected[2048..2052].fill(0x01);
     // SAFETY: the only command buffer writing `destination` has completed.
     assert_eq!(unsafe { destination.get_bytes() }.as_ref(), expected.as_slice());
-    logger.assert_clean();
+    fixture.assert_clean();
 }
 
 #[uzu_test]
 fn invalid_ranges_return_errors_without_recording() {
-    let (context, logger) = context();
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
     let pipeline = add_pipeline(&context);
-    let first = buffer(&context, &[7; 4096]);
-    let second = buffer(&context, &[0; 4096]);
+    let first = fixture.buffer(&[7u8; 4096]);
+    let second = fixture.buffer(&[0u8; 4096]);
     let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
     let range_error = |result| matches!(result, Err(Error::BufferRange { .. }));
     assert!(range_error(encoding.encode_copy(&first, 0..0, &second, 0)));
@@ -145,7 +107,7 @@ fn invalid_ranges_return_errors_without_recording() {
     // SAFETY: every call below fails its checks before recording, so the shader never runs.
     unsafe {
         for push_constants in [vec![0; 3], vec![0; 24], vec![0; 32], vec![0; limit as usize]] {
-            let result = encoding.encode_dispatch(&pipeline, &push_constants, [1, 1, 1], &[], &[]);
+            let result = encoding.encode_dispatch(&pipeline, &push_constants, [1, 1, 1], [], []);
             assert!(matches!(
                 result,
                 Err(Error::PushConstantsMismatch {
@@ -154,28 +116,30 @@ fn invalid_ranges_return_errors_without_recording() {
                 })
             ));
         }
-        let result = encoding.encode_dispatch(&pipeline, &[0; 28], [u32::MAX, 1, 1], &[], &[]);
+        let result = encoding.encode_dispatch(&pipeline, &[0; 28], [u32::MAX, 1, 1], [], []);
         assert!(matches!(result, Err(Error::DispatchGroups { .. })));
-        assert!(range_error(encoding.encode_dispatch(&pipeline, &[0; 28], [1, 1, 1], &[(&first, 0..4097)], &[])));
+        assert!(range_error(encoding.encode_dispatch(&pipeline, &[0; 28], [1, 1, 1], [(&first, 0..4097)], [])));
     }
 
     encoding.encode_copy(&first, 0..100, &first, 100).unwrap();
     encoding.encode_copy(&first, 0..200, &second, 0).unwrap();
-    complete(encoding);
+    KernelFixture::complete(encoding);
     // SAFETY: the only command buffer writing `second` has completed.
     assert_eq!(&unsafe { second.get_bytes() }[..200], &[7; 200]);
     assert!(matches!(VkBuffer::new(context.clone(), 0), Err(Error::EmptyBuffer)));
-    logger.assert_clean();
+    fixture.assert_clean();
 }
 
 #[uzu_test]
 fn foreign_context_objects_are_rejected() {
-    let (other_context, other_logger) = context();
-    let (context, logger) = context();
+    let other = KernelFixture::new();
+    let other_context = &other.context;
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
     let size = 64u32;
     let input = vec![1.0f32; size as usize];
-    let [local_a, local_b, local_output] = [&input, &input, &input].map(|values| floats(&context, values));
-    let foreign = floats(&other_context, &input);
+    let [local_a, local_b, local_output] = [&input, &input, &input].map(|values| fixture.buffer(values));
+    let foreign = other.buffer(&input);
     let local_pipeline = add_pipeline(&context);
     let foreign_pipeline = add_pipeline(&other_context);
     let foreign_error = |result| matches!(result, Err(Error::ForeignContext));
@@ -189,23 +153,24 @@ fn foreign_context_objects_are_rejected() {
     assert!(foreign_error(encode_add(&mut encoding, &local_pipeline, [&local_a, &local_b, &foreign], size)));
 
     encode_add(&mut encoding, &local_pipeline, [&local_a, &local_b, &local_output], size).unwrap();
-    complete(encoding);
+    KernelFixture::complete(encoding);
     // SAFETY: the command buffer writing `local_output` has completed and none writes `foreign`.
-    let (local, foreign) = unsafe { (read_floats(&local_output), read_floats(&foreign)) };
+    let (local, foreign) = unsafe { (KernelFixture::read::<f32>(&local_output), KernelFixture::read::<f32>(&foreign)) };
     assert!(local.iter().all(|&value| value == 2.0));
     assert!(foreign.iter().all(|&value| value == 1.0));
-    logger.assert_clean();
-    other_logger.assert_clean();
+    fixture.assert_clean();
+    other.assert_clean();
 }
 
 #[uzu_test]
 fn transfer_and_dispatch_chain_is_ordered() {
-    let (context, logger) = context();
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
     let pipeline = add_pipeline(&context);
     let size = 1024u32;
     let input = (0..size).map(|index| index as f32).collect::<Vec<_>>();
-    let [a, b] = [&input, &input].map(|values| floats(&context, values));
-    let [sum, copied, result] = [(); 3].map(|_| floats(&context, &vec![-1.0; size as usize]));
+    let [a, b] = [&input, &input].map(|values| fixture.buffer(values));
+    let [sum, copied, result] = [(); 3].map(|_| fixture.buffer(&vec![-1.0f32; size as usize]));
     let bytes = 0..size as u64 * 4;
 
     let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
@@ -214,22 +179,23 @@ fn transfer_and_dispatch_chain_is_ordered() {
     encoding.encode_copy(&sum, bytes.clone(), &copied, 0).unwrap();
     encoding.encode_fill(&a, bytes, 0).unwrap();
     encode_add(&mut encoding, &pipeline, [&a, &copied, &result], size).unwrap();
-    complete(encoding);
+    KernelFixture::complete(encoding);
 
     // SAFETY: the only command buffer writing `a` and `result` has completed.
-    let (a, result) = unsafe { (read_floats(&a), read_floats(&result)) };
+    let (a, result) = unsafe { (KernelFixture::read::<f32>(&a), KernelFixture::read::<f32>(&result)) };
     assert!(a.iter().all(|&value| value == 0.0));
     assert_eq!(result, input.iter().map(|value| value * 2.0).collect::<Vec<_>>());
-    logger.assert_clean();
+    fixture.assert_clean();
 }
 
 #[uzu_test]
 fn multiple_command_buffers_in_flight() {
-    let (context, logger) = context();
-    let destination = buffer(&context, &[0; 8 * 256]);
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
+    let destination = fixture.buffer(&[0u8; 8 * 256]);
     let pending = (0..8u8)
         .map(|index| {
-            let source = buffer(&context, &[index + 1; 256]);
+            let source = fixture.buffer(&[index + 1; 256]);
             let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
             encoding.encode_copy(&source, 0..256, &destination, index as u64 * 256).unwrap();
             encoding.end_encoding().unwrap().submit()
@@ -243,19 +209,20 @@ fn multiple_command_buffers_in_flight() {
     for (index, chunk) in bytes.chunks(256).enumerate() {
         assert!(chunk.iter().all(|&value| value == index as u8 + 1), "chunk {index}");
     }
-    logger.assert_clean();
+    fixture.assert_clean();
 }
 
 #[uzu_test]
 fn retains_resources_until_completion() {
-    let (context, logger) = context();
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
     let size = 1003u32;
     let input = (0..size).map(|index| index as f32).collect::<Vec<_>>();
-    let output = floats(&context, &vec![0.0; size as usize]);
+    let output = fixture.buffer(&vec![0.0f32; size as usize]);
     let mut retained = Vec::<Weak<dyn Send + Sync>>::new();
     let pending = {
         let pipeline = add_pipeline(&context);
-        let [a, b] = [&input, &input].map(|values| floats(&context, values));
+        let [a, b] = [&input, &input].map(|values| fixture.buffer(values));
         let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
         encode_add(&mut encoding, &pipeline, [&a, &b, &output], size).unwrap();
         retained.push(Arc::downgrade(&pipeline) as Weak<dyn Send + Sync>);
@@ -266,26 +233,27 @@ fn retains_resources_until_completion() {
     pending.wait_until_completed().unwrap();
     assert!(retained.iter().all(|resource| resource.upgrade().is_none()));
     // SAFETY: the command buffer writing `output` has completed; the next one is never submitted.
-    let output_values = unsafe { read_floats(&output) };
+    let output_values = unsafe { KernelFixture::read::<f32>(&output) };
     assert_eq!(output_values, input.iter().map(|value| value * 2.0).collect::<Vec<_>>());
 
-    let source = buffer(&context, &[1; 64]);
+    let source = fixture.buffer(&[1u8; 64]);
     let weak_source = Arc::downgrade(&source);
     let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
     encoding.encode_copy(&source, 0..64, &output, 0).unwrap();
     drop(source);
     drop(encoding.end_encoding().unwrap());
     assert!(weak_source.upgrade().is_none());
-    logger.assert_clean();
+    fixture.assert_clean();
 }
 
 #[uzu_test]
 fn dropped_pending_waits_for_gpu() {
-    let (context, logger) = context();
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
     let pattern = (0..4 << 20).map(|index: u32| (index % 253) as u8).collect::<Vec<_>>();
-    let source = buffer(&context, &pattern);
+    let source = fixture.buffer(&pattern);
     let weak_source = Arc::downgrade(&source);
-    let destination = buffer(&context, &vec![0; pattern.len()]);
+    let destination = fixture.buffer(&vec![0u8; pattern.len()]);
     let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
     encoding.encode_copy(&source, 0..pattern.len() as u64, &destination, 0).unwrap();
     drop(source);
@@ -293,13 +261,14 @@ fn dropped_pending_waits_for_gpu() {
     assert!(weak_source.upgrade().is_none());
     // SAFETY: dropping the pending command buffer waited for the copy into `destination`.
     assert_eq!(unsafe { destination.get_bytes() }.as_ref(), pattern.as_slice());
-    logger.assert_clean();
+    fixture.assert_clean();
 }
 
 #[uzu_test]
 fn command_resources_survive_thousand_reuse_cycles() {
-    let (context, logger) = context();
-    let destination = buffer(&context, &[0; 256]);
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
+    let destination = fixture.buffer(&[0u8; 256]);
     let mut gpu_time = Duration::ZERO;
     for cycle in 0..1000u32 {
         if cycle.is_multiple_of(10) {
@@ -311,63 +280,66 @@ fn command_resources_survive_thousand_reuse_cycles() {
         }
         let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
         encoding.encode_fill(&destination, 0..256, cycle as u8).unwrap();
-        gpu_time += complete(encoding).gpu_execution_time();
+        gpu_time += KernelFixture::complete(encoding).gpu_execution_time();
         // SAFETY: this cycle's command buffer completed; abandoned ones were never submitted.
         let bytes = unsafe { destination.get_bytes() };
         assert!(bytes.iter().all(|&value| value == cycle as u8), "cycle {cycle}");
     }
     assert!(gpu_time > Duration::ZERO);
-    logger.assert_clean();
+    fixture.assert_clean();
 }
 
 #[uzu_test]
 fn four_threads_submit_concurrently() {
-    let (context, logger) = context();
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
     std::thread::scope(|scope| {
         for thread in 0..4u8 {
-            let context = context.clone();
+            let (context, fixture) = (context.clone(), &fixture);
             scope.spawn(move || {
-                let source = buffer(&context, &[0; 1024]);
-                let destination = buffer(&context, &[0; 1024]);
+                let source = fixture.buffer(&[0u8; 1024]);
+                let destination = fixture.buffer(&[0u8; 1024]);
                 for submit in 0..32u8 {
                     let value = thread * 32 + submit;
                     let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
                     encoding.encode_fill(&source, 0..1024, value).unwrap();
                     encoding.encode_copy(&source, 0..1024, &destination, 0).unwrap();
-                    complete(encoding);
+                    KernelFixture::complete(encoding);
                     // SAFETY: this thread's buffers are written only by its own completed command buffer.
                     assert!(unsafe { destination.get_bytes() }.iter().all(|&byte| byte == value));
                 }
             });
         }
     });
-    logger.assert_clean();
+    fixture.assert_clean();
 }
 
 #[uzu_test]
 fn timestamps_measure_each_submission() {
-    let (context, logger) = context();
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
     assert!(matches!(VkTimestampQueryPool::new(context.clone(), 0), Err(Error::TimestampRange)));
     let pool = VkTimestampQueryPool::new(context.clone(), 2).unwrap();
     assert!(matches!(pool.get_duration_nanos(0), Err(Error::TimestampRange)));
-    let source = buffer(&context, &vec![3; 16 << 20]);
-    let destination = buffer(&context, &vec![0; 16 << 20]);
+    let source = fixture.buffer(&vec![3u8; 16 << 20]);
+    let destination = fixture.buffer(&vec![0u8; 16 << 20]);
     for _ in 0..3 {
         let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
         encoding.encode_copy(&source, 0..16 << 20, &destination, 0).unwrap();
-        assert!(complete(encoding).gpu_execution_time() > Duration::ZERO);
+        assert!(KernelFixture::complete(encoding).gpu_execution_time() > Duration::ZERO);
     }
-    logger.assert_clean();
+    fixture.assert_clean();
 }
 
 /// Run explicitly on the target machine: `cargo test ... selected_device_is_hardware -- --ignored`.
 #[uzu_test]
 #[ignore]
 fn selected_device_is_hardware() {
-    let (context, logger) = context();
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
     let properties = &context.physical_device().properties;
     let name = unsafe { CStr::from_ptr(properties.device_name.as_ptr()) }.to_string_lossy();
     assert_ne!(properties.device_type, vk::PhysicalDeviceType::CPU, "software Vulkan device {name}");
     assert!(name.starts_with("Apple M2"), "unexpected Vulkan device {name}");
-    logger.assert_clean();
+    fixture.assert_clean();
 }
