@@ -1,4 +1,5 @@
 use std::{
+    mem::take,
     sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
@@ -37,8 +38,7 @@ pub struct CpuCommandBufferEncoding {
     constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
-    timestamp_entries: Option<Vec<TimestampSampleEntry>>,
-    timestamps: Arc<Mutex<Vec<Instant>>>,
+    timestamps: Option<Arc<Mutex<Vec<(TimestampSampleEntry, Instant)>>>>,
 }
 
 impl CpuCommandBufferEncoding {
@@ -52,8 +52,7 @@ impl CpuCommandBufferEncoding {
             constant_allocator,
             allocation_pool,
             context,
-            timestamp_entries: None,
-            timestamps: Arc::new(Mutex::new(Vec::new())),
+            timestamps: None,
         }
     }
 
@@ -68,12 +67,10 @@ impl CpuCommandBufferEncoding {
         &mut self,
         entry: TimestampSampleEntry,
     ) {
-        let Some(entries) = &mut self.timestamp_entries else {
+        let Some(timestamps) = self.timestamps.clone() else {
             return;
         };
-        entries.push(entry);
-        let timestamps = self.timestamps.clone();
-        self.push_command(move || timestamps.lock().push(Instant::now()));
+        self.push_command(move || timestamps.lock().push((entry, Instant::now())));
     }
 }
 
@@ -137,8 +134,8 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
     fn pop_debug_group(&mut self) {}
 
     fn enable_timestamps(&mut self) -> Result<(), CpuError> {
-        assert!(self.timestamp_entries.is_none(), "timing already enabled");
-        self.timestamp_entries = Some(Vec::new());
+        assert!(self.timestamps.is_none(), "timestamps already enabled");
+        self.timestamps = Some(Arc::new(Mutex::new(Vec::new())));
         Ok(())
     }
 
@@ -163,7 +160,6 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
             constant_allocator: self.constant_allocator,
             allocation_pool: self.allocation_pool,
             context: self.context,
-            timestamp_entries: self.timestamp_entries,
             timestamps: self.timestamps,
         }
     }
@@ -174,8 +170,7 @@ pub struct CpuCommandBufferExecutable {
     constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
-    timestamp_entries: Option<Vec<TimestampSampleEntry>>,
-    timestamps: Arc<Mutex<Vec<Instant>>>,
+    timestamps: Option<Arc<Mutex<Vec<(TimestampSampleEntry, Instant)>>>>,
 }
 
 impl CommandBufferExecutable for CpuCommandBufferExecutable {
@@ -198,9 +193,9 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
 
                 let completed = CpuCommandBufferCompleted {
                     gpu_execution_time,
-                    timestamps: self.timestamp_entries.map_or_else(Box::default, |entries| {
-                        entries.into_iter().zip(self.timestamps.lock().iter().copied()).collect()
-                    }),
+                    timestamps: self
+                        .timestamps
+                        .map_or_else(Box::default, |timestamps| take(&mut *timestamps.lock()).into_boxed_slice()),
                     _allocation_pool: self.allocation_pool,
                 };
 
