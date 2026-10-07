@@ -1,42 +1,66 @@
-use std::{
-    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
-    sync::Arc,
-};
+use std::{os::raw::c_void, ptr::NonNull, sync::Arc};
 
 use ash::vk;
 use vk_mem::Alloc;
 
-use super::{VkBufferCreateInfo, VkBufferError, VkContext};
+use super::{Error, VkBufferError, VkContext};
 
+/// Storage buffer that is permanently mapped into host-visible, host-coherent memory.
 pub struct VkBuffer {
     context: Arc<VkContext>,
     allocation: vk_mem::Allocation,
     buffer: vk::Buffer,
+    device_address: vk::DeviceAddress,
+    cpu_ptr: NonNull<c_void>,
     size: vk::DeviceSize,
 }
 
-impl VkBuffer {
-    pub fn new_with_info(
-        context: Arc<VkContext>,
-        info: &VkBufferCreateInfo<'_>,
-    ) -> Result<Self, VkBufferError> {
-        Self::new(context, &info.allocation_info, &info.buffer_info)
-    }
+// The mapping is owned by this buffer and stays valid until drop; host access goes through `&`/`&mut`.
+unsafe impl Send for VkBuffer {}
+unsafe impl Sync for VkBuffer {}
 
+impl VkBuffer {
     pub fn new(
         context: Arc<VkContext>,
-        allocation_info: &vk_mem::AllocationCreateInfo,
-        buffer_info: &vk::BufferCreateInfo<'_>,
-    ) -> Result<Self, VkBufferError> {
-        let buffer_info = (*buffer_info).usage(buffer_info.usage | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS);
-        let (buffer, allocation) = unsafe { context.memory_allocator().create_buffer(&buffer_info, allocation_info) }
-            .map_err(VkBufferError::Allocation)?;
+        size: vk::DeviceSize,
+    ) -> Result<Self, Error> {
+        if size == 0 {
+            return Err(Error::EmptyBuffer);
+        }
+        let buffer_info = vk::BufferCreateInfo::default().size(size).usage(
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+        );
+        let allocation_info = vk_mem::AllocationCreateInfo {
+            usage: vk_mem::MemoryUsage::AutoPreferDevice,
+            flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_RANDOM,
+            required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            ..Default::default()
+        };
+        let allocator = context.memory_allocator();
+        let (buffer, mut allocation) =
+            unsafe { allocator.create_buffer(&buffer_info, &allocation_info) }.map_err(VkBufferError::Allocation)?;
+        let Some(cpu_ptr) = NonNull::new(allocator.get_allocation_info(&allocation).mapped_data) else {
+            unsafe { allocator.destroy_buffer(buffer, &mut allocation) };
+            return Err(VkBufferError::MemoryMap(vk::Result::ERROR_MEMORY_MAP_FAILED).into());
+        };
+        let device_address = unsafe {
+            context.device().get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
+        };
         Ok(Self {
             context,
             allocation,
             buffer,
-            size: buffer_info.size,
+            device_address,
+            cpu_ptr,
+            size,
         })
+    }
+
+    pub fn context(&self) -> &Arc<VkContext> {
+        &self.context
     }
 
     pub fn buffer(&self) -> vk::Buffer {
@@ -44,35 +68,17 @@ impl VkBuffer {
     }
 
     pub fn device_address(&self) -> vk::DeviceAddress {
-        let info = vk::BufferDeviceAddressInfo::default().buffer(self.buffer);
-        unsafe { self.context.device().get_buffer_device_address(&info) }
+        self.device_address
     }
 
-    pub fn map_action_unmap<T>(
-        &mut self,
-        action: impl FnOnce(&mut [u8]) -> T,
-    ) -> Result<T, VkBufferError> {
-        let allocator = self.context.memory_allocator();
-        let ptr = unsafe { allocator.map_memory(&mut self.allocation) }.map_err(VkBufferError::MemoryMap)?;
-        if let Err(error) = allocator.invalidate_allocation(&self.allocation, 0, self.size) {
-            unsafe {
-                allocator.unmap_memory(&mut self.allocation);
-            }
-            return Err(VkBufferError::CacheInvalidate(error));
-        }
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            action(unsafe { std::slice::from_raw_parts_mut(ptr, self.size as usize) })
-        }));
-        let flushed = allocator.flush_allocation(&self.allocation, 0, self.size);
-        unsafe {
-            allocator.unmap_memory(&mut self.allocation);
-        }
-        let result = match result {
-            Ok(value) => value,
-            Err(panic) => resume_unwind(panic),
-        };
-        flushed.map_err(VkBufferError::CacheFlush)?;
-        Ok(result)
+    /// Host-coherent mapping of the whole buffer. Dereferencing it must not overlap GPU work that
+    /// accesses the same bytes: read or write only before submission or after completion.
+    pub fn cpu_ptr(&self) -> NonNull<c_void> {
+        self.cpu_ptr
+    }
+
+    pub fn size(&self) -> vk::DeviceSize {
+        self.size
     }
 
     pub fn fill(
@@ -85,47 +91,15 @@ impl VkBuffer {
                 size: self.size,
             });
         }
-        self.map_action_unmap(|bytes| bytes[..data.len()].copy_from_slice(data))
+        unsafe { std::slice::from_raw_parts_mut(self.cpu_ptr.as_ptr().cast::<u8>(), data.len()) }.copy_from_slice(data);
+        Ok(())
     }
 
-    pub fn get_bytes(&mut self) -> Result<Box<[u8]>, VkBufferError> {
-        self.map_action_unmap(|bytes| Box::from(&*bytes))
-    }
-
-    pub fn size(&self) -> vk::DeviceSize {
-        self.size
-    }
-
-    pub fn get_memory_barrier(
-        &self,
-        src_access_mask: vk::AccessFlags,
-        dst_access_mask: vk::AccessFlags,
-    ) -> vk::BufferMemoryBarrier<'_> {
-        vk::BufferMemoryBarrier::default()
-            .src_access_mask(src_access_mask)
-            .dst_access_mask(dst_access_mask)
-            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .buffer(self.buffer)
-            .offset(0)
-            .size(vk::WHOLE_SIZE)
-    }
-
-    pub fn get_memory_barrier2(
-        &self,
-        src_access_mask: vk::AccessFlags2,
-        dst_access_mask: vk::AccessFlags2,
-    ) -> vk::BufferMemoryBarrier2<'_> {
-        vk::BufferMemoryBarrier2::default()
-            .src_access_mask(src_access_mask)
-            .dst_access_mask(dst_access_mask)
-            .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
-            .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
-            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .buffer(self.buffer)
-            .offset(0)
-            .size(vk::WHOLE_SIZE)
+    /// # Safety
+    /// No GPU work or host writer may access the buffer during the copy: every command buffer that
+    /// writes it must have completed, and no other host thread may write through `cpu_ptr`.
+    pub unsafe fn get_bytes(&self) -> Box<[u8]> {
+        Box::from(unsafe { std::slice::from_raw_parts(self.cpu_ptr.as_ptr().cast::<u8>(), self.size as usize) })
     }
 }
 

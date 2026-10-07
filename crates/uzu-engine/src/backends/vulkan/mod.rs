@@ -1,11 +1,12 @@
 mod error;
 mod vk_buffer;
-mod vk_buffer_create_info;
 mod vk_buffer_error;
-mod vk_command_buffers;
+mod vk_command_buffer_completed;
+mod vk_command_buffer_encoding;
+mod vk_command_buffer_executable;
+mod vk_command_buffer_pending;
+mod vk_command_buffer_resources;
 mod vk_compute_pipeline;
-mod vk_compute_shader_layout_buffer;
-mod vk_compute_shader_layout_set;
 mod vk_context;
 mod vk_context_create_info;
 mod vk_context_error;
@@ -19,12 +20,13 @@ mod vk_timestamp_query_pool;
 
 pub use error::Error;
 pub use vk_buffer::VkBuffer;
-pub use vk_buffer_create_info::VkBufferCreateInfo;
 pub use vk_buffer_error::VkBufferError;
-pub use vk_command_buffers::VkCommandBuffers;
+pub use vk_command_buffer_completed::VkCommandBufferCompleted;
+pub use vk_command_buffer_encoding::VkCommandBufferEncoding;
+pub use vk_command_buffer_executable::VkCommandBufferExecutable;
+pub use vk_command_buffer_pending::VkCommandBufferPending;
+pub use vk_command_buffer_resources::VkCommandBufferResources;
 pub use vk_compute_pipeline::VkComputePipeline;
-pub use vk_compute_shader_layout_buffer::VkComputeShaderLayoutBuffer;
-pub use vk_compute_shader_layout_set::VkComputeShaderLayoutSet;
 pub use vk_context::VkContext;
 pub use vk_context_create_info::VkContextCreateInfo;
 pub use vk_context_error::VkContextError;
@@ -35,3 +37,7 @@ pub use vk_physical_device_subgroup_properties::VkPhysicalDeviceSubgroupProperti
 pub use vk_println_logger::VkPrintlnLogger;
 pub use vk_shader::VkShader;
 pub use vk_timestamp_query_pool::VkTimestampQueryPool;
+
+#[cfg(test)]
+#[path = "../../../unit/backends/vulkan/mod.rs"]
+mod tests;

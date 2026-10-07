@@ -1,0 +1,373 @@
+use std::{
+    ffi::CStr,
+    sync::{Arc, Weak},
+    time::Duration,
+};
+
+use ash::vk;
+use uzu_engine_macros::uzu_test;
+
+use super::validation_logger::ValidationLogger;
+use crate::backends::vulkan::{
+    Error, VkBuffer, VkCommandBufferCompleted, VkCommandBufferEncoding, VkComputePipeline, VkContext,
+    VkContextCreateInfo, VkShader, VkTimestampQueryPool,
+};
+
+const GROUP_SIZE: u32 = 64;
+
+fn context() -> (Arc<VkContext>, ValidationLogger) {
+    let logger = ValidationLogger::default();
+    let context = VkContext::new(VkContextCreateInfo {
+        with_validation: true,
+        logger: Box::new(logger.clone()),
+    })
+    .expect("Vulkan context");
+    let properties = &context.physical_device().properties;
+    let name = unsafe { CStr::from_ptr(properties.device_name.as_ptr()) };
+    eprintln!("Vulkan test device: {} ({:?})", name.to_string_lossy(), properties.device_type);
+    (Arc::new(context), logger)
+}
+
+fn buffer(
+    context: &Arc<VkContext>,
+    bytes: &[u8],
+) -> Arc<VkBuffer> {
+    let mut buffer = VkBuffer::new(context.clone(), bytes.len() as u64).expect("buffer");
+    buffer.fill(bytes).expect("host fill");
+    Arc::new(buffer)
+}
+
+fn floats(
+    context: &Arc<VkContext>,
+    values: &[f32],
+) -> Arc<VkBuffer> {
+    buffer(context, bytemuck::cast_slice(values))
+}
+
+/// # Safety
+/// Same contract as `VkBuffer::get_bytes`.
+unsafe fn read_floats(buffer: &VkBuffer) -> Vec<f32> {
+    bytemuck::cast_slice(&unsafe { buffer.get_bytes() }).to_vec()
+}
+
+fn complete(encoding: VkCommandBufferEncoding) -> VkCommandBufferCompleted {
+    encoding.end_encoding().expect("end encoding").submit().wait_until_completed().expect("completion")
+}
+
+/// `output = input_0 + input_1` over `size` floats through the shared test kernel.
+fn add_pipeline_with_arguments(
+    context: &Arc<VkContext>,
+    push_constant_size: u32,
+) -> Result<VkComputePipeline, Error> {
+    let shader = VkShader::new(context.clone(), concat!(env!("OUT_DIR"), "/vulkan/test_kernel.spv"))?;
+    let entries = [vk::SpecializationMapEntry::default().constant_id(0).offset(0).size(4)];
+    let group_bytes = GROUP_SIZE.to_ne_bytes();
+    let specialization = vk::SpecializationInfo::default().map_entries(&entries).data(&group_bytes);
+    VkComputePipeline::new(
+        context.clone(),
+        shader.module(),
+        &[],
+        push_constant_size,
+        "__dsl_22test_kernel_axis_float",
+        &specialization,
+    )
+}
+
+fn add_pipeline(context: &Arc<VkContext>) -> Arc<VkComputePipeline> {
+    Arc::new(add_pipeline_with_arguments(context, 28).expect("pipeline"))
+}
+
+fn encode_add(
+    encoding: &mut VkCommandBufferEncoding,
+    pipeline: &Arc<VkComputePipeline>,
+    [input_0, input_1, output]: [&Arc<VkBuffer>; 3],
+    size: u32,
+) -> Result<(), Error> {
+    let push_constants = [input_0, input_1, output]
+        .iter()
+        .flat_map(|buffer| buffer.device_address().to_ne_bytes())
+        .chain(size.to_ne_bytes())
+        .collect::<Vec<_>>();
+    let bytes = 0..size as u64 * 4;
+    // SAFETY: test_kernel_axis_float takes three device addresses and `size`, and touches only
+    // indices < size of input_0/input_1 (read) and output (written), all declared below.
+    unsafe {
+        encoding.encode_dispatch(
+            pipeline,
+            &push_constants,
+            [size.div_ceil(GROUP_SIZE), 1, 1],
+            &[(input_0, bytes.clone()), (input_1, bytes.clone())],
+            &[(output, bytes)],
+        )
+    }
+}
+
+#[uzu_test]
+fn copy_and_fill_round_trip() {
+    let (context, logger) = context();
+    let pattern = (0..4096).map(|index| (index % 251) as u8).collect::<Vec<_>>();
+    let source = buffer(&context, &pattern);
+    let destination = buffer(&context, &[0; 4096]);
+    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    encoding.encode_fill(&destination, 0..4096, 0xab).unwrap();
+    encoding.encode_copy(&source, 256..1280, &destination, 512).unwrap();
+    encoding.encode_fill(&destination, 2048..2052, 0x01).unwrap();
+    complete(encoding);
+
+    let mut expected = vec![0xab; 4096];
+    expected[512..1536].copy_from_slice(&pattern[256..1280]);
+    expected[2048..2052].fill(0x01);
+    // SAFETY: the only command buffer writing `destination` has completed.
+    assert_eq!(unsafe { destination.get_bytes() }.as_ref(), expected.as_slice());
+    logger.assert_clean();
+}
+
+#[uzu_test]
+fn invalid_ranges_return_errors_without_recording() {
+    let (context, logger) = context();
+    let pipeline = add_pipeline(&context);
+    let first = buffer(&context, &[7; 4096]);
+    let second = buffer(&context, &[0; 4096]);
+    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    let range_error = |result| matches!(result, Err(Error::BufferRange { .. }));
+    assert!(range_error(encoding.encode_copy(&first, 0..0, &second, 0)));
+    assert!(range_error(encoding.encode_copy(&first, 4000..4100, &second, 0)));
+    assert!(range_error(encoding.encode_copy(&first, 0..200, &second, 4000)));
+    assert!(range_error(encoding.encode_copy(&first, 0..200, &second, u64::MAX - 1)));
+    assert!(matches!(encoding.encode_copy(&first, 0..100, &first, 50), Err(Error::CopyOverlap)));
+    assert!(matches!(encoding.encode_fill(&second, 1..9, 0), Err(Error::FillAlignment { .. })));
+    assert!(matches!(encoding.encode_fill(&second, 0..6, 0), Err(Error::FillAlignment { .. })));
+    assert!(range_error(encoding.encode_fill(&second, 4096..4100, 0)));
+    let limit = context.physical_device().properties.limits.max_push_constants_size;
+    for size in [6, limit + 4] {
+        assert!(matches!(add_pipeline_with_arguments(&context, size), Err(Error::PushConstants { .. })));
+    }
+    // SAFETY: every call below fails its checks before recording, so the shader never runs.
+    unsafe {
+        for push_constants in [vec![0; 3], vec![0; 24], vec![0; 32], vec![0; limit as usize]] {
+            let result = encoding.encode_dispatch(&pipeline, &push_constants, [1, 1, 1], &[], &[]);
+            assert!(matches!(
+                result,
+                Err(Error::PushConstantsMismatch {
+                    expected: 28,
+                    ..
+                })
+            ));
+        }
+        let result = encoding.encode_dispatch(&pipeline, &[0; 28], [u32::MAX, 1, 1], &[], &[]);
+        assert!(matches!(result, Err(Error::DispatchGroups { .. })));
+        assert!(range_error(encoding.encode_dispatch(&pipeline, &[0; 28], [1, 1, 1], &[(&first, 0..4097)], &[])));
+    }
+
+    encoding.encode_copy(&first, 0..100, &first, 100).unwrap();
+    encoding.encode_copy(&first, 0..200, &second, 0).unwrap();
+    complete(encoding);
+    // SAFETY: the only command buffer writing `second` has completed.
+    assert_eq!(&unsafe { second.get_bytes() }[..200], &[7; 200]);
+    assert!(matches!(VkBuffer::new(context.clone(), 0), Err(Error::EmptyBuffer)));
+    logger.assert_clean();
+}
+
+#[uzu_test]
+fn foreign_context_objects_are_rejected() {
+    let (other_context, other_logger) = context();
+    let (context, logger) = context();
+    let size = 64u32;
+    let input = vec![1.0f32; size as usize];
+    let [local_a, local_b, local_output] = [&input, &input, &input].map(|values| floats(&context, values));
+    let foreign = floats(&other_context, &input);
+    let local_pipeline = add_pipeline(&context);
+    let foreign_pipeline = add_pipeline(&other_context);
+    let foreign_error = |result| matches!(result, Err(Error::ForeignContext));
+
+    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    assert!(foreign_error(encoding.encode_copy(&foreign, 0..64, &local_output, 0)));
+    assert!(foreign_error(encoding.encode_copy(&local_a, 0..64, &foreign, 0)));
+    assert!(foreign_error(encoding.encode_fill(&foreign, 0..64, 0)));
+    assert!(foreign_error(encode_add(&mut encoding, &foreign_pipeline, [&local_a, &local_b, &local_output], size)));
+    assert!(foreign_error(encode_add(&mut encoding, &local_pipeline, [&local_a, &foreign, &local_output], size)));
+    assert!(foreign_error(encode_add(&mut encoding, &local_pipeline, [&local_a, &local_b, &foreign], size)));
+
+    encode_add(&mut encoding, &local_pipeline, [&local_a, &local_b, &local_output], size).unwrap();
+    complete(encoding);
+    // SAFETY: the command buffer writing `local_output` has completed and none writes `foreign`.
+    let (local, foreign) = unsafe { (read_floats(&local_output), read_floats(&foreign)) };
+    assert!(local.iter().all(|&value| value == 2.0));
+    assert!(foreign.iter().all(|&value| value == 1.0));
+    logger.assert_clean();
+    other_logger.assert_clean();
+}
+
+#[uzu_test]
+fn transfer_and_dispatch_chain_is_ordered() {
+    let (context, logger) = context();
+    let pipeline = add_pipeline(&context);
+    let size = 1024u32;
+    let input = (0..size).map(|index| index as f32).collect::<Vec<_>>();
+    let [a, b] = [&input, &input].map(|values| floats(&context, values));
+    let [sum, copied, result] = [(); 3].map(|_| floats(&context, &vec![-1.0; size as usize]));
+    let bytes = 0..size as u64 * 4;
+
+    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    encoding.encode_fill(&sum, bytes.clone(), 0).unwrap();
+    encode_add(&mut encoding, &pipeline, [&a, &b, &sum], size).unwrap();
+    encoding.encode_copy(&sum, bytes.clone(), &copied, 0).unwrap();
+    encoding.encode_fill(&a, bytes, 0).unwrap();
+    encode_add(&mut encoding, &pipeline, [&a, &copied, &result], size).unwrap();
+    complete(encoding);
+
+    // SAFETY: the only command buffer writing `a` and `result` has completed.
+    let (a, result) = unsafe { (read_floats(&a), read_floats(&result)) };
+    assert!(a.iter().all(|&value| value == 0.0));
+    assert_eq!(result, input.iter().map(|value| value * 2.0).collect::<Vec<_>>());
+    logger.assert_clean();
+}
+
+#[uzu_test]
+fn multiple_command_buffers_in_flight() {
+    let (context, logger) = context();
+    let destination = buffer(&context, &[0; 8 * 256]);
+    let pending = (0..8u8)
+        .map(|index| {
+            let source = buffer(&context, &[index + 1; 256]);
+            let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+            encoding.encode_copy(&source, 0..256, &destination, index as u64 * 256).unwrap();
+            encoding.end_encoding().unwrap().submit()
+        })
+        .collect::<Vec<_>>();
+    for pending in pending.into_iter().rev() {
+        pending.wait_until_completed().unwrap();
+    }
+    // SAFETY: all eight command buffers writing `destination` have completed.
+    let bytes = unsafe { destination.get_bytes() };
+    for (index, chunk) in bytes.chunks(256).enumerate() {
+        assert!(chunk.iter().all(|&value| value == index as u8 + 1), "chunk {index}");
+    }
+    logger.assert_clean();
+}
+
+#[uzu_test]
+fn retains_resources_until_completion() {
+    let (context, logger) = context();
+    let size = 1003u32;
+    let input = (0..size).map(|index| index as f32).collect::<Vec<_>>();
+    let output = floats(&context, &vec![0.0; size as usize]);
+    let mut retained = Vec::<Weak<dyn Send + Sync>>::new();
+    let pending = {
+        let pipeline = add_pipeline(&context);
+        let [a, b] = [&input, &input].map(|values| floats(&context, values));
+        let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+        encode_add(&mut encoding, &pipeline, [&a, &b, &output], size).unwrap();
+        retained.push(Arc::downgrade(&pipeline) as Weak<dyn Send + Sync>);
+        retained.extend([&a, &b].map(|buffer| Arc::downgrade(buffer) as Weak<dyn Send + Sync>));
+        encoding.end_encoding().unwrap().submit()
+    };
+    assert!(retained.iter().all(|resource| resource.upgrade().is_some()));
+    pending.wait_until_completed().unwrap();
+    assert!(retained.iter().all(|resource| resource.upgrade().is_none()));
+    // SAFETY: the command buffer writing `output` has completed; the next one is never submitted.
+    let output_values = unsafe { read_floats(&output) };
+    assert_eq!(output_values, input.iter().map(|value| value * 2.0).collect::<Vec<_>>());
+
+    let source = buffer(&context, &[1; 64]);
+    let weak_source = Arc::downgrade(&source);
+    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    encoding.encode_copy(&source, 0..64, &output, 0).unwrap();
+    drop(source);
+    drop(encoding.end_encoding().unwrap());
+    assert!(weak_source.upgrade().is_none());
+    logger.assert_clean();
+}
+
+#[uzu_test]
+fn dropped_pending_waits_for_gpu() {
+    let (context, logger) = context();
+    let pattern = (0..4 << 20).map(|index: u32| (index % 253) as u8).collect::<Vec<_>>();
+    let source = buffer(&context, &pattern);
+    let weak_source = Arc::downgrade(&source);
+    let destination = buffer(&context, &vec![0; pattern.len()]);
+    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    encoding.encode_copy(&source, 0..pattern.len() as u64, &destination, 0).unwrap();
+    drop(source);
+    drop(encoding.end_encoding().unwrap().submit());
+    assert!(weak_source.upgrade().is_none());
+    // SAFETY: dropping the pending command buffer waited for the copy into `destination`.
+    assert_eq!(unsafe { destination.get_bytes() }.as_ref(), pattern.as_slice());
+    logger.assert_clean();
+}
+
+#[uzu_test]
+fn command_resources_survive_thousand_reuse_cycles() {
+    let (context, logger) = context();
+    let destination = buffer(&context, &[0; 256]);
+    let mut gpu_time = Duration::ZERO;
+    for cycle in 0..1000u32 {
+        if cycle.is_multiple_of(10) {
+            let mut abandoned = VkCommandBufferEncoding::new(context.clone()).unwrap();
+            abandoned.encode_fill(&destination, 0..256, 0xff).unwrap();
+            if cycle.is_multiple_of(20) {
+                drop(abandoned.end_encoding().unwrap());
+            }
+        }
+        let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+        encoding.encode_fill(&destination, 0..256, cycle as u8).unwrap();
+        gpu_time += complete(encoding).gpu_execution_time();
+        // SAFETY: this cycle's command buffer completed; abandoned ones were never submitted.
+        let bytes = unsafe { destination.get_bytes() };
+        assert!(bytes.iter().all(|&value| value == cycle as u8), "cycle {cycle}");
+    }
+    assert!(gpu_time > Duration::ZERO);
+    logger.assert_clean();
+}
+
+#[uzu_test]
+fn four_threads_submit_concurrently() {
+    let (context, logger) = context();
+    std::thread::scope(|scope| {
+        for thread in 0..4u8 {
+            let context = context.clone();
+            scope.spawn(move || {
+                let source = buffer(&context, &[0; 1024]);
+                let destination = buffer(&context, &[0; 1024]);
+                for submit in 0..32u8 {
+                    let value = thread * 32 + submit;
+                    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+                    encoding.encode_fill(&source, 0..1024, value).unwrap();
+                    encoding.encode_copy(&source, 0..1024, &destination, 0).unwrap();
+                    complete(encoding);
+                    // SAFETY: this thread's buffers are written only by its own completed command buffer.
+                    assert!(unsafe { destination.get_bytes() }.iter().all(|&byte| byte == value));
+                }
+            });
+        }
+    });
+    logger.assert_clean();
+}
+
+#[uzu_test]
+fn timestamps_measure_each_submission() {
+    let (context, logger) = context();
+    assert!(matches!(VkTimestampQueryPool::new(context.clone(), 0), Err(Error::TimestampRange)));
+    let pool = VkTimestampQueryPool::new(context.clone(), 2).unwrap();
+    assert!(matches!(pool.get_duration_nanos(0), Err(Error::TimestampRange)));
+    let source = buffer(&context, &vec![3; 16 << 20]);
+    let destination = buffer(&context, &vec![0; 16 << 20]);
+    for _ in 0..3 {
+        let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+        encoding.encode_copy(&source, 0..16 << 20, &destination, 0).unwrap();
+        assert!(complete(encoding).gpu_execution_time() > Duration::ZERO);
+    }
+    logger.assert_clean();
+}
+
+/// Run explicitly on the target machine: `cargo test ... selected_device_is_hardware -- --ignored`.
+#[uzu_test]
+#[ignore]
+fn selected_device_is_hardware() {
+    let (context, logger) = context();
+    let properties = &context.physical_device().properties;
+    let name = unsafe { CStr::from_ptr(properties.device_name.as_ptr()) }.to_string_lossy();
+    assert_ne!(properties.device_type, vk::PhysicalDeviceType::CPU, "software Vulkan device {name}");
+    assert!(name.starts_with("Apple M2"), "unexpected Vulkan device {name}");
+    logger.assert_clean();
+}

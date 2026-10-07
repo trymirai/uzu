@@ -54,9 +54,9 @@ impl VkTimestampQueryPool {
         }
 
         unsafe {
-            self.context.device().cmd_write_timestamp(
+            self.context.device().cmd_write_timestamp2(
                 command_buffer,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags2::ALL_COMMANDS,
                 self.query_pool,
                 self.query_index,
             );
@@ -82,15 +82,6 @@ impl VkTimestampQueryPool {
             )?;
         }
         Ok(Self::compute_duration_nanos(results[0], results[1], self.timestamp_period, self.valid_bits))
-    }
-
-    /// # Safety
-    /// All commands using this pool must have completed before resetting it.
-    pub unsafe fn reset(&mut self) {
-        unsafe {
-            self.context.device().reset_query_pool(self.query_pool, 0, self.queries_count);
-        }
-        self.query_index = 0;
     }
 
     fn compute_duration_nanos(

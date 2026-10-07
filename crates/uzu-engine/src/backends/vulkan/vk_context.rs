@@ -3,22 +3,28 @@ use std::ffi::{CStr, c_char, c_void};
 use ash::{ext, khr, vk};
 use parking_lot::{Mutex, MutexGuard};
 
-use super::{VkContextCreateInfo, VkContextError, VkPhysicalDevice, VkPhysicalDeviceFeatures};
+use super::{
+    Error, VkCommandBufferResources, VkContextCreateInfo, VkContextError, VkLogger, VkPhysicalDevice,
+    VkPhysicalDeviceFeatures,
+};
 
 const VK_LAYER_KHRONOS_VALIDATION: &CStr = c"VK_LAYER_KHRONOS_validation";
+const HOST_COHERENT_MEMORY: vk::MemoryPropertyFlags = vk::MemoryPropertyFlags::from_raw(
+    vk::MemoryPropertyFlags::HOST_VISIBLE.as_raw() | vk::MemoryPropertyFlags::HOST_COHERENT.as_raw(),
+);
 /// https://docs.vulkan.org/refpages/latest/refpages/index.html
 pub struct VkContext {
     _entry: ash::Entry,
     instance: ash::Instance,
-    _create_info: Box<VkContextCreateInfo>,
+    create_info: Box<VkContextCreateInfo>,
     physical_device: VkPhysicalDevice,
-    command_pool: Mutex<vk::CommandPool>,
+    command_buffer_resources: Mutex<Vec<VkCommandBufferResources>>,
     debug_utils: ext::debug_utils::Instance,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
     timestamp_valid_bits: u32,
     device: ash::Device,
     memory_allocator: Option<vk_mem::Allocator>,
-    queue: vk::Queue,
+    queue: Mutex<vk::Queue>,
     queue_family_index: u32,
 }
 impl VkContext {
@@ -65,13 +71,8 @@ impl VkContext {
             get_logical_device(&instance, &physical_device, &required_extensions, &required_features)
                 .inspect_err(|_| dispose_instance())?;
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
-        let command_pool = create_command_pool(&device, queue_family_index).inspect_err(|_| unsafe {
-            device.destroy_device(None);
-            dispose_instance();
-        })?;
         let memory_allocator =
             create_memory_allocator(&instance, &device, physical_device.device).inspect_err(|_| unsafe {
-                device.destroy_command_pool(command_pool, None);
                 device.destroy_device(None);
                 dispose_instance();
             })?;
@@ -79,22 +80,38 @@ impl VkContext {
         Ok(Self {
             _entry: entry,
             instance,
-            _create_info: create_info,
+            create_info,
             physical_device,
-            command_pool: Mutex::new(command_pool),
+            command_buffer_resources: Mutex::new(Vec::new()),
             debug_utils,
             debug_messenger,
             timestamp_valid_bits,
             device,
             memory_allocator: Some(memory_allocator),
-            queue,
+            queue: Mutex::new(queue),
             queue_family_index,
         })
     }
 
-    /// Do not hold this lock while allocating or dropping `VkCommandBuffers` on this thread.
-    pub fn command_pool(&self) -> MutexGuard<'_, vk::CommandPool> {
-        self.command_pool.lock()
+    /// Returns reset command resources: a cached set when one is idle, otherwise a new set.
+    pub fn acquire_command_buffer_resources(&self) -> Result<VkCommandBufferResources, Error> {
+        let Some(resources) = self.command_buffer_resources.lock().pop() else {
+            return VkCommandBufferResources::new(&self.device, self.queue_family_index);
+        };
+        if let Err(error) = resources.reset(&self.device) {
+            unsafe { resources.destroy(&self.device) };
+            return Err(error);
+        }
+        Ok(resources)
+    }
+
+    /// # Safety
+    /// The resources must come from this context and must not be pending on the GPU.
+    pub unsafe fn recycle_command_buffer_resources(
+        &self,
+        resources: VkCommandBufferResources,
+    ) {
+        self.command_buffer_resources.lock().push(resources);
     }
 
     pub fn device(&self) -> &ash::Device {
@@ -105,8 +122,9 @@ impl VkContext {
         self.memory_allocator.as_ref().unwrap()
     }
 
-    pub fn queue(&self) -> vk::Queue {
-        self.queue
+    /// Hold the guard only for queue submission: Vulkan requires external queue synchronization.
+    pub fn queue(&self) -> MutexGuard<'_, vk::Queue> {
+        self.queue.lock()
     }
 
     pub fn queue_family_index(&self) -> u32 {
@@ -120,12 +138,18 @@ impl VkContext {
     pub fn physical_device(&self) -> &VkPhysicalDevice {
         &self.physical_device
     }
+
+    pub fn logger(&self) -> &dyn VkLogger {
+        self.create_info.logger.as_ref()
+    }
 }
 impl Drop for VkContext {
     fn drop(&mut self) {
         unsafe {
+            for resources in self.command_buffer_resources.get_mut().drain(..) {
+                resources.destroy(&self.device);
+            }
             self.memory_allocator = None;
-            self.device.destroy_command_pool(*self.command_pool.get_mut(), None);
             self.device.destroy_device(None);
             if let Some(messenger) = self.debug_messenger {
                 self.debug_utils.destroy_debug_utils_messenger(messenger, None);
@@ -145,18 +169,6 @@ fn get_entry() -> Result<ash::Entry, VkContextError> {
     match entry_result {
         Ok(entry) => Ok(entry),
         Err(err) => Err(VkContextError::EntryLoadingError(err)),
-    }
-}
-fn create_command_pool(
-    device: &ash::Device,
-    queue_family_index: u32,
-) -> Result<vk::CommandPool, VkContextError> {
-    let info = vk::CommandPoolCreateInfo::default()
-        .queue_family_index(queue_family_index)
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-    match unsafe { device.create_command_pool(&info, None) } {
-        Ok(pool) => Ok(pool),
-        Err(result) => Err(VkContextError::CommandPoolCreate(result)),
     }
 }
 fn create_instance(
@@ -236,6 +248,11 @@ fn get_physical_device(
                     .supported_operations
                     .contains(vk::SubgroupFeatureFlags::ARITHMETIC)
                 && physical_device.subgroup_properties.supported_stages.contains(vk::ShaderStageFlags::COMPUTE)
+                && physical_device
+                    .memory_properties
+                    .memory_types_as_slice()
+                    .iter()
+                    .any(|memory_type| memory_type.property_flags.contains(HOST_COHERENT_MEMORY))
                 && required_extensions
                     .iter()
                     .all(|&req_ext| physical_device.supported_extensions.contains(&req_ext.to_string()))
