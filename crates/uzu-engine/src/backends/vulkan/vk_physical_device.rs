@@ -46,8 +46,11 @@ impl VkPhysicalDevice {
         // features
         let mut vk11features = vk::PhysicalDeviceVulkan11Features::default();
         let mut vk12features = vk::PhysicalDeviceVulkan12Features::default();
-        let mut features2 =
-            vk::PhysicalDeviceFeatures2::default().push_next(&mut vk11features).push_next(&mut vk12features);
+        let mut vk13features = vk::PhysicalDeviceVulkan13Features::default();
+        let mut features2 = vk::PhysicalDeviceFeatures2::default()
+            .push_next(&mut vk11features)
+            .push_next(&mut vk12features)
+            .push_next(&mut vk13features);
         unsafe { instance.get_physical_device_features2(physical_device, &mut features2) }
         let features = VkPhysicalDeviceFeatures {
             shader_int16: features2.features.shader_int16 == 1,
@@ -55,6 +58,10 @@ impl VkPhysicalDevice {
             storage_push_constant16: vk11features.storage_push_constant16 == 1,
             shader_float16: vk12features.shader_float16 == 1,
             shader_subgroup_extended_types: vk12features.shader_subgroup_extended_types == 1,
+            buffer_device_address: vk12features.buffer_device_address == 1,
+            host_query_reset: vk12features.host_query_reset == 1,
+            maintenance4: vk13features.maintenance4 == 1,
+            synchronization2: vk13features.synchronization2 == 1,
         };
 
         Ok(Self {
@@ -64,17 +71,6 @@ impl VkPhysicalDevice {
             features,
             subgroup_properties,
             memory_properties,
-        })
-    }
-
-    pub fn get_memory_type(
-        &self,
-        type_filter: u32,
-        properties: vk::MemoryPropertyFlags,
-    ) -> Option<u32> {
-        (0..self.memory_properties.memory_type_count).find(|&i| {
-            (type_filter & (1 << i)) != 0
-                && self.memory_properties.memory_types[i as usize].property_flags.contains(properties)
         })
     }
 }

@@ -13,14 +13,22 @@ impl VkComputePipeline {
     pub fn new(
         ctx: Arc<VkContext>,
         shader_module: vk::ShaderModule,
-        descriptor_set_layout: vk::DescriptorSetLayout,
+        descriptor_set_layouts: &[vk::DescriptorSetLayout],
+        push_constant_size: u32,
         entry_point: &str,
         specialization_info: &SpecializationInfo<'_>,
     ) -> Result<Self, Error> {
         let entry_cstring = CString::new(entry_point)?;
         let pipeline_layout = {
-            let info =
-                vk::PipelineLayoutCreateInfo::default().set_layouts(std::slice::from_ref(&descriptor_set_layout));
+            let ranges = (push_constant_size != 0)
+                .then(|| {
+                    vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).size(push_constant_size)
+                })
+                .into_iter()
+                .collect::<Vec<_>>();
+            let info = vk::PipelineLayoutCreateInfo::default()
+                .set_layouts(descriptor_set_layouts)
+                .push_constant_ranges(&ranges);
             unsafe { ctx.device().create_pipeline_layout(&info, None)? }
         };
 

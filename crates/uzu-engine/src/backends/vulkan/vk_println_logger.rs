@@ -1,12 +1,6 @@
 use super::VkLogger;
 
-#[derive(Default)]
 pub struct VkPrintlnLogger;
-impl VkPrintlnLogger {
-    pub fn new() -> Self {
-        Self
-    }
-}
 impl VkLogger for VkPrintlnLogger {
     fn v(
         &self,

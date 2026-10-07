@@ -19,7 +19,4 @@ pub enum VkBufferError {
         requested: usize,
         size: vk::DeviceSize,
     },
-
-    #[error("Memory type index not found")]
-    MemoryTypeIndexNotFound,
 }

@@ -2,12 +2,12 @@ use anyhow::{Context, bail};
 use itertools::Itertools;
 use shader_slang::ComponentType;
 
-use super::{SlangArgumentType, SlangKernelInfo, slang_api};
+use super::{Error, SlangArgumentType, SlangKernelInfo, slang_api};
 
 pub fn generate_wrappers(
     kernel: &SlangKernelInfo,
     component: &ComponentType,
-) -> anyhow::Result<Vec<String>> {
+) -> Result<Vec<String>, Error> {
     let mut wrappers = Vec::new();
 
     let type_params = kernel.type_parameters();
@@ -15,7 +15,7 @@ pub fn generate_wrappers(
     let specialization_variants: Vec<Option<Vec<&str>>> = if type_params.is_empty() {
         vec![None]
     } else {
-        type_params.iter().map(|p| p.variants.iter().copied()).multi_cartesian_product().map(Some).collect()
+        type_params.iter().map(|p| p.iter().copied()).multi_cartesian_product().map(Some).collect()
     };
 
     for specialization_variant in specialization_variants {
@@ -45,9 +45,9 @@ pub fn generate_wrappers(
                 };
                 Ok((a.name()?.to_string(), arg_type, specialized_type))
             })
-            .collect::<anyhow::Result<_>>()?;
+            .collect::<Result<_, Error>>()?;
 
-        let has_axis = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Axis(_)));
+        let has_axis = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Axis(_, _)));
         let has_groups = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Groups));
         let has_threads = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Threads(_)));
 
@@ -86,7 +86,7 @@ pub fn generate_wrappers(
                 .map(|(name, arg_type, _)| {
                     Ok(match arg_type {
                         SlangArgumentType::Ptr | SlangArgumentType::Constant => name.clone(),
-                        SlangArgumentType::Axis(_) => {
+                        SlangArgumentType::Axis(_, _) => {
                             format!("__dsl_axis_idx.{}", axis_letters.next().context("more than three Axis arguments")?)
                         },
                         SlangArgumentType::Groups => {
@@ -103,13 +103,22 @@ pub fn generate_wrappers(
                         },
                     })
                 })
-                .collect::<anyhow::Result<Vec<_>>>()?
+                .collect::<Result<Vec<_>, Error>>()?
                 .join(", ")
         };
 
         let numthreads = calculate_numthreads(&arguments)?;
 
-        let body = format!("{}({});", underlying_call, underlying_arguments);
+        let guards = arguments
+            .iter()
+            .filter_map(|(_, kind, _)| match kind {
+                SlangArgumentType::Axis(total, _) => Some(total),
+                _ => None,
+            })
+            .zip(["x", "y", "z"])
+            .map(|(total, axis)| format!("if (__dsl_axis_idx.{axis} >= ({total})) return;"))
+            .join("\n  ");
+        let body = format!("{guards}\n  {underlying_call}({underlying_arguments});");
 
         let wrapper = format!(
             "[shader(\"compute\")]\n[numthreads({})]\nvoid {wrapper_name}({wrapper_arguments_str}) {{\n  {body}\n}}",
@@ -133,11 +142,11 @@ fn mangle_name(
     result
 }
 
-fn calculate_numthreads(arguments: &[(String, SlangArgumentType, String)]) -> anyhow::Result<String> {
+fn calculate_numthreads(arguments: &[(String, SlangArgumentType, String)]) -> Result<String, Error> {
     let threads: Vec<&str> = arguments
         .iter()
         .filter_map(|(_, arg_type, _)| match arg_type {
-            SlangArgumentType::Axis(threads_per_group) => Some(threads_per_group.as_ref()),
+            SlangArgumentType::Axis(_, threads_per_group) => Some(threads_per_group.as_ref()),
             SlangArgumentType::Threads(threads) => Some(threads.as_ref()),
             _ => None,
         })

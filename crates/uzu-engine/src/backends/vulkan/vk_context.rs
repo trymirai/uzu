@@ -1,6 +1,7 @@
 use std::ffi::{CStr, c_char, c_void};
 
-use ash::{khr, vk};
+use ash::{ext, khr, vk};
+use parking_lot::{Mutex, MutexGuard};
 
 use super::{VkContextCreateInfo, VkContextError, VkPhysicalDevice, VkPhysicalDeviceFeatures};
 
@@ -11,7 +12,10 @@ pub struct VkContext {
     instance: ash::Instance,
     _create_info: Box<VkContextCreateInfo>,
     physical_device: VkPhysicalDevice,
-    command_pool: vk::CommandPool,
+    command_pool: Mutex<vk::CommandPool>,
+    debug_utils: ext::debug_utils::Instance,
+    debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
+    timestamp_valid_bits: u32,
     device: ash::Device,
     memory_allocator: Option<vk_mem::Allocator>,
     queue: vk::Queue,
@@ -20,7 +24,7 @@ pub struct VkContext {
 impl VkContext {
     pub fn new(create_info: VkContextCreateInfo) -> Result<Self, VkContextError> {
         let create_info = Box::new(create_info);
-        let api_version = vk::API_VERSION_1_2;
+        let api_version = vk::API_VERSION_1_3;
         let required_extensions = vec![
             khr::shader_float_controls::NAME.to_str().unwrap(),
             khr::shader_float16_int8::NAME.to_str().unwrap(),
@@ -32,25 +36,44 @@ impl VkContext {
             shader_subgroup_extended_types: true,
             storage_buffer16_bit_access: true,
             storage_push_constant16: true,
+            buffer_device_address: true,
+            host_query_reset: true,
+            maintenance4: true,
+            synchronization2: true,
         };
 
         let entry = get_entry()?;
         let instance = create_instance(&entry, api_version, &create_info)?;
+        let debug_utils = ext::debug_utils::Instance::new(&entry, &instance);
+        let debug_messenger = if create_info.with_validation {
+            Some(
+                unsafe { debug_utils.create_debug_utils_messenger(&debug_messenger_info(&create_info), None) }
+                    .inspect_err(|_| unsafe { instance.destroy_instance(None) })?,
+            )
+        } else {
+            None
+        };
+        let dispose_instance = || unsafe {
+            if let Some(messenger) = debug_messenger {
+                debug_utils.destroy_debug_utils_messenger(messenger, None);
+            }
+            instance.destroy_instance(None);
+        };
         let physical_device = get_physical_device(&instance, &required_extensions, &required_features)
-            .inspect_err(|_| unsafe { instance.destroy_instance(None) })?;
-        let (device, queue_family_index) =
+            .inspect_err(|_| dispose_instance())?;
+        let (device, queue_family_index, timestamp_valid_bits) =
             get_logical_device(&instance, &physical_device, &required_extensions, &required_features)
-                .inspect_err(|_| unsafe { instance.destroy_instance(None) })?;
+                .inspect_err(|_| dispose_instance())?;
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
         let command_pool = create_command_pool(&device, queue_family_index).inspect_err(|_| unsafe {
             device.destroy_device(None);
-            instance.destroy_instance(None);
+            dispose_instance();
         })?;
         let memory_allocator =
             create_memory_allocator(&instance, &device, physical_device.device).inspect_err(|_| unsafe {
                 device.destroy_command_pool(command_pool, None);
                 device.destroy_device(None);
-                instance.destroy_instance(None);
+                dispose_instance();
             })?;
 
         Ok(Self {
@@ -58,7 +81,10 @@ impl VkContext {
             instance,
             _create_info: create_info,
             physical_device,
-            command_pool,
+            command_pool: Mutex::new(command_pool),
+            debug_utils,
+            debug_messenger,
+            timestamp_valid_bits,
             device,
             memory_allocator: Some(memory_allocator),
             queue,
@@ -66,8 +92,9 @@ impl VkContext {
         })
     }
 
-    pub fn command_pool(&self) -> vk::CommandPool {
-        self.command_pool
+    /// Do not hold this lock while allocating or dropping `VkCommandBuffers` on this thread.
+    pub fn command_pool(&self) -> MutexGuard<'_, vk::CommandPool> {
+        self.command_pool.lock()
     }
 
     pub fn device(&self) -> &ash::Device {
@@ -86,6 +113,10 @@ impl VkContext {
         self.queue_family_index
     }
 
+    pub fn timestamp_valid_bits(&self) -> u32 {
+        self.timestamp_valid_bits
+    }
+
     pub fn physical_device(&self) -> &VkPhysicalDevice {
         &self.physical_device
     }
@@ -94,8 +125,11 @@ impl Drop for VkContext {
     fn drop(&mut self) {
         unsafe {
             self.memory_allocator = None;
-            self.device.destroy_command_pool(self.command_pool, None);
+            self.device.destroy_command_pool(*self.command_pool.get_mut(), None);
             self.device.destroy_device(None);
+            if let Some(messenger) = self.debug_messenger {
+                self.debug_utils.destroy_debug_utils_messenger(messenger, None);
+            }
             self.instance.destroy_instance(None);
         }
     }
@@ -144,17 +178,7 @@ fn create_instance(
         instance_extensions.push(vk::EXT_DEBUG_UTILS_NAME.as_ptr());
         instance_layers.push(VK_LAYER_KHRONOS_VALIDATION.as_ptr());
 
-        let msg_create_info = vk::DebugUtilsMessengerCreateInfoEXT {
-            message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
-                | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
-            message_type: vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
-                | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION,
-            pfn_user_callback: Some(crate::backends::vulkan::logger::debug_message_callback),
-            p_user_data: create_info as *const VkContextCreateInfo as *mut c_void,
-            ..Default::default()
-        };
+        let msg_create_info = debug_messenger_info(create_info);
         instance_nexts.push(msg_create_info);
     }
 
@@ -181,7 +205,9 @@ fn create_memory_allocator(
     device: &ash::Device,
     physical_device: vk::PhysicalDevice,
 ) -> Result<vk_mem::Allocator, VkContextError> {
-    let info = vk_mem::AllocatorCreateInfo::new(instance, device, physical_device);
+    let mut info = vk_mem::AllocatorCreateInfo::new(instance, device, physical_device);
+    info.flags = vk_mem::AllocatorCreateFlags::BUFFER_DEVICE_ADDRESS;
+    info.vulkan_api_version = vk::API_VERSION_1_3;
     match unsafe { vk_mem::Allocator::new(info) } {
         Ok(allocator) => Ok(allocator),
         Err(err) => Err(VkContextError::MemoryAllocatorCreate(err)),
@@ -203,7 +229,7 @@ fn get_physical_device(
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .filter(|physical_device| {
-            physical_device.properties.api_version >= vk::API_VERSION_1_2
+            physical_device.properties.api_version >= vk::API_VERSION_1_3
                 && physical_device.features.contains(required_features)
                 && physical_device
                     .subgroup_properties
@@ -229,7 +255,7 @@ fn get_logical_device(
     physical_device: &VkPhysicalDevice,
     required_extensions: &[&str],
     required_features: &VkPhysicalDeviceFeatures,
-) -> Result<(ash::Device, u32), VkContextError> {
+) -> Result<(ash::Device, u32, u32), VkContextError> {
     // find queue family index
     let queue_family_properties =
         unsafe { instance.get_physical_device_queue_family_properties(physical_device.device) };
@@ -265,7 +291,12 @@ fn get_logical_device(
         .storage_push_constant16(required_features.storage_push_constant16);
     let mut vk12_features = vk::PhysicalDeviceVulkan12Features::default()
         .shader_float16(required_features.shader_float16)
-        .shader_subgroup_extended_types(required_features.shader_subgroup_extended_types);
+        .shader_subgroup_extended_types(required_features.shader_subgroup_extended_types)
+        .buffer_device_address(required_features.buffer_device_address)
+        .host_query_reset(required_features.host_query_reset);
+    let mut vk13_features = vk::PhysicalDeviceVulkan13Features::default()
+        .maintenance4(required_features.maintenance4)
+        .synchronization2(required_features.synchronization2);
 
     // prepare device
     let device_create_info = vk::DeviceCreateInfo::default()
@@ -273,13 +304,14 @@ fn get_logical_device(
         .enabled_extension_names(&device_extensions)
         .enabled_features(&vk10_features)
         .push_next(&mut vk11_features)
-        .push_next(&mut vk12_features);
+        .push_next(&mut vk12_features)
+        .push_next(&mut vk13_features);
     let device = match unsafe { instance.create_device(physical_device.device, &device_create_info, None) } {
         Ok(dev) => dev,
         Err(result) => return Err(VkContextError::DeviceCreateError(result)),
     };
 
-    Ok((device, queue_family_index))
+    Ok((device, queue_family_index, queue_family_properties[queue_family_index as usize].timestamp_valid_bits))
 }
 fn is_layer_supported(
     entry: &ash::Entry,
@@ -287,4 +319,48 @@ fn is_layer_supported(
 ) -> Result<bool, VkContextError> {
     let layer_properties = unsafe { entry.enumerate_instance_layer_properties() }?;
     Ok(layer_properties.iter().any(|properties| unsafe { CStr::from_ptr(properties.layer_name.as_ptr()) } == layer))
+}
+
+fn debug_messenger_info(create_info: &VkContextCreateInfo) -> vk::DebugUtilsMessengerCreateInfoEXT<'_> {
+    vk::DebugUtilsMessengerCreateInfoEXT::default()
+        .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR)
+        .message_type(
+            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
+                | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION,
+        )
+        .pfn_user_callback(Some(debug_message_callback))
+        .user_data(create_info as *const VkContextCreateInfo as *mut c_void)
+}
+
+unsafe extern "system" fn debug_message_callback(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    p_user_data: *mut c_void,
+) -> vk::Bool32 {
+    if p_user_data.is_null() {
+        return vk::FALSE;
+    }
+
+    let types = match message_type {
+        vk::DebugUtilsMessageTypeFlagsEXT::GENERAL => "[General]",
+        vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE => "[Performance]",
+        vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION => "[Validation]",
+        _ => "",
+    };
+    let message = unsafe { CStr::from_ptr((*p_callback_data).p_message) };
+    let log_message = format!("{types}{:?}", message);
+
+    let create_info = unsafe { &*(p_user_data as *const VkContextCreateInfo) };
+    let logger = create_info.logger.as_ref();
+    match message_severity {
+        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => logger.v(log_message.as_str()),
+        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => logger.i(log_message.as_str()),
+        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => logger.w(log_message.as_str()),
+        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => logger.e(log_message.as_str()),
+        _ => logger.d(log_message.as_str()),
+    }
+
+    vk::FALSE
 }

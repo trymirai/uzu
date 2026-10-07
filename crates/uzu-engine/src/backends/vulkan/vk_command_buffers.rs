@@ -6,7 +6,6 @@ use super::{Error, VkContext};
 
 pub struct VkCommandBuffers {
     context: Arc<VkContext>,
-    command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
     primary: bool,
 }
@@ -16,22 +15,23 @@ impl VkCommandBuffers {
         primary: bool,
         count: u32,
     ) -> Result<Self, Error> {
-        let command_pool = ctx.command_pool();
         let level = if primary {
             vk::CommandBufferLevel::PRIMARY
         } else {
             vk::CommandBufferLevel::SECONDARY
         };
 
-        let info = vk::CommandBufferAllocateInfo::default()
-            .command_pool(command_pool)
-            .level(level)
-            .command_buffer_count(count);
-        let command_buffers = unsafe { ctx.device().allocate_command_buffers(&info)? };
+        let command_buffers = {
+            let command_pool = ctx.command_pool();
+            let info = vk::CommandBufferAllocateInfo::default()
+                .command_pool(*command_pool)
+                .level(level)
+                .command_buffer_count(count);
+            unsafe { ctx.device().allocate_command_buffers(&info)? }
+        };
 
         Ok(Self {
             context: ctx,
-            command_pool,
             command_buffers,
             primary,
         })
@@ -48,7 +48,7 @@ impl VkCommandBuffers {
 impl Drop for VkCommandBuffers {
     fn drop(&mut self) {
         unsafe {
-            self.context.device().free_command_buffers(self.command_pool, self.command_buffers.as_slice());
+            self.context.device().free_command_buffers(*self.context.command_pool(), self.command_buffers.as_slice());
         }
     }
 }
