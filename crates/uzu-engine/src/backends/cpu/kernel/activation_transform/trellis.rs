@@ -2,7 +2,7 @@ use half::bf16;
 use uzu_engine_macros::kernel;
 
 use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8};
-use crate::backends::common::{gpu_types::trellis::COLUMN_GROUP_COUNT, kernel::mixing_dimension};
+use crate::backends::common::gpu_types::trellis::{COLUMN_GROUP_COUNT, mixing_dimension};
 
 fn rotate_token(
     input: &[bf16],

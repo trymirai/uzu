@@ -7,6 +7,7 @@ pub mod int_spec;
 pub mod low_rank_spec;
 pub mod mlx_spec;
 pub mod qtip_gaussian;
+pub mod row_stack;
 
 #[uzu_config]
 #[serde(rename_all = "snake_case")]
@@ -23,5 +24,6 @@ pub enum Layout {
     mlx_spec::MLXSpec,
     d4s4_spec::D4S4Spec,
     qtip_gaussian::QtipGaussianSpec,
+    row_stack::RowStackSpec
 )]
 pub struct WeightMatrixSpec;

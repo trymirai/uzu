@@ -10,7 +10,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Gather, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
+        Gather, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_transform::InputRht,
     },
     parameters::ParameterTree,
 };
@@ -66,8 +66,8 @@ impl<B: Backend> UntiedReadout<B> {
             rht_signs,
             activation_quantization: linear.prepare_a8(context),
         };
-        let input_rht = InputRht::new(context, data_type, preparation, /* in_place */ false)
-            .map_err(LinearMatmulError::BackendError)?;
+        let input_rht =
+            InputRht::new(context, data_type, preparation, false).map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
             linear,

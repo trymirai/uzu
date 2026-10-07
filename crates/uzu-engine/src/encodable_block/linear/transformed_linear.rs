@@ -2,20 +2,24 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::{
+        Backend, CommandBuffer, CommandBufferEncoding,
+        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, trellis::mixing_dimension},
+    },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::linear::{
-        Linear, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
+        Linear, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError,
+        input_transform::{InputRht, InputTransform, TrellisRotation},
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
-pub enum RHTLinearWrapperError<B: Backend> {
+pub enum TransformedLinearError<B: Backend> {
     #[error("Inner linear error: {0}")]
     InnerLinearError(#[from] LinearMatmulError<B>),
     #[error("Parameter loading error: {0}")]
@@ -26,8 +30,8 @@ pub enum RHTLinearWrapperError<B: Backend> {
     UnsupportedConfiguration(String),
 }
 
-pub struct RHTLinearWrapper<B: Backend> {
-    input_rht: InputRht<B>,
+pub struct TransformedLinear<B: Backend> {
+    input: InputTransform<B>,
     inner_linear: LinearMatmul<B>,
 }
 
@@ -43,7 +47,7 @@ fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
     )
 }
 
-impl<B: Backend> RHTLinearWrapper<B> {
+impl<B: Backend> TransformedLinear<B> {
     pub(super) fn new(
         context: &B::Context,
         input_dimension: u32,
@@ -53,11 +57,11 @@ impl<B: Backend> RHTLinearWrapper<B> {
         input_data_type: DataType,
         output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
-    ) -> Result<Self, RHTLinearWrapperError<B>> {
+    ) -> Result<Self, TransformedLinearError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         if !has_input_output_rht(&spec) {
-            return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{spec:?}")));
+            return Err(TransformedLinearError::UnsupportedConfiguration(format!("{spec:?}")));
         }
 
         let (rht_signs, mut inner_linear) = Self::load_inner_with_output_rht(
@@ -92,7 +96,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         output_data_type: DataType,
         allow_prequantized_activation: bool,
         parameter_tree: &ParameterTree<B>,
-    ) -> Result<Option<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>)>, RHTLinearWrapperError<B>> {
+    ) -> Result<Option<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>)>, TransformedLinearError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         if !has_input_output_rht(&spec) {
@@ -121,6 +125,42 @@ impl<B: Backend> RHTLinearWrapper<B> {
         }
     }
 
+    pub(super) fn new_trellis(
+        context: &B::Context,
+        spec: AnyWeightMatrixSpec,
+        input_dimension: u32,
+        output_dimension: u32,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        weights_tree: &ParameterTree<B>,
+    ) -> Result<Self, TransformedLinearError<B>> {
+        let mixing_dimension = mixing_dimension(input_dimension);
+        let signs = weights_tree.leaf("signs")?.validate(&[input_dimension], DataType::F32)?.read_buffer()?;
+        let mixing = weights_tree
+            .leaf("small_q")?
+            .validate(&[mixing_dimension, mixing_dimension], DataType::F32)?
+            .read_buffer()?;
+        let rotation = TrellisRotation::new(context, signs, mixing, input_dimension)
+            .map_err(TransformedLinearError::BackendError)?;
+        let inner_linear = LinearMatmul::load(
+            context,
+            spec,
+            input_dimension,
+            output_dimension,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+            weights_tree,
+            None,
+            None,
+        )?;
+        Ok(Self {
+            input: InputTransform::Trellis(rotation),
+            inner_linear,
+        })
+    }
+
     fn load_inner_with_output_rht(
         context: &B::Context,
         input_dimension: u32,
@@ -130,7 +170,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         output_data_type: DataType,
         weights_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
-    ) -> Result<(B::GlobalBuffer, LinearMatmul<B>), RHTLinearWrapperError<B>> {
+    ) -> Result<(B::GlobalBuffer, LinearMatmul<B>), TransformedLinearError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
@@ -162,18 +202,18 @@ impl<B: Backend> RHTLinearWrapper<B> {
         input_data_type: DataType,
         input_preparation: LinearInputPreparation<B>,
         inner_linear: LinearMatmul<B>,
-    ) -> Result<Self, RHTLinearWrapperError<B>> {
+    ) -> Result<Self, TransformedLinearError<B>> {
         let input_rht = InputRht::new(context, input_data_type, input_preparation, true)
-            .map_err(RHTLinearWrapperError::BackendError)?;
+            .map_err(TransformedLinearError::BackendError)?;
 
         Ok(Self {
-            input_rht,
+            input: InputTransform::Rht(input_rht),
             inner_linear,
         })
     }
 }
 
-impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
+impl<B: Backend> Linear<B> for TransformedLinear<B> {
     fn encode(
         &self,
         input: B::ScratchBuffer,
@@ -189,7 +229,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("linear (rht)");
+        command_buffer.push_debug_group("linear (transformed)");
 
         let input = match input {
             LinearInput::FullPrecision(input) => input,
@@ -199,8 +239,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 return output;
             },
         };
-        let format = self.inner_linear.select_activation_format(batch_dim, command_buffer.context());
-        let input = self.input_rht.prepare_in_place(input, batch_dim, format, command_buffer)?;
+        let input = self.input.prepare_in_place(input, batch_dim, &self.inner_linear, command_buffer)?;
         let output = self.inner_linear.encode_with_a(
             input.as_matmul_a(),
             batch_dim,

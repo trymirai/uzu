@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferCpuAccessible, BufferMut,
+        Backend, BufferMut,
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, TrellisFormat},
     },
@@ -28,6 +28,7 @@ pub struct QuantizationInfo {
 }
 
 struct Quantized<B: Backend> {
+    codes: B::GlobalBuffer,
     scales: B::GlobalBuffer,
     correction: QuantizedCorrection<B::GlobalBuffer>,
     params: QuantParams,
@@ -35,19 +36,24 @@ struct Quantized<B: Backend> {
     signed_codes: bool,
 }
 
+struct Trellis<B: Backend> {
+    codes: B::GlobalBuffer,
+    row_scales: B::GlobalBuffer,
+    codebook: [f32; 5],
+    format: TrellisFormat,
+}
+
 pub struct WeightMatrix<B: Backend> {
-    values: B::GlobalBuffer,
+    output_dim: u32,
     encoding: WeightEncoding<B>,
 }
 
 enum WeightEncoding<B: Backend> {
-    Dense,
+    Dense(B::GlobalBuffer),
     Quantized(Quantized<B>),
-    Trellis {
-        row_scales: B::GlobalBuffer,
-        codebook: [f32; 5],
-        format: TrellisFormat,
-    },
+    Trellis(Trellis<B>),
+    /// Gather and output ops (bias, Hadamard) support a single block only.
+    RowStack(Box<[WeightMatrix<B>]>),
 }
 
 impl<B: Backend> WeightMatrix<B> {
@@ -65,8 +71,8 @@ impl<B: Backend> WeightMatrix<B> {
                 let (rows, columns) = physical_shape(&required_layout, output_dim, input_dim);
                 let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_buffer()?;
                 Ok(Self {
-                    values,
-                    encoding: WeightEncoding::Dense,
+                    output_dim,
+                    encoding: WeightEncoding::Dense(values),
                 })
             },
             AnyWeightMatrixSpec::MLXSpec(spec) => {
@@ -102,37 +108,44 @@ impl<B: Backend> WeightMatrix<B> {
             AnyWeightMatrixSpec::QtipGaussianSpec(spec) => {
                 load_trellis(tree, &spec, required_layout, output_dim, input_dim)
             },
+            AnyWeightMatrixSpec::RowStackSpec(spec) => {
+                let parts_tree = tree.subtree("parts");
+                let parts = spec
+                    .parts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (rows, spec))| {
+                        Self::load(
+                            &parts_tree.subtree(&index.to_string()),
+                            spec,
+                            required_layout.clone(),
+                            rows,
+                            input_dim,
+                            data_type,
+                        )
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(Self {
+                    output_dim,
+                    encoding: WeightEncoding::RowStack(parts),
+                })
+            },
             spec => Err(WeightMatrixError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
-    }
-
-    pub fn values(&self) -> &B::GlobalBuffer {
-        &self.values
     }
 
     pub fn quantization(&self) -> Option<QuantizationInfo> {
         self.quantized().map(|quantized| quantized.info)
     }
 
-    pub fn scales(&self) -> Option<&B::GlobalBuffer> {
-        self.quantized().map(|quantized| &quantized.scales)
-    }
-
-    pub fn zero_points(&self) -> Option<&B::GlobalBuffer> {
-        self.quantized()?.correction.zero_points()
-    }
-
-    pub fn biases(&self) -> Option<&B::GlobalBuffer> {
-        self.quantized()?.correction.biases()
-    }
-
+    /// Single matrices only; a row stack has one operand per part, see [`Self::blocks`].
     pub fn matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
         match &self.encoding {
-            WeightEncoding::Dense => MatmulB::FullPrecision {
-                b: &self.values,
+            WeightEncoding::Dense(values) => MatmulB::FullPrecision {
+                b: values,
             },
             WeightEncoding::Quantized(quantized) => MatmulB::Quantized(QuantizedB {
-                codes: &self.values,
+                codes: &quantized.codes,
                 scales: &quantized.scales,
                 correction: quantized.correction.as_ref(),
                 params: quantized.params,
@@ -140,28 +153,30 @@ impl<B: Backend> WeightMatrix<B> {
                 group_size: quantized.info.group_size,
                 signed_codes: quantized.signed_codes,
             }),
-            WeightEncoding::Trellis {
-                row_scales,
-                codebook,
-                format,
-            } => MatmulB::Trellis {
-                codes: &self.values,
-                row_scales,
-                codebook: *codebook,
-                format: *format,
+            WeightEncoding::Trellis(trellis) => MatmulB::Trellis {
+                codes: &trellis.codes,
+                row_scales: &trellis.row_scales,
+                codebook: trellis.codebook,
+                format: trellis.format,
             },
+            WeightEncoding::RowStack(_) => unreachable!("a row stack has one operand per part"),
         }
+    }
+
+    /// (output rows, operand) per row-stack part; one block for a single matrix.
+    pub fn blocks(&self) -> impl ExactSizeIterator<Item = (u32, MatmulB<&B::GlobalBuffer>)> {
+        let parts = match &self.encoding {
+            WeightEncoding::RowStack(parts) => parts,
+            _ => std::slice::from_ref(self),
+        };
+        parts.iter().map(|part| (part.output_dim, part.matmul_b()))
     }
 
     pub fn try_prepare_a8_storage(&mut self) -> bool {
         match &mut self.encoding {
-            WeightEncoding::Quantized(quantized) => quantized.prepare_a8_storage(&mut self.values),
+            WeightEncoding::Quantized(quantized) => quantized.prepare_a8_storage(),
             _ => false,
         }
-    }
-
-    pub fn a8_signed_codes(&self) -> Option<bool> {
-        self.quantized().map(|quantized| quantized.info.mode != QuantizationMode::U4)
     }
 
     fn quantized(&self) -> Option<&Quantized<B>> {
@@ -243,8 +258,9 @@ fn load_quantized<B: Backend>(
         QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
     };
     Ok(WeightMatrix {
-        values,
+        output_dim,
         encoding: WeightEncoding::Quantized(Quantized {
+            codes: values,
             scales,
             correction,
             params,
@@ -276,7 +292,7 @@ fn load_trellis<B: Backend>(
     };
     let code_row_bytes =
         input_dim / block_columns * (16 + (block_columns / spec.vector_width - 1) * spec.transition_bits).div_ceil(8);
-    let values = tree.leaf("codes")?.validate(&[output_dim, code_row_bytes], DataType::U8)?.read_buffer()?;
+    let codes = tree.leaf("codes")?.validate(&[output_dim, code_row_bytes], DataType::U8)?.read_buffer()?;
     let row_scales = tree.leaf("scales")?.validate(&[output_dim], DataType::F32)?.read_buffer()?;
     let codebook: [f32; 5] = tree
         .leaf("codebook")?
@@ -286,20 +302,18 @@ fn load_trellis<B: Backend>(
         .try_into()
         .expect("validated codebook has five values");
     Ok(WeightMatrix {
-        values,
-        encoding: WeightEncoding::Trellis {
+        output_dim,
+        encoding: WeightEncoding::Trellis(Trellis {
+            codes,
             row_scales,
             codebook,
             format,
-        },
+        }),
     })
 }
 
 impl<B: Backend> Quantized<B> {
-    fn prepare_a8_storage(
-        &mut self,
-        values: impl BufferMut<Buffer: BufferCpuAccessible>,
-    ) -> bool {
+    fn prepare_a8_storage(&mut self) -> bool {
         if self.params.layout() != QuantParamsLayout::GroupOutput {
             return false;
         }
@@ -308,7 +322,7 @@ impl<B: Backend> Quantized<B> {
                 && let Some(sign_flip_mask) = self.info.mode.weight_codes_sign_flip_mask()
             {
                 let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
-                let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(values.as_slice_mut());
+                let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>((&mut self.codes).as_slice_mut());
                 words.iter_mut().for_each(|word| *word ^= broadcast_mask);
                 prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
             }

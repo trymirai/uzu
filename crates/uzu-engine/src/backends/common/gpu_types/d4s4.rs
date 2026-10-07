@@ -1,4 +1,4 @@
-//! Fixed layout of the D4S4 embedding format (lalamo's `LatticeSpec` with kind `d4`).
+//! Fixed layout of the D4S4 embedding format.
 
 pub const VALUES_PER_CODE: u32 = 4;
 pub const CODEBOOK_SIZE: u32 = 256;

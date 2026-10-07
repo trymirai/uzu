@@ -7,8 +7,8 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::trellis::COLUMN_GROUP_COUNT,
-            kernel::{TrellisTransformKernel, mixing_dimension},
+            gpu_types::trellis::{COLUMN_GROUP_COUNT, mixing_dimension},
+            kernel::TrellisTransformKernel,
         },
         cpu::Cpu,
     },

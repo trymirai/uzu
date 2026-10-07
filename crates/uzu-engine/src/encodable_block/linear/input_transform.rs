@@ -1,13 +1,88 @@
 use std::mem::size_of;
 
-use super::{LinearInput, LinearInputPreparation};
+use super::{Linear, LinearInput, LinearInputPreparation, LinearMatmul};
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding,
-        kernel::{ActivationTransform, matmul::ActivationFormat},
+        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        gpu_types::trellis::COLUMN_GROUP_COUNT,
+        kernel::{ActivationTransform, TrellisTransformKernel, matmul::ActivationFormat},
     },
     data_type::DataType,
 };
+
+pub(super) enum InputTransform<B: Backend> {
+    Rht(InputRht<B>),
+    Trellis(TrellisRotation<B>),
+}
+
+impl<B: Backend> InputTransform<B> {
+    pub(super) fn prepare_in_place(
+        &self,
+        input: B::ScratchBuffer,
+        batch_dim: u32,
+        linear: &LinearMatmul<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<LinearInput<B>, B::Error> {
+        match self {
+            Self::Rht(rht) => {
+                let format = linear.select_activation_format(batch_dim, command_buffer.context());
+                rht.prepare_in_place(input, batch_dim, format, command_buffer)
+            },
+            Self::Trellis(rotation) => rotation.prepare(&input, batch_dim, command_buffer),
+        }
+    }
+}
+
+/// Rotates the input into the basis trellis weights were quantized in, then int8-quantizes it per token.
+pub(super) struct TrellisRotation<B: Backend> {
+    kernel: <B::Kernels as Kernels>::TrellisTransformKernel,
+    signs: B::GlobalBuffer,
+    mixing: B::GlobalBuffer,
+    input_dim: u32,
+}
+
+impl<B: Backend> TrellisRotation<B> {
+    pub(super) fn new(
+        context: &B::Context,
+        signs: B::GlobalBuffer,
+        mixing: B::GlobalBuffer,
+        input_dim: u32,
+    ) -> Result<Self, B::Error> {
+        Ok(Self {
+            kernel: <B::Kernels as Kernels>::TrellisTransformKernel::new(context, input_dim)?,
+            signs,
+            mixing,
+            input_dim,
+        })
+    }
+
+    fn prepare(
+        &self,
+        input: impl BufferRef<Backend = B>,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<LinearInput<B>, B::Error> {
+        let mut values = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.input_dim], DataType::I8)?;
+        let mut column_group_sums =
+            command_buffer.allocate_scratch_for_shape(&[batch_dim, COLUMN_GROUP_COUNT], DataType::F32)?;
+        let mut scales = command_buffer.allocate_scratch_for_shape(&[batch_dim], DataType::F32)?;
+        self.kernel.encode(
+            input,
+            &self.signs,
+            &self.mixing,
+            &mut values,
+            &mut column_group_sums,
+            &mut scales,
+            batch_dim,
+            command_buffer,
+        );
+        Ok(LinearInput::Trellis {
+            values,
+            column_group_sums,
+            scales,
+        })
+    }
+}
 
 pub(super) struct InputRht<B: Backend> {
     rht_signs: B::GlobalBuffer,

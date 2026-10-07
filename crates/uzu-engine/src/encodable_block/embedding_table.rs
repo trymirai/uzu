@@ -5,7 +5,7 @@ use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         gpu_types::{EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, d4s4},
-        kernel::InputEmbeddingLookupKernel,
+        kernel::{InputEmbeddingLookupKernel, matmul::MatmulB},
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
@@ -58,14 +58,27 @@ struct LookupBindings<'a, B: Backend> {
 impl<B: Backend> Storage<B> {
     fn lookup_bindings(&self) -> LookupBindings<'_, B> {
         match self {
-            Self::Matrix(matrix) => LookupBindings {
-                values: matrix.values(),
-                scales: matrix.scales(),
-                zero_points: matrix.zero_points(),
-                biases: matrix.biases(),
-                ladder_indices: None,
-                ladder: None,
-                codebook: None,
+            Self::Matrix(matrix) => {
+                let (values, scales, zero_points, biases) = match matrix.matmul_b() {
+                    MatmulB::FullPrecision {
+                        b,
+                    } => (b, None, None, None),
+                    MatmulB::Quantized(quantized) => {
+                        (quantized.codes, Some(quantized.scales), quantized.zero_points(), quantized.biases())
+                    },
+                    MatmulB::Trellis {
+                        ..
+                    } => unreachable!("trellis tables are rejected at load"),
+                };
+                LookupBindings {
+                    values,
+                    scales,
+                    zero_points,
+                    biases,
+                    ladder_indices: None,
+                    ladder: None,
+                    codebook: None,
+                }
             },
             Self::D4S4(table) => LookupBindings {
                 values: &table.codes,
@@ -134,12 +147,14 @@ impl<B: Backend> EmbeddingTable<B> {
 
         let (table_kind, quantization) = match &storage {
             Storage::D4S4(_) => (EmbeddingTableKind::D4S4, None),
-            Storage::Matrix(matrix) => {
-                if let Some(info) = matrix.quantization() {
-                    (EmbeddingTableKind::Quantized, Some(info))
-                } else {
-                    (EmbeddingTableKind::Dense, None)
-                }
+            Storage::Matrix(matrix) => match matrix.matmul_b() {
+                MatmulB::FullPrecision {
+                    ..
+                } => (EmbeddingTableKind::Dense, None),
+                MatmulB::Quantized(_) => (EmbeddingTableKind::Quantized, matrix.quantization()),
+                MatmulB::Trellis {
+                    ..
+                } => return Err(EmbeddingTableError::UnsupportedConfiguration("trellis embedding tables".into())),
             },
         };
         let group_size = quantization.map(|info| info.group_size);
@@ -220,8 +235,8 @@ fn load_d4s4<B: Backend>(
         ladder: read("ladder", &[d4s4::LADDER_SIZE], DataType::F16)?,
         codebook: read("table", &[d4s4::CODEBOOK_SIZE, d4s4::VALUES_PER_CODE], DataType::I8)?,
     };
-    let factors = read("output_hadamard_factors", &[embedding_dim], DataType::I32)?;
-    Ok((table, factors))
+    let signs = read("output_hadamard_factors", &[embedding_dim], DataType::I32)?;
+    Ok((table, signs))
 }
 
 pub(super) fn read_output_signs<B: Backend>(
