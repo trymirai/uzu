@@ -10,7 +10,7 @@ use crate::{
     backends::{
         common::{
             Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-            CommandBufferExecutable, CommandBufferPending, CommandBufferTimestamps, TimestampSlot, TimestampSpan,
+            CommandBufferExecutable, CommandBufferPending, CommandBufferTimestamps, TimestampSpan,
             TimestampSpanRecorder, allocator::bump::BumpAllocator,
         },
         cpu::{
@@ -160,7 +160,7 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
             constant_allocator: self.constant_allocator,
             allocation_pool: self.allocation_pool,
             context: self.context,
-            timestamp_spans: self.timestamp_spans.map(TimestampSpanRecorder::finish),
+            timestamp_spans: self.timestamp_spans,
             timestamp_instants: self.timestamp_instants,
         }
     }
@@ -171,7 +171,7 @@ pub struct CpuCommandBufferExecutable {
     constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
-    timestamp_spans: Option<Box<[TimestampSpan<TimestampSlot>]>>,
+    timestamp_spans: Option<TimestampSpanRecorder>,
     timestamp_instants: Arc<Mutex<Vec<Instant>>>,
 }
 
@@ -196,8 +196,7 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
                 let completed = CpuCommandBufferCompleted {
                     gpu_execution_time,
                     timestamps: self.timestamp_spans.map_or_else(Box::default, |spans| {
-                        let instants = take(&mut *self.timestamp_instants.lock());
-                        spans.into_iter().map(|span| span.map(|slot| instants[slot])).collect()
+                        spans.into_spans(&take(&mut *self.timestamp_instants.lock()))
                     }),
                     _allocation_pool: self.allocation_pool,
                 };
@@ -240,7 +239,7 @@ impl CommandBufferCompleted for CpuCommandBufferCompleted {
         self.gpu_execution_time
     }
 
-    fn timestamps(&self) -> &[TimestampSpan<Instant>] {
+    fn timestamps(&self) -> &[TimestampSpan] {
         &self.timestamps
     }
 }

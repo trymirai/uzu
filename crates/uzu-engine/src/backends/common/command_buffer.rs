@@ -1,7 +1,4 @@
-use std::{
-    mem::size_of_val,
-    time::{Duration, Instant},
-};
+use std::{mem::size_of_val, time::Duration};
 
 use bytemuck::{AnyBitPattern, NoUninit};
 
@@ -118,5 +115,5 @@ pub trait CommandBufferCompleted: Send {
 
     fn gpu_execution_time(&self) -> Duration;
 
-    fn timestamps(&self) -> &[TimestampSpan<Instant>];
+    fn timestamps(&self) -> &[TimestampSpan];
 }

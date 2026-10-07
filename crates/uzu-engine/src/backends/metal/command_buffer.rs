@@ -280,7 +280,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
             allocation_pool: self.allocation_pool.clone(),
             context: self.context.clone(),
             counter_heaps: self.counter_heaps.clone(),
-            timestamp_spans: self.timestamp_spans.take().map(TimestampSpanRecorder::finish),
+            timestamp_spans: self.timestamp_spans.take(),
         }
     }
 }
@@ -304,7 +304,7 @@ pub struct MetalCommandBufferExecutable {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     context: Arc<MetalContext>,
     counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
-    timestamp_spans: Option<Box<[TimestampSpan<TimestampSlot>]>>,
+    timestamp_spans: Option<TimestampSpanRecorder>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
@@ -327,7 +327,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         let command_buffer = self.command_buffer.clone();
         let context_clone = self.context.clone();
         let counter_heaps = self.counter_heaps;
-        let slot_count = self.timestamp_spans.as_deref().map_or(0, |spans| 2 * spans.len());
+        let slot_count = self.timestamp_spans.as_ref().map_or(0, TimestampSpanRecorder::slot_count);
 
         let constant_allocator = self.constant_allocator;
         let allocation_pool = self.allocation_pool.clone();
@@ -402,7 +402,7 @@ fn resolve_timestamps(
 
 pub struct MetalCommandBufferPending {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
-    timestamp_spans: Option<Box<[TimestampSpan<TimestampSlot>]>>,
+    timestamp_spans: Option<TimestampSpanRecorder>,
     receiver: mpsc::Receiver<Result<(Duration, Vec<Instant>), MetalError>>,
 }
 
@@ -413,9 +413,7 @@ impl CommandBufferPending for MetalCommandBufferPending {
         let (gpu_execution_time, instants) = self.receiver.recv().map_err(MetalError::CommandBufferWait)??;
         Ok(MetalCommandBufferCompleted {
             gpu_execution_time,
-            timestamps: self.timestamp_spans.map_or_else(Box::default, |spans| {
-                spans.into_iter().map(|span| span.map(|slot| instants[slot])).collect()
-            }),
+            timestamps: self.timestamp_spans.map_or_else(Box::default, |spans| spans.into_spans(&instants)),
             _allocation_pool: self.allocation_pool,
         })
     }
@@ -434,7 +432,7 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
         self.gpu_execution_time
     }
 
-    fn timestamps(&self) -> &[TimestampSpan<Instant>] {
+    fn timestamps(&self) -> &[TimestampSpan] {
         &self.timestamps
     }
 }

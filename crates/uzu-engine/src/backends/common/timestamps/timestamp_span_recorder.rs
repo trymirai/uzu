@@ -1,39 +1,59 @@
-use super::{BlockName, TimestampSlot, TimestampSpan, open_timestamp_span::OpenTimestampSpan};
+use std::time::Instant;
+
+use super::{BlockName, CommandBufferTimestamps, TimestampSlot, TimestampSpan, span_boundary::SpanBoundary};
 
 #[derive(Default)]
 pub struct TimestampSpanRecorder {
-    open: Vec<OpenTimestampSpan>,
-    closed: Vec<TimestampSpan<TimestampSlot>>,
+    boundaries: Vec<SpanBoundary>,
 }
 
 impl TimestampSpanRecorder {
-    fn next_slot(&self) -> TimestampSlot {
-        self.open.len() + 2 * self.closed.len()
-    }
-
     pub fn start(
         &mut self,
         name: BlockName,
     ) -> TimestampSlot {
-        let start = self.next_slot();
-        self.open.push(OpenTimestampSpan {
-            name,
-            start,
-        });
-        start
+        self.push(SpanBoundary::Start(name))
     }
 
     pub fn end(&mut self) -> TimestampSlot {
-        let end = self.next_slot();
-        let open = self.open.pop().expect("timestamp ended without a start");
-        self.closed.push(open.close(end));
-        end
+        self.push(SpanBoundary::End)
     }
 
-    pub fn finish(self) -> Box<[TimestampSpan<TimestampSlot>]> {
-        assert!(self.open.is_empty(), "{} timestamps were started but never ended", self.open.len());
-        let mut closed = self.closed;
-        closed.sort_unstable_by_key(|span| span.start);
-        closed.into_boxed_slice()
+    fn push(
+        &mut self,
+        boundary: SpanBoundary,
+    ) -> TimestampSlot {
+        self.boundaries.push(boundary);
+        self.boundaries.len() - 1
+    }
+
+    pub fn slot_count(&self) -> usize {
+        self.boundaries.len()
+    }
+
+    pub fn into_spans(
+        self,
+        instants: &[Instant],
+    ) -> CommandBufferTimestamps {
+        let mut spans = Vec::new();
+        let mut open_span_indices = Vec::new();
+        for (boundary, &instant) in self.boundaries.into_iter().zip(instants) {
+            match boundary {
+                SpanBoundary::Start(name) => {
+                    open_span_indices.push(spans.len());
+                    spans.push(TimestampSpan {
+                        name,
+                        start: instant,
+                        end: instant,
+                    });
+                },
+                SpanBoundary::End => {
+                    let index = open_span_indices.pop().expect("timestamp ended without a start");
+                    spans[index].end = instant;
+                },
+            }
+        }
+        assert!(open_span_indices.is_empty(), "timestamps were started but never ended");
+        spans.into_boxed_slice()
     }
 }
