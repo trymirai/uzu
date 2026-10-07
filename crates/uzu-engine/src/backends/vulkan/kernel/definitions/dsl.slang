@@ -17,6 +17,10 @@ struct KernelAttribute;
 [[__AttributeUsage(_AttributeTargets.Function)]]
 struct PublicAttribute;
 
+// Private kernel that still gets a generated binding, compiled only into test builds.
+[[__AttributeUsage(_AttributeTargets.Function)]]
+struct TestAttribute;
+
 
 // Kernel parameter annotation
 

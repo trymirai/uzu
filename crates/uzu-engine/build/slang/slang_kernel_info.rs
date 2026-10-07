@@ -1,4 +1,4 @@
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use shader_slang::{
     DeclKind,
     reflection::{Decl, Function},
@@ -14,6 +14,7 @@ pub struct SlangKernelInfo<'a> {
     function: &'a Function,
     name: &'a str,
     public: bool,
+    test: bool,
     generic_decl: Option<&'a Decl>,
     type_parameters: Vec<(String, &'static [&'static str])>,
 }
@@ -41,6 +42,8 @@ impl<'a> SlangKernelInfo<'a> {
         }
         let name = function.name().context("Slang kernel has no name")?;
         let public = function.user_attributes().any(|attribute| attribute.name() == Some("Public"));
+        let test = function.user_attributes().any(|attribute| attribute.name() == Some("Test"));
+        ensure!(!(public && test), "kernel '{name}' cannot be both Public and Test");
         let mut type_parameters = Vec::new();
         if let Some(generic) = generic_decl {
             for parameter in slang_api::get_generic_type_parameters(generic)? {
@@ -60,6 +63,7 @@ impl<'a> SlangKernelInfo<'a> {
             function,
             name,
             public,
+            test,
             generic_decl,
             type_parameters,
         }))
@@ -81,9 +85,14 @@ impl<'a> SlangKernelInfo<'a> {
         self.type_parameters.iter().map(|(_, variants)| *variants)
     }
 
-    /// The shared kernel contract, compared against the CPU and Metal descriptors; `None` for private kernels.
+    pub fn is_public(&self) -> bool {
+        self.public
+    }
+
+    /// The common kernel signature of a public or `[[Test]]` kernel; `None` for SPIR-V-only private kernels.
+    /// Only public descriptors are compared against the CPU and Metal ones.
     pub fn to_kernel(&self) -> Result<Option<Kernel>, Error> {
-        if !self.public {
+        if !self.public && !self.test {
             return Ok(None);
         }
         let mut parameters = self

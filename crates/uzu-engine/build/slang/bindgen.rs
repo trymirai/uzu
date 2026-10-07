@@ -19,14 +19,18 @@ pub fn binding_file(
     output_base.with_file_name(binding_module(kernel_name).to_string()).with_extension("rs")
 }
 
-/// Module declarations and re-exports of every generated binding, from `(file, kernel name)` pairs.
-pub fn bindgen_umbrella(bindings: &[(String, String)]) -> TokenStream {
-    let modules = bindings.iter().map(|(file, kernel_name)| {
+/// Module declarations and re-exports of every generated binding from `(file, kernel name, test)`; bindings of
+/// `[[Test]]` kernels exist only in test builds.
+pub fn bindgen_umbrella(bindings: &[(String, String, bool)]) -> TokenStream {
+    let modules = bindings.iter().map(|(file, kernel_name, test)| {
+        let test = test.then(|| quote! { #[cfg(test)] });
         let module = binding_module(kernel_name);
         let ty = format_ident!("{kernel_name}VulkanKernel");
         quote! {
+            #test
             #[path = #file]
             mod #module;
+            #test
             pub use #module::#ty;
         }
     });
@@ -289,6 +293,7 @@ fn data_type(slang_type: &str) -> Result<Ident, Error> {
             "float" => "F32",
             "half" => "F16",
             "bf16" => "BF16",
+            "uint" => "U32",
             other => bail!("no DataType for Slang type '{other}'"),
         }
     ))
