@@ -12,9 +12,8 @@ use crate::engine::language_model::grammar::Grammar;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, BlockName, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
-        CommandBufferExecutable, CommandBufferTimestamps, Context, gpu_types::trie::TrieNode as GpuTrieNode,
-        kernel::ContextRingUpdateKernel,
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferTimestamps, Context, gpu_types::trie::TrieNode as GpuTrieNode,
     },
     data_type::DataType,
     encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
@@ -491,9 +490,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         None
                     };
                     if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
-                        let name = BlockName::from("update repetition penalty ring");
-                        command_buffer.push_debug_group(&name);
-                        command_buffer.sample_start_timestamp(&name);
                         let accepted_input_token_ids_const = command_buffer
                             .allocate_constant_from_slice(
                                 &accepted_input_token_ids
@@ -509,8 +505,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             full.len() as u32,
                             &mut command_buffer,
                         );
-                        command_buffer.sample_end_timestamp();
-                        command_buffer.pop_debug_group();
                     }
                     if let Some(capture_span) = capture_span {
                         wait(command_buffer.end_encoding().submit(), self.options.timestamps.as_ref())
