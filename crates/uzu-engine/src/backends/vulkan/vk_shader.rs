@@ -1,0 +1,38 @@
+use std::{io::Cursor, sync::Arc};
+
+use ash::vk;
+
+use super::{Error, VkContext};
+
+pub struct VkShader {
+    context: Arc<VkContext>,
+    shader_module: vk::ShaderModule,
+}
+
+impl VkShader {
+    pub fn new(
+        context: Arc<VkContext>,
+        file_path: &str,
+    ) -> Result<Self, Error> {
+        let bytes = std::fs::read(file_path)?;
+        let words = ash::util::read_spv(&mut Cursor::new(bytes))?;
+        let info = vk::ShaderModuleCreateInfo::default().code(&words);
+        let shader_module = unsafe { context.device().create_shader_module(&info, None)? };
+        Ok(Self {
+            context,
+            shader_module,
+        })
+    }
+
+    pub fn module(&self) -> vk::ShaderModule {
+        self.shader_module
+    }
+}
+
+impl Drop for VkShader {
+    fn drop(&mut self) {
+        unsafe {
+            self.context.device().destroy_shader_module(self.shader_module, None);
+        }
+    }
+}

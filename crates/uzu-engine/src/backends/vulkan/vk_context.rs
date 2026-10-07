@@ -1,30 +1,25 @@
-use std::{
-    os::raw::{c_char, c_void},
-    sync::Arc,
-};
+use std::ffi::{CStr, c_char, c_void};
 
 use ash::{khr, vk};
 
-use crate::backends::vulkan::{
-    ffi,
-    logger::{VkLogger, VkPrintlnLogger},
-    physical_device::{VkPhysicalDevice, VkPhysicalDeviceFeatures},
-};
+use super::{VkContextCreateInfo, VkContextError, VkPhysicalDevice, VkPhysicalDeviceFeatures};
 
-const VK_LAYER_KHRONOS_VALIDATION: &str = "VK_LAYER_KHRONOS_validation";
-
+const VK_LAYER_KHRONOS_VALIDATION: &CStr = c"VK_LAYER_KHRONOS_validation";
 /// https://docs.vulkan.org/refpages/latest/refpages/index.html
 pub struct VkContext {
+    _entry: ash::Entry,
+    instance: ash::Instance,
+    _create_info: Box<VkContextCreateInfo>,
     physical_device: VkPhysicalDevice,
     command_pool: vk::CommandPool,
-    device: Arc<ash::Device>,
+    device: ash::Device,
     memory_allocator: Option<vk_mem::Allocator>,
     queue: vk::Queue,
     queue_family_index: u32,
 }
-
 impl VkContext {
     pub fn new(create_info: VkContextCreateInfo) -> Result<Self, VkContextError> {
+        let create_info = Box::new(create_info);
         let api_version = vk::API_VERSION_1_2;
         let required_extensions = vec![
             khr::shader_float_controls::NAME.to_str().unwrap(),
@@ -40,18 +35,31 @@ impl VkContext {
         };
 
         let entry = get_entry()?;
-        let instance = create_instance(&entry, api_version, create_info.with_validation, create_info.logger)?;
-        let physical_device = get_physical_device(&instance, &required_extensions, &required_features)?;
+        let instance = create_instance(&entry, api_version, &create_info)?;
+        let physical_device = get_physical_device(&instance, &required_extensions, &required_features)
+            .inspect_err(|_| unsafe { instance.destroy_instance(None) })?;
         let (device, queue_family_index) =
-            get_logical_device(&instance, &physical_device, &required_extensions, &required_features)?;
+            get_logical_device(&instance, &physical_device, &required_extensions, &required_features)
+                .inspect_err(|_| unsafe { instance.destroy_instance(None) })?;
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
-        let command_pool = create_command_pool(&device, queue_family_index)?;
-        let memory_allocator = create_memory_allocator(&instance, &device, physical_device.device)?;
+        let command_pool = create_command_pool(&device, queue_family_index).inspect_err(|_| unsafe {
+            device.destroy_device(None);
+            instance.destroy_instance(None);
+        })?;
+        let memory_allocator =
+            create_memory_allocator(&instance, &device, physical_device.device).inspect_err(|_| unsafe {
+                device.destroy_command_pool(command_pool, None);
+                device.destroy_device(None);
+                instance.destroy_instance(None);
+            })?;
 
         Ok(Self {
+            _entry: entry,
+            instance,
+            _create_info: create_info,
             physical_device,
             command_pool,
-            device: Arc::new(device),
+            device,
             memory_allocator: Some(memory_allocator),
             queue,
             queue_family_index,
@@ -62,12 +70,12 @@ impl VkContext {
         self.command_pool
     }
 
-    pub fn device(&self) -> Arc<ash::Device> {
-        self.device.clone()
+    pub fn device(&self) -> &ash::Device {
+        &self.device
     }
 
     pub fn memory_allocator(&self) -> &vk_mem::Allocator {
-        &self.memory_allocator.as_ref().unwrap()
+        self.memory_allocator.as_ref().unwrap()
     }
 
     pub fn queue(&self) -> vk::Queue {
@@ -82,67 +90,22 @@ impl VkContext {
         &self.physical_device
     }
 }
-
 impl Drop for VkContext {
     fn drop(&mut self) {
         unsafe {
             self.memory_allocator = None;
             self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);
+            self.instance.destroy_instance(None);
         }
     }
 }
-
-pub struct VkContextCreateInfo {
-    pub with_validation: bool,
-    pub logger: Box<dyn VkLogger>,
-}
-
-impl Default for VkContextCreateInfo {
-    fn default() -> Self {
-        Self {
-            with_validation: true,
-            logger: Box::new(VkPrintlnLogger::new()),
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum VkContextError {
-    #[error("Command pool creation error: {0}")]
-    CommandPoolCreate(vk::Result),
-
-    #[error("Vulkan device creation error: {0}")]
-    DeviceCreateError(vk::Result),
-
-    #[error("Vulkan entry loading error: {0}")]
-    EntryLoadingError(ash::LoadingError),
-
-    #[error("Vulkan instance creation error: {0}")]
-    InstanceCreate(vk::Result),
-
-    #[error("Memory allocator creation error: {0}")]
-    MemoryAllocatorCreate(vk::Result),
-
-    #[error("Vulkan physical devices not found: {0}")]
-    PhysicalDevicesNotFound(vk::Result),
-
-    #[error("Vulkan physical devices queue not found")]
-    PhysicalDeviceQueueNotFound,
-
-    #[error("Vulkan suitable physical devices not found")]
-    PhysicalDeviceSuitableNotFound,
-
-    #[error("Validation layer is not supported")]
-    ValidationNotSupported,
-}
-
 fn get_entry() -> Result<ash::Entry, VkContextError> {
-    #[cfg(any(target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     // default loader tries to load lib from /usr/lib/, but on macOS this folder is protected by SIP
     let entry_result = unsafe { ash::Entry::load_from("/usr/local/lib/libvulkan.dylib") };
 
-    #[cfg(not(any(target_os = "macos")))]
+    #[cfg(not(target_os = "macos"))]
     let entry_result = unsafe { ash::Entry::load() };
 
     match entry_result {
@@ -150,7 +113,6 @@ fn get_entry() -> Result<ash::Entry, VkContextError> {
         Err(err) => Err(VkContextError::EntryLoadingError(err)),
     }
 }
-
 fn create_command_pool(
     device: &ash::Device,
     queue_family_index: u32,
@@ -163,12 +125,10 @@ fn create_command_pool(
         Err(result) => Err(VkContextError::CommandPoolCreate(result)),
     }
 }
-
 fn create_instance(
     entry: &ash::Entry,
     api_version: u32,
-    with_validation: bool,
-    logger: Box<dyn VkLogger>,
+    create_info: &VkContextCreateInfo,
 ) -> Result<ash::Instance, VkContextError> {
     let mut instance_extensions: Vec<*const c_char> = Vec::new();
     instance_extensions.push(vk::KHR_PORTABILITY_ENUMERATION_NAME.as_ptr());
@@ -177,12 +137,12 @@ fn create_instance(
     let mut instance_layers: Vec<*const c_char> = Vec::new();
     let mut instance_nexts = Vec::new();
 
-    if with_validation {
-        if !is_layer_supported(&entry, VK_LAYER_KHRONOS_VALIDATION) {
+    if create_info.with_validation {
+        if !is_layer_supported(entry, VK_LAYER_KHRONOS_VALIDATION)? {
             return Err(VkContextError::ValidationNotSupported);
         }
         instance_extensions.push(vk::EXT_DEBUG_UTILS_NAME.as_ptr());
-        instance_layers.push(ffi::str_to_ptr_const_char(VK_LAYER_KHRONOS_VALIDATION));
+        instance_layers.push(VK_LAYER_KHRONOS_VALIDATION.as_ptr());
 
         let msg_create_info = vk::DebugUtilsMessengerCreateInfoEXT {
             message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
@@ -192,7 +152,7 @@ fn create_instance(
                 | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
                 | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION,
             pfn_user_callback: Some(crate::backends::vulkan::logger::debug_message_callback),
-            p_user_data: &logger as *const _ as *mut c_void,
+            p_user_data: create_info as *const VkContextCreateInfo as *mut c_void,
             ..Default::default()
         };
         instance_nexts.push(msg_create_info);
@@ -216,22 +176,20 @@ fn create_instance(
 
     Ok(instance)
 }
-
 fn create_memory_allocator(
     instance: &ash::Instance,
     device: &ash::Device,
     physical_device: vk::PhysicalDevice,
 ) -> Result<vk_mem::Allocator, VkContextError> {
-    let info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
+    let info = vk_mem::AllocatorCreateInfo::new(instance, device, physical_device);
     match unsafe { vk_mem::Allocator::new(info) } {
         Ok(allocator) => Ok(allocator),
         Err(err) => Err(VkContextError::MemoryAllocatorCreate(err)),
     }
 }
-
 fn get_physical_device(
     instance: &ash::Instance,
-    required_extensions: &Vec<&str>,
+    required_extensions: &[&str],
     required_features: &VkPhysicalDeviceFeatures,
 ) -> Result<VkPhysicalDevice, VkContextError> {
     let devices = match unsafe { instance.enumerate_physical_devices() } {
@@ -242,8 +200,11 @@ fn get_physical_device(
     let device_opt = devices
         .into_iter()
         .map(|device| VkPhysicalDevice::new(instance, device))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|physical_device| {
-            physical_device.features.contains(required_features)
+            physical_device.properties.api_version >= vk::API_VERSION_1_2
+                && physical_device.features.contains(required_features)
                 && physical_device
                     .subgroup_properties
                     .supported_operations
@@ -261,17 +222,12 @@ fn get_physical_device(
             vk::PhysicalDeviceType::OTHER => 4,
             _ => 5,
         });
-    if let None = device_opt {
-        return Err(VkContextError::PhysicalDeviceSuitableNotFound);
-    }
-
-    Ok(device_opt.unwrap())
+    device_opt.ok_or(VkContextError::PhysicalDeviceSuitableNotFound)
 }
-
 fn get_logical_device(
     instance: &ash::Instance,
     physical_device: &VkPhysicalDevice,
-    required_extensions: &Vec<&str>,
+    required_extensions: &[&str],
     required_features: &VkPhysicalDeviceFeatures,
 ) -> Result<(ash::Device, u32), VkContextError> {
     // find queue family index
@@ -293,10 +249,9 @@ fn get_logical_device(
         vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family_index).queue_priorities(&queue_priorities);
 
     // prepare extensions
-    let mut device_extensions: Vec<*const c_char> = Vec::new();
-    for &ext in required_extensions {
-        device_extensions.push(ffi::str_to_ptr_const_char(ext));
-    }
+    let extension_names =
+        required_extensions.iter().map(|name| std::ffi::CString::new(*name).unwrap()).collect::<Vec<_>>();
+    let mut device_extensions = extension_names.iter().map(|name| name.as_ptr()).collect::<Vec<_>>();
 
     // (https://vulkan.lunarg.com/doc/view/1.4.321.0/mac/antora/spec/latest/chapters/devsandqueues.html#VUID-VkDeviceCreateInfo-pProperties-04451
     if physical_device.supported_extensions.contains(&khr::portability_subset::NAME.to_str().unwrap().to_string()) {
@@ -306,12 +261,11 @@ fn get_logical_device(
     // prepare features
     let vk10_features = vk::PhysicalDeviceFeatures::default().shader_int16(required_features.shader_int16);
     let mut vk11_features = vk::PhysicalDeviceVulkan11Features::default()
-        .storage_buffer16_bit_access(required_features.storage_push_constant16)
+        .storage_buffer16_bit_access(required_features.storage_buffer16_bit_access)
         .storage_push_constant16(required_features.storage_push_constant16);
     let mut vk12_features = vk::PhysicalDeviceVulkan12Features::default()
         .shader_float16(required_features.shader_float16)
         .shader_subgroup_extended_types(required_features.shader_subgroup_extended_types);
-    let mut vk13_features = vk::PhysicalDeviceVulkan13Features::default();
 
     // prepare device
     let device_create_info = vk::DeviceCreateInfo::default()
@@ -319,8 +273,7 @@ fn get_logical_device(
         .enabled_extension_names(&device_extensions)
         .enabled_features(&vk10_features)
         .push_next(&mut vk11_features)
-        .push_next(&mut vk12_features)
-        .push_next(&mut vk13_features);
+        .push_next(&mut vk12_features);
     let device = match unsafe { instance.create_device(physical_device.device, &device_create_info, None) } {
         Ok(dev) => dev,
         Err(result) => return Err(VkContextError::DeviceCreateError(result)),
@@ -328,22 +281,10 @@ fn get_logical_device(
 
     Ok((device, queue_family_index))
 }
-
 fn is_layer_supported(
     entry: &ash::Entry,
-    layer: &str,
-) -> bool {
-    let layer_properties = unsafe { entry.enumerate_instance_layer_properties() }.unwrap_or(Vec::new());
-    if layer_properties.is_empty() {
-        return false;
-    }
-
-    for prop in layer_properties.iter() {
-        let layer_name = ffi::c_char_slice_to_string(&prop.layer_name);
-        if layer_name == layer {
-            return true;
-        }
-    }
-
-    false
+    layer: &CStr,
+) -> Result<bool, VkContextError> {
+    let layer_properties = unsafe { entry.enumerate_instance_layer_properties() }?;
+    Ok(layer_properties.iter().any(|properties| unsafe { CStr::from_ptr(properties.layer_name.as_ptr()) } == layer))
 }

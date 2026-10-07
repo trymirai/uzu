@@ -1,28 +1,23 @@
-use std::{
-    ffi::{CStr, CString},
-    sync::Arc,
-};
+use std::{ffi::CString, sync::Arc};
 
 use ash::{vk, vk::SpecializationInfo};
 
-use crate::backends::vulkan::context::VkContext;
-
-const MAIN: &CStr = unsafe { CStr::from_bytes_with_nul_unchecked(b"main\0") };
+use super::{Error, VkContext};
 
 pub struct VkComputePipeline {
-    device: Arc<ash::Device>,
+    context: Arc<VkContext>,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
 }
-
 impl VkComputePipeline {
     pub fn new(
-        ctx: &VkContext,
+        ctx: Arc<VkContext>,
         shader_module: vk::ShaderModule,
         descriptor_set_layout: vk::DescriptorSetLayout,
         entry_point: &str,
-        specialization_info: &SpecializationInfo,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+        specialization_info: &SpecializationInfo<'_>,
+    ) -> Result<Self, Error> {
+        let entry_cstring = CString::new(entry_point)?;
         let pipeline_layout = {
             let info =
                 vk::PipelineLayoutCreateInfo::default().set_layouts(std::slice::from_ref(&descriptor_set_layout));
@@ -30,7 +25,6 @@ impl VkComputePipeline {
         };
 
         let pipeline = {
-            let entry_cstring = CString::new(entry_point)?;
             let stage_info = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::COMPUTE)
                 .module(shader_module)
@@ -40,12 +34,18 @@ impl VkComputePipeline {
             unsafe {
                 ctx.device()
                     .create_compute_pipelines(vk::PipelineCache::null(), std::slice::from_ref(&info), None)
-                    .map_err(|(_, err)| err)?
+                    .map_err(|(pipelines, error)| {
+                        for pipeline in pipelines {
+                            ctx.device().destroy_pipeline(pipeline, None);
+                        }
+                        ctx.device().destroy_pipeline_layout(pipeline_layout, None);
+                        error
+                    })?
             }
         }[0];
 
         Ok(Self {
-            device: ctx.device(),
+            context: ctx,
             pipeline,
             pipeline_layout,
         })
@@ -59,12 +59,11 @@ impl VkComputePipeline {
         self.pipeline_layout
     }
 }
-
 impl Drop for VkComputePipeline {
     fn drop(&mut self) {
         unsafe {
-            self.device.destroy_pipeline(self.pipeline, None);
-            self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+            self.context.device().destroy_pipeline(self.pipeline, None);
+            self.context.device().destroy_pipeline_layout(self.pipeline_layout, None);
         }
     }
 }

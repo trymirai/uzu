@@ -17,6 +17,8 @@ default = ["cpu", "metal", "grammar"]
 
 cpu = [] # TODO: move libm here
 
+vulkan = ["dep:ash", "dep:vk-mem", "dep:shader-slang", "dep:shader-slang-sys", "dep:blake3", "dep:serde_json"]
+
 metal = [
     "dep:rayon",
     "dep:clang-ast",
@@ -43,14 +45,16 @@ syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
 rhai.workspace = true
+shader-slang = { workspace = true, optional = true }
+shader-slang-sys = { workspace = true, optional = true }
+blake3 = { workspace = true, optional = true }
+serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
 rayon = { workspace = true, optional = true }
 clang-ast = { workspace = true, optional = true }
 depfile = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
-serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
-blake3 = { workspace = true, optional = true }
 xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 
 [dependencies]
@@ -70,6 +74,8 @@ num-traits.workspace = true
 libm.workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
+ash = { workspace = true, optional = true }
+vk-mem = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }
@@ -107,3 +113,7 @@ tokio = { workspace = true, features = ["full"] }
 uzu.workspace = true
 criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }
+
+[[example]]
+name = "vulkan"
+required-features = ["vulkan"]

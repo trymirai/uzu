@@ -1,24 +1,21 @@
 use std::sync::Arc;
-use ash::vk;
-use crate::backends::vulkan::context::VkContext;
 
 use ash::vk;
 
-use crate::backends::vulkan::context::VkContext;
+use super::{Error, VkContext};
 
 pub struct VkCommandBuffers {
-    device: Arc<ash::Device>,
+    context: Arc<VkContext>,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
-    primary: bool
+    primary: bool,
 }
-
 impl VkCommandBuffers {
     pub fn new(
-        ctx: &VkContext,
+        ctx: Arc<VkContext>,
         primary: bool,
-        count: u32
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+        count: u32,
+    ) -> Result<Self, Error> {
         let command_pool = ctx.command_pool();
         let level = if primary {
             vk::CommandBufferLevel::PRIMARY
@@ -33,10 +30,10 @@ impl VkCommandBuffers {
         let command_buffers = unsafe { ctx.device().allocate_command_buffers(&info)? };
 
         Ok(Self {
-            device: ctx.device(),
+            context: ctx,
             command_pool,
             command_buffers,
-            primary
+            primary,
         })
     }
 
@@ -48,11 +45,10 @@ impl VkCommandBuffers {
         self.primary
     }
 }
-
 impl Drop for VkCommandBuffers {
     fn drop(&mut self) {
         unsafe {
-            self.device.free_command_buffers(self.command_pool, self.command_buffers.as_slice());
+            self.context.device().free_command_buffers(self.command_pool, self.command_buffers.as_slice());
         }
     }
 }
