@@ -31,6 +31,8 @@ pub enum MetalError {
     CannotCreateCounterHeap(String),
     #[error("Cannot resolve counter heap")]
     CannotResolveCounterHeap,
+    #[error("Timestamp {0} was not written by the GPU")]
+    UnwrittenTimestamp(usize),
     #[error("Cannot create command buffer")]
     CannotCreateCommandBuffer,
     #[error("Cannot create argument table: {0}")]
