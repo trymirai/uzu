@@ -120,7 +120,7 @@ impl<'a> SlangKernelInfo<'a> {
                     });
                     continue;
                 },
-                SlangArgumentType::Axis(..) | SlangArgumentType::Groups | SlangArgumentType::Threads(_) => continue,
+                SlangArgumentType::Axis(..) | SlangArgumentType::Groups(_) | SlangArgumentType::Threads(_) => continue,
             };
             arguments.push(KernelArgument {
                 name: ArgumentName::from(name),

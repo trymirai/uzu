@@ -48,6 +48,12 @@ pub enum Error {
         kernel: &'static str,
         data_types: Box<[crate::data_type::DataType]>,
     },
+    #[error("work group {size:?} exceeds the device limit {limit:?} or {invocations} invocations")]
+    WorkGroupSize {
+        size: [u32; 3],
+        limit: [u32; 3],
+        invocations: u32,
+    },
     #[error("dispatch of {groups:?} groups exceeds the device limit {limit:?}")]
     DispatchGroups {
         groups: [u32; 3],

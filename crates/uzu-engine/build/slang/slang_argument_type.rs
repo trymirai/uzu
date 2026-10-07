@@ -6,6 +6,6 @@ pub enum SlangArgumentType {
     Constant(Box<str>),
     Specialize(Box<str>),
     Axis(Box<str>, Box<str>),
-    Groups,
+    Groups(Box<str>),
     Threads(Box<str>),
 }

@@ -53,7 +53,9 @@ PUBLIC KERNEL(Softmax)(
     }
     norm *= fast::exp(prev_max - maxval);
     for (uint i = 0; i < SOFTMAX_ELEMENTS_PER_THREAD; i++) {
-      norm += fast::exp(vals[i] - maxval);
+      if (base + i < row_length) {
+        norm += fast::exp(vals[i] - maxval);
+      }
     }
   }
 

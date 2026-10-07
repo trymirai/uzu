@@ -52,8 +52,7 @@ impl<'a> SlangArgument<'a> {
             let per_group = axis.argument_value_string(1).context("Axis missing arg 1")?.into();
             Ok(SlangArgumentType::Axis(total, per_group))
         } else if let Some(groups) = self.attribute("Groups") {
-            groups.argument_value_string(0).context("Groups missing arg")?;
-            Ok(SlangArgumentType::Groups)
+            Ok(SlangArgumentType::Groups(groups.argument_value_string(0).context("Groups missing arg")?.into()))
         } else if let Some(threads) = self.attribute("Threads") {
             Ok(SlangArgumentType::Threads(threads.argument_value_string(0).context("Threads missing arg")?.into()))
         } else if self.attribute("Specialize").is_some() {

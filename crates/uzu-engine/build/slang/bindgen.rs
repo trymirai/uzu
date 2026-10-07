@@ -138,34 +138,49 @@ pub fn bindgen(
     }
 
     let mut conditions = Vec::new();
-    let mut axes = Vec::new();
+    let (mut axes, mut groups) = (Vec::new(), Vec::new());
+    let host_expression = |text: &str| {
+        syn::parse_str::<Expr>(text).with_context(|| format!("{kernel_name}: malformed host expression '{text}'"))
+    };
     for argument in info.arguments() {
         match argument.argument_type()? {
-            SlangArgumentType::Axis(total, _) => axes.push(syn::parse_str::<Expr>(&total)?),
-            SlangArgumentType::Groups | SlangArgumentType::Threads(_) => {
-                bail!("{kernel_name}: Groups/Threads dispatch has no Vulkan binding yet")
-            },
+            SlangArgumentType::Axis(total, _) => axes.push(host_expression(&total)?),
+            SlangArgumentType::Groups(count) => groups.push(host_expression(&count)?),
             _ => {},
         }
         if let Some(condition) = argument.condition()? {
             let name = format_ident!("{}", argument.name()?);
-            let condition = syn::parse_str::<Expr>(condition)?;
+            let condition = host_expression(condition)?;
             let message =
                 format!("{kernel_name}: argument '{name}' must be present exactly when {}", quote! { #condition });
             conditions.push(quote! { assert_eq!(#name.is_some(), #condition, "{}", #message); });
         }
     }
-    ensure!((1..=3).contains(&axes.len()), "{kernel_name}: needs one to three Axis arguments");
-    let groups = (0..3)
-        .map(|index| match abi.group_size[index] {
-            size if index < axes.len() && size > 0 => Ok(quote! { __dsl_axis[#index].div_ceil(#size) }),
-            1 => Ok(quote! { 1 }),
-            size => bail!("{kernel_name}: reflected group size {size} on axis {index}"),
+    // The wrapper admits exactly one mode with at most three dimensions. Axis totals count threads and divide by the
+    // group size; Groups counts are workgroups directly.
+    let axis = !axes.is_empty();
+    let grid = if axis {
+        axes
+    } else {
+        groups
+    };
+    ensure!(abi.group_size.iter().all(|&size| size > 0), "{kernel_name}: reflected group size {:?}", abi.group_size);
+    let dispatch = (0..3)
+        .map(|index| match (index < grid.len(), abi.group_size[index]) {
+            (true, size) if axis => Ok(quote! { __dsl_grid[#index].div_ceil(#size) }),
+            (true, _) => Ok(quote! { __dsl_grid[#index] }),
+            (false, size) if !axis || size == 1 => Ok(quote! { 1 }),
+            (false, size) => bail!("{kernel_name}: reflected group size {size} on undispatched axis {index}"),
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    let axis_count = axes.len();
+    let grid_count = grid.len();
+    let [group_x, group_y, group_z] = abi.group_size;
+    let invocations = group_x
+        .checked_mul(group_y)
+        .and_then(|invocations| invocations.checked_mul(group_z))
+        .with_context(|| format!("{kernel_name}: work group {:?} overflows u32 invocations", abi.group_size))?;
 
-    let host_expressions = quote! { #(#conditions)* #(#axes)* };
+    let host_expressions = quote! { #(#conditions)* #(#grid)* };
     let referenced = specializations
         .iter()
         .map(|(name, _)| name)
@@ -222,6 +237,17 @@ pub fn bindgen(
                     #(#entry_arms,)*
                     #unsupported
                 };
+                let limits = &context.physical_device().properties.limits;
+                let size = [#group_x, #group_y, #group_z];
+                if size.iter().zip(limits.max_compute_work_group_size).any(|(&size, limit)| size > limit)
+                    || #invocations > limits.max_compute_work_group_invocations
+                {
+                    return Err(Error::WorkGroupSize {
+                        size,
+                        limit: limits.max_compute_work_group_size,
+                        invocations: limits.max_compute_work_group_invocations,
+                    });
+                }
                 let shader = VkShader::new(context.clone(), SPIRV)?;
                 let specialization_data: [[u8; 4]; #specialization_count] =
                     [#(vk::Bool32::from(#specialization_names).to_ne_bytes()),*];
@@ -252,8 +278,8 @@ pub fn bindgen(
             ) {
                 #(let #referenced = self.#referenced;)*
                 #(#conditions)*
-                let __dsl_axis: [u32; #axis_count] = [#(#axes),*];
-                if __dsl_axis.contains(&0) {
+                let __dsl_grid: [u32; #grid_count] = [#(#grid),*];
+                if __dsl_grid.contains(&0) {
                     return;
                 }
                 let mut __dsl_block = [0u8; #block_size];
@@ -264,7 +290,7 @@ pub fn bindgen(
                     command_buffer.encode_dispatch(
                         &self.pipeline,
                         &__dsl_block,
-                        [#(#groups),*],
+                        [#(#dispatch),*],
                         __dsl_reads.into_iter().flatten(),
                         __dsl_writes.into_iter().flatten(),
                     )

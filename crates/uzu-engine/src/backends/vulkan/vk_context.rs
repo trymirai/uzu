@@ -246,7 +246,7 @@ fn get_physical_device(
                 && physical_device
                     .subgroup_properties
                     .supported_operations
-                    .contains(vk::SubgroupFeatureFlags::ARITHMETIC)
+                    .contains(vk::SubgroupFeatureFlags::BASIC | vk::SubgroupFeatureFlags::ARITHMETIC)
                 && physical_device.subgroup_properties.supported_stages.contains(vk::ShaderStageFlags::COMPUTE)
                 && physical_device
                     .memory_properties

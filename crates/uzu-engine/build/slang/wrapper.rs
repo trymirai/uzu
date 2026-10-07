@@ -62,11 +62,14 @@ pub fn generate_wrappers(
             .collect::<Result<_, Error>>()?;
 
         let has_axis = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Axis(_, _)));
-        let has_groups = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Groups));
+        let has_groups = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Groups(_)));
         let has_threads = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Threads(_)));
 
         if has_axis && (has_groups || has_threads) {
             bail!("mixing groups/threads and axis is not supported");
+        }
+        if has_groups != has_threads || !(has_axis || has_groups) {
+            bail!("kernel '{}' needs either Axis or both Groups and Threads", kernel.name());
         }
 
         let mut wrapper_arguments: Vec<String> = arguments
@@ -104,7 +107,7 @@ pub fn generate_wrappers(
                         SlangArgumentType::Axis(_, _) => {
                             format!("__dsl_axis_idx.{}", axis_letters.next().context("more than three Axis arguments")?)
                         },
-                        SlangArgumentType::Groups => {
+                        SlangArgumentType::Groups(_) => {
                             format!(
                                 "__dsl_group_idx.{}",
                                 group_letters.next().context("more than three Groups arguments")?

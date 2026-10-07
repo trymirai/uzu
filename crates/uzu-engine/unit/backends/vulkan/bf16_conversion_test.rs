@@ -1,4 +1,4 @@
-use std::{fmt::Debug, mem::size_of, ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
 use bytemuck::{AnyBitPattern, NoUninit};
 use half::bf16;
@@ -11,35 +11,30 @@ use crate::backends::vulkan::{
     vk_kernels::{TestBf16LoadVulkanKernel, TestBf16StoreVulkanKernel},
 };
 
-/// Sentinel elements before and after every range, so both ranges start at a nonzero offset.
-const GUARD: usize = 64;
-
 /// Runs one conversion dispatch over guarded ranges and returns the converted range after checking that the
 /// output guards are untouched.
-fn convert<I: NoUninit + AnyBitPattern, O: NoUninit + AnyBitPattern + PartialEq + Debug>(
+fn convert<I: NoUninit + AnyBitPattern, O: NoUninit + AnyBitPattern>(
     fixture: &KernelFixture,
     input: &[I],
     (input_sentinel, output_sentinel): (I, O),
     encode: impl FnOnce((&Arc<VkBuffer>, Range<u64>), (&Arc<VkBuffer>, Range<u64>), u32, &mut VkCommandBufferEncoding),
 ) -> Vec<O> {
-    let range = |size: usize| (GUARD * size) as u64..((GUARD + input.len()) * size) as u64;
-    let input_buffer =
-        fixture.buffer(&[vec![input_sentinel; GUARD], input.to_vec(), vec![input_sentinel; GUARD]].concat());
-    let output_buffer = fixture.buffer(&vec![output_sentinel; input.len() + 2 * GUARD]);
+    let input_buffer = fixture.guarded(input, input_sentinel);
+    let output_buffer = fixture.guarded(&vec![output_sentinel; input.len()], output_sentinel);
     let mut encoding = fixture.encoding();
     encode(
-        (&input_buffer, range(size_of::<I>())),
-        (&output_buffer, range(size_of::<O>())),
+        (&input_buffer.0, input_buffer.1.clone()),
+        (&output_buffer.0, output_buffer.1.clone()),
         input.len() as u32,
         &mut encoding,
     );
     KernelFixture::complete(encoding);
-    // SAFETY: the only command buffer writing `output_buffer` has completed.
-    let output = unsafe { KernelFixture::read::<O>(&output_buffer) };
-    let (head, rest) = output.split_at(GUARD);
-    let (body, tail) = rest.split_at(input.len());
-    assert!(head.iter().chain(tail).all(|value| *value == output_sentinel), "output guards were written");
-    body.to_vec()
+    // SAFETY: the only command buffer using these buffers has completed.
+    unsafe {
+        let read = KernelFixture::read_guarded(&input_buffer, input_sentinel);
+        assert_eq!(bytemuck::cast_slice::<I, u8>(&read), bytemuck::cast_slice::<I, u8>(input), "input changed");
+        KernelFixture::read_guarded(&output_buffer, output_sentinel)
+    }
 }
 
 /// Asserts `actual` equals `expected` bit for bit, after printing the count and the first mismatches.

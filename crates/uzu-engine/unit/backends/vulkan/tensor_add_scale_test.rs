@@ -21,9 +21,6 @@ use crate::{
     tests::helpers::{buffer_to_vec, create_buffer_with_data, create_context, submit_command_buffer},
 };
 
-/// Sentinel elements kept before and after every GPU range; also makes every range start at a nonzero offset.
-const GUARD: usize = 64;
-
 /// The CPU kernel through the shared trait, dispatched `repeats` times into one command buffer.
 fn cpu_output<T: ArrayElement + Float>(
     input: &[T],
@@ -64,15 +61,13 @@ fn gpu_output<T: ArrayElement + Float + Debug>(
     submissions: &[usize],
 ) -> Vec<T> {
     let sentinel = T::from(-7.0).unwrap();
-    let guarded = |values: &[T]| [vec![sentinel; GUARD], values.to_vec(), vec![sentinel; GUARD]].concat();
-    let range = |len: usize| (GUARD * size_of::<T>()) as u64..((GUARD + len) * size_of::<T>()) as u64;
     let initial = match in_place {
         true => input.to_vec(),
         false => vec![sentinel; input.len()],
     };
-    let output = fixture.buffer(&guarded(&initial));
-    let input_buffer = (!in_place).then(|| fixture.buffer(&guarded(input)));
-    let bias_buffer = fixture.buffer(&guarded(bias));
+    let output = fixture.guarded(&initial, sentinel);
+    let input_buffer = (!in_place).then(|| fixture.guarded(input, sentinel));
+    let bias_buffer = fixture.guarded(bias, sentinel);
     for &repeats in submissions {
         let mut encoding = fixture.encoding();
         for _ in 0..repeats {
@@ -80,9 +75,9 @@ fn gpu_output<T: ArrayElement + Float + Debug>(
             // index `position < length` and `position % num_cols` is inside them; output aliases only itself.
             unsafe {
                 kernel.encode(
-                    input_buffer.as_ref().map(|buffer| (buffer, range(input.len()))),
-                    (&bias_buffer, range(bias.len())),
-                    (&output, range(input.len())),
+                    input_buffer.as_ref().map(|(buffer, range)| (buffer, range.clone())),
+                    (&bias_buffer.0, bias_buffer.1.clone()),
+                    (&output.0, output.1.clone()),
                     num_cols,
                     input.len() as u32,
                     scale,
@@ -92,29 +87,17 @@ fn gpu_output<T: ArrayElement + Float + Debug>(
         }
         KernelFixture::complete(encoding);
     }
-    // SAFETY: the only command buffer writing `output` has completed.
-    let values = unsafe { KernelFixture::read::<T>(&output) };
-    let (head, rest) = values.split_at(GUARD);
-    let (body, tail) = rest.split_at(input.len());
-    assert_bits(&[sentinel; GUARD], head, "leading guard");
-    assert_bits(&[sentinel; GUARD], tail, "trailing guard");
-    body.to_vec()
-}
-
-/// Bit equality, except that any NaN matches any NaN (payloads after FP32 arithmetic are not portable).
-fn assert_bits<T: ArrayElement + Float + Debug>(
-    expected: &[T],
-    actual: &[T],
-    case: &str,
-) {
-    assert_eq!(expected.len(), actual.len(), "{case}: length");
-    for (index, (&expected, &actual)) in expected.iter().zip(actual).enumerate() {
-        let same = match expected.is_nan() {
-            true => actual.is_nan(),
-            false => bytemuck::bytes_of(&expected) == bytemuck::bytes_of(&actual),
-        };
-        assert!(same, "{case}: element {index}: CPU {expected:?}, Vulkan {actual:?}");
+    // SAFETY: every command buffer using these buffers has completed.
+    for (buffer, values) in input_buffer.iter().map(|buffer| (buffer, input)).chain([(&bias_buffer, bias)]) {
+        let read = unsafe { KernelFixture::read_guarded(buffer, sentinel) };
+        assert_eq!(
+            bytemuck::cast_slice::<T, u8>(&read),
+            bytemuck::cast_slice::<T, u8>(values),
+            "read-only data changed"
+        );
     }
+    // SAFETY: the only command buffer writing `output` has completed.
+    unsafe { KernelFixture::read_guarded(&output, sentinel) }
 }
 
 fn kernel<T: ArrayElement>(
@@ -150,7 +133,11 @@ fn matches_cpu<T: ArrayElement + Float + Debug>() {
             let case = (&input[..], &bias[..], num_cols as u32, 0.3, in_place);
             let gpu = gpu_output(&fixture, &kernel, case, &[1]);
             let cpu = cpu_output(&input, &bias, num_cols as u32, 0.3, in_place, 1);
-            assert_bits(&cpu, &gpu, &format!("{:?} length {length} in_place {in_place}", T::data_type()));
+            KernelFixture::assert_bits(
+                &cpu,
+                &gpu,
+                &format!("{:?} length {length} in_place {in_place}", T::data_type()),
+            );
         }
     }
     fixture.assert_clean();
@@ -163,8 +150,8 @@ fn rounds_ties_to_even<T: ArrayElement + Float + Debug>(ulp: f32) {
     let bias = [ulp, ulp, -ulp, -ulp].map(|value| T::from(value / 2.0).unwrap());
     let (cpu, gpu) = outputs(&fixture, (&input, &bias, 4, 1.0, false));
     let expected = [1.0, 1.0 + 2.0 * ulp, -1.0, -1.0 - 2.0 * ulp].map(|value| T::from(value).unwrap());
-    assert_bits(&expected, &cpu, "CPU ties");
-    assert_bits(&cpu, &gpu, &format!("{:?} ties", T::data_type()));
+    KernelFixture::assert_bits(&expected, &cpu, "CPU ties");
+    KernelFixture::assert_bits(&cpu, &gpu, &format!("{:?} ties", T::data_type()));
     fixture.assert_clean();
 }
 
@@ -176,10 +163,10 @@ fn propagates_specials<T: ArrayElement + Float + Debug>() {
     let bias = [T::one(), T::one(), T::one(), zero, -zero, zero, max, -inf, nan];
     let (cpu, gpu) = outputs(&fixture, (&input, &bias, 9, 1.0, false));
     assert!(cpu[0].is_nan() && cpu[6].is_infinite() && cpu[7].is_nan() && cpu[4].is_sign_negative());
-    assert_bits(&cpu, &gpu, &format!("{:?} specials", T::data_type()));
+    KernelFixture::assert_bits(&cpu, &gpu, &format!("{:?} specials", T::data_type()));
     let (cpu, gpu) = outputs(&fixture, (&[zero, T::one()], &[zero, -T::one()], 2, -1.0, false));
     assert!(cpu.iter().all(|value| *value == zero && value.is_sign_negative()));
-    assert_bits(&cpu, &gpu, &format!("{:?} negated zeros", T::data_type()));
+    KernelFixture::assert_bits(&cpu, &gpu, &format!("{:?} negated zeros", T::data_type()));
     fixture.assert_clean();
 }
 
@@ -243,7 +230,7 @@ fn repeats_dependent_dispatches<T: ArrayElement + Float + Debug>() {
     for submissions in [&[1000][..], &[7, 5]] {
         let gpu = gpu_output(&fixture, &kernel, (&input, &bias, 13, 1.0, true), submissions);
         let cpu = cpu_output(&input, &bias, 13, 1.0, true, submissions.iter().sum());
-        assert_bits(&cpu, &gpu, &format!("{:?} submissions {submissions:?}", T::data_type()));
+        KernelFixture::assert_bits(&cpu, &gpu, &format!("{:?} submissions {submissions:?}", T::data_type()));
     }
     fixture.assert_clean();
 }
