@@ -26,6 +26,10 @@ inputs:
     description: "Install bindings requirements"
     required: false
     default: 'false'
+  uv-cache:
+    description: "Enable the uv dependency cache"
+    required: false
+    default: 'true'
 
 runs:
   using: composite
@@ -78,7 +82,7 @@ runs:
     - if: inputs.test_data == 'true' || inputs.bindings == 'true'
       uses: astral-sh/setup-uv@v7
       with:
-        enable-cache: true
+        enable-cache: ${{ inputs.uv-cache }}
 
     - if: inputs.test_data == 'true'
       run: |
