@@ -31,18 +31,18 @@ impl TimestampSpanRecorder {
         self.boundaries.len()
     }
 
-    pub fn into_spans(
-        self,
+    pub fn spans(
+        &self,
         instants: &[Instant],
     ) -> CommandBufferTimestamps {
         let mut spans = Vec::new();
         let mut open_span_indices = Vec::new();
-        for (boundary, &instant) in self.boundaries.into_iter().zip(instants) {
+        for (boundary, &instant) in self.boundaries.iter().zip(instants) {
             match boundary {
                 SpanBoundary::Start(name) => {
                     open_span_indices.push(spans.len());
                     spans.push(TimestampSpan {
-                        name,
+                        name: name.clone(),
                         start: instant,
                         end: instant,
                     });

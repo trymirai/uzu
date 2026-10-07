@@ -1,15 +1,14 @@
 use std::{
     range::Range,
     sync::{Arc, mpsc},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandBufferExt,
     MTL4CommandEncoder, MTL4CommandEncoderExt, MTL4CommandQueue, MTL4CommandQueueExt, MTL4CommitFeedback,
     MTL4CommitFeedbackExt, MTL4CommitFeedbackHandler, MTL4CommitOptions, MTL4ComputeCommandEncoder,
-    MTL4ComputeCommandEncoderExt, MTL4CounterHeap, MTL4CounterHeapDescriptor, MTL4CounterHeapExt, MTL4CounterHeapType,
-    MTL4TimestampGranularity, MTL4VisibilityOptions, MTLDevice, MTLDeviceExt, MTLStages,
+    MTL4ComputeCommandEncoderExt, MTL4VisibilityOptions, MTLDeviceExt, MTLStages,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeSet;
@@ -17,13 +16,13 @@ use rangemap::RangeSet;
 use crate::backends::{
     common::{
         Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-        CommandBufferExecutable, CommandBufferPending, CommandBufferTimestamps, Context, TimestampSlot, TimestampSpan,
-        TimestampSpanRecorder, allocator::bump::BumpAllocator,
+        CommandBufferExecutable, CommandBufferPending, CommandBufferTimestamps, Context, TimestampSpan,
+        allocator::bump::BumpAllocator,
     },
-    metal::{Metal, MetalContext, buffer::MetalBufferExt, error::MetalError},
+    metal::{
+        Metal, MetalContext, buffer::MetalBufferExt, error::MetalError, timestamp_recorder::MetalTimestampRecorder,
+    },
 };
-
-const COUNTER_HEAP_CAPACITY: usize = 4096;
 
 pub struct MetalCommandBuffer;
 
@@ -51,8 +50,7 @@ pub struct MetalCommandBufferEncoding {
     constant_allocator: Option<BumpAllocator<<Metal as Backend>::GlobalBuffer>>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     pub(super) context: Arc<MetalContext>,
-    counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
-    timestamp_spans: Option<TimestampSpanRecorder>,
+    timestamps: Option<MetalTimestampRecorder>,
 }
 
 impl MetalCommandBufferEncoding {
@@ -61,21 +59,15 @@ impl MetalCommandBufferEncoding {
         name: Option<&str>,
         allocation_pool: Option<Arc<<Metal as Backend>::AllocationPool>>,
     ) -> Result<Self, MetalError> {
-        let (command_allocator, command_buffer, counter_heaps) = if let mut command_buffer_cache =
-            context.command_buffer_cache.lock()
+        let (command_allocator, command_buffer) = if let mut command_buffer_cache = context.command_buffer_cache.lock()
             && let Some(command_buffer_cached) = command_buffer_cache.pop()
         {
             command_buffer_cached.command_allocator.reset();
-            (
-                command_buffer_cached.command_allocator,
-                command_buffer_cached.command_buffer,
-                command_buffer_cached.counter_heaps,
-            )
+            (command_buffer_cached.command_allocator, command_buffer_cached.command_buffer)
         } else {
             (
                 context.device.new_command_allocator().ok_or(MetalError::CannotCreateCommandBuffer)?,
                 context.device.new_mtl4_command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
-                Vec::new(),
             )
         };
 
@@ -113,8 +105,7 @@ impl MetalCommandBufferEncoding {
             constant_allocator: Some(constant_allocator),
             allocation_pool,
             context,
-            counter_heaps,
-            timestamp_spans: None,
+            timestamps: None,
         })
     }
 
@@ -142,28 +133,6 @@ impl MetalCommandBufferEncoding {
                 self.reads.insert(access.range.into());
             }
         }
-    }
-
-    fn write_timestamp(
-        &mut self,
-        slot: TimestampSlot,
-    ) {
-        if slot / COUNTER_HEAP_CAPACITY == self.counter_heaps.len() {
-            let descriptor = MTL4CounterHeapDescriptor::new();
-            descriptor.set_type(MTL4CounterHeapType::TIMESTAMP);
-            descriptor.set_count(COUNTER_HEAP_CAPACITY);
-            self.counter_heaps.push(
-                self.context
-                    .device
-                    .new_counter_heap_with_descriptor(&descriptor)
-                    .expect("Failed to create a counter heap"),
-            );
-        }
-        self.compute_encoder.write_timestamp_with_granularity_into_heap_at_index(
-            MTL4TimestampGranularity::PRECISE,
-            &self.counter_heaps[slot / COUNTER_HEAP_CAPACITY],
-            slot % COUNTER_HEAP_CAPACITY,
-        );
     }
 }
 
@@ -250,22 +219,22 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     }
 
     fn enable_timestamps(&mut self) {
-        assert!(self.timestamp_spans.is_none(), "timestamps already enabled");
-        self.timestamp_spans = Some(TimestampSpanRecorder::default());
+        assert!(self.timestamps.is_none(), "timestamps already enabled");
+        self.timestamps = Some(MetalTimestampRecorder::new(self.context.device.clone()));
     }
 
     fn sample_start_timestamp(
         &mut self,
         name: &BlockName,
     ) {
-        if let Some(slot) = self.timestamp_spans.as_mut().map(|spans| spans.start(name.clone())) {
-            self.write_timestamp(slot);
+        if let Some(timestamps) = &mut self.timestamps {
+            timestamps.start(name.clone(), &self.compute_encoder);
         }
     }
 
     fn sample_end_timestamp(&mut self) {
-        if let Some(slot) = self.timestamp_spans.as_mut().map(TimestampSpanRecorder::end) {
-            self.write_timestamp(slot);
+        if let Some(timestamps) = &mut self.timestamps {
+            timestamps.end(&self.compute_encoder);
         }
     }
 
@@ -279,8 +248,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
             constant_allocator,
             allocation_pool: self.allocation_pool.clone(),
             context: self.context.clone(),
-            counter_heaps: self.counter_heaps.clone(),
-            timestamp_spans: self.timestamp_spans.take(),
+            timestamps: self.timestamps.take(),
         }
     }
 }
@@ -303,8 +271,7 @@ pub struct MetalCommandBufferExecutable {
     constant_allocator: BumpAllocator<<Metal as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     context: Arc<MetalContext>,
-    counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
-    timestamp_spans: Option<TimestampSpanRecorder>,
+    timestamps: Option<MetalTimestampRecorder>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
@@ -326,8 +293,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         let command_allocator = self.command_allocator.clone();
         let command_buffer = self.command_buffer.clone();
         let context_clone = self.context.clone();
-        let counter_heaps = self.counter_heaps;
-        let slot_count = self.timestamp_spans.as_ref().map_or(0, TimestampSpanRecorder::slot_count);
+        let timestamps = self.timestamps;
 
         let constant_allocator = self.constant_allocator;
         let allocation_pool = self.allocation_pool.clone();
@@ -335,20 +301,15 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
             let message = if let Some(error) = feedback.error() {
                 Err(MetalError::CommandBufferExecution(error.to_string()))
             } else {
-                resolve_timestamps(&context_clone.device, &counter_heaps, slot_count).map(|instants| {
-                    (Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()), instants)
-                })
+                timestamps
+                    .as_ref()
+                    .map_or_else(|| Ok(Box::default()), MetalTimestampRecorder::resolve)
+                    .map(|spans| (Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()), spans))
             };
-            let resolved = message.is_ok();
             let _ = sender.send(message);
             context_clone.command_buffer_cache.lock().push(MetalCommandBufferCache {
                 command_allocator: command_allocator.clone(),
                 command_buffer: command_buffer.clone(),
-                counter_heaps: if resolved {
-                    counter_heaps.clone()
-                } else {
-                    Vec::new()
-                },
             });
             let _keep_alive = (&constant_allocator, &allocation_pool);
         };
@@ -359,61 +320,24 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 
         MetalCommandBufferPending {
             allocation_pool: self.allocation_pool,
-            timestamp_spans: self.timestamp_spans,
             receiver,
         }
     }
 }
 
-fn resolve_timestamps(
-    device: &ProtocolObject<dyn MTLDevice>,
-    counter_heaps: &[Retained<ProtocolObject<dyn MTL4CounterHeap>>],
-    count: usize,
-) -> Result<Vec<Instant>, MetalError> {
-    let mut ticks = Vec::with_capacity(count);
-    for (index, counter_heap) in counter_heaps.iter().enumerate().take(count.div_ceil(COUNTER_HEAP_CAPACITY)) {
-        let slots = 0..(count - index * COUNTER_HEAP_CAPACITY).min(COUNTER_HEAP_CAPACITY);
-        let bytes = counter_heap.resolve_counter_range(slots.clone()).ok_or(MetalError::CannotResolveCounterHeap)?;
-        counter_heap.invalidate_counter_range(slots);
-        let (entries, _) = bytes.as_chunks::<{ size_of::<u64>() }>();
-        ticks.extend(entries.iter().map(|entry| u64::from_ne_bytes(*entry)));
-    }
-    let frequency = device.query_timestamp_frequency() as u128;
-    let (mut cpu_now, mut gpu_now) = (0, 0);
-    let now = Instant::now();
-    device.sample_timestamps_gpu_timestamp(&mut cpu_now, &mut gpu_now);
-    let to_instant = |ticks: u64| {
-        let nanoseconds = (ticks as u128 * 1_000_000_000 / frequency) as u64;
-        now - Duration::from_nanos(gpu_now - nanoseconds)
-    };
-    ticks
-        .iter()
-        .enumerate()
-        .scan(None, |previous_timestamp, (slot, &slot_ticks)| {
-            let timestamp = match slot_ticks {
-                0 => previous_timestamp.ok_or(MetalError::UnwrittenTimestamp(slot)),
-                slot_ticks => Ok(to_instant(slot_ticks)),
-            };
-            *previous_timestamp = timestamp.as_ref().ok().copied();
-            Some(timestamp)
-        })
-        .collect()
-}
-
 pub struct MetalCommandBufferPending {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
-    timestamp_spans: Option<TimestampSpanRecorder>,
-    receiver: mpsc::Receiver<Result<(Duration, Vec<Instant>), MetalError>>,
+    receiver: mpsc::Receiver<Result<(Duration, CommandBufferTimestamps), MetalError>>,
 }
 
 impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
 
     fn wait_until_completed(self) -> Result<MetalCommandBufferCompleted, MetalError> {
-        let (gpu_execution_time, instants) = self.receiver.recv().map_err(MetalError::CommandBufferWait)??;
+        let (gpu_execution_time, timestamps) = self.receiver.recv().map_err(MetalError::CommandBufferWait)??;
         Ok(MetalCommandBufferCompleted {
             gpu_execution_time,
-            timestamps: self.timestamp_spans.map_or_else(Box::default, |spans| spans.into_spans(&instants)),
+            timestamps,
             _allocation_pool: self.allocation_pool,
         })
     }
@@ -440,5 +364,4 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
 pub struct MetalCommandBufferCache {
     command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
     command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
-    counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
 }

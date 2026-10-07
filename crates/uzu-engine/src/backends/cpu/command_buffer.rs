@@ -196,7 +196,7 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
 
                 let completed = CpuCommandBufferCompleted {
                     gpu_execution_time,
-                    timestamps: self.timestamp_spans.map_or_else(Box::default, |spans| spans.into_spans(&instants)),
+                    timestamps: self.timestamp_spans.map_or_else(Box::default, |spans| spans.spans(&instants)),
                     _allocation_pool: self.allocation_pool,
                 };
 
