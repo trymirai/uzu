@@ -104,7 +104,7 @@ class OMLXEngine(InferenceEngine):
             raise
 
     def _configure_depth(self, depth: int) -> None:
-        if depth < 0 or depth > self.max_depth:
+        if depth < 0 or self.max_depth < depth:
             raise ValueError(f"speculative_depth must be between 0 and {self.max_depth} for this engine")
 
         if isinstance(self.engine, DFlashEngine):

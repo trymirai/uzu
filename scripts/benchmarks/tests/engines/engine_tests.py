@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
-from bench import BenchRequest, BenchResponse, BenchSampling, ChatMessage, ChatRole
+from bench import BenchRequest, BenchResponse, BenchSampling, ChatMessage
 
 from .engine_process import EngineProcess, run_engine
 
