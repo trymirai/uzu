@@ -1,4 +1,5 @@
 #include "bench_memory.h"
+
 #include "memory_counters.h"
 
 // Keep Mach's packed IPC structs out of Zig's C-header translator.

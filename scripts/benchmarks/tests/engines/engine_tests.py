@@ -55,7 +55,7 @@ class EngineTests:
 
     def test_chat_generation(self, engine: EngineProcess) -> None:
         request = BenchRequest(
-            prompt_chat=[ChatMessage(role=ChatRole.USER, content="Say hello in one short sentence.")],
+            prompt_chat=[ChatMessage(role="user", content="Say hello in one short sentence.")],
             max_tokens=8,
         )
         assert_responses(engine.request(request), 1)

@@ -7,4 +7,6 @@ static struct PyModuleDef module = {
     .m_size = 0,
 };
 
-PyMODINIT_FUNC PyInit__mach(void) { return PyModule_Create(&module); }
+PyMODINIT_FUNC PyInit__mach(void) {
+    return PyModule_Create(&module);
+}

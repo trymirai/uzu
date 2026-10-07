@@ -24,9 +24,9 @@ static kern_return_t collect_memory_counters(
         return KERN_RETURN_GRAPHICS_UNAVAILABLE;
     }
 
-    uint64_t graphics_total =
-        memory_info.ledger_tag_graphics_footprint + memory_info.ledger_tag_graphics_footprint_compressed +
-        memory_info.ledger_tag_graphics_nofootprint + memory_info.ledger_tag_graphics_nofootprint_compressed;
+    uint64_t graphics_total = memory_info.ledger_tag_graphics_footprint +
+        memory_info.ledger_tag_graphics_footprint_compressed + memory_info.ledger_tag_graphics_nofootprint +
+        memory_info.ledger_tag_graphics_nofootprint_compressed;
 
     counters->pid = pid;
     counters->phys_footprint = memory_info.phys_footprint;
@@ -53,7 +53,10 @@ static kern_return_t collect_memory_counters(
     return KERN_SUCCESS;
 }
 
-kern_return_t get_memory_counters(memory_counters_t* counters, bool with_malloc_zone_stats) {
+kern_return_t get_memory_counters(
+    memory_counters_t* counters,
+    bool with_malloc_zone_stats
+) {
     return collect_memory_counters(mach_task_self(), getpid(), counters, with_malloc_zone_stats);
 }
 

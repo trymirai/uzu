@@ -91,7 +91,6 @@ impl UzuEngine {
         let started = Instant::now();
         let mut stream = self.instance.stream(tokens, state.as_mut(), config, CancellationToken::new());
         loop {
-            let metrics = stream.metrics();
             let Some(event) = stream.next().await else {
                 break;
             };
@@ -101,7 +100,7 @@ impl UzuEngine {
 
             first_token.get_or_insert_with(Instant::now);
             tokens_generated += 1;
-            let metrics = metrics.context("Generation did not return metrics")?;
+            let metrics = stream.metrics().context("Generation did not return metrics")?;
             forward_passes = metrics.num_prefill_forward_passes + metrics.num_decode_forward_passes;
 
             let current = MemoryCounters::collect()?;

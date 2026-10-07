@@ -1,9 +1,8 @@
 """Compare model declarations without building the Rust, C++, or Zig engines.
 
-Python's unbounded integers, float precision, and existing ChatRole enum are
-normalized to their native counterparts. Rust/C++ numeric widths are also
-compared directly. This checks declarations, not the full behavior of serde,
-Glaze, or Pydantic.
+Python's unbounded integers and float precision are normalized to their native
+counterparts. Rust/C++ numeric widths are also compared directly. This checks
+declarations, not the full behavior of serde, Glaze, or Pydantic.
 """
 
 import inspect
@@ -16,11 +15,10 @@ from typing import Union, get_args, get_origin
 
 import bench
 import pytest
+from annotated_types import Ge
 from pydantic import BaseModel, JsonValue
 
 ROOT = Path(__file__).resolve().parents[1]
-
-CHAT_ROLES = {"assistant", "developer", "system", "tool", "user"}
 
 CONTAINERS = {
     "Option": "optional",
@@ -160,13 +158,6 @@ def python_type(annotation: object, field_path: str) -> str:
     if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
         return annotation.__name__
 
-    if inspect.isclass(annotation) and issubclass(annotation, Enum):
-        assert field_path == "ChatMessage.role" and issubclass(annotation, str), (
-            f"{field_path}: enum constraint has no Rust/C++ counterpart"
-        )
-        assert {member.value for member in annotation} == CHAT_ROLES, "ChatMessage.role: enum constraints changed"
-        return "string"
-
     primitives: dict[object, str] = {str: "string", int: "integer", float: "number"}
     assert annotation in primitives, f"{field_path}: unsupported Python type {annotation}"
     return primitives[annotation]
@@ -181,7 +172,11 @@ def read_python_models() -> dict[str, dict[str, Field]]:
         fields = {}
         for field_name, field in model.model_fields.items():
             path = f"{name}.{field_name}"
-            assert not field.metadata, f"{path}: constraints have no Rust/C++ counterpart: {field.metadata}"
+            # max_tokens is unsigned in all native models.
+            expected_metadata = [Ge(0)] if path == "BenchRequest.max_tokens" else []
+            assert field.metadata == expected_metadata, (
+                f"{path}: constraints differ from native counterparts: {field.metadata}"
+            )
             assert field.alias is field.validation_alias is field.serialization_alias is None, (
                 f"{path}: alias has no Rust/C++ counterpart"
             )
