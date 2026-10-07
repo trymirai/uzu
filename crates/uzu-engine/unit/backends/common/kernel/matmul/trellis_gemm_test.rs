@@ -55,10 +55,9 @@ fn decode_state(
 ) -> u16 {
     let width = format.vector_width as usize;
     let restart_columns = format.restart_columns as usize;
-    let (block, local, block_bytes) = if restart_columns == 0 {
-        (0, column, 0)
-    } else {
-        (column / restart_columns, column % restart_columns, row_bytes(format, restart_columns))
+    let (block, local, block_bytes) = match column.checked_div(restart_columns) {
+        Some(block) => (block, column % restart_columns, row_bytes(format, restart_columns)),
+        None => (0, column, 0),
     };
     let start_bit = block * block_bytes * 8 + local / width * format.transition_bits as usize;
     (start_bit..start_bit + 16).fold(0u32, |state, bit| (state << 1) | u32::from(row[bit / 8] >> (7 - bit % 8) & 1))

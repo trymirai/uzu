@@ -138,8 +138,7 @@ impl<B: Backend> WeightMatrix<B> {
         self.quantized().map(|quantized| quantized.info)
     }
 
-    /// Single matrices only; a row stack has one operand per part, see [`Self::blocks`].
-    pub fn matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
+    pub fn single_matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
         match &self.encoding {
             WeightEncoding::Dense(values) => MatmulB::FullPrecision {
                 b: values,
@@ -169,7 +168,7 @@ impl<B: Backend> WeightMatrix<B> {
             WeightEncoding::RowStack(parts) => parts,
             _ => std::slice::from_ref(self),
         };
-        parts.iter().map(|part| (part.output_dim, part.matmul_b()))
+        parts.iter().map(|part| (part.output_dim, part.single_matmul_b()))
     }
 
     pub fn try_prepare_a8_storage(&mut self) -> bool {
@@ -227,7 +226,6 @@ fn load_quantized<B: Backend>(
         group_size,
     };
     let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
-    // Parameters swap the weight axes once K is grouped: output-input stores [G, N], input-output stores [N, G].
     let params_layout = match layout {
         Layout::OutputInput => QuantParamsLayout::GroupOutput,
         Layout::InputOutput => QuantParamsLayout::OutputGroup,

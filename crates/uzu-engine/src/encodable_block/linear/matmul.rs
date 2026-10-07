@@ -61,7 +61,6 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    /// Loads a linear over any parsed spec. Hybrid compositions live in the wrappers, not here.
     pub fn load(
         context: &B::Context,
         spec: AnyWeightMatrixSpec,
@@ -109,7 +108,7 @@ impl<B: Backend> LinearMatmul<B> {
         context: &B::Context,
     ) -> Option<ActivationQuantization> {
         let signed_codes = self.matrix.quantization()?.mode != QuantizationMode::U4;
-        let mut candidate = self.matmul_shape(1, false);
+        let mut candidate = self.single_matmul_shape(1, false);
         candidate.signed_codes = signed_codes;
         let quantization = self.kernel.lock().select_activation_quantization(&candidate, context)?;
         self.matrix.try_prepare_a8_storage().then_some(quantization)
@@ -157,12 +156,12 @@ impl<B: Backend> LinearMatmul<B> {
         Ok(output)
     }
 
-    fn matmul_shape(
+    fn single_matmul_shape(
         &self,
         batch_dim: u32,
         a_full_precision: bool,
     ) -> MatmulShape {
-        let b = self.matrix.matmul_b();
+        let b = self.matrix.single_matmul_b();
         MatmulShape {
             m: batch_dim,
             n: self.output_dim,
@@ -228,6 +227,6 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        self.kernel.lock().select_activation_format(&self.matmul_shape(batch_dim, true), context)
+        self.kernel.lock().select_activation_format(&self.single_matmul_shape(batch_dim, true), context)
     }
 }

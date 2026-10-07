@@ -59,7 +59,7 @@ impl<B: Backend> Storage<B> {
     fn lookup_bindings(&self) -> LookupBindings<'_, B> {
         match self {
             Self::Matrix(matrix) => {
-                let (values, scales, zero_points, biases) = match matrix.matmul_b() {
+                let (values, scales, zero_points, biases) = match matrix.single_matmul_b() {
                     MatmulB::FullPrecision {
                         b,
                     } => (b, None, None, None),
@@ -147,7 +147,7 @@ impl<B: Backend> EmbeddingTable<B> {
 
         let (table_kind, quantization) = match &storage {
             Storage::D4S4(_) => (EmbeddingTableKind::D4S4, None),
-            Storage::Matrix(matrix) => match matrix.matmul_b() {
+            Storage::Matrix(matrix) => match matrix.single_matmul_b() {
                 MatmulB::FullPrecision {
                     ..
                 } => (EmbeddingTableKind::Dense, None),

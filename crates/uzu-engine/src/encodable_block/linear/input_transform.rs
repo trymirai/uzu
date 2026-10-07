@@ -33,7 +33,6 @@ impl<B: Backend> InputTransform<B> {
     }
 }
 
-/// Rotates the input into the basis trellis weights were quantized in, then int8-quantizes it per token.
 pub(super) struct TrellisRotation<B: Backend> {
     kernel: <B::Kernels as Kernels>::TrellisTransformKernel,
     signs: B::GlobalBuffer,

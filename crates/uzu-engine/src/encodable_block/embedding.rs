@@ -215,7 +215,7 @@ impl<B: Backend> Embedding<B> {
                         values: input_buffer,
                         offset: 0,
                     },
-                    b: table.as_matrix().expect("tied embedding tables are matrices").matmul_b(),
+                    b: table.as_matrix().expect("tied embedding tables are matrices").single_matmul_b(),
                     b_leading_dimension: None,
                     b_transpose: true,
                     output: MatmulOutput::new(&mut output, MatmulDOps::none()),
