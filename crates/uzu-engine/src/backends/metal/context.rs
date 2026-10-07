@@ -8,9 +8,9 @@ use std::{
 };
 
 use metal::{
-    MTL4CommandQueue, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCaptureTarget,
-    MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary,
-    MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
+    MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor, MTLCaptureDescriptor, MTLCaptureDestination,
+    MTLCaptureManager, MTLCaptureTarget, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLFunctionConstantValues,
+    MTLGPUFamily, MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
@@ -27,7 +27,7 @@ use crate::backends::{
         decompression,
         error::MetalError,
         heaps::MetalHeaps,
-        metal_extensions::{DeviceExt, LibraryPipelineExtensions},
+        metal_extensions::{CompilerPipelineExtensions, DeviceExt},
     },
 };
 
@@ -41,6 +41,7 @@ pub struct MetalContext {
     pub device_name: String,
     pub(super) residency_set: Arc<Mutex<Retained<ProtocolObject<dyn MTLResidencySet>>>>,
     pub command_queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
+    compiler: Retained<ProtocolObject<dyn MTL4Compiler>>,
     pub(super) block_allocator: Arc<BlockAllocator<MetalDenseBuffer>>,
     pub(super) heaps: Arc<MetalHeaps>,
     pub(super) peak_memory_usage: Arc<AtomicUsize>,
@@ -91,8 +92,8 @@ impl MetalContext {
             return Ok(pipeline.clone());
         }
 
-        let pipeline =
-            self.library(library_data, library_compressed)?.compute_pipeline_state(function_name, constants)?;
+        let library = self.library(library_data, library_compressed)?;
+        let pipeline = self.compiler.compute_pipeline_state(&library, function_name, constants)?;
         self.pipeline_cache.lock().insert(cache_key.to_string(), pipeline.clone());
 
         Ok(pipeline)
@@ -120,6 +121,10 @@ impl Context for MetalContext {
         let command_queue = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueue)?;
         command_queue.add_residency_set(&residency_set);
 
+        let compiler = device
+            .new_compiler_with_descriptor(&MTL4CompilerDescriptor::new())
+            .map_err(|error| MetalError::CannotCreateCompiler(error.to_string()))?;
+
         let block_allocator = BlockAllocator::new(16 * 1024);
 
         let heaps = MetalHeaps::new(device.clone(), peak_memory_usage.clone(), MTLSparsePageSize::KB256, 256);
@@ -132,6 +137,7 @@ impl Context for MetalContext {
             device_name,
             residency_set: Arc::new(Mutex::new(residency_set)),
             command_queue,
+            compiler,
             block_allocator,
             heaps,
             peak_memory_usage,

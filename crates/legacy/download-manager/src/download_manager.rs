@@ -36,7 +36,7 @@ impl DownloadManager {
             DownloadManagerType::Universal => Arc::new(UniversalBackend::new(runtime_handle)),
         };
         #[cfg(target_vendor = "apple")]
-        let bundle_id = crate::backends::AppleBackend::bundle_identifier();
+        let bundle_id = crate::backends::AppleBackend::background_bundle_identifier();
         #[cfg(not(target_vendor = "apple"))]
         let bundle_id = String::new();
         let manager_id = if bundle_id.is_empty() {
