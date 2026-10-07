@@ -1,10 +1,7 @@
 use std::{
-    mem::take,
     sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
-
-use parking_lot::Mutex;
 
 use crate::{
     backends::{
@@ -17,6 +14,7 @@ use crate::{
             Cpu,
             buffer::{CpuBufferExt, dense::CpuBuffer},
             context::CpuContext,
+            cpu_command::CpuCommand,
             error::CpuError,
         },
     },
@@ -35,12 +33,11 @@ impl CommandBuffer for CpuCommandBuffer {
 }
 
 pub struct CpuCommandBufferEncoding {
-    commands: Vec<Box<dyn FnOnce() + Send>>,
+    commands: Vec<CpuCommand>,
     constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
     timestamp_spans: Option<TimestampSpanRecorder>,
-    timestamp_instants: Arc<Mutex<Vec<Instant>>>,
 }
 
 impl CpuCommandBufferEncoding {
@@ -55,7 +52,6 @@ impl CpuCommandBufferEncoding {
             allocation_pool,
             context,
             timestamp_spans: None,
-            timestamp_instants: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -63,12 +59,11 @@ impl CpuCommandBufferEncoding {
         &mut self,
         command: impl FnOnce() + Send + 'static,
     ) {
-        self.commands.push(Box::new(command))
+        self.commands.push(CpuCommand::Run(Box::new(command)))
     }
 
     fn write_timestamp(&mut self) {
-        let instants = self.timestamp_instants.clone();
-        self.push_command(move || instants.lock().push(Instant::now()));
+        self.commands.push(CpuCommand::Timestamp);
     }
 }
 
@@ -161,18 +156,16 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
             allocation_pool: self.allocation_pool,
             context: self.context,
             timestamp_spans: self.timestamp_spans,
-            timestamp_instants: self.timestamp_instants,
         }
     }
 }
 
 pub struct CpuCommandBufferExecutable {
-    commands: Vec<Box<dyn FnOnce() + Send>>,
+    commands: Vec<CpuCommand>,
     constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
     timestamp_spans: Option<TimestampSpanRecorder>,
-    timestamp_instants: Arc<Mutex<Vec<Instant>>>,
 }
 
 impl CommandBufferExecutable for CpuCommandBufferExecutable {
@@ -187,17 +180,23 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
             .send(Box::new(move || {
                 let start = Instant::now();
 
-                for command in self.commands {
-                    command()
-                }
+                let instants = self
+                    .commands
+                    .into_iter()
+                    .filter_map(|command| match command {
+                        CpuCommand::Run(run) => {
+                            run();
+                            None
+                        },
+                        CpuCommand::Timestamp => Some(Instant::now()),
+                    })
+                    .collect::<Box<[Instant]>>();
 
                 let gpu_execution_time = start.elapsed();
 
                 let completed = CpuCommandBufferCompleted {
                     gpu_execution_time,
-                    timestamps: self.timestamp_spans.map_or_else(Box::default, |spans| {
-                        spans.into_spans(&take(&mut *self.timestamp_instants.lock()))
-                    }),
+                    timestamps: self.timestamp_spans.map_or_else(Box::default, |spans| spans.into_spans(&instants)),
                     _allocation_pool: self.allocation_pool,
                 };
 
