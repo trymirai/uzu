@@ -159,19 +159,15 @@ impl<B: Backend> TransformerLayerConv<B> {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let name = format!("{parent}/post convolution");
-        command_buffer.sample_start_timestamp(&name);
-        let output = self.post_conv.encode(
+        self.post_conv.encode(
             input,
             coefficients,
             2 * self.coefficient_count,
             self.coefficient_count,
             sequence_length,
-            &name,
+            parent,
             command_buffer,
-        )?;
-        command_buffer.sample_end_timestamp(&name);
-        Ok(output)
+        )
     }
 }
 

@@ -171,11 +171,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        let name = format!("{parent}/accept");
-        command_buffer.sample_start_timestamp(&name);
-        self.dflash.encode_accept(state, target_features, accepted_indices, &name, command_buffer)?;
-        command_buffer.sample_end_timestamp(&name);
-        Ok(())
+        self.dflash.encode_accept(state, target_features, accepted_indices, parent, command_buffer)
     }
 
     pub fn make_shape(

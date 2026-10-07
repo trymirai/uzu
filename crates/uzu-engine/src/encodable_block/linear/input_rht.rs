@@ -98,14 +98,12 @@ impl<B: Backend> InputRht<B> {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
-        let name = format!("{parent}/prepare in place");
-        command_buffer.sample_start_timestamp(&name);
         if format == ActivationFormat::Int8 && self.quantizer.is_some() {
-            let output = self.prepare(&input, batch_dim, format, &name, command_buffer)?;
-            command_buffer.sample_end_timestamp(&name);
-            return Ok(output);
+            return self.prepare(&input, batch_dim, format, parent, command_buffer);
         }
 
+        let name = format!("{parent}/prepare");
+        command_buffer.sample_start_timestamp(&name);
         let input_dim = self.input_dim();
         self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer);
         command_buffer.sample_end_timestamp(&name);

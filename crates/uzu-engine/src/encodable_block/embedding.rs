@@ -158,9 +158,7 @@ impl<B: Backend> Embedding<B> {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
-        let name = format!("{parent}/embedding lookup");
-        command_buffer.push_debug_group(&name);
-        command_buffer.sample_start_timestamp(&name);
+        command_buffer.push_debug_group(&format!("{parent}/embedding lookup"));
 
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
@@ -176,9 +174,8 @@ impl<B: Backend> Embedding<B> {
                 ..
             } => input_table,
         };
-        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, &name, command_buffer);
+        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, parent, command_buffer);
 
-        command_buffer.sample_end_timestamp(&name);
         command_buffer.pop_debug_group();
 
         Ok(output)

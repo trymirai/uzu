@@ -14,7 +14,7 @@ pub use untied_readout::UntiedReadout;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferRef, CommandBuffer,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationQuantization,
@@ -45,18 +45,14 @@ pub trait Linear<B: Backend>: Send + Sync {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let name = format!("{parent}/input");
-        command_buffer.sample_start_timestamp(&name);
-        let output = match input {
-            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, &name, command_buffer)?,
+        match input {
+            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, parent, command_buffer),
             LinearInput::Int8Symmetric {
                 ..
             } => {
                 panic!("linear does not support pre-quantized activations")
             },
-        };
-        command_buffer.sample_end_timestamp(&name);
-        Ok(output)
+        }
     }
 
     fn select_activation_format(

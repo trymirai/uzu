@@ -127,11 +127,7 @@ impl<B: Backend> QKVNorm<B> {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        let name = format!("{parent}/qkv norm encode");
-        command_buffer.sample_start_timestamp(&name);
-        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, &name, command_buffer)?;
-        command_buffer.sample_end_timestamp(&name);
-        Ok(())
+        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, parent, command_buffer)
     }
 
     pub fn encode_key_value(
@@ -141,11 +137,7 @@ impl<B: Backend> QKVNorm<B> {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        let name = format!("{parent}/key value");
-        command_buffer.sample_start_timestamp(&name);
-        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, &name, command_buffer)?;
-        command_buffer.sample_end_timestamp(&name);
-        Ok(())
+        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, parent, command_buffer)
     }
 
     fn encode_packed(

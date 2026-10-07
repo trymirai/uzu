@@ -263,7 +263,7 @@ impl<B: Backend> Transformer<B> {
         let precalculated_ropes = self
             .ropes
             .iter()
-            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, &name, command_buffer))
+            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
             .collect::<Result<Box<[_]>, B::Error>>()?;
 
         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {

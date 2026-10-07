@@ -53,11 +53,11 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
 
     pub fn encode_for_linear(
         &self,
+        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         fused_up: impl BufferRef<Backend = B>,
         batch_dim: u32,
         act_format: ActivationFormat,
-        parent: &str,
     ) -> Result<LinearInput<B>, B::Error> {
         let name = format!("{parent}/gate act mul");
         command_buffer.push_debug_group(&name);

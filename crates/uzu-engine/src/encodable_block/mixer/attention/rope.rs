@@ -13,11 +13,8 @@ impl<B: Backend> PrecalculatedRoPE<B> {
     pub fn precalculate(
         rope_config: &AnyRoPEConfig,
         token_positions: &[u32],
-        parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Self, B::Error> {
-        let name = format!("{parent}/precalculate");
-        command_buffer.sample_start_timestamp(&name);
         let head_dim = *rope_config.head_dim();
         assert!(head_dim > 0 && head_dim.is_multiple_of(2), "RoPE head_dim must be positive and even");
         let half_dim = head_dim / 2;
@@ -104,12 +101,10 @@ impl<B: Backend> PrecalculatedRoPE<B> {
             }
         }
 
-        let rope = Self {
+        Ok(Self {
             cosines: command_buffer.allocate_constant_from_slice(&cosines)?,
             sines: command_buffer.allocate_constant_from_slice(&sines)?,
             dim: *rope_config.head_dim(),
-        };
-        command_buffer.sample_end_timestamp(&name);
-        Ok(rope)
+        })
     }
 }

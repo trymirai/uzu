@@ -48,9 +48,7 @@ impl<B: Backend> Attention<B> {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let name = format!("{parent}/attend");
-        command_buffer.sample_start_timestamp(&name);
-        let qkvg = self.projection.project(hidden, batch_dim.size(), &name, command_buffer)?;
+        let qkvg = self.projection.project(hidden, batch_dim.size(), parent, command_buffer)?;
 
         let mut attention_output = match state {
             Some(MaybeMut::Mut(state)) => {
@@ -63,16 +61,16 @@ impl<B: Backend> Attention<B> {
                     self.num_q_heads,
                     precalculated_rope,
                     batch_dim.size(),
-                    &name,
+                    parent,
                     command_buffer,
                 )?;
-                self.run_core(&queries, batch_dim, state, &name, command_buffer)?
+                self.run_core(&queries, batch_dim, state, parent, command_buffer)?
             },
             Some(MaybeMut::Const(state)) => {
                 // KV sharing: QKVG contains queries and an optional gate only.
                 let queries =
-                    self.prepare_queries(&qkvg, precalculated_rope, batch_dim.size(), &name, command_buffer)?;
-                self.run_core(&queries, batch_dim, state, &name, command_buffer)?
+                    self.prepare_queries(&qkvg, precalculated_rope, batch_dim.size(), parent, command_buffer)?;
+                self.run_core(&queries, batch_dim, state, parent, command_buffer)?
             },
             None => {
                 let Some(num_kv_heads) = self.num_kv_heads else {
@@ -93,7 +91,7 @@ impl<B: Backend> Attention<B> {
                     self.num_q_heads,
                     precalculated_rope,
                     batch_dim.size(),
-                    &name,
+                    parent,
                     command_buffer,
                 )?;
 
@@ -126,9 +124,7 @@ impl<B: Backend> Attention<B> {
                 command_buffer,
             );
         }
-        let output = self.out_projection.encode(attention_output, batch_dim.size(), &name, command_buffer)?;
-        command_buffer.sample_end_timestamp(&name);
-        Ok(output)
+        self.out_projection.encode(attention_output, batch_dim.size(), parent, command_buffer)
     }
 
     pub fn append_projected_kv(

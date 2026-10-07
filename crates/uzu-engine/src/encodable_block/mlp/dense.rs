@@ -42,7 +42,7 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
 
         let fused_up = self.up.encode(input, batch_dim, &name, command_buffer)?;
         let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
-        let down_input = self.gate.encode_for_linear(command_buffer, &fused_up, batch_dim, act_format, &name)?;
+        let down_input = self.gate.encode_for_linear(&name, command_buffer, &fused_up, batch_dim, act_format)?;
         let output = self.down.encode_input(down_input, batch_dim, &name, command_buffer)?;
 
         command_buffer.sample_end_timestamp(&name);

@@ -42,13 +42,10 @@ impl<B: Backend> MixerState<B> for Mamba2State<B> {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-        parent: &str,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        _parent: &str,
+        _command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), <B as Backend>::Error> {
-        let name = format!("{parent}/accept");
-        command_buffer.sample_start_timestamp(&name);
         assert!(self.suffix_length.take() == Some(*accepted_indices.last().unwrap() + 1));
-        command_buffer.sample_end_timestamp(&name);
         Ok(())
     }
 }

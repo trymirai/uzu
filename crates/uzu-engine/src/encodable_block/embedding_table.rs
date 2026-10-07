@@ -176,7 +176,7 @@ impl<B: Backend> EmbeddingTable<B> {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let name = format!("{parent}/lookup");
+        let name = format!("{parent}/embedding lookup");
         command_buffer.sample_start_timestamp(&name);
         let bindings = self.storage.lookup_bindings();
         self.lookup.encode(

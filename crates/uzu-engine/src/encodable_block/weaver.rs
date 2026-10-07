@@ -392,7 +392,8 @@ impl<B: Backend> Weaver<B> {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), WeaverEncodeError<B>> {
-        let name = format!("{parent}/step");
+        let name = format!("{parent}/weaver step");
+        command_buffer.push_debug_group(&name);
         command_buffer.sample_start_timestamp(&name);
         let tree_slot_count = shape.slot_count();
         let ancestor_stride = self.max_depth;
@@ -548,6 +549,7 @@ impl<B: Backend> Weaver<B> {
         );
 
         command_buffer.sample_end_timestamp(&name);
+        command_buffer.pop_debug_group();
         Ok(())
     }
 
@@ -613,7 +615,7 @@ impl<B: Backend> Weaver<B> {
             .map_err(WeaverEncodeError::Backend)?;
 
         let rope_positions = (0..=self.max_depth).collect::<Box<[_]>>();
-        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &rope_positions, &name, command_buffer)
+        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &rope_positions, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
 
         let prefix_kv_layers =
@@ -689,9 +691,6 @@ impl<B: Backend> Weaver<B> {
             } else {
                 shape.expand_per_round
             };
-            let step_name = format!("{name}/weaver step");
-            command_buffer.push_debug_group(&step_name);
-            command_buffer.sample_start_timestamp(&step_name);
             self.encode_step(
                 target_embedding,
                 prefix_kv_layers.iter(),
@@ -712,11 +711,9 @@ impl<B: Backend> Weaver<B> {
                 &shape,
                 batch_node_count,
                 batch_start_slot,
-                &step_name,
+                &name,
                 command_buffer,
             )?;
-            command_buffer.sample_end_timestamp(&step_name);
-            command_buffer.pop_debug_group();
             batch_start_slot += batch_node_count;
         }
 

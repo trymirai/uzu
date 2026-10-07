@@ -181,11 +181,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let name = format!("{parent}/rht linear wrapper");
-        command_buffer.sample_start_timestamp(&name);
-        let output = self.encode_input(LinearInput::FullPrecision(input), batch_dim, &name, command_buffer)?;
-        command_buffer.sample_end_timestamp(&name);
-        Ok(output)
+        self.encode_input(LinearInput::FullPrecision(input), batch_dim, parent, command_buffer)
     }
 
     fn encode_input(

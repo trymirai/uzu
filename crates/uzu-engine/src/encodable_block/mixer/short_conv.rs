@@ -45,11 +45,9 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-        parent: &str,
+        _parent: &str,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        let name = format!("{parent}/accept");
-        command_buffer.sample_start_timestamp(&name);
         let suffix_state_type =
             self.suffix_state.take().expect("Called short conv state encode accept on a state with nothing to accept");
 
@@ -60,7 +58,6 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
                 suffix_length,
             } => {
                 assert!(accepted_index == suffix_length - 1, "attempted to do a partial flat short conv state accept");
-                command_buffer.sample_end_timestamp(&name);
                 Ok(())
             },
             ShortConvStateSuffixStatus::Trie {
@@ -72,7 +69,6 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
                     conv_states.subrange(accepted_offset..accepted_offset + conv_state_size),
                     &mut self.conv_state,
                 );
-                command_buffer.sample_end_timestamp(&name);
                 Ok(())
             },
         }
