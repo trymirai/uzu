@@ -33,6 +33,8 @@ use crate::{
     utils::timestamps::{create_command_buffer, wait},
 };
 
+const SPECULATOR_PROPOSE: &str = "speculator propose";
+
 #[derive(Debug, Error)]
 pub enum DFlashTreeError<B: Backend> {
     #[error("backend error: {0}")]
@@ -235,7 +237,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let root_position = state.context_length();
 
         let mut command_buffer =
-            create_command_buffer::<B>(&self.context, "speculator propose", &allocation_pool, timestamps)
+            create_command_buffer::<B>(&self.context, SPECULATOR_PROPOSE, &allocation_pool, timestamps)
                 .map_err(DFlashTreeError::Backend)?;
 
         let nodes = match shape.construction_method {
@@ -261,7 +263,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     target_output_token,
                     target_embedding,
                     dflash_depth,
-                    "speculator propose",
+                    SPECULATOR_PROPOSE,
                     &mut command_buffer,
                 )?;
                 let topology_nodes = (0..chain_length)
@@ -283,7 +285,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         &SamplingMethod::Greedy,
                         &batch_topology,
                         (0..chain_length).into(),
-                        "speculator propose",
+                        SPECULATOR_PROPOSE,
                         &mut command_buffer,
                     )
                     .map_err(DFlashTreeError::Backend)?;
@@ -339,7 +341,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     target_output_token,
                     target_embedding,
                     dflash_depth,
-                    "speculator propose",
+                    SPECULATOR_PROPOSE,
                     &mut command_buffer,
                 )?;
                 let depth_seeds = (0..weaver.max_depth())
@@ -361,7 +363,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         expand_width,
                         prune_noise_scale: prune_sigma.map(f32::recip),
                     },
-                    "speculator propose",
+                    SPECULATOR_PROPOSE,
                     &mut command_buffer,
                 )?;
                 let completed =
