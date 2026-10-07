@@ -20,7 +20,7 @@ use crate::backends::{
         CommandBufferExecutable, CommandBufferPending, CommandBufferTimestamps, Context, TimestampSlot, TimestampSpan,
         TimestampSpanRecorder, allocator::bump::BumpAllocator,
     },
-    metal::{Metal, MetalContext, buffer::MetalBufferExt, error::MetalError, preceding_work::PrecedingWork},
+    metal::{Metal, MetalContext, buffer::MetalBufferExt, error::MetalError},
 };
 
 const COUNTER_HEAP_CAPACITY: usize = 4096;
@@ -53,8 +53,6 @@ pub struct MetalCommandBufferEncoding {
     pub(super) context: Arc<MetalContext>,
     counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
     timestamp_spans: Option<TimestampSpanRecorder>,
-    preceding_works: Vec<PrecedingWork>,
-    preceding_work: PrecedingWork,
 }
 
 impl MetalCommandBufferEncoding {
@@ -117,20 +115,10 @@ impl MetalCommandBufferEncoding {
             context,
             counter_heaps,
             timestamp_spans: None,
-            preceding_works: Vec::new(),
-            preceding_work: PrecedingWork::NoKernel,
         })
     }
 
     pub(super) fn access(
-        &mut self,
-        accesses: &[Access],
-    ) {
-        self.preceding_work = PrecedingWork::Kernel;
-        self.order_accesses(accesses);
-    }
-
-    fn order_accesses(
         &mut self,
         accesses: &[Access],
     ) {
@@ -176,7 +164,6 @@ impl MetalCommandBufferEncoding {
             &self.counter_heaps[slot / COUNTER_HEAP_CAPACITY],
             slot % COUNTER_HEAP_CAPACITY,
         );
-        self.preceding_works.push(std::mem::replace(&mut self.preceding_work, PrecedingWork::NoKernel));
     }
 }
 
@@ -210,7 +197,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         let (dst, dst_range) = dst.parts();
         assert_eq!(src_range.iter().len(), dst_range.iter().len());
 
-        self.order_accesses(&[
+        self.access(&[
             Access {
                 range: src.gpu_address_subrange(src_range),
                 write: false,
@@ -241,7 +228,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         assert!(range.end > range.start);
         assert!(range.start.is_multiple_of(4) && range.end.is_multiple_of(4));
 
-        self.order_accesses(&[Access {
+        self.access(&[Access {
             range: dst.gpu_address_subrange(range),
             write: true,
         }]);
@@ -294,7 +281,6 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
             context: self.context.clone(),
             counter_heaps: self.counter_heaps.clone(),
             timestamp_spans: self.timestamp_spans.take().map(TimestampSpanRecorder::finish),
-            preceding_works: std::mem::take(&mut self.preceding_works).into_boxed_slice(),
         }
     }
 }
@@ -319,7 +305,6 @@ pub struct MetalCommandBufferExecutable {
     context: Arc<MetalContext>,
     counter_heaps: Vec<Retained<ProtocolObject<dyn MTL4CounterHeap>>>,
     timestamp_spans: Option<Box<[TimestampSpan<TimestampSlot>]>>,
-    preceding_works: Box<[PrecedingWork]>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
@@ -342,7 +327,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         let command_buffer = self.command_buffer.clone();
         let context_clone = self.context.clone();
         let counter_heaps = self.counter_heaps;
-        let preceding_works = self.preceding_works;
+        let slot_count = self.timestamp_spans.as_deref().map_or(0, |spans| 2 * spans.len());
 
         let constant_allocator = self.constant_allocator;
         let allocation_pool = self.allocation_pool.clone();
@@ -350,7 +335,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
             let message = if let Some(error) = feedback.error() {
                 Err(MetalError::CommandBufferExecution(error.to_string()))
             } else {
-                resolve_timestamps(&context_clone.device, &counter_heaps, &preceding_works).map(|instants| {
+                resolve_timestamps(&context_clone.device, &counter_heaps, slot_count).map(|instants| {
                     (Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()), instants)
                 })
             };
@@ -383,9 +368,8 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 fn resolve_timestamps(
     device: &ProtocolObject<dyn MTLDevice>,
     counter_heaps: &[Retained<ProtocolObject<dyn MTL4CounterHeap>>],
-    preceding_works: &[PrecedingWork],
+    count: usize,
 ) -> Result<Vec<Instant>, MetalError> {
-    let count = preceding_works.len();
     let mut ticks = Vec::with_capacity(count);
     for (index, counter_heap) in counter_heaps.iter().enumerate().take(count.div_ceil(COUNTER_HEAP_CAPACITY)) {
         let slots = 0..(count - index * COUNTER_HEAP_CAPACITY).min(COUNTER_HEAP_CAPACITY);
@@ -404,13 +388,11 @@ fn resolve_timestamps(
     };
     ticks
         .iter()
-        .zip(preceding_works)
         .enumerate()
-        .scan(None, |previous_timestamp, (slot, (&slot_ticks, &preceding_work))| {
-            let timestamp = match (slot_ticks, preceding_work, *previous_timestamp) {
-                (0, PrecedingWork::NoKernel, Some(previous_timestamp)) => Ok(previous_timestamp),
-                (0, ..) => Err(MetalError::UnwrittenTimestamp(slot)),
-                (slot_ticks, ..) => Ok(to_instant(slot_ticks)),
+        .scan(None, |previous_timestamp, (slot, &slot_ticks)| {
+            let timestamp = match slot_ticks {
+                0 => previous_timestamp.ok_or(MetalError::UnwrittenTimestamp(slot)),
+                slot_ticks => Ok(to_instant(slot_ticks)),
             };
             *previous_timestamp = timestamp.as_ref().ok().copied();
             Some(timestamp)

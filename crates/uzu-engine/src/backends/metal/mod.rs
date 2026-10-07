@@ -7,7 +7,6 @@ mod error;
 mod heaps;
 mod kernel;
 mod metal_extensions;
-mod preceding_work;
 
 pub use backend::Metal;
 pub use context::MetalContext; // TODO: This should be removed
