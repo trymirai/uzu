@@ -172,8 +172,11 @@ def read_python_models() -> dict[str, dict[str, Field]]:
         fields = {}
         for field_name, field in model.model_fields.items():
             path = f"{name}.{field_name}"
-            # max_tokens is unsigned in all native models.
-            expected_metadata = [Ge(0)] if path == "BenchRequest.max_tokens" else []
+            # These request fields are unsigned in all native models.
+            unsigned_request_fields = {
+                "BenchRequest.max_tokens", "BenchRequest.speculative_depth", "BenchRequest.num_runs"
+            }
+            expected_metadata = [Ge(0)] if path in unsigned_request_fields else []
             assert field.metadata == expected_metadata, (
                 f"{path}: constraints differ from native counterparts: {field.metadata}"
             )

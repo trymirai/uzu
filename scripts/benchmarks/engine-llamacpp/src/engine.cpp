@@ -385,6 +385,9 @@ std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) con
     if (speculative_depth > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
         throw std::invalid_argument("speculative_depth exceeds the supported range");
     }
+    if (speculative_depth > 0 && !this->has_mtp && !this->draft_model) {
+        throw std::invalid_argument("Positive speculative_depth requires MTP weights or a draft model");
+    }
 
     const std::vector<llama_token> tokens = tokenize(request);
     std::optional<size_t> max_tokens = request.max_tokens;

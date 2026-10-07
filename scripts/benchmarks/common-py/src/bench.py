@@ -23,9 +23,9 @@ class BenchRequest(BaseModel):
     tool_choice: JsonValue | None = Field(default=None, exclude_if=lambda value: value is None)
 
     max_tokens: int | None = Field(default=None, ge=0)
-    speculative_depth: int | None = None
+    speculative_depth: int | None = Field(default=None, ge=0)
     sampling: BenchSampling | None = None
-    num_runs: int | None = None
+    num_runs: int | None = Field(default=None, ge=0)
 
     @property
     def prompt(self) -> str | list[ChatMessage]:

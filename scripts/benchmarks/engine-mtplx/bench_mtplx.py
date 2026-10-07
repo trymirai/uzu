@@ -59,7 +59,10 @@ class MTPLXEngine(InferenceEngine):
             runtime_env_overrides=runtime_env,
         )
 
-        depth = metadata.get("mtp_depth_default")
+        depth: int | None = metadata.get("recommended_mtp_depth")
+        if depth is None:
+            depth = metadata.get("mtp_depth_default")
+
         return int(depth if depth is not None else 3)
 
     def execute(self, request: BenchRequest) -> list[BenchResponse]:
@@ -120,9 +123,9 @@ class MTPLXEngine(InferenceEngine):
             sampler=sampler,
             stop_token_ids=stop_token_ids,
         )
-        return [self._run(generate) for _ in range(num_runs)]
+        return [self._run(generate, speculative=depth > 0) for _ in range(num_runs)]
 
-    def _run(self, generate: Callable[..., GenerationOutput]) -> BenchResponse:
+    def _run(self, generate: Callable[..., GenerationOutput], *, speculative: bool) -> BenchResponse:
         # prepare variables
         time_first_token: float = -1.0
         mem_counters_max: MemoryCounters = get_memory_counters()
@@ -151,9 +154,13 @@ class MTPLXEngine(InferenceEngine):
             time_first_token = time_end
 
         # collect metrics
-        forward_passes = int(output.stats.verify_calls)
         decode_tokens = max(0, output.stats.generated_tokens - 1)
-        tokens_per_forward_pass = decode_tokens / forward_passes if forward_passes else 0.0
+        if speculative:
+            forward_passes = int(output.stats.verify_calls)
+            tokens_per_forward_pass = decode_tokens / forward_passes if forward_passes else 0.0
+        else:
+            # AR does not record verify_calls and emits one token per target forward.
+            tokens_per_forward_pass = float(output.stats.generated_tokens > 0)
         decode_duration = time_end - time_first_token
 
         return BenchResponse(
