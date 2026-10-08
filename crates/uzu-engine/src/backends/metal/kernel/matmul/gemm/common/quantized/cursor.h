@@ -38,15 +38,21 @@ load_int8_tile(const device int8_t* src, const int row_stride, const short simdg
   Fragment tile;
   if constexpr (CODES_GROUPED_BY_NIBBLE) {
     using Ops = typename Fragment::FragmentOpsType;
+    if (!ALIGNED && simdgroup_limit <= 0) {
+      tile.clear();
+      return tile;
+    }
     const short2 position = Ops::get_position(simd_lane_id);
-    const device int8_t* base = src + int(position.y) * row_stride + int(get_pack_factor<W4_BITS>()) * int(position.x);
-    const short row_limit = simdgroup_limit - position.y;
+    const device int8_t* base = src + int(get_pack_factor<W4_BITS>()) * int(position.x);
     for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
-      vec<uint, Fragment::COL_FRAGMENTS> packed_chunk(0u);
-      if (ALIGNED || row_offset < row_limit) {
-        packed_chunk =
-            *reinterpret_cast<const device vec<uint, Fragment::COL_FRAGMENTS>*>(base + int(row_offset) * row_stride);
+      // Rows past the tile's live rows re-read the last live row (their scales are zero and they are never stored),
+      // so every lane loads unconditionally.
+      short row = position.y + row_offset;
+      if (!ALIGNED) {
+        row = min(row, short(simdgroup_limit - 1));
       }
+      const vec<uint, Fragment::COL_FRAGMENTS> packed_chunk =
+          *reinterpret_cast<const device vec<uint, Fragment::COL_FRAGMENTS>*>(base + int(row) * row_stride);
       METAL_PRAGMA_UNROLL
       for (ushort fragment_column = 0; fragment_column < Fragment::COL_FRAGMENTS; ++fragment_column) {
         reinterpret_cast<thread uint*>(&tile.fragment_at(fragment_row, fragment_column))[row_slot] =

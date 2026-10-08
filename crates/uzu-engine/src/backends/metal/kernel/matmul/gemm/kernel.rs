@@ -322,9 +322,12 @@ impl GemmKernel {
                 plan,
                 output_transform,
                 output_bias,
+                rht_factors.filter(|_| bias_after_rht.is_none()),
                 command_buffer,
             )?;
-            if let Some(factors) = rht_factors {
+            if let Some(factors) = rht_factors
+                && bias_after_rht.is_some()
+            {
                 output_work.apply(d.reborrow(), factors, bias_after_rht, m, n, command_buffer);
             }
             return Ok(());
@@ -410,6 +413,7 @@ impl GemmKernel {
         plan: GemmPlan,
         output_transform: GemmDTransform,
         output_bias: Option<impl BufferRef<Backend = Metal>>,
+        rht_factors: Option<impl BufferRef<Backend = Metal>>,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let (m, n, k) = (shape.m, shape.n, shape.k);
@@ -487,8 +491,11 @@ impl GemmKernel {
 
         debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
         let group_count = ((elem as u32) / 4).div_ceil(256);
-        let reduce_transform =
+        let mut reduce_transform =
             output_transform.intersection(GemmDTransform::SCALE | GemmDTransform::ACCUMULATE | GemmDTransform::BIAS);
+        if rht_factors.is_some() {
+            reduce_transform |= GemmDTransform::RHT;
+        }
         let bias_arg = if reduce_transform.contains(GemmDTransform::BIAS) {
             output_bias
         } else {
@@ -501,7 +508,18 @@ impl GemmKernel {
         };
         let reduce =
             self.get_or_create_split_k_reduce(command_buffer.context(), reduce_transform, partial_data_type)?;
-        reduce.encode(&temp, d.reborrow(), bias_arg, elem as u32, split_k, group_count, n, scale_arg, command_buffer);
+        reduce.encode(
+            &temp,
+            d.reborrow(),
+            bias_arg,
+            rht_factors,
+            elem as u32,
+            split_k,
+            group_count,
+            n,
+            scale_arg,
+            command_buffer,
+        );
 
         Ok(())
     }

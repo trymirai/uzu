@@ -1,6 +1,7 @@
 #include "../../common/dsl.h"
 #include "../../common/thread_context.h"
 #include "../generated/gemm.h"
+#include "../../hadamard_transform/hadamard_transform.h"
 
 using namespace metal;
 using namespace uzu::gemm;
@@ -14,6 +15,8 @@ KERNEL(GemmSplitKReduce)(
     device T* output,
     const device T* output_bias
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
+    const device int32_t* rht_factors
+        OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
     const constant uint& element_count,
     const constant uint& partition_count,
     const constant uint& threadgroup_count,
@@ -54,6 +57,21 @@ KERNEL(GemmSplitKReduce)(
   if (output_transform.contains(GemmDTransform::BIAS)) {
     const uint column = (vector_index * 4u) % column_count;
     accumulator += float4(*reinterpret_cast<const device vec<T, 4>*>(output_bias + column));
+  }
+
+  if (output_transform.contains(GemmDTransform::RHT)) {
+    // The output RHT of ActivationTransform, from the same bf16 output and in the same stage order, so the result is
+    // bitwise identical. A 32-wide block is 8 lanes x 4 values: element bits 0-1 sit in registers, bits 2-4 in lanes.
+    float4 value = float4(vec<T, 4>(accumulator));
+    value = float4(value.y + value.x, value.x - value.y, value.w + value.z, value.z - value.w);
+    value = float4(value.z + value.x, value.w + value.y, value.x - value.z, value.y - value.w);
+    const ushort lane = thread_context.simd_lane_id;
+    for (ushort stride = 1; stride < HADAMARD_TRANSFORM_BLOCK_SIZE / 4; stride <<= 1) {
+      const float4 partner = simd_shuffle_xor(value, stride);
+      value = (lane & stride) ? (partner - value) : (partner + value);
+    }
+    const int4 factors = *reinterpret_cast<const device int4*>(rht_factors + (vector_index * 4u) % column_count);
+    accumulator = value / sqrt(static_cast<float>(HADAMARD_TRANSFORM_BLOCK_SIZE)) * float4(factors);
   }
 
   output_vectors[vector_index] = vec<T, 4>(accumulator);
