@@ -31,6 +31,23 @@ impl<B: Backend> InputTransform<B> {
             Self::Trellis(rotation) => rotation.prepare(&input, batch_dim, command_buffer),
         }
     }
+
+    // Leaves `input` intact for the next group.
+    pub(super) fn prepare(
+        &self,
+        input: &B::ScratchBuffer,
+        batch_dim: u32,
+        linear: &LinearMatmul<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<LinearInput<B>, B::Error> {
+        match self {
+            Self::Rht(rht) => {
+                let format = linear.select_activation_format(batch_dim, command_buffer.context());
+                rht.prepare(input, batch_dim, format, command_buffer)
+            },
+            Self::Trellis(rotation) => rotation.prepare(input, batch_dim, command_buffer),
+        }
+    }
 }
 
 pub(super) struct TrellisRotation<B: Backend> {

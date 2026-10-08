@@ -44,7 +44,6 @@ struct Trellis<B: Backend> {
 }
 
 pub struct WeightMatrix<B: Backend> {
-    output_dim: u32,
     encoding: WeightEncoding<B>,
 }
 
@@ -52,8 +51,6 @@ enum WeightEncoding<B: Backend> {
     Dense(B::GlobalBuffer),
     Quantized(Quantized<B>),
     Trellis(Trellis<B>),
-    /// Gather and output ops (bias, Hadamard) support a single block only.
-    RowStack(Box<[WeightMatrix<B>]>),
 }
 
 impl<B: Backend> WeightMatrix<B> {
@@ -71,7 +68,6 @@ impl<B: Backend> WeightMatrix<B> {
                 let (rows, columns) = physical_shape(&required_layout, output_dim, input_dim);
                 let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_buffer()?;
                 Ok(Self {
-                    output_dim,
                     encoding: WeightEncoding::Dense(values),
                 })
             },
@@ -108,28 +104,6 @@ impl<B: Backend> WeightMatrix<B> {
             AnyWeightMatrixSpec::QtipGaussianSpec(spec) => {
                 load_trellis(tree, &spec, required_layout, output_dim, input_dim)
             },
-            AnyWeightMatrixSpec::RowStackSpec(spec) => {
-                let parts_tree = tree.subtree("parts");
-                let parts = spec
-                    .parts
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (rows, spec))| {
-                        Self::load(
-                            &parts_tree.subtree(&index.to_string()),
-                            spec,
-                            required_layout.clone(),
-                            rows,
-                            input_dim,
-                            data_type,
-                        )
-                    })
-                    .collect::<Result<_, _>>()?;
-                Ok(Self {
-                    output_dim,
-                    encoding: WeightEncoding::RowStack(parts),
-                })
-            },
             spec => Err(WeightMatrixError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
     }
@@ -138,7 +112,7 @@ impl<B: Backend> WeightMatrix<B> {
         self.quantized().map(|quantized| quantized.info)
     }
 
-    pub fn single_matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
+    pub fn matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
         match &self.encoding {
             WeightEncoding::Dense(values) => MatmulB::FullPrecision {
                 b: values,
@@ -158,17 +132,7 @@ impl<B: Backend> WeightMatrix<B> {
                 codebook: trellis.codebook,
                 format: trellis.format,
             },
-            WeightEncoding::RowStack(_) => unreachable!("a row stack has one operand per part"),
         }
-    }
-
-    /// (output rows, operand) per row-stack part; one block for a single matrix.
-    pub fn blocks(&self) -> impl ExactSizeIterator<Item = (u32, MatmulB<&B::GlobalBuffer>)> {
-        let parts = match &self.encoding {
-            WeightEncoding::RowStack(parts) => parts,
-            _ => std::slice::from_ref(self),
-        };
-        parts.iter().map(|part| (part.output_dim, part.single_matmul_b()))
     }
 
     pub fn try_prepare_a8_storage(&mut self) -> bool {
@@ -256,7 +220,6 @@ fn load_quantized<B: Backend>(
         QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
     };
     Ok(WeightMatrix {
-        output_dim,
         encoding: WeightEncoding::Quantized(Quantized {
             codes: values,
             scales,
@@ -300,7 +263,6 @@ fn load_trellis<B: Backend>(
         .try_into()
         .expect("validated codebook has five values");
     Ok(WeightMatrix {
-        output_dim,
         encoding: WeightEncoding::Trellis(Trellis {
             codes,
             row_scales,

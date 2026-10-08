@@ -23,7 +23,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{HybridSpec, IncoherenceKind, IncoherenceProcessingMode},
     },
     data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
@@ -163,38 +163,34 @@ impl<B: Backend> dyn Linear<B> {
                 )?;
                 Ok(Box::new(block))
             },
-            spec @ (AnyWeightMatrixSpec::QtipGaussianSpec(_) | AnyWeightMatrixSpec::RowStackSpec(_)) => {
-                Ok(Box::new(TransformedLinear::new_trellis(
-                    context,
-                    spec,
-                    input_dimension,
-                    output_dimension_sum,
-                    weights_data_type,
-                    input_data_type,
-                    output_data_type,
-                    &weights_tree,
-                )?))
-            },
-            AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+            spec @ (AnyWeightMatrixSpec::RowStackSpec(_)
+            | AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 adapter_spec: None,
-                incoherence_block_size: Some(block_size),
+                incoherence_processing_mode: IncoherenceProcessingMode::Input,
+                ..
+            })
+            | AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                adapter_spec: None,
+                incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
                 incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
                 ..
-            }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(TransformedLinear::new(
+            })) => Ok(Box::new(TransformedLinear::new_stacked(
                 context,
+                spec,
                 input_dimension,
                 output_dimension_sum,
-                has_biases,
                 weights_data_type,
                 input_data_type,
                 output_data_type,
-                parameter_tree,
+                weights_tree,
+                has_biases.then_some(parameter_tree),
             )?)),
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
                 adapter_spec: Some(adapter_spec),
                 incoherence_block_size,
                 incoherence_processing_mode,
+                incoherence_kind: IncoherenceKind::Hadamard,
                 ..
             }) => {
                 assert!(!has_biases, "QLoRA linear with biases is not supported");
