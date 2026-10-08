@@ -7,6 +7,7 @@ mod gated_act_mul_test;
 mod input_embedding_lookup_case;
 mod input_embedding_lookup_test;
 mod kernel_fixture;
+mod kv_cache_update_test;
 mod logit_transform_test;
 mod normalization_case;
 mod normalization_test;

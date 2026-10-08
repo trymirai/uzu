@@ -7,13 +7,14 @@ use anyhow::{Context, bail, ensure};
 use itertools::Itertools;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::{ToTokens, format_ident, quote};
+use shader_slang::ScalarType;
 use syn::{Expr, GenericArgument, Ident, PathArguments, Type, parse_quote};
 
 use super::{Error, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, wrapper::specialization_name};
 use crate::common::{
     enum_paths::{EnumPaths, GpuTypeKind},
     expr_rewrite::rewrite_paths_with,
-    gpu_types::{GpuType, GpuTypes},
+    gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes},
     kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
 };
 
@@ -160,8 +161,13 @@ pub fn bindgen(
 
     let mut strides = BTreeSet::new();
     for (_, abi) in variants {
-        for (pointee, stride, _) in abi.fields.iter().filter_map(|field| field.pointee.as_ref()) {
-            strides.insert((data_type(pointee)?.to_string(), *stride));
+        for field in &abi.fields {
+            let buffer = kernel.arguments.iter().any(|argument| {
+                argument.name.as_ref() == field.name && matches!(argument.ty, KernelArgumentType::Buffer(_))
+            });
+            if let (true, Some((pointee, stride, ..))) = (buffer, &field.pointee) {
+                strides.insert((data_type(pointee)?.to_string(), *stride));
+            }
         }
     }
     let stride_checks = strides.iter().map(|(data_type, stride)| {
@@ -177,6 +183,7 @@ pub fn bindgen(
     let mut packing = Vec::new();
     let mut reads = Vec::new();
     let mut writes = Vec::new();
+    let mut layout_checks = Vec::new();
     for argument in &kernel.arguments {
         let name = format_ident!("{}", argument.name.as_ref());
         // The pipeline-selecting argument has no push-constant field.
@@ -193,8 +200,8 @@ pub fn bindgen(
             .find(|field| field.name == argument.name.as_ref())
             .with_context(|| format!("{kernel_name}: no reflected field for '{name}'"))?;
         let (start, end) = (field.offset, field.offset + field.size);
-        let (argument_type, bytes) = match &argument.ty {
-            KernelArgumentType::Buffer(access) => {
+        let (argument_type, bytes) = match (&argument.ty, &field.pointee) {
+            (KernelArgumentType::Buffer(access), _) => {
                 ensure!(field.size == 8 && field.pointee.is_some(), "{kernel_name}: '{name}' is not a device address");
                 let declared = if argument.conditional {
                     quote! { #name.clone() }
@@ -212,7 +219,90 @@ pub fn bindgen(
                 };
                 (quote! { (&std::sync::Arc<VkBuffer>, std::ops::Range<u64>) }, quote! { #address.to_ne_bytes() })
             },
-            KernelArgumentType::Constant(text) => {
+            // A `[[HostSlice]]`: the slice is copied into memory of the command buffer once the dispatch is known to
+            // record, and the shader reads it through its address; an empty slice passes address 0 and reads nothing.
+            (KernelArgumentType::Constant(text), Some((pointee, stride, alignment, fields))) => {
+                let path = enum_paths.full_path_for(pointee).unwrap_or_default();
+                ensure!(
+                    field.size == 8 && !argument.conditional && text.as_ref() == format!("&[{path}]"),
+                    "{kernel_name}: '{name}' of type '{text}' is not a device address of a canonical '{pointee}' slice"
+                );
+                ensure!(
+                    variants.iter().all(|(_, other)| other.fields.iter().any(|other| other == field)),
+                    "{kernel_name}: variants differ in the layout of '{name}'"
+                );
+                let canonical = gpu_types
+                    .files
+                    .iter()
+                    .flat_map(|file| &file.types)
+                    .find_map(|candidate| match candidate {
+                        GpuType::Struct(candidate) if candidate.name.as_ref() == pointee => Some(candidate),
+                        _ => None,
+                    })
+                    .with_context(|| format!("{kernel_name}: no canonical struct '{pointee}'"))?;
+                ensure!(
+                    canonical
+                        .fields
+                        .iter()
+                        .map(|canonical| canonical.name.as_ref())
+                        .eq(fields.iter().map(|(name, ..)| name)),
+                    "{kernel_name}: '{pointee}' fields differ from the canonical struct"
+                );
+                // The encoder's upload allocator aligns ranges to at most 64 bytes.
+                ensure!(*alignment <= 64, "{kernel_name}: '{pointee}' needs alignment {alignment} above 64");
+                // The canonical Rust type must have Slang's reflected layout, field by field, and each field the reflected
+                // scalar type and array shape. `bool`, 1 byte in Rust and 4 in Slang, has no shared one.
+                let scalar = |text: &str| match text {
+                    "u32" => Some(ScalarType::Uint32),
+                    "f32" => Some(ScalarType::Float32),
+                    _ => None,
+                };
+                for (canonical, (field_name, _, _, reflected, array)) in canonical.fields.iter().zip(fields) {
+                    let (element, length) = match &canonical.ty {
+                        GpuTypeStructFieldType::Scalar(element) => (element, None),
+                        GpuTypeStructFieldType::Array {
+                            element,
+                            length,
+                        } => (element, Some((*length, 4))),
+                    };
+                    ensure!(
+                        scalar(element) == Some(*reflected) && *array == length,
+                        "{kernel_name}: field {pointee}.{field_name} is {element} {length:?} in Rust but {reflected:?} \
+                         {array:?} in Slang"
+                    );
+                }
+                let ty: Type = syn::parse_str(path)?;
+                let message = format!("{kernel_name}: {path} does not have the layout Slang reflects");
+                layout_checks.push(quote! {
+                    const _: () = assert!(
+                        size_of::<#ty>() == #stride && align_of::<#ty>() == #alignment,
+                        #message
+                    );
+                });
+                for (canonical, (field_name, offset, size, ..)) in canonical.fields.iter().zip(fields) {
+                    let field_type: Type = match &canonical.ty {
+                        GpuTypeStructFieldType::Scalar(element) => syn::parse_str(element)?,
+                        GpuTypeStructFieldType::Array {
+                            element,
+                            length,
+                        } => syn::parse_str(&format!("[{element}; {length}]"))?,
+                    };
+                    let field_name = format_ident!("{field_name}");
+                    layout_checks.push(quote! {
+                        const _: () = assert!(
+                            std::mem::offset_of!(#ty, #field_name) == #offset && size_of::<#field_type>() == #size,
+                            #message
+                        );
+                    });
+                }
+                let message = format!("{kernel_name} upload of {name}");
+                packing.push(quote! { let #name = command_buffer.upload(#name).expect(#message); });
+                reads.push(quote! { #name.as_ref().map(|(buffer, range)| (buffer, range.clone())) });
+                let address =
+                    quote! { #name.as_ref().map_or(0, |(buffer, range)| buffer.device_address() + range.start) };
+                (quote! { &[#ty] }, quote! { #address.to_ne_bytes() })
+            },
+            (KernelArgumentType::Constant(text), None) => {
                 ensure!(field.size == 4 && field.pointee.is_none(), "{kernel_name}: '{name}' is not a 4-byte {text}");
                 let ty: Type = syn::parse_str(text)?;
                 let value = word(&name, &ty, &["u32", "i32", "f32", "bool"])?;
@@ -443,6 +533,7 @@ pub fn bindgen(
         const SPIRV: &[u8] = include_bytes!(#spirv_file);
 
         #(#stride_checks)*
+        #(#layout_checks)*
 
         pub struct #struct_name {
             #pipeline_field,

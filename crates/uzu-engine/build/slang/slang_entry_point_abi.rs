@@ -59,7 +59,33 @@ impl SlangEntryPointAbi {
                         alignment > 0 && stride > 0 && stride.is_multiple_of(alignment),
                         "'{name}': pointee of '{parameter_name}' has stride {stride} and alignment {alignment}"
                     );
-                    Some((pointee.name().context("pointee has no name")?.to_owned(), stride, alignment))
+                    let fields = pointee
+                        .fields()
+                        .map(|field| {
+                            let field_name = field.name().context("pointee field has no name")?.to_owned();
+                            let layout = field.type_layout().context("pointee field has no layout")?;
+                            let (element, array) = match layout.kind() {
+                                TypeKind::Scalar => (layout, None),
+                                TypeKind::Array => {
+                                    let element =
+                                        layout.element_type_layout().context("array has no element layout")?;
+                                    let count = layout.element_count().context("array has no element count")?;
+                                    (element, Some((count, layout.element_stride(ParameterCategory::Uniform))))
+                                },
+                                kind => bail!(
+                                    "'{name}': field '{field_name}' of '{parameter_name}' has unsupported kind {kind:?}"
+                                ),
+                            };
+                            ensure!(
+                                matches!(element.kind(), TypeKind::Scalar),
+                                "'{name}': field '{field_name}' of '{parameter_name}' is not of scalars"
+                            );
+                            let scalar = element.scalar_type().context("scalar has no type")?;
+                            let size = layout.size(ParameterCategory::Uniform);
+                            Ok((field_name, field.offset(ParameterCategory::Uniform), size, scalar, array))
+                        })
+                        .collect::<Result<_, Error>>()?;
+                    Some((pointee.name().context("pointee has no name")?.to_owned(), stride, alignment, fields))
                 },
                 TypeKind::Scalar | TypeKind::Enum => None,
                 kind => bail!("'{name}': parameter '{parameter_name}' has unsupported kind {kind:?}"),

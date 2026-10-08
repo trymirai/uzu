@@ -1,22 +1,12 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use anyhow::bail;
-use syn::{Type, TypePath, visit_mut::VisitMut};
+use syn::{Type, visit_mut::VisitMut};
 
-use super::gpu_types::{GpuType, GpuTypeName, GpuTypePath, GpuTypes};
+use super::{GpuTypeEntry, GpuTypeKind, TypePathCanonicalizer};
+use crate::common::gpu_types::{GpuType, GpuTypeName, GpuTypePath, GpuTypes};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum GpuTypeKind {
-    Enum,
-    OptionSet,
-}
-
-#[derive(Clone)]
-struct GpuTypeEntry {
-    path: GpuTypePath,
-    kind: GpuTypeKind,
-}
-
+/// Canonical paths of the GPU enums, option sets and structs, by short name.
 #[derive(Clone)]
 pub struct EnumPaths {
     short_name_to_entry: HashMap<GpuTypeName, GpuTypeEntry>,
@@ -28,9 +18,10 @@ impl EnumPaths {
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
                 let (name_str, kind) = match ty {
-                    GpuType::Enum(enum_type) => (enum_type.name.as_ref(), GpuTypeKind::Enum),
-                    GpuType::OptionSet(option_set) => (option_set.name.as_ref(), GpuTypeKind::OptionSet),
-                    GpuType::Constant(_) | GpuType::Struct(_) => continue,
+                    GpuType::Enum(enum_type) => (enum_type.name.as_ref(), Some(GpuTypeKind::Enum)),
+                    GpuType::OptionSet(option_set) => (option_set.name.as_ref(), Some(GpuTypeKind::OptionSet)),
+                    GpuType::Struct(struct_type) => (struct_type.name.as_ref(), None),
+                    GpuType::Constant(_) => continue,
                 };
                 let name = GpuTypeName::from(name_str);
                 let path =
@@ -60,12 +51,14 @@ impl EnumPaths {
         self.short_name_to_entry.get(short_name).map(|entry| &*entry.path)
     }
 
+    /// The scalar kind of a canonical enum or option set; `None` for canonical structs, which `full_path_for` knows,
+    /// and unknown names.
     #[allow(dead_code)]
     pub fn kind_for(
         &self,
         short_name: &str,
     ) -> Option<GpuTypeKind> {
-        self.short_name_to_entry.get(short_name).map(|entry| entry.kind)
+        self.short_name_to_entry.get(short_name).and_then(|entry| entry.kind)
     }
 
     pub fn canonicalize_type(
@@ -76,32 +69,5 @@ impl EnumPaths {
             enum_paths: self,
         };
         canonicalizer.visit_type_mut(ty);
-    }
-}
-
-struct TypePathCanonicalizer<'enum_paths> {
-    enum_paths: &'enum_paths EnumPaths,
-}
-
-impl<'enum_paths> VisitMut for TypePathCanonicalizer<'enum_paths> {
-    fn visit_type_path_mut(
-        &mut self,
-        type_path: &mut TypePath,
-    ) {
-        let path = &type_path.path;
-        if type_path.qself.is_none()
-            && path.leading_colon.is_none()
-            && path.segments.len() == 1
-            && matches!(path.segments[0].arguments, syn::PathArguments::None)
-        {
-            let segment_name = path.segments[0].ident.to_string();
-            if let Some(full_path_text) = self.enum_paths.full_path_for(&segment_name)
-                && let Ok(full_path) = syn::parse_str::<syn::Path>(full_path_text)
-            {
-                type_path.path = full_path;
-                return;
-            }
-        }
-        syn::visit_mut::visit_type_path_mut(self, type_path);
     }
 }

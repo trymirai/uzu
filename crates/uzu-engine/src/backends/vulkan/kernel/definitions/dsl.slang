@@ -48,6 +48,11 @@ struct OptionalAttribute {
 [[__AttributeUsage(_AttributeTargets.Param)]]
 struct SpecializeAttribute;
 
+// A read-only pointer to a canonical GPU struct that the binding takes as a host slice, like the CPU kernel, and uploads
+// when it records the dispatch.
+[[__AttributeUsage(_AttributeTargets.Param)]]
+struct HostSliceAttribute;
+
 // A uniform canonical enum for which the binding builds one pipeline per enum value, passed as a specialization constant
 // instead of a push constant; the kernel signature keeps it a uniform, chosen at encode.
 [[__AttributeUsage(_AttributeTargets.Param)]]

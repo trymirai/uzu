@@ -77,6 +77,24 @@ impl<'a> SlangArgument<'a> {
             _ => None,
         };
 
+        // A host slice is a constant like the CPU kernel's `&[T]` of the canonical struct, whose pointer the shader reads.
+        if self.attribute("HostSlice").is_some() {
+            let name = self.name()?;
+            if let Some(other) = ["Optional", "Specialize", "Axis", "Groups", "Threads", "PipelineVariants"]
+                .into_iter()
+                .find(|other| self.attribute(other).is_some())
+            {
+                bail!("'{name}': HostSlice cannot be combined with {other}");
+            }
+            ensure!(matches!(ty.kind(), TypeKind::Pointer), "'{name}': HostSlice needs a pointer");
+            let (pointee, access) = self.pointer()?;
+            ensure!(access == KernelBufferAccess::Read, "'{name}': HostSlice needs a read-only pointer");
+            ensure!(
+                self.enum_paths.full_path_for(&pointee).is_some() && self.enum_paths.kind_for(&pointee).is_none(),
+                "'{name}': HostSlice points to '{pointee}', which is not a canonical GPU struct"
+            );
+            return Ok(SlangArgumentType::Constant(format!("&[{}]", self.rust_type(&pointee)?).into()));
+        }
         if let Some(axis) = self.attribute("Axis") {
             let total = axis.argument_value_string(0).context("Axis missing arg 0")?.into();
             let per_group = axis.argument_value_string(1).context("Axis missing arg 1")?.into();
@@ -100,7 +118,7 @@ impl<'a> SlangArgument<'a> {
             }
         } else {
             match (ty.kind(), value) {
-                (TypeKind::Pointer, _) => Ok(SlangArgumentType::Ptr(self.access()?)),
+                (TypeKind::Pointer, _) => Ok(SlangArgumentType::Ptr(self.pointer()?.1)),
                 (_, Some(value)) => Ok(SlangArgumentType::Constant(self.rust_type(&value)?)),
                 (kind, _) => bail!(
                     "unsupported parameter type for '{}': kind={kind:?} name={}",
@@ -150,17 +168,16 @@ impl<'a> SlangArgument<'a> {
         self.variable.user_attributes().find(|attribute| attribute.name() == Some(name))
     }
 
-    /// Access mode as reflected by Slang, e.g. `Ptr<T, Access.Read, AddressSpace.Device>`.
-    fn access(&self) -> Result<KernelBufferAccess, Error> {
+    /// Pointee and access mode as reflected by Slang, e.g. `Ptr<T, Access.Read, AddressSpace.Device>`.
+    fn pointer(&self) -> Result<(String, KernelBufferAccess), Error> {
         let ty = self.slang_type()?;
-        let access = ty
+        let pointer = ty
             .strip_prefix("Ptr<")
             .and_then(|ty| ty.strip_suffix(", AddressSpace.Device>"))
-            .and_then(|ty| ty.rsplit_once(", Access."))
-            .map(|(_, access)| access);
-        match access {
-            Some("Read") => Ok(KernelBufferAccess::Read),
-            Some("ReadWrite") => Ok(KernelBufferAccess::ReadWrite),
+            .and_then(|ty| ty.rsplit_once(", Access."));
+        match pointer {
+            Some((pointee, "Read")) => Ok((pointee.to_owned(), KernelBufferAccess::Read)),
+            Some((pointee, "ReadWrite")) => Ok((pointee.to_owned(), KernelBufferAccess::ReadWrite)),
             _ => bail!("unsupported pointer type for '{}': {ty}", self.name()?),
         }
     }

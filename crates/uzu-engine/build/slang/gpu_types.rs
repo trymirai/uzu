@@ -3,11 +3,11 @@ use std::{fs, path::Path};
 use anyhow::{Context, bail};
 
 use super::Error;
-use crate::common::gpu_types::{GpuType, GpuTypes};
+use crate::common::gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes};
 
-/// Writes `generated/<file>.slang` under `out_dir` for every GPU types file that declares constants or enums, so
-/// shaders `import generated.<file>;`. Enums are `uint`-backed with the canonical discriminants; structs and option
-/// sets are not emitted.
+/// Writes `generated/<file>.slang` under `out_dir` for every GPU types file that declares constants, enums or structs,
+/// so shaders `import generated.<file>;`. Enums are `uint`-backed with the canonical discriminants; option sets are not
+/// emitted.
 pub fn generate_types(
     gpu_types: &GpuTypes,
     out_dir: &Path,
@@ -42,7 +42,37 @@ pub fn generate_types(
                         .collect::<String>();
                     declarations.push(format!("public enum {} : uint {{\n{variants}}}\n", gpu_enum.name));
                 },
-                GpuType::Struct(_) | GpuType::OptionSet(_) => {},
+                // Fields of 32-bit scalars or their arrays. Slang stores `bool` in 4 bytes and Rust in 1, so a struct
+                // with one has no shared layout; the binding's layout guard rejects it as a host slice.
+                GpuType::Struct(gpu_struct) => {
+                    let fields = gpu_struct
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            let (element, length) = match &field.ty {
+                                GpuTypeStructFieldType::Scalar(element) => (element, String::new()),
+                                GpuTypeStructFieldType::Array {
+                                    element,
+                                    length,
+                                } => (element, format!("[{length}]")),
+                            };
+                            let ty = match element.as_ref() {
+                                "u32" => "uint",
+                                "f32" => "float",
+                                "bool" => "bool",
+                                other => bail!(
+                                    "gpu_types/{}.rs: field {}.{} has unsupported type '{other}'",
+                                    file.name,
+                                    gpu_struct.name,
+                                    field.name
+                                ),
+                            };
+                            Ok(format!("  public {ty} {}{length};\n", field.name))
+                        })
+                        .collect::<Result<String, Error>>()?;
+                    declarations.push(format!("public struct {} {{\n{fields}}}\n", gpu_struct.name));
+                },
+                GpuType::OptionSet(_) => {},
             }
         }
         if !declarations.is_empty() {

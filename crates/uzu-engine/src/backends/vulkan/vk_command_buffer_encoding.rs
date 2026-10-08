@@ -1,12 +1,17 @@
 use std::{mem::take, ops::Range, sync::Arc};
 
 use ash::vk;
+use bytemuck::NoUninit;
 use rangemap::RangeSet;
 
 use super::{
     Error, VkBuffer, VkCommandBufferExecutable, VkCommandBufferResources, VkComputePipeline, VkContext,
     VkTimestampQueryPool,
 };
+use crate::backends::common::allocator::bump::BumpAllocator;
+
+/// Smallest buffer that holds uploads, so small uploads of one command buffer share it.
+const UPLOAD_PAGE_SIZE: usize = 4096;
 
 /// A recording primary command buffer that owns its pool, retains every buffer and pipeline it
 /// references, and inserts barriers where accesses conflict (same algorithm as the Metal encoder).
@@ -17,6 +22,7 @@ pub struct VkCommandBufferEncoding {
     retained: Vec<Arc<dyn Send + Sync>>,
     reads: RangeSet<u64>,
     writes: RangeSet<u64>,
+    uploads: BumpAllocator<Arc<VkBuffer>>,
 }
 
 impl VkCommandBufferEncoding {
@@ -28,6 +34,7 @@ impl VkCommandBufferEncoding {
             retained: Vec::new(),
             reads: RangeSet::new(),
             writes: RangeSet::new(),
+            uploads: BumpAllocator::new(UPLOAD_PAGE_SIZE),
         };
         let mut timestamps = VkTimestampQueryPool::new(context, 2)?;
         let command_buffer = encoding.command_buffer();
@@ -91,6 +98,41 @@ impl VkCommandBufferEncoding {
         }
         self.retained.extend([source.clone() as Arc<dyn Send + Sync>, destination.clone()]);
         Ok(())
+    }
+
+    /// Copies `data` into host-coherent memory owned by this command buffer, at a range no other upload
+    /// uses, and returns it for dispatches to read: one that declares the range retains its buffer
+    /// until the command buffer completes, so later changes to `data` reach none of them. An empty
+    /// slice needs no memory and returns `None`.
+    pub fn upload<T: NoUninit>(
+        &mut self,
+        data: &[T],
+    ) -> Result<Option<(Arc<VkBuffer>, Range<u64>)>, Error> {
+        let bytes = bytemuck::cast_slice::<T, u8>(data);
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        let context = self.context.clone();
+        let allocation = self
+            .uploads
+            .allocate(bytes.len(), |size| Ok::<_, Error>(Arc::new(VkBuffer::new(context, size as u64)?)))?;
+        let (buffer, range) = (allocation.page().clone(), allocation.range());
+        assert!(
+            (buffer.device_address() + range.start as u64).is_multiple_of(align_of::<T>() as u64),
+            "upload of {} bytes is not aligned to {}",
+            bytes.len(),
+            align_of::<T>()
+        );
+        // SAFETY: the range lies in the mapped buffer and belongs to this upload alone, and the GPU
+        // cannot be using the buffer: it is not yet part of a submitted command buffer.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                buffer.cpu_ptr().as_ptr().cast::<u8>().add(range.start),
+                bytes.len(),
+            );
+        }
+        Ok(Some((buffer, range.start as u64..range.end as u64)))
     }
 
     pub fn encode_fill(
