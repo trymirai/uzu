@@ -351,3 +351,89 @@ fn test_edge_kernel_f16() {
 fn test_edge_kernel_bf16() {
     test_edge_kernel::<bf16>();
 }
+
+/// Multi-token decode runs tokens in order, each after the first continuing the state the previous one stored, in place
+/// or not. The CPU state follows the independent trajectory of shifts and T(pre_gate · input) bit for bit, and so does
+/// every backend's. Outputs of two backends differ by at most twice the FP32 error γ(max(K + 2, 4)) of the absolute
+/// terms (the longest weighted path: pre_gate · input, its weight, the last accumulation and the gate) plus both
+/// roundings to T. Repeated to expose races between channels or tokens.
+fn test_sequential_tokens<T: ArrayElement + Float + Debug + Display>() {
+    let (model_dim, kernel_size, in_proj_stride) = (300, 4, 905);
+    let tap_count = kernel_size - 1;
+    let value = |i: usize| {
+        let magnitude = 0.125 + ((i * 7919) % 1021) as f32 / 1020.0 * 1.875;
+        if (i * 7919 / 1021).is_multiple_of(3) {
+            -magnitude
+        } else {
+            magnitude
+        }
+    };
+    let n = (kernel_size + 2).max(4) as f64 * f64::from(f32::EPSILON) / 2.0;
+    let gamma = n / (1.0 - n);
+    let unit = match T::data_type() {
+        DataType::F32 => 0.0,
+        _ => T::epsilon().to_f64().unwrap() / 2.0,
+    };
+    let tiny = unit * T::min_positive_value().to_f64().unwrap();
+    let f64_of = |value: T| value.to_f64().unwrap();
+    let bits = |values: &[T]| bytemuck::cast_slice::<T, u8>(values).to_vec();
+    for (suffix_len, has_bias) in [(3, false), (17, true)] {
+        let input = Input::<T> {
+            in_proj: (0..suffix_len * in_proj_stride).map(|i| T::from(value(i)).unwrap()).collect(),
+            w: (0..model_dim * kernel_size).map(|i| value(i + 3)).collect(),
+            b: has_bias.then(|| (0..model_dim).map(|i| value(i + 7)).collect()),
+            state: (0..model_dim * tap_count).map(|i| T::from(value(i + 11)).unwrap()).collect(),
+            suffix_len: suffix_len as u32,
+            kernel_size: kernel_size as u32,
+            in_proj_stride: in_proj_stride as u32,
+            state_stride: tap_count as u32,
+            model_dim: model_dim as u32,
+        };
+        let mut state = input.state.to_vec();
+        let mut bounds = vec![0.0; suffix_len * model_dim];
+        for token in 0..suffix_len {
+            for channel in 0..model_dim {
+                let row = token * in_proj_stride + channel;
+                let x = f64_of(input.in_proj[row]) * f64_of(input.in_proj[row + 2 * model_dim]);
+                let samples = state[channel * tap_count..(channel + 1) * tap_count].iter().map(|&s| f64_of(s));
+                let weights = &input.w[channel * kernel_size..(channel + 1) * kernel_size];
+                let bias = input.b.as_ref().map_or(0.0, |b| f64::from(b[channel]));
+                let magnitude =
+                    samples.chain([x]).zip(weights).map(|(s, &w)| (s * f64::from(w)).abs()).sum::<f64>() + bias.abs();
+                let gated = magnitude * f64_of(input.in_proj[row + model_dim]).abs();
+                let accumulation = gamma * gated;
+                bounds[token * model_dim + channel] =
+                    2.0 * accumulation + 2.0 * unit * (gated + accumulation) + 2.0 * tiny;
+                state.copy_within(channel * tap_count + 1..(channel + 1) * tap_count, channel * tap_count);
+                state[(channel + 1) * tap_count - 1] = T::from(x as f32).unwrap();
+            }
+        }
+        for state_in_place in [false, true] {
+            let case =
+                format!("{:?} suffix_len={suffix_len} has_bias={has_bias} in_place={state_in_place}", T::data_type());
+            let (cpu_out, cpu_state) = get_output::<T, Cpu>(&input, state_in_place);
+            assert_eq!(bits(&cpu_state), bits(&state), "CPU state trajectory, {case}");
+            for _ in 0..3 {
+                for_each_non_cpu_backend!(|B| {
+                    let (out, next_state) = get_output::<T, B>(&input, state_in_place);
+                    let backend = std::any::type_name::<B>();
+                    assert_eq!(bits(&next_state), bits(&cpu_state), "{backend} state, {case}");
+                    for (index, ((&expected, &actual), &bound)) in cpu_out.iter().zip(&out).zip(&bounds).enumerate() {
+                        let error = (f64_of(actual) - f64_of(expected)).abs();
+                        assert!(
+                            error <= bound,
+                            "{backend} out {index}: CPU {expected}, {actual}, bound {bound:e}, {case}"
+                        );
+                    }
+                });
+            }
+        }
+    }
+}
+
+#[uzu_test]
+fn test_sequential_tokens_all_types() {
+    test_sequential_tokens::<f32>();
+    test_sequential_tokens::<f16>();
+    test_sequential_tokens::<bf16>();
+}

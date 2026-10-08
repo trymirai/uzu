@@ -104,7 +104,7 @@ pub fn short_conv_prefill<T: ArrayElement + Float, WeightT: ArrayElement + Float
                     let padded_offset = padded_row * model_dim + channel_idx;
                     let state_idx = channel_idx * state_stride + tap;
 
-                    *state_out.add(state_idx) = T::from(*padded.add(padded_offset)).unwrap();
+                    *state_out.add(state_idx) = *padded.add(padded_offset);
                 }
             }
         }

@@ -325,3 +325,52 @@ fn test_edge_small_f16() {
 fn test_edge_small_bf16() {
     test_edge_small::<bf16>();
 }
+
+/// The state copy stores the trailing padded samples unchanged, bit for bit: signalling and quiet NaN payloads, signed
+/// zero, subnormals and infinity.
+fn test_state_copy_bits<T: ArrayElement + Float>() {
+    let (model_dim, kernel_size, suffix_len) = (8, 4, 2);
+    let tap_count = kernel_size - 1;
+    let specials: Vec<u8> = match T::data_type() {
+        DataType::F32 => [0x7F80_0001u32, 0xFFA0_0F00, 0x7FC1_2345, 0x8000_0000, 0x0000_0001, 0x807F_FFFF, 0xFF80_0000]
+            .iter()
+            .flat_map(|bits| bits.to_ne_bytes())
+            .collect(),
+        DataType::F16 => [0x7C01u16, 0xFD55, 0x7E01, 0x8000, 0x0001, 0x83FF, 0xFC00]
+            .iter()
+            .flat_map(|bits| bits.to_ne_bytes())
+            .collect(),
+        _ => [0x7F81u16, 0xFFA5, 0x7FC1, 0x8000, 0x0001, 0x807F, 0xFF80]
+            .iter()
+            .flat_map(|bits| bits.to_ne_bytes())
+            .collect(),
+    };
+    let specials = bytemuck::pod_collect_to_vec::<u8, T>(&specials);
+    let input = Input::<T> {
+        padded: specials.iter().cycle().take((tap_count + suffix_len) * model_dim).copied().collect(),
+        in_proj: vec![T::one(); suffix_len * 3 * model_dim].into(),
+        w: vec![0.5; model_dim * kernel_size].into(),
+        b: None,
+        suffix_len: suffix_len as u32,
+        kernel_size: kernel_size as u32,
+        in_proj_stride: (3 * model_dim) as u32,
+        state_stride: tap_count as u32,
+        model_dim: model_dim as u32,
+    };
+    let expected = (0..model_dim * tap_count)
+        .map(|i| input.padded[(suffix_len + i % tap_count) * model_dim + i / tap_count])
+        .collect::<Vec<_>>();
+    let bits = |values: &[T]| bytemuck::cast_slice::<T, u8>(values).to_vec();
+    assert_eq!(bits(&get_output::<T, Cpu>(&input).1), bits(&expected), "CPU {:?}", T::data_type());
+    for_each_non_cpu_backend!(|B| {
+        let state_out = get_output::<T, B>(&input).1;
+        assert_eq!(bits(&state_out), bits(&expected), "{} {:?}", std::any::type_name::<B>(), T::data_type());
+    });
+}
+
+#[uzu_test]
+fn test_state_copy_bits_all_types() {
+    test_state_copy_bits::<f32>();
+    test_state_copy_bits::<f16>();
+    test_state_copy_bits::<bf16>();
+}

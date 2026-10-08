@@ -111,46 +111,48 @@ PUBLIC KERNEL(ShortConvDecode)(
     constant const uint& model_dim,
     const bool has_bias SPECIALIZE,
     const bool state_in_place SPECIALIZE,
-    const uint token_idx AXIS(suffix_len, 1),
     const uint channel_idx AXIS(model_dim, 256)
 ) {
-  if (state_in_place) {
-    state = next_state;
-  }
-
   const uint tap_count = kernel_size > 0 ? kernel_size - 1 : 0u;
   const uint state_offset = channel_idx * state_stride;
   const device WeightT* w_row = w + channel_idx * kernel_size;
 
-  uint in_proj_idx = token_idx * in_proj_stride + channel_idx;
-  float pre_conv_gate = float(in_proj[in_proj_idx]);
-  float post_conv_gate = float(in_proj[in_proj_idx + model_dim]);
-  float x_in = float(in_proj[in_proj_idx + 2 * model_dim]);
-
-  float x = x_in * pre_conv_gate;
-
-  float acc = 0.0f;
-  if (has_bias) {
-    acc = float(b[channel_idx]);
-  }
-
-  for (uint tap = 0; tap < tap_count; ++tap) {
-    float sample = float(state[state_offset + tap]);
-    acc += float(w_row[tap]) * sample;
-  }
-
-  acc += float(w_row[tap_count]) * x;
-
-  float gated_output = acc * post_conv_gate;
-
-  uint out_idx = token_idx * model_dim + channel_idx;
-  out[out_idx] = static_cast<T>(gated_output);
-
-  if (tap_count > 0) {
-    for (uint tap = 0; tap < tap_count - 1; ++tap) {
-      next_state[state_offset + tap] = state[state_offset + tap + 1];
+  // Tokens run in order: the first reads state unless in place, every later one the next_state its predecessor stored.
+  for (uint token_idx = 0; token_idx < suffix_len; ++token_idx) {
+    if (state_in_place || token_idx > 0) {
+      state = next_state;
     }
-    next_state[state_offset + tap_count - 1] = static_cast<T>(x);
+
+    uint in_proj_idx = token_idx * in_proj_stride + channel_idx;
+    float pre_conv_gate = float(in_proj[in_proj_idx]);
+    float post_conv_gate = float(in_proj[in_proj_idx + model_dim]);
+    float x_in = float(in_proj[in_proj_idx + 2 * model_dim]);
+
+    float x = x_in * pre_conv_gate;
+
+    float acc = 0.0f;
+    if (has_bias) {
+      acc = float(b[channel_idx]);
+    }
+
+    for (uint tap = 0; tap < tap_count; ++tap) {
+      float sample = float(state[state_offset + tap]);
+      acc += float(w_row[tap]) * sample;
+    }
+
+    acc += float(w_row[tap_count]) * x;
+
+    float gated_output = acc * post_conv_gate;
+
+    uint out_idx = token_idx * model_dim + channel_idx;
+    out[out_idx] = static_cast<T>(gated_output);
+
+    if (tap_count > 0) {
+      for (uint tap = 0; tap < tap_count - 1; ++tap) {
+        next_state[state_offset + tap] = state[state_offset + tap + 1];
+      }
+      next_state[state_offset + tap_count - 1] = static_cast<T>(x);
+    }
   }
 }
 

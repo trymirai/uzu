@@ -32,7 +32,8 @@ pub use vk_context::VkContext;
 pub use vk_context_create_info::VkContextCreateInfo;
 pub use vk_context_error::VkContextError;
 pub use vk_kernels::{
-    LogitTransformVulkanKernel, NormalizationVulkanKernel, PoolingMeanVulkanKernel, SoftmaxVulkanKernel,
+    LogitTransformVulkanKernel, NormalizationVulkanKernel, PoolingMeanVulkanKernel, ShortConvDecodeVulkanKernel,
+    ShortConvPackVulkanKernel, ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SoftmaxVulkanKernel,
     TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel,
 };
 pub use vk_logger::VkLogger;

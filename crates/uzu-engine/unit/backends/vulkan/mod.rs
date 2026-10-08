@@ -5,6 +5,8 @@ mod normalization_case;
 mod normalization_test;
 mod pooling_mean_test;
 mod runtime_test;
+mod short_conv_case;
+mod short_conv_test;
 mod softmax_test;
 mod specialization_test;
 mod tensor_add_bias_test;
@@ -12,3 +14,4 @@ mod tensor_add_scale_test;
 mod validation_logger;
 
 pub use normalization_case::NormalizationCase;
+pub use short_conv_case::ShortConvCase;
