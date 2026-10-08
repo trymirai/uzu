@@ -1,5 +1,7 @@
 import definitions;
 import common.activation;
+import common.quantized_value;
+import generated.quantization_method;
 
 // The CPU MatmulKernel's per-output numerics shared by Gemv and Gemm: which outputs a native evaluation keeps, the CPU's
 // order where it does not, and the epilogue.
@@ -73,17 +75,73 @@ public uint matmul_mode(
   return MATMUL_FAST;
 }
 
-// The CPU's dot of A and B from the given elements, in its order with every product and sum rounded as it rounds them.
-public float matmul_replay<A : IModelFloat, B : IModelFloat>(
+// The FP32 value of B's element `inner` of row `row`, which starts at element `base`, as the CPU reads it.
+public interface IMatmulWeights {
+  public float weight(uint row, uint inner, uint base);
+}
+
+// Full-precision B rows of k elements.
+public struct DenseWeights<B : IModelFloat> : IMatmulWeights {
+  public Ptr<B, Access.Read> b;
+
+  public float weight(uint row, uint inner, uint base) {
+    return b[base + inner].toFloat();
+  }
+}
+
+// Packed U4 or U8 codes of B rows of k elements, code i = row k + inner, a U4 code the low nibble of byte i / 2 first,
+// stored signed codes with their top bit flipped. Scales, biases and zero points (nibbles for U4) of group
+// inner / group_size sit at row output_stride + group group_stride, each plane with its own strides; without zero points
+// the offset is the midpoint, 8 or 128. The value is quantized_value's, in FP32, never rounded to B.
+public struct QuantizedWeights<B : IModelFloat> : IMatmulWeights {
+  public Ptr<uint8_t, Access.Read> codes;
+  public Ptr<B, Access.Read> scales;
+  public Ptr<B, Access.Read> biases;
+  public Ptr<uint8_t, Access.Read> zero_points;
+  public uint group_size;
+  public uint scale_output_stride;
+  public uint scale_group_stride;
+  public uint zero_point_output_stride;
+  public uint zero_point_group_stride;
+  public bool u4;
+  public bool signed_codes;
+  public QuantizationMethod method;
+
+  public float weight(uint row, uint inner, uint base) {
+    let index = base + inner;
+    var code = u4 ? read_nibble(codes, index) : uint(codes[index]);
+    if (signed_codes) {
+      code ^= u4 ? 8u : 128u;
+    }
+    let group = inner / group_size;
+    let metadata = row * scale_output_stride + group * scale_group_stride;
+    let scale = scales[metadata].toFloat();
+    let scale_bias = method == QuantizationMethod.ScaleBias;
+    float correction;
+    if (scale_bias) {
+      correction = biases[metadata].toFloat();
+    } else if (method == QuantizationMethod.ScaleZeroPoint) {
+      let offset = row * zero_point_output_stride + group * zero_point_group_stride;
+      correction = float(u4 ? read_nibble(zero_points, offset) : uint(zero_points[offset]));
+    } else {
+      correction = u4 ? 8.0 : 128.0;
+    }
+    return quantized_value(scale, float(code), scale_bias, correction);
+  }
+}
+
+// The CPU's dot of A from `a_base` and B row `row`, in its order with every product and sum rounded as it rounds them.
+public float matmul_replay<A : IModelFloat, W : IMatmulWeights>(
   Ptr<A, Access.Read> a,
   uint a_base,
-  Ptr<B, Access.Read> b,
-  uint b_base,
+  W weights,
+  uint row,
   uint k
 ) {
   var dot = 0.0;
+  let base = row * k;
   for (uint j = 0; j < k; j++) {
-    dot = ordered_sum(dot, exact_product(a[a_base + j].toFloat(), b[b_base + j].toFloat()));
+    dot = ordered_sum(dot, exact_product(a[a_base + j].toFloat(), weights.weight(row, j, base)));
   }
   return dot;
 }

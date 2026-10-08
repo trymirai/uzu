@@ -21,6 +21,7 @@ mod normalization_test;
 mod pooling_mean_test;
 mod qkv_norm_case;
 mod qkv_norm_test;
+mod quantized_matmul_test;
 mod runtime_test;
 mod short_conv_case;
 mod short_conv_test;

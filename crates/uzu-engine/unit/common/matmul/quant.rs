@@ -39,7 +39,8 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
     }
 }
 
-fn pad<T: ArrayElement>(
+/// `values` extended with zeros to at least `minimum_len` elements: a metadata plane filled to its padded shape.
+pub fn pad<T: ArrayElement>(
     values: &[T],
     minimum_len: usize,
 ) -> Vec<T> {

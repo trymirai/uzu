@@ -7,19 +7,31 @@ use crate::{
     backends::{
         common::{
             Backend, Context, Kernels,
-            kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
+            gpu_types::QuantizationMethod,
+            kernel::matmul::{
+                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, QuantParams,
+                QuantParamsLayout, QuantParamsStrides, QuantizedB, QuantizedCorrection,
+            },
         },
         cpu::Cpu,
-        vulkan::{GemmVulkanKernel, GemvVulkanKernel, VkBuffer, VkCommandBufferEncoding},
+        vulkan::{
+            GemmVulkanKernel, GemvVulkanKernel, QuantizedGemmVulkanKernel, QuantizedGemvVulkanKernel, VkBuffer,
+            VkCommandBufferEncoding,
+        },
     },
     data_type::DataType,
-    tests::helpers::{buffer_to_vec, create_buffer_with_data, create_context, submit_command_buffer},
+    tests::{
+        helpers::{buffer_to_vec, create_buffer_with_data, create_context, submit_command_buffer},
+        matmul::{QuantInput, pad, transpose_metadata},
+    },
 };
 
 /// One raw Gemv or Gemm dispatch shared by the CPU and Vulkan runners and the FP64 oracle: values held as FP32, each
 /// exactly representable in its storage type, `types` of B, A and D. B holds rows of `k`, A `a_offset` NaN
 /// elements before its `[m, k]` rows, D the prior `[m, n]` output; bias is one B-typed value per output column and
 /// `gather` names the B row of every output (Gemv only). Mask bits: 1 scale, 2 accumulate, 4 bias, 8 soft cap, 16 gather.
+/// With `quantized`, B's rows are its packed codes and metadata, scales and biases each representable in B's type, and
+/// `b` holds their FP32 values as the CPU decodes them, never rounded to B's type.
 #[derive(Clone)]
 pub struct MatmulCase {
     pub types: [DataType; 3],
@@ -35,6 +47,7 @@ pub struct MatmulCase {
     pub ab_scale: Option<f32>,
     pub accumulate: bool,
     pub soft_cap: Option<f32>,
+    pub quantized: Option<QuantInput<f32>>,
 }
 
 impl MatmulCase {
@@ -100,7 +113,114 @@ impl MatmulCase {
             ab_scale: (mask & 1 != 0).then_some(0.75),
             accumulate: mask & 2 != 0,
             soft_cap: (mask & 8 != 0).then_some(3.0),
+            quantized: None,
         }
+    }
+
+    /// The case with B's weight rows quantized by the canonical `QuantInput` from `seed`: `bits` 4 or 8, `group_size`,
+    /// `method`, metadata `layout` and stored `signed_codes`, scales and biases rounded to B's type and `b` the decoded
+    /// FP32 weights.
+    pub fn quantize(
+        mut self,
+        bits: u32,
+        group_size: u32,
+        method: QuantizationMethod,
+        layout: QuantParamsLayout,
+        signed_codes: bool,
+        seed: u64,
+    ) -> Self {
+        let rows = match self.k {
+            0 => {
+                self.n
+                    + if self.gather.is_some() {
+                        3
+                    } else {
+                        0
+                    }
+            },
+            k => self.b.len() as u32 / k,
+        };
+        let mut input = QuantInput::<f32>::new(self.m, self.k, rows, group_size, bits, method, seed);
+        input.params_layout = layout;
+        input.signed_codes = signed_codes;
+        let b_type = self.types[0];
+        input.scales.iter_mut().chain(input.biases.iter_mut().flatten()).for_each(|value| {
+            *value = Self::stored(*value, b_type);
+        });
+        self.quantized = Some(input);
+        self.b = self.decoded();
+        self
+    }
+
+    /// The quantized weights as the CPU MatmulKernel decodes them, each step one FP32 rounding: scale times the code
+    /// plus the bias, or plus minus the scale times the zero point or the midpoint 2^(bits - 1). Metadata is read in
+    /// `QuantInput`'s own `[rows, groups]` layout, before any upload transposes it.
+    pub fn decoded(&self) -> Vec<f32> {
+        let input = self.quantized.as_ref().expect("quantized case");
+        let (k, group_size) = (self.k as usize, input.group_size as usize);
+        let bits = DataType::from(input.mode).size_in_bits();
+        let params = QuantParams::new(QuantParamsLayout::OutputGroup, input.n, self.k.div_ceil(input.group_size));
+        let (scale_strides, zero_point_strides) = (params.scale_strides(), params.zero_point_strides(input.mode));
+        (0..input.n as usize * k)
+            .map(|index| {
+                let (row, group) = (index / k, index % k / group_size);
+                let code = (input.w_packed[index * bits / 32] >> (index * bits % 32)) & ((1 << bits) - 1);
+                let metadata = row * scale_strides.output_stride as usize + group * scale_strides.group_stride as usize;
+                let scale = input.scales[metadata];
+                let correction = match input.quant_method {
+                    QuantizationMethod::ScaleBias => input.biases.as_ref().expect("biases")[metadata],
+                    QuantizationMethod::ScaleZeroPoint => {
+                        let offset = row * zero_point_strides.output_stride as usize
+                            + group * zero_point_strides.group_stride as usize;
+                        let byte = input.zero_points.as_ref().expect("zero points")[offset * bits / 8];
+                        -scale * f32::from((byte >> (offset * bits % 8)) & ((1u16 << bits) - 1) as u8)
+                    },
+                    QuantizationMethod::ScaleSymmetric => -scale * (1u32 << (bits - 1)) as f32,
+                };
+                scale * code as f32 + correction
+            })
+            .collect()
+    }
+
+    /// The byte planes B is read from, as the CPU and Vulkan receive them: full-precision B; or the packed codes as
+    /// uploaded, the scales and then the biases or zero points, each padded to its `QuantParams` shape in its storage
+    /// type and transposed to the case's layout.
+    pub fn weight_planes(&self) -> Vec<Vec<u8>> {
+        let b_type = self.types[0];
+        let Some(input) = &self.quantized else {
+            return vec![Self::bytes(&self.b, b_type)];
+        };
+        let groups = self.k.div_ceil(input.group_size);
+        let params = QuantParams::new(input.params_layout, input.n, groups);
+        let length = |shape: [u32; 2]| shape.into_iter().product::<u32>() as usize;
+        let layout = |mut plane: Vec<u8>, bits: usize| {
+            if input.params_layout == QuantParamsLayout::GroupOutput {
+                transpose_metadata(&mut plane, input.n, groups, bits as u32);
+            }
+            plane
+        };
+        let metadata = |values: &[f32]| {
+            layout(Self::bytes(&pad(values, length(params.scale_shape())), b_type), b_type.size_in_bits())
+        };
+        let mut planes = vec![bytemuck::cast_slice(&input.weights_for_upload()).to_vec(), metadata(&input.scales)];
+        match input.quant_method {
+            QuantizationMethod::ScaleBias => planes.push(metadata(input.biases.as_ref().expect("biases"))),
+            QuantizationMethod::ScaleZeroPoint => planes.push(layout(
+                pad(input.zero_points.as_ref().expect("zero points"), length(params.zero_point_shape(input.mode))),
+                DataType::from(input.mode).size_in_bits(),
+            )),
+            QuantizationMethod::ScaleSymmetric => {},
+        }
+        planes
+    }
+
+    /// The scale and, with zero points, zero-point strides of the uploaded metadata, in values.
+    pub fn strides(&self) -> (QuantParamsStrides, Option<QuantParamsStrides>) {
+        let input = self.quantized.as_ref().expect("quantized case");
+        let params = QuantParams::new(input.params_layout, input.n, self.k.div_ceil(input.group_size));
+        let zero_points =
+            (input.quant_method == QuantizationMethod::ScaleZeroPoint).then(|| params.zero_point_strides(input.mode));
+        (params.scale_strides(), zero_points)
     }
 
     /// `value` rounded to nearest even in `data_type`.
@@ -195,7 +315,21 @@ impl MatmulCase {
                 _ => create_buffer_with_data::<Cpu, f32>(&context, values),
             }
         };
-        let (b, a) = (buffer(&self.b, b_type), buffer(&self.a_storage(), a_type));
+        let weights = self
+            .weight_planes()
+            .iter()
+            .map(|plane| {
+                create_buffer_with_data::<Cpu, u8>(
+                    &context,
+                    if plane.is_empty() {
+                        &[0; 4]
+                    } else {
+                        plane
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let a = buffer(&self.a_storage(), a_type);
         let mut d = buffer(&self.d, d_type);
         let bias = self.bias.as_ref().map(|bias| buffer(bias, b_type));
         let gather = self.gather.as_ref().map(|gather| create_buffer_with_data::<Cpu, u32>(&context, gather));
@@ -213,8 +347,23 @@ impl MatmulCase {
                     values: &a,
                     offset: self.a_offset,
                 },
-                b: MatmulB::FullPrecision {
-                    b: &b,
+                b: match &self.quantized {
+                    None => MatmulB::FullPrecision {
+                        b: &weights[0],
+                    },
+                    Some(input) => MatmulB::Quantized(QuantizedB {
+                        codes: &weights[0],
+                        scales: &weights[1],
+                        correction: match input.quant_method {
+                            QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(&weights[2]),
+                            QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(&weights[2]),
+                            QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
+                        },
+                        params: QuantParams::new(input.params_layout, input.n, self.k.div_ceil(input.group_size)),
+                        mode: input.mode,
+                        group_size: input.group_size,
+                        signed_codes: input.signed_codes,
+                    }),
                 },
                 b_leading_dimension: None,
                 b_transpose: true,
@@ -298,6 +447,139 @@ impl MatmulCase {
         unsafe { kernel.encode(b, a, d, bias, self.k, self.n, self.m, self.ab_scale, self.soft_cap, encoding) }
     }
 
+    /// The quantized Gemv of the case's flags, codes, method and group size.
+    pub fn quantized_gemv_kernel(
+        &self,
+        fixture: &KernelFixture,
+    ) -> QuantizedGemvVulkanKernel {
+        let input = self.quantized.as_ref().expect("quantized case");
+        let [b_type, a_type, d_type] = self.types;
+        let [has_scale, accumulate, has_bias, has_soft_cap, gathered] = self.mask();
+        QuantizedGemvVulkanKernel::new(
+            &fixture.context,
+            a_type,
+            b_type,
+            d_type,
+            has_scale,
+            accumulate,
+            has_bias,
+            has_soft_cap,
+            gathered,
+            input.mode,
+            input.quant_method,
+            input.signed_codes,
+            input.group_size,
+        )
+        .expect("Vulkan QuantizedGemv")
+    }
+
+    /// The quantized Gemm of the case's flags, codes, method and group size.
+    pub fn quantized_gemm_kernel(
+        &self,
+        fixture: &KernelFixture,
+    ) -> QuantizedGemmVulkanKernel {
+        assert!(self.gather.is_none(), "Gemm takes no gather");
+        let input = self.quantized.as_ref().expect("quantized case");
+        let [b_type, a_type, d_type] = self.types;
+        let [has_scale, accumulate, has_bias, has_soft_cap, _] = self.mask();
+        QuantizedGemmVulkanKernel::new(
+            &fixture.context,
+            a_type,
+            b_type,
+            d_type,
+            has_scale,
+            accumulate,
+            has_bias,
+            has_soft_cap,
+            input.mode,
+            input.quant_method,
+            input.signed_codes,
+            input.group_size,
+        )
+        .expect("Vulkan QuantizedGemm")
+    }
+
+    /// Records the QuantizedGemv dispatch over the weight planes of `weight_planes`, `[a, d]` and the optional bias and
+    /// gather ranges.
+    ///
+    /// # Safety
+    /// As for `encode_gemv`, the weight ranges holding their planes.
+    pub unsafe fn encode_quantized_gemv(
+        &self,
+        kernel: &QuantizedGemvVulkanKernel,
+        weights: &[(&Arc<VkBuffer>, Range<u64>)],
+        [a, d]: [(&Arc<VkBuffer>, Range<u64>); 2],
+        bias: Option<(&Arc<VkBuffer>, Range<u64>)>,
+        gather: Option<(&Arc<VkBuffer>, Range<u64>)>,
+        encoding: &mut VkCommandBufferEncoding,
+    ) {
+        let (scales, zero_points) = self.strides();
+        let method = self.quantized.as_ref().expect("quantized case").quant_method;
+        let correction = |wanted| (method == wanted).then(|| weights[2].clone());
+        // SAFETY: forwarded from the caller.
+        unsafe {
+            kernel.encode(
+                weights[0].clone(),
+                weights[1].clone(),
+                correction(QuantizationMethod::ScaleBias),
+                correction(QuantizationMethod::ScaleZeroPoint),
+                a,
+                d,
+                bias,
+                gather,
+                self.k,
+                self.n,
+                self.m,
+                scales.output_stride,
+                scales.group_stride,
+                zero_points.map(|strides| strides.output_stride),
+                zero_points.map(|strides| strides.group_stride),
+                self.ab_scale,
+                self.soft_cap,
+                encoding,
+            )
+        }
+    }
+
+    /// Records the QuantizedGemm dispatch as `encode_quantized_gemv` does, without gather.
+    ///
+    /// # Safety
+    /// As for `encode_quantized_gemv`.
+    pub unsafe fn encode_quantized_gemm(
+        &self,
+        kernel: &QuantizedGemmVulkanKernel,
+        weights: &[(&Arc<VkBuffer>, Range<u64>)],
+        [a, d]: [(&Arc<VkBuffer>, Range<u64>); 2],
+        bias: Option<(&Arc<VkBuffer>, Range<u64>)>,
+        encoding: &mut VkCommandBufferEncoding,
+    ) {
+        let (scales, zero_points) = self.strides();
+        let method = self.quantized.as_ref().expect("quantized case").quant_method;
+        let correction = |wanted| (method == wanted).then(|| weights[2].clone());
+        // SAFETY: forwarded from the caller.
+        unsafe {
+            kernel.encode(
+                weights[0].clone(),
+                weights[1].clone(),
+                correction(QuantizationMethod::ScaleBias),
+                correction(QuantizationMethod::ScaleZeroPoint),
+                a,
+                d,
+                bias,
+                self.k,
+                self.n,
+                self.m,
+                scales.output_stride,
+                scales.group_stride,
+                zero_points.map(|strides| strides.output_stride),
+                zero_points.map(|strides| strides.group_stride),
+                self.ab_scale,
+                self.soft_cap,
+                encoding,
+            )
+        }
+    }
+
     /// D after `repeat` Gemv dispatches, as `gpu` records them.
     pub fn gemv(
         &self,
@@ -306,8 +588,8 @@ impl MatmulCase {
     ) -> Vec<f32> {
         let kernel = self.gemv_kernel(fixture);
         // SAFETY: `gpu` passes guarded ranges holding the case's elements and indices; D aliases nothing.
-        self.gpu(fixture, repeat, |ranges, bias, gather, encoding| unsafe {
-            self.encode_gemv(&kernel, ranges, bias, gather, encoding)
+        self.gpu(fixture, repeat, |weights, [a, d], bias, gather, encoding| unsafe {
+            self.encode_gemv(&kernel, [weights[0].clone(), a, d], bias, gather, encoding)
         })
     }
 
@@ -319,19 +601,47 @@ impl MatmulCase {
     ) -> Vec<f32> {
         let kernel = self.gemm_kernel(fixture);
         // SAFETY: `gpu` passes guarded ranges holding the case's elements; D aliases nothing.
-        self.gpu(fixture, repeat, |ranges, bias, _, encoding| unsafe {
-            self.encode_gemm(&kernel, ranges, bias, encoding)
+        self.gpu(fixture, repeat, |weights, [a, d], bias, _, encoding| unsafe {
+            self.encode_gemm(&kernel, [weights[0].clone(), a, d], bias, encoding)
         })
     }
 
-    /// D after `repeat` dispatches `encode` records in one command buffer over guarded byte ranges of `[b, a, d]`, bias
-    /// and gather, A's starting `a_offset` elements in, after asserting every guard and input unchanged.
+    /// D after `repeat` QuantizedGemv dispatches, as `gpu` records them.
+    pub fn quantized_gemv(
+        &self,
+        fixture: &KernelFixture,
+        repeat: usize,
+    ) -> Vec<f32> {
+        let kernel = self.quantized_gemv_kernel(fixture);
+        // SAFETY: `gpu` passes guarded ranges holding the case's planes, elements and indices; D aliases nothing.
+        self.gpu(fixture, repeat, |weights, ranges, bias, gather, encoding| unsafe {
+            self.encode_quantized_gemv(&kernel, weights, ranges, bias, gather, encoding)
+        })
+    }
+
+    /// D after `repeat` QuantizedGemm dispatches, as `gpu` records them.
+    pub fn quantized_gemm(
+        &self,
+        fixture: &KernelFixture,
+        repeat: usize,
+    ) -> Vec<f32> {
+        let kernel = self.quantized_gemm_kernel(fixture);
+        // SAFETY: `gpu` passes guarded ranges holding the case's planes and elements; D aliases nothing.
+        self.gpu(fixture, repeat, |weights, ranges, bias, _, encoding| unsafe {
+            self.encode_quantized_gemm(&kernel, weights, ranges, bias, encoding)
+        })
+    }
+
+    /// D after `repeat` dispatches `encode` records in one command buffer over guarded byte ranges of the weight planes
+    /// of `weight_planes`, `[a, d]`, bias and gather, A's starting `a_offset` elements in, after asserting every guard
+    /// and input unchanged.
     pub fn gpu(
         &self,
         fixture: &KernelFixture,
         repeat: usize,
         mut encode: impl FnMut(
-            [(&Arc<VkBuffer>, Range<u64>); 3],
+            &[(&Arc<VkBuffer>, Range<u64>)],
+            [(&Arc<VkBuffer>, Range<u64>); 2],
             Option<(&Arc<VkBuffer>, Range<u64>)>,
             Option<(&Arc<VkBuffer>, Range<u64>)>,
             &mut VkCommandBufferEncoding,
@@ -339,9 +649,10 @@ impl MatmulCase {
     ) -> Vec<f32> {
         let [b_type, a_type, d_type] = self.types;
         let sentinel = 0xa5u8;
-        let inputs =
-            [(&self.b, b_type), (&self.a_storage(), a_type)].map(|(values, data_type)| Self::bytes(values, data_type));
-        let [b, a] = inputs.each_ref().map(|bytes| fixture.guarded(bytes, sentinel));
+        let planes = self.weight_planes();
+        let weights = planes.iter().map(|bytes| fixture.guarded(bytes, sentinel)).collect::<Vec<_>>();
+        let a_input = Self::bytes(&self.a_storage(), a_type);
+        let a = fixture.guarded(&a_input, sentinel);
         let d = fixture.guarded(&Self::bytes(&self.d, d_type), sentinel);
         let bias = self.bias.as_ref().map(|bias| Self::bytes(bias, b_type));
         let bias_range = bias.as_ref().map(|bytes| fixture.guarded(bytes, sentinel));
@@ -352,13 +663,14 @@ impl MatmulCase {
             (buffer, range.clone())
         }
         // A recorded dispatch retains every buffer it declares until completion.
-        let owners = || [&b, &a, &d].map(|(buffer, _)| Arc::strong_count(buffer));
+        let owners = || weights.iter().chain([&a, &d]).map(|(buffer, _)| Arc::strong_count(buffer)).collect::<Vec<_>>();
         let unrecorded = owners();
         let mut encoding = fixture.encoding();
         for _ in 0..repeat {
             let a_range = (&a.0, a.1.start + skip..a.1.end);
             encode(
-                [range(&b), a_range, range(&d)],
+                &weights.iter().map(range).collect::<Vec<_>>(),
+                [a_range, range(&d)],
                 bias_range.as_ref().map(range),
                 gather_range.as_ref().map(range),
                 &mut encoding,
@@ -370,9 +682,10 @@ impl MatmulCase {
         KernelFixture::complete(encoding);
         // SAFETY: the only command buffer using these buffers has completed.
         unsafe {
-            for (guarded, payload, name) in [(&b, &inputs[0], "B"), (&a, &inputs[1], "A")] {
-                KernelFixture::assert_unchanged(guarded, sentinel, payload, name);
+            for (index, (guarded, payload)) in weights.iter().zip(&planes).enumerate() {
+                KernelFixture::assert_unchanged(guarded, sentinel, payload, &format!("B plane {index}"));
             }
+            KernelFixture::assert_unchanged(&a, sentinel, &a_input, "A");
             if let (Some(guarded), Some(payload)) = (&bias_range, &bias) {
                 KernelFixture::assert_unchanged(guarded, sentinel, payload, "bias");
             }
@@ -532,7 +845,20 @@ impl MatmulCase {
     pub fn label(&self) -> String {
         let flags = ["scale", "accumulate", "bias", "soft cap", "gather"];
         let mask = self.mask().iter().zip(flags).filter(|(on, _)| **on).map(|(_, flag)| flag).collect::<Vec<_>>();
-        format!("B/A/D {:?} m {} n {} k {} A offset {} {mask:?}", self.types, self.m, self.n, self.k, self.a_offset)
+        let quantized = self.quantized.as_ref().map(|input| {
+            let layout = input.params_layout;
+            let (mode, method, group, signed) = (input.mode, input.quant_method, input.group_size, input.signed_codes);
+            format!(" {mode:?} {method:?} group {group} {layout:?} signed {signed}")
+        });
+        format!(
+            "B/A/D {:?} m {} n {} k {} A offset {} {mask:?}{}",
+            self.types,
+            self.m,
+            self.n,
+            self.k,
+            self.a_offset,
+            quantized.unwrap_or_default()
+        )
     }
 
     /// The case on the CPU and through `run` against its FP64 bounds: where they exist both outputs within them, else

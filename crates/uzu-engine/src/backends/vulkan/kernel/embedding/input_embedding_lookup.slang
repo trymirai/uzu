@@ -1,6 +1,7 @@
 import definitions;
 import common.activation;
 import common.hadamard;
+import common.quantized_value;
 import generated.d4s4;
 import generated.embedding;
 import generated.hadamard_order;
@@ -8,11 +9,6 @@ import generated.quantization;
 import generated.quantization_method;
 
 static const uint INPUT_EMBEDDING_LOOKUP_TILE = 256;
-
-// The 4-bit field `nibble` of packed bytes, the low half of a byte first.
-uint read_nibble(Ptr<uint8_t, Access.Read> bytes, uint nibble) {
-  return (uint(bytes[nibble / 2]) >> (4 * (nibble % 2))) & 15u;
-}
 
 // One row per token, one workgroup per tile of a row, in the CPU's staging with exact FP32 products: a dense T value
 // times the input scale rounded to T is rounded to T; a quantized code times its group scale plus the group bias (the
@@ -87,20 +83,17 @@ func InputEmbeddingLookup<T: IModelFloat>(
       } else {
         code = float(uint(values[row + column]));
       }
-      // The CPU adds the negated offset product: IEEE defines x - y as x + (-y), signed zeros, infinities and NaN
-      // included, and -(s z) is (-s) z under round to nearest even, while the device may flush a negated subnormal.
-      let product = exact_product(scale, code);
-      float sum;
-      if (quantization_method == QuantizationMethod.ScaleBias) {
-        sum = exact_sum(product, biases[scale_index].toFloat(), false);
+      let scale_bias = quantization_method == QuantizationMethod.ScaleBias;
+      float correction;
+      if (scale_bias) {
+        correction = biases[scale_index].toFloat();
       } else {
-        let zero_point = quantization_method == QuantizationMethod.ScaleZeroPoint
-                           ? float(u4 ? read_nibble(zero_points, 2 * token * ((groups + 1) / 2) + group)
-                                      : uint(zero_points[scale_index]))
-                           : (u4 ? 8.0 : 128.0);
-        sum = exact_sum(product, exact_product(scale, zero_point), true);
+        correction = quantization_method == QuantizationMethod.ScaleZeroPoint
+                       ? float(u4 ? read_nibble(zero_points, 2 * token * ((groups + 1) / 2) + group)
+                                  : uint(zero_points[scale_index]))
+                       : (u4 ? 8.0 : 128.0);
       }
-      value = T.fromFloat(exact_product(sum, input_scale)).toFloat();
+      value = T.fromFloat(exact_product(quantized_value(scale, code, scale_bias, correction), input_scale)).toFloat();
     } else {
       let ladder_index =
         read_nibble(ladder_indices, token * (model_dim / COLUMNS_PER_LADDER_SCALE) + column / COLUMNS_PER_LADDER_SCALE);

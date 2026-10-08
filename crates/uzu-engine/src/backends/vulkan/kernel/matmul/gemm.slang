@@ -2,8 +2,9 @@ import definitions;
 import common.activation;
 import common.matmul;
 
-// The CPU MatmulKernel's full-precision product of A rows and transposed contiguous B rows, D = epilogue(A Bᵀ), for
-// every BF16/F32 triple. A workgroup computes a GEMM_TILE x GEMM_TILE tile of D from shared slices of GEMM_DEPTH K
+// The CPU MatmulKernel's product of A rows and transposed contiguous B rows, D = epilogue(A Bᵀ), for every BF16/F32
+// triple, B full precision (Gemm) or U4/U8 quantized (QuantizedGemm), read through common.matmul's weight reader. A
+// workgroup computes a GEMM_TILE x GEMM_TILE tile of D from shared slices of GEMM_DEPTH K
 // elements of A's and B's tile rows; each invocation owns GEMM_SPAN x GEMM_SPAN outputs GEMM_STRIDE apart and folds
 // each one's products from +0 in increasing K, the CPU's order, a NoContraction product and sum per step. Where
 // common.matmul classes an output fast that fold sees no operand, product or partial the device may flush, so it rounds
@@ -35,23 +36,23 @@ float gemm_step(float sum, float x, float w) {
   };
 }
 
-[[Kernel]] func Gemm<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
-  Ptr<B, Access.Read> b,
+void gemm_body<A : IModelFloat, B : IModelFloat, D : IModelFloat, W : IMatmulWeights>(
+  W weights,
   Ptr<A, Access.Read> a,
   Ptr<D, Access.ReadWrite> d,
-  [[Optional("has_bias")]] Ptr<B, Access.Read> bias,
+  Ptr<B, Access.Read> bias,
   uint k,
   uint n,
   uint m,
-  [[Optional("has_scale")]] float ab_scale,
-  [[Optional("has_soft_cap")]] float soft_cap,
-  [[Groups("n.div_ceil(64)")]] uint column_tile,
-  [[Groups("m.div_ceil(64)")]] uint row_tile,
-  [[Threads("256")]] uint tid,
-  [[Specialize]] bool has_scale,
-  [[Specialize]] bool accumulate,
-  [[Specialize]] bool has_bias,
-  [[Specialize]] bool has_soft_cap,
+  float ab_scale,
+  float soft_cap,
+  uint column_tile,
+  uint row_tile,
+  uint tid,
+  bool has_scale,
+  bool accumulate,
+  bool has_bias,
+  bool has_soft_cap,
 ) {
   let first_row = row_tile * GEMM_TILE;
   let first_column = column_tile * GEMM_TILE;
@@ -85,7 +86,7 @@ float gemm_step(float sum, float x, float w) {
         x = a[a_row * k + j].toFloat();
       }
       if (b_row < n && j < k) {
-        w = b[b_row * k + j].toFloat();
+        w = weights.weight(b_row, j, b_row * k);
       }
       a_fields = matmul_merge_fields(a_fields, matmul_fields(x, 0.0));
       b_fields = matmul_merge_fields(b_fields, matmul_fields(0.0, w));
@@ -140,7 +141,7 @@ float gemm_step(float sum, float x, float w) {
         }
         var dot = sums[i][j];
         if (matmul_mode(fields, k, has_scale, ab_scale, accumulate, prior, has_bias, bias_value) != MATMUL_FAST) {
-          dot = matmul_replay(a, row * k, b, column * k, k);
+          dot = matmul_replay(a, row * k, weights, column, k);
         }
         let value =
           matmul_epilogue(dot, has_scale, ab_scale, accumulate, prior, has_bias, bias_value, has_soft_cap, soft_cap);
@@ -148,4 +149,28 @@ float gemm_step(float sum, float x, float w) {
       }
     }
   }
+}
+
+[[Kernel]] func Gemm<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
+  Ptr<B, Access.Read> b,
+  Ptr<A, Access.Read> a,
+  Ptr<D, Access.ReadWrite> d,
+  [[Optional("has_bias")]] Ptr<B, Access.Read> bias,
+  uint k,
+  uint n,
+  uint m,
+  [[Optional("has_scale")]] float ab_scale,
+  [[Optional("has_soft_cap")]] float soft_cap,
+  [[Groups("n.div_ceil(64)")]] uint column_tile,
+  [[Groups("m.div_ceil(64)")]] uint row_tile,
+  [[Threads("256")]] uint tid,
+  [[Specialize]] bool has_scale,
+  [[Specialize]] bool accumulate,
+  [[Specialize]] bool has_bias,
+  [[Specialize]] bool has_soft_cap,
+) {
+  DenseWeights<B> weights = { b };
+  gemm_body<A, B, D>(
+    weights, a, d, bias, k, n, m, ab_scale, soft_cap, column_tile, row_tile, tid, has_scale, accumulate, has_bias,
+    has_soft_cap);
 }
