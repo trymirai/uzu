@@ -33,7 +33,7 @@ pub use vk_context_create_info::VkContextCreateInfo;
 pub use vk_context_error::VkContextError;
 pub use vk_kernels::{
     ActivationTransformVulkanKernel, ActivationVulkanKernel, AncestorAttentionVulkanKernel,
-    AttentionPrepareVulkanKernel, AttentionSinglePassVulkanKernel, GatedActMulVulkanKernel,
+    AttentionPrepareVulkanKernel, AttentionSinglePassVulkanKernel, GatedActMulVulkanKernel, GemvVulkanKernel,
     InputEmbeddingLookupVulkanKernel, KVCacheUpdateVulkanKernel, LogitTransformVulkanKernel, NormalizationVulkanKernel,
     PoolingMeanVulkanKernel, QKVNormVulkanKernel, ShortConvDecodeVulkanKernel, ShortConvPackVulkanKernel,
     ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SigmoidGateVulkanKernel, SoftmaxVulkanKernel,

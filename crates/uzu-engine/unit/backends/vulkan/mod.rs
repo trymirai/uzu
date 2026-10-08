@@ -8,6 +8,8 @@ mod attention_single_pass_case;
 mod attention_single_pass_test;
 mod bf16_conversion_test;
 mod gated_act_mul_test;
+mod gemv_case;
+mod gemv_test;
 mod input_embedding_lookup_case;
 mod input_embedding_lookup_test;
 mod kernel_fixture;
@@ -36,7 +38,8 @@ pub use activation_transform_test::{
 };
 pub use ancestor_attention_case::{AncestorAttentionCase, HEAD_DIM};
 pub use attention_prepare_case::AttentionPrepareCase;
-pub use attention_single_pass_case::AttentionSinglePassCase;
+pub use attention_single_pass_case::{AttentionSinglePassCase, hashed};
+pub use gemv_case::GemvCase;
 pub use input_embedding_lookup_case::InputEmbeddingLookupCase;
 pub use normalization_case::NormalizationCase;
 pub use normalization_test::stage_oracle as normalization_stage_oracle;

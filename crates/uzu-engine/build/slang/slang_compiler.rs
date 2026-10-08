@@ -74,7 +74,7 @@ impl SlangCompiler {
         source_file: &Path,
         enum_paths: &EnumPaths,
         gpu_types: &GpuTypes,
-    ) -> Result<(KernelPath, Box<[Kernel]>, Box<[KernelName]>), Error> {
+    ) -> Result<(KernelPath, Box<[Kernel]>, Box<[(KernelName, bool)]>), Error> {
         let source_relative = source_file.strip_prefix(&self.src_dir)?.with_extension("");
         let kernel_path = source_relative
             .components()
@@ -105,7 +105,7 @@ impl SlangCompiler {
                 println!("cargo::rerun-if-changed={path}");
             }
             debug_log!("Slang compile cached: {}", source_file.display());
-            return Ok((kernel_path, cached.public_kernels, cached.test_bindings));
+            return Ok((kernel_path, cached.public_kernels, cached.bindings));
         }
 
         let source_path = source_file.to_str().context("Slang source path is not UTF-8")?;
@@ -132,11 +132,10 @@ impl SlangCompiler {
             .flatten()
             .collect::<Vec<_>>();
         let descriptors = kernels.iter().map(SlangKernelInfo::to_kernel).collect::<Result<Vec<_>, _>>()?;
-        let (public, test): (Vec<_>, Vec<_>) =
+        let (public, private): (Vec<_>, Vec<_>) =
             kernels.iter().zip(descriptors.iter().cloned()).partition(|(info, _)| info.is_public());
-        let public_kernels = public.into_iter().filter_map(|(_, kernel)| kernel).collect::<Box<[Kernel]>>();
-        let test_bindings =
-            test.into_iter().filter_map(|(_, kernel)| Some(kernel?.name)).collect::<Box<[KernelName]>>();
+        let public_kernels = public.into_iter().map(|(_, kernel)| kernel).collect::<Box<[Kernel]>>();
+        let bindings = private.into_iter().map(|(info, kernel)| (kernel.name, info.is_test())).collect::<Box<[_]>>();
 
         let mut artifact_hashes = HashMap::new();
         if !kernels.is_empty() {
@@ -200,9 +199,6 @@ impl SlangCompiler {
             let object_path = object_file.to_str().context("Slang artifact path is not UTF-8")?;
             let mut binding_files = Vec::new();
             for ((info, descriptor), (_, entry_points)) in kernels.iter().zip(&descriptors).zip(&wrappers) {
-                let Some(descriptor) = descriptor else {
-                    continue;
-                };
                 let variants = entry_points
                     .iter()
                     .map(|(name, types)| {
@@ -239,11 +235,11 @@ impl SlangCompiler {
                 dependency_hashes,
                 artifact_hashes,
                 public_kernels: public_kernels.clone(),
-                test_bindings: test_bindings.clone(),
+                bindings: bindings.clone(),
             })?,
         )?;
         debug_log!("Slang compile end: {}", source_file.display());
-        Ok((kernel_path, public_kernels, test_bindings))
+        Ok((kernel_path, public_kernels, bindings))
     }
 }
 
@@ -272,11 +268,11 @@ impl Compiler for SlangCompiler {
         let mut bindings = Vec::new();
         for source in sources {
             if !fs::read(&source)?.starts_with(b"implementing") {
-                let (path, file_kernels, test_bindings) = self
+                let (path, file_kernels, private) = self
                     .compile(&source, enum_paths, gpu_types)
                     .with_context(|| format!("cannot compile {}", source.display()))?;
                 let names = file_kernels.iter().map(|kernel| (&kernel.name, false));
-                for (name, test) in names.chain(test_bindings.iter().map(|name| (name, true))) {
+                for (name, test) in names.chain(private.iter().map(|(name, test)| (name, *test))) {
                     let file = bindgen::binding_file(&self.out_dir.join(path.join("/")), name);
                     bindings.push((
                         file.to_str().context("binding path is not UTF-8")?.to_owned(),

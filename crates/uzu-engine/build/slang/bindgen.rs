@@ -46,7 +46,7 @@ pub fn bindgen_umbrella(bindings: &[(String, String, bool)]) -> TokenStream {
     quote! { #(#modules)* }
 }
 
-/// Raw typed binding of a public kernel. Its constructor and `encode` follow the common `Kernel`
+/// Raw typed binding of a kernel. Its constructor and `encode` follow the common `Kernel`
 /// signature; the push-constant block and specialization data follow each entry point's reflected ABI. A
 /// `[[PipelineVariants]]` argument gets one pipeline per value of its canonical enum, which `encode` selects.
 pub fn bindgen(
@@ -65,6 +65,8 @@ pub fn bindgen(
         (abi.block_size, abi.group_size, abi.specialization_ids.clone(), fields)
     };
     ensure!(variants.iter().all(|(_, other)| layout(other) == layout(abi)), "{kernel_name}: variants differ in layout");
+    // Vulkan guarantees every device 128 bytes of push constants.
+    ensure!(abi.block_size <= 128, "{kernel_name}: push-constant block of {} bytes exceeds 128", abi.block_size);
 
     let type_parameters = kernel
         .parameters

@@ -72,20 +72,6 @@ float attention_exp(float x) {
   return exp(x);
 }
 
-// a + b as exact_sum, its native sum decorated NoContraction so it is never fused with the product feeding it: the
-// per-key path rounds each product and each sum as the CPU does.
-float attention_ordered_sum(float a, float b) {
-  [branch]
-  if (max(asuint(a) & 0x7fffffffu, asuint(b) & 0x7fffffffu) < 0x0d000000u) {
-    return exact_sum(a, b, false);
-  }
-  return spirv_asm {
-    %sum:$$float = OpFAdd $a $b;
-    OpDecorate %sum NoContraction;
-    result:$$float = OpCopyObject %sum;
-  };
-}
-
 // The CPU's per-key steps over one tile's used keys, by slice 0, which holds the whole state: the running maximum
 // ignoring NaN as f32::max does, then the rescale and the weight rounded to FP32 and every product and sum exact, in
 // its order.
@@ -108,9 +94,9 @@ void attention_ordered_tile<Keys: IAttentionKeys>(
       let weight = attention_exp(score - next);
       for (uint a = 0; a < dims_per_thread; a++) {
         let product = exact_product(weight, source.value(tile + index, dim + a * slice_dims));
-        accumulators[a] = attention_ordered_sum(exact_product(accumulators[a], factor), product);
+        accumulators[a] = ordered_sum(exact_product(accumulators[a], factor), product);
       }
-      normalizer = attention_ordered_sum(exact_product(normalizer, factor), weight);
+      normalizer = ordered_sum(exact_product(normalizer, factor), weight);
       max_score = next;
     }
   }

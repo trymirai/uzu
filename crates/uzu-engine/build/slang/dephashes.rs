@@ -10,6 +10,7 @@ pub struct Dephashes {
     pub artifact_hashes: HashMap<String, [u8; blake3::OUT_LEN]>,
     pub dependency_hashes: HashMap<String, [u8; blake3::OUT_LEN]>,
     pub public_kernels: Box<[Kernel]>,
-    /// Private `[[Test]]` kernels whose bindings are generated for test builds only.
-    pub test_bindings: Box<[KernelName]>,
+    /// Every non-public kernel's binding: `true` for a `[[Test]]` kernel, bound in test builds only, `false` for a
+    /// production-private one, bound in every build without a common trait.
+    pub bindings: Box<[(KernelName, bool)]>,
 }

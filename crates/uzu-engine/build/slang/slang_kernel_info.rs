@@ -95,6 +95,10 @@ impl<'a> SlangKernelInfo<'a> {
         self.public
     }
 
+    pub fn is_test(&self) -> bool {
+        self.test
+    }
+
     /// `(phase, condition)` of every `[[Precondition]]`: phase `new` or `encode`, a nonempty host condition.
     pub fn preconditions(&self) -> Result<Vec<(&'a str, &'a str)>, Error> {
         let attributes = self.function.user_attributes().filter(|attribute| attribute.name() == Some("Precondition"));
@@ -113,12 +117,8 @@ impl<'a> SlangKernelInfo<'a> {
             .collect()
     }
 
-    /// The common kernel signature of a public or `[[Test]]` kernel; `None` for SPIR-V-only private kernels.
-    /// Only public descriptors are compared against the CPU and Metal ones.
-    pub fn to_kernel(&self) -> Result<Option<Kernel>, Error> {
-        if !self.public && !self.test {
-            return Ok(None);
-        }
+    /// The common kernel signature of every kernel; only public descriptors are compared against the CPU and Metal ones.
+    pub fn to_kernel(&self) -> Result<Kernel, Error> {
         let mut parameters = self
             .type_parameters
             .iter()
@@ -155,11 +155,11 @@ impl<'a> SlangKernelInfo<'a> {
                 ty,
             });
         }
-        Ok(Some(Kernel {
+        Ok(Kernel {
             name: KernelName::from(self.name),
             parameters: parameters.into(),
             arguments: arguments.into(),
-        }))
+        })
     }
 }
 

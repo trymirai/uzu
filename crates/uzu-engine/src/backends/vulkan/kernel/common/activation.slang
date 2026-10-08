@@ -151,6 +151,20 @@ public float exact_sum(float a, float b, bool subtract) {
   return subtract ? a - b : a + b;
 }
 
+// a + b as exact_sum, its native sum decorated NoContraction so it is never fused with the product feeding it: ordered
+// paths round each product and each sum as the CPU does.
+public float ordered_sum(float a, float b) {
+  [branch]
+  if (max(asuint(a) & 0x7fffffffu, asuint(b) & 0x7fffffffu) < 0x0d000000u) {
+    return exact_sum(a, b, false);
+  }
+  return spirv_asm {
+    %sum:$$float = OpFAdd $a $b;
+    OpDecorate %sum NoContraction;
+    result:$$float = OpCopyObject %sum;
+  };
+}
+
 // a * b rounded to nearest even as IEEE FP32, subnormals kept. Natively unless an operand is subnormal or the product
 // may be (exponent fields summing below 128); then the significands' 48-bit product is rounded onto the result's grid.
 // Classes are decided on the bits: a nonzero subnormal times infinity is infinite, zero times infinity NaN.
@@ -212,7 +226,7 @@ float staged_log(float s) {
 
 // (x / 4) / (d / 4) evaluated as written (NoContraction): the device otherwise drops the exact quarter scaling of
 // denominators past 2^126, whose subnormal reciprocal then flushes the CPU's normal SiLU tail to zero.
-float quarter_quotient(float x, float d) {
+public float quarter_quotient(float x, float d) {
   let quarter = 0.25;
   return spirv_asm {
     %quarter_x:$$float = OpFMul $x $quarter;

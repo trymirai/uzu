@@ -10,6 +10,7 @@ use uzu_engine_macros::uzu_test;
 use super::kernel_fixture::KernelFixture;
 use crate::backends::vulkan::{
     Error, VkBuffer, VkCommandBufferEncoding, VkComputePipeline, VkContext, VkShader, VkTimestampQueryPool,
+    vk_kernels::TestKernelAxisFloatVulkanKernel,
 };
 
 const GROUP_SIZE: u32 = 64;
@@ -20,16 +21,13 @@ fn add_pipeline_with_arguments(
     push_constant_size: u32,
 ) -> Result<VkComputePipeline, Error> {
     let shader = VkShader::new(context.clone(), include_bytes!(concat!(env!("OUT_DIR"), "/vulkan/test_kernel.spv")))?;
-    let entries = [vk::SpecializationMapEntry::default().constant_id(0).offset(0).size(4)];
-    let group_bytes = GROUP_SIZE.to_ne_bytes();
-    let specialization = vk::SpecializationInfo::default().map_entries(&entries).data(&group_bytes);
     VkComputePipeline::new(
         context.clone(),
         shader.module(),
         &[],
         push_constant_size,
-        "__dsl_22test_kernel_axis_float",
-        &specialization,
+        "__dsl_19TestKernelAxisFloat",
+        &vk::SpecializationInfo::default(),
     )
 }
 
@@ -60,6 +58,33 @@ fn encode_add(
             [(output, bytes)],
         )
     }
+}
+
+/// The test kernel's generated binding records the same addition as the raw pipeline, over guarded ranges.
+#[uzu_test]
+fn test_kernel_binding_adds() {
+    let fixture = KernelFixture::new();
+    let size = 1003u32;
+    let inputs = [1.0f32, 2.0].map(|scale| (0..size).map(|index| index as f32 * scale).collect::<Vec<_>>());
+    let [input_0, input_1] = inputs.each_ref().map(|values| fixture.guarded(values, -7.0f32));
+    let output = fixture.guarded(&vec![-1234.0f32; size as usize], -7.0);
+    let kernel = TestKernelAxisFloatVulkanKernel::new(&fixture.context).expect("binding");
+    let mut encoding = fixture.encoding();
+    // SAFETY: the guarded ranges hold `size` floats each; the output aliases nothing.
+    unsafe {
+        kernel.encode(
+            (&input_0.0, input_0.1.clone()),
+            (&input_1.0, input_1.1.clone()),
+            (&output.0, output.1.clone()),
+            size,
+            &mut encoding,
+        )
+    };
+    KernelFixture::complete(encoding);
+    // SAFETY: the only command buffer using the output has completed.
+    let result = unsafe { KernelFixture::read_guarded(&output, -7.0f32) };
+    assert_eq!(result, inputs[0].iter().zip(&inputs[1]).map(|(a, b)| a + b).collect::<Vec<_>>());
+    fixture.assert_clean();
 }
 
 #[uzu_test]
