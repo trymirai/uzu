@@ -11,14 +11,6 @@
 
 #include "util.hpp"
 
-struct llama_batch_deleter {
-    void operator()(llama_batch* batch) {
-        llama_batch_free(*batch);
-    }
-};
-
-typedef std::unique_ptr<llama_batch, llama_batch_deleter> llama_batch_ptr;
-
 struct LlamaEngine::RunConfig {
     std::optional<size_t> max_tokens;
     llama_context_params ctx_params;
@@ -227,19 +219,20 @@ BenchResponse LlamaEngine::run_single(
     };
 
     // prefill
-    llama_batch_ptr batch_storage{new llama_batch(llama_batch_init(llama_n_batch(ctx.get()), 0, 1))};
-    llama_batch& batch = *batch_storage;
-    const int64_t time_start = llama_time_us();
+    const size_t logical_batch_size = llama_n_batch(ctx.get());
     const size_t physical_batch_size = llama_n_ubatch(ctx.get());
-    // Hidden-state extraction exposes only the latest physical batch for MTP and DFlash.
-    const size_t prefill_batch_size = use_speculation ? physical_batch_size : llama_n_batch(ctx.get());
+    common_batch batch(ctx.get());
+    batch.tokens.reserve(logical_batch_size);
+
+    const int64_t time_start = llama_time_us();
+    const size_t prefill_batch_size = use_speculation ? physical_batch_size : logical_batch_size;
     for (size_t offset = 0; offset < tokens.size(); offset += prefill_batch_size) {
-        common_batch_clear(batch);
+        batch.clear();
         const size_t end = std::min(tokens.size(), offset + prefill_batch_size);
         for (size_t i = offset; i < end; ++i) {
-            common_batch_add(batch, tokens[i], i, {0}, i + 1 == tokens.size());
+            batch.add(tokens[i], i, 0, i + 1 == tokens.size());
         }
-        if (llama_decode(ctx.get(), batch) != 0) {
+        if (llama_process(ctx.get(), LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0) {
             throw std::runtime_error("Prefill failed");
         }
         // A single-sequence prefill call can contain multiple physical forward passes.
@@ -288,13 +281,13 @@ BenchResponse LlamaEngine::run_single(
             checkpoint.update_tgt(ctx.get(), 0, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
         }
 
-        common_batch_clear(batch);
-        common_batch_add(batch, token, n_past, {0}, true);
+        batch.clear();
+        batch.add(token, n_past, 0, true);
         for (size_t i = 0; i < draft.size(); ++i) {
-            common_batch_add(batch, draft[i], n_past + i + 1, {0}, true);
+            batch.add(draft[i], n_past + i + 1, 0, true);
         }
 
-        if (llama_decode(ctx.get(), batch) != 0) {
+        if (llama_process(ctx.get(), LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0) {
             throw std::runtime_error("Token decode failed: " + std::to_string(token));
         }
         forward_passes++;
@@ -320,11 +313,11 @@ BenchResponse LlamaEngine::run_single(
         if (spec) {
             // Older recurrent architectures cannot remove a suffix. Restore their state and replay
             // the committed inputs without sampling again, preserving the target sampler's RNG state.
-            if (checkpoint_target && tokens.size() - n_past < static_cast<size_t>(batch.n_tokens)) {
+            if (checkpoint_target && tokens.size() - n_past < static_cast<size_t>(batch.size())) {
                 checkpoint.load_tgt(ctx.get(), 0, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
                 trim_context(ctx.get(), n_past);
-                batch.n_tokens = tokens.size() - n_past;
-                if (llama_decode(ctx.get(), batch) != 0) {
+                batch.tokens.resize(tokens.size() - n_past);
+                if (llama_process(ctx.get(), LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0) {
                     throw std::runtime_error("Failed to replay accepted speculative tokens");
                 }
                 forward_passes++;
