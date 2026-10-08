@@ -32,10 +32,10 @@ pub use vk_context::VkContext;
 pub use vk_context_create_info::VkContextCreateInfo;
 pub use vk_context_error::VkContextError;
 pub use vk_kernels::{
-    ActivationTransformVulkanKernel, ActivationVulkanKernel, GatedActMulVulkanKernel, LogitTransformVulkanKernel,
-    NormalizationVulkanKernel, PoolingMeanVulkanKernel, ShortConvDecodeVulkanKernel, ShortConvPackVulkanKernel,
-    ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SoftmaxVulkanKernel, TensorAddBiasVulkanKernel,
-    TensorAddScaleVulkanKernel,
+    ActivationTransformVulkanKernel, ActivationVulkanKernel, GatedActMulVulkanKernel, InputEmbeddingLookupVulkanKernel,
+    LogitTransformVulkanKernel, NormalizationVulkanKernel, PoolingMeanVulkanKernel, ShortConvDecodeVulkanKernel,
+    ShortConvPackVulkanKernel, ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SoftmaxVulkanKernel,
+    TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel,
 };
 pub use vk_logger::VkLogger;
 pub use vk_physical_device::VkPhysicalDevice;

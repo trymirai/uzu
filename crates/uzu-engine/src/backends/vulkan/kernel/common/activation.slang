@@ -135,6 +135,22 @@ public float exact_scale_up_24(float x) {
   return asfloat(asuint(float(bits & 0x007fffffu) * asfloat(0x01000000u)) | (bits & 0x80000000u));
 }
 
+// a + b or a - b rounded to nearest even, subnormals kept. When both magnitudes are below 2^-101 both are scaled up by
+// 2^24 exactly, so the native operation sees normals: a sum below the smallest normal is exact on the 2^-149 grid and a
+// larger one rounds as the scaled one, so scaling back down is exact. Otherwise any subnormal operand is below half the
+// other's ULP (at least 2^-125 below a power of two), leaving the rounded sum unchanged, and a nonzero cancellation of
+// operands from 2^-101 on is at least the smallest normal.
+public float exact_sum(float a, float b, bool subtract) {
+  // A branch, not flattened: the scaled path is rare and would otherwise run for every sum.
+  [branch]
+  if (max(asuint(a) & 0x7fffffffu, asuint(b) & 0x7fffffffu) < 0x0d000000u) {
+    let scaled_a = exact_scale_up_24(a);
+    let scaled_b = exact_scale_up_24(b);
+    return exact_scale_down(subtract ? scaled_a - scaled_b : scaled_a + scaled_b, 24);
+  }
+  return subtract ? a - b : a + b;
+}
+
 // a * b rounded to nearest even as IEEE FP32, subnormals kept. Natively unless an operand is subnormal or the product
 // may be (exponent fields summing below 128); then the significands' 48-bit product is rounded onto the result's grid.
 // Classes are decided on the bits: a nonzero subnormal times infinity is infinite, zero times infinity NaN.

@@ -2,6 +2,8 @@ mod activation_test;
 mod activation_transform_test;
 mod bf16_conversion_test;
 mod gated_act_mul_test;
+mod input_embedding_lookup_case;
+mod input_embedding_lookup_test;
 mod kernel_fixture;
 mod logit_transform_test;
 mod normalization_case;
@@ -22,5 +24,6 @@ pub use activation_transform_test::{
     assert_quantized, check_bounds, cpu_outputs as transform_cpu_outputs, gpu_transformed, label, quantizations,
     quantized, raw, signs, to, transform_oracle, values,
 };
+pub use input_embedding_lookup_case::InputEmbeddingLookupCase;
 pub use normalization_case::NormalizationCase;
 pub use short_conv_case::ShortConvCase;
