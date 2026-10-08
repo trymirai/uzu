@@ -1,4 +1,4 @@
-use std::{ops::Range, sync::Arc};
+use std::{collections::BTreeMap, ops::Range, sync::Arc};
 
 use half::bf16;
 
@@ -10,18 +10,18 @@ use crate::{
             kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
         },
         cpu::Cpu,
-        vulkan::{GemvVulkanKernel, VkBuffer, VkCommandBufferEncoding},
+        vulkan::{GemmVulkanKernel, GemvVulkanKernel, VkBuffer, VkCommandBufferEncoding},
     },
     data_type::DataType,
     tests::helpers::{buffer_to_vec, create_buffer_with_data, create_context, submit_command_buffer},
 };
 
-/// One raw Gemv dispatch shared by the CPU and Vulkan runners and the FP64 oracle: values held as FP32, each exactly
-/// representable in its storage type, `types` of B, A and D. B holds rows of `k`, A `a_offset` NaN
+/// One raw Gemv or Gemm dispatch shared by the CPU and Vulkan runners and the FP64 oracle: values held as FP32, each
+/// exactly representable in its storage type, `types` of B, A and D. B holds rows of `k`, A `a_offset` NaN
 /// elements before its `[m, k]` rows, D the prior `[m, n]` output; bias is one B-typed value per output column and
-/// `gather` names the B row of every output. Mask bits: 1 scale, 2 accumulate, 4 bias, 8 soft cap, 16 gather.
+/// `gather` names the B row of every output (Gemv only). Mask bits: 1 scale, 2 accumulate, 4 bias, 8 soft cap, 16 gather.
 #[derive(Clone)]
-pub struct GemvCase {
+pub struct MatmulCase {
     pub types: [DataType; 3],
     pub m: u32,
     pub n: u32,
@@ -37,7 +37,35 @@ pub struct GemvCase {
     pub soft_cap: Option<f32>,
 }
 
-impl GemvCase {
+impl MatmulCase {
+    pub const SCALE: u32 = 1;
+    pub const ACCUMULATE: u32 = 2;
+    pub const BIAS: u32 = 4;
+    pub const SOFT_CAP: u32 = 8;
+    pub const GATHER: u32 = 16;
+
+    /// Every B, A and D triple of F32 and BF16.
+    pub fn triples() -> impl Iterator<Item = [DataType; 3]> {
+        itertools::iproduct!(
+            [DataType::F32, DataType::BF16],
+            [DataType::F32, DataType::BF16],
+            [DataType::F32, DataType::BF16]
+        )
+        .map(|(b, a, d)| [b, a, d])
+    }
+
+    /// One A row against `rows` of B under `mask`, without gather; other fields as `new` makes them.
+    pub fn witness(
+        types: [DataType; 3],
+        a: &[f32],
+        rows: &[&[f32]],
+        mask: u32,
+    ) -> Self {
+        let mut case = Self::new(types, 1, rows.len() as u32, a.len() as u32, mask & !Self::GATHER, 0);
+        (case.a, case.b) = (a.to_vec(), rows.concat());
+        case
+    }
+
     /// Hashed operands in [-2, 2), prior outputs and biases in [-1, 1), scale 0.75 and cap 3 under `mask`; gathered
     /// outputs name B rows out of order and repeatedly among `n + 3`; A starts 1 to 3 elements into its range.
     pub fn new(
@@ -206,7 +234,7 @@ impl GemvCase {
         }
     }
 
-    pub fn vulkan_kernel(
+    pub fn gemv_kernel(
         &self,
         fixture: &KernelFixture,
     ) -> GemvVulkanKernel {
@@ -226,13 +254,24 @@ impl GemvCase {
         .expect("Vulkan Gemv")
     }
 
-    /// Records the dispatch over `[b, a, d]` and the optional bias and gather ranges; A's range starts at A's first
-    /// element.
+    pub fn gemm_kernel(
+        &self,
+        fixture: &KernelFixture,
+    ) -> GemmVulkanKernel {
+        assert!(self.gather.is_none(), "Gemm takes no gather");
+        let [b_type, a_type, d_type] = self.types;
+        let [has_scale, accumulate, has_bias, has_soft_cap, _] = self.mask();
+        GemmVulkanKernel::new(&fixture.context, a_type, b_type, d_type, has_scale, accumulate, has_bias, has_soft_cap)
+            .expect("Vulkan Gemm")
+    }
+
+    /// Records the Gemv dispatch over `[b, a, d]` and the optional bias and gather ranges; A's range starts at A's
+    /// first element.
     ///
     /// # Safety
     /// The ranges hold every element the case indexes, aligned, gather indices are below `weight_rows`, and D aliases
     /// nothing.
-    pub unsafe fn encode(
+    pub unsafe fn encode_gemv(
         &self,
         kernel: &GemvVulkanKernel,
         [b, a, d]: [(&Arc<VkBuffer>, Range<u64>); 3],
@@ -244,13 +283,59 @@ impl GemvCase {
         unsafe { kernel.encode(b, a, d, bias, gather, self.k, self.n, self.m, self.ab_scale, self.soft_cap, encoding) }
     }
 
-    /// D after `repeat` dispatches in one command buffer over guarded byte ranges, A's starting `a_offset` elements in,
-    /// after asserting every guard and input unchanged.
+    /// Records the Gemm dispatch as `encode_gemv` does, without gather.
+    ///
+    /// # Safety
+    /// As for `encode_gemv`.
+    pub unsafe fn encode_gemm(
+        &self,
+        kernel: &GemmVulkanKernel,
+        [b, a, d]: [(&Arc<VkBuffer>, Range<u64>); 3],
+        bias: Option<(&Arc<VkBuffer>, Range<u64>)>,
+        encoding: &mut VkCommandBufferEncoding,
+    ) {
+        // SAFETY: forwarded from the caller.
+        unsafe { kernel.encode(b, a, d, bias, self.k, self.n, self.m, self.ab_scale, self.soft_cap, encoding) }
+    }
+
+    /// D after `repeat` Gemv dispatches, as `gpu` records them.
+    pub fn gemv(
+        &self,
+        fixture: &KernelFixture,
+        repeat: usize,
+    ) -> Vec<f32> {
+        let kernel = self.gemv_kernel(fixture);
+        // SAFETY: `gpu` passes guarded ranges holding the case's elements and indices; D aliases nothing.
+        self.gpu(fixture, repeat, |ranges, bias, gather, encoding| unsafe {
+            self.encode_gemv(&kernel, ranges, bias, gather, encoding)
+        })
+    }
+
+    /// D after `repeat` Gemm dispatches, as `gpu` records them.
+    pub fn gemm(
+        &self,
+        fixture: &KernelFixture,
+        repeat: usize,
+    ) -> Vec<f32> {
+        let kernel = self.gemm_kernel(fixture);
+        // SAFETY: `gpu` passes guarded ranges holding the case's elements; D aliases nothing.
+        self.gpu(fixture, repeat, |ranges, bias, _, encoding| unsafe {
+            self.encode_gemm(&kernel, ranges, bias, encoding)
+        })
+    }
+
+    /// D after `repeat` dispatches `encode` records in one command buffer over guarded byte ranges of `[b, a, d]`, bias
+    /// and gather, A's starting `a_offset` elements in, after asserting every guard and input unchanged.
     pub fn gpu(
         &self,
         fixture: &KernelFixture,
-        kernel: &GemvVulkanKernel,
         repeat: usize,
+        mut encode: impl FnMut(
+            [(&Arc<VkBuffer>, Range<u64>); 3],
+            Option<(&Arc<VkBuffer>, Range<u64>)>,
+            Option<(&Arc<VkBuffer>, Range<u64>)>,
+            &mut VkCommandBufferEncoding,
+        ),
     ) -> Vec<f32> {
         let [b_type, a_type, d_type] = self.types;
         let sentinel = 0xa5u8;
@@ -266,19 +351,21 @@ impl GemvCase {
         fn range((buffer, range): &(Arc<VkBuffer>, Range<u64>)) -> (&Arc<VkBuffer>, Range<u64>) {
             (buffer, range.clone())
         }
+        // A recorded dispatch retains every buffer it declares until completion.
+        let owners = || [&b, &a, &d].map(|(buffer, _)| Arc::strong_count(buffer));
+        let unrecorded = owners();
         let mut encoding = fixture.encoding();
         for _ in 0..repeat {
             let a_range = (&a.0, a.1.start + skip..a.1.end);
-            // SAFETY: the guarded ranges hold the case's elements and indices; D aliases nothing.
-            unsafe {
-                self.encode(
-                    kernel,
-                    [range(&b), a_range, range(&d)],
-                    bias_range.as_ref().map(range),
-                    gather_range.as_ref().map(range),
-                    &mut encoding,
-                )
-            };
+            encode(
+                [range(&b), a_range, range(&d)],
+                bias_range.as_ref().map(range),
+                gather_range.as_ref().map(range),
+                &mut encoding,
+            );
+        }
+        if self.m == 0 || self.n == 0 {
+            assert_eq!(owners(), unrecorded, "{}: an empty dispatch was recorded", self.label());
         }
         KernelFixture::complete(encoding);
         // SAFETY: the only command buffer using these buffers has completed.
@@ -446,5 +533,91 @@ impl GemvCase {
         let flags = ["scale", "accumulate", "bias", "soft cap", "gather"];
         let mask = self.mask().iter().zip(flags).filter(|(on, _)| **on).map(|(_, flag)| flag).collect::<Vec<_>>();
         format!("B/A/D {:?} m {} n {} k {} A offset {} {mask:?}", self.types, self.m, self.n, self.k, self.a_offset)
+    }
+
+    /// The case on the CPU and through `run` against its FP64 bounds: where they exist both outputs within them, else
+    /// Vulkan's class and bits the CPU's (NaN any NaN), and under a soft cap the bounds of the soft cap at the CPU's
+    /// exact FP32 input where that is finite. Counts bounded and exact outputs and the largest Vulkan-CPU difference
+    /// relative to the CPU's magnitude (at least the smallest normal) per label; returns the CPU and Vulkan outputs.
+    pub fn check(
+        &self,
+        fixture: &KernelFixture,
+        label: &str,
+        run: fn(&Self, &KernelFixture, usize) -> Vec<f32>,
+        totals: &mut BTreeMap<String, [f64; 3]>,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let vulkan = run(self, fixture, 1);
+        let cpu = self.cpu(1, false);
+        let bounds = self.bounds();
+        let before = (self.soft_cap.is_some() && bounds.iter().any(Option::is_none)).then(|| self.cpu(1, true));
+        let total = totals.entry(label.to_owned()).or_default();
+        for (index, bound) in bounds.into_iter().enumerate() {
+            let name = format!("{label} {} output {index}", self.label());
+            let bound = bound.or_else(|| {
+                let value = f64::from(before.as_ref()?[index]);
+                value.is_finite().then(|| Self::soft_cap_bounds((value, value), self.soft_cap?)).flatten()
+            });
+            match bound {
+                Some(bound) => {
+                    for (backend, value) in [("CPU", cpu[index]), ("Vulkan", vulkan[index])] {
+                        assert!(
+                            self.within(value, bound),
+                            "{name}: {backend} {value:e} outside [{:e}, {:e}]",
+                            bound.0,
+                            bound.1
+                        );
+                    }
+                    total[0] += 1.0;
+                    let difference = f64::from(vulkan[index]) - f64::from(cpu[index]);
+                    total[2] =
+                        total[2].max(difference.abs() / f64::from(cpu[index].abs()).max(f64::from(f32::MIN_POSITIVE)));
+                },
+                None => {
+                    KernelFixture::assert_bits(&cpu[index..=index], &vulkan[index..=index], &name);
+                    total[1] += 1.0;
+                },
+            }
+        }
+        (cpu, vulkan)
+    }
+
+    pub fn report(
+        kernel: &str,
+        totals: &BTreeMap<String, [f64; 3]>,
+    ) {
+        for (label, [bounded, exact, difference]) in totals {
+            eprintln!(
+                "{kernel} {label}: {bounded} bounded outputs, {exact} exact outputs, max relative |Vulkan - CPU| \
+                 {difference:.3e}"
+            );
+        }
+    }
+
+    pub fn check_all(
+        kernel: &str,
+        label: &str,
+        run: fn(&Self, &KernelFixture, usize) -> Vec<f32>,
+        cases: impl IntoIterator<Item = Self>,
+    ) {
+        let fixture = KernelFixture::new();
+        let mut totals = BTreeMap::new();
+        for case in cases {
+            case.check(&fixture, label, run, &mut totals);
+        }
+        Self::report(kernel, &totals);
+        fixture.assert_clean();
+    }
+
+    /// Both the CPU and `run` store exactly `expected`, bit for bit (NaN any NaN).
+    pub fn exact(
+        &self,
+        fixture: &KernelFixture,
+        label: &str,
+        run: fn(&Self, &KernelFixture, usize) -> Vec<f32>,
+        expected: &[f32],
+    ) {
+        let vulkan = run(self, fixture, 1);
+        KernelFixture::assert_bits(expected, &self.cpu(1, false), &format!("{label} CPU"));
+        KernelFixture::assert_bits(expected, &vulkan, &format!("{label} Vulkan"));
     }
 }
