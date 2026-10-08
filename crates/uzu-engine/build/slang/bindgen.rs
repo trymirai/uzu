@@ -74,7 +74,6 @@ pub fn bindgen(
             .with_context(|| format!("{kernel_name}: no specialization constant '{constant}'"))?;
         specializations.push((format_ident!("{}", parameter.name.as_ref()), *id));
     }
-    ensure!(specializations.len() == abi.specialization_ids.len(), "{kernel_name}: unbound specialization constants");
 
     let mut strides = BTreeSet::new();
     for (_, abi) in variants {

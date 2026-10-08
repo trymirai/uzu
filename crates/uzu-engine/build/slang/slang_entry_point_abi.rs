@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{Context, bail, ensure};
 use itertools::Itertools;
 use shader_slang::{
@@ -15,7 +17,8 @@ pub struct SlangEntryPointAbi {
     pub group_size: [u32; 3],
     pub block_size: usize,
     pub fields: Vec<SlangFieldAbi>,
-    /// `(name, constant_id)` of every specialization constant; all are `bool`, passed as `VkBool32`.
+    /// `(name, constant_id)` of every specialization constant of the program, each one `declared` by a kernel of the
+    /// module; all are `bool`, passed as `VkBool32`.
     pub specialization_ids: Vec<(String, u32)>,
 }
 
@@ -23,6 +26,7 @@ impl SlangEntryPointAbi {
     pub fn from_reflection(
         program: &Shader,
         entry_point: &EntryPoint,
+        declared: &BTreeSet<String>,
     ) -> Result<Self, Error> {
         let name = entry_point.name().context("Slang entry point has no name")?.to_owned();
         let block = entry_point.type_layout().context("Slang entry point has no layout")?;
@@ -85,6 +89,10 @@ impl SlangEntryPointAbi {
                         [ParameterCategory::SpecializationConstant]
                     ) && matches!(layout.scalar_type(), Some(ScalarType::Bool)),
                     "'{name}': global '{parameter_name}' is not a bool specialization constant"
+                );
+                ensure!(
+                    declared.contains(parameter_name),
+                    "'{name}': global '{parameter_name}' is not a specialization of a kernel in this module"
                 );
                 Ok((
                     parameter_name.to_owned(),

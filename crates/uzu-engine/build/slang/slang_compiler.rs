@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     env,
     ffi::CString,
     fs,
@@ -14,7 +14,10 @@ use shader_slang::{
 };
 use walkdir::WalkDir;
 
-use super::{Dephashes, Error, SlangEntryPointAbi, SlangKernelInfo, bindgen, generate_constants, slang_api, wrapper};
+use super::{
+    Dephashes, Error, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, bindgen, generate_constants, slang_api,
+    wrapper,
+};
 use crate::{
     common::{
         caching,
@@ -163,6 +166,15 @@ impl SlangCompiler {
             fs::write(&object_file, blob.as_slice())?;
 
             let program = compiled.layout(0).context("linked Slang program has no layout")?;
+            // Specialization constants declared by the module's kernels; each binding sets only its own.
+            let mut declared = BTreeSet::new();
+            for info in &kernels {
+                for argument in info.arguments() {
+                    if let SlangArgumentType::Specialize(_) = argument.argument_type()? {
+                        declared.insert(wrapper::specialization_name(info.name(), argument.name()?));
+                    }
+                }
+            }
             let object_path = object_file.to_str().context("Slang artifact path is not UTF-8")?;
             let mut binding_files = Vec::new();
             for ((info, descriptor), (_, entry_points)) in kernels.iter().zip(&descriptors).zip(&wrappers) {
@@ -173,7 +185,7 @@ impl SlangCompiler {
                     .iter()
                     .map(|(name, types)| {
                         let entry_point = program.find_entry_point_by_name(name).context("entry point not linked")?;
-                        Ok((types.clone(), SlangEntryPointAbi::from_reflection(program, entry_point)?))
+                        Ok((types.clone(), SlangEntryPointAbi::from_reflection(program, entry_point, &declared)?))
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 let binding_file = bindgen::binding_file(&output_base, &descriptor.name);
