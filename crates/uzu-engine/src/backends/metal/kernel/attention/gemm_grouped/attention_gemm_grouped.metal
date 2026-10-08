@@ -6,11 +6,13 @@
 #include "../../matmul/common/loader.h"
 #include "../../matmul/common/mxu_fragment/ops.h"
 #include "../../generated/attention.h"
+#include "../../generated/ring.h"
 #include "../../generated/trie.h"
 
 using namespace metal;
 using namespace uzu::matmul;
 using namespace uzu::attention;
+using namespace uzu::ring;
 using namespace uzu::trie;
 
 #define ATTENTION_GQA_SIMDGROUPS 8
@@ -70,6 +72,10 @@ KERNEL(AttentionGemmGrouped)(
     device float* partial_maxs OPTIONAL(split_kv),
     device float* partial_sums OPTIONAL(split_kv),
     const device TrieNode* trie OPTIONAL(is_trie),
+    // Ring cache (non-causal only): the prefix region [0, prefix_length) is a ring that starts at `ring_offset`;
+    // keys are read in physical order, only the window mask needs the logical positions.
+    const constant RingParams& ring_params OPTIONAL(is_kv_cache_ring),
+    const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
     const constant AttnParams& params,
     const constant uint& m_tiles,
     const constant uint& kv_heads,
@@ -78,6 +84,8 @@ KERNEL(AttentionGemmGrouped)(
     const bool split_kv SPECIALIZE,
     const bool is_causal SPECIALIZE,
     const bool is_trie SPECIALIZE,
+    const bool is_kv_cache_ring SPECIALIZE,
+    const bool is_sliding_window SPECIALIZE,
     threadgroup float score_exchange[AttentionGemmGroupedLayout<T, BK, BD, D_SLICES>::SCORE_EXCHANGE_SIZE],
     const ThreadContext thread_context,
     const uint tile_split_flat GROUPS(m_tiles * num_splits),
@@ -166,10 +174,15 @@ KERNEL(AttentionGemmGrouped)(
   const short2 score_position = ScoreFragment::get_position(lane);
   uint last_visible_key[ROWS_PER_LANE];
   ulong row_trie_mask[ROWS_PER_LANE];
+  // Logical position of each row's query (ring / window masks only).
+  const uint suffix_position = is_kv_cache_ring ? ring_params.ring_length : prefix_length;
+  uint query_position[ROWS_PER_LANE];
   METAL_PRAGMA_UNROLL
   for (ushort r = 0; r < ROWS_PER_LANE; ++r) {
     last_visible_key[r] = 0;
     row_trie_mask[r] = 0ul;
+    const uint row = row_base + uint(score_position.y) + uint(r) * uint(Ops::THREAD_ELEMENT_ROW_STRIDE);
+    query_position[r] = suffix_position + row % params.q_len;
   }
   if (is_causal || is_trie) {
     METAL_PRAGMA_UNROLL
@@ -272,7 +285,8 @@ KERNEL(AttentionGemmGrouped)(
     }
 
     const uint key_base = first_key + kb * uint(BK);
-    const bool masked_block = IS_TAIL || ((is_causal || is_trie) && (key_base + uint(BK) > prefix_length));
+    const bool masked_block = IS_TAIL || ((is_causal || is_trie) && (key_base + uint(BK) > prefix_length)) ||
+                              is_kv_cache_ring || is_sliding_window;
     if (masked_block) {
       map_lane_rows(score, score_position, [&](ushort row, short col, AccumType value) {
         const uint key = key_base + uint(col);
@@ -282,6 +296,23 @@ KERNEL(AttentionGemmGrouped)(
               visible && (key < prefix_length || ((row_trie_mask[row] >> ulong(key - prefix_length)) & 1ul) != 0ul);
         } else if (is_causal) {
           visible = visible && (key <= last_visible_key[row]);
+        }
+        if (is_kv_cache_ring || is_sliding_window) {
+          // Same rule as should_use_key in mask.h for non-causal attention.
+          uint key_position;
+          if (key >= prefix_length) {
+            key_position = suffix_position + (key - prefix_length);
+          } else if (is_kv_cache_ring) {
+            key_position = (prefix_length + key - ring_params.ring_offset) % prefix_length;
+            visible = visible && key_position < ring_params.ring_length;
+          } else {
+            key_position = key;
+          }
+          if (is_sliding_window) {
+            const uint distance = key_position <= query_position[row] ? query_position[row] - key_position
+                                                                       : key_position - query_position[row];
+            visible = visible && distance <= sliding_window_size / 2u;
+          }
         }
         return visible ? value : masked_score_pre_scale;
       });

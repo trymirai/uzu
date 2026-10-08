@@ -4,7 +4,7 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding,
-            gpu_types::AttnParams,
+            gpu_types::{AttnParams, ring::RingParams},
             kernel::{AttentionArguments, AttentionKernelConfig},
         },
         metal::{
@@ -38,19 +38,23 @@ struct AttentionGemmGroupedMetal {
     scale: Option<f32>,
     block_rows: u32,
     mask: MaskKind,
+    is_ring: bool,
+    sliding_window_size: Option<u32>,
 }
 
 impl AttentionGemmGroupedMetal {
     fn new_fixed(
         context: &MetalContext,
-        head_dim: u32,
-        num_groups: u32,
-        num_q_heads: u32,
-        scale: Option<f32>,
+        config: &AttentionKernelConfig,
         mask: MaskKind,
     ) -> Result<Self, MetalError> {
+        let (head_dim, num_groups, num_q_heads) = (config.head_dim, config.num_groups, config.num_q_heads);
         assert!(matches!(head_dim, 128 | 256), "head_dim must be 128 or 256");
         assert_eq!(num_q_heads % num_groups, 0, "num_q_heads must be divisible by num_groups");
+        assert!(
+            !(config.is_kv_cache_ring || config.sliding_window_size.is_some()) || !mask.is_causal(),
+            "ring / sliding window are supported for non-causal attention only"
+        );
         let slices = head_dim / SLICE_COLS;
         let block_rows = SIMDGROUPS_PER_THREADGROUP / slices * TILE_ROWS;
         let new_kernel = |split| {
@@ -63,6 +67,8 @@ impl AttentionGemmGroupedMetal {
                 split,
                 mask.is_causal(),
                 mask.is_trie(),
+                config.is_kv_cache_ring,
+                config.sliding_window_size.is_some(),
             )
         };
         let combine = AttentionGemmGroupedCombineMetalKernel::new(context, DataType::BF16, head_dim)?;
@@ -73,9 +79,11 @@ impl AttentionGemmGroupedMetal {
             head_dim,
             num_groups,
             num_q_heads,
-            scale,
+            scale: config.scale,
             block_rows,
             mask,
+            is_ring: config.is_kv_cache_ring,
+            sliding_window_size: config.sliding_window_size,
         })
     }
 
@@ -86,6 +94,7 @@ impl AttentionGemmGroupedMetal {
         values: impl BufferRef<Backend = Metal>,
         output: impl BufferMut<Backend = Metal>,
         trie: Option<impl BufferRef<Backend = Metal>>,
+        ring_params: Option<RingParams>,
         suffix_length: u32,
         kv_length: u32,
         q_replicas: u32,
@@ -93,6 +102,7 @@ impl AttentionGemmGroupedMetal {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
         let params = self.params(suffix_length, kv_length);
+        assert_eq!(ring_params.is_some(), self.is_ring, "ring presence must match the kernel");
         let grouped_rows = self.num_q_heads / self.num_groups * suffix_length;
         let m_tiles = grouped_rows.div_ceil(self.block_rows);
         assert_eq!(trie.is_some(), self.mask.is_trie(), "trie presence must match mask");
@@ -109,6 +119,8 @@ impl AttentionGemmGroupedMetal {
                 None::<&mut <Metal as Backend>::ScratchBuffer>,
                 None::<&mut <Metal as Backend>::ScratchBuffer>,
                 trie,
+                ring_params,
+                self.sliding_window_size,
                 params,
                 m_tiles,
                 self.num_groups,
@@ -133,6 +145,8 @@ impl AttentionGemmGroupedMetal {
             Some(&mut partial_maxs),
             Some(&mut partial_sums),
             trie,
+            ring_params,
+            self.sliding_window_size,
             params,
             m_tiles,
             self.num_groups,
@@ -190,10 +204,7 @@ impl AttentionGemmGroupedMetal {
 pub struct AttentionGemmGrouped {
     non_trie: Mutex<Option<AttentionGemmGroupedMetal>>,
     trie: Mutex<Option<AttentionGemmGroupedMetal>>,
-    head_dim: u32,
-    num_groups: u32,
-    num_q_heads: u32,
-    scale: Option<f32>,
+    config: AttentionKernelConfig,
 }
 
 impl AttentionGemmGrouped {
@@ -209,14 +220,7 @@ impl AttentionGemmGrouped {
         };
         let mut cache = cache.lock();
         if cache.is_none() {
-            *cache = Some(AttentionGemmGroupedMetal::new_fixed(
-                context,
-                self.head_dim,
-                self.num_groups,
-                self.num_q_heads,
-                self.scale,
-                mask,
-            )?);
+            *cache = Some(AttentionGemmGroupedMetal::new_fixed(context, &self.config, mask)?);
         }
         Ok(MutexGuard::map(cache, |cache| cache.as_mut().expect("attention pipeline was just initialized")))
     }
@@ -232,10 +236,7 @@ impl AttentionGemmGrouped {
         Self {
             non_trie: Mutex::new(None),
             trie: Mutex::new(None),
-            head_dim: config.head_dim,
-            num_groups: config.num_groups,
-            num_q_heads: config.num_q_heads,
-            scale: config.scale,
+            config: *config,
         }
     }
 
@@ -245,7 +246,7 @@ impl AttentionGemmGrouped {
         suffix_length: u32,
         kv_length: u32,
     ) -> bool {
-        policy::should_encode(self.head_dim, mask, suffix_length, kv_length)
+        policy::should_encode(self.config.head_dim, mask, suffix_length, kv_length)
     }
 
     pub fn encode(
@@ -262,12 +263,13 @@ impl AttentionGemmGrouped {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let suffix_length = arguments.suffix_length;
-        assert!(arguments.cache.ring_params().is_none(), "ring KV cache is unsupported");
         assert!(arguments.sinks.is_none(), "attention sinks are unsupported");
 
         let kv_length = arguments.cache.prefix_len() + suffix_length;
-        let mut output = command_buffer
-            .allocate_scratch_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], DataType::BF16)?;
+        let mut output = command_buffer.allocate_scratch_for_shape(
+            &[suffix_length, self.config.num_q_heads, self.config.head_dim],
+            DataType::BF16,
+        )?;
         let gpu_core_count = command_buffer.context().gpu_core_count;
         let core = self.get_or_create(command_buffer.context(), mask)?;
         let num_splits = choose_splits(
@@ -288,6 +290,7 @@ impl AttentionGemmGrouped {
             arguments.values,
             &mut output,
             arguments.trie,
+            arguments.cache.ring_params(),
             suffix_length,
             kv_length,
             1,

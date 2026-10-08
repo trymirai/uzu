@@ -119,14 +119,14 @@ impl AttentionMetalKernel {
         let is_ring = arguments.cache.ring_params().is_some();
         let mask = MaskKind::for_attention(self.is_causal, is_trie);
 
-        if !is_ring
-            && let Some(mask) = mask
+        if let Some(mask) = mask
             && let Some(grouped) = &self.grouped
         {
             if grouped.should_encode(mask, suffix_length, kv_length) {
                 return grouped.encode(mask, arguments, command_buffer);
             }
-
+        }
+        if !is_ring && mask.is_some() && self.grouped.is_some() {
             // These measured sibling exceptions apply only when the
             // grouped core was built for this layer.
             if self.head_dim == 256 && (1..=16).contains(&suffix_length) && kv_length > D256_SINGLE_PASS_KV_THRESHOLD {

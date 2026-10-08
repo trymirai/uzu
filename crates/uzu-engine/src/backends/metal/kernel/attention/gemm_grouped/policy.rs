@@ -19,8 +19,7 @@ pub fn is_supported(
         && arguments.data_type == DataType::BF16
         && context.supports_mxu
         && !arguments.has_sinks
-        && !arguments.is_kv_cache_ring
-        && arguments.sliding_window_size.is_none()
+        && (!(arguments.is_kv_cache_ring || arguments.sliding_window_size.is_some()) || !arguments.is_causal)
         && arguments.scale.is_none_or(|scale| scale > 0.0)
         && arguments.num_groups > 0
         && arguments.num_q_heads > 0
