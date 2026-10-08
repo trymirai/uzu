@@ -6,6 +6,7 @@
 #include "common/gemm_tiling.h"
 #include "common/mxu_mma_core.h"
 #include "common/quantized/trellis.h"
+#include "../common/simdgroup_fragment_ops.h"
 
 using namespace metal;
 using namespace uzu::gemm;
@@ -35,14 +36,52 @@ struct TrellisEpilogue {
   }
 };
 
+template <GemmTiling TILING, bool USE_MXU>
+struct TrellisGemmLayout {
+  using Ops = metal::conditional_t<USE_MXU, uzu::matmul::MxuFragmentOps<>, uzu::matmul::SimdgroupFragmentOps>;
+
+  UZU_CONST uint BLOCK_M = gemm_tiling_block_m(TILING);
+  UZU_CONST uint BLOCK_N = gemm_tiling_block_n(TILING);
+  UZU_CONST uint BLOCK_K = gemm_tiling_block_k(TILING);
+  UZU_CONST uint SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(TILING);
+  UZU_CONST uint SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(TILING);
+  UZU_CONST uint THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
+  UZU_CONST uint SIMDGROUP_BLOCK_M = BLOCK_M / SIMDGROUPS_PER_ROW;
+  UZU_CONST uint SIMDGROUP_BLOCK_N = BLOCK_N / SIMDGROUPS_PER_COLUMN;
+  UZU_CONST uint TILES_M = SIMDGROUP_BLOCK_M / Ops::FRAGMENT_ROWS;
+  UZU_CONST uint TILES_N = SIMDGROUP_BLOCK_N / Ops::FRAGMENT_COLS;
+  UZU_CONST uint TILES_K = BLOCK_K / Ops::FRAGMENT_ROWS;
+
+  // Simdgroup path only.
+  UZU_CONST uint ROW_ALIGNMENT_BYTES = 16;
+  UZU_CONST uint B_SHARED_STRIDE = BLOCK_K + ROW_ALIGNMENT_BYTES / uint(sizeof(bfloat));
+  UZU_CONST uint B_SHARED_SIZE = USE_MXU ? 1 : BLOCK_N * B_SHARED_STRIDE;
+  UZU_CONST uint DECODES_PER_ROW = BLOCK_K / trellis::WEIGHTS_PER_DECODE;
+
+  // Float slab sums must stay exact integers.
+  UZU_CONST uint MAX_ACTIVATION_MAGNITUDE = 128;
+  UZU_CONST uint FLOAT_EXACT_INTEGER_LIMIT = 1u << 24;
+  static_assert(
+      USE_MXU || BLOCK_K * MAX_ACTIVATION_MAGNITUDE * trellis::MAX_BIASED_WEIGHT < FLOAT_EXACT_INTEGER_LIMIT,
+      "BLOCK_K slab must sum exactly in float"
+  );
+};
+
 } // namespace
 
-template <GemmTiling GEMM_TILING>
+template <GemmTiling GEMM_TILING, bool USE_MXU>
 VARIANTS(
     GEMM_TILING,
+    GemmTiling::Tile64x64x32_Simdgroups2x2,
     GemmTiling::Tile16x32x256_Simdgroups1x1,
     GemmTiling::Tile64x64x256_Simdgroups2x2,
     GemmTiling::Tile128x128x256_Simdgroups4x4)
+VARIANTS(USE_MXU, false, true)
+CONSTRAINT(
+    USE_MXU ==
+    (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
+     GEMM_TILING == GemmTiling::Tile64x64x256_Simdgroups2x2 ||
+     GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4))
 KERNEL(GemmTrellis)(
     const device int8_t* activations,
     const device float4* column_group_sums,
@@ -52,6 +91,7 @@ KERNEL(GemmTrellis)(
     const device float* scale_and_offsets,
     device bfloat* output,
     const constant uzu::matmul::GemmParams* params,
+    threadgroup bfloat b_shared OPTIONAL(!USE_MXU)[TrellisGemmLayout<GEMM_TILING, USE_MXU>::B_SHARED_SIZE],
     const constant uint& group_count_x,
     const constant uint& group_count_y,
     const constant uint& group_count_z,
@@ -71,70 +111,132 @@ KERNEL(GemmTrellis)(
   (void)thread_y;
   (void)thread_z;
 
-  using LeftOperand =
-      operands::LeftOperandFor<GemmAPrologueKind::Int8Symmetric, bfloat, ushort(trellis::K_STEP), false>;
-  // A stock int8 right operand, only for the tile constants of `Core`.
-  using RightOperand =
-      operands::RightOperandFor<GemmBPrologueKind::ScaleSymmetricDequant, ushort(8), ushort(trellis::K_STEP), bfloat>;
-  using Core = MxuMmaCore<bfloat, GEMM_TILING, true, LeftOperand, RightOperand>;
-  using Ops = typename Core::FragmentOps;
-  using Products = uzu::matmul::Fragment<int, Core::TILES_M, Core::TILES_N, Ops>;
-  using RightFragment = uzu::matmul::Fragment<int8_t, Core::TILES_N, Core::TILES_K, Ops, uzu::matmul::ReadDirect, true>;
   const trellis::GemmTrellisFormat trellis_format{
       trellis_vector_width,
       trellis_transition_bits,
       trellis_restart_columns
   };
+  const uint code_row_bytes = trellis::row_bytes(trellis_format, params->K);
+
+  using Layout = TrellisGemmLayout<GEMM_TILING, USE_MXU>;
+  using Ops = typename Layout::Ops;
 
   const uint simdgroup = thread_context.simdgroup_index;
   const uint token_base =
-      group_y * Core::THREADGROUP_BLOCK_M + Core::SIMDGROUP_BLOCK_M * (simdgroup / Core::SIMDGROUPS_PER_COLUMN);
+      group_y * Layout::BLOCK_M + Layout::SIMDGROUP_BLOCK_M * (simdgroup / Layout::SIMDGROUPS_PER_COLUMN);
   const uint row_base =
-      group_x * Core::THREADGROUP_BLOCK_N + Core::SIMDGROUP_BLOCK_N * (simdgroup % Core::SIMDGROUPS_PER_COLUMN);
-  const short token_end = short(min(int(Core::SIMDGROUP_BLOCK_M), int(params->M) - int(token_base)));
-  const short row_end = short(min(int(Core::SIMDGROUP_BLOCK_N), int(params->N) - int(row_base)));
-  const schedules::TileContext tile_context{
-      .simdgroup_limit_m = token_end,
-      .simdgroup_limit_n = row_end,
-      .k_offset = group_z * params->aligned_inner_iterations * trellis::K_STEP,
-      .abs_row_base = token_base,
-  };
+      group_x * Layout::BLOCK_N + Layout::SIMDGROUP_BLOCK_N * (simdgroup % Layout::SIMDGROUPS_PER_COLUMN);
+  const short token_end = short(min(int(Layout::SIMDGROUP_BLOCK_M), int(params->M) - int(token_base)));
+  const short row_end = short(min(int(Layout::SIMDGROUP_BLOCK_N), int(params->N) - int(row_base)));
+  const uint k_offset = group_z * params->aligned_inner_iterations * trellis::K_STEP;
 
-  const uint code_row_bytes = trellis::row_bytes(trellis_format, params->K);
-  const short2 position = Ops::get_position(thread_context.simd_lane_id);
-  const auto left_storage = operands::pack_left<LeftOperand, bfloat>(nullptr, activations, nullptr, nullptr);
-
-  Products products;
+  uzu::matmul::Fragment<int, Layout::TILES_M, Layout::TILES_N, Ops> products;
   products.clear();
-  uzu::dispatch_bool(alignment.contains(GemmAlignment::M) || token_end == Core::SIMDGROUP_BLOCK_M, [&](auto aligned_m) {
-    uzu::dispatch_bool(alignment.contains(GemmAlignment::N) || row_end == Core::SIMDGROUP_BLOCK_N, [&](auto aligned_n) {
-      auto left = quantized::make_left_cursor<true, Core, LeftOperand, aligned_m.value>(
-          left_storage,
-          params,
-          tile_context,
-          thread_context
-      );
-      quantized::TrellisCursor<RightFragment, aligned_n.value> trellis_cursor{
-          codes + size_t(row_base + position.y) * code_row_bytes,
-          code_row_bytes,
-          row_end,
-          position,
-          tile_context.k_offset,
-          trellis_format
-      };
-      const int k_chunks = token_end > 0 && row_end > 0
-                               ? int(params->aligned_inner_iterations) * int(trellis::K_STEP / Core::SIMDGROUP_BLOCK_K)
-                               : 0;
-      METAL_PRAGMA_NO_UNROLL
-      for (int chunk = 0; chunk < k_chunks; ++chunk) {
-        auto left_tile = left.load(0u);
-        auto right_tile = trellis_cursor.load(0u);
-        uzu::matmul::fragment_mma(products, left_tile, right_tile);
-        left.advance();
-        trellis_cursor.advance();
+
+  if constexpr (USE_MXU) {
+    using LeftOperand =
+        operands::LeftOperandFor<GemmAPrologueKind::Int8Symmetric, bfloat, ushort(trellis::K_STEP), false>;
+    // A stock int8 right operand, only for the tile constants of `Core`.
+    using RightOperand =
+        operands::RightOperandFor<GemmBPrologueKind::ScaleSymmetricDequant, ushort(8), ushort(trellis::K_STEP), bfloat>;
+    using Core = MxuMmaCore<bfloat, GEMM_TILING, true, LeftOperand, RightOperand>;
+    using RightFragment =
+        uzu::matmul::Fragment<int8_t, Core::TILES_N, Core::TILES_K, Ops, uzu::matmul::ReadDirect, true>;
+    const schedules::TileContext tile_context{
+        .simdgroup_limit_m = token_end,
+        .simdgroup_limit_n = row_end,
+        .k_offset = k_offset,
+        .abs_row_base = token_base,
+    };
+    const short2 position = Ops::get_position(thread_context.simd_lane_id);
+    const auto left_storage = operands::pack_left<LeftOperand, bfloat>(nullptr, activations, nullptr, nullptr);
+    uzu::dispatch_bool(
+        alignment.contains(GemmAlignment::M) || token_end == Layout::SIMDGROUP_BLOCK_M,
+        [&](auto aligned_m) {
+          uzu::dispatch_bool(
+              alignment.contains(GemmAlignment::N) || row_end == Layout::SIMDGROUP_BLOCK_N,
+              [&](auto aligned_n) {
+                auto left = quantized::make_left_cursor<true, Core, LeftOperand, aligned_m.value>(
+                    left_storage,
+                    params,
+                    tile_context,
+                    thread_context
+                );
+                quantized::TrellisCursor<RightFragment, aligned_n.value> trellis_cursor{
+                    codes + size_t(row_base + position.y) * code_row_bytes,
+                    code_row_bytes,
+                    row_end,
+                    position,
+                    k_offset,
+                    trellis_format
+                };
+                const int k_chunks = token_end > 0 && row_end > 0 ? int(params->aligned_inner_iterations) *
+                                                                        int(trellis::K_STEP / Core::SIMDGROUP_BLOCK_K)
+                                                                  : 0;
+                METAL_PRAGMA_NO_UNROLL
+                for (int chunk = 0; chunk < k_chunks; ++chunk) {
+                  auto left_tile = left.load(0u);
+                  auto right_tile = trellis_cursor.load(0u);
+                  uzu::matmul::fragment_mma(products, left_tile, right_tile);
+                  left.advance();
+                  trellis_cursor.advance();
+                }
+              }
+          );
+        }
+    );
+  } else {
+    // Decode B to threadgroup, MMA in float, accumulate in int.
+    uzu::matmul::Fragment<bfloat, Layout::TILES_M, Layout::TILES_K, Ops> left_tile;
+    uzu::matmul::Fragment<bfloat, Layout::TILES_K, Layout::TILES_N, Ops, uzu::matmul::ReadTranspose> right_tile;
+    uzu::matmul::Fragment<float, Layout::TILES_M, Layout::TILES_N, Ops> slab_products;
+
+    const uint thread_index = simdgroup * METAL_SIMD_SIZE + thread_context.simd_lane_id;
+    const uint row_block_base = group_x * Layout::BLOCK_N;
+    const uint last_token = params->M - 1;
+    const device int8_t* left_rows =
+        activations + size_t(min(token_base, last_token)) * params->leading_dimension_a + k_offset;
+    const threadgroup bfloat* right_rows = b_shared + (row_base - row_block_base) * Layout::B_SHARED_STRIDE;
+    const uint k_length = params->aligned_inner_iterations * trellis::K_STEP;
+
+    for (uint k = 0; k < k_length; k += Layout::BLOCK_K) {
+      for (uint decode = thread_index; decode < Layout::BLOCK_N * Layout::DECODES_PER_ROW; decode += Layout::THREADS) {
+        const uint row_offset = decode / Layout::DECODES_PER_ROW;
+        const uint column = decode % Layout::DECODES_PER_ROW * trellis::WEIGHTS_PER_DECODE;
+        const uint row = row_block_base + row_offset;
+        uint biased_weights = 0u;
+        if (row < params->N) {
+          biased_weights = trellis::decode_biased_weights(
+              trellis_format,
+              codes + size_t(row) * code_row_bytes,
+              k_offset + k + column
+          );
+        }
+        *reinterpret_cast<threadgroup bfloat4*>(b_shared + row_offset * Layout::B_SHARED_STRIDE + column) =
+            bfloat4(float4(as_type<uchar4>(biased_weights)));
       }
-    });
-  });
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+
+      left_tile.load_from(
+          thread_context.simd_lane_id,
+          uzu::matmul::fragment_source(left_rows + k, params->leading_dimension_a).bounded(token_end, Layout::BLOCK_K)
+      );
+      right_tile.load_from(
+          thread_context.simd_lane_id,
+          uzu::matmul::fragment_source(right_rows, Layout::B_SHARED_STRIDE)
+              .bounded(Layout::SIMDGROUP_BLOCK_N, Layout::BLOCK_K)
+      );
+      slab_products.clear();
+      uzu::matmul::fragment_mma(slab_products, left_tile, right_tile);
+      slab_products.zip_for_each_coord(
+          thread_context.simd_lane_id,
+          [&](short, short, thread float& slab, thread int& exact) { exact += int(slab); },
+          slab_products,
+          products
+      );
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+  }
 
   const bool write_split_k_partials = params->aligned_inner_iterations * trellis::K_STEP < params->K;
   const size_t partial_sum_offset = size_t(group_z) * params->M * params->N;

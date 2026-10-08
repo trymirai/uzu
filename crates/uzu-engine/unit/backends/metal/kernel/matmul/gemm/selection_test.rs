@@ -151,6 +151,7 @@ fn selection_fallbacks_and_split_k_are_preserved() {
 
 #[uzu_test]
 fn trellis_plan_matches_projection_cases() {
+    use GemmEngine::{Mxu, Simdgroup};
     use GemmTiling::*;
 
     for (m, n, k, tiling, split_k) in [
@@ -163,8 +164,29 @@ fn trellis_plan_matches_projection_cases() {
         trellis_shape.a_full_precision = false;
         trellis_shape.b_is_trellis = true;
         let plan = problem(trellis_shape, DataType::BF16).select_plan();
-        assert_eq!((plan.engine, plan.tiling, plan.split_k), (GemmEngine::Mxu, tiling, split_k), "M {m} N {n} K {k}");
+        assert_eq!((plan.engine, plan.tiling, plan.split_k), (Mxu, tiling, split_k), "M {m} N {n} K {k}");
     }
+
+    for (m, n, k, expect_split) in [(17, 80, 64, false), (1, 80, 5120, true), (1, 6, 5120, false)] {
+        let mut trellis_shape = shape(m, n, k);
+        trellis_shape.a_full_precision = false;
+        trellis_shape.b_is_trellis = true;
+        let simdgroup =
+            GemmProblem::new(trellis_shape, DataType::BF16, DataType::BF16, false, MTLGPUFamily::Apple7).select_plan();
+        assert_eq!(simdgroup.engine, Simdgroup);
+        assert_eq!(simdgroup.tiling, Tile64x64x32_Simdgroups2x2);
+        assert_eq!(k % (simdgroup.split_k * TRELLIS_K_STEP), 0);
+        assert_eq!(simdgroup.split_k > 1, expect_split);
+    }
+
+    let mut trellis_shape = shape(1, 80, 5120);
+    trellis_shape.a_full_precision = false;
+    trellis_shape.b_is_trellis = true;
+    assert_eq!(
+        GemmProblem::new(trellis_shape, DataType::BF16, DataType::BF16, false, MTLGPUFamily::Apple7)
+            .select_plan_for_engine(Mxu),
+        Err(GemmPlanError::MxuUnavailable)
+    );
 }
 
 #[uzu_test]

@@ -13,7 +13,7 @@ use crate::{
                 MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, TrellisFormat,
             },
         },
-        metal::{Metal, MetalContext},
+        metal::{GemmEngine, Metal, MetalContext},
     },
     data_type::DataType,
     tests::{
@@ -90,13 +90,23 @@ fn run_projection(
     context: &MetalContext,
     format: TrellisFormat,
     dimensions: (usize, usize, usize),
+    engine: Option<GemmEngine>,
+    cancellation_case: bool,
 ) {
     let (m, n, k) = dimensions;
     let mut rng = SmallRng::seed_from_u64((m * k + n) as u64);
-    let stored: Vec<u8> = (0..n * row_bytes(format, k)).map(|_| rng.random()).collect();
-    let row_scales: Vec<f32> = (0..n).map(|_| rng.random_range(0.001..0.01)).collect();
+    let mut stored: Vec<u8> = (0..n * row_bytes(format, k)).map(|_| rng.random()).collect();
+    let mut row_scales: Vec<f32> = (0..n).map(|_| rng.random_range(0.001..0.01)).collect();
     let mut values: Vec<i8> = (0..m * k).map(|_| rng.random_range(-127..=127)).collect();
-    if m > 1 {
+    if cancellation_case {
+        stored.fill(0xFF);
+        row_scales.fill(1.0);
+        values[..k].fill(127);
+        values[k..2 * k].fill(-128);
+        values[2 * k..2 * k + k / 2].fill(127);
+        values[2 * k + k / 2..3 * k].fill(-127);
+        values[3 * k - 1] = -126;
+    } else if m > 1 {
         // Exercise the zero-activation path in the epilogue.
         values[k..2 * k].fill(0);
     }
@@ -106,7 +116,10 @@ fn run_projection(
             (0..4).map(|group| row.iter().skip(group).step_by(4).fold(0.0, |sum, &value| sum + f32::from(value)))
         })
         .collect();
-    let activation_scales_host: Vec<f32> = (0..m).map(|_| rng.random_range(0.001..0.01)).collect();
+    let mut activation_scales_host: Vec<f32> = (0..m).map(|_| rng.random_range(0.001..0.01)).collect();
+    if cancellation_case {
+        activation_scales_host.fill(1.0);
+    }
     let activations = create_buffer_with_data::<Metal, i8>(context, &values);
     let group_sums = create_buffer_with_data::<Metal, f32>(context, &group_sums_host);
     let activation_scales = create_buffer_with_data::<Metal, f32>(context, &activation_scales_host);
@@ -141,7 +154,11 @@ fn run_projection(
     let mut matmul =
         <MetalMatmul as MatmulKernel>::new(context, DataType::BF16, DataType::BF16, DataType::BF16).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    matmul.encode(arguments, &mut command_buffer).unwrap();
+    if let Some(engine) = engine {
+        matmul.encode_with_gemm_engine(arguments, engine, &mut command_buffer).unwrap();
+    } else {
+        matmul.encode(arguments, &mut command_buffer).unwrap();
+    }
     submit_command_buffer(command_buffer);
     let decoded_levels: Vec<i32> = stored
         .chunks_exact(row_bytes(format, k))
@@ -156,6 +173,12 @@ fn run_projection(
             let row_values = &values[token * k..(token + 1) * k];
             let levels = &decoded_levels[row * k..(row + 1) * k];
             let level_dot: i32 = levels.iter().zip(row_values).map(|(&level, &value)| level * i32::from(value)).sum();
+            if cancellation_case && token < 2 {
+                assert!(level_dot.abs() > (1 << 24));
+            }
+            if cancellation_case && token == 2 {
+                assert!(level_dot.abs() < 112, "large positive and negative sums should cancel");
+            }
             let sums = &group_sums_host[token * 4..token * 4 + 4];
             // A non-dyadic offset exposes rounding differences in the GPU dot.
             let offsets_dot =
@@ -180,10 +203,14 @@ fn run_projection(
 #[case::v2_t4(V2_T4)]
 fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
     let context = shared_metal_context();
-    if !context.supports_mxu {
-        return;
-    }
+    println!("Trellis GEMM correctness on {} (supports_mxu={})", context.device_name, context.supports_mxu);
+    run_projection(&context, format, (17, 80, 64), None, false);
     for (m, n, k) in CASES {
-        run_projection(&context, format, (m, n, k));
+        run_projection(&context, format, (m, n, k), Some(GemmEngine::Simdgroup), false);
+        if context.supports_mxu {
+            run_projection(&context, format, (m, n, k), Some(GemmEngine::Mxu), false);
+        }
     }
+    run_projection(&context, format, (1, 6, 5120), Some(GemmEngine::Simdgroup), false);
+    run_projection(&context, format, (3, 4, 32_768), Some(GemmEngine::Simdgroup), true);
 }
