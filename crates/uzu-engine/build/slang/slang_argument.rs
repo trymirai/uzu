@@ -111,6 +111,28 @@ impl<'a> SlangArgument<'a> {
         }
     }
 
+    /// Whether the argument is `[[PipelineVariants]]`, which must be a uniform canonical GPU enum without other
+    /// annotations.
+    pub fn pipeline_variants(&self) -> Result<bool, Error> {
+        if self.attribute("PipelineVariants").is_none() {
+            return Ok(false);
+        }
+        let name = self.name()?;
+        if let Some(other) = ["Optional", "Specialize", "Axis", "Groups", "Threads"]
+            .into_iter()
+            .find(|other| self.attribute(other).is_some())
+        {
+            bail!("'{name}': PipelineVariants cannot be combined with {other}");
+        }
+        let ty = self.variable.ty().context("Slang argument has no type")?;
+        ensure!(
+            matches!(ty.kind(), TypeKind::Enum) && matches!(self.argument_type()?, SlangArgumentType::Constant(_)),
+            "'{name}': PipelineVariants needs a uniform canonical GPU enum, not {}",
+            self.slang_type()?
+        );
+        Ok(true)
+    }
+
     /// The type text of the common kernel descriptor: enum names resolve to their canonical paths.
     fn rust_type(
         &self,

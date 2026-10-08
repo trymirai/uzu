@@ -1,3 +1,4 @@
+mod activation_test;
 mod bf16_conversion_test;
 mod kernel_fixture;
 mod logit_transform_test;
@@ -14,5 +15,6 @@ mod tensor_add_scale_test;
 mod typed_constants_test;
 mod validation_logger;
 
+pub use activation_test::tanh_interval;
 pub use normalization_case::NormalizationCase;
 pub use short_conv_case::ShortConvCase;

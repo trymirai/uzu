@@ -8,16 +8,30 @@ pub fn generate_wrappers(
     kernel: &SlangKernelInfo,
     component: &ComponentType,
 ) -> Result<(Vec<String>, Vec<(String, Vec<&'static str>)>), Error> {
+    // The `[[PipelineVariants]]` argument travels as a specialization constant, like a `[[Specialize]]` one, instead of
+    // a push constant; the kernel still receives it as its uniform.
+    let mut variant_arguments = Vec::new();
+    for argument in kernel.arguments() {
+        if argument.pipeline_variants()? {
+            variant_arguments.push(argument.name()?.to_owned());
+        }
+    }
+    if variant_arguments.len() > 1 {
+        bail!("kernel '{}' marks {variant_arguments:?} PipelineVariants; at most one argument may be", kernel.name());
+    }
+    let variant_argument = variant_arguments.first().map(String::as_str);
     let mut wrappers = kernel
         .arguments()
         .map(|a| {
-            Ok(match a.argument_type()? {
-                SlangArgumentType::Specialize(_) => Some(format!(
+            let specialized =
+                matches!(a.argument_type()?, SlangArgumentType::Specialize(_)) || Some(a.name()?) == variant_argument;
+            Ok(match specialized {
+                true => Some(format!(
                     "[[SpecializationConstant]] const {} {};",
                     specialization_wire_type(&a.slang_type()?),
                     specialization_name(kernel.name(), a.name()?)
                 )),
-                _ => None,
+                false => None,
             })
         })
         .filter_map(Result::transpose)
@@ -76,7 +90,9 @@ pub fn generate_wrappers(
             .iter()
             .filter_map(|(name, arg_type, slang_type)| match arg_type {
                 SlangArgumentType::Ptr(_) => Some(format!("{} {}", slang_type, name)),
-                SlangArgumentType::Constant(_) => Some(format!("uniform {} {}", slang_type, name)),
+                SlangArgumentType::Constant(_) if Some(name.as_str()) != variant_argument => {
+                    Some(format!("uniform {} {}", slang_type, name))
+                },
                 _ => None,
             })
             .collect();
@@ -101,12 +117,16 @@ pub fn generate_wrappers(
             arguments
                 .iter()
                 .map(|(name, arg_type, slang_type)| {
+                    let variant = Some(name.as_str()) == variant_argument;
                     Ok(match arg_type {
-                        SlangArgumentType::Ptr(_) | SlangArgumentType::Constant(_) => name.clone(),
+                        SlangArgumentType::Ptr(_) => name.clone(),
+                        SlangArgumentType::Constant(_) if !variant => name.clone(),
                         // Enum specializations travel as `uint` and convert back at the call.
-                        SlangArgumentType::Specialize(_) => match specialization_wire_type(slang_type) {
-                            wire if wire == slang_type => specialization_name(kernel.name(), name),
-                            _ => format!("{slang_type}({})", specialization_name(kernel.name(), name)),
+                        SlangArgumentType::Specialize(_) | SlangArgumentType::Constant(_) => {
+                            match specialization_wire_type(slang_type) {
+                                wire if wire == slang_type => specialization_name(kernel.name(), name),
+                                _ => format!("{slang_type}({})", specialization_name(kernel.name(), name)),
+                            }
                         },
                         SlangArgumentType::Axis(_, _) => {
                             format!("__dsl_axis_idx.{}", axis_letters.next().context("more than three Axis arguments")?)
@@ -140,12 +160,16 @@ pub fn generate_wrappers(
             .zip(["x", "y", "z"])
             .map(|(total, axis)| format!("if (__dsl_axis_idx.{axis} >= ({total})) return;"))
             .join("\n  ");
-        // Every entry point rounds 16- and 32-bit float results to nearest even, the same as the CPU backend; without
-        // an explicit mode, Vulkan leaves the rounding implementation-defined.
+        // Every entry point rounds 16- and 32-bit float results to nearest even and preserves their signed zeros,
+        // infinities and NaNs, the same as the CPU backend; without explicit modes, Vulkan leaves the rounding
+        // implementation-defined and lets implementations assume none of those values occur.
         let rounding = format!(
-            "spirv_asm {{\n    OpCapability RoundingModeRTE;\n    OpExtension \"SPV_KHR_float_controls\";\n    \
+            "spirv_asm {{\n    OpCapability RoundingModeRTE;\n    OpCapability SignedZeroInfNanPreserve;\n    \
+             OpExtension \"SPV_KHR_float_controls\";\n    \
              OpExecutionMode ${wrapper_name} RoundingModeRTE 16;\n    \
-             OpExecutionMode ${wrapper_name} RoundingModeRTE 32;\n  }};"
+             OpExecutionMode ${wrapper_name} RoundingModeRTE 32;\n    \
+             OpExecutionMode ${wrapper_name} SignedZeroInfNanPreserve 16;\n    \
+             OpExecutionMode ${wrapper_name} SignedZeroInfNanPreserve 32;\n  }};"
         );
         let body = format!("{rounding}\n  {guards}\n  {underlying_call}({underlying_arguments});");
 

@@ -47,3 +47,8 @@ struct OptionalAttribute {
 
 [[__AttributeUsage(_AttributeTargets.Param)]]
 struct SpecializeAttribute;
+
+// A uniform canonical enum for which the binding builds one pipeline per enum value, passed as a specialization constant
+// instead of a push constant; the kernel signature keeps it a uniform, chosen at encode.
+[[__AttributeUsage(_AttributeTargets.Param)]]
+struct PipelineVariantsAttribute;

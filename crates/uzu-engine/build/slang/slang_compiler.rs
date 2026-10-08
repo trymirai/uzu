@@ -73,6 +73,7 @@ impl SlangCompiler {
         &self,
         source_file: &Path,
         enum_paths: &EnumPaths,
+        gpu_types: &GpuTypes,
     ) -> Result<(KernelPath, Box<[Kernel]>, Box<[KernelName]>), Error> {
         let source_relative = source_file.strip_prefix(&self.src_dir)?.with_extension("");
         let kernel_path = source_relative
@@ -180,12 +181,14 @@ impl SlangCompiler {
             fs::write(&object_file, blob.as_slice())?;
 
             let program = compiled.layout(0).context("linked Slang program has no layout")?;
-            // Specialization constants declared by the module's kernels with their wire types; each binding sets only
-            // its own.
+            // Specialization constants declared by the module's kernels, `[[PipelineVariants]]` ones included, with their
+            // wire types; each binding sets only its own.
             let mut declared = BTreeMap::new();
             for info in &kernels {
                 for argument in info.arguments() {
-                    if let SlangArgumentType::Specialize(_) = argument.argument_type()? {
+                    if matches!(argument.argument_type()?, SlangArgumentType::Specialize(_))
+                        || argument.pipeline_variants()?
+                    {
                         let wire = match wrapper::specialization_wire_type(&argument.slang_type()?) {
                             "bool" => ScalarType::Bool,
                             _ => ScalarType::Uint32,
@@ -208,8 +211,11 @@ impl SlangCompiler {
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 let binding_file = bindgen::binding_file(&output_base, &descriptor.name);
-                write_tokens(bindgen::bindgen(info, descriptor, &variants, object_path, enum_paths)?, &binding_file)
-                    .with_context(|| format!("cannot write {} binding", descriptor.name))?;
+                write_tokens(
+                    bindgen::bindgen(info, descriptor, &variants, object_path, enum_paths, gpu_types)?,
+                    &binding_file,
+                )
+                .with_context(|| format!("cannot write {} binding", descriptor.name))?;
                 binding_files.push(binding_file);
             }
             for path in [&wrapper_file, &object_file].into_iter().chain(&binding_files) {
@@ -267,7 +273,7 @@ impl Compiler for SlangCompiler {
         for source in sources {
             if !fs::read(&source)?.starts_with(b"implementing") {
                 let (path, file_kernels, test_bindings) = self
-                    .compile(&source, enum_paths)
+                    .compile(&source, enum_paths, gpu_types)
                     .with_context(|| format!("cannot compile {}", source.display()))?;
                 let names = file_kernels.iter().map(|kernel| (&kernel.name, false));
                 for (name, test) in names.chain(test_bindings.iter().map(|name| (name, true))) {

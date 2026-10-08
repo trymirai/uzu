@@ -13,6 +13,7 @@ use super::{Error, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, wrapp
 use crate::common::{
     enum_paths::{EnumPaths, GpuTypeKind},
     expr_rewrite::rewrite_paths_with,
+    gpu_types::{GpuType, GpuTypes},
     kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
 };
 
@@ -43,13 +44,15 @@ pub fn bindgen_umbrella(bindings: &[(String, String, bool)]) -> TokenStream {
 }
 
 /// Raw typed binding of a public kernel. Its constructor and `encode` follow the common `Kernel`
-/// signature; the push-constant block and specialization data follow each entry point's reflected ABI.
+/// signature; the push-constant block and specialization data follow each entry point's reflected ABI. A
+/// `[[PipelineVariants]]` argument gets one pipeline per value of its canonical enum, which `encode` selects.
 pub fn bindgen(
     info: &SlangKernelInfo,
     kernel: &Kernel,
     variants: &[(Vec<&'static str>, SlangEntryPointAbi)],
     spirv_file: &str,
     enum_paths: &EnumPaths,
+    gpu_types: &GpuTypes,
 ) -> Result<TokenStream, Error> {
     let kernel_name: &str = &kernel.name;
     let struct_name = format_ident!("{kernel_name}VulkanKernel");
@@ -108,6 +111,52 @@ pub fn bindgen(
         specializations.push((name, ty, value, *id));
     }
 
+    // `(argument, variant paths, specialization constant id)` of the `[[PipelineVariants]]` argument, whose values are
+    // the canonical enum's own variants, by name.
+    let mut pipeline_variants = None;
+    for argument in info.arguments() {
+        if !argument.pipeline_variants()? {
+            continue;
+        }
+        let name = argument.name()?;
+        let Some(KernelArgumentType::Constant(text)) =
+            kernel.arguments.iter().find(|candidate| candidate.name.as_ref() == name).map(|argument| &argument.ty)
+        else {
+            bail!("{kernel_name}: PipelineVariants argument '{name}' is not a uniform");
+        };
+        let ty: Type = syn::parse_str(text)?;
+        let short = text.rsplit_once("::").map_or(text.as_ref(), |(_, short)| short);
+        ensure!(
+            enum_paths.full_path_for(short) == Some(text.as_ref())
+                && enum_paths.kind_for(short) == Some(GpuTypeKind::Enum),
+            "{kernel_name}: PipelineVariants argument '{name}' has type '{text}', not a canonical GPU enum"
+        );
+        let canonical = gpu_types
+            .files
+            .iter()
+            .flat_map(|file| &file.types)
+            .find_map(|candidate| match candidate {
+                GpuType::Enum(candidate) if candidate.name.as_ref() == short => Some(candidate),
+                _ => None,
+            })
+            .with_context(|| format!("{kernel_name}: no canonical enum '{short}'"))?;
+        let paths = canonical
+            .variants
+            .iter()
+            .map(|variant| {
+                let variant = format_ident!("{}", variant.name.as_ref());
+                quote! { #ty::#variant }
+            })
+            .collect::<Vec<_>>();
+        let constant = specialization_name(kernel_name, name);
+        let (_, id) = abi
+            .specialization_ids
+            .iter()
+            .find(|(name, _)| *name == constant)
+            .with_context(|| format!("{kernel_name}: no specialization constant '{constant}'"))?;
+        pipeline_variants = Some((format_ident!("{name}"), paths, *id));
+    }
+
     let mut strides = BTreeSet::new();
     for (_, abi) in variants {
         for (pointee, stride, _) in abi.fields.iter().filter_map(|field| field.pointee.as_ref()) {
@@ -119,13 +168,24 @@ pub fn bindgen(
         quote! { const _: () = assert!(crate::data_type::DataType::#data_type.size_in_bytes() == #stride); }
     });
 
-    ensure!(kernel.arguments.len() == abi.fields.len(), "{kernel_name}: arguments and reflected fields differ");
+    ensure!(
+        kernel.arguments.len() == abi.fields.len() + usize::from(pipeline_variants.is_some()),
+        "{kernel_name}: arguments and reflected fields differ"
+    );
     let mut encode_arguments = Vec::new();
     let mut packing = Vec::new();
     let mut reads = Vec::new();
     let mut writes = Vec::new();
     for argument in &kernel.arguments {
         let name = format_ident!("{}", argument.name.as_ref());
+        // The pipeline-selecting argument has no push-constant field.
+        if let (Some((selector, ..)), KernelArgumentType::Constant(text)) = (&pipeline_variants, &argument.ty)
+            && *selector == name
+        {
+            let ty: Type = syn::parse_str(text)?;
+            encode_arguments.push(quote! { #name: #ty });
+            continue;
+        }
         let field = abi
             .fields
             .iter()
@@ -267,6 +327,55 @@ pub fn bindgen(
     });
     let block_size = abi.block_size;
     let block_size_u32 = u32::try_from(block_size)?;
+    // One pipeline, or one per `[[PipelineVariants]]` value from the same shader module, its constant in the last
+    // specialization slot; `encode` selects by an exhaustive match on the canonical variants.
+    let (pipeline_field, pipelines, pipeline) = match &pipeline_variants {
+        None => (
+            quote! { pipeline: std::sync::Arc<VkComputePipeline> },
+            quote! {
+                let specialization_data: [[u8; 4]; #specialization_count] =
+                    [#(#specialization_values.to_ne_bytes()),*];
+                let specialization_entries: [vk::SpecializationMapEntry; #specialization_count] = [#(#specialization_entries),*];
+                let specialization =
+                    vk::SpecializationInfo::default().map_entries(&specialization_entries).data(specialization_data.as_flattened());
+                let pipeline =
+                    VkComputePipeline::new(context.clone(), shader.module(), &[], #block_size_u32, entry_point, &specialization)?;
+                Ok(Self {
+                    pipeline: std::sync::Arc::new(pipeline),
+                    #(#referenced,)*
+                })
+            },
+            quote! { &self.pipeline },
+        ),
+        Some((selector, paths, id)) => {
+            let (count, offset, indices) = (paths.len(), 4 * specialization_count as u32, 0..paths.len());
+            (
+                quote! { pipelines: [std::sync::Arc<VkComputePipeline>; #count] },
+                quote! {
+                    let mut specialization_data: [[u8; 4]; #specialization_count + 1] =
+                        [#(#specialization_values.to_ne_bytes(),)* [0; 4]];
+                    let specialization_entries: [vk::SpecializationMapEntry; #specialization_count + 1] = [
+                        #(#specialization_entries,)*
+                        vk::SpecializationMapEntry::default().constant_id(#id).offset(#offset).size(4)
+                    ];
+                    let pipelines = [#({
+                        specialization_data[#specialization_count] = (#paths as u32).to_ne_bytes();
+                        let specialization = vk::SpecializationInfo::default()
+                            .map_entries(&specialization_entries)
+                            .data(specialization_data.as_flattened());
+                        std::sync::Arc::new(VkComputePipeline::new(
+                            context.clone(), shader.module(), &[], #block_size_u32, entry_point, &specialization,
+                        )?)
+                    }),*];
+                    Ok(Self {
+                        pipelines,
+                        #(#referenced,)*
+                    })
+                },
+                quote! { match #selector { #(#paths => &self.pipelines[#indices],)* } },
+            )
+        },
+    };
     let dispatch_message = format!("{kernel_name} dispatch");
     let (read_count, write_count) = (reads.len(), writes.len());
 
@@ -280,7 +389,7 @@ pub fn bindgen(
         #(#stride_checks)*
 
         pub struct #struct_name {
-            pipeline: std::sync::Arc<VkComputePipeline>,
+            #pipeline_field,
             #(#referenced: #referenced_types,)*
         }
 
@@ -305,17 +414,7 @@ pub fn bindgen(
                     });
                 }
                 let shader = VkShader::new(context.clone(), SPIRV)?;
-                let specialization_data: [[u8; 4]; #specialization_count] =
-                    [#(#specialization_values.to_ne_bytes()),*];
-                let specialization_entries: [vk::SpecializationMapEntry; #specialization_count] = [#(#specialization_entries),*];
-                let specialization =
-                    vk::SpecializationInfo::default().map_entries(&specialization_entries).data(specialization_data.as_flattened());
-                let pipeline =
-                    VkComputePipeline::new(context.clone(), shader.module(), &[], #block_size_u32, entry_point, &specialization)?;
-                Ok(Self {
-                    pipeline: std::sync::Arc::new(pipeline),
-                    #(#referenced,)*
-                })
+                #pipelines
             }
 
             /// Records one dispatch. Optional-argument presence is asserted before anything is recorded,
@@ -344,7 +443,7 @@ pub fn bindgen(
                 let __dsl_writes: [Option<(&std::sync::Arc<VkBuffer>, std::ops::Range<u64>)>; #write_count] = [#(#writes),*];
                 unsafe {
                     command_buffer.encode_dispatch(
-                        &self.pipeline,
+                        #pipeline,
                         &__dsl_block,
                         [#(#dispatch),*],
                         __dsl_reads.into_iter().flatten(),

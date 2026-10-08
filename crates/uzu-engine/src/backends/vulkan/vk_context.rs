@@ -254,6 +254,8 @@ fn get_physical_device(
                 && physical_device.subgroup_properties.supported_stages.contains(vk::ShaderStageFlags::COMPUTE)
                 && physical_device.shader_rounding_mode_rte_float16
                 && physical_device.shader_rounding_mode_rte_float32
+                && physical_device.shader_signed_zero_inf_nan_preserve_float16
+                && physical_device.shader_signed_zero_inf_nan_preserve_float32
                 && physical_device.rounding_mode_independence == vk::ShaderFloatControlsIndependence::ALL
                 && physical_device
                     .memory_properties

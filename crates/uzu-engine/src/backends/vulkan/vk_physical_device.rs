@@ -15,6 +15,9 @@ pub struct VkPhysicalDevice {
     /// does.
     pub shader_rounding_mode_rte_float16: bool,
     pub shader_rounding_mode_rte_float32: bool,
+    /// Whether shaders may preserve 16- and 32-bit signed zeros, infinities and NaNs, as every generated kernel does.
+    pub shader_signed_zero_inf_nan_preserve_float16: bool,
+    pub shader_signed_zero_inf_nan_preserve_float32: bool,
     /// Which widths may set rounding modes independently. The backend conservatively requires `ALL`, so declaring the
     /// 16- and 32-bit modes is valid whatever 64-bit uses.
     pub rounding_mode_independence: vk::ShaderFloatControlsIndependence,
@@ -86,6 +89,12 @@ impl VkPhysicalDevice {
             memory_properties,
             shader_rounding_mode_rte_float16: float_controls_properties.shader_rounding_mode_rte_float16 == 1,
             shader_rounding_mode_rte_float32: float_controls_properties.shader_rounding_mode_rte_float32 == 1,
+            shader_signed_zero_inf_nan_preserve_float16: float_controls_properties
+                .shader_signed_zero_inf_nan_preserve_float16
+                == 1,
+            shader_signed_zero_inf_nan_preserve_float32: float_controls_properties
+                .shader_signed_zero_inf_nan_preserve_float32
+                == 1,
             rounding_mode_independence: float_controls_properties.rounding_mode_independence,
         })
     }

@@ -4,7 +4,7 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
-use super::kernel_fixture::KernelFixture;
+use super::{kernel_fixture::KernelFixture, tanh_interval};
 use crate::{
     array::ArrayElement,
     backends::{
@@ -178,6 +178,26 @@ fn soft_cap_matches_fp64_by_magnitude() {
     let signed = gpu_output(&fixture, &kernel::<f32>(&fixture, true), (&zeros, 1.0, 30.0, true), &[1]);
     assert_eq!(signed.iter().map(|value| value.to_bits()).collect::<Vec<_>>(), zeros.map(f32::to_bits), "signed zeros");
     KernelFixture::report("LogitTransform", errors);
+    fixture.assert_clean();
+}
+
+/// The F32 soft cap's tanh tail from log(3) / 2, cap 1 so x is the logit: within the derived bounds of
+/// 1 - 2 / (e^2|x| + 1) over every 4096th value of ±[0.55, 20], which collapse to ±1 from 9.2 on, where tanh rounds to
+/// ±1, and exactly ±cap for large finite and infinite logits under cap 30.
+#[uzu_test]
+fn soft_cap_tail_matches_fp64() {
+    let fixture = KernelFixture::new();
+    let kernel = kernel::<f32>(&fixture, true);
+    let tail = (0.55f32.to_bits()..=20.0f32.to_bits()).step_by(4096).map(f32::from_bits);
+    let tail = tail.flat_map(|x| [x, -x]).collect::<Vec<_>>();
+    for (x, y) in tail.iter().zip(gpu_output(&fixture, &kernel, (&tail, 1.0, 1.0, true), &[1])) {
+        let (lo, hi) = tanh_interval(f64::from(*x));
+        assert!((lo..=hi).contains(&f64::from(y)), "x {x:e}: {y:e} outside [{lo:e}, {hi:e}]");
+        assert!(x.abs() < 9.2 || (lo == hi && y == x.signum()), "x {x:e}: {y:e} is not saturated");
+    }
+    let large = [1e30f32, f32::MAX, f32::INFINITY].map(|x| [x, -x]).concat();
+    let capped = gpu_output(&fixture, &kernel, (&large, 1.0, 30.0, true), &[1]);
+    assert_eq!(capped, large.iter().map(|x| 30.0 * x.signum()).collect::<Vec<_>>(), "large logits");
     fixture.assert_clean();
 }
 

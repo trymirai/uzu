@@ -145,6 +145,74 @@ fn test_activation_large<T: ArrayElement + Float + Debug + Display>(
     test_internal::<T>(&input, &expected, &label);
 }
 
+/// Distance between two values in representable steps of their 16- or 32-bit storage type.
+fn storage_steps<T: ArrayElement>(
+    a: T,
+    b: T,
+) -> i64 {
+    let ordinal = |value: T| {
+        let (bits, sign) = match *bytemuck::bytes_of(&value) {
+            [lo, hi] => (i64::from(u16::from_ne_bytes([lo, hi])), 1 << 15),
+            [b0, b1, b2, b3] => (i64::from(u32::from_ne_bytes([b0, b1, b2, b3])), 1 << 31),
+            _ => unreachable!("storage types are 16 or 32 bits"),
+        };
+        if bits & sign != 0 {
+            -(bits & !sign)
+        } else {
+            bits
+        }
+    };
+    (ordinal(a) - ordinal(b)).abs()
+}
+
+/// SiLU's negative tails through the CPU's FP32 exponential overflow below -88.72: the CPU and every other backend
+/// within two storage steps of x / (1 + e^-x) in FP64 for the input as stored, or -0 where e^-x overflows FP32.
+fn test_silu_negative_tail<T: ArrayElement + Float + Debug + Display>() {
+    let tail = [-10.0f32, -16.0, -17.0, -20.0, -30.0, -50.0, -87.0, -88.0, -88.72, -88.73, -89.0];
+    let input = Input::<T> {
+        data: tail.iter().map(|&x| T::from(x).unwrap()).collect(),
+        act_type: ActivationType::SILU,
+        in_place: false,
+    };
+    let expected = input
+        .data
+        .iter()
+        .map(|&x| {
+            let x = x.to_f64().unwrap();
+            let e = (-x).exp();
+            T::from(if (e as f32).is_infinite() {
+                -0.0
+            } else {
+                x / (1.0 + e)
+            })
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let check = |actual: &[T], backend: &str| {
+        assert_eq!(actual.len(), input.data.len(), "SiLU {backend} {:?}: output length", T::data_type());
+        for ((x, &expected), &actual) in input.data.iter().zip(&expected).zip(actual) {
+            let same_zero =
+                expected.is_zero() == actual.is_zero() && expected.is_sign_negative() == actual.is_sign_negative();
+            assert!(
+                storage_steps(expected, actual) <= 2 && same_zero,
+                "SiLU {backend} {:?} x {x}: {actual}, expected {expected}",
+                T::data_type()
+            );
+        }
+    };
+    check(&get_output::<T, Cpu>(&input), "CPU");
+    for_each_non_cpu_backend!(|B| {
+        check(&get_output::<T, B>(&input), std::any::type_name::<B>());
+    });
+}
+
+#[uzu_test]
+fn test_silu_negative_tail_all_types() {
+    test_silu_negative_tail::<f32>();
+    test_silu_negative_tail::<f16>();
+    test_silu_negative_tail::<bf16>();
+}
+
 // SILU out-of-place tests
 #[uzu_test]
 fn test_silu_f32() {

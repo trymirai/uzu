@@ -8,9 +8,10 @@ using namespace uzu::activation_type;
 template <typename T>
 inline T activate_silu_alpha(T x, float alpha) {
   float xf = float(x);
-  float y = 1.0f / (1.0f + fast::exp(-fabs(xf) * alpha));
-  float out = (xf < 0.0f) ? (1.0f - y) * xf : y * xf;
-  return static_cast<T>(out);
+  // Past 2^126 the reciprocal a division may use is subnormal and flushes, so both operands are scaled by an exact 1/4
+  // there, keeping the CPU's normal results down to the exponential's overflow.
+  float d = 1.0f + metal::precise::exp(-alpha * xf);
+  return static_cast<T>(d > 0x1p126f ? xf * 0.25f / (d * 0.25f) : xf / d);
 }
 
 template <typename T>

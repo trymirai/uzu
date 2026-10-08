@@ -36,6 +36,22 @@ static const uint TYPED_CONSTANTS_ABSENT = 0xa5a5a5a5u;
   output[base + 7] = mode != ActivationType.SILU ? uint(secondary) : TYPED_CONSTANTS_ABSENT;
 }
 
+// Echoes the pipeline's activation, both regular specializations and the uniform after it into four words per element.
+[[Kernel]] [[Test]] func TestPipelineVariants(
+  Ptr<uint, Access.ReadWrite> output,
+  uint size,
+  [[PipelineVariants]] ActivationType activation,
+  uint word,
+  [[Axis("size", "32")]] uint index,
+  [[Specialize]] bool flag,
+  [[Specialize]] uint group,
+) {
+  output[index * 4] = uint(activation);
+  output[index * 4 + 1] = flag ? 1u : 0u;
+  output[index * 4 + 2] = group;
+  output[index * 4 + 3] = word + index;
+}
+
 // Wrapping signed and unsigned byte arithmetic on scalar byte storage; the odd term for negative values exposes a load
 // that zero-extends signed bytes.
 [[Kernel]] [[Test]] func TestByteStorage(

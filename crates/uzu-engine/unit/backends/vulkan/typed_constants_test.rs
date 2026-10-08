@@ -12,7 +12,7 @@ use crate::backends::{
     common::gpu_types::ActivationType,
     vulkan::{
         VkBuffer,
-        vk_kernels::{TestByteStorageVulkanKernel, TestTypedConstantsVulkanKernel},
+        vk_kernels::{TestByteStorageVulkanKernel, TestPipelineVariantsVulkanKernel, TestTypedConstantsVulkanKernel},
     },
 };
 
@@ -125,6 +125,53 @@ fn typed_constants_reach_the_kernel() {
                     actual == expected,
                     "size {size}, reversed {order}, {:?}, uniform {activation:?}: words differ",
                     configurations[index]
+                );
+            }
+        }
+    }
+    fixture.assert_clean();
+}
+
+/// Three pipeline-variant kernels differing in both regular specializations record every activation each, in both
+/// orders, into one command buffer per size: each element echoes the selected pipeline's activation, its kernel's
+/// specializations and the uniform after the selector, and the words past the span keep their sentinel; an empty
+/// dispatch records nothing.
+#[uzu_test]
+fn pipeline_variants_select_each_pipeline() {
+    let fixture = KernelFixture::new();
+    let configurations = [(false, 0), (true, 257), (true, u32::MAX)];
+    let kernels = configurations.map(|(flag, group)| {
+        TestPipelineVariantsVulkanKernel::new(&fixture.context, flag, group).expect("TestPipelineVariants")
+    });
+    let count = kernels.len() * ACTIVATIONS.len();
+    for size in [0, 1, 33, 257] {
+        for order in [false, true] {
+            let mut encoding = fixture.encoding();
+            let mut dispatches = Vec::new();
+            for index in 0..count {
+                let index = if order {
+                    count - 1 - index
+                } else {
+                    index
+                };
+                let (kernel, activation) = (index / ACTIVATIONS.len(), ACTIVATIONS[index % ACTIVATIONS.len()]);
+                let word = 1000 * index as u32;
+                let output = fixture.guarded(&vec![SENTINEL; 4 * size as usize + 4], SENTINEL);
+                // SAFETY: the output holds `size` four-word elements, which bounds every index the kernel writes, and
+                // aliases nothing.
+                unsafe { kernels[kernel].encode(range(&output), size, activation, word, &mut encoding) };
+                dispatches.push((kernel, activation, word, output));
+            }
+            KernelFixture::complete(encoding);
+            for (kernel, activation, word, output) in dispatches {
+                let (flag, group) = configurations[kernel];
+                let elements = (0..size).flat_map(|i| [activation as u32, u32::from(flag), group, word + i]);
+                let expected = elements.chain([SENTINEL; 4]).collect::<Vec<_>>();
+                // SAFETY: the only command buffer using this buffer has completed.
+                let actual = unsafe { KernelFixture::read_guarded(&output, SENTINEL) };
+                assert!(
+                    actual == expected,
+                    "size {size}, reversed {order}, kernel {kernel}, {activation:?}: words differ"
                 );
             }
         }
