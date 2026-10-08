@@ -6,16 +6,10 @@ use metal::{
     MTLSparseTextureMappingMode,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use parking_lot::Mutex;
 
 use crate::backends::{
     common::{Buffer, SparseBuffer},
-    metal::{
-        Metal, MetalContext,
-        error::MetalError,
-        heaps::{MetalHeapPage, MetalHeaps},
-        metal_extensions::SparsePageSizeExt,
-    },
+    metal::{Metal, MetalContext, error::MetalError, heaps::MetalHeapPage, metal_extensions::SparsePageSizeExt},
 };
 
 pub struct MetalSparseBuffer {
@@ -23,14 +17,12 @@ pub struct MetalSparseBuffer {
     pages: Vec<MetalHeapPage>,
     length: usize,
     capacity: usize,
-    heaps: Arc<MetalHeaps>,
-    command_queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
-    residency_set: Arc<Mutex<Retained<ProtocolObject<dyn MTLResidencySet>>>>,
+    context: Arc<MetalContext>,
 }
 
 impl MetalSparseBuffer {
     pub(in crate::backends::metal) fn new(
-        context: &MetalContext,
+        context: Arc<MetalContext>,
         capacity: usize,
     ) -> Result<Self, MetalError> {
         let page_size = context.heaps.page_size();
@@ -55,9 +47,7 @@ impl MetalSparseBuffer {
             pages: Vec::new(),
             length: 0,
             capacity,
-            heaps: context.heaps.clone(),
-            command_queue: context.command_queue.clone(),
-            residency_set: context.residency_set.clone(),
+            context,
         })
     }
 
@@ -83,15 +73,16 @@ impl SparseBuffer for MetalSparseBuffer {
             return Ok(());
         }
 
-        let old_page_count = self.length.div_ceil(self.heaps.page_size().in_bytes());
-        let new_page_count = until.div_ceil(self.heaps.page_size().in_bytes());
+        let old_page_count = self.length.div_ceil(self.context.heaps.page_size().in_bytes());
+        let new_page_count = until.div_ceil(self.context.heaps.page_size().in_bytes());
 
         if new_page_count > old_page_count {
-            let batches = self.heaps.allocate(new_page_count - old_page_count)?;
+            let mut sparse_state = self.context.sparse_state.lock();
+            let batches = self.context.heaps.allocate(new_page_count - old_page_count)?;
             let mut current_page_count = old_page_count;
             for batch in &batches {
                 let num_pages_in_batch = batch.range().iter().len();
-                self.command_queue.update_buffer_mappings(
+                self.context.sparse_queue.update_buffer_mappings(
                     &self.buffer,
                     Some(batch.heap()),
                     &[MTL4UpdateSparseBufferMappingOperation::new(
@@ -102,6 +93,7 @@ impl SparseBuffer for MetalSparseBuffer {
                 );
                 current_page_count += num_pages_in_batch;
             }
+            sparse_state.did_ops = true;
             self.pages.extend(batches);
         }
 
@@ -114,16 +106,18 @@ impl SparseBuffer for MetalSparseBuffer {
 impl Drop for MetalSparseBuffer {
     fn drop(&mut self) {
         if self.length > 0 {
-            self.command_queue.update_buffer_mappings(
+            let mut sparse_state = self.context.sparse_state.lock();
+            self.context.sparse_queue.update_buffer_mappings(
                 &self.buffer,
                 None,
                 &[MTL4UpdateSparseBufferMappingOperation::new(
                     MTLSparseTextureMappingMode::Unmap,
-                    0..self.length.div_ceil(self.heaps.page_size().in_bytes()),
+                    0..self.length.div_ceil(self.context.heaps.page_size().in_bytes()),
                     0,
                 )],
             );
-            let event = self.command_queue.device().new_shared_event().unwrap();
+            sparse_state.did_ops = true;
+            let event = self.context.sparse_queue.device().new_shared_event().unwrap();
             let retain = (self.buffer.clone(), std::mem::take(&mut self.pages), event.clone());
             event.notify_listener_at_value(
                 &MTLSharedEventListener::shared_listener(),
@@ -132,10 +126,10 @@ impl Drop for MetalSparseBuffer {
                     let _ = &retain;
                 }),
             );
-            self.command_queue.signal_event_value(event.as_ref(), 1);
+            self.context.sparse_queue.signal_event_value(event.as_ref(), 1);
         }
 
-        let residency_set_locked = self.residency_set.lock();
+        let residency_set_locked = self.context.residency_set.lock();
         residency_set_locked.remove_allocation(self.buffer.as_ref());
         residency_set_locked.commit();
     }

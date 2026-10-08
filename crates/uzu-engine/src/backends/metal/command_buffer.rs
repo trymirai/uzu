@@ -6,9 +6,9 @@ use std::{
 
 use metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandBufferExt,
-    MTL4CommandEncoder, MTL4CommandEncoderExt, MTL4CommandQueueExt, MTL4CommitFeedback, MTL4CommitFeedbackExt,
-    MTL4CommitFeedbackHandler, MTL4CommitOptions, MTL4ComputeCommandEncoder, MTL4ComputeCommandEncoderExt,
-    MTL4VisibilityOptions, MTLDeviceExt, MTLStages,
+    MTL4CommandEncoder, MTL4CommandEncoderExt, MTL4CommandQueue, MTL4CommandQueueExt, MTL4CommitFeedback,
+    MTL4CommitFeedbackExt, MTL4CommitFeedbackHandler, MTL4CommitOptions, MTL4ComputeCommandEncoder,
+    MTL4ComputeCommandEncoderExt, MTL4VisibilityOptions, MTLDeviceExt, MTLStages,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeSet;
@@ -251,6 +251,16 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
     type CommandBuffer = MetalCommandBuffer;
 
     fn submit(self) -> MetalCommandBufferPending {
+        let mut sparse_state_locked = self.context.sparse_state.lock();
+        if sparse_state_locked.did_ops {
+            sparse_state_locked.did_ops = false;
+            sparse_state_locked.event_value += 1;
+            let value = sparse_state_locked.event_value;
+            self.context.sparse_queue.signal_event_value(&self.context.sparse_event, value);
+            self.context.command_queue.wait_for_event_value(&self.context.sparse_event, value);
+        }
+        drop(sparse_state_locked);
+
         let (sender, receiver) = mpsc::channel();
 
         let command_allocator = self.command_allocator.clone();

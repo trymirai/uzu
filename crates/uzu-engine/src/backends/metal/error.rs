@@ -21,6 +21,8 @@ pub enum MetalError {
     CannotCreateCompiler(String),
     #[error("Cannot create command queue")]
     CannotCreateCommandQueue,
+    #[error("Cannot create event")]
+    CannotCreateEvent,
     #[error("Cannot create buffer")]
     CannotCreateBuffer,
     #[error("Cannot create heap")]
