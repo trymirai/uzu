@@ -86,6 +86,7 @@ impl SlangCompiler {
         let wrapper_file = output_base.with_extension("slang");
         let object_file = output_base.with_extension("spv");
         let dephashes_file = output_base.with_extension("dephashes");
+        println!("cargo::rerun-if-changed={}", dephashes_file.display());
         let mut hasher = blake3::Hasher::new();
         hasher.update(caching::build_system_hash()?.as_bytes());
         hasher.update(self._global_session.build_tag_string().as_bytes());
