@@ -117,16 +117,7 @@ impl GemmProblem {
         let Some(step) = outer_block_k(shape, engine, tiling) else {
             return 1;
         };
-        let group_size = shape.b_group_size.unwrap_or(0);
-        let mut align = if engine == GemmEngine::Mxu || !shape.is_quant() {
-            step
-        } else {
-            step.max(group_size)
-        };
-        if shape.b_prologue == GemmBPrologueKind::ScaleZeroPointDequant && shape.b_bits == Some(4) {
-            align = align.max(2_u32.saturating_mul(group_size));
-        }
-        let align = align.max(ACTIVATION_SCALE_GROUP_SIZE).max(group_size);
+        let align = step.max(ACTIVATION_SCALE_GROUP_SIZE);
         let target_tiles = policy::split_k_target_tiles(!shape.a_full_precision, tiling, shape.b_bits);
         let mut split_k = (target_tiles / base_tiles).max(1).min((shape.k / align).max(1));
         if !shape.a_full_precision && engine == GemmEngine::Mxu && tiling.block_k() != 0 {
@@ -201,7 +192,7 @@ fn mxu_is_eligible(shape: MatmulShape) -> bool {
     }
     shape.b_transpose
         && shape.b_leading_dimension.is_none()
-        && shape.k.is_multiple_of(select_mxu_quant_tiling(shape).block_k())
+        && shape.k.is_multiple_of(policy::mxu_mn_tile(!shape.a_full_precision, shape.m, shape.n).block_k())
 }
 
 fn select_tiling(
@@ -210,22 +201,13 @@ fn select_tiling(
     apple_gpu_family: MTLGPUFamily,
 ) -> GemmTiling {
     match engine {
-        GemmEngine::Simdgroup if shape.is_quant() => {
-            policy::simdgroup_quant_tile(shape.m, shape.n, shape.b_group_size.unwrap_or(0), apple_gpu_family)
-        },
+        GemmEngine::Simdgroup if shape.is_quant() => policy::simdgroup_quant_tile(shape.m, shape.n, apple_gpu_family),
         GemmEngine::Simdgroup => policy::simdgroup_fp_tile(shape.m, shape.n, shape.k),
-        GemmEngine::Mxu if !shape.a_full_precision || shape.is_quant() => select_mxu_quant_tiling(shape),
+        GemmEngine::Mxu if !shape.a_full_precision || shape.is_quant() => {
+            policy::mxu_mn_tile(!shape.a_full_precision, shape.m, shape.n)
+        },
         GemmEngine::Mxu if shape.b_transpose => policy::mxu_fp_tile(shape.m, shape.n, shape.k),
         GemmEngine::Mxu => policy::mxu_mn_tile(false, shape.m, shape.n),
-    }
-}
-
-fn select_mxu_quant_tiling(shape: MatmulShape) -> GemmTiling {
-    let tiling = policy::mxu_mn_tile(!shape.a_full_precision, shape.m, shape.n);
-    if tiling.fits_quant_group_size(shape.b_group_size.unwrap_or(0)) {
-        tiling
-    } else {
-        policy::MXU_DEFAULT_TILE
     }
 }
 #[cfg(test)]
