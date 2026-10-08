@@ -68,6 +68,7 @@ class SplashEngine(InferenceEngine):
         subprocess.run([str(SPLASH_BINARY), "device-check"], check=True)
 
         sys.path.insert(0, str(SPLASH_DIR.parent))
+        sys.path.insert(0, str(SPLASH_DIR))
         from splash.server import protocol as wire
         from splash.server.backend import Job, NativeBackend
         from splash.server.chat_templates import ChatTemplates
@@ -95,7 +96,7 @@ class SplashEngine(InferenceEngine):
         )
         validate_tokenizer(self.tokenizer)
         chat_templates = ChatTemplates(self.tokenizer)
-        self._command = [str(SPLASH_BINARY), "serve-native", str(root / "target"), str(root / "draft"), "auto", "auto"]
+        self._command = [str(SPLASH_BINARY), "serve-native", str(root), "auto", "auto"]
         try:
             self.runtime = MultiplexedRuntime(
                 self._command,
@@ -104,7 +105,7 @@ class SplashEngine(InferenceEngine):
                 pending_limit=1,
                 eager_start=False,
             )
-            self.backend = NativeBackend(self.runtime, self.tokenizer)
+            self.backend = NativeBackend(self.runtime, self.tokenizer, request_logger=lambda record: None)
             # Each run explicitly waits for readiness. Disable the server's
             # background recovery, whose stdout logs would corrupt JSONL output.
             self.runtime.on_engine_failure = None
@@ -119,8 +120,6 @@ class SplashEngine(InferenceEngine):
                 self.tokenizer,
                 self.backend,
                 str(model),
-                ready.max_context_tokens,
-                # With no output limit, use all remaining context until EOS.
                 ready.max_context_tokens,
                 1800.0,
                 ready.max_concurrent_requests,
@@ -184,13 +183,11 @@ class SplashEngine(InferenceEngine):
         return [self._run(self._prepare(request, body)) for _ in range(num_runs)]
 
     def _prepare(self, request: BenchRequest, body: dict):
+        deadline = self.frontend.request_deadline(body, time.monotonic())
         if request.prompt_text is None:
-            job, _, _ = self.frontend.prepare(body)
-            return job
+            return self.frontend.prepare(body, deadline=deadline)
 
-        # Splash 1.1.0 exposes raw tokenization but no text-completions route.
-        # Submit those tokens to the same native runtime as chat.
-        deadline = self.frontend.request_deadline(body)
+        # Submit raw tokens to the same native runtime without a chat template.
         tokens = self.frontend.tokenize({"content": request.prompt_text, "add_special": True}, deadline=deadline)
         if not tokens:
             raise ValueError("Input prompt is empty")
@@ -205,9 +202,11 @@ class SplashEngine(InferenceEngine):
             prompt_tokens=tokens,
             max_new_tokens=max_tokens,
             seed=secrets.randbits(64),
-            temperature=body["temperature"],
-            top_p=body["top_p"],
-            top_k=body["top_k"],
+            sampling=self._wire.SamplingParameters(
+                temperature=body["temperature"],
+                top_p=body["top_p"],
+                top_k=body["top_k"],
+            ),
             deadline=deadline,
         )
 
