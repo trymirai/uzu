@@ -74,6 +74,17 @@ impl<'a> SlangArgument<'a> {
                 );
                 Some(name)
             },
+            // A by-value canonical struct, passed like the CPU kernel's value of it.
+            TypeKind::Struct => {
+                let name = self.slang_type()?;
+                ensure!(
+                    self.enum_paths.full_path_for(&name).is_some() && self.enum_paths.kind_for(&name).is_none(),
+                    "'{}' has struct type '{name}' that is not a canonical GPU struct",
+                    self.name()?
+                );
+                ensure!(self.attribute("Specialize").is_none(), "'{}': a struct cannot be specialized", self.name()?);
+                Some(name)
+            },
             _ => None,
         };
 

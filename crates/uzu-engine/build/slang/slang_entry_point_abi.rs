@@ -50,9 +50,15 @@ impl SlangEntryPointAbi {
                 [ParameterCategory::Uniform] => {},
                 categories => bail!("'{name}': parameter '{parameter_name}' has unsupported categories {categories:?}"),
             }
-            let pointee = match layout.kind() {
-                TypeKind::Pointer => {
-                    let pointee = layout.element_type_layout().context("pointer has no pointee layout")?;
+            // The pointee of a `Ptr<T>` argument, or a by-value struct argument itself.
+            let described = match layout.kind() {
+                TypeKind::Pointer => Some(layout.element_type_layout().context("pointer has no pointee layout")?),
+                TypeKind::Struct => Some(layout),
+                TypeKind::Scalar | TypeKind::Enum => None,
+                kind => bail!("'{name}': parameter '{parameter_name}' has unsupported kind {kind:?}"),
+            };
+            let described = match described {
+                Some(pointee) => {
                     let stride = pointee.stride(ParameterCategory::Uniform);
                     let alignment = usize::try_from(pointee.alignment(ParameterCategory::Uniform))?;
                     ensure!(
@@ -87,14 +93,13 @@ impl SlangEntryPointAbi {
                         .collect::<Result<_, Error>>()?;
                     Some((pointee.name().context("pointee has no name")?.to_owned(), stride, alignment, fields))
                 },
-                TypeKind::Scalar | TypeKind::Enum => None,
-                kind => bail!("'{name}': parameter '{parameter_name}' has unsupported kind {kind:?}"),
+                None => None,
             };
             fields.push(SlangFieldAbi {
                 name: parameter_name.to_owned(),
                 offset: parameter.offset(ParameterCategory::Uniform),
                 size: layout.size(ParameterCategory::Uniform),
-                pointee,
+                layout: described,
             });
         }
         let mut end = 0;

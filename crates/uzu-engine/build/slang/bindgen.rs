@@ -10,7 +10,9 @@ use quote::{ToTokens, format_ident, quote};
 use shader_slang::ScalarType;
 use syn::{Expr, GenericArgument, Ident, PathArguments, Type, parse_quote};
 
-use super::{Error, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, wrapper::specialization_name};
+use super::{
+    Error, SlangArgumentType, SlangEntryPointAbi, SlangFieldAbi, SlangKernelInfo, wrapper::specialization_name,
+};
 use crate::common::{
     enum_paths::{EnumPaths, GpuTypeKind},
     expr_rewrite::rewrite_paths_with,
@@ -159,13 +161,16 @@ pub fn bindgen(
         pipeline_variants = Some((format_ident!("{name}"), paths, *id));
     }
 
+    // Buffers of canonical structs are checked by `canonical_struct`, those of primitives by their data type's size.
     let mut strides = BTreeSet::new();
     for (_, abi) in variants {
         for field in &abi.fields {
             let buffer = kernel.arguments.iter().any(|argument| {
                 argument.name.as_ref() == field.name && matches!(argument.ty, KernelArgumentType::Buffer(_))
             });
-            if let (true, Some((pointee, stride, ..))) = (buffer, &field.pointee) {
+            if let (true, Some((pointee, stride, ..))) = (buffer, &field.layout)
+                && (enum_paths.full_path_for(pointee).is_none() || enum_paths.kind_for(pointee).is_some())
+            {
                 strides.insert((data_type(pointee)?.to_string(), *stride));
             }
         }
@@ -179,11 +184,82 @@ pub fn bindgen(
         kernel.arguments.len() == abi.fields.len() + usize::from(pipeline_variants.is_some()),
         "{kernel_name}: arguments and reflected fields differ"
     );
+    // The canonical struct `field` holds by value, slices or addresses, with its path, type, stride and alignment; `None`
+    // for other fields. Its fields must be the canonical struct's, by name, of the reflected scalar type and array shape,
+    // the same in every variant, and the canonical Rust type must have Slang's reflected layout, field by field. `bool`,
+    // 1 byte in Rust and 4 in Slang, has no shared one.
+    let mut layout_checks = Vec::new();
+    let mut canonical_struct = |field: &SlangFieldAbi| -> Result<Option<(&str, Type, usize, usize)>, Error> {
+        let Some((pointee, stride, alignment, fields)) = &field.layout else {
+            return Ok(None);
+        };
+        let Some(path) = enum_paths.full_path_for(pointee).filter(|_| enum_paths.kind_for(pointee).is_none()) else {
+            return Ok(None);
+        };
+        let name = &field.name;
+        ensure!(
+            variants.iter().all(|(_, other)| other.fields.iter().any(|other| other == field)),
+            "{kernel_name}: variants differ in the layout of '{name}'"
+        );
+        let canonical = gpu_types
+            .files
+            .iter()
+            .flat_map(|file| &file.types)
+            .find_map(|candidate| match candidate {
+                GpuType::Struct(candidate) if candidate.name.as_ref() == pointee => Some(candidate),
+                _ => None,
+            })
+            .with_context(|| format!("{kernel_name}: no canonical struct '{pointee}'"))?;
+        ensure!(
+            canonical.fields.iter().map(|canonical| canonical.name.as_ref()).eq(fields.iter().map(|(name, ..)| name)),
+            "{kernel_name}: '{pointee}' fields differ from the canonical struct"
+        );
+        let scalar = |text: &str| match text {
+            "u32" => Some(ScalarType::Uint32),
+            "f32" => Some(ScalarType::Float32),
+            _ => None,
+        };
+        for (canonical, (field_name, _, _, reflected, array)) in canonical.fields.iter().zip(fields) {
+            let (element, length) = match &canonical.ty {
+                GpuTypeStructFieldType::Scalar(element) => (element, None),
+                GpuTypeStructFieldType::Array {
+                    element,
+                    length,
+                } => (element, Some((*length, 4))),
+            };
+            ensure!(
+                scalar(element) == Some(*reflected) && *array == length,
+                "{kernel_name}: field {pointee}.{field_name} is {element} {length:?} in Rust but {reflected:?} {array:?} \
+                 in Slang"
+            );
+        }
+        let ty: Type = syn::parse_str(path)?;
+        let message = format!("{kernel_name}: {path} does not have the layout Slang reflects");
+        layout_checks.push(quote! {
+            const _: () = assert!(size_of::<#ty>() == #stride && align_of::<#ty>() == #alignment, #message);
+        });
+        for (canonical, (field_name, offset, size, ..)) in canonical.fields.iter().zip(fields) {
+            let field_type: Type = match &canonical.ty {
+                GpuTypeStructFieldType::Scalar(element) => syn::parse_str(element)?,
+                GpuTypeStructFieldType::Array {
+                    element,
+                    length,
+                } => syn::parse_str(&format!("[{element}; {length}]"))?,
+            };
+            let field_name = format_ident!("{field_name}");
+            layout_checks.push(quote! {
+                const _: () = assert!(
+                    std::mem::offset_of!(#ty, #field_name) == #offset && size_of::<#field_type>() == #size,
+                    #message
+                );
+            });
+        }
+        Ok(Some((path, ty, *stride, *alignment)))
+    };
     let mut encode_arguments = Vec::new();
     let mut packing = Vec::new();
     let mut reads = Vec::new();
     let mut writes = Vec::new();
-    let mut layout_checks = Vec::new();
     for argument in &kernel.arguments {
         let name = format_ident!("{}", argument.name.as_ref());
         // The pipeline-selecting argument has no push-constant field.
@@ -200,9 +276,9 @@ pub fn bindgen(
             .find(|field| field.name == argument.name.as_ref())
             .with_context(|| format!("{kernel_name}: no reflected field for '{name}'"))?;
         let (start, end) = (field.offset, field.offset + field.size);
-        let (argument_type, bytes) = match (&argument.ty, &field.pointee) {
+        let (argument_type, bytes) = match (&argument.ty, canonical_struct(field)?) {
             (KernelArgumentType::Buffer(access), _) => {
-                ensure!(field.size == 8 && field.pointee.is_some(), "{kernel_name}: '{name}' is not a device address");
+                ensure!(field.size == 8 && field.layout.is_some(), "{kernel_name}: '{name}' is not a device address");
                 let declared = if argument.conditional {
                     quote! { #name.clone() }
                 } else {
@@ -219,82 +295,26 @@ pub fn bindgen(
                 };
                 (quote! { (&std::sync::Arc<VkBuffer>, std::ops::Range<u64>) }, quote! { #address.to_ne_bytes() })
             },
+            // A canonical struct by value: its bytes in the push constants, which an absent optional leaves zero.
+            (KernelArgumentType::Constant(text), Some((path, ty, stride, _))) if text.as_ref() == path => {
+                ensure!(field.size == stride, "{kernel_name}: '{name}' of {} bytes is not one {path}", field.size);
+                let cast = quote! { bytemuck::cast::<#ty, [u8; #stride]> };
+                let bytes = if argument.conditional {
+                    quote! { #name.map_or([0; #stride], #cast) }
+                } else {
+                    quote! { #cast(#name) }
+                };
+                (quote! { #ty }, bytes)
+            },
             // A `[[HostSlice]]`: the slice is copied into memory of the command buffer once the dispatch is known to
             // record, and the shader reads it through its address; an empty slice passes address 0 and reads nothing.
-            (KernelArgumentType::Constant(text), Some((pointee, stride, alignment, fields))) => {
-                let path = enum_paths.full_path_for(pointee).unwrap_or_default();
+            (KernelArgumentType::Constant(text), Some((path, ty, _, alignment))) => {
                 ensure!(
                     field.size == 8 && !argument.conditional && text.as_ref() == format!("&[{path}]"),
-                    "{kernel_name}: '{name}' of type '{text}' is not a device address of a canonical '{pointee}' slice"
-                );
-                ensure!(
-                    variants.iter().all(|(_, other)| other.fields.iter().any(|other| other == field)),
-                    "{kernel_name}: variants differ in the layout of '{name}'"
-                );
-                let canonical = gpu_types
-                    .files
-                    .iter()
-                    .flat_map(|file| &file.types)
-                    .find_map(|candidate| match candidate {
-                        GpuType::Struct(candidate) if candidate.name.as_ref() == pointee => Some(candidate),
-                        _ => None,
-                    })
-                    .with_context(|| format!("{kernel_name}: no canonical struct '{pointee}'"))?;
-                ensure!(
-                    canonical
-                        .fields
-                        .iter()
-                        .map(|canonical| canonical.name.as_ref())
-                        .eq(fields.iter().map(|(name, ..)| name)),
-                    "{kernel_name}: '{pointee}' fields differ from the canonical struct"
+                    "{kernel_name}: '{name}' of type '{text}' is not a device address of a canonical '{path}' slice"
                 );
                 // The encoder's upload allocator aligns ranges to at most 64 bytes.
-                ensure!(*alignment <= 64, "{kernel_name}: '{pointee}' needs alignment {alignment} above 64");
-                // The canonical Rust type must have Slang's reflected layout, field by field, and each field the reflected
-                // scalar type and array shape. `bool`, 1 byte in Rust and 4 in Slang, has no shared one.
-                let scalar = |text: &str| match text {
-                    "u32" => Some(ScalarType::Uint32),
-                    "f32" => Some(ScalarType::Float32),
-                    _ => None,
-                };
-                for (canonical, (field_name, _, _, reflected, array)) in canonical.fields.iter().zip(fields) {
-                    let (element, length) = match &canonical.ty {
-                        GpuTypeStructFieldType::Scalar(element) => (element, None),
-                        GpuTypeStructFieldType::Array {
-                            element,
-                            length,
-                        } => (element, Some((*length, 4))),
-                    };
-                    ensure!(
-                        scalar(element) == Some(*reflected) && *array == length,
-                        "{kernel_name}: field {pointee}.{field_name} is {element} {length:?} in Rust but {reflected:?} \
-                         {array:?} in Slang"
-                    );
-                }
-                let ty: Type = syn::parse_str(path)?;
-                let message = format!("{kernel_name}: {path} does not have the layout Slang reflects");
-                layout_checks.push(quote! {
-                    const _: () = assert!(
-                        size_of::<#ty>() == #stride && align_of::<#ty>() == #alignment,
-                        #message
-                    );
-                });
-                for (canonical, (field_name, offset, size, ..)) in canonical.fields.iter().zip(fields) {
-                    let field_type: Type = match &canonical.ty {
-                        GpuTypeStructFieldType::Scalar(element) => syn::parse_str(element)?,
-                        GpuTypeStructFieldType::Array {
-                            element,
-                            length,
-                        } => syn::parse_str(&format!("[{element}; {length}]"))?,
-                    };
-                    let field_name = format_ident!("{field_name}");
-                    layout_checks.push(quote! {
-                        const _: () = assert!(
-                            std::mem::offset_of!(#ty, #field_name) == #offset && size_of::<#field_type>() == #size,
-                            #message
-                        );
-                    });
-                }
+                ensure!(alignment <= 64, "{kernel_name}: '{path}' needs alignment {alignment} above 64");
                 let message = format!("{kernel_name} upload of {name}");
                 packing.push(quote! { let #name = command_buffer.upload(#name).expect(#message); });
                 reads.push(quote! { #name.as_ref().map(|(buffer, range)| (buffer, range.clone())) });
@@ -303,7 +323,7 @@ pub fn bindgen(
                 (quote! { &[#ty] }, quote! { #address.to_ne_bytes() })
             },
             (KernelArgumentType::Constant(text), None) => {
-                ensure!(field.size == 4 && field.pointee.is_none(), "{kernel_name}: '{name}' is not a 4-byte {text}");
+                ensure!(field.size == 4 && field.layout.is_none(), "{kernel_name}: '{name}' is not a 4-byte {text}");
                 let ty: Type = syn::parse_str(text)?;
                 let value = word(&name, &ty, &["u32", "i32", "f32", "bool"])?;
                 // An absent optional constant leaves its bytes zero.

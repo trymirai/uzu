@@ -2,6 +2,8 @@ mod activation_test;
 mod activation_transform_test;
 mod attention_prepare_case;
 mod attention_prepare_test;
+mod attention_single_pass_case;
+mod attention_single_pass_test;
 mod bf16_conversion_test;
 mod gated_act_mul_test;
 mod input_embedding_lookup_case;
@@ -31,6 +33,7 @@ pub use activation_transform_test::{
     quantized, raw, signs, to, transform_oracle, values,
 };
 pub use attention_prepare_case::AttentionPrepareCase;
+pub use attention_single_pass_case::AttentionSinglePassCase;
 pub use input_embedding_lookup_case::InputEmbeddingLookupCase;
 pub use normalization_case::NormalizationCase;
 pub use normalization_test::stage_oracle as normalization_stage_oracle;
