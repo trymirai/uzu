@@ -1,5 +1,7 @@
 mod activation_test;
 mod activation_transform_test;
+mod ancestor_attention_case;
+mod ancestor_attention_test;
 mod attention_prepare_case;
 mod attention_prepare_test;
 mod attention_single_pass_case;
@@ -32,6 +34,7 @@ pub use activation_transform_test::{
     assert_quantized, check_bounds, cpu_outputs as transform_cpu_outputs, gpu_transformed, label, quantizations,
     quantized, raw, signs, to, transform_oracle, values,
 };
+pub use ancestor_attention_case::{AncestorAttentionCase, HEAD_DIM};
 pub use attention_prepare_case::AttentionPrepareCase;
 pub use attention_single_pass_case::AttentionSinglePassCase;
 pub use input_embedding_lookup_case::InputEmbeddingLookupCase;

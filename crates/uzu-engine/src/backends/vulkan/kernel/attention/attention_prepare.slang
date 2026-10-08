@@ -1,14 +1,12 @@
 import definitions;
-import common.activation;
+import common.attention;
 
 static const uint ATTENTION_PREPARE_TILE = 128;
 
 // Splits packed qkvg rows into queries [head, token, head_dim] and, with has_kv, keys and values
 // [kv_token_offset + token, head, head_dim], leaving any trailing gate unread. One workgroup per tile of one head of one
 // token. Elements past rope_dim, value heads and every element without has_rope are copied bit for bit; the first rope_dim
-// elements of query and key heads are rotated as the CPU apply_rope: the input times the cosine plus the signed paired
-// element times the sine, each product and the sum an FP32 rounding of its own with subnormals kept, then rounded to
-// ElementT. The paired element of the first half is negated through its sign bit, which the device may flush otherwise.
+// elements of query and key heads are rotated as the CPU apply_rope by rope_rotated, then rounded to ElementT.
 // The CPU's preconditions hold also for empty batches; the row stride bound is a quotient, free of overflow.
 [[Kernel]] [[Public]]
 [[Precondition("encode", "num_q_heads > 0 || has_kv")]]
@@ -52,13 +50,8 @@ func AttentionPrepare<ElementT: IBFloat16, RopeT: IFloat32>(
     let half = rope_dim / 2;
     let first = element < half;
     let paired = qkvg[row + (first ? element + half : element - half)].toFloat();
-    let signed_paired = asfloat(asuint(paired) ^ (first ? 0x80000000u : 0u));
     let table = batch * rope_dim + element;
-    let rotated = exact_sum(
-      exact_product(value.toFloat(), cosines[table].toFloat()),
-      exact_product(signed_paired, sines[table].toFloat()),
-      false
-    );
+    let rotated = rope_rotated(value.toFloat(), paired, first, cosines[table].toFloat(), sines[table].toFloat());
     value = ElementT.fromFloat(rotated);
   }
   if (is_query) {
