@@ -9,8 +9,8 @@ use crate::{
             CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FrontierIdx, MetadataIdx, TreeIdx,
         },
         kernel::{
-            AncestorAttentionKernel, AttentionArguments, AttentionKernel, WeaverFrontierInsertChildrenKernel,
-            WeaverFrontierSelectKernel, WeaverTopChildrenKernel, radix_top_k_small::RadixTopKSmall,
+            AncestorAttentionKernel, AttentionArguments, AttentionKernel, WeaverFrontierSelectKernel,
+            WeaverTopChildrenKernel, radix_top_k_small::RadixTopKSmall,
         },
     },
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
@@ -124,7 +124,6 @@ pub struct Weaver<B: Backend> {
     top_children: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
     top_children_with_prune_noise: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
     frontier_select: <B::Kernels as Kernels>::WeaverFrontierSelectKernel,
-    frontier_insert_children: <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel,
     model_dim: u32,
     target_model_dim: u32,
     max_depth: u32,
@@ -168,6 +167,10 @@ pub enum WeaverEncodeError<B: Backend> {
     #[error("invalid Weaver tree input")]
     InvalidTreeInput,
 }
+
+/// Children come only from the draft's top candidates: the target samples within top-k / top-p, so tail tokens that
+/// the Gumbel noise lifts are almost never accepted and only take tree slots.
+const EXPANSION_CANDIDATES: u32 = 32;
 
 impl<B: Backend> Weaver<B> {
     pub fn new(
@@ -264,8 +267,6 @@ impl<B: Backend> Weaver<B> {
             <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context, true).map_err(WeaverNewError::Backend)?;
         let frontier_select =
             <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(context).map_err(WeaverNewError::Backend)?;
-        let frontier_insert_children = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(context)
-            .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             token_embedding_norm,
             token_embedding_projection,
@@ -279,7 +280,6 @@ impl<B: Backend> Weaver<B> {
             top_children,
             top_children_with_prune_noise,
             frontier_select,
-            frontier_insert_children,
             model_dim: config.model_dim,
             target_model_dim: config.target_model_dim,
             max_depth: config.max_depth,
@@ -490,17 +490,7 @@ impl<B: Backend> Weaver<B> {
             false,
             command_buffer,
         )?;
-        let mut child_token_ids = command_buffer
-            .allocate_scratch_for_shape(&[batch_node_count, shape.expand_width], DataType::U32)
-            .map_err(WeaverEncodeError::Backend)?;
-        let mut child_logprobs = command_buffer
-            .allocate_scratch_for_shape(&[batch_node_count, shape.expand_width], DataType::F32)
-            .map_err(WeaverEncodeError::Backend)?;
-        let mut child_prune_logprobs = shape
-            .prune_noise_scale
-            .map(|_| command_buffer.allocate_scratch_for_shape(&[batch_node_count, shape.expand_width], DataType::F32))
-            .transpose()
-            .map_err(WeaverEncodeError::Backend)?;
+
         let top_children = if shape.prune_noise_scale.is_some() {
             &self.top_children_with_prune_noise
         } else {
@@ -512,30 +502,17 @@ impl<B: Backend> Weaver<B> {
             batch_candidate_ids,
             depth_seeds_buffer,
             node_metadata,
-            &mut child_token_ids,
-            &mut child_logprobs,
-            child_prune_logprobs.as_mut(),
+            node_valid.as_ref(),
+            packed_tree.as_ref(),
+            frontier,
             batch_node_count,
             self.candidate_pool_size,
+            EXPANSION_CANDIDATES.min(self.candidate_pool_size),
             shape.expand_width,
             target_embedding.vocab_size(),
-            shape.prune_noise_scale,
-            command_buffer,
-        );
-
-        // The edge lane feeds only final pruning; without prune noise it keeps the model logprobs.
-        self.frontier_insert_children.encode(
-            packed_tree.as_ref(),
-            node_metadata,
-            node_valid.as_ref(),
-            &child_token_ids,
-            &child_logprobs,
-            child_prune_logprobs.as_ref().unwrap_or(&child_logprobs),
-            frontier,
             frontier_capacity,
             tree_slot_count,
-            batch_node_count,
-            shape.expand_width,
+            shape.prune_noise_scale,
             command_buffer,
         );
 

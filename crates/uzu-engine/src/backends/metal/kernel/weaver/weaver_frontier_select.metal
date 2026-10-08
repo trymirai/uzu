@@ -6,6 +6,9 @@
 
 using namespace metal;
 
+// One threadgroup picks the `node_count` best frontier entries, moves them into the packed tree as the next batch
+// of nodes and stages their ancestor lists and candidate pools. Every thread keeps the ranking fields of its
+// FRONTIER_ENTRIES_PER_THREAD slots in registers, so each pick is a register scan plus one reduction.
 PUBLIC KERNEL(WeaverFrontierSelect)(
     device uint* frontier,
     device uint* packed_tree,
@@ -30,6 +33,7 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
     threadgroup uint4 reduce[FRONTIER_SELECT_SIMDGROUPS],
     threadgroup uint winner_slot[FRONTIER_MAX_WIDTH],
     threadgroup uint node_candidate_depth[FRONTIER_MAX_WIDTH],
+    threadgroup uint node_parent_slot[FRONTIER_MAX_WIDTH],
     const ThreadContext thread_context,
     const uint group_index GROUPS(1),
     const uint lid THREADS(FRONTIER_SELECT_THREADS)
@@ -42,10 +46,24 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
   }
 
   bool entry_active[FRONTIER_ENTRIES_PER_THREAD];
+  uint entry_key[FRONTIER_ENTRIES_PER_THREAD];
+  uint entry_parent[FRONTIER_ENTRIES_PER_THREAD];
+  uint entry_token[FRONTIER_ENTRIES_PER_THREAD];
   for (uint entry = 0; entry < FRONTIER_ENTRIES_PER_THREAD; ++entry) {
     const uint slot = lid + entry * FRONTIER_SELECT_THREADS;
-    entry_active[entry] =
+    const bool active =
         slot < frontier_capacity && frontier[uint(FrontierIdx::Active) * frontier_capacity + slot] != 0u;
+    entry_active[entry] = active;
+    entry_key[entry] = 0u;
+    entry_parent[entry] = FRONTIER_NO_WINNER;
+    entry_token[entry] = FRONTIER_NO_WINNER;
+    if (active) {
+      const uint depth = frontier[uint(FrontierIdx::Depth) * frontier_capacity + slot];
+      const uint key = frontier[uint(FrontierIdx::PathScoreKey) * frontier_capacity + slot];
+      entry_key[entry] = ((depth < lookahead_count ? 1u : 0u) << 31) | (key >> 1);
+      entry_parent[entry] = frontier[uint(FrontierIdx::ParentSlot) * frontier_capacity + slot];
+      entry_token[entry] = frontier[uint(FrontierIdx::TokenId) * frontier_capacity + slot];
+    }
   }
 
   for (uint child = 0; child < node_count; ++child) {
@@ -53,11 +71,9 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
     for (uint entry = 0; entry < FRONTIER_ENTRIES_PER_THREAD; ++entry) {
       const uint slot = lid + entry * FRONTIER_SELECT_THREADS;
       if (entry_active[entry]) {
-        const uint depth = frontier[uint(FrontierIdx::Depth) * frontier_capacity + slot];
-        const uint key = frontier[uint(FrontierIdx::PathScoreKey) * frontier_capacity + slot];
-        const uint parent = frontier[uint(FrontierIdx::ParentSlot) * frontier_capacity + slot];
-        const uint token = frontier[uint(FrontierIdx::TokenId) * frontier_capacity + slot];
-        const uint packed_key = ((depth < lookahead_count ? 1u : 0u) << 31) | (key >> 1);
+        const uint packed_key = entry_key[entry];
+        const uint parent = entry_parent[entry];
+        const uint token = entry_token[entry];
         if (packed_key > local.x ||
             (packed_key == local.x && (parent < local.y || (parent == local.y && token < local.z)))) {
           local = uint4(packed_key, parent, token, slot);
@@ -119,15 +135,7 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
       frontier[uint(FrontierIdx::Active) * frontier_capacity + slot] = 0u;
     }
 
-    const uint parent_slot = real && parent < tree_slot_count ? parent : 0u;
-    for (uint index = 0; index < ancestor_stride; ++index) {
-      const uint ancestor =
-          real && index + 1u <= depth
-              ? (index + 1u == depth ? parent_slot : slot_ancestors[parent_slot * ancestor_stride + index])
-              : 0u;
-      slot_ancestors[tree_slot * ancestor_stride + index] = ancestor;
-      node_ancestor_indices[node * ancestor_stride + index] = ancestor;
-    }
+    node_parent_slot[node] = real && parent < tree_slot_count ? parent : 0u;
 
     node_token_ids[node] = token;
     node_metadata[uint(MetadataIdx::Depth) * node_count + node] = depth < lookahead_count ? depth : PADDING_DEPTH;
@@ -139,6 +147,21 @@ PUBLIC KERNEL(WeaverFrontierSelect)(
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  // Ancestor lists, one thread per (node, index): the parent's list is from an earlier round.
+  for (uint pair = lid; pair < node_count * ancestor_stride; pair += FRONTIER_SELECT_THREADS) {
+    const uint node = pair / ancestor_stride;
+    const uint index = pair % ancestor_stride;
+    const bool real = winner_slot[node] != FRONTIER_NO_WINNER;
+    const uint depth = node_candidate_depth[node];
+    const uint parent_slot = node_parent_slot[node];
+    const uint ancestor =
+        real && index + 1u <= depth
+            ? (index + 1u == depth ? parent_slot : slot_ancestors[parent_slot * ancestor_stride + index])
+            : 0u;
+    slot_ancestors[(batch_start_slot + node) * ancestor_stride + index] = ancestor;
+    node_ancestor_indices[node * ancestor_stride + index] = ancestor;
+  }
 
   for (uint node = 0; node < node_count; ++node) {
     if (node_candidate_depth[node] >= candidate_depth_count) {

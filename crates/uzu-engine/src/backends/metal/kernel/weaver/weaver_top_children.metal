@@ -41,19 +41,24 @@ METAL_FUNC bool weaver_better(uint score, uint token, uint index, uint best_scor
          (score == best_score && (token < best_token || (token == best_token && index < best_index)));
 }
 
+// One threadgroup per node: picks its `expand_width` children from the candidate pool and inserts them into the
+// frontier (slot parent * expand_width + child) with their path logprob and score key.
 PUBLIC KERNEL(WeaverTopChildren)(
     const device bfloat* residual_logits,
     const device float* candidate_logits,
     const device uint* candidate_ids,
     const device uint64_t* depth_seeds,
     const device uint* node_metadata,
-    device uint* output_token_ids,
-    device float* output_model_logprobs,
-    device float* output_prune_logprobs OPTIONAL(has_prune_noise),
+    const device uint* node_valid,
+    const device uint* packed_tree,
+    device uint* frontier,
     constant uint& rows,
     constant uint& candidates,
+    constant uint& expansion_candidates,
     constant uint& expand_width,
     constant uint& vocab_size,
+    constant uint& frontier_capacity,
+    constant uint& tree_slot_count,
     constant float& prune_noise_scale OPTIONAL(has_prune_noise),
     const bool has_prune_noise SPECIALIZE,
     threadgroup float reduce_float[TOP_CHILDREN_SIMDGROUPS],
@@ -68,7 +73,17 @@ PUBLIC KERNEL(WeaverTopChildren)(
     const uint row GROUPS(rows),
     const uint lid THREADS(TOP_CHILDREN_THREADS)
 ) {
-  if (candidates == 0 || candidates > CANDIDATES_MAX || expand_width == 0 || expand_width > candidates) {
+  if (candidates == 0 || candidates > CANDIDATES_MAX || expand_width == 0 || expand_width > expansion_candidates ||
+      expansion_candidates > candidates ||
+      frontier_capacity == 0 || tree_slot_count == 0) {
+    return;
+  }
+  // Padding nodes expand nothing (uniform over the threadgroup).
+  if (node_valid[row] == 0u) {
+    return;
+  }
+  const uint parent = node_metadata[uint(MetadataIdx::TreeSlot) * rows + row];
+  if (parent >= tree_slot_count) {
     return;
   }
 
@@ -85,12 +100,16 @@ PUBLIC KERNEL(WeaverTopChildren)(
       second_valid ? candidate_logits[base + second_index] + float(residual_logits[base + second_index]) : -INFINITY;
   const uint first_token = first_valid ? uint(candidate_ids[base + first_index]) : 0xffffffffu;
   const uint second_token = second_valid ? uint(candidate_ids[base + second_index]) : 0xffffffffu;
-  const uint first_score =
-      first_valid ? top_k_score_key(first_logit + gumbel_noise(seed, first_token, vocab_size)) : 0u;
-  const uint second_score =
-      second_valid ? top_k_score_key(second_logit + gumbel_noise(seed, second_token, vocab_size)) : 0u;
-  bool first_active = first_valid;
-  bool second_active = second_valid;
+  // Expansion follows the target's own Gumbel noise so the tree covers what it will sample; greedy
+  // verification (no prune noise) adds none, so the expansion must not either or the tree, and with it the
+  // tree-verify rounding, would depend on the session seed.
+  const float first_noise = has_prune_noise ? gumbel_noise(seed, first_token, vocab_size) : 0.0f;
+  const float second_noise = has_prune_noise ? gumbel_noise(seed, second_token, vocab_size) : 0.0f;
+  const uint first_score = first_valid ? top_k_score_key(first_logit + first_noise) : 0u;
+  const uint second_score = second_valid ? top_k_score_key(second_logit + second_noise) : 0u;
+  // Children come only from the pool's first `expansion_candidates` (the pool is sorted by draft logit).
+  bool first_active = first_valid && first_index < expansion_candidates;
+  bool second_active = second_valid && second_index < expansion_candidates;
 
   const float local_max = fmax(first_logit, second_logit);
   const float simd_maximum = simd_max(local_max);
@@ -195,14 +214,29 @@ PUBLIC KERNEL(WeaverTopChildren)(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    if (lid == 0) {
+    const uint slot = parent * expand_width + child;
+    if (lid == 0 && slot < frontier_capacity) {
       const float winner_logit = candidate_logits[base + winner_index] + float(residual_logits[base + winner_index]);
-      output_token_ids[row * expand_width + child] = winner_token;
-      output_model_logprobs[row * expand_width + child] = winner_logit - log_sum;
+      // `volatile` keeps the rounded logprob as the operand of the path sum (fast-math may not reassociate).
+      volatile float logprob_rounded = winner_logit - log_sum;
+      const float logprob = logprob_rounded;
+      const float cumulative_logprob =
+          as_type<float>(packed_tree[uint(TreeIdx::PathLogprobBits) * tree_slot_count + parent]) + logprob;
+      frontier[uint(FrontierIdx::TokenId) * frontier_capacity + slot] = winner_token;
+      frontier[uint(FrontierIdx::ParentSlot) * frontier_capacity + slot] = parent;
+      frontier[uint(FrontierIdx::Depth) * frontier_capacity + slot] =
+          packed_tree[uint(TreeIdx::Depth) * tree_slot_count + parent] + 1u;
+      frontier[uint(FrontierIdx::PathLogprobBits) * frontier_capacity + slot] = as_type<uint>(cumulative_logprob);
+      frontier[uint(FrontierIdx::PathScoreKey) * frontier_capacity + slot] = top_k_score_key(cumulative_logprob);
+      frontier[uint(FrontierIdx::Active) * frontier_capacity + slot] = 1u;
+      // The edge lane feeds only final pruning; without prune noise it keeps the model logprob.
+      if (!has_prune_noise) {
+        frontier[uint(FrontierIdx::EdgeLogprobBits) * frontier_capacity + slot] = as_type<uint>(logprob);
+      }
     }
-    if (has_prune_noise && (first_index == winner_index || second_index == winner_index)) {
-      output_prune_logprobs[row * expand_width + child] =
-          (first_index == winner_index ? first_prune_logit : second_prune_logit) - prune_log_sum;
+    if (has_prune_noise && slot < frontier_capacity && (first_index == winner_index || second_index == winner_index)) {
+      frontier[uint(FrontierIdx::EdgeLogprobBits) * frontier_capacity + slot] =
+          as_type<uint>((first_index == winner_index ? first_prune_logit : second_prune_logit) - prune_log_sum);
     }
     first_active = first_active && first_index != winner_index;
     second_active = second_active && second_index != winner_index;

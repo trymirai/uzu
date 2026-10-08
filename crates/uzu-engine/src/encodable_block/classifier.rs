@@ -143,6 +143,7 @@ impl<B: Backend> Classifier<B> {
                 Some((0..batch_dim).into()),
                 None,
                 None,
+                None,
                 command_buffer,
             )
             .map_err(ClassifierError::Backend)?
