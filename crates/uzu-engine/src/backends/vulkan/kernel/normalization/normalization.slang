@@ -1,5 +1,5 @@
 import definitions;
-import generated.hadamard_order;
+import common.hadamard;
 
 // Row normalization ported from the Metal kernel, one workgroup per row. Every value is converted exactly where the
 // Metal kernel converts it: the residual sum, its scaling and the shortcut store in InputT; normalization in FP32;
@@ -12,8 +12,6 @@ static const uint NORMALIZATION_THREADS = 256;
 // One entry per subgroup; 256 covers the smallest possible subgroup width.
 groupshared float normalization_subgroup_sums[NORMALIZATION_THREADS];
 groupshared float normalization_pivot;
-// Ping-pong Hadamard butterfly stages, one element per invocation.
-groupshared float normalization_hadamard_stages[2][NORMALIZATION_THREADS];
 
 // Sums over the workgroup as Softmax combines its pairs: subgroup sums, one shared entry per subgroup, then subgroup 0
 // sums the entries.
@@ -69,33 +67,6 @@ float normalization_difference(float a, float b) {
     OpDecorate %difference NoContraction;
     result:$$float = OpCopyObject %difference;
   };
-}
-
-// Input random Hadamard transform of logical blocks of HADAMARD_TRANSFORM_BLOCK_SIZE consecutive invocations, as the
-// Metal simdgroup transform: the butterfly of the factored values, divided by sqrt(block size). Blocks live in
-// workgroup shared memory, so they do not depend on the device subgroup width.
-float normalization_hadamard(float value, uint tid) {
-  static_assert(
-    HADAMARD_TRANSFORM_BLOCK_SIZE > 0 && (HADAMARD_TRANSFORM_BLOCK_SIZE & (HADAMARD_TRANSFORM_BLOCK_SIZE - 1)) == 0,
-    "Hadamard transform block size must be a power of two"
-  );
-  static_assert(
-    NORMALIZATION_THREADS % HADAMARD_TRANSFORM_BLOCK_SIZE == 0, "Hadamard transform blocks must tile the workgroup"
-  );
-  normalization_hadamard_stages[0][tid] = value;
-  GroupMemoryBarrierWithGroupSync();
-  uint stage = 0;
-  for (uint stride = 1; stride < HADAMARD_TRANSFORM_BLOCK_SIZE; stride <<= 1) {
-    let own = normalization_hadamard_stages[stage][tid];
-    let partner = normalization_hadamard_stages[stage][tid ^ stride];
-    stage ^= 1;
-    normalization_hadamard_stages[stage][tid] = (tid & stride) != 0 ? partner - own : partner + own;
-    GroupMemoryBarrierWithGroupSync();
-  }
-  let transformed = normalization_hadamard_stages[stage][tid];
-  // An even stage count ends in stage 0, which the next call overwrites: every invocation reads first.
-  GroupMemoryBarrierWithGroupSync();
-  return transformed / sqrt(float(HADAMARD_TRANSFORM_BLOCK_SIZE));
 }
 
 [[Kernel]] [[Public]] func Normalization<
@@ -209,9 +180,10 @@ float normalization_hadamard(float value, uint tid) {
     if (use_hadamard) {
       float factored = 0.0;
       if (active) {
-        factored = value.toFloat() * float(hadamard_factors[i]);
+        factored = hadamard_factor(value.toFloat(), hadamard_factors[i]);
       }
-      value = OutputT.fromFloat(normalization_hadamard(factored, tid));
+      // The input random Hadamard transform: the factors, then the transform.
+      value = OutputT.fromFloat(hadamard_transform<NORMALIZATION_THREADS>(factored, tid));
     }
     if (active) {
       if (scale_output) {

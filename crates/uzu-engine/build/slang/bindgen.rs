@@ -265,6 +265,58 @@ pub fn bindgen(
             }
         }
     }
+    // Preconditions: the constructor's over specializations return an error before anything is created; `encode`'s,
+    // also over uniforms, assert after the presence checks and before anything is recorded. Single names must be
+    // specializations or, for `encode`, uniforms; longer paths variants of canonical GPU enums.
+    let names = |constants: bool| {
+        let parameters =
+            kernel.parameters.iter().filter(|parameter| matches!(parameter.ty, KernelParameterType::Value(_)));
+        let parameters = parameters.map(|parameter| parameter.name.as_ref());
+        let uniforms = kernel
+            .arguments
+            .iter()
+            .filter(|argument| constants && matches!(argument.ty, KernelArgumentType::Constant(_)));
+        parameters.chain(uniforms.map(|argument| argument.name.as_ref())).map(str::to_string).collect::<BTreeSet<_>>()
+    };
+    let is_variant = |path: &syn::Path| {
+        let [head, variant] = [0, 1].map(|index| path.segments.get(index).map(|segment| segment.ident.to_string()));
+        gpu_types.files.iter().flat_map(|file| &file.types).any(|candidate| match candidate {
+            GpuType::Enum(candidate) => {
+                path.segments.len() == 2
+                    && Some(candidate.name.as_ref()) == head.as_deref()
+                    && candidate.variants.iter().any(|known| Some(known.name.as_ref()) == variant.as_deref())
+            },
+            _ => false,
+        })
+    };
+    let (mut new_preconditions, mut encode_preconditions) = (Vec::new(), Vec::new());
+    for (phase, text) in info.preconditions()? {
+        let known = names(phase == "encode");
+        let mut unknown = Vec::new();
+        let mut parsed = syn::parse_str::<Expr>(text)
+            .with_context(|| format!("{kernel_name}: malformed {phase} Precondition '{text}'"))?;
+        rewrite_paths_with(&mut parsed, |path| {
+            let single = path.get_ident().is_some_and(|ident| known.contains(&ident.to_string()));
+            if !single && !is_variant(path) {
+                unknown.push(path.to_token_stream().to_string());
+            }
+            None
+        });
+        ensure!(unknown.is_empty(), "{kernel_name}: {phase} Precondition '{text}' names unknown {unknown:?}");
+        let condition = host_expression(text)?;
+        match phase {
+            "new" => new_preconditions.push(quote! {
+                if !(#condition) {
+                    return Err(Error::KernelPrecondition { kernel: #kernel_name, condition: #text });
+                }
+            }),
+            _ => {
+                let message = format!("{kernel_name}: precondition {text} violated");
+                encode_preconditions.push(quote! { assert!(#condition, "{}", #message); });
+            },
+        }
+    }
+
     // The wrapper admits exactly one mode with at most three dimensions. Axis totals count threads and divide by the
     // group size; Groups counts are workgroups directly.
     let axis = !axes.is_empty();
@@ -289,7 +341,7 @@ pub fn bindgen(
         .and_then(|invocations| invocations.checked_mul(group_z))
         .with_context(|| format!("{kernel_name}: work group {:?} overflows u32 invocations", abi.group_size))?;
 
-    let host_expressions = quote! { #(#conditions)* #(#grid)* };
+    let host_expressions = quote! { #(#conditions)* #(#encode_preconditions)* #(#grid)* };
     let (referenced, referenced_types): (Vec<_>, Vec<_>) = specializations
         .iter()
         .filter(|(name, ..)| references(host_expressions.clone(), name))
@@ -401,6 +453,7 @@ pub fn bindgen(
                 #(, #specialization_names: #specialization_types)*
             ) -> Result<Self, Error> {
                 #(#specialization_conditions)*
+                #(#new_preconditions)*
                 let entry_point = #entry_selection;
                 let limits = &context.physical_device().properties.limits;
                 let size = [#group_x, #group_y, #group_z];
@@ -433,6 +486,7 @@ pub fn bindgen(
             ) {
                 #(let #referenced = self.#referenced;)*
                 #(#conditions)*
+                #(#encode_preconditions)*
                 let __dsl_grid: [u32; #grid_count] = [#(#grid),*];
                 if __dsl_grid.contains(&0) {
                     return;

@@ -119,7 +119,7 @@ fn ulp32(value: f64) -> f64 {
     }
 }
 
-fn round32(value: f64) -> f64 {
+pub fn round32(value: f64) -> f64 {
     value as f32 as f64
 }
 
@@ -183,39 +183,50 @@ fn log_interval(s: f64) -> (f64, f64) {
 /// Inputs up to 2^-26 in magnitude, where SiLU and both GELUs return x / 2.
 const TINY: u32 = 0x3280_0000;
 
+/// Bounds of Vulkan's exp, 3 + 2|argument| ULPs, exact for infinities, and the correctly rounded value.
+fn exp(argument: f64) -> ((f64, f64), f64) {
+    let value = argument.exp();
+    let units = if argument.is_finite() {
+        3.0 + 2.0 * argument.abs()
+    } else {
+        0.0
+    };
+    (interval(value, value, units), round32(value))
+}
+
+/// The CPU's activation_silu_alpha for one FP32 input, as `oracle`: the exponent -alpha x is an FP32 product, and where
+/// it is at most 2^-26 in magnitude the result is x / 2 exactly.
+pub fn silu_oracle(
+    x: f64,
+    alpha: f32,
+) -> ((f64, f64), f64) {
+    let exponent = round32(-f64::from(alpha) * x);
+    if (exponent as f32).to_bits() & 0x7fff_ffff <= TINY {
+        let half = round32(x / 2.0);
+        return ((half, half), half);
+    }
+    let (e, e_center) = exp(exponent);
+    let d = interval(1.0 + e.0, 1.0 + e.1, 0.0);
+    (interval(x / d.0, x / d.1, 2.5), round32(x / round32(1.0 + e_center)))
+}
+
 /// The CPU's staged FP32 arithmetic for one FP32 input, as the bounds of every value Vulkan may compute and the value
 /// with correctly rounded transcendentals. FP32 additions and products are correctly rounded on both sides; Vulkan
 /// allows exp 3 + 2|x| ULPs, division 2.5 ULPs (also kept past 2^126, where Vulkan requires nothing, to hold the CPU's
 /// tail), and the contraction of a product into the following addition. GELUExact's erf is the shader's faithfully
 /// rounded polynomial (2 ULPs with one more rounding), with its large-input exponential's error. Tiny inputs halve
 /// exactly; no FP32 subnormal may flush.
-fn oracle(
+pub fn oracle(
     x: f64,
     activation: ActivationType,
 ) -> ((f64, f64), f64) {
-    // Exponentials of infinities are exact.
-    let exp = |argument: f64| {
-        let (value, units) = (
-            argument.exp(),
-            if argument.is_finite() {
-                3.0 + 2.0 * argument.abs()
-            } else {
-                0.0
-            },
-        );
-        (interval(value, value, units), round32(value))
-    };
-    let halves = matches!(activation, ActivationType::SILU | ActivationType::GELUApprox | ActivationType::GELUExact);
+    let halves = matches!(activation, ActivationType::GELUApprox | ActivationType::GELUExact);
     if halves && (x as f32).to_bits() & 0x7fff_ffff <= TINY {
         let half = round32(x / 2.0);
         return ((half, half), half);
     }
     match activation {
-        ActivationType::SILU => {
-            let (e, e_center) = exp(-x);
-            let d = interval(1.0 + e.0, 1.0 + e.1, 0.0);
-            (interval(x / d.0, x / d.1, 2.5), round32(x / round32(1.0 + e_center)))
-        },
+        ActivationType::SILU => silu_oracle(x, 1.0),
         ActivationType::GELUApprox => {
             let (k0, k1) = (round32(0.044715), round32((2.0 / PI).sqrt()));
             let square = round32(round32(k0 * x) * x);

@@ -95,6 +95,24 @@ impl<'a> SlangKernelInfo<'a> {
         self.public
     }
 
+    /// `(phase, condition)` of every `[[Precondition]]`: phase `new` or `encode`, a nonempty host condition.
+    pub fn preconditions(&self) -> Result<Vec<(&'a str, &'a str)>, Error> {
+        let attributes = self.function.user_attributes().filter(|attribute| attribute.name() == Some("Precondition"));
+        attributes
+            .map(|attribute| {
+                let phase = attribute.argument_value_string(0).context("Precondition missing phase")?;
+                let condition = attribute.argument_value_string(1).context("Precondition missing condition")?;
+                ensure!(
+                    matches!(phase, "new" | "encode"),
+                    "kernel '{}': Precondition phase '{phase}' is neither 'new' nor 'encode'",
+                    self.name
+                );
+                ensure!(!condition.trim().is_empty(), "kernel '{}': empty {phase} Precondition", self.name);
+                Ok((phase, condition))
+            })
+            .collect()
+    }
+
     /// The common kernel signature of a public or `[[Test]]` kernel; `None` for SPIR-V-only private kernels.
     /// Only public descriptors are compared against the CPU and Metal ones.
     pub fn to_kernel(&self) -> Result<Option<Kernel>, Error> {
