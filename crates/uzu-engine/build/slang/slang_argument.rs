@@ -101,7 +101,7 @@ impl<'a> SlangArgument<'a> {
         } else {
             match (ty.kind(), value) {
                 (TypeKind::Pointer, _) => Ok(SlangArgumentType::Ptr(self.access()?)),
-                (_, Some(value)) if value != "bool" => Ok(SlangArgumentType::Constant(self.rust_type(&value)?)),
+                (_, Some(value)) => Ok(SlangArgumentType::Constant(self.rust_type(&value)?)),
                 (kind, _) => bail!(
                     "unsupported parameter type for '{}': kind={kind:?} name={}",
                     self.name()?,

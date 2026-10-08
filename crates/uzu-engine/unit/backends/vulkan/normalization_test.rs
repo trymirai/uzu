@@ -6,11 +6,12 @@ use std::{
     sync::Arc,
 };
 
+use bytemuck::NoUninit;
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
-use super::{NormalizationCase, kernel_fixture::KernelFixture};
+use super::{NormalizationCase, check_bounds, kernel_fixture::KernelFixture, round32, staged_rms_bounds};
 use crate::{
     array::ArrayElement,
     backends::{
@@ -217,7 +218,7 @@ fn ulp<T: Float>(value: f64) -> f64 {
 /// over √H and adds γ(log2 H + 2) Σ|v| / √H, with γ(n) = n u / (1 - n u) and u = 2^-24, for the FP32 rounding of the
 /// log2 H butterfly additions, of the √H constant and of the division by it, then q of its output. Output scaling
 /// multiplies the allowance by |scalar| and adds q.
-fn stage_oracle<I: Float, A: Float, O: Float>(
+pub fn stage_oracle<I: Float, A: Float, O: Float>(
     case: &NormalizationCase<I, A>,
     stored: &[I],
 ) -> (Vec<O>, Vec<f64>) {
@@ -786,6 +787,151 @@ fn rejects_invalid_contracts() {
     // SAFETY: the completed command buffer recorded no dispatch.
     assert_eq!(unsafe { KernelFixture::read::<f32>(&values) }, [1.0; 64]);
     fixture.assert_clean();
+}
+
+/// Statistics and differences the CPU keeps subnormal, which flushing turns into infinities, NaN or wrong normal outputs.
+/// RMS: rows whose squares, sum or mean are subnormal, a normal row, a zero row and a row mixing normal and flushed-size
+/// squares, under zero, subnormal, negative-zero and NaN epsilons, and without scales a normal row with subnormal
+/// elements, normalized through the two differences from zero. LayerNorm without scales: a row around the smallest
+/// normal whose deviations are one subnormal unit of T (once a NaN for an infinity, zeros for normal or subnormal
+/// outputs) and an ordinary near-constant row, under zero, subnormal, ordinary and negative-zero epsilons. Long rows of 1000 elements, an RMS row and a near-constant LayerNorm row, sum
+/// over more elements than invocations, in the device's order and the CPU's. The stage oracle's FP64 statistics within
+/// their 1e-5 budget cannot represent a staged underflow, so CPU and Vulkan are each checked against the staged
+/// endpoints of the workgroup of 256, the guards and the input unchanged.
+fn vanishing_rows_match_staging<T: ArrayElement + Float + NoUninit + Debug>() {
+    let fixture = KernelFixture::new();
+    let two = |exponent: i32| 2f32.powi(exponent);
+    let (smallest, unit) = (f32::MIN_POSITIVE, (T::min_positive_value() * T::epsilon()).to_f32().unwrap());
+    let rms: &[[f32; 4]] = &[
+        [two(-70), -1.5 * two(-70), 0.75 * two(-69), two(-71)],
+        [two(-62), -two(-62), two(-62), -1.25 * two(-62)],
+        [0.0, -0.0, 0.0, 0.0],
+        [1.5 * two(-75), -two(-74), 0.0, two(-76)],
+        [1.0, two(-70), -1.5 * two(-75), 3.0 * two(-76)],
+    ];
+    let layer_norm: &[[f32; 4]] =
+        &[[smallest, smallest + unit, smallest - unit, smallest], [1.0 + two(-6), 1.0, 1.0 - two(-7), 1.0]];
+    let tiny = f32::from_bits(0x0001_0000);
+    let mut cases = Vec::new();
+    for (subtract_mean, rows, epsilons) in
+        [(false, rms, [0.0, tiny, -0.0, f32::NAN]), (true, layer_norm, [0.0, tiny, 1e-5, -0.0])]
+    {
+        for epsilon in epsilons {
+            let case = NormalizationCase::<T, f32>::new(rows.len() as u32, 4, 0);
+            let mut case = if subtract_mean {
+                case.subtract_mean()
+            } else {
+                case.scales(true, 0.0)
+            };
+            case.epsilon = epsilon;
+            case.input = rows.iter().flatten().map(|&x| T::from(x).unwrap()).collect();
+            cases.push(case);
+        }
+    }
+    let mut near_constant = NormalizationCase::<T, f32>::new(2, 1000, 0).subtract_mean().scales(false, 1.0);
+    let step = T::epsilon().to_f32().unwrap() * 512.0;
+    near_constant.input = (0..2000).map(|i| T::from(1000.0 + ((i * 37) % 9) as f32 * step).unwrap()).collect();
+    let mut subnormal_inputs = NormalizationCase::<T, f32>::new(1, 4, 0);
+    subnormal_inputs.input = [1.5, 3.0 * unit, -unit, 0.5].map(|x| T::from(x).unwrap()).to_vec();
+    cases.extend([subnormal_inputs, NormalizationCase::<T, f32>::new(2, 1000, 5).scales(true, 0.0), near_constant]);
+    for case in &cases {
+        let kernel = kernel::<T, f32, T>(&fixture, case);
+        let (cpu, _, _) = cpu_output::<T, f32, T>(case, 1);
+        let (gpu, _) = gpu_output::<T, f32, T>(&fixture, &kernel, case, &[1]);
+        let label = format!("Normalization {} {} epsilon {:e}", types::<T, f32, T>(), case.path(), case.epsilon);
+        check_bounds(&staged_rms_bounds::<T, f32, T>(case, 256), &cpu, &gpu, &label);
+    }
+    fixture.assert_clean();
+}
+
+#[uzu_test]
+fn vanishing_rows_match_staging_all_types() {
+    vanishing_rows_match_staging::<f32>();
+    vanishing_rows_match_staging::<bf16>();
+}
+
+/// `staged_rms_bounds` of the case without its biases and output scalar, then those stages: the bias added in FP32 to
+/// the stored value and rounded to T, the output scalar's FP32 product rounded to T. Both are correctly rounded and
+/// monotonic in the value, so the endpoints propagate, swapped by a negative scalar.
+fn affine_tail_bounds<T: Float>(case: &NormalizationCase<T, f32>) -> Vec<((f64, f64), f64)> {
+    let plain = NormalizationCase {
+        biases: None,
+        post_layer_scalar: PostLayerScalar::None,
+        ..case.clone()
+    };
+    let to_t = |value: f64| T::from(value).unwrap().to_f64().unwrap();
+    let stage = |index: usize, value: f64| {
+        let biases = case.biases.as_ref();
+        let value = biases.map_or(value, |biases| to_t(round32(value + f64::from(biases[index % biases.len()]))));
+        match case.post_layer_scalar {
+            PostLayerScalar::ScaleOutput(scalar) => to_t(round32(value * f64::from(scalar))),
+            _ => value,
+        }
+    };
+    let bounds = staged_rms_bounds::<T, f32, T>(&plain, 256).into_iter().enumerate();
+    bounds
+        .map(|(index, ((lo, hi), center))| {
+            let (a, b) = (stage(index, lo), stage(index, hi));
+            ((a.min(b), a.max(b)), stage(index, center))
+        })
+        .collect()
+}
+
+/// The elementwise stages on tiny values, which a device flushing subnormal operands or results zeroes: a normal row's
+/// elements of 3 and -1 subnormal units of T normalize to subnormal outputs under full_layer and only-normalization
+/// scales; subnormal biases on them, one cancelling to +0; an output scalar halving them, to -0 for the negative one,
+/// and one scaling them to normal outputs; residual sums and their scaled halves that are subnormal, one by
+/// cancellation. Shortcuts must match the CPU bit for bit, and both outputs the staged bounds of the stored values.
+fn tiny_affine_stages_match_staging<T: ArrayElement + Float + NoUninit + Debug>() {
+    let fixture = KernelFixture::new();
+    let (unit, two) = ((T::min_positive_value() * T::epsilon()).to_f32().unwrap(), |e: i32| 2f32.powi(e));
+    let row = |values: [f32; 4]| values.map(|x| T::from(x).unwrap()).to_vec();
+    let base = || {
+        let mut case = NormalizationCase::<T, f32>::new(1, 4, 0);
+        case.input = row([1.5, 3.0 * unit, -unit, 0.5]);
+        case
+    };
+    let biased = |case: NormalizationCase<T, f32>| NormalizationCase {
+        biases: Some(vec![0.0, unit, unit, -0.0]),
+        ..case
+    };
+    let residual = |post| {
+        let mut case = base().scales(true, 0.0).shortcut(ShortcutMode::Add).post(post);
+        (case.input, case.shortcut) = (row([1.5, two(-127), -two(-126), 0.5]), row([0.0, two(-128), two(-127), -0.0]));
+        case
+    };
+    let cases = [
+        base().scales(true, 0.0),
+        base().scales(false, 1.0),
+        biased(base().scales(true, 0.0)),
+        biased(base()),
+        base().scales(true, 0.0).post(PostLayerScalar::ScaleOutput(0.5)),
+        base().post(PostLayerScalar::ScaleOutput(two(30))),
+        residual(PostLayerScalar::None),
+        residual(PostLayerScalar::ScaleResidualSum(0.5)),
+    ];
+    for case in &cases {
+        let label = format!("Normalization {} {}", types::<T, f32, T>(), case.path());
+        let (cpu, cpu_shortcut, stored) = cpu_output::<T, f32, T>(case, 1);
+        let (gpu, gpu_shortcut) = gpu_output::<T, f32, T>(&fixture, &kernel::<T, f32, T>(&fixture, case), case, &[1]);
+        KernelFixture::assert_bits(&cpu_shortcut, &gpu_shortcut, &format!("{label} shortcut"));
+        let tiny = |values: &[T]| values.iter().any(|value| value.is_subnormal());
+        let scaled_up = matches!(case.post_layer_scalar, PostLayerScalar::ScaleOutput(scalar) if scalar > 1.0);
+        assert!(tiny(&cpu) || tiny(&cpu_shortcut) || scaled_up && cpu[1].is_normal(), "{label}: no tiny witness");
+        let stored = NormalizationCase {
+            input: stored,
+            shortcut_mode: ShortcutMode::None,
+            ..case.clone()
+        };
+        check_bounds(&affine_tail_bounds(&stored), &cpu, &gpu, &label);
+    }
+    fixture.assert_clean();
+}
+
+#[uzu_test]
+fn tiny_affine_stages_match_staging_all_types() {
+    tiny_affine_stages_match_staging::<f32>();
+    tiny_affine_stages_match_staging::<bf16>();
 }
 
 /// Run alone: `cargo test ... normalization_test::throughput -- --ignored --nocapture`. Pipelines are created before

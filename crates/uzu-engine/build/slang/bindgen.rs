@@ -69,7 +69,7 @@ pub fn bindgen(
         .filter(|parameter| matches!(parameter.ty, KernelParameterType::Type))
         .map(|parameter| format_ident!("{}", parameter.name.as_ref()))
         .collect::<Vec<_>>();
-    // A 32-bit word of one of `scalars` or a canonical enum, by discriminant, as Slang lays it out.
+    // A 32-bit word of one of `scalars` or a canonical enum, by discriminant, as Slang lays it out; a `bool` is 0 or 1.
     let word = |name: &Ident, ty: &Type, scalars: &[&str]| -> Result<TokenStream, Error> {
         let text = ty.to_token_stream().to_string().replace(" :: ", "::");
         let canonical_enum = text.rsplit_once("::").is_some_and(|(_, short)| {
@@ -78,6 +78,7 @@ pub fn bindgen(
         });
         match text.as_str() {
             _ if canonical_enum => Ok(quote! { (#name as u32) }),
+            "bool" if scalars.contains(&"bool") => Ok(quote! { u32::from(#name) }),
             scalar if scalars.contains(&scalar) => Ok(quote! { #name }),
             other => bail!("{kernel_name}: unsupported type '{other}' for '{name}'"),
         }
@@ -214,7 +215,7 @@ pub fn bindgen(
             KernelArgumentType::Constant(text) => {
                 ensure!(field.size == 4 && field.pointee.is_none(), "{kernel_name}: '{name}' is not a 4-byte {text}");
                 let ty: Type = syn::parse_str(text)?;
-                let value = word(&name, &ty, &["u32", "i32", "f32"])?;
+                let value = word(&name, &ty, &["u32", "i32", "f32", "bool"])?;
                 // An absent optional constant leaves its bytes zero.
                 let bytes = if argument.conditional {
                     quote! { #name.map_or([0; 4], |#name| #value.to_ne_bytes()) }
@@ -267,10 +268,13 @@ pub fn bindgen(
     }
     // Preconditions: the constructor's over specializations return an error before anything is created; `encode`'s,
     // also over uniforms, assert after the presence checks and before anything is recorded. Single names must be
-    // specializations or, for `encode`, uniforms; longer paths variants of canonical GPU enums.
+    // specializations, for `new` also type parameters and for `encode` uniforms; longer paths variants of canonical GPU
+    // enums.
     let names = |constants: bool| {
-        let parameters =
-            kernel.parameters.iter().filter(|parameter| matches!(parameter.ty, KernelParameterType::Value(_)));
+        let parameters = kernel.parameters.iter().filter(|parameter| match parameter.ty {
+            KernelParameterType::Value(_) => true,
+            KernelParameterType::Type => !constants,
+        });
         let parameters = parameters.map(|parameter| parameter.name.as_ref());
         let uniforms = kernel
             .arguments

@@ -9,7 +9,8 @@ use super::kernel_fixture::KernelFixture;
 use crate::backends::vulkan::{
     VkBuffer, VkCommandBufferEncoding,
     vk_kernels::{
-        TestBf16LoadVulkanKernel, TestBf16StoreVulkanKernel, TestF16LoadVulkanKernel, TestF16StoreVulkanKernel,
+        TestBf16LoadVulkanKernel, TestBf16StoreVulkanKernel, TestF16LoadVulkanKernel, TestF16StagedVulkanKernel,
+        TestF16StoreVulkanKernel,
     },
 };
 
@@ -177,5 +178,77 @@ fn stores_fp32_to_f16_boundaries_and_ties() {
     let actual = output.iter().map(|&bits| u32::from(bits)).collect::<Vec<_>>();
     let nan = |bits: u32| f16::from_bits(bits as u16).is_nan();
     assert_exact_or_nan("FP32 -> F16 store", &input, &expected, &actual, nan);
+    fixture.assert_clean();
+}
+
+/// Normalization's scaled residual staging with its intermediate F16 rounding kept in registers, the stored result's
+/// widening then squared exactly as the RMS statistics do (the shape in which native compilation once dropped the
+/// intermediate rounding): pairs around the residual (4/99 - 4) + (24/99 - 2) that lost it, whose single rounding of
+/// the unrounded sum's product moves the result one step, and every pair of signed zeros, subnormals, extremes,
+/// infinities and NaN, each times FP32 scalars never quantized to F16. Results and their narrowed squares match half's
+/// narrowing of the FP32 sum, its widening, the FP32 product and the final narrowing bit for bit, except NaN payloads.
+#[uzu_test]
+fn keeps_intermediate_f16_rounding() {
+    let fixture = KernelFixture::new();
+    let kernel = TestF16StagedVulkanKernel::new(&fixture.context).expect("TestF16Staged");
+    let staged = |a: f16, b: f16, scalar: f32| f16::from_f32(f16::from_f32(a.to_f32() + b.to_f32()).to_f32() * scalar);
+    let (a, b) = (f16::from_f32(1.0 / 99.0 * 4.0 - 4.0), f16::from_f32(12.0 / 99.0 * 2.0 - 2.0));
+    let single = f16::from_f32((a.to_f32() + b.to_f32()) * 0.3);
+    assert_ne!(
+        staged(a, b, 0.3).to_bits(),
+        single.to_bits(),
+        "the witness is insensitive to the intermediate rounding"
+    );
+    let specials = [0x0000, 0x8000, 0x0001, 0x8003, 0x0400, 0x7bff, 0xfbff, 0x7c00, 0xfc00, 0x7e00, 0x3c00, 0xb555];
+    let mut pairs = (0..64u16)
+        .flat_map(|da| (0..16u16).map(move |db| (a.to_bits() - 32 + da, b.to_bits() - 8 + db)))
+        .collect::<Vec<_>>();
+    pairs.extend(specials.iter().flat_map(|&x| specials.map(|y| (x, y))));
+    let input = pairs.iter().flat_map(|&(x, y)| [f16::from_bits(x), f16::from_bits(y)]).collect::<Vec<_>>();
+    let sentinel = f16::from_bits(0xbeef);
+    let scalars = [0.3f32, 1.0 / 3.0, -0.7, 1.5, 3e-5, 4096.0];
+    let mut encoding = fixture.encoding();
+    let buffers = scalars.map(|scalar| {
+        let (input, output) =
+            (fixture.guarded(&input, sentinel), fixture.guarded(&vec![sentinel; 2 * pairs.len()], sentinel));
+        // SAFETY: the input and the output hold two aligned F16 per pair; the kernel indexes `idx` and `size + idx`.
+        unsafe {
+            kernel.encode(
+                (&input.0, input.1.clone()),
+                (&output.0, output.1.clone()),
+                pairs.len() as u32,
+                scalar,
+                &mut encoding,
+            )
+        };
+        (input, output)
+    });
+    KernelFixture::complete(encoding);
+    let mut sensitive = 0;
+    for (scalar, (input_buffer, output_buffer)) in scalars.into_iter().zip(&buffers) {
+        // SAFETY: the only command buffer using these buffers has completed.
+        let actual = unsafe {
+            KernelFixture::assert_unchanged(input_buffer, sentinel, &input, "staged input");
+            KernelFixture::read_guarded(output_buffer, sentinel)
+        };
+        let results =
+            pairs.iter().map(|&(x, y)| staged(f16::from_bits(x), f16::from_bits(y), scalar)).collect::<Vec<_>>();
+        let squares = results.iter().map(|value| f16::from_f32(value.to_f32() * value.to_f32()));
+        let expected =
+            results.iter().copied().chain(squares).map(|value| u32::from(value.to_bits())).collect::<Vec<_>>();
+        sensitive += pairs
+            .iter()
+            .zip(&expected[..pairs.len()])
+            .filter(|&(&(x, y), &bits)| {
+                let single = f16::from_f32((f16::from_bits(x).to_f32() + f16::from_bits(y).to_f32()) * scalar);
+                !single.is_nan() && u32::from(single.to_bits()) != bits
+            })
+            .count();
+        let inputs = pairs.iter().map(|&(x, y)| u32::from(x) << 16 | u32::from(y)).collect::<Vec<_>>().repeat(2);
+        let actual = actual.iter().map(|value| u32::from(value.to_bits())).collect::<Vec<_>>();
+        let nan = |bits: u32| f16::from_bits(bits as u16).is_nan();
+        assert_exact_or_nan(&format!("F16 staged residual times {scalar:e}"), &inputs, &expected, &actual, nan);
+    }
+    eprintln!("F16 staged residual: {sensitive} results differ from a single rounding");
     fixture.assert_clean();
 }

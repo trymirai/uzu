@@ -2,7 +2,8 @@ import definitions;
 import generated.activation_type;
 
 // Echoes every typed uniform and specialization into eight words per element, reading optional values only under
-// their presence conditions, in one or two rows chosen by the specialized enum.
+// their presence conditions, in one or two rows chosen by the specialized enum. Word 3 also holds the uniform flags in
+// bits 1 and 2.
 
 static const uint TYPED_CONSTANTS_ABSENT = 0xa5a5a5a5u;
 
@@ -10,7 +11,9 @@ static const uint TYPED_CONSTANTS_ABSENT = 0xa5a5a5a5u;
   Ptr<uint, Access.ReadWrite> output,
   uint size,
   ActivationType activation,
+  bool flag,
   [[Optional("has_offset")]] uint offset,
+  [[Optional("has_offset")]] bool optional_flag,
   [[Optional("mode == ActivationType::IDENTITY")]] float scale,
   [[Groups("size.div_ceil(32)")]] uint group_x,
   [[Groups("mode as u32 % 2 + 1")]] uint row,
@@ -29,7 +32,7 @@ static const uint TYPED_CONSTANTS_ABSENT = 0xa5a5a5a5u;
   output[base] = uint(activation);
   output[base + 1] = uint(mode);
   output[base + 2] = word;
-  output[base + 3] = has_offset ? 1u : 0u;
+  output[base + 3] = (has_offset ? 1u : 0u) | (flag ? 2u : 0u) | (has_offset ? (optional_flag ? 4u : 0u) : 0u);
   output[base + 4] = has_offset ? offset + index : TYPED_CONSTANTS_ABSENT;
   output[base + 5] = mode == ActivationType.IDENTITY ? asuint(scale) : TYPED_CONSTANTS_ABSENT;
   output[base + 6] = has_offset ? group : TYPED_CONSTANTS_ABSENT;

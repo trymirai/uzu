@@ -16,8 +16,11 @@ public extension float : IStorageFloat {
     }
 }
 
-// Narrowing rounds to nearest even under the RoundingModeRTE 16 execution mode every generated entry point declares.
-// Widening goes through the half's bits: compilers may drop a plain float(half(x)) round trip, losing the rounding.
+// Narrowing is the native conversion, rounding to nearest even under the RoundingModeRTE 16 execution mode every
+// generated entry point declares, decorated NoContraction: on the tested native and lavapipe drivers an undecorated
+// conversion widened again was sometimes compiled without its intermediate F16 rounding, which the decoration keeps
+// (driver optimization is the inferred cause). Widening goes through the half's bits: compilers may drop a plain
+// float(half(x)) round trip, losing the rounding.
 public extension half : IStorageFloat {
     public float toFloat() {
         let bits = uint(asuint16(this));
@@ -28,6 +31,10 @@ public extension half : IStorageFloat {
     }
 
     public static half fromFloat(float value) {
-        return half(value);
+        return spirv_asm {
+            %narrowed:$$half = OpFConvert $value;
+            OpDecorate %narrowed NoContraction;
+            result:$$half = OpCopyObject %narrowed;
+        };
     }
 }

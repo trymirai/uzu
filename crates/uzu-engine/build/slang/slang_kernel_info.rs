@@ -169,6 +169,7 @@ fn variants_for_constraint(constraint: &str) -> Option<&'static [&'static str]> 
         "IStorageFloat" => Some(&["float", "half", "bf16"]),
         "IFloat32" => Some(&["float"]),
         "IModelFloat" => Some(&["float", "bf16"]),
+        "IBFloat16" => Some(&["bf16"]),
         _ => None,
     }
 }

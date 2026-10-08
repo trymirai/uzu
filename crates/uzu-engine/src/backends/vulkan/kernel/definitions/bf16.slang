@@ -2,7 +2,7 @@ implementing definitions;
 
 // BF16 in uint16 storage, needing no BF16 device extension. Loads widen to the upper half of an FP32 and
 // stores round to nearest even, both exactly like half::bf16 (to_f32 / from_f32), quieting NaNs.
-public struct bf16 : IModelFloat {
+public struct bf16 : IModelFloat, IBFloat16 {
     public uint16_t bits;
 
     public float toFloat() {

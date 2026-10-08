@@ -53,15 +53,18 @@ fn configurations() -> Vec<(ActivationType, u32, bool, Option<u32>, Option<Activ
         .collect()
 }
 
-/// The eight words of each element in each of the two rows; rows the dispatch does not reach keep the sentinel.
+/// The eight words of each element in each of the two rows; rows the dispatch does not reach keep the sentinel. The
+/// uniform flags reach word 3 as bits 1 and 2.
 fn expected(
     (mode, word, has_offset, group, secondary): (ActivationType, u32, bool, Option<u32>, Option<ActivationType>),
     size: u32,
     activation: ActivationType,
+    (flag, optional_flag): (bool, Option<bool>),
     offset: Option<u32>,
     scale: Option<f32>,
 ) -> Vec<u32> {
     let rows = mode as u32 % 2 + 1;
+    let flags = u32::from(has_offset) | u32::from(flag) << 1 | u32::from(optional_flag == Some(true)) << 2;
     (0..2)
         .flat_map(|row| {
             (0..size).flat_map(move |index| match row < rows {
@@ -69,7 +72,7 @@ fn expected(
                     activation as u32,
                     mode as u32,
                     word,
-                    u32::from(has_offset),
+                    flags,
                     offset.map_or(ABSENT, |offset| offset.wrapping_add(index)),
                     scale.map_or(ABSENT, f32::to_bits),
                     group.unwrap_or(ABSENT),
@@ -82,7 +85,8 @@ fn expected(
 }
 
 /// Ten pipelines of one module, differing in every specialization, record interleaved into one command buffer per
-/// size, in both orders, with every uniform activation and each optional uniform present exactly when required.
+/// size, in both orders, with every uniform activation and each optional uniform present exactly when required. The
+/// bool uniforms alternate between consecutive dispatches of each pipeline, so a stale or misplaced word shows.
 #[uzu_test]
 fn typed_constants_reach_the_kernel() {
     let fixture = KernelFixture::new();
@@ -109,18 +113,30 @@ fn typed_constants_reach_the_kernel() {
                     let offset = has_offset.then_some([u32::MAX - 3, 257, 0][(index + activation_index) % 3]);
                     let scale = (mode == ActivationType::IDENTITY)
                         .then_some([-0.0, 3.5, f32::from_bits(1)][(index + activation_index) % 3]);
+                    let flags = (activation_index % 2 == 1, has_offset.then_some(activation_index % 2 == 0));
                     let output = fixture.guarded(&vec![SENTINEL; 2 * 8 * size as usize], SENTINEL);
                     // SAFETY: the output holds two rows of `size` eight-word elements, which bounds every index the
                     // kernel writes, and aliases nothing.
-                    unsafe { kernels[index].encode(range(&output), size, activation, offset, scale, &mut encoding) };
-                    dispatches.push((index, activation, offset, scale, output));
+                    unsafe {
+                        kernels[index].encode(
+                            range(&output),
+                            size,
+                            activation,
+                            flags.0,
+                            offset,
+                            flags.1,
+                            scale,
+                            &mut encoding,
+                        )
+                    };
+                    dispatches.push((index, activation, flags, offset, scale, output));
                 }
             }
             KernelFixture::complete(encoding);
-            for (index, activation, offset, scale, output) in dispatches {
+            for (index, activation, flags, offset, scale, output) in dispatches {
                 // SAFETY: the only command buffer using this buffer has completed.
                 let actual = unsafe { KernelFixture::read_guarded(&output, SENTINEL) };
-                let expected = expected(configurations[index], size, activation, offset, scale);
+                let expected = expected(configurations[index], size, activation, flags, offset, scale);
                 assert!(
                     actual == expected,
                     "size {size}, reversed {order}, {:?}, uniform {activation:?}: words differ",
@@ -214,32 +230,51 @@ fn typed_constants_presence_is_checked_first() {
     });
     let mut encoding = fixture.encoding();
     let mut rejected = Vec::new();
-    for (kernel, size, offset, scale, argument) in [
-        (&kernels[0], 33, None, Some(1.0), "offset"),
-        (&kernels[0], 0, None, Some(1.0), "offset"),
-        (&kernels[0], 33, Some(1), None, "scale"),
-        (&kernels[0], 0, Some(1), None, "scale"),
-        (&kernels[1], 33, Some(1), None, "offset"),
-        (&kernels[1], 0, Some(1), None, "offset"),
-        (&kernels[1], 33, None, Some(1.0), "scale"),
-        (&kernels[1], 0, None, Some(1.0), "scale"),
+    for (kernel, size, offset, optional_flag, scale, argument) in [
+        (&kernels[0], 33, None, Some(true), Some(1.0), "offset"),
+        (&kernels[0], 0, None, Some(true), Some(1.0), "offset"),
+        (&kernels[0], 33, Some(1), None, Some(1.0), "optional_flag"),
+        (&kernels[0], 0, Some(1), None, Some(1.0), "optional_flag"),
+        (&kernels[0], 33, Some(1), Some(true), None, "scale"),
+        (&kernels[0], 0, Some(1), Some(true), None, "scale"),
+        (&kernels[1], 33, Some(1), None, None, "offset"),
+        (&kernels[1], 0, Some(1), None, None, "offset"),
+        (&kernels[1], 33, None, Some(false), None, "optional_flag"),
+        (&kernels[1], 0, None, Some(false), None, "optional_flag"),
+        (&kernels[1], 33, None, None, Some(1.0), "scale"),
+        (&kernels[1], 0, None, None, Some(1.0), "scale"),
     ] {
         let output = fixture.guarded(&vec![SENTINEL; 2 * 8 * 33], SENTINEL);
         let result = catch_unwind(AssertUnwindSafe(|| {
             // SAFETY: the output holds two rows of 33 eight-word elements and aliases nothing.
-            unsafe { kernel.encode(range(&output), size, ActivationType::SILU, offset, scale, &mut encoding) }
+            unsafe {
+                kernel.encode(
+                    range(&output),
+                    size,
+                    ActivationType::SILU,
+                    true,
+                    offset,
+                    optional_flag,
+                    scale,
+                    &mut encoding,
+                )
+            }
         }));
         let message = panic_message(result.expect_err("encode accepted"));
         assert!(message.contains(&format!("argument '{argument}' must be present exactly when")), "{message}");
         rejected.push(output);
     }
-    let accepted = [(present, Some(5), Some(2.0)), (absent, None, None)].map(|(configuration, offset, scale)| {
-        let output = fixture.guarded(&vec![SENTINEL; 2 * 8 * 33], SENTINEL);
-        (configuration, offset, scale, output)
-    });
-    for (kernel, (_, offset, scale, output)) in kernels.iter().zip(&accepted) {
+    let accepted = [(present, (true, Some(true)), Some(5), Some(2.0)), (absent, (false, None), None, None)].map(
+        |(configuration, flags, offset, scale)| {
+            let output = fixture.guarded(&vec![SENTINEL; 2 * 8 * 33], SENTINEL);
+            (configuration, flags, offset, scale, output)
+        },
+    );
+    for (kernel, (_, flags, offset, scale, output)) in kernels.iter().zip(&accepted) {
         // SAFETY: as above.
-        unsafe { kernel.encode(range(output), 33, ActivationType::SOFTPLUS, *offset, *scale, &mut encoding) };
+        unsafe {
+            kernel.encode(range(output), 33, ActivationType::SOFTPLUS, flags.0, *offset, flags.1, *scale, &mut encoding)
+        };
     }
     KernelFixture::complete(encoding);
     // SAFETY: the only command buffer using these buffers has completed.
@@ -247,8 +282,8 @@ fn typed_constants_presence_is_checked_first() {
         for output in &rejected {
             KernelFixture::assert_unchanged(output, SENTINEL, &vec![SENTINEL; 2 * 8 * 33], "rejected output");
         }
-        for (configuration, offset, scale, output) in &accepted {
-            let expected = expected(*configuration, 33, ActivationType::SOFTPLUS, *offset, *scale);
+        for (configuration, flags, offset, scale, output) in &accepted {
+            let expected = expected(*configuration, 33, ActivationType::SOFTPLUS, *flags, *offset, *scale);
             assert!(KernelFixture::read_guarded(output, SENTINEL) == expected, "{configuration:?}: words differ");
         }
     }
