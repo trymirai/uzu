@@ -37,6 +37,9 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetTreeVerify::new(context.as_ref(), &arguments).unwrap();
     eprintln!("GDN tree verification PSO construction: {:.2} ms", started.elapsed().as_secs_f64() * 1e3);
     let h0 = create_buffer_with_data::<Metal, f32>(&context, &vec![0.001; V_HEADS * HEAD_DIM * HEAD_DIM]);
+    let norm_weight = create_buffer_with_data::<Metal, f32>(&context, &vec![1.0; HEAD_DIM]);
+    const CONV_DIM: usize = 2 * K_HEADS * HEAD_DIM + V_HEADS * HEAD_DIM;
+    const TOTAL_PROJ_DIM: usize = CONV_DIM + V_HEADS * HEAD_DIM + 2 * V_HEADS;
     let mut group = c.benchmark_group("Metal/Kernel/GDNTreeVerify");
     group.sample_size(20).warm_up_time(Duration::from_millis(300)).measurement_time(Duration::from_secs(1));
 
@@ -53,6 +56,8 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         log_decay.copyin(&vec![-0.01f32; tree_size * V_HEADS]);
         let mut beta = command_buffer.allocate_scratch(tree_size * V_HEADS * size_of::<f32>()).unwrap();
         beta.copyin(&vec![0.2f32; tree_size * V_HEADS]);
+        let mut in_projected = command_buffer.allocate_scratch(tree_size * TOTAL_PROJ_DIM * size_of::<bf16>()).unwrap();
+        in_projected.copyin(&vec![bf16::from_f32(0.1); tree_size * TOTAL_PROJ_DIM]);
         let benchmark_path = format!("Metal/Kernel/GDNTreeVerify/T{tree_size}");
         group.bench_function(format!("T{tree_size}"), |bencher| {
             iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |command_buffer| {
@@ -67,6 +72,11 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
                             log_decay: &log_decay,
                             beta: &beta,
                             h0: &h0,
+                            in_projected: &in_projected,
+                            norm_weight: &norm_weight,
+                            norm_epsilon: 1e-6,
+                            conv_dim: CONV_DIM as u32,
+                            total_proj_dim: TOTAL_PROJ_DIM as u32,
                             tree_size: tree_size as u32,
                         },
                         command_buffer,
