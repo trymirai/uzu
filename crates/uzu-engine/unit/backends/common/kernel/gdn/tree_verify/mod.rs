@@ -1,4 +1,5 @@
 mod conv_scan_test;
+mod fused_test;
 mod out_bench;
 mod out_test;
 mod prefix_bench;

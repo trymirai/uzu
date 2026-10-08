@@ -1,4 +1,5 @@
 pub mod conv_scan;
+pub mod fused;
 pub mod out;
 pub mod prefix;
 pub mod state_advance;
