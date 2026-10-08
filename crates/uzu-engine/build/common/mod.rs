@@ -4,7 +4,7 @@ pub mod compiler;
 pub mod constraints;
 pub mod enum_paths;
 pub mod envs;
-#[cfg(all(feature = "metal", target_os = "macos"))]
+#[cfg(any(all(feature = "metal", target_os = "macos"), feature = "vulkan"))]
 pub mod expr_rewrite;
 pub mod gpu_types;
 pub mod identifiers;

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use anyhow::{Context, bail, ensure};
 use itertools::Itertools;
@@ -18,7 +18,7 @@ pub struct SlangEntryPointAbi {
     pub block_size: usize,
     pub fields: Vec<SlangFieldAbi>,
     /// `(name, constant_id)` of every specialization constant of the program, each one `declared` by a kernel of the
-    /// module; all are `bool`, passed as `VkBool32`.
+    /// module with its scalar wire type: `bool` passed as `VkBool32`, or `uint`.
     pub specialization_ids: Vec<(String, u32)>,
 }
 
@@ -26,7 +26,7 @@ impl SlangEntryPointAbi {
     pub fn from_reflection(
         program: &Shader,
         entry_point: &EntryPoint,
-        declared: &BTreeSet<String>,
+        declared: &BTreeMap<String, ScalarType>,
     ) -> Result<Self, Error> {
         let name = entry_point.name().context("Slang entry point has no name")?.to_owned();
         let block = entry_point.type_layout().context("Slang entry point has no layout")?;
@@ -61,7 +61,7 @@ impl SlangEntryPointAbi {
                     );
                     Some((pointee.name().context("pointee has no name")?.to_owned(), stride, alignment))
                 },
-                TypeKind::Scalar => None,
+                TypeKind::Scalar | TypeKind::Enum => None,
                 kind => bail!("'{name}': parameter '{parameter_name}' has unsupported kind {kind:?}"),
             };
             fields.push(SlangFieldAbi {
@@ -83,16 +83,15 @@ impl SlangEntryPointAbi {
             .map(|parameter| {
                 let parameter_name = parameter.name().context("Slang global parameter has no name")?;
                 let layout = parameter.type_layout().context("Slang global parameter has no layout")?;
+                let wire = declared.get(parameter_name).with_context(|| {
+                    format!("'{name}': global '{parameter_name}' is not a specialization of a kernel in this module")
+                })?;
                 ensure!(
                     matches!(
                         layout.categories().collect::<Vec<_>>().as_slice(),
                         [ParameterCategory::SpecializationConstant]
-                    ) && matches!(layout.scalar_type(), Some(ScalarType::Bool)),
-                    "'{name}': global '{parameter_name}' is not a bool specialization constant"
-                );
-                ensure!(
-                    declared.contains(parameter_name),
-                    "'{name}': global '{parameter_name}' is not a specialization of a kernel in this module"
+                    ) && layout.scalar_type() == Some(*wire),
+                    "'{name}': global '{parameter_name}' is not a {wire:?} specialization constant"
                 );
                 Ok((
                     parameter_name.to_owned(),

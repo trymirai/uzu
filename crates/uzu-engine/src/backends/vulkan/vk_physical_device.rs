@@ -11,10 +11,12 @@ pub struct VkPhysicalDevice {
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub features: VkPhysicalDeviceFeatures,
     pub subgroup_properties: VkPhysicalDeviceSubgroupProperties,
-    /// Whether shaders may declare round-to-nearest-even for 16-bit float conversions, as every generated kernel does.
+    /// Whether shaders may declare round-to-nearest-even for 16- and 32-bit float results, as every generated kernel
+    /// does.
     pub shader_rounding_mode_rte_float16: bool,
-    /// Which widths may set rounding modes independently. The backend conservatively requires `ALL`, so declaring only
-    /// the 16-bit mode is valid whatever the other widths use.
+    pub shader_rounding_mode_rte_float32: bool,
+    /// Which widths may set rounding modes independently. The backend conservatively requires `ALL`, so declaring the
+    /// 16- and 32-bit modes is valid whatever 64-bit uses.
     pub rounding_mode_independence: vk::ShaderFloatControlsIndependence,
 }
 impl VkPhysicalDevice {
@@ -64,6 +66,9 @@ impl VkPhysicalDevice {
             shader_int16: features2.features.shader_int16 == 1,
             storage_buffer16_bit_access: vk11features.storage_buffer16_bit_access == 1,
             storage_push_constant16: vk11features.storage_push_constant16 == 1,
+            shader_int8: vk12features.shader_int8 == 1,
+            storage_buffer8_bit_access: vk12features.storage_buffer8_bit_access == 1,
+            storage_push_constant8: vk12features.storage_push_constant8 == 1,
             shader_float16: vk12features.shader_float16 == 1,
             shader_subgroup_extended_types: vk12features.shader_subgroup_extended_types == 1,
             buffer_device_address: vk12features.buffer_device_address == 1,
@@ -80,6 +85,7 @@ impl VkPhysicalDevice {
             subgroup_properties,
             memory_properties,
             shader_rounding_mode_rte_float16: float_controls_properties.shader_rounding_mode_rte_float16 == 1,
+            shader_rounding_mode_rte_float32: float_controls_properties.shader_rounding_mode_rte_float32 == 1,
             rounding_mode_independence: float_controls_properties.rounding_mode_independence,
         })
     }

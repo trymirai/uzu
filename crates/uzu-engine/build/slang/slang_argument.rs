@@ -1,20 +1,30 @@
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
+use quote::ToTokens;
 use shader_slang::{
     ScalarType, TypeKind,
     reflection::{Generic, UserAttribute, Variable},
 };
+use syn::Type;
 
 use super::{Error, SlangArgumentType};
-use crate::common::kernel::KernelBufferAccess;
+use crate::common::{
+    enum_paths::{EnumPaths, GpuTypeKind},
+    kernel::KernelBufferAccess,
+};
 
 pub struct SlangArgument<'a> {
     variable: &'a Variable,
+    enum_paths: &'a EnumPaths,
 }
 
 impl<'a> SlangArgument<'a> {
-    pub fn new(variable: &'a Variable) -> Self {
+    pub fn new(
+        variable: &'a Variable,
+        enum_paths: &'a EnumPaths,
+    ) -> Self {
         Self {
             variable,
+            enum_paths,
         }
     }
 
@@ -43,9 +53,29 @@ impl<'a> SlangArgument<'a> {
             .transpose()
     }
 
+    /// Constants and specializations carry their canonical Rust type, as the CPU kernel declares it; an optional
+    /// specialization is an `Option` of it.
     pub fn argument_type(&self) -> Result<SlangArgumentType, Error> {
         let ty = self.variable.ty().context("Slang argument has no type")?;
-        let scalar = matches!(ty.kind(), TypeKind::Scalar).then(|| ty.scalar_type());
+        let value = match ty.kind() {
+            TypeKind::Scalar => match ty.scalar_type() {
+                ScalarType::Bool => Some("bool".to_string()),
+                ScalarType::Uint32 => Some("u32".to_string()),
+                ScalarType::Int32 => Some("i32".to_string()),
+                ScalarType::Float32 => Some("f32".to_string()),
+                _ => None,
+            },
+            TypeKind::Enum => {
+                let name = self.slang_type()?;
+                ensure!(
+                    self.enum_paths.kind_for(&name) == Some(GpuTypeKind::Enum),
+                    "'{}' has enum type '{name}' that is not a canonical GPU enum",
+                    self.name()?
+                );
+                Some(name)
+            },
+            _ => None,
+        };
 
         if let Some(axis) = self.attribute("Axis") {
             let total = axis.argument_value_string(0).context("Axis missing arg 0")?.into();
@@ -56,16 +86,22 @@ impl<'a> SlangArgument<'a> {
         } else if let Some(threads) = self.attribute("Threads") {
             Ok(SlangArgumentType::Threads(threads.argument_value_string(0).context("Threads missing arg")?.into()))
         } else if self.attribute("Specialize").is_some() {
-            match scalar {
-                Some(ScalarType::Bool) => Ok(SlangArgumentType::Specialize("bool".into())),
+            match value {
+                Some(value) if value == "bool" && self.condition()?.is_none() => {
+                    Ok(SlangArgumentType::Specialize(value.into()))
+                },
+                Some(value) if !matches!(value.as_str(), "bool" | "i32" | "f32") => {
+                    Ok(SlangArgumentType::Specialize(match self.condition()? {
+                        Some(_) => self.rust_type(&format!("Option<{value}>"))?,
+                        None => self.rust_type(&value)?,
+                    }))
+                },
                 _ => bail!("unsupported specialization type for '{}': {}", self.name()?, self.slang_type()?),
             }
         } else {
-            match (ty.kind(), scalar) {
+            match (ty.kind(), value) {
                 (TypeKind::Pointer, _) => Ok(SlangArgumentType::Ptr(self.access()?)),
-                (_, Some(ScalarType::Uint32)) => Ok(SlangArgumentType::Constant("u32".into())),
-                (_, Some(ScalarType::Int32)) => Ok(SlangArgumentType::Constant("i32".into())),
-                (_, Some(ScalarType::Float32)) => Ok(SlangArgumentType::Constant("f32".into())),
+                (_, Some(value)) if value != "bool" => Ok(SlangArgumentType::Constant(self.rust_type(&value)?)),
                 (kind, _) => bail!(
                     "unsupported parameter type for '{}': kind={kind:?} name={}",
                     self.name()?,
@@ -73,6 +109,16 @@ impl<'a> SlangArgument<'a> {
                 ),
             }
         }
+    }
+
+    /// The type text of the common kernel descriptor: enum names resolve to their canonical paths.
+    fn rust_type(
+        &self,
+        text: &str,
+    ) -> Result<Box<str>, Error> {
+        let mut ty: Type = syn::parse_str(text)?;
+        self.enum_paths.canonicalize_type(&mut ty);
+        Ok(ty.to_token_stream().to_string().replace(" :: ", "::").into())
     }
 
     fn attribute(

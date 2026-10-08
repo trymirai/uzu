@@ -38,6 +38,10 @@ impl VkContext {
         ];
         let required_features = VkPhysicalDeviceFeatures {
             shader_int16: true,
+            shader_int8: true,
+            storage_buffer8_bit_access: true,
+            // Slang declares StoragePushConstant8 for modules with byte pointers, as StoragePushConstant16 for 16-bit.
+            storage_push_constant8: true,
             shader_float16: true,
             shader_subgroup_extended_types: true,
             storage_buffer16_bit_access: true,
@@ -249,6 +253,7 @@ fn get_physical_device(
                     .contains(vk::SubgroupFeatureFlags::BASIC | vk::SubgroupFeatureFlags::ARITHMETIC)
                 && physical_device.subgroup_properties.supported_stages.contains(vk::ShaderStageFlags::COMPUTE)
                 && physical_device.shader_rounding_mode_rte_float16
+                && physical_device.shader_rounding_mode_rte_float32
                 && physical_device.rounding_mode_independence == vk::ShaderFloatControlsIndependence::ALL
                 && physical_device
                     .memory_properties
@@ -309,6 +314,9 @@ fn get_logical_device(
         .storage_buffer16_bit_access(required_features.storage_buffer16_bit_access)
         .storage_push_constant16(required_features.storage_push_constant16);
     let mut vk12_features = vk::PhysicalDeviceVulkan12Features::default()
+        .shader_int8(required_features.shader_int8)
+        .storage_buffer8_bit_access(required_features.storage_buffer8_bit_access)
+        .storage_push_constant8(required_features.storage_push_constant8)
         .shader_float16(required_features.shader_float16)
         .shader_subgroup_extended_types(required_features.shader_subgroup_extended_types)
         .buffer_device_address(required_features.buffer_device_address)

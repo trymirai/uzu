@@ -11,6 +11,7 @@ mod softmax_test;
 mod specialization_test;
 mod tensor_add_bias_test;
 mod tensor_add_scale_test;
+mod typed_constants_test;
 mod validation_logger;
 
 pub use normalization_case::NormalizationCase;

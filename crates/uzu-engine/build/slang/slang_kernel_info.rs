@@ -6,6 +6,7 @@ use shader_slang::{
 
 use super::{Error, SlangArgument, SlangArgumentType, slang_api};
 use crate::common::{
+    enum_paths::EnumPaths,
     identifiers::{ArgumentName, KernelName},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelParameter, KernelParameterType},
 };
@@ -17,10 +18,14 @@ pub struct SlangKernelInfo<'a> {
     test: bool,
     generic_decl: Option<&'a Decl>,
     type_parameters: Vec<(String, &'static [&'static str])>,
+    enum_paths: &'a EnumPaths,
 }
 
 impl<'a> SlangKernelInfo<'a> {
-    pub fn from_reflection(decl: &'a Decl) -> Result<Option<Self>, Error> {
+    pub fn from_reflection(
+        decl: &'a Decl,
+        enum_paths: &'a EnumPaths,
+    ) -> Result<Option<Self>, Error> {
         let (generic_decl, function_decl) = if let DeclKind::Generic = decl.kind() {
             (
                 Some(decl),
@@ -66,6 +71,7 @@ impl<'a> SlangKernelInfo<'a> {
             test,
             generic_decl,
             type_parameters,
+            enum_paths,
         }))
     }
 
@@ -78,7 +84,7 @@ impl<'a> SlangKernelInfo<'a> {
     }
 
     pub fn arguments(&self) -> impl Iterator<Item = SlangArgument<'a>> {
-        self.function.parameters().map(SlangArgument::new)
+        self.function.parameters().map(|parameter| SlangArgument::new(parameter, self.enum_paths))
     }
 
     pub fn type_parameters(&self) -> impl Iterator<Item = &'static [&'static str]> {
@@ -110,15 +116,18 @@ impl<'a> SlangKernelInfo<'a> {
             let ty = match argument.argument_type()? {
                 SlangArgumentType::Ptr(access) => KernelArgumentType::Buffer(access),
                 SlangArgumentType::Constant(ty) => KernelArgumentType::Constant(ty),
-                _ if conditional => {
-                    bail!("kernel '{}': Optional argument '{name}' is not a pointer or constant", self.name)
-                },
                 SlangArgumentType::Specialize(ty) => {
                     parameters.push(KernelParameter {
                         name: name.into(),
                         ty: KernelParameterType::Value(ty),
                     });
                     continue;
+                },
+                _ if conditional => {
+                    bail!(
+                        "kernel '{}': Optional argument '{name}' is not a pointer, constant or specialization",
+                        self.name
+                    )
                 },
                 SlangArgumentType::Axis(..) | SlangArgumentType::Groups(_) | SlangArgumentType::Threads(_) => continue,
             };

@@ -5,9 +5,10 @@ use anyhow::{Context, bail};
 use super::Error;
 use crate::common::gpu_types::{GpuType, GpuTypes};
 
-/// Writes `generated/<file>.slang` under `out_dir` for every GPU types file that declares constants, so shaders
-/// `import generated.<file>;`. Only scalar constants are emitted; enums, structs and option sets are not.
-pub fn generate_constants(
+/// Writes `generated/<file>.slang` under `out_dir` for every GPU types file that declares constants or enums, so
+/// shaders `import generated.<file>;`. Enums are `uint`-backed with the canonical discriminants; structs and option
+/// sets are not emitted.
+pub fn generate_types(
     gpu_types: &GpuTypes,
     out_dir: &Path,
 ) -> Result<(), Error> {
@@ -17,25 +18,40 @@ pub fn generate_constants(
     }
     fs::create_dir_all(&generated)?;
     for file in &gpu_types.files {
-        let mut constants = Vec::new();
+        let mut declarations = Vec::new();
         for gpu_type in &file.types {
-            let GpuType::Constant(constant) = gpu_type else {
-                continue;
-            };
-            let ty = match constant.ty.as_ref() {
-                "u32" => "uint",
-                "f32" => "float",
-                other => bail!("gpu_types/{}.rs: constant {} has unsupported type '{other}'", file.name, constant.name),
-            };
-            constants.push(format!("public static const {ty} {} = {};\n", constant.name, constant.value_expression));
+            match gpu_type {
+                GpuType::Constant(constant) => {
+                    let ty = match constant.ty.as_ref() {
+                        "u32" => "uint",
+                        "f32" => "float",
+                        other => bail!(
+                            "gpu_types/{}.rs: constant {} has unsupported type '{other}'",
+                            file.name,
+                            constant.name
+                        ),
+                    };
+                    declarations
+                        .push(format!("public static const {ty} {} = {};\n", constant.name, constant.value_expression));
+                },
+                GpuType::Enum(gpu_enum) => {
+                    let variants = gpu_enum
+                        .variants
+                        .iter()
+                        .map(|variant| format!("  {} = {},\n", variant.name, variant.discriminant))
+                        .collect::<String>();
+                    declarations.push(format!("public enum {} : uint {{\n{variants}}}\n", gpu_enum.name));
+                },
+                GpuType::Struct(_) | GpuType::OptionSet(_) => {},
+            }
         }
-        if !constants.is_empty() {
+        if !declarations.is_empty() {
             let path = generated.join(file.name.as_ref()).with_extension("slang");
             let contents = format!(
                 "// Generated from gpu_types/{}.rs\nmodule {};\n\n{}",
                 file.name,
                 file.name,
-                constants.concat()
+                declarations.concat()
             );
             fs::write(&path, contents).with_context(|| format!("cannot write {}", path.display()))?;
         }

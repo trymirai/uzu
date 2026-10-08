@@ -14,7 +14,7 @@ pub fn generate_wrappers(
             Ok(match a.argument_type()? {
                 SlangArgumentType::Specialize(_) => Some(format!(
                     "[[SpecializationConstant]] const {} {};",
-                    a.slang_type()?,
+                    specialization_wire_type(&a.slang_type()?),
                     specialization_name(kernel.name(), a.name()?)
                 )),
                 _ => None,
@@ -100,10 +100,14 @@ pub fn generate_wrappers(
 
             arguments
                 .iter()
-                .map(|(name, arg_type, _)| {
+                .map(|(name, arg_type, slang_type)| {
                     Ok(match arg_type {
                         SlangArgumentType::Ptr(_) | SlangArgumentType::Constant(_) => name.clone(),
-                        SlangArgumentType::Specialize(_) => specialization_name(kernel.name(), name),
+                        // Enum specializations travel as `uint` and convert back at the call.
+                        SlangArgumentType::Specialize(_) => match specialization_wire_type(slang_type) {
+                            wire if wire == slang_type => specialization_name(kernel.name(), name),
+                            _ => format!("{slang_type}({})", specialization_name(kernel.name(), name)),
+                        },
                         SlangArgumentType::Axis(_, _) => {
                             format!("__dsl_axis_idx.{}", axis_letters.next().context("more than three Axis arguments")?)
                         },
@@ -136,10 +140,12 @@ pub fn generate_wrappers(
             .zip(["x", "y", "z"])
             .map(|(total, axis)| format!("if (__dsl_axis_idx.{axis} >= ({total})) return;"))
             .join("\n  ");
-        // Every entry point rounds 16-bit float conversions to nearest even, the same as the CPU backend.
+        // Every entry point rounds 16- and 32-bit float results to nearest even, the same as the CPU backend; without
+        // an explicit mode, Vulkan leaves the rounding implementation-defined.
         let rounding = format!(
             "spirv_asm {{\n    OpCapability RoundingModeRTE;\n    OpExtension \"SPV_KHR_float_controls\";\n    \
-             OpExecutionMode ${wrapper_name} RoundingModeRTE 16;\n  }};"
+             OpExecutionMode ${wrapper_name} RoundingModeRTE 16;\n    \
+             OpExecutionMode ${wrapper_name} RoundingModeRTE 32;\n  }};"
         );
         let body = format!("{rounding}\n  {guards}\n  {underlying_call}({underlying_arguments});");
 
@@ -164,6 +170,14 @@ fn mangle_name(
         result.push_str(&format!("_{}{}", ty.len(), ty));
     }
     result
+}
+
+/// Slang type of a specialization constant: Vulkan specializes only scalars, so enums are `uint`.
+pub fn specialization_wire_type(slang_type: &str) -> &str {
+    match slang_type {
+        "bool" => "bool",
+        _ => "uint",
+    }
 }
 
 pub fn specialization_name(

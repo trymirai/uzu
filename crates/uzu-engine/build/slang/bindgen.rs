@@ -4,12 +4,17 @@ use std::{
 };
 
 use anyhow::{Context, bail, ensure};
+use itertools::Itertools;
 use proc_macro2::{TokenStream, TokenTree};
-use quote::{format_ident, quote};
-use syn::{Expr, Ident, Type};
+use quote::{ToTokens, format_ident, quote};
+use syn::{Expr, GenericArgument, Ident, PathArguments, Type, parse_quote};
 
 use super::{Error, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, wrapper::specialization_name};
-use crate::common::kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType};
+use crate::common::{
+    enum_paths::{EnumPaths, GpuTypeKind},
+    expr_rewrite::rewrite_paths_with,
+    kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
+};
 
 /// Generated file holding a kernel's binding type, next to its SPIR-V.
 pub fn binding_file(
@@ -44,6 +49,7 @@ pub fn bindgen(
     kernel: &Kernel,
     variants: &[(Vec<&'static str>, SlangEntryPointAbi)],
     spirv_file: &str,
+    enum_paths: &EnumPaths,
 ) -> Result<TokenStream, Error> {
     let kernel_name: &str = &kernel.name;
     let struct_name = format_ident!("{kernel_name}VulkanKernel");
@@ -60,19 +66,46 @@ pub fn bindgen(
         .filter(|parameter| matches!(parameter.ty, KernelParameterType::Type))
         .map(|parameter| format_ident!("{}", parameter.name.as_ref()))
         .collect::<Vec<_>>();
+    // A 32-bit word of one of `scalars` or a canonical enum, by discriminant, as Slang lays it out.
+    let word = |name: &Ident, ty: &Type, scalars: &[&str]| -> Result<TokenStream, Error> {
+        let text = ty.to_token_stream().to_string().replace(" :: ", "::");
+        let canonical_enum = text.rsplit_once("::").is_some_and(|(_, short)| {
+            enum_paths.full_path_for(short) == Some(text.as_str())
+                && enum_paths.kind_for(short) == Some(GpuTypeKind::Enum)
+        });
+        match text.as_str() {
+            _ if canonical_enum => Ok(quote! { (#name as u32) }),
+            scalar if scalars.contains(&scalar) => Ok(quote! { #name }),
+            other => bail!("{kernel_name}: unsupported type '{other}' for '{name}'"),
+        }
+    };
+    // Specializations are `bool`, `u32` or a canonical enum, which Slang declares as `uint`. An absent optional one
+    // writes 0, which its presence condition keeps the kernel from reading.
     let mut specializations = Vec::new();
     for parameter in &kernel.parameters {
-        let KernelParameterType::Value(ty) = &parameter.ty else {
+        let KernelParameterType::Value(text) = &parameter.ty else {
             continue;
         };
-        ensure!(ty.as_ref() == "bool", "{kernel_name}: specialization '{}' is not bool", parameter.name);
+        let name = format_ident!("{}", parameter.name.as_ref());
+        let ty: Type = syn::parse_str(text)?;
+        let value = match option_inner(&ty) {
+            _ if text.as_ref() == "bool" => quote! { vk::Bool32::from(#name) },
+            Some(inner) => match syn::parse2(word(&name, inner, &["u32"])?)? {
+                Expr::Paren(inner) => {
+                    let inner = inner.expr;
+                    quote! { #name.map_or(0, |#name| #inner) }
+                },
+                _ => quote! { #name.unwrap_or(0) },
+            },
+            None => word(&name, &ty, &["u32"])?,
+        };
         let constant = specialization_name(kernel_name, &parameter.name);
         let (_, id) = abi
             .specialization_ids
             .iter()
             .find(|(name, _)| *name == constant)
             .with_context(|| format!("{kernel_name}: no specialization constant '{constant}'"))?;
-        specializations.push((format_ident!("{}", parameter.name.as_ref()), *id));
+        specializations.push((name, ty, value, *id));
     }
 
     let mut strides = BTreeSet::new();
@@ -118,14 +151,17 @@ pub fn bindgen(
                 };
                 (quote! { (&std::sync::Arc<VkBuffer>, std::ops::Range<u64>) }, quote! { #address.to_ne_bytes() })
             },
-            KernelArgumentType::Constant(ty) => {
-                let size = match ty.as_ref() {
-                    "u32" | "i32" | "f32" => 4,
-                    other => bail!("{kernel_name}: unsupported constant type '{other}' for '{name}'"),
+            KernelArgumentType::Constant(text) => {
+                ensure!(field.size == 4 && field.pointee.is_none(), "{kernel_name}: '{name}' is not a 4-byte {text}");
+                let ty: Type = syn::parse_str(text)?;
+                let value = word(&name, &ty, &["u32", "i32", "f32"])?;
+                // An absent optional constant leaves its bytes zero.
+                let bytes = if argument.conditional {
+                    quote! { #name.map_or([0; 4], |#name| #value.to_ne_bytes()) }
+                } else {
+                    quote! { #value.to_ne_bytes() }
                 };
-                ensure!(field.size == size && field.pointee.is_none(), "{kernel_name}: '{name}' is not a {ty}");
-                let ty: Type = syn::parse_str(ty)?;
-                (quote! { #ty }, quote! { #name.to_ne_bytes() })
+                (quote! { #ty }, bytes)
             },
         };
         encode_arguments.push(if argument.conditional {
@@ -136,15 +172,25 @@ pub fn bindgen(
         packing.push(quote! { __dsl_block[#start..#end].copy_from_slice(&#bytes); });
     }
 
-    let mut conditions = Vec::new();
+    // Optional specializations are checked by the constructor, other optional arguments by `encode`.
+    let (mut conditions, mut specialization_conditions) = (Vec::new(), Vec::new());
     let (mut axes, mut groups) = (Vec::new(), Vec::new());
     let host_expression = |text: &str| {
-        syn::parse_str::<Expr>(text).with_context(|| format!("{kernel_name}: malformed host expression '{text}'"))
+        let mut expression = syn::parse_str::<Expr>(text)
+            .with_context(|| format!("{kernel_name}: malformed host expression '{text}'"))?;
+        // `Enum::Variant` paths name canonical GPU types.
+        rewrite_paths_with(&mut expression, |path| {
+            let (head, variant) = (path.segments.first()?, path.segments.iter().skip(1));
+            let canonical: syn::Path = syn::parse_str(enum_paths.full_path_for(&head.ident.to_string())?).ok()?;
+            (path.segments.len() > 1).then(|| parse_quote! { #canonical #(:: #variant)* })
+        });
+        Ok::<_, Error>(expression)
     };
     for argument in info.arguments() {
-        match argument.argument_type()? {
-            SlangArgumentType::Axis(total, _) => axes.push(host_expression(&total)?),
-            SlangArgumentType::Groups(count) => groups.push(host_expression(&count)?),
+        let argument_type = argument.argument_type()?;
+        match &argument_type {
+            SlangArgumentType::Axis(total, _) => axes.push(host_expression(total)?),
+            SlangArgumentType::Groups(count) => groups.push(host_expression(count)?),
             _ => {},
         }
         if let Some(condition) = argument.condition()? {
@@ -152,7 +198,11 @@ pub fn bindgen(
             let condition = host_expression(condition)?;
             let message =
                 format!("{kernel_name}: argument '{name}' must be present exactly when {}", quote! { #condition });
-            conditions.push(quote! { assert_eq!(#name.is_some(), #condition, "{}", #message); });
+            let check = quote! { assert_eq!(#name.is_some(), #condition, "{}", #message); };
+            match argument_type {
+                SlangArgumentType::Specialize(_) => specialization_conditions.push(check),
+                _ => conditions.push(check),
+            }
         }
     }
     // The wrapper admits exactly one mode with at most three dimensions. Axis totals count threads and divide by the
@@ -180,11 +230,11 @@ pub fn bindgen(
         .with_context(|| format!("{kernel_name}: work group {:?} overflows u32 invocations", abi.group_size))?;
 
     let host_expressions = quote! { #(#conditions)* #(#grid)* };
-    let referenced = specializations
+    let (referenced, referenced_types): (Vec<_>, Vec<_>) = specializations
         .iter()
-        .map(|(name, _)| name)
-        .filter(|name| references(host_expressions.clone(), name))
-        .collect::<Vec<_>>();
+        .filter(|(name, ..)| references(host_expressions.clone(), name))
+        .map(|(name, ty, ..)| (name, ty))
+        .unzip();
 
     let entry_arms = variants
         .iter()
@@ -209,8 +259,9 @@ pub fn bindgen(
     };
 
     let specialization_count = specializations.len();
-    let specialization_names = specializations.iter().map(|(name, _)| name).collect::<Vec<_>>();
-    let specialization_entries = specializations.iter().enumerate().map(|(index, (_, id))| {
+    let (specialization_names, specialization_types, specialization_values) =
+        specializations.iter().map(|(name, ty, value, _)| (name, ty, value)).multiunzip::<(Vec<_>, Vec<_>, Vec<_>)>();
+    let specialization_entries = specializations.iter().enumerate().map(|(index, (.., id))| {
         let offset = 4 * index as u32;
         quote! { vk::SpecializationMapEntry::default().constant_id(#id).offset(#offset).size(4) }
     });
@@ -230,7 +281,7 @@ pub fn bindgen(
 
         pub struct #struct_name {
             pipeline: std::sync::Arc<VkComputePipeline>,
-            #(#referenced: bool,)*
+            #(#referenced: #referenced_types,)*
         }
 
         impl #struct_name {
@@ -238,8 +289,9 @@ pub fn bindgen(
             pub fn new(
                 context: &std::sync::Arc<VkContext>
                 #(, #type_parameters: crate::data_type::DataType)*
-                #(, #specialization_names: bool)*
+                #(, #specialization_names: #specialization_types)*
             ) -> Result<Self, Error> {
+                #(#specialization_conditions)*
                 let entry_point = #entry_selection;
                 let limits = &context.physical_device().properties.limits;
                 let size = [#group_x, #group_y, #group_z];
@@ -254,7 +306,7 @@ pub fn bindgen(
                 }
                 let shader = VkShader::new(context.clone(), SPIRV)?;
                 let specialization_data: [[u8; 4]; #specialization_count] =
-                    [#(vk::Bool32::from(#specialization_names).to_ne_bytes()),*];
+                    [#(#specialization_values.to_ne_bytes()),*];
                 let specialization_entries: [vk::SpecializationMapEntry; #specialization_count] = [#(#specialization_entries),*];
                 let specialization =
                     vk::SpecializationInfo::default().map_entries(&specialization_entries).data(specialization_data.as_flattened());
@@ -325,9 +377,26 @@ fn data_type(slang_type: &str) -> Result<Ident, Error> {
             "bf16" => "BF16",
             "uint" => "U32",
             "int" => "I32",
+            "uint8_t" => "U8",
+            "int8_t" => "I8",
             other => bail!("no DataType for Slang type '{other}'"),
         }
     ))
+}
+
+/// `T` of an `Option<T>` type.
+fn option_inner(ty: &Type) -> Option<&Type> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.iter().exactly_one().ok().filter(|segment| segment.ident == "Option")?;
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+    match arguments.args.iter().exactly_one().ok()? {
+        GenericArgument::Type(inner) => Some(inner),
+        _ => None,
+    }
 }
 
 fn references(

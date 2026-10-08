@@ -15,7 +15,7 @@ mod wrapper;
 
 pub use dephashes::Dephashes;
 pub use error::Error;
-pub use gpu_types::generate_constants;
+pub use gpu_types::generate_types;
 pub use module_with_diagnostics::ModuleWithDiagnostics;
 pub use slang_argument::SlangArgument;
 pub use slang_argument_type::SlangArgumentType;

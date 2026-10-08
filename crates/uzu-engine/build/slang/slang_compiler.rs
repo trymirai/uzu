@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     env,
     ffi::CString,
     fs,
@@ -10,12 +10,13 @@ use std::{
 use anyhow::Context;
 use itertools::Itertools;
 use shader_slang::{
-    CompileTarget, CompilerOptions, ComponentType, GlobalSession, OptimizationLevel, Session, SessionDesc, TargetDesc,
+    CompileTarget, CompilerOptions, ComponentType, GlobalSession, OptimizationLevel, ScalarType, Session, SessionDesc,
+    TargetDesc,
 };
 use walkdir::WalkDir;
 
 use super::{
-    Dephashes, Error, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, bindgen, generate_constants, slang_api,
+    Dephashes, Error, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, bindgen, generate_types, slang_api,
     wrapper,
 };
 use crate::{
@@ -71,6 +72,7 @@ impl SlangCompiler {
     fn compile(
         &self,
         source_file: &Path,
+        enum_paths: &EnumPaths,
     ) -> Result<(KernelPath, Box<[Kernel]>, Box<[KernelName]>), Error> {
         let source_relative = source_file.strip_prefix(&self.src_dir)?.with_extension("");
         let kernel_path = source_relative
@@ -123,7 +125,7 @@ impl SlangCompiler {
             .module
             .module_reflection()
             .children()
-            .map(SlangKernelInfo::from_reflection)
+            .map(|decl| SlangKernelInfo::from_reflection(decl, enum_paths))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .flatten()
@@ -141,7 +143,19 @@ impl SlangCompiler {
                 .iter()
                 .map(|kernel| wrapper::generate_wrappers(kernel, &loaded.component))
                 .collect::<Result<Vec<_>, _>>()?;
-            let imports = format!("import definitions;\nimport {source_path:?};");
+            // The wrapper names the generated types the kernels' signatures use, so it imports what the source does.
+            let generated = self.out_dir.join("generated");
+            let imports = once("definitions".to_owned())
+                .chain(dependency_hashes.keys().filter_map(|path| {
+                    let path = Path::new(path);
+                    (path.parent() == Some(&generated))
+                        .then(|| Some(format!("generated.{}", path.file_stem()?.to_str()?)))
+                        .flatten()
+                }))
+                .sorted()
+                .map(|module| format!("import {module};\n"))
+                .chain(once(format!("import {source_path:?};")))
+                .collect::<String>();
             let contents =
                 once(imports).chain(wrappers.iter().flat_map(|(blocks, _)| blocks.iter().cloned())).join("\n\n");
             fs::write(&wrapper_file, contents)?;
@@ -166,12 +180,17 @@ impl SlangCompiler {
             fs::write(&object_file, blob.as_slice())?;
 
             let program = compiled.layout(0).context("linked Slang program has no layout")?;
-            // Specialization constants declared by the module's kernels; each binding sets only its own.
-            let mut declared = BTreeSet::new();
+            // Specialization constants declared by the module's kernels with their wire types; each binding sets only
+            // its own.
+            let mut declared = BTreeMap::new();
             for info in &kernels {
                 for argument in info.arguments() {
                     if let SlangArgumentType::Specialize(_) = argument.argument_type()? {
-                        declared.insert(wrapper::specialization_name(info.name(), argument.name()?));
+                        let wire = match wrapper::specialization_wire_type(&argument.slang_type()?) {
+                            "bool" => ScalarType::Bool,
+                            _ => ScalarType::Uint32,
+                        };
+                        declared.insert(wrapper::specialization_name(info.name(), argument.name()?), wire);
                     }
                 }
             }
@@ -189,7 +208,7 @@ impl SlangCompiler {
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 let binding_file = bindgen::binding_file(&output_base, &descriptor.name);
-                write_tokens(bindgen::bindgen(info, descriptor, &variants, object_path)?, &binding_file)
+                write_tokens(bindgen::bindgen(info, descriptor, &variants, object_path, enum_paths)?, &binding_file)
                     .with_context(|| format!("cannot write {} binding", descriptor.name))?;
                 binding_files.push(binding_file);
             }
@@ -226,10 +245,10 @@ impl Compiler for SlangCompiler {
     fn build(
         &self,
         gpu_types: &GpuTypes,
-        _enum_paths: &EnumPaths,
+        enum_paths: &EnumPaths,
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
         // Before any module loads or cache check, so cached dependency hashes see the current constants.
-        generate_constants(gpu_types, &self.out_dir).context("cannot generate Slang GPU types")?;
+        generate_types(gpu_types, &self.out_dir).context("cannot generate Slang GPU types")?;
         println!("cargo::rerun-if-changed={}", self.src_dir.display());
         println!("cargo::rerun-if-env-changed=SLANG_DIR");
         println!("cargo::rerun-if-env-changed=LD_LIBRARY_PATH");
@@ -247,8 +266,9 @@ impl Compiler for SlangCompiler {
         let mut bindings = Vec::new();
         for source in sources {
             if !fs::read(&source)?.starts_with(b"implementing") {
-                let (path, file_kernels, test_bindings) =
-                    self.compile(&source).with_context(|| format!("cannot compile {}", source.display()))?;
+                let (path, file_kernels, test_bindings) = self
+                    .compile(&source, enum_paths)
+                    .with_context(|| format!("cannot compile {}", source.display()))?;
                 let names = file_kernels.iter().map(|kernel| (&kernel.name, false));
                 for (name, test) in names.chain(test_bindings.iter().map(|name| (name, true))) {
                     let file = bindgen::binding_file(&self.out_dir.join(path.join("/")), name);
