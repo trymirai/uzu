@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from .engine import ServerEngine, ServerEngineType
 from .engine.magnitude import MagnitudeServerEngine
+from .engine.splash import SplashServerEngine
 from .engine.tensorfold import TensorFoldServerEngine
 from .engine.uzu import UzuServerEngine
 from .util import await_cooldown, load_input
@@ -49,9 +50,10 @@ def get_bench_average(responses: list[BenchResponse]) -> BenchAverage:
     )
 
 
-@app.command(name=ServerEngineType.UZU.value)
-@app.command(name=ServerEngineType.TENSORFOLD.value)
 @app.command(name=ServerEngineType.MAGNITUDE.value)
+@app.command(name=ServerEngineType.TENSORFOLD.value)
+@app.command(name=ServerEngineType.SPLASH.value)
+@app.command(name=ServerEngineType.UZU.value)
 def run_engine(
     ctx: typer.Context,
     model: Annotated[str, typer.Option("--model", help="Model identifier, repository ID, or local model directory.")],
@@ -74,6 +76,8 @@ def run_engine(
         engine = TensorFoldServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
     elif engine_type == ServerEngineType.MAGNITUDE:
         engine = MagnitudeServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
+    elif engine_type == ServerEngineType.SPLASH:
+        engine = SplashServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
     else:
         raise ValueError(f"Engine {engine_type} is not supported")
 

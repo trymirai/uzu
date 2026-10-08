@@ -31,4 +31,4 @@ line-length = 120
 extend-select = ["E501"]
 
 [tool.ty.environment]
-extra-paths = ["engine-splash/deps"]
+extra-paths = ["engine-splash", "engine-splash/deps"]

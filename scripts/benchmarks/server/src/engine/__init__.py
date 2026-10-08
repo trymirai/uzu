@@ -13,9 +13,10 @@ from bench import BenchResponse
 
 
 class ServerEngineType(StrEnum):
-    UZU = "uzu"
+    SPLASH = "splash"
     TENSORFOLD = "tensorfold"
     MAGNITUDE = "magnitude"
+    UZU = "uzu"
 
 
 class ServerEngine(ABC):
