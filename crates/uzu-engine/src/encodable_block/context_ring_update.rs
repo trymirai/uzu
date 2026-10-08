@@ -1,16 +1,15 @@
 use crate::backends::common::{
-    Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-    kernel::ContextRingUpdateKernel,
+    Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels, kernel::ContextRingUpdateKernel,
 };
 
 pub struct ContextRingUpdate<B: Backend> {
-    name: BlockName,
+    name: String,
     kernel: <B::Kernels as Kernels>::ContextRingUpdateKernel,
 }
 
 impl<B: Backend> ContextRingUpdate<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
         Ok(Self {

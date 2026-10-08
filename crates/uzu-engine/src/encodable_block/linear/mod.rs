@@ -14,7 +14,7 @@ pub use untied_readout::UntiedReadout;
 
 use crate::{
     backends::common::{
-        Backend, BlockName, BufferRef, CommandBuffer,
+        Backend, BufferRef, CommandBuffer,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationQuantization,
@@ -123,7 +123,7 @@ pub enum LinearBlockError<B: Backend> {
 
 impl<B: Backend> dyn Linear<B> {
     pub fn new_mixed_precision(
-        name: BlockName,
+        name: String,
         input_dimension: u32,
         output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
@@ -203,7 +203,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new(
-        name: BlockName,
+        name: String,
         input_dimension: u32,
         output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
@@ -225,7 +225,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_with_input_rht_mixed_precision(
-        name: BlockName,
+        name: String,
         input_dimension: u32,
         output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
@@ -266,7 +266,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_for_fused_input(
-        name: BlockName,
+        name: String,
         input_dimension: u32,
         output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
@@ -305,7 +305,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_with_input_rht(
-        name: BlockName,
+        name: String,
         input_dimension: u32,
         output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,

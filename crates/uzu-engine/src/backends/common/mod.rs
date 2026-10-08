@@ -24,4 +24,4 @@ pub use command_buffer::{
 pub use context::Context;
 pub use device_capabilities::DeviceCapabilities;
 pub use kernel::Kernels;
-pub use timestamps::{BlockName, CommandBufferTimestamps, TimestampSlot, TimestampSpan, TimestampSpanRecorder};
+pub use timestamps::{TimestampSpan, TimestampSpanRecorder};

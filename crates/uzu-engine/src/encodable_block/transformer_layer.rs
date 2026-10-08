@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, kernel::ActivationTransform,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, kernel::ActivationTransform,
     },
     config::transformer_layer::{TransformerLayerConfig, TransformerLayerConvConfig},
     data_type::DataType,
@@ -45,7 +45,7 @@ pub enum TransformerLayerError<B: Backend> {
 }
 
 struct TransformerLayerConv<B: Backend> {
-    pre_convolution_name: BlockName,
+    pre_convolution_name: String,
     model_dim: u32,
     pre_conv: SeparableCausalConv<B>,
     kernel_projection: Box<dyn Linear<B>>,
@@ -57,7 +57,7 @@ struct TransformerLayerConv<B: Backend> {
 // TODO: saner shortcut
 
 pub struct TransformerLayer<B: Backend> {
-    name: BlockName,
+    name: String,
     pub layer_index: u32,
     pub kv_source_layer_index: Option<u32>,
     pub pre_mixer_norm: Option<Normalization<B>>,
@@ -73,7 +73,7 @@ pub struct TransformerLayer<B: Backend> {
 
 impl<B: Backend> TransformerLayerConv<B> {
     fn new(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         model_dim: u32,
         config: &TransformerLayerConvConfig,
@@ -175,7 +175,7 @@ impl<B: Backend> TransformerLayerConv<B> {
 
 impl<B: Backend> TransformerLayer<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         model_dim: u32,
         hidden_dim: u32,

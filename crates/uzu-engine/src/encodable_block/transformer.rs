@@ -5,8 +5,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BlockName, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        kernel::TensorAddScaleKernel,
+        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels, kernel::TensorAddScaleKernel,
     },
     config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
     data_type::DataType,
@@ -26,7 +25,7 @@ enum TransformerLayerStateType<B: Backend> {
 }
 
 pub struct TransformerState<B: Backend> {
-    accept_name: BlockName,
+    accept_name: String,
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
 }
@@ -93,8 +92,8 @@ pub enum TransformerNewError<B: Backend> {
 }
 
 pub struct Transformer<B: Backend> {
-    name: BlockName,
-    capture_residual_name: BlockName,
+    name: String,
+    capture_residual_name: String,
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
@@ -104,7 +103,7 @@ pub struct Transformer<B: Backend> {
 
 impl<B: Backend> Transformer<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         output_norm_hadamard_factors: Option<B::GlobalBuffer>,
         data_type: DataType,

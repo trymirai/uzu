@@ -5,7 +5,7 @@ use thiserror::Error;
 use tokenizers::Tokenizer;
 
 use crate::{
-    backends::common::{Backend, BlockName, Context, DeviceCapabilities},
+    backends::common::{Backend, Context, DeviceCapabilities},
     config::{
         model::{generation::GenerationConfig, language_model::LanguageModelConfig},
         token_codec::AnyTokenCodecConfig,
@@ -78,7 +78,7 @@ impl<B: Backend> Engine<B> {
         let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
-            BlockName::from("decoder"),
+            String::from("decoder"),
             self.context.as_ref(),
             &config.decoder_config,
             &weight_loader.tree().subtree("decoder"),
@@ -96,10 +96,10 @@ impl<B: Backend> Engine<B> {
             .transpose()?
             .flatten();
 
-        let sampling = Sampling::new(BlockName::from("sampling"), data_type, config.decoder_config.vocab_size);
+        let sampling = Sampling::new(String::from("sampling"), data_type, config.decoder_config.vocab_size);
 
         let context_ring_update =
-            ContextRingUpdate::new(BlockName::from("update repetition penalty ring"), self.context.as_ref())
+            ContextRingUpdate::new(String::from("update repetition penalty ring"), self.context.as_ref())
                 .map_err(EngineLoadLanguageModelError::Backend)?;
 
         weight_loader.tree().assert_all_tensors_validated()?;

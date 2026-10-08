@@ -6,9 +6,9 @@ use std::{
 use crate::{
     backends::{
         common::{
-            Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-            CommandBufferExecutable, CommandBufferPending, CommandBufferTimestamps, TimestampSpan,
-            TimestampSpanRecorder, allocator::bump::BumpAllocator,
+            Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
+            CommandBufferExecutable, CommandBufferPending, TimestampSpan, TimestampSpanRecorder,
+            allocator::bump::BumpAllocator,
         },
         cpu::{
             Cpu,
@@ -133,10 +133,10 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn sample_start_timestamp(
         &mut self,
-        name: &BlockName,
+        name: &str,
     ) {
         if let Some(spans) = &mut self.timestamp_spans {
-            spans.start(name.clone());
+            spans.start(name.to_owned());
             self.write_timestamp();
         }
     }
@@ -227,7 +227,7 @@ impl CommandBufferPending for CpuCommandBufferPending {
 
 pub struct CpuCommandBufferCompleted {
     gpu_execution_time: Duration,
-    timestamps: CommandBufferTimestamps,
+    timestamps: Box<[TimestampSpan]>,
     _allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
 }
 

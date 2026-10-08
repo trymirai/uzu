@@ -12,8 +12,8 @@ use crate::engine::language_model::grammar::Grammar;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferTimestamps, Context, gpu_types::trie::TrieNode as GpuTrieNode,
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context,
+        TimestampSpan, gpu_types::trie::TrieNode as GpuTrieNode,
     },
     data_type::DataType,
     encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
@@ -41,7 +41,7 @@ impl<B: Backend> ForwardPassChaining<B> {
     fn resolve<'a>(
         &'a mut self,
         tokens: &mut Vec<u64>,
-        timestamps: Option<&Sender<CommandBufferTimestamps>>,
+        timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
     ) -> Result<(u64, Option<&'a B::ScratchBuffer>), LanguageModelStreamError<B>> {
         match self {

@@ -7,7 +7,7 @@ use gate_act_mul::MlpGateActMulEncodable;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, BlockName, CommandBuffer},
+    backends::common::{Backend, CommandBuffer},
     config::mlp::AnyMLPConfig,
     data_type::DataType,
     encodable_block::linear::{Linear, LinearBlockError},
@@ -35,7 +35,7 @@ pub enum MlpBlockError<B: Backend> {
 
 impl<B: Backend> dyn Mlp<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         config: &AnyMLPConfig,
         model_dimension: u32,
         hidden_dimension: u32,

@@ -1,7 +1,7 @@
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{AncestorAttentionKernel, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
     },
     config::{
@@ -25,8 +25,8 @@ pub struct PreparedPrefixAttention<B: Backend> {
 }
 
 pub struct WeaverLayer<B: Backend> {
-    prefix_attention_name: BlockName,
-    post_attention_name: BlockName,
+    prefix_attention_name: String,
+    post_attention_name: String,
     pub pre_attention_norm: Normalization<B>,
     pub qkv_projection: Box<dyn Linear<B>>,
     attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
@@ -44,7 +44,7 @@ pub struct WeaverLayer<B: Backend> {
 
 impl<B: Backend> WeaverLayer<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         config: &WeaverConfig,
         add_to_residual: bool,

@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, BlockName, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, SeparableCausalConvKernel},
     },
     config::token_mixer::convolutions::SeparableCausalConvConfig,
@@ -21,7 +21,7 @@ pub enum ConvolutionNewError<B: Backend> {
 }
 
 pub struct SeparableCausalConv<B: Backend> {
-    name: BlockName,
+    name: String,
     model_dim: u32,
     data_type: DataType,
     weights: B::GlobalBuffer,
@@ -31,7 +31,7 @@ pub struct SeparableCausalConv<B: Backend> {
 
 impl<B: Backend> SeparableCausalConv<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         model_dim: u32,
         kernel_size: u32,
         group_size: u32,

@@ -4,8 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, BlockName, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-        Context, Kernels,
+        Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         gpu_types::ActivationType,
         kernel::{
             Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDPrefill64Kernel, SSDPrefillKernel,
@@ -56,7 +55,7 @@ enum Mamba2SSDPrefillVariant<B: Backend> {
 }
 
 pub struct Mamba2<B: Backend> {
-    name: BlockName,
+    name: String,
     kernel_size: u32,
     num_heads: u32,
     num_groups: u32,
@@ -93,7 +92,7 @@ pub enum Mamba2NewError<B: Backend> {
 
 impl<B: Backend> Mamba2<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         hidden_dim: u32,
         outer_data_type: DataType,
         config: &Mamba2Config,

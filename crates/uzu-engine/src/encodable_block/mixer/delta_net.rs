@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, BlockName, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
+        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferPending, Context, Kernels,
         kernel::{
             Conv1dPackKernel, ConvTreeScanKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel,
@@ -48,7 +48,7 @@ enum DeltaNetSuffixStatus<B: Backend> {
 }
 
 pub struct DeltaNetState<B: Backend> {
-    accept_name: BlockName,
+    accept_name: String,
     conv_state: B::GlobalBuffer,
     ssm_state: B::GlobalBuffer,
     suffix_status: Option<DeltaNetSuffixStatus<B>>,
@@ -117,8 +117,8 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
 }
 
 pub struct DeltaNet<B: Backend> {
-    name: BlockName,
-    tree_verify_name: BlockName,
+    name: String,
+    tree_verify_name: String,
     num_heads: u32,
     head_dim: u32,
     num_groups: u32,
@@ -164,7 +164,7 @@ pub enum DeltaNetNewError<B: Backend> {
 
 impl<B: Backend> DeltaNet<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         hidden_dim: u32,
         outer_data_type: DataType,
         config: &DeltaNetConfig,

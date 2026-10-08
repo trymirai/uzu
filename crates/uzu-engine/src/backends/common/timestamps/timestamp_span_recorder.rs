@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use super::{BlockName, CommandBufferTimestamps, TimestampSlot, TimestampSpan, span_boundary::SpanBoundary};
+use super::{TimestampSpan, span_boundary::SpanBoundary};
 
 #[derive(Default)]
 pub struct TimestampSpanRecorder {
@@ -10,19 +10,19 @@ pub struct TimestampSpanRecorder {
 impl TimestampSpanRecorder {
     pub fn start(
         &mut self,
-        name: BlockName,
-    ) -> TimestampSlot {
+        name: String,
+    ) -> usize {
         self.push(SpanBoundary::Start(name))
     }
 
-    pub fn end(&mut self) -> TimestampSlot {
+    pub fn end(&mut self) -> usize {
         self.push(SpanBoundary::End)
     }
 
     fn push(
         &mut self,
         boundary: SpanBoundary,
-    ) -> TimestampSlot {
+    ) -> usize {
         self.boundaries.push(boundary);
         self.boundaries.len() - 1
     }
@@ -34,7 +34,7 @@ impl TimestampSpanRecorder {
     pub fn spans(
         &self,
         instants: &[Instant],
-    ) -> CommandBufferTimestamps {
+    ) -> Box<[TimestampSpan]> {
         let mut spans = Vec::new();
         let mut open_span_indices = Vec::new();
         for (boundary, &instant) in self.boundaries.iter().zip(instants) {

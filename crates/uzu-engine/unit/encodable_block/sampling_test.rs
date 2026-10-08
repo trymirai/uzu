@@ -9,7 +9,7 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::common::{
-        Backend, BlockName, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
         gpu_types::trie::TrieNode,
     },
     data_type::DataType,
@@ -44,7 +44,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     method: &SamplingMethod,
     batch_size: u32,
 ) -> Result<SamplingTestResults, TestCaseError> {
-    let sampling = Sampling::<B>::new(BlockName::from("test/sampling"), T::data_type(), vocab_size as u32);
+    let sampling = Sampling::<B>::new(String::from("test/sampling"), T::data_type(), vocab_size as u32);
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let logits_buffer = command_buffer.allocate_constant_from_slice(logits).unwrap();

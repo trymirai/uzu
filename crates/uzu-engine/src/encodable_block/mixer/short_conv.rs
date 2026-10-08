@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, BlockName, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
+        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferPending, Context, Kernels,
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
@@ -75,10 +75,10 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
 }
 
 pub struct ShortConv<B: Backend> {
-    name: BlockName,
-    decode_conv_name: BlockName,
-    prefill_conv_name: BlockName,
-    trie_conv_name: BlockName,
+    name: String,
+    decode_conv_name: String,
+    prefill_conv_name: String,
+    trie_conv_name: String,
     hidden_dim: u32,
     data_type: DataType,
     kernel_size: u32,
@@ -106,7 +106,7 @@ pub enum ShortConvNewError<B: Backend> {
 
 impl<B: Backend> ShortConv<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         hidden_dim: u32,
         data_type: DataType,
         config: &ShortConvConfig,

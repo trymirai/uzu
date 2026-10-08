@@ -4,7 +4,7 @@ use bytemuck::{AnyBitPattern, NoUninit};
 
 use crate::{
     array::size_for_shape,
-    backends::common::{Backend, BlockName, BufferMut, BufferRef, TimestampSpan},
+    backends::common::{Backend, BufferMut, BufferRef, TimestampSpan},
     data_type::DataType,
 };
 
@@ -82,10 +82,9 @@ pub trait CommandBufferEncoding {
 
     fn enable_timestamps(&mut self);
 
-    #[allow(clippy::ptr_arg)]
     fn sample_start_timestamp(
         &mut self,
-        name: &BlockName,
+        name: &str,
     );
 
     fn sample_end_timestamp(&mut self);

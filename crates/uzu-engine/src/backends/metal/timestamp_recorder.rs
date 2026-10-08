@@ -7,7 +7,7 @@ use metal::{
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::backends::{
-    common::{BlockName, CommandBufferTimestamps, TimestampSlot, TimestampSpanRecorder},
+    common::{TimestampSpan, TimestampSpanRecorder},
     metal::error::MetalError,
 };
 
@@ -32,7 +32,7 @@ impl MetalTimestampRecorder {
 
     pub fn start(
         &mut self,
-        name: BlockName,
+        name: String,
         encoder: &ProtocolObject<dyn MTL4ComputeCommandEncoder>,
     ) {
         let slot = self.spans.start(name);
@@ -49,7 +49,7 @@ impl MetalTimestampRecorder {
 
     fn write(
         &mut self,
-        slot: TimestampSlot,
+        slot: usize,
         encoder: &ProtocolObject<dyn MTL4ComputeCommandEncoder>,
     ) {
         if slot / COUNTER_HEAP_CAPACITY == self.counter_heaps.len() {
@@ -68,7 +68,7 @@ impl MetalTimestampRecorder {
         );
     }
 
-    pub fn resolve(&self) -> Result<CommandBufferTimestamps, MetalError> {
+    pub fn resolve(&self) -> Result<Box<[TimestampSpan]>, MetalError> {
         let count = self.spans.slot_count();
         let mut ticks = Vec::with_capacity(count);
         for (index, counter_heap) in self.counter_heaps.iter().enumerate() {

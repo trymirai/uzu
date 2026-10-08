@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BlockName, CommandBuffer, CommandBufferEncoding,
+        Backend, CommandBuffer, CommandBufferEncoding,
         gpu_types::ActivationType,
         kernel::{ActivationKernel, Kernels},
     },
@@ -27,7 +27,7 @@ pub enum PredictionHeadError<B: Backend> {
 }
 
 pub struct PredictionHead<B: Backend> {
-    name: BlockName,
+    name: String,
     hidden_dim: u32,
     activation: ActivationType,
     dense_projection: Box<dyn Linear<B>>,
@@ -38,7 +38,7 @@ pub struct PredictionHead<B: Backend> {
 
 impl<B: Backend> PredictionHead<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         hidden_dim: u32,
         num_labels: u32,
         data_type: DataType,

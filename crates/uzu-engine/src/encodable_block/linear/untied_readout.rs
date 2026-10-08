@@ -1,6 +1,6 @@
 use crate::{
     backends::common::{
-        Backend, BlockName, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::matmul::{ActivationFormat, MatmulA},
     },
@@ -16,14 +16,14 @@ use crate::{
 };
 
 pub struct UntiedReadout<B: Backend> {
-    name: BlockName,
+    name: String,
     linear: LinearMatmul<B>,
     input_rht: Option<InputRht<B>>,
 }
 
 impl<B: Backend> UntiedReadout<B> {
     pub fn load(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         tree: &ParameterTree<B>,
         spec: AnyWeightMatrixSpec,

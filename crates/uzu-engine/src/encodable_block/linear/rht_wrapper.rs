@@ -2,9 +2,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{
-        Backend, BlockName, CommandBuffer, CommandBufferEncoding, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
-    },
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
     config::weight_matrix::{
         AnyWeightMatrixSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
@@ -29,7 +27,7 @@ pub enum RHTLinearWrapperError<B: Backend> {
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
-    name: BlockName,
+    name: String,
     input_rht: InputRht<B>,
     inner_linear: LinearMatmul<B>,
 }
@@ -48,7 +46,7 @@ fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
 
 impl<B: Backend> RHTLinearWrapper<B> {
     pub(super) fn new(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         input_dimension: u32,
         output_dimension: u32,
@@ -89,7 +87,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
     }
 
     pub(super) fn try_new_with_input_preparation(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         input_dimension: u32,
         output_dimension: u32,
@@ -130,7 +128,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
     }
 
     fn load_inner_with_output_rht(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         input_dimension: u32,
         output_dimension: u32,
@@ -168,7 +166,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
     }
 
     fn build_self_contained(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         input_data_type: DataType,
         input_preparation: LinearInputPreparation<B>,

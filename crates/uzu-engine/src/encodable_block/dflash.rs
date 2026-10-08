@@ -6,8 +6,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, BlockName, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
-        gpu_types::trie::TrieNode,
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, gpu_types::trie::TrieNode,
     },
     config::{dflash::DFlashDraftConfig, rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
     data_type::DataType,
@@ -42,8 +41,8 @@ impl<B: Backend> DFlashState<B> {
 }
 
 pub struct DFlash<B: Backend> {
-    accept_name: BlockName,
-    draft_name: BlockName,
+    accept_name: String,
+    draft_name: String,
     target_feature_projection: Box<dyn Linear<B>>,
     projected_feature_norm: Normalization<B>,
     state_kv_projection: Box<dyn Linear<B>>,
@@ -92,7 +91,7 @@ pub enum DFlashEncodeError<B: Backend> {
 
 impl<B: Backend> DFlash<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         config: &DFlashDraftConfig,
         parameter_tree: &ParameterTree<B>,

@@ -3,14 +3,14 @@ use std::mem::size_of;
 use super::{LinearInput, LinearInputPreparation};
 use crate::{
     backends::common::{
-        Backend, BlockName, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{ActivationTransform, matmul::ActivationFormat},
     },
     data_type::DataType,
 };
 
 pub(super) struct InputRht<B: Backend> {
-    name: BlockName,
+    name: String,
     rht_signs: B::GlobalBuffer,
     rht: ActivationTransform<B>,
     quantizer: Option<ActivationTransform<B>>,
@@ -18,7 +18,7 @@ pub(super) struct InputRht<B: Backend> {
 
 impl<B: Backend> InputRht<B> {
     pub(super) fn new(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         data_type: DataType,
         preparation: LinearInputPreparation<B>,

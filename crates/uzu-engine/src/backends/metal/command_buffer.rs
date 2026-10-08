@@ -15,9 +15,8 @@ use rangemap::RangeSet;
 
 use crate::backends::{
     common::{
-        Backend, BlockName, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-        CommandBufferExecutable, CommandBufferPending, CommandBufferTimestamps, Context, TimestampSpan,
-        allocator::bump::BumpAllocator,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
+        CommandBufferExecutable, CommandBufferPending, Context, TimestampSpan, allocator::bump::BumpAllocator,
     },
     metal::{
         Metal, MetalContext, buffer::MetalBufferExt, error::MetalError, timestamp_recorder::MetalTimestampRecorder,
@@ -225,10 +224,10 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn sample_start_timestamp(
         &mut self,
-        name: &BlockName,
+        name: &str,
     ) {
         if let Some(timestamps) = &mut self.timestamps {
-            timestamps.start(name.clone(), &self.compute_encoder);
+            timestamps.start(name.to_owned(), &self.compute_encoder);
         }
     }
 
@@ -327,7 +326,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 
 pub struct MetalCommandBufferPending {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
-    receiver: mpsc::Receiver<Result<(Duration, CommandBufferTimestamps), MetalError>>,
+    receiver: mpsc::Receiver<Result<(Duration, Box<[TimestampSpan]>), MetalError>>,
 }
 
 impl CommandBufferPending for MetalCommandBufferPending {
@@ -345,7 +344,7 @@ impl CommandBufferPending for MetalCommandBufferPending {
 
 pub struct MetalCommandBufferCompleted {
     gpu_execution_time: Duration,
-    timestamps: CommandBufferTimestamps,
+    timestamps: Box<[TimestampSpan]>,
     _allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
 }
 

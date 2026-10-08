@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BlockName, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{
             ActivationQuantization, Kernels,
             matmul::{
@@ -37,7 +37,7 @@ pub enum LinearMatmulError<B: Backend> {
 }
 
 pub struct LinearMatmul<B: Backend> {
-    name: BlockName,
+    name: String,
     kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     matrix: WeightMatrix<B>,
     biases: Option<B::GlobalBuffer>,
@@ -67,7 +67,7 @@ impl<B: Backend> LinearMatmul<B> {
     /// Loads a linear over any parsed spec — full precision, MLX or Int. Hybrid
     /// compositions live in the wrappers, not here.
     pub fn load(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         spec: AnyWeightMatrixSpec,
         input_dim: u32,

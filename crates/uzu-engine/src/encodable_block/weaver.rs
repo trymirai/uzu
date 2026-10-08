@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, BlockName, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         gpu_types::weaver::{
             CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FrontierIdx, MetadataIdx, TreeIdx,
         },
@@ -112,9 +112,9 @@ impl<B: Backend> EncodedWeaverTree<B> {
 }
 
 pub struct Weaver<B: Backend> {
-    name: BlockName,
-    prefix_name: BlockName,
-    step_name: BlockName,
+    name: String,
+    prefix_name: String,
+    step_name: String,
     token_embedding_norm: Normalization<B>,
     token_embedding_projection: Box<dyn Linear<B>>,
     hidden_state_norm: Normalization<B>,
@@ -174,7 +174,7 @@ pub enum WeaverEncodeError<B: Backend> {
 
 impl<B: Backend> Weaver<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         context: &B::Context,
         config: &WeaverConfig,
         vocab_size: u32,

@@ -1,6 +1,4 @@
-use super::BlockName;
-
 pub enum SpanBoundary {
-    Start(BlockName),
+    Start(String),
     End,
 }

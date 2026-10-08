@@ -1,7 +1,7 @@
 //! MLP block encodable.
 
 use crate::{
-    backends::common::{Backend, BlockName, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding},
     encodable_block::{
         linear::Linear,
         mlp::{Mlp, gate_act_mul::MlpGateActMulEncodable},
@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub struct DenseMlp<B: Backend> {
-    name: BlockName,
+    name: String,
     up: Box<dyn Linear<B>>,
     gate: MlpGateActMulEncodable<B>,
     down: Box<dyn Linear<B>>,
@@ -17,7 +17,7 @@ pub struct DenseMlp<B: Backend> {
 
 impl<B: Backend> DenseMlp<B> {
     pub fn new(
-        name: BlockName,
+        name: String,
         up: Box<dyn Linear<B>>,
         gate: MlpGateActMulEncodable<B>,
         down: Box<dyn Linear<B>>,
