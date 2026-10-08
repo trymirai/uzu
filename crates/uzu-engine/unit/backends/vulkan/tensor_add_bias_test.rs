@@ -211,7 +211,7 @@ fn rejects_invalid_contracts() {
     let mut encoding = fixture.encoding();
     for in_place in [false, true] {
         let kernel = kernel::<f32, f32>(&fixture, in_place);
-        let wrong = in_place.then(|| (&values, 0..16));
+        let wrong = in_place.then_some((&values, 0..16));
         let encode = AssertUnwindSafe(|| unsafe {
             // SAFETY: never dispatched: the optional-argument assertion fails before recording.
             kernel.encode(wrong, (&values, 0..16), (&values, 0..16), 4, 4, &mut encoding);
@@ -233,9 +233,9 @@ fn throughput() {
     const NUM_COLS: usize = 4096;
     fn measure<T: ArrayElement + Float, B: ArrayElement + Float>(fixture: &KernelFixture) {
         let kernel = kernel::<T, B>(fixture, false);
-        let input = fixture.buffer(&vec![T::one(); LENGTH]);
-        let bias = fixture.buffer(&vec![B::one(); NUM_COLS]);
-        let output = fixture.buffer(&vec![T::zero(); LENGTH]);
+        let input = fixture.buffer(&std::iter::repeat_n(T::one(), LENGTH).collect::<Vec<_>>());
+        let bias = fixture.buffer(&[B::one(); NUM_COLS]);
+        let output = fixture.buffer(&std::iter::repeat_n(T::zero(), LENGTH).collect::<Vec<_>>());
         let bytes = |len: usize, size: usize| 0..(len * size) as u64;
         let (gpu, wall) = fixture.median_times(|encoding| {
             // SAFETY: input/output hold LENGTH elements and bias NUM_COLS; output aliases nothing.

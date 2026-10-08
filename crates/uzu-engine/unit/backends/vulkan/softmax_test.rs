@@ -343,7 +343,7 @@ fn rejects_invalid_contracts() {
     let mut encoding = fixture.encoding();
     for has_sinks in [false, true] {
         let kernel = kernel::<f32>(&fixture, has_sinks);
-        let wrong = (!has_sinks).then(|| (&values, 0..4));
+        let wrong = (!has_sinks).then_some((&values, 0..4));
         let encode = AssertUnwindSafe(|| unsafe {
             // SAFETY: never dispatched: the optional-argument assertion fails before recording.
             kernel.encode((&values, 0..16), wrong, 4, 1, 1, &mut encoding);

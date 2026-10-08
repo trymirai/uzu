@@ -87,7 +87,7 @@ fn copy_and_fill_round_trip() {
 fn invalid_ranges_return_errors_without_recording() {
     let fixture = KernelFixture::new();
     let context = &fixture.context;
-    let pipeline = add_pipeline(&context);
+    let pipeline = add_pipeline(context);
     let first = fixture.buffer(&[7u8; 4096]);
     let second = fixture.buffer(&[0u8; 4096]);
     let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
@@ -102,7 +102,7 @@ fn invalid_ranges_return_errors_without_recording() {
     assert!(range_error(encoding.encode_fill(&second, 4096..4100, 0)));
     let limit = context.physical_device().properties.limits.max_push_constants_size;
     for size in [6, limit + 4] {
-        assert!(matches!(add_pipeline_with_arguments(&context, size), Err(Error::PushConstants { .. })));
+        assert!(matches!(add_pipeline_with_arguments(context, size), Err(Error::PushConstants { .. })));
     }
     // SAFETY: every call below fails its checks before recording, so the shader never runs.
     unsafe {
@@ -151,8 +151,8 @@ fn foreign_context_objects_are_rejected() {
     let input = vec![1.0f32; size as usize];
     let [local_a, local_b, local_output] = [&input, &input, &input].map(|values| fixture.buffer(values));
     let foreign = other.buffer(&input);
-    let local_pipeline = add_pipeline(&context);
-    let foreign_pipeline = add_pipeline(&other_context);
+    let local_pipeline = add_pipeline(context);
+    let foreign_pipeline = add_pipeline(other_context);
     let foreign_error = |result| matches!(result, Err(Error::ForeignContext));
 
     let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
@@ -224,7 +224,7 @@ fn dispatch_accepts_empty_spans() {
 fn transfer_and_dispatch_chain_is_ordered() {
     let fixture = KernelFixture::new();
     let context = &fixture.context;
-    let pipeline = add_pipeline(&context);
+    let pipeline = add_pipeline(context);
     let size = 1024u32;
     let input = (0..size).map(|index| index as f32).collect::<Vec<_>>();
     let [a, b] = [&input, &input].map(|values| fixture.buffer(values));
@@ -279,7 +279,7 @@ fn retains_resources_until_completion() {
     let output = fixture.buffer(&vec![0.0f32; size as usize]);
     let mut retained = Vec::<Weak<dyn Send + Sync>>::new();
     let pending = {
-        let pipeline = add_pipeline(&context);
+        let pipeline = add_pipeline(context);
         let [a, b] = [&input, &input].map(|values| fixture.buffer(values));
         let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
         encode_add(&mut encoding, &pipeline, [&a, &b, &output], size).unwrap();

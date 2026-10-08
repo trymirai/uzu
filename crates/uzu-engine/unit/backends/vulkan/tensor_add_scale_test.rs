@@ -305,7 +305,7 @@ fn rejects_invalid_contracts() {
     let mut encoding = fixture.encoding();
     for in_place in [false, true] {
         let kernel = kernel::<f32>(&fixture, in_place);
-        let wrong = in_place.then(|| (&values, 0..16));
+        let wrong = in_place.then_some((&values, 0..16));
         let encode = AssertUnwindSafe(|| unsafe {
             // SAFETY: never dispatched: the optional-argument assertion fails before recording.
             kernel.encode(wrong, (&values, 0..16), (&values, 0..16), 4, 4, 1.0, &mut encoding);
@@ -329,7 +329,7 @@ fn throughput() {
         let (input, bias, output) = (
             fixture.buffer(&sequence::<T>(LENGTH, 1)),
             fixture.buffer(&sequence::<T>(NUM_COLS, 2)),
-            fixture.buffer(&vec![T::zero(); LENGTH]),
+            fixture.buffer(&std::iter::repeat_n(T::zero(), LENGTH).collect::<Vec<_>>()),
         );
         let bytes = |len: usize| 0..(len * size_of::<T>()) as u64;
         let (gpu, wall) = fixture.median_times(|encoding| {
