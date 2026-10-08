@@ -22,7 +22,7 @@ defaults:
 jobs:
   linters:
     name: linters
-    runs-on: macs-fleet-low
+    runs-on: prefect-github-actions
 
     steps:
       - uses: actions/checkout@v6
@@ -64,7 +64,7 @@ jobs:
 
   tests:
     name: ${{ matrix.host }}${{ matrix.target && format(' ({0})', matrix.target) }}
-    runs-on: ${{ matrix.host == 'linux' && 'uzu-n4std16' || 'macs-fleet-low' }}
+    runs-on: ${{ matrix.host == 'linux' && 'uzu-n4std16' || 'prefect-github-actions' }}
 
     strategy:
       matrix:
@@ -118,7 +118,7 @@ jobs:
 
   validate-bindings:
     name: validate-bindings
-    runs-on: macs-fleet-low
+    runs-on: prefect-github-actions
 
     steps:
       - uses: actions/checkout@v6
@@ -152,7 +152,7 @@ jobs:
 
   linters-mirai-gui:
     name: linters-mirai-gui
-    runs-on: macs-fleet-low
+    runs-on: prefect-github-actions
 
     defaults:
       run:
@@ -206,7 +206,7 @@ jobs:
 
   tests-mirai-gui:
     name: tests-mirai-gui
-    runs-on: macs-fleet-low
+    runs-on: prefect-github-actions
 
     defaults:
       run:
@@ -233,7 +233,7 @@ jobs:
 
   build-mirai-gui:
     name: build-mirai-gui
-    runs-on: macs-fleet-low
+    runs-on: prefect-github-actions
 
     defaults:
       run:

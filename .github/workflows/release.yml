@@ -22,7 +22,7 @@ defaults:
 
 jobs:
   release:
-    runs-on: macs-fleet-low
+    runs-on: prefect-github-actions
     env:
       VERSION: ${{ inputs.version }}
 
