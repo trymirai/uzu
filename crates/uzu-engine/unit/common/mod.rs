@@ -3,7 +3,6 @@ compile_error!("uzu tests require cpu backend");
 
 pub mod assert;
 pub mod cold_pool;
-pub mod env_vars;
 pub mod harness;
 pub mod helpers;
 pub mod matmul;

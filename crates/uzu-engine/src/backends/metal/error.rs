@@ -13,7 +13,7 @@ pub enum MetalError {
     CannotOpenDevice,
     #[error("Cannot create residency set: {0}")]
     CannotCreateResidencySet(String),
-    #[error("Cannot start gpu capture {0}")]
+    #[error("Cannot start GPU capture: {0}")]
     CannotStartGpuCapture(String),
     #[error("Cannot create library: {0}")]
     CannotCreateLibrary(String),

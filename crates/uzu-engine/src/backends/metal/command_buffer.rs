@@ -55,23 +55,19 @@ impl MetalCommandBufferEncoding {
         name: Option<&str>,
         allocation_pool: Option<Arc<<Metal as Backend>::AllocationPool>>,
     ) -> Result<Self, MetalError> {
-        let (command_allocator, command_buffer) = if let mut command_buffer_cache = context.command_buffer_cache.lock()
-            && let Some(command_buffer_cached) = command_buffer_cache.pop()
-        {
-            command_buffer_cached.command_allocator.reset();
-            (command_buffer_cached.command_allocator, command_buffer_cached.command_buffer)
+        let command_allocator = if let Some(command_allocator) = context.command_allocator_cache.lock().pop() {
+            command_allocator.reset();
+            command_allocator
         } else {
-            (
-                context.device.new_command_allocator().ok_or(MetalError::CannotCreateCommandBuffer)?,
-                context.device.new_mtl4_command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
-            )
+            context.device.new_command_allocator().ok_or(MetalError::CannotCreateCommandBuffer)?
         };
 
+        let command_buffer = context.device.new_mtl4_command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?;
+        command_buffer.begin_command_buffer_with_allocator(&command_allocator);
         command_buffer.set_label(name);
 
-        command_buffer.begin_command_buffer_with_allocator(&command_allocator);
-
         let compute_encoder = command_buffer.compute_command_encoder().unwrap();
+        ProtocolObject::<dyn MTL4CommandEncoder>::set_label(compute_encoder.as_ref(), name);
 
         compute_encoder.barrier_after_queue_stages_before_stages_visibility_options(
             MTLStages::Dispatch | MTLStages::Blit | MTLStages::ResourceState,
@@ -80,6 +76,7 @@ impl MetalCommandBufferEncoding {
         );
 
         let argument_table_descriptor = MTL4ArgumentTableDescriptor::new();
+        argument_table_descriptor.set_label(name.map(|name| format!("{name} argument table")).as_deref());
         argument_table_descriptor.set_max_buffer_bind_count(31);
         let argument_table = context
             .device
@@ -213,6 +210,13 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         self.compute_encoder.pop_debug_group();
     }
 
+    fn add_debug_point(
+        &mut self,
+        name: &str,
+    ) {
+        ProtocolObject::<dyn MTL4CommandEncoder>::insert_debug_signpost(self.compute_encoder.as_ref(), name);
+    }
+
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
         let constant_allocator = self.constant_allocator.take().unwrap();
         assert!(constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
@@ -276,11 +280,8 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
                 Ok(Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()))
             };
             let _ = sender.send(message);
-            context_clone.command_buffer_cache.lock().push(MetalCommandBufferCache {
-                command_allocator: command_allocator.clone(),
-                command_buffer: command_buffer.clone(),
-            });
-            let _keep_alive = (&constant_allocator, &allocation_pool);
+            context_clone.command_allocator_cache.lock().push(command_allocator.clone());
+            let _keep_alive = (&command_buffer, &constant_allocator, &allocation_pool);
         };
 
         let options = MTL4CommitOptions::new();
@@ -325,9 +326,4 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
     fn gpu_execution_time(&self) -> Duration {
         self.gpu_execution_time
     }
-}
-
-pub struct MetalCommandBufferCache {
-    command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
-    command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
 }

@@ -217,6 +217,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
         prng: &PRng,
         allocation_pool: Arc<B::AllocationPool>,
+        command_buffer_name: Option<&str>,
     ) -> Result<TrieNode, DFlashTreeError<B>> {
         assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
 
@@ -232,7 +233,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let mut command_buffer = self
             .context
-            .create_command_buffer(Some("speculator propose"), Some(allocation_pool))
+            .create_command_buffer(command_buffer_name, Some(allocation_pool))
             .map_err(DFlashTreeError::Backend)?;
 
         let nodes = match shape.construction_method {

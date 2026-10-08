@@ -13,17 +13,17 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferPending, Context, gpu_types::trie::TrieNode as GpuTrieNode, kernel::ContextRingUpdateKernel,
+        CommandBufferPending, Context,
+        capture_matcher::{CAPTURE_MATCHER, CaptureMatcherSpan},
+        gpu_types::trie::TrieNode as GpuTrieNode,
+        kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
     encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
-    engine::{
-        capture::CaptureSpan,
-        language_model::{
-            LanguageModel,
-            state::LanguageModelState,
-            stream::{LanguageModelStreamError, LanguageModelStreamOptions},
-        },
+    engine::language_model::{
+        LanguageModel,
+        state::LanguageModelState,
+        stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
     trie::TrieNode,
 };
@@ -92,7 +92,7 @@ struct DecodingStatePending<B: Backend> {
     input_trie: TrieNode,
     full_accept: bool,
     pending: Box<[<B::CommandBuffer as CommandBuffer>::Pending]>,
-    capture_span: Option<CaptureSpan<B>>,
+    capture_span: Option<CaptureMatcherSpan>,
     hidden_features: Option<Box<[B::ScratchBuffer]>>,
     output_norm: Option<B::ScratchBuffer>,
     output_tokens: Arc<B::GlobalBuffer>,
@@ -109,7 +109,7 @@ enum DecodingState<B: Backend> {
         num_accepted: usize,
         hidden_features: Option<Box<[B::ScratchBuffer]>>,
         output_norm: Option<(B::ScratchBuffer, usize)>,
-        capture_span: Option<CaptureSpan<B>>,
+        capture_span: Option<CaptureMatcherSpan>,
     },
     Halted,
     Invalid,
@@ -158,14 +158,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             return Err(LanguageModelStreamError::ContextOverflow);
         }
 
-        let capture_span = if let Some(capture_manager) = &model.engine.capture_manager
-            && let Some(capture_request) = capture_manager.maybe_capture_prefill_step()
-        {
-            Some(capture_request.start().map_err(LanguageModelStreamError::Backend)?)
-        } else {
-            None
-        };
-
         let allocation_pool = model.engine.context.create_allocation_pool();
 
         let mut context_ring = if let Some(suffix_repetition_length) =
@@ -198,6 +190,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let mut metrics = TokenStreamMetrics::default();
 
         let decoding_state = if !input.is_empty() {
+            let _capture_span = CAPTURE_MATCHER.capture::<B>(&model.engine.context, "prefill")?;
             model_state.last_output_token.take();
 
             // NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
@@ -217,6 +210,13 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 .context
                 .create_command_buffer(Some("prefill"), Some(allocation_pool.clone()))
                 .map_err(LanguageModelStreamError::Backend)?;
+
+            command_buffer.add_debug_point(&format!(
+                "prefill at context {}, suffix {} ({} batches)",
+                model_state.transformer_state.context_length(),
+                input.len(),
+                number_of_batches
+            ));
 
             let mut output_tokens = None;
             let mut output_norm = None;
@@ -349,7 +349,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 input_trie: TrieNode::new(0, 0, 0.0),
                 full_accept: true,
                 pending,
-                capture_span,
+                capture_span: None,
                 hidden_features: None,
                 output_norm,
                 output_tokens: Arc::new(output_tokens.unwrap()),
@@ -374,9 +374,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
     }
 
     fn generate(&mut self) -> Result<Option<u64>, LanguageModelStreamError<B>> {
-        let (mut prev_output, mut command_buffer): (
+        let (mut prev_output, acceptance): (
             ForwardPassChaining<B>,
-            Option<<B::CommandBuffer as CommandBuffer>::Encoding>,
+            Option<(<B::CommandBuffer as CommandBuffer>::Encoding, Option<CaptureMatcherSpan>)>,
         ) = match replace(&mut self.decoding_state, DecodingState::Invalid) {
             DecodingState::Seeded {
                 seed_token,
@@ -458,7 +458,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         .model
                         .engine
                         .context
-                        .create_command_buffer(Some("decode"), Some(self.allocation_pool.clone()))
+                        .create_command_buffer(
+                            Some(&format!("decode {} (accept)", self.metrics.num_decode_forward_passes - 1)),
+                            Some(self.allocation_pool.clone()),
+                        )
                         .map_err(LanguageModelStreamError::Backend)?;
                     self.model_state
                         .transformer_state
@@ -485,7 +488,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         None
                     };
                     if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
-                        command_buffer.push_debug_group("update repetition penalty ring");
                         let accepted_input_token_ids_const = command_buffer
                             .allocate_constant_from_slice(
                                 &accepted_input_token_ids
@@ -501,23 +503,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             full.len() as u32,
                             &mut command_buffer,
                         );
-                        command_buffer.pop_debug_group();
-                    }
-                    if let Some(capture_span) = capture_span {
-                        command_buffer
-                            .end_encoding()
-                            .submit()
-                            .wait_until_completed()
-                            .map_err(LanguageModelStreamError::Backend)?;
-
-                        drop(capture_span);
-
-                        command_buffer = self
-                            .model
-                            .engine
-                            .context
-                            .create_command_buffer(Some("decode"), Some(self.allocation_pool.clone()))
-                            .map_err(LanguageModelStreamError::Backend)?;
                     }
                     self.model_state.tokens.extend(accepted_output_token_ids);
                     (
@@ -525,7 +510,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             token: output_token_id,
                             output_norm,
                         },
-                        Some(command_buffer),
+                        Some((command_buffer, capture_span)),
                     )
                 }
             },
@@ -548,20 +533,14 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             ));
         }
 
-        let capture_span = if let Some(capture_manager) = &self.model.engine.capture_manager
-            && let Some(capture_request) = capture_manager.maybe_capture_decode_step()
-        {
-            prev_output.resolve(
-                &mut self.model_state.tokens,
-                #[cfg(grammar)]
-                self.options.grammar.as_mut(),
-            )?;
-            Some(capture_request.start().map_err(LanguageModelStreamError::Backend)?)
-        } else {
-            None
-        };
-
         let mut pending = Vec::new();
+        if let Some((accept_command_buffer, _capture_span)) = acceptance {
+            pending.push(accept_command_buffer.end_encoding().submit());
+        }
+
+        let mut capture_span = CAPTURE_MATCHER
+            .capture::<B>(&self.model.engine.context, &format!("decode:{}", self.metrics.num_decode_forward_passes))?;
+
         let (input_trie, chain_copy, full_accept) = if let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
@@ -572,9 +551,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),
             )? {
-            if let Some(accept_command_buffer) = command_buffer.take() {
-                pending.push(accept_command_buffer.end_encoding().submit());
-            }
             let trie = speculator.propose_tree(
                 self.model_state.speculator_state.as_mut().unwrap(),
                 output_norm,
@@ -585,6 +561,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 self.options.grammar.as_mut(),
                 &self.model_state.prng,
                 self.allocation_pool.clone(),
+                Some(&format!("decode {} (speculate)", self.metrics.num_decode_forward_passes)),
             )?;
             prev_output.drop_output_norm();
             (trie, None, false)
@@ -601,18 +578,24 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         };
         let input_flat_trie = input_trie.linearize();
 
-        if let Some(accept_command_buffer) = command_buffer.take() {
-            pending.push(accept_command_buffer.end_encoding().submit());
-        }
-
         self.allocation_pool = self.model.engine.context.create_allocation_pool();
 
         let mut command_buffer = self
             .model
             .engine
             .context
-            .create_command_buffer(Some("decode"), Some(self.allocation_pool.clone()))
+            .create_command_buffer(
+                Some(&format!("decode {} (forward)", self.metrics.num_decode_forward_passes)),
+                Some(self.allocation_pool.clone()),
+            )
             .map_err(LanguageModelStreamError::Backend)?;
+
+        command_buffer.add_debug_point(&format!(
+            "decode round {} at context {} suffix {}",
+            self.metrics.num_decode_forward_passes,
+            context_length,
+            input_flat_trie.len()
+        ));
 
         let scratch_token_ids;
         let mut constant_token_ids = None;
@@ -663,7 +646,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .model
                     .engine
                     .context
-                    .create_command_buffer(Some("decode"), Some(self.allocation_pool.clone()))
+                    .create_command_buffer(
+                        Some(&format!("decode {} (sample and accept)", self.metrics.num_decode_forward_passes)),
+                        Some(self.allocation_pool.clone()),
+                    )
                     .map_err(LanguageModelStreamError::Backend)?;
 
                 let mut bitmask = command_buffer
@@ -761,6 +747,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         drop(constant_token_ids);
         pending.push(command_buffer.end_encoding().submit());
 
+        if full_accept {
+            capture_span.take();
+        }
+
         self.metrics.num_decode_forward_passes += 1;
         self.metrics.num_tokens_proposed += input_flat_trie.len();
         if full_accept {
@@ -822,7 +812,10 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                         .model
                         .engine
                         .context
-                        .create_command_buffer(Some("drop accept"), Some(self.allocation_pool.clone()))
+                        .create_command_buffer(
+                            Some(&format!("decode {} (accept on drop)", self.metrics.num_decode_forward_passes - 1)),
+                            Some(self.allocation_pool.clone()),
+                        )
                         .unwrap();
                     self.model_state.transformer_state.encode_accept(&[0], &mut command_buffer).unwrap();
                     if let Some(speculator) = self.model.speculator.as_ref() {
@@ -853,7 +846,10 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                     .model
                     .engine
                     .context
-                    .create_command_buffer(Some("drop accept"), Some(self.allocation_pool.clone()))
+                    .create_command_buffer(
+                        Some(&format!("decode {} (accept on drop)", self.metrics.num_decode_forward_passes - 1)),
+                        Some(self.allocation_pool.clone()),
+                    )
                     .unwrap();
                 let accepted_token_indicies =
                     full.iter().take(num_accepted + 1).map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
