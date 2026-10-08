@@ -32,7 +32,7 @@ fn rotate_token(
 }
 
 #[kernel(TrellisTransform)]
-#[variants(DIMENSION, 5120, 6144, 17408)]
+#[variants(DIMENSION, 4096, 5120, 6144, 6656, 17408, 19968)]
 pub fn trellis_transform<const DIMENSION: u32>(
     input: *const bf16,
     rht_factors: *const f32,
