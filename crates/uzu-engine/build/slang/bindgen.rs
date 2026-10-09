@@ -310,22 +310,46 @@ pub fn bindgen(
                 (quote! { #ty }, bytes)
             },
             // A `[[HostSlice]]`: the slice is copied into memory of the command buffer once the dispatch is known to
-            // record, and the shader reads it through its address; an empty slice passes address 0 and reads nothing.
-            (KernelArgumentType::Constant(text), Some((path, ty, _, alignment))) => {
-                ensure!(
-                    field.size == 8 && !argument.conditional && text.as_ref() == format!("&[{path}]"),
-                    "{kernel_name}: '{name}' of type '{text}' is not a device address of a canonical '{path}' slice"
-                );
-                // The encoder's upload allocator aligns ranges to at most 64 bytes.
-                ensure!(alignment <= 64, "{kernel_name}: '{path}' needs alignment {alignment} above 64");
+            // record, and the shader reads it through its address; an empty slice passes address 0 and reads nothing. A
+            // `[[HostSlice(N)]]` is the CPU kernel's `&[u32; N]`, never empty, read through a `uint` pointer.
+            (KernelArgumentType::Constant(text), canonical) if canonical.is_some() || text.starts_with("&[u32; ") => {
+                let (argument_type, data) = match canonical {
+                    Some((path, ty, _, alignment)) => {
+                        ensure!(
+                            field.size == 8 && !argument.conditional && text.as_ref() == format!("&[{path}]"),
+                            "{kernel_name}: '{name}' of type '{text}' is not a device address of a canonical '{path}' \
+                             slice"
+                        );
+                        // The encoder's upload allocator aligns ranges to at most 64 bytes.
+                        ensure!(alignment <= 64, "{kernel_name}: '{path}' needs alignment {alignment} above 64");
+                        (quote! { &[#ty] }, quote! { #name })
+                    },
+                    None => {
+                        let length = text.strip_prefix("&[u32; ").and_then(|rest| rest.strip_suffix(']'));
+                        let length = length.and_then(|length| length.parse::<usize>().ok());
+                        let uint = Some(("uint".to_owned(), 4, 4, Vec::new()));
+                        ensure!(
+                            length.is_some_and(|length| length > 0 && text.as_ref() == format!("&[u32; {length}]"))
+                                && !argument.conditional
+                                && variants.iter().all(|(_, other)| {
+                                    other.fields.iter().any(|other| {
+                                        other.name == field.name && other.size == 8 && other.layout == uint
+                                    })
+                                }),
+                            "{kernel_name}: '{name}' of type '{text}' is not a device address of a positive u32 array"
+                        );
+                        let ty: Type = syn::parse_str(text)?;
+                        (quote! { #ty }, quote! { #name.as_slice() })
+                    },
+                };
                 let message = format!("{kernel_name} upload of {name}");
-                packing.push(quote! { let #name = command_buffer.upload(#name).expect(#message); });
+                packing.push(quote! { let #name = command_buffer.upload(#data).expect(#message); });
                 reads.push(quote! { #name.as_ref().map(|(buffer, range)| (buffer, range.clone())) });
                 let address =
                     quote! { #name.as_ref().map_or(0, |(buffer, range)| buffer.device_address() + range.start) };
-                (quote! { &[#ty] }, quote! { #address.to_ne_bytes() })
+                (argument_type, quote! { #address.to_ne_bytes() })
             },
-            (KernelArgumentType::Constant(text), None) => {
+            (KernelArgumentType::Constant(text), _) => {
                 ensure!(field.size == 4 && field.layout.is_none(), "{kernel_name}: '{name}' is not a 4-byte {text}");
                 let ty: Type = syn::parse_str(text)?;
                 let value = word(&name, &ty, &["u32", "i32", "f32", "bool"])?;

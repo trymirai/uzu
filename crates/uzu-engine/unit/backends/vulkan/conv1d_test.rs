@@ -113,7 +113,7 @@ fn pack_spans([channels, suffix, row, s]: [u32; 4]) -> [usize; 3] {
 }
 
 /// Finite eighths, with the specials at every `every`-th element when `every` > 0.
-fn values<T: ArrayElement + Float>(
+pub fn values<T: ArrayElement + Float>(
     len: usize,
     seed: usize,
     every: usize,

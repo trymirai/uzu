@@ -125,7 +125,7 @@ pub fn round32(value: f64) -> f64 {
 
 /// The FP32 values an operation with exact result in `[a, b]` and an error of `units` ULPs may return: the outward
 /// endpoints rounded to FP32, which is monotonic; infinite endpoints stay.
-fn interval(
+pub fn interval(
     a: f64,
     b: f64,
     units: f64,
@@ -184,7 +184,7 @@ fn log_interval(s: f64) -> (f64, f64) {
 const TINY: u32 = 0x3280_0000;
 
 /// Bounds of Vulkan's exp, 3 + 2|argument| ULPs, exact for infinities, and the correctly rounded value.
-fn exp(argument: f64) -> ((f64, f64), f64) {
+pub fn exp(argument: f64) -> ((f64, f64), f64) {
     let value = argument.exp();
     let units = if argument.is_finite() {
         3.0 + 2.0 * argument.abs()

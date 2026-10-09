@@ -31,13 +31,14 @@ mod sigmoid_gate_test;
 mod softmax_test;
 mod specialization_test;
 mod split_inproj_test;
+mod ssd_update_test;
 mod storage_address_test;
 mod tensor_add_bias_test;
 mod tensor_add_scale_test;
 mod typed_constants_test;
 mod validation_logger;
 
-pub use activation_test::{check as activation_check, oracle, round32, silu_oracle, tanh_interval};
+pub use activation_test::{check as activation_check, exp, interval, oracle, round32, silu_oracle, tanh_interval};
 pub use activation_transform_test::{
     assert_quantized, check_bounds, cpu_outputs as transform_cpu_outputs, gpu_transformed, label, quantizations,
     quantized, raw, signs, to, transform_oracle, values,
@@ -45,6 +46,7 @@ pub use activation_transform_test::{
 pub use ancestor_attention_case::{AncestorAttentionCase, HEAD_DIM};
 pub use attention_prepare_case::AttentionPrepareCase;
 pub use attention_single_pass_case::{AttentionSinglePassCase, hashed};
+pub use conv1d_test::values as conv1d_values;
 pub use gemv_test::{exact_witnesses, overflow_and_nonfinite_witnesses, soft_cap_edges, soft_cap_follows_bias};
 pub use input_embedding_lookup_case::InputEmbeddingLookupCase;
 pub use matmul_case::MatmulCase;

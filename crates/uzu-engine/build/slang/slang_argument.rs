@@ -88,8 +88,9 @@ impl<'a> SlangArgument<'a> {
             _ => None,
         };
 
-        // A host slice is a constant like the CPU kernel's `&[T]` of the canonical struct, whose pointer the shader reads.
-        if self.attribute("HostSlice").is_some() {
+        // A host slice is a constant like the CPU kernel's `&[T]` of the canonical struct, whose pointer the shader reads;
+        // with a positive length N, the CPU kernel's `&[u32; N]` behind a `uint` pointer.
+        if let Some(host_slice) = self.attribute("HostSlice") {
             let name = self.name()?;
             if let Some(other) = ["Optional", "Specialize", "Axis", "Groups", "Threads", "PipelineVariants"]
                 .into_iter()
@@ -100,6 +101,16 @@ impl<'a> SlangArgument<'a> {
             ensure!(matches!(ty.kind(), TypeKind::Pointer), "'{name}': HostSlice needs a pointer");
             let (pointee, access) = self.pointer()?;
             ensure!(access == KernelBufferAccess::Read, "'{name}': HostSlice needs a read-only pointer");
+            let length = host_slice.argument_value_int(0).context("HostSlice length")?;
+            ensure!(length >= 0, "'{name}': HostSlice length {length} is negative");
+            // Bindgen checks the linked pointee's layout is the `uint` scalar's.
+            if length > 0 {
+                ensure!(
+                    pointee == "uint",
+                    "'{name}': HostSlice({length}) needs Ptr<uint, Access.Read>, not '{pointee}'"
+                );
+                return Ok(SlangArgumentType::Constant(format!("&[{}; {length}]", self.rust_type("u32")?).into()));
+            }
             ensure!(
                 self.enum_paths.full_path_for(&pointee).is_some() && self.enum_paths.kind_for(&pointee).is_none(),
                 "'{name}': HostSlice points to '{pointee}', which is not a canonical GPU struct"
