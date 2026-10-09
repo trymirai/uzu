@@ -1,5 +1,6 @@
 pub mod batch_topology;
 pub mod classifier;
+pub mod context_ring_update;
 pub mod convolution;
 pub mod decoder;
 pub mod dflash;

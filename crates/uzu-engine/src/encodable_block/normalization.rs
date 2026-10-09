@@ -37,6 +37,7 @@ pub enum NormalizationNewError<B: Backend> {
 }
 
 pub struct Normalization<B: Backend> {
+    name: String,
     epsilon: f32,
     scale_offset: Option<f32>,
     scales: Option<B::GlobalBuffer>,
@@ -50,6 +51,7 @@ pub struct Normalization<B: Backend> {
 
 impl<B: Backend> Normalization<B> {
     pub fn new(
+        name: String,
         element_count: u32,
         hadamard_factors: Option<B::GlobalBuffer>,
         shortcut_mode: ShortcutMode,
@@ -100,6 +102,7 @@ impl<B: Backend> Normalization<B> {
         .map_err(NormalizationNewError::Backend)?;
 
         Ok(Self {
+            name,
             epsilon: config.epsilon,
             scale_offset: config.scale_offset,
             scales,
@@ -120,7 +123,8 @@ impl<B: Backend> Normalization<B> {
         shortcut: Option<impl BufferMut<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("normalization");
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let row_size = size_for_shape(&[self.element_count], self.data_type);
         let row_offset_bytes = row_offset as usize * row_size;
@@ -141,6 +145,7 @@ impl<B: Backend> Normalization<B> {
             command_buffer,
         );
 
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)

@@ -45,6 +45,7 @@ enum EmbeddingTying<B: Backend> {
 }
 
 pub struct Embedding<B: Backend> {
+    readout_name: String,
     tying: EmbeddingTying<B>,
     input_scale: f32,
     data_type: DataType,
@@ -69,6 +70,7 @@ impl<B: Backend> Embedding<B> {
     }
 
     pub fn new(
+        name: String,
         context: &B::Context,
         vocab_size: u32,
         model_dim: u32,
@@ -79,7 +81,14 @@ impl<B: Backend> Embedding<B> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
-                let table = EmbeddingTable::load(context, &embedding_tree, vocab_size, model_dim, data_type)?;
+                let table = EmbeddingTable::load(
+                    format!("{name}/lookup"),
+                    context,
+                    &embedding_tree,
+                    vocab_size,
+                    model_dim,
+                    data_type,
+                )?;
                 if table.as_matrix().is_none() {
                     return Err(EmbeddingError::UnsupportedConfiguration("tied embeddings need a matrix table".into()));
                 }
@@ -100,11 +109,18 @@ impl<B: Backend> Embedding<B> {
             },
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
                 let input_embedding_tree = parameter_tree.subtree("input_embedding");
-                let input_table =
-                    EmbeddingTable::load(context, &input_embedding_tree, vocab_size, model_dim, data_type)?;
+                let input_table = EmbeddingTable::load(
+                    format!("{name}/lookup"),
+                    context,
+                    &input_embedding_tree,
+                    vocab_size,
+                    model_dim,
+                    data_type,
+                )?;
                 let output_embedding_tree = parameter_tree.subtree("output_embedding");
                 let output_embedding_spec = output_embedding_tree.metadata("spec")?;
                 let output = UntiedReadout::load(
+                    format!("{name}/readout/untied"),
                     context,
                     &output_embedding_tree,
                     output_embedding_spec,
@@ -140,6 +156,7 @@ impl<B: Backend> Embedding<B> {
 
         Ok((
             Self {
+                readout_name: format!("{name}/readout"),
                 tying,
                 input_scale,
                 data_type,
@@ -157,8 +174,6 @@ impl<B: Backend> Embedding<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
-        command_buffer.push_debug_group("embedding lookup");
-
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
@@ -175,8 +190,6 @@ impl<B: Backend> Embedding<B> {
         };
         table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
 
-        command_buffer.pop_debug_group();
-
         Ok(output)
     }
 
@@ -189,7 +202,8 @@ impl<B: Backend> Embedding<B> {
         apply_logit_transform: bool,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
-        command_buffer.push_debug_group("embedding readout");
+        command_buffer.push_debug_group(&self.readout_name);
+        command_buffer.sample_start_timestamp(&self.readout_name);
 
         assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
         let mut output_buffer = match &self.tying {
@@ -240,6 +254,7 @@ impl<B: Backend> Embedding<B> {
             );
         }
 
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output_buffer)

@@ -35,6 +35,7 @@ pub enum MlpBlockError<B: Backend> {
 
 impl<B: Backend> dyn Mlp<B> {
     pub fn new(
+        name: String,
         config: &AnyMLPConfig,
         model_dimension: u32,
         hidden_dimension: u32,
@@ -45,6 +46,7 @@ impl<B: Backend> dyn Mlp<B> {
         match config {
             AnyMLPConfig::DenseMLPConfig(dense_config) => {
                 let (up_projection, up_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
+                    format!("{name}/up projection"),
                     model_dimension,
                     [2 * hidden_dimension],
                     dense_config.has_up_biases,
@@ -54,6 +56,7 @@ impl<B: Backend> dyn Mlp<B> {
                 )?;
 
                 let (down_projection, down_input_preparation) = <dyn Linear<B>>::new_for_fused_input(
+                    format!("{name}/down projection"),
                     hidden_dimension,
                     [model_dimension],
                     dense_config.has_down_biases,
@@ -63,6 +66,7 @@ impl<B: Backend> dyn Mlp<B> {
                 )?;
 
                 let gate = MlpGateActMulEncodable::new(
+                    format!("{name}/gate act mul"),
                     context,
                     data_type,
                     dense_config.activation.clone(),
@@ -73,7 +77,7 @@ impl<B: Backend> dyn Mlp<B> {
                 )
                 .map_err(MlpBlockError::BackendError)?;
 
-                Ok((Box::new(DenseMlp::new(up_projection, gate, down_projection)), up_input_hadamard_factors))
+                Ok((Box::new(DenseMlp::new(name, up_projection, gate, down_projection)), up_input_hadamard_factors))
             },
             AnyMLPConfig::MixtureOfExpertsConfig(_) => Err(MlpBlockError::UnsupportedMixtureOfExperts),
         }

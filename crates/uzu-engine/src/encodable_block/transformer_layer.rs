@@ -45,6 +45,7 @@ pub enum TransformerLayerError<B: Backend> {
 }
 
 struct TransformerLayerConv<B: Backend> {
+    pre_convolution_name: String,
     model_dim: u32,
     pre_conv: SeparableCausalConv<B>,
     kernel_projection: Box<dyn Linear<B>>,
@@ -56,6 +57,7 @@ struct TransformerLayerConv<B: Backend> {
 // TODO: saner shortcut
 
 pub struct TransformerLayer<B: Backend> {
+    name: String,
     pub layer_index: u32,
     pub kv_source_layer_index: Option<u32>,
     pub pre_mixer_norm: Option<Normalization<B>>,
@@ -71,6 +73,7 @@ pub struct TransformerLayer<B: Backend> {
 
 impl<B: Backend> TransformerLayerConv<B> {
     fn new(
+        name: String,
         context: &B::Context,
         model_dim: u32,
         config: &TransformerLayerConvConfig,
@@ -79,6 +82,7 @@ impl<B: Backend> TransformerLayerConv<B> {
         input_hadamard_factors: Option<B::GlobalBuffer>,
     ) -> Result<Self, TransformerLayerError<B>> {
         let pre_conv = SeparableCausalConv::new(
+            format!("{name}/pre conv"),
             model_dim,
             config.conv_kernel_size,
             config.conv_group_size,
@@ -88,6 +92,7 @@ impl<B: Backend> TransformerLayerConv<B> {
             context,
         )?;
         let post_conv = SeparableCausalConv::new(
+            format!("{name}/post conv"),
             model_dim,
             config.conv_kernel_size,
             config.conv_group_size,
@@ -100,6 +105,7 @@ impl<B: Backend> TransformerLayerConv<B> {
         let coefficient_count = config.conv_kernel_size * (model_dim / config.conv_group_size);
         let projection_dim = coefficient_count * 2;
         let kernel_projection = <dyn Linear<B>>::new(
+            format!("{name}/kernel projection"),
             model_dim,
             [projection_dim],
             false,
@@ -114,6 +120,7 @@ impl<B: Backend> TransformerLayerConv<B> {
             .map_err(TransformerLayerError::Backend)?;
 
         Ok(Self {
+            pre_convolution_name: format!("{name}/pre convolution"),
             model_dim,
             pre_conv,
             kernel_projection,
@@ -129,6 +136,7 @@ impl<B: Backend> TransformerLayerConv<B> {
         sequence_length: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
+        command_buffer.sample_start_timestamp(&self.pre_convolution_name);
         let mut projection_input = command_buffer.allocate_scratch(input.size())?;
         command_buffer.encode_copy(input, &mut projection_input);
         let coefficients = self.kernel_projection.encode(projection_input, sequence_length, command_buffer)?;
@@ -143,6 +151,7 @@ impl<B: Backend> TransformerLayerConv<B> {
         if let Some((transform, factors)) = &self.input_rht {
             transform.encode_fp_in_place(&mut output, factors, None, sequence_length, self.model_dim, command_buffer);
         }
+        command_buffer.sample_end_timestamp();
         Ok((output, coefficients))
     }
 
@@ -166,6 +175,7 @@ impl<B: Backend> TransformerLayerConv<B> {
 
 impl<B: Backend> TransformerLayer<B> {
     pub fn new(
+        name: String,
         context: &B::Context,
         model_dim: u32,
         hidden_dim: u32,
@@ -201,6 +211,7 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         let (mixer, mixer_hadamard_factors) = <dyn Mixer<B>>::new(
+            &name,
             model_dim,
             data_type,
             layer_config.rope_config.as_ref(),
@@ -212,6 +223,7 @@ impl<B: Backend> TransformerLayer<B> {
         let (mixer_conv, mixer_hadamard_factors) = match &layer_config.mixer_conv_config {
             Some(config) => (
                 Some(TransformerLayerConv::new(
+                    format!("{name}/mixer conv"),
                     context,
                     model_dim,
                     config,
@@ -226,6 +238,7 @@ impl<B: Backend> TransformerLayer<B> {
 
         let pre_mixer_norm = if let Some(pre_mixer_norm_config) = &layer_config.pre_mixer_norm_config {
             Some(Normalization::new(
+                format!("{name}/pre mixer norm"),
                 model_dim,
                 mixer_hadamard_factors,
                 if layer_index > 0 {
@@ -248,6 +261,7 @@ impl<B: Backend> TransformerLayer<B> {
 
         let post_mixer_norm = if let Some(norm_config) = &layer_config.post_mixer_norm_config {
             Some(Normalization::new(
+                format!("{name}/post mixer norm"),
                 model_dim,
                 None,
                 ShortcutMode::None,
@@ -262,6 +276,7 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         let (mlp, mlp_input_hadamard_factors) = <dyn Mlp<B>>::new(
+            format!("{name}/mlp"),
             &layer_config.mlp_config,
             model_dim,
             layer_config.hidden_dim.unwrap_or(hidden_dim),
@@ -273,6 +288,7 @@ impl<B: Backend> TransformerLayer<B> {
         let (mlp_conv, mlp_input_hadamard_factors) = match &layer_config.mlp_conv_config {
             Some(config) => (
                 Some(TransformerLayerConv::new(
+                    format!("{name}/mlp conv"),
                     context,
                     model_dim,
                     config,
@@ -286,6 +302,7 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         let pre_mlp_norm = Normalization::new(
+            format!("{name}/pre mlp norm"),
             model_dim,
             mlp_input_hadamard_factors,
             ShortcutMode::Add,
@@ -298,6 +315,7 @@ impl<B: Backend> TransformerLayer<B> {
 
         let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
             Some(Normalization::new(
+                format!("{name}/post mlp norm"),
                 model_dim,
                 None,
                 ShortcutMode::None,
@@ -314,6 +332,7 @@ impl<B: Backend> TransformerLayer<B> {
         let ple_projection = layer_config.ple_config.as_ref().map(|ple_config| {
             let ple_loader = parameter_tree.subtree("ple");
             PerLayerEmbeddingProjection::new(
+                format!("{name}/per layer embedding projection"),
                 context,
                 ple_config,
                 model_dim,
@@ -326,6 +345,7 @@ impl<B: Backend> TransformerLayer<B> {
         });
 
         Ok(Self {
+            name,
             layer_index,
             kv_source_layer_index: layer_config.kv_source_layer_index,
             pre_mixer_norm,
@@ -350,7 +370,8 @@ impl<B: Backend> TransformerLayer<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&format!("transformer layer {}", self.layer_index));
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let mut hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
             pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)?
@@ -418,6 +439,7 @@ impl<B: Backend> TransformerLayer<B> {
             command_buffer.encode_fill(&mut hidden, 0);
         }
 
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(hidden)

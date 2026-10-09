@@ -16,9 +16,11 @@ use rangemap::RangeSet;
 use crate::backends::{
     common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-        CommandBufferExecutable, CommandBufferPending, Context, allocator::bump::BumpAllocator,
+        CommandBufferExecutable, CommandBufferPending, Context, TimestampSpan, allocator::bump::BumpAllocator,
     },
-    metal::{Metal, MetalContext, buffer::MetalBufferExt, error::MetalError},
+    metal::{
+        Metal, MetalContext, buffer::MetalBufferExt, error::MetalError, timestamp_recorder::MetalTimestampRecorder,
+    },
 };
 
 pub struct MetalCommandBuffer;
@@ -47,6 +49,7 @@ pub struct MetalCommandBufferEncoding {
     constant_allocator: Option<BumpAllocator<<Metal as Backend>::GlobalBuffer>>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     pub(super) context: Arc<MetalContext>,
+    timestamps: Option<MetalTimestampRecorder>,
 }
 
 impl MetalCommandBufferEncoding {
@@ -101,6 +104,7 @@ impl MetalCommandBufferEncoding {
             constant_allocator: Some(constant_allocator),
             allocation_pool,
             context,
+            timestamps: None,
         })
     }
 
@@ -213,6 +217,26 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         self.compute_encoder.pop_debug_group();
     }
 
+    fn enable_timestamps(&mut self) {
+        assert!(self.timestamps.is_none(), "timestamps already enabled");
+        self.timestamps = Some(MetalTimestampRecorder::new(self.context.device.clone()));
+    }
+
+    fn sample_start_timestamp(
+        &mut self,
+        name: &str,
+    ) {
+        if let Some(timestamps) = &mut self.timestamps {
+            timestamps.start(name.to_owned(), &self.compute_encoder);
+        }
+    }
+
+    fn sample_end_timestamp(&mut self) {
+        if let Some(timestamps) = &mut self.timestamps {
+            timestamps.end(&self.compute_encoder);
+        }
+    }
+
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
         let constant_allocator = self.constant_allocator.take().unwrap();
         assert!(constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
@@ -223,6 +247,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
             constant_allocator,
             allocation_pool: self.allocation_pool.clone(),
             context: self.context.clone(),
+            timestamps: self.timestamps.take(),
         }
     }
 }
@@ -245,6 +270,7 @@ pub struct MetalCommandBufferExecutable {
     constant_allocator: BumpAllocator<<Metal as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     context: Arc<MetalContext>,
+    timestamps: Option<MetalTimestampRecorder>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
@@ -266,14 +292,18 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         let command_allocator = self.command_allocator.clone();
         let command_buffer = self.command_buffer.clone();
         let context_clone = self.context.clone();
+        let timestamps = self.timestamps;
 
         let constant_allocator = self.constant_allocator;
         let allocation_pool = self.allocation_pool.clone();
         let feedback_handler = move |feedback: &ProtocolObject<dyn MTL4CommitFeedback>| {
             let message = if let Some(error) = feedback.error() {
-                Err(error.to_string())
+                Err(MetalError::CommandBufferExecution(error.to_string()))
             } else {
-                Ok(Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()))
+                timestamps
+                    .as_ref()
+                    .map_or_else(|| Ok(Box::default()), MetalTimestampRecorder::resolve)
+                    .map(|spans| (Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()), spans))
             };
             let _ = sender.send(message);
             context_clone.command_buffer_cache.lock().push(MetalCommandBufferCache {
@@ -296,19 +326,17 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 
 pub struct MetalCommandBufferPending {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
-    receiver: mpsc::Receiver<Result<Duration, String>>,
+    receiver: mpsc::Receiver<Result<(Duration, Box<[TimestampSpan]>), MetalError>>,
 }
 
 impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
 
     fn wait_until_completed(self) -> Result<MetalCommandBufferCompleted, MetalError> {
+        let (gpu_execution_time, timestamps) = self.receiver.recv().map_err(MetalError::CommandBufferWait)??;
         Ok(MetalCommandBufferCompleted {
-            gpu_execution_time: self
-                .receiver
-                .recv()
-                .map_err(MetalError::CommandBufferWait)?
-                .map_err(MetalError::CommandBufferExecution)?,
+            gpu_execution_time,
+            timestamps,
             _allocation_pool: self.allocation_pool,
         })
     }
@@ -316,6 +344,7 @@ impl CommandBufferPending for MetalCommandBufferPending {
 
 pub struct MetalCommandBufferCompleted {
     gpu_execution_time: Duration,
+    timestamps: Box<[TimestampSpan]>,
     _allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
 }
 
@@ -324,6 +353,10 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
 
     fn gpu_execution_time(&self) -> Duration {
         self.gpu_execution_time
+    }
+
+    fn timestamps(&self) -> &[TimestampSpan] {
+        &self.timestamps
     }
 }
 
