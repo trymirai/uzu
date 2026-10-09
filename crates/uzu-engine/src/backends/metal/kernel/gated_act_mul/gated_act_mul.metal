@@ -12,6 +12,7 @@ using namespace uzu::gated_act_mul;
 
 #define NUM_SIMDGROUPS 4
 #define NUM_THREADS NUM_SIMDGROUPS* METAL_SIMD_SIZE
+#define TILE_ELEMENTS NUM_THREADS* HADAMARD_VECTOR_SIZE
 
 #define QUANTIZED (ops == GatedActMulOp::Quantize || ops == GatedActMulOp::QuantizeWithGroupSums)
 #define EMITS_GROUP_SUMS (ops == GatedActMulOp::QuantizeWithGroupSums)
@@ -45,120 +46,94 @@ PUBLIC KERNEL(GatedActMul) (
     const bool custom_activation_alpha SPECIALIZE,
     const bool clip_gate SPECIALIZE,
     const bool clip_value SPECIALIZE,
-    threadgroup float partial_max OPTIONAL(QUANTIZED && activation_scale_group_size > METAL_SIMD_SIZE)[NUM_SIMDGROUPS],
-    threadgroup int partial_sums OPTIONAL(EMITS_GROUP_SUMS && sum_group_size > METAL_SIMD_SIZE)[NUM_SIMDGROUPS],
-    uint activation_tile_index GROUPS(gated_dim.div_ceil(NUM_THREADS)),
+    uint activation_tile_index GROUPS(gated_dim.div_ceil(TILE_ELEMENTS)),
     uint batch_idx GROUPS(batch_dim),
     uint thread_index THREADS(NUM_THREADS),
     const ThreadContext thread_context
 ) {
-  const uint gated_idx = activation_tile_index * ACTIVATION_QUANT_TILE_SIZE + thread_index;
-  const uint simdgroup_offset =
-      activation_tile_index * ACTIVATION_QUANT_TILE_SIZE + (thread_index / METAL_SIMD_SIZE) * METAL_SIMD_SIZE;
-  const bool element_in_bounds = gated_idx < gated_dim;
-  const bool simdgroup_in_bounds = simdgroup_offset + METAL_SIMD_SIZE <= gated_dim;
-  T value = static_cast<T>(0);
-  T gate = static_cast<T>(0);
-  if (element_in_bounds) {
+  const uint first_index = activation_tile_index * TILE_ELEMENTS + thread_index * HADAMARD_VECTOR_SIZE;
+  const ushort lane_index = thread_context.simd_lane_id;
+  const uint valid_count =
+      first_index < gated_dim ? min(static_cast<uint>(HADAMARD_VECTOR_SIZE), gated_dim - first_index) : 0u;
+  const bool use_vector_io = valid_count == HADAMARD_VECTOR_SIZE;
+
+  vec<T, HADAMARD_VECTOR_SIZE> value = static_cast<T>(0);
+  vec<T, HADAMARD_VECTOR_SIZE> gate = static_cast<T>(0);
+  {
+    const device T* value_row;
+    const device T* gate_row;
     if (interleaved) {
-      const uint base = batch_idx * (2 * gated_dim);
-      value = act_operand[base + gated_idx];
-      gate = act_operand[base + gated_dim + gated_idx];
+      value_row = act_operand + batch_idx * (2 * gated_dim);
+      gate_row = value_row + gated_dim;
     } else {
-      value = value_operand[batch_idx * value_row_stride + value_offset + gated_idx];
-      gate = act_operand[batch_idx * gated_dim + gated_idx];
+      value_row = value_operand + batch_idx * value_row_stride + value_offset;
+      gate_row = act_operand + batch_idx * gated_dim;
+    }
+    if (use_vector_io) {
+      value = load_hadamard_vector(value_row + first_index);
+      gate = load_hadamard_vector(gate_row + first_index);
+    } else {
+      for (uint index = 0; index < valid_count; ++index) {
+        value[index] = value_row[first_index + index];
+        gate[index] = gate_row[first_index + index];
+      }
     }
   }
   if (clip_gate) {
-    gate = static_cast<T>(clamp(float(gate), gate_clip_min, gate_clip_max));
+    gate = vec<T, HADAMARD_VECTOR_SIZE>(clamp(float4(gate), gate_clip_min, gate_clip_max));
   }
   if (clip_value) {
-    value = static_cast<T>(clamp(float(value), value_clip_min, value_clip_max));
+    value = vec<T, HADAMARD_VECTOR_SIZE>(clamp(float4(value), value_clip_min, value_clip_max));
   }
-  if (!QUANTIZED) {
-    T result = static_cast<T>(0);
-    if (element_in_bounds && (!use_hadamard || simdgroup_in_bounds)) {
-      float transformed;
+
+  const bool hadamard = QUANTIZED || use_hadamard;
+  const bool block_in_bounds =
+      (first_index / HADAMARD_TRANSFORM_BLOCK_SIZE + 1) * HADAMARD_TRANSFORM_BLOCK_SIZE <= gated_dim;
+  float4 results = 0.0f;
+  METAL_PRAGMA_UNROLL
+  for (uint index = 0; index < HADAMARD_VECTOR_SIZE; ++index) {
+    if (index < valid_count && (!hadamard || block_in_bounds)) {
       if (custom_activation_alpha && act_type == ActivationType::SILU) {
-        const T activated = activate_silu_alpha(gate, activation_alpha);
-        const T gated = value * activated;
-        transformed = static_cast<float>(gated);
+        const T activated = activate_silu_alpha(gate[index], activation_alpha);
+        const T gated = value[index] * activated;
+        results[index] = static_cast<float>(gated);
       } else {
-        transformed = gated_act_mul(value, gate, act_type);
+        results[index] = gated_act_mul(value[index], gate[index], act_type);
       }
-      if (use_hadamard) {
-        transformed = simdgroup_input_random_hadamard_transform(
-            static_cast<ushort>(gated_idx % METAL_SIMD_SIZE),
-            transformed,
-            hadamard_factors[gated_idx]
-        );
-      }
-      result = static_cast<T>(transformed);
     }
-    if (element_in_bounds) {
-      fp_out[batch_idx * gated_dim + gated_idx] = result;
+  }
+  if (hadamard) {
+    if (block_in_bounds) {
+      results *= float4(load_hadamard_vector(hadamard_factors + first_index));
+    }
+    results = simdgroup_hadamard_transform_vector(lane_index, results);
+  }
+
+  if (!QUANTIZED) {
+    device T* out_row = fp_out + batch_idx * gated_dim;
+    if (use_vector_io) {
+      store_hadamard_vector(out_row + first_index, results);
+    } else {
+      for (uint index = 0; index < valid_count; ++index) {
+        out_row[first_index + index] = static_cast<T>(results[index]);
+      }
     }
     return;
   }
 
-  float result = 0.0f;
-  if (simdgroup_in_bounds) {
-    if (custom_activation_alpha && act_type == ActivationType::SILU) {
-      const T activated = activate_silu_alpha(gate, activation_alpha);
-      const T gated = value * activated;
-      result = static_cast<float>(gated);
-    } else {
-      result = gated_act_mul(value, gate, act_type);
-    }
-    result = simdgroup_input_random_hadamard_transform(
-        static_cast<ushort>(gated_idx % METAL_SIMD_SIZE),
-        result,
-        hadamard_factors[gated_idx]
-    );
-  }
-
-  const float maximum = reduce_activation_quantization_group(
-      fabs(result),
-      activation_scale_group_size,
-      partial_max,
-      thread_context,
-      [](float x) { return simd_max(x); },
-      [](float x, float y) { return max(x, y); }
-  );
-  const float scale = isfinite(maximum) && maximum > 0.0f ? maximum / ACTIVATION_QUANT_INT8_MAX : 1.0f;
-  const int8_t code = quantize_activation_int8(result, scale);
-  if (element_in_bounds) {
-    const uint output_gated_index = grouped_by_weight_nibble ? nibble_grouped_index(gated_idx) : gated_idx;
-    q_out[batch_idx * gated_dim + output_gated_index] = code;
-  }
-
-  write_activation_quantization_group(
-      scales_out,
-      scale,
-      activation_scale_group_size,
+  store_quantized_activation_vector(
+      results,
+      lane_index,
+      valid_count > 0,
+      first_index,
       gated_dim,
-      activation_tile_index,
       batch_idx,
-      thread_context
+      activation_scale_group_size,
+      grouped_by_weight_nibble,
+      EMITS_GROUP_SUMS,
+      sum_group_size,
+      q_out,
+      scales_out,
+      group_sums_out
   );
-
-  if (EMITS_GROUP_SUMS) {
-    const int sum = reduce_activation_quantization_group(
-        static_cast<int>(code),
-        sum_group_size,
-        partial_sums,
-        thread_context,
-        [](int x) { return simd_sum(x); },
-        [](int x, int y) { return x + y; }
-    );
-    write_activation_quantization_group(
-        group_sums_out,
-        sum,
-        sum_group_size,
-        gated_dim,
-        activation_tile_index,
-        batch_idx,
-        thread_context
-    );
-  }
 }
