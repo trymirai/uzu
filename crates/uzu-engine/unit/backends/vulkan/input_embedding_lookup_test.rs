@@ -126,8 +126,9 @@ fn special<T: Float>(
 }
 
 /// NaN, infinities, signed zeros, subnormals and the largest finite values in every table, including subnormal
-/// products scaled back to normal results, exact cancellations to +0 and overflow to infinity; both transforms of
-/// them; and invalid tokens over NaN tables with all-negative factors, which still give +0.
+/// products scaled back to normal results, exact cancellations to +0 and overflow to infinity; every special and signed
+/// extreme scale of every row times code bytes 0, 1, 127, 128 and 255 of each mode, with -0 biases keeping product zero
+/// signs; both transforms of them; and invalid tokens over NaN tables with all-negative factors, which still give +0.
 fn special_values_match_oracle<T: ArrayElement + Float + NoUninit + Debug>() {
     let fixture = KernelFixture::new();
     let specials = [
@@ -145,6 +146,7 @@ fn special_values_match_oracle<T: ArrayElement + Float + NoUninit + Debug>() {
         0x0c00_0000,
         0x1000_0000,
     ];
+    let code_specials = [&specials[..], &[0x8080_0000, 0xff7f_0000, 0x7f7f_ffff, 0xff7f_ffff]].concat();
     let mut cases = Vec::new();
     for (dim, hadamard) in [(64, false), (64, true)] {
         let with = |case: Case<T>| {
@@ -172,6 +174,14 @@ fn special_values_match_oracle<T: ArrayElement + Float + NoUninit + Debug>() {
                 input_scale: 2e30,
                 ..quantized
             });
+        }
+        for mode in MODES {
+            let mut codes = with(Case::new(Quantized, Some((mode, ScaleBias, 16)), (VOCAB, dim), &TOKENS, 2));
+            codes.token_ids = (0..VOCAB).collect();
+            codes.values = [0, 1, 127, 128, 255].into_iter().cycle().take(codes.values.len()).collect();
+            codes.scales = Some(special(&code_specials, (VOCAB * dim / 16) as usize));
+            codes.biases = codes.biases.map(|biases| vec![T::neg_zero(); biases.len()]);
+            cases.push(codes);
         }
         let mut d4s4 = with(Case::new(D4S4, None, (VOCAB, dim), &TOKENS, 3));
         d4s4.scales = Some(special(&specials, VOCAB as usize));

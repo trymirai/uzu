@@ -75,13 +75,13 @@ func InputEmbeddingLookup<T: IModelFloat>(
       let scale_index = token * groups + group;
       let scale = scales[scale_index].toFloat();
       let row = token * (u4 ? model_dim / 2 : model_dim);
-      float code;
+      int code;
       if (u4) {
-        code = float(read_nibble(values, 2 * row + column));
+        code = int(read_nibble(values, 2 * row + column));
       } else if (quantization_mode == QuantizationMode.I8) {
-        code = float(int(int8_t(values[row + column])));
+        code = int(int8_t(values[row + column]));
       } else {
-        code = float(uint(values[row + column]));
+        code = int(uint(values[row + column]));
       }
       let scale_bias = quantization_method == QuantizationMethod.ScaleBias;
       float correction;

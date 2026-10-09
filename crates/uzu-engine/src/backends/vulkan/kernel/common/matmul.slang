@@ -99,8 +99,8 @@ public struct Int8Activations : IMatmulOperand {
   public bool grouped_by_weight_nibble;
 
   public float value(uint row, uint inner, uint base) {
-    let code = float(codes[base + int8_code_index(inner, grouped_by_weight_nibble)]);
-    return exact_product(code, scales[(base + inner) / group_size]);
+    let code = int(codes[base + int8_code_index(inner, grouped_by_weight_nibble)]);
+    return code_product(scales[(base + inner) / group_size], code);
   }
 }
 
@@ -141,7 +141,7 @@ public struct QuantizedWeights<B : IModelFloat> : IMatmulOperand {
     } else {
       correction = u4 ? 8.0 : 128.0;
     }
-    return quantized_value(scale, float(code), scale_bias, correction);
+    return quantized_value(scale, int(code), scale_bias, correction);
   }
 }
 
