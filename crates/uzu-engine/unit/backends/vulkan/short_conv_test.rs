@@ -51,7 +51,7 @@ fn sentinel<T: Float>() -> T {
     T::from(-7.0).unwrap()
 }
 
-fn arg(guarded: &(Arc<VkBuffer>, Range<u64>)) -> (&Arc<VkBuffer>, Range<u64>) {
+pub fn arg(guarded: &(Arc<VkBuffer>, Range<u64>)) -> (&Arc<VkBuffer>, Range<u64>) {
     (&guarded.0, guarded.1.clone())
 }
 
