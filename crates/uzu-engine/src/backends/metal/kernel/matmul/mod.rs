@@ -8,7 +8,6 @@ pub use self::gemm::GemmKernel;
 use self::{
     gemm::{GemmPlan, GemmProblem},
     gemv::{GemvKernel, GemvSpecialization},
-    qmv::QmvRoute,
 };
 use crate::{
     backends::{
@@ -38,6 +37,7 @@ pub struct MatmulMetalKernel {
     output_data_type: DataType,
 }
 
+#[derive(Debug)]
 enum MatmulDispatch {
     Gemv(GemvSpecialization),
     Gemm(GemmPlan),
@@ -83,8 +83,21 @@ impl MatmulOutputWork {
     }
 }
 
-fn supports_integer_right_operand(shape: &MatmulShape) -> bool {
-    matches!((shape.b_bits, shape.signed_codes), (Some(4), _) | (Some(8), true))
+fn int8_activation_quantization(shape: &MatmulShape) -> Option<ActivationQuantization> {
+    let emit_group_sums = match shape.b_prologue {
+        GemmBPrologueKind::FullPrecision => return None,
+        GemmBPrologueKind::ScaleSymmetricDequant => false,
+        GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant => true,
+    };
+    let weight_group_size = shape.b_group_size?;
+    let eligible = matches!((shape.b_bits, shape.signed_codes), (Some(4), _) | (Some(8), true))
+        && shape.params_layout == Some(QuantParamsLayout::GroupOutput)
+        && shape.b_transpose
+        && shape.b_leading_dimension.is_none()
+        && shape.k.is_multiple_of(ACTIVATION_SCALE_GROUP_SIZE)
+        && shape.k.is_multiple_of(weight_group_size);
+    let code_layout = shape.b_bits.and_then(Int8CodeLayout::for_right_bits).filter(|_| eligible)?;
+    ActivationQuantization::new(ACTIVATION_SCALE_GROUP_SIZE, weight_group_size, emit_group_sums, code_layout)
 }
 
 impl MatmulMetalKernel {
@@ -134,14 +147,11 @@ impl MatmulMetalKernel {
         if shape.b_is_trellis {
             return MatmulDispatch::Gemm(problem.select_plan());
         }
-        if let Some(route) = qmv::route(device_name, apple_gpu_family, supports_mxu, shape, all_bf16) {
-            return match route {
-                QmvRoute::Tuned(tile) | QmvRoute::MainGemv(tile) => MatmulDispatch::Gemv(
-                    GemvSpecialization::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile)
-                        .expect("typed QMV route must contain a legal GEMV tile"),
-                ),
-                QmvRoute::MainGemm(plan) => MatmulDispatch::Gemm(plan),
-            };
+        if let Some(tile) = qmv::route(device_name, apple_gpu_family, shape, all_bf16) {
+            return MatmulDispatch::Gemv(
+                GemvSpecialization::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile)
+                    .expect("typed QMV route must contain a legal GEMV tile"),
+            );
         }
         let gemv = GemvSpecialization::select_shape(
             shape,
@@ -215,31 +225,14 @@ impl MatmulKernel for MatmulMetalKernel {
         shape: &MatmulShape,
         context: &MetalContext,
     ) -> Option<ActivationQuantization> {
-        let weight_group_size = shape.b_group_size?;
-        let emit_group_sums = match shape.b_prologue {
-            GemmBPrologueKind::ScaleSymmetricDequant => false,
-            GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant => true,
-            GemmBPrologueKind::FullPrecision => return None,
-        };
-        let code_layout = shape.b_bits.and_then(Int8CodeLayout::for_right_bits)?;
-        let quantization =
-            ActivationQuantization::new(ACTIVATION_SCALE_GROUP_SIZE, weight_group_size, emit_group_sums, code_layout)?;
         if !context.supports_mxu
             || self.input_data_type != DataType::BF16
             || self.output_data_type != DataType::BF16
             || shape.a_full_precision
-            || !shape.is_quant()
-            || shape.params_layout != Some(QuantParamsLayout::GroupOutput)
-            || !supports_integer_right_operand(shape)
-            || !shape.b_transpose
-            || shape.b_leading_dimension.is_some()
-            || !shape.k.is_multiple_of(ACTIVATION_SCALE_GROUP_SIZE)
-            || !shape.k.is_multiple_of(weight_group_size)
         {
             return None;
         }
-
-        Some(quantization)
+        int8_activation_quantization(shape)
     }
 
     fn select_activation_format(
@@ -247,8 +240,7 @@ impl MatmulKernel for MatmulMetalKernel {
         bf16_shape: &MatmulShape,
         context: &MetalContext,
     ) -> ActivationFormat {
-        if bf16_shape.params_layout != Some(QuantParamsLayout::GroupOutput)
-            || !supports_integer_right_operand(bf16_shape)
+        if int8_activation_quantization(bf16_shape).is_none()
             || matches!(self.select_dispatch(bf16_shape, context), MatmulDispatch::Gemv(_))
         {
             return ActivationFormat::Bf16;

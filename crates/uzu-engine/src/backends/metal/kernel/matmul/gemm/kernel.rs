@@ -1,7 +1,7 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use super::{
-    super::{MatmulOutputWork, supports_integer_right_operand},
+    super::{MatmulOutputWork, int8_activation_quantization},
     GemmEngine, GemmPlan,
     selection::{GemmProblem, outer_block_k},
     specialization::GemmSpecialization,
@@ -13,11 +13,11 @@ use crate::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding,
             gpu_types::{
                 GemmParams,
-                gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform},
+                gemm::{GemmAPrologueKind, GemmAlignment, GemmDTransform},
             },
             kernel::matmul::{
                 Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulOutput, MatmulShape,
-                QuantParamsLayout, QuantParamsStrides, QuantizedB,
+                QuantParamsStrides, QuantizedB,
             },
         },
         metal::{
@@ -484,40 +484,16 @@ fn validate_int8_left_operand(
     code_layout: Int8CodeLayout,
     has_group_sums: bool,
 ) -> Result<(), MetalError> {
-    if shape.b_bits.and_then(Int8CodeLayout::for_right_bits) != Some(code_layout) {
-        return Err(MatmulError::IncompatibleA {
-            path: "Gemm",
-            reason: "left code layout is incompatible with the right operand",
-        }
-        .into());
-    }
-    let needs_group_sums =
-        matches!(shape.b_prologue, GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant);
-    if needs_group_sums && !has_group_sums {
-        return Err(MatmulError::IncompatibleA {
-            path: "Gemm",
-            reason: "quantized correction requires left group sums",
-        }
-        .into());
-    }
     let compatible = use_mxu
-        && supports_integer_right_operand(&shape)
-        && shape.params_layout == Some(QuantParamsLayout::GroupOutput)
-        && matches!(
-            shape.b_prologue,
-            GemmBPrologueKind::ScaleSymmetricDequant
-                | GemmBPrologueKind::ScaleBiasDequant
-                | GemmBPrologueKind::ScaleZeroPointDequant
-        )
-        && matches!(a_group_size, 32 | 64 | 128)
-        && shape.k.is_multiple_of(a_group_size)
-        && shape
-            .b_group_size
-            .is_some_and(|gs| matches!(gs, 32 | 64 | 128) && shape.k.is_multiple_of(gs) && a_group_size >= gs);
+        && int8_activation_quantization(&shape).is_some_and(|expected| {
+            expected.scale_group_size() == a_group_size
+                && expected.code_layout() == code_layout
+                && (has_group_sums || expected.sum_group_size().is_none())
+        });
     if !compatible {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
-            reason: "symmetric int8 left operands require group-major metadata and supported 32/64/128 groups",
+            reason: "int8 activations do not match the quantization these weights accept",
         }
         .into());
     }

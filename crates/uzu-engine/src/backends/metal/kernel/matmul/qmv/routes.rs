@@ -2,17 +2,8 @@
 // Tuned on M1, M2, M2 Pro, M3 Max, M4, M4 Pro, M5 Max.
 use metal::MTLGPUFamily;
 
-use super::{
-    super::{
-        gemm::{GemmEngine, GemmPlan},
-        gemv::GemvTile,
-    },
-    QmvRoute,
-};
-use crate::backends::common::{
-    gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
-    kernel::matmul::MatmulShape,
-};
+use super::super::gemv::GemvTile;
+use crate::backends::common::{gpu_types::gemm::GemmBPrologueKind, kernel::matmul::MatmulShape};
 
 const DOWN: u8 = 1 << 0;
 const GATE: u8 = 1 << 1;
@@ -29,7 +20,7 @@ struct RouteRow {
     group: u32,
     m: u32,
     shapes: u8,
-    route: QmvRoute,
+    tile: GemvTile,
 }
 
 const fn shape(
@@ -48,11 +39,9 @@ const fn shape(
 }
 
 #[rustfmt::skip]
-macro_rules! tuned { ($input:literal, $output:literal, $lanes:literal, $group_lanes:literal, $simdgroups:literal) => { QmvRoute::Tuned(GemvTile::quantized_output_tile($simdgroups, $output, $input, $lanes, $group_lanes)) }; }
+macro_rules! tuned { ($input:literal, $output:literal, $lanes:literal, $group_lanes:literal, $simdgroups:literal) => { GemvTile::quantized_output_tile($simdgroups, $output, $input, $lanes, $group_lanes) }; }
 #[rustfmt::skip]
-macro_rules! main_gemv { ($input:literal, $results_per_simdgroup:literal, $lanes:literal, $group_lanes:literal, $simdgroups:literal) => { QmvRoute::MainGemv(GemvTile::quantized($simdgroups, $results_per_simdgroup, $input, $lanes, $group_lanes)) }; }
-#[rustfmt::skip]
-macro_rules! main_gemm { ($engine:ident, $tiling:ident, $split:literal) => { QmvRoute::MainGemm(GemmPlan { engine: GemmEngine::$engine, tiling: GemmTiling::$tiling, split_k: $split }) }; }
+macro_rules! main_gemv { ($input:literal, $results_per_simdgroup:literal, $lanes:literal, $group_lanes:literal, $simdgroups:literal) => { GemvTile::quantized($simdgroups, $results_per_simdgroup, $input, $lanes, $group_lanes) }; }
 #[rustfmt::skip]
 macro_rules! qmv_format { (w4_zp_g64) => { (4, 64) }; (w8_sym_g64) => { (8, 64) }; }
 #[rustfmt::skip]
@@ -60,7 +49,7 @@ macro_rules! measured_device_name { (M1) => { "Apple M1" }; (M2) => { "Apple M2"
 #[rustfmt::skip]
 macro_rules! measured_apple_gpu_family { (M1) => { MTLGPUFamily::Apple7 }; (M2) => { MTLGPUFamily::Apple8 }; (M2Pro) => { MTLGPUFamily::Apple8 }; (M3Max) => { MTLGPUFamily::Apple9 }; (M4) => { MTLGPUFamily::Apple9 }; (M4Pro) => { MTLGPUFamily::Apple9 }; (M5Max) => { MTLGPUFamily::Apple10 }; }
 #[rustfmt::skip]
-macro_rules! row { ($device:ident, $format:ident, $m:literal, $shapes:expr, $route:expr) => { RouteRow { device_name: measured_device_name!($device), apple_gpu_family: measured_apple_gpu_family!($device), bits: qmv_format!($format).0, group: qmv_format!($format).1, m: $m, shapes: $shapes, route: $route } }; }
+macro_rules! row { ($device:ident, $format:ident, $m:literal, $shapes:expr, $tile:expr) => { RouteRow { device_name: measured_device_name!($device), apple_gpu_family: measured_apple_gpu_family!($device), bits: qmv_format!($format).0, group: qmv_format!($format).1, m: $m, shapes: $shapes, tile: $tile } }; }
 
 #[rustfmt::skip]
 const ROWS: &[RouteRow] = &[
@@ -70,33 +59,21 @@ const ROWS: &[RouteRow] = &[
     row!(M1, w4_zp_g64, 5, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 16, 1, 4)),
     row!(M1, w4_zp_g64, 6, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 16, 1, 4)),
     row!(M1, w4_zp_g64, 7, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
-    row!(M1, w8_sym_g64, 2, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 8, 8)),
-    row!(M1, w8_sym_g64, 3, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 8, 8)),
     row!(M1, w8_sym_g64, 4, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(4, 16, 8, 1, 2)),
     row!(M1, w8_sym_g64, 5, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
     row!(M1, w8_sym_g64, 6, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 8, 1, 2)),
     row!(M1, w8_sym_g64, 7, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
     row!(M2, w4_zp_g64, 2, PROJECTION_IN, tuned!(2, 8, 8, 1, 2)),
-    row!(M2, w4_zp_g64, 2, DOWN | GATE | GATE_UP | PROJECTION_OUT | READOUT, tuned!(2, 16, 8, 1, 2)),
     row!(M2, w4_zp_g64, 3, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(3, 16, 8, 1, 2)),
     row!(M2, w4_zp_g64, 4, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(4, 16, 8, 1, 2)),
     row!(M2, w4_zp_g64, 5, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
-    row!(M2, w4_zp_g64, 6, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 8, 1, 2)),
-    row!(M2, w4_zp_g64, 7, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
-    row!(M2, w8_sym_g64, 2, GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 8, 8)),
     row!(M2, w8_sym_g64, 2, DOWN, tuned!(2, 16, 8, 1, 2)),
     row!(M2, w8_sym_g64, 3, GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 8, 8)),
     row!(M2, w8_sym_g64, 3, DOWN, tuned!(3, 16, 8, 1, 2)),
     row!(M2, w8_sym_g64, 4, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(4, 16, 8, 1, 2)),
-    row!(M2, w8_sym_g64, 5, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
-    row!(M2, w8_sym_g64, 6, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 8, 1, 2)),
-    row!(M2, w8_sym_g64, 7, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
     row!(M2Pro, w4_zp_g64, 2, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(2, 16, 8, 1, 2)),
-    row!(M2Pro, w4_zp_g64, 3, DOWN | GATE | GATE_UP | PROJECTION_IN | READOUT, tuned!(3, 16, 8, 1, 2)),
     row!(M2Pro, w4_zp_g64, 3, PROJECTION_OUT, tuned!(3, 16, 16, 1, 4)),
-    row!(M2Pro, w4_zp_g64, 4, GATE_UP | PROJECTION_IN | READOUT, tuned!(4, 16, 8, 1, 2)),
     row!(M2Pro, w4_zp_g64, 4, DOWN | GATE | PROJECTION_OUT, tuned!(4, 16, 16, 1, 4)),
-    row!(M2Pro, w4_zp_g64, 5, PROJECTION_IN, tuned!(5, 16, 8, 1, 2)),
     row!(M2Pro, w4_zp_g64, 5, DOWN | GATE | GATE_UP | PROJECTION_OUT | READOUT, tuned!(5, 16, 16, 1, 4)),
     row!(M2Pro, w4_zp_g64, 6, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 8, 1, 2)),
     row!(M2Pro, w4_zp_g64, 7, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
@@ -104,52 +81,31 @@ const ROWS: &[RouteRow] = &[
     row!(M2Pro, w8_sym_g64, 3, DOWN | PROJECTION_OUT, main_gemv!(1, 4, 32, 8, 8)),
     row!(M2Pro, w8_sym_g64, 3, GATE_UP | PROJECTION_IN | READOUT, tuned!(3, 16, 8, 1, 2)),
     row!(M2Pro, w8_sym_g64, 4, DOWN | PROJECTION_OUT, main_gemv!(1, 4, 32, 8, 8)),
-    row!(M2Pro, w8_sym_g64, 4, GATE_UP | PROJECTION_IN | READOUT, tuned!(4, 16, 8, 1, 2)),
     row!(M2Pro, w8_sym_g64, 5, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
     row!(M2Pro, w8_sym_g64, 6, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 8, 1, 2)),
     row!(M2Pro, w8_sym_g64, 7, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
-    row!(M3Max, w4_zp_g64, 2, GATE_UP | PROJECTION_IN | READOUT, main_gemv!(1, 4, 32, 4, 8)),
     row!(M3Max, w4_zp_g64, 2, DOWN | GATE | PROJECTION_OUT, tuned!(2, 16, 8, 1, 2)),
     row!(M3Max, w4_zp_g64, 3, DOWN | GATE | PROJECTION_OUT, tuned!(3, 16, 8, 1, 2)),
-    row!(M3Max, w4_zp_g64, 3, GATE_UP | PROJECTION_IN | READOUT, tuned!(3, 16, 16, 1, 4)),
     row!(M3Max, w4_zp_g64, 4, DOWN | GATE | PROJECTION_OUT | READOUT, tuned!(4, 16, 8, 1, 2)),
     row!(M3Max, w4_zp_g64, 4, GATE_UP | PROJECTION_IN, tuned!(4, 16, 16, 1, 4)),
     row!(M3Max, w4_zp_g64, 5, DOWN | GATE | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
     row!(M3Max, w4_zp_g64, 5, GATE_UP, tuned!(5, 16, 16, 1, 4)),
-    row!(M3Max, w4_zp_g64, 6, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 8, 1, 2)),
-    row!(M3Max, w4_zp_g64, 7, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
-    row!(M3Max, w8_sym_g64, 2, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 8, 8)),
-    row!(M3Max, w8_sym_g64, 3, GATE_UP | PROJECTION_IN | READOUT, main_gemv!(1, 4, 32, 8, 8)),
     row!(M3Max, w8_sym_g64, 3, DOWN | PROJECTION_OUT, tuned!(3, 16, 8, 1, 2)),
-    row!(M3Max, w8_sym_g64, 4, GATE_UP | PROJECTION_IN, main_gemv!(1, 4, 32, 8, 8)),
     row!(M3Max, w8_sym_g64, 4, DOWN | PROJECTION_OUT | READOUT, tuned!(4, 16, 8, 1, 2)),
-    row!(M3Max, w8_sym_g64, 5, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
-    row!(M3Max, w8_sym_g64, 6, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 8, 1, 2)),
-    row!(M3Max, w8_sym_g64, 7, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
-    row!(M4, w4_zp_g64, 2, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 4, 8)),
     row!(M4, w4_zp_g64, 3, DOWN, tuned!(3, 16, 8, 1, 2)),
     row!(M4, w4_zp_g64, 3, GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(3, 16, 16, 1, 4)),
-    row!(M4, w4_zp_g64, 4, DOWN | READOUT, tuned!(4, 16, 8, 1, 2)),
     row!(M4, w4_zp_g64, 4, GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT, tuned!(4, 16, 16, 1, 4)),
     row!(M4, w4_zp_g64, 5, DOWN | GATE_UP | PROJECTION_IN | READOUT, tuned!(5, 16, 8, 1, 2)),
     row!(M4, w4_zp_g64, 5, GATE | PROJECTION_OUT, tuned!(5, 16, 16, 1, 4)),
-    row!(M4, w4_zp_g64, 6, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 8, 1, 2)),
-    row!(M4, w4_zp_g64, 7, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
     row!(M4, w8_sym_g64, 2, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 8, 8)),
-    row!(M4, w8_sym_g64, 3, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 8, 8)),
     row!(M4, w8_sym_g64, 4, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 8, 8)),
-    row!(M4, w8_sym_g64, 5, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
-    row!(M4, w8_sym_g64, 6, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 8, 1, 2)),
-    row!(M4, w8_sym_g64, 7, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
     row!(M4Pro, w4_zp_g64, 2, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 4, 8)),
     row!(M4Pro, w4_zp_g64, 3, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(3, 16, 16, 1, 4)),
     row!(M4Pro, w4_zp_g64, 4, DOWN | GATE | GATE_UP | PROJECTION_OUT | READOUT, tuned!(4, 16, 8, 1, 2)),
-    row!(M4Pro, w4_zp_g64, 4, PROJECTION_IN, tuned!(4, 16, 16, 1, 4)),
     row!(M4Pro, w4_zp_g64, 5, DOWN | GATE | GATE_UP | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
     row!(M4Pro, w4_zp_g64, 5, PROJECTION_IN, tuned!(5, 16, 16, 1, 4)),
     row!(M4Pro, w4_zp_g64, 6, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(6, 16, 8, 1, 2)),
     row!(M4Pro, w4_zp_g64, 7, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
-    row!(M4Pro, w8_sym_g64, 2, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT, main_gemv!(1, 4, 32, 8, 8)),
     row!(M4Pro, w8_sym_g64, 2, READOUT, tuned!(2, 16, 8, 1, 2)),
     row!(M4Pro, w8_sym_g64, 3, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, main_gemv!(1, 4, 32, 8, 8)),
     row!(M4Pro, w8_sym_g64, 4, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(4, 16, 8, 1, 2)),
@@ -160,26 +116,12 @@ const ROWS: &[RouteRow] = &[
     row!(M5Max, w4_zp_g64, 3, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(3, 16, 8, 1, 2)),
     row!(M5Max, w4_zp_g64, 4, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(4, 16, 8, 1, 2)),
     row!(M5Max, w4_zp_g64, 5, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
-    row!(M5Max, w4_zp_g64, 6, GATE_UP | PROJECTION_IN | READOUT, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 1)),
-    row!(M5Max, w4_zp_g64, 6, DOWN, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 4)),
-    row!(M5Max, w4_zp_g64, 6, GATE, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 5)),
-    row!(M5Max, w4_zp_g64, 6, PROJECTION_OUT, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 6)),
-    row!(M5Max, w4_zp_g64, 7, GATE_UP | PROJECTION_IN | READOUT, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 1)),
-    row!(M5Max, w4_zp_g64, 7, DOWN, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 4)),
-    row!(M5Max, w4_zp_g64, 7, GATE, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 5)),
-    row!(M5Max, w4_zp_g64, 7, PROJECTION_OUT, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 6)),
-    row!(M5Max, w8_sym_g64, 2, GATE_UP | PROJECTION_IN, main_gemv!(1, 4, 32, 8, 8)),
     row!(M5Max, w8_sym_g64, 2, DOWN | PROJECTION_OUT | READOUT, tuned!(2, 16, 8, 1, 2)),
     row!(M5Max, w8_sym_g64, 3, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(3, 16, 8, 1, 2)),
     row!(M5Max, w8_sym_g64, 4, PROJECTION_IN, tuned!(2, 16, 8, 1, 2)),
     row!(M5Max, w8_sym_g64, 4, DOWN | GATE_UP | PROJECTION_OUT | READOUT, tuned!(4, 16, 8, 1, 2)),
     row!(M5Max, w8_sym_g64, 5, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
-    row!(M5Max, w8_sym_g64, 6, DOWN, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 4)),
-    row!(M5Max, w8_sym_g64, 6, PROJECTION_OUT, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 6)),
     row!(M5Max, w8_sym_g64, 6, GATE_UP | PROJECTION_IN | READOUT, tuned!(6, 16, 8, 1, 2)),
-    row!(M5Max, w8_sym_g64, 7, GATE_UP | PROJECTION_IN | READOUT, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 1)),
-    row!(M5Max, w8_sym_g64, 7, DOWN, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 4)),
-    row!(M5Max, w8_sym_g64, 7, PROJECTION_OUT, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 6)),
 ];
 
 fn qmv_format(shape: &MatmulShape) -> Option<(u32, u32)> {
@@ -193,10 +135,9 @@ fn qmv_format(shape: &MatmulShape) -> Option<(u32, u32)> {
 pub fn route(
     device_name: &str,
     apple_gpu_family: MTLGPUFamily,
-    supports_mxu: bool,
     shape: &MatmulShape,
     all_bf16: bool,
-) -> Option<QmvRoute> {
+) -> Option<GemvTile> {
     if !all_bf16
         || shape.m < 2
         || shape.m > 7
@@ -214,21 +155,11 @@ pub fn route(
     }
     let matches =
         |row: &&RouteRow| row.bits == bits && row.group == group && row.m == shape.m && row.shapes & mask != 0;
-    let route =
-        ROWS.iter().filter(matches).find(|row| row.device_name == device_name).map(|row| row.route).or_else(|| {
-            let same_family = |row: &&RouteRow| row.apple_gpu_family == apple_gpu_family;
-            let mut routes = ROWS.iter().filter(matches).filter(same_family).map(|row| row.route);
-            let route = routes.next()?;
-            routes.all(|candidate| candidate == route).then_some(route)
-        });
-    route.filter(|route| {
-        !matches!(
-            route,
-            QmvRoute::MainGemm(GemmPlan {
-                engine: GemmEngine::Mxu,
-                ..
-            })
-        ) || supports_mxu
+    ROWS.iter().filter(matches).find(|row| row.device_name == device_name).map(|row| row.tile).or_else(|| {
+        let same_family = |row: &&RouteRow| row.apple_gpu_family == apple_gpu_family;
+        let mut tiles = ROWS.iter().filter(matches).filter(same_family).map(|row| row.tile);
+        let tile = tiles.next()?;
+        tiles.all(|candidate| candidate == tile).then_some(tile)
     })
 }
 
