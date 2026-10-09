@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::{Context, bail};
 use itertools::Itertools;
 use shader_slang::ComponentType;
@@ -7,6 +9,7 @@ use super::{Error, SlangArgumentType, SlangKernelInfo, slang_api};
 pub fn generate_wrappers(
     kernel: &SlangKernelInfo,
     component: &ComponentType,
+    module_globals: &HashSet<&str>,
 ) -> Result<(Vec<String>, Vec<(String, Vec<&'static str>)>), Error> {
     // The `[[PipelineVariants]]` argument travels as a specialization constant, like a `[[Specialize]]` one, instead of
     // a push constant; the kernel still receives it as its uniform.
@@ -25,11 +28,11 @@ pub fn generate_wrappers(
         .map(|a| {
             let specialized =
                 matches!(a.argument_type()?, SlangArgumentType::Specialize(_)) || Some(a.name()?) == variant_argument;
-            Ok(match specialized {
+            let name = specialization_name(kernel.name(), a.name()?);
+            Ok(match specialized && !module_globals.contains(name.as_str()) {
                 true => Some(format!(
-                    "[[SpecializationConstant]] const {} {};",
-                    specialization_wire_type(&a.slang_type()?),
-                    specialization_name(kernel.name(), a.name()?)
+                    "[[SpecializationConstant]] const {} {name};",
+                    specialization_wire_type(&a.slang_type()?)
                 )),
                 false => None,
             })

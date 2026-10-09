@@ -17,6 +17,7 @@ pub mod logging;
 pub mod mangling;
 pub mod traitgen;
 
+pub use codegen::write_if_changed;
 #[cfg(any(all(feature = "metal", target_os = "macos"), feature = "vulkan"))]
 pub use data_type::data_type;
 pub use error::Error;

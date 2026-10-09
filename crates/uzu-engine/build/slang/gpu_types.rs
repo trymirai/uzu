@@ -1,22 +1,23 @@
-use std::{fs, path::Path};
+use std::{collections::HashSet, fs, path::Path};
 
 use anyhow::{Context, bail};
 
 use super::Error;
-use crate::common::gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes};
+use crate::common::{
+    gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes},
+    write_if_changed,
+};
 
 /// Writes `generated/<file>.slang` under `out_dir` for every GPU types file that declares constants, enums or structs,
 /// so shaders `import generated.<file>;`. Enums are `uint`-backed with the canonical discriminants; option sets are not
-/// emitted.
+/// emitted. Unchanged modules are not rewritten; anything else in the directory, which this generator owns, is removed.
 pub fn generate_types(
     gpu_types: &GpuTypes,
     out_dir: &Path,
 ) -> Result<(), Error> {
     let generated = out_dir.join("generated");
-    if generated.exists() {
-        fs::remove_dir_all(&generated)?;
-    }
     fs::create_dir_all(&generated)?;
+    let mut written = HashSet::new();
     for file in &gpu_types.files {
         let mut declarations = Vec::new();
         for gpu_type in &file.types {
@@ -83,7 +84,15 @@ pub fn generate_types(
                 file.name,
                 declarations.concat()
             );
-            fs::write(&path, contents).with_context(|| format!("cannot write {}", path.display()))?;
+            write_if_changed(&path, contents)?;
+            written.insert(path);
+        }
+    }
+    // A types file removed, or now without declarations, must not leave its module behind.
+    for entry in fs::read_dir(&generated)? {
+        let path = entry?.path();
+        if !written.contains(&path) {
+            fs::remove_file(&path).with_context(|| format!("cannot remove {}", path.display()))?;
         }
     }
     Ok(())

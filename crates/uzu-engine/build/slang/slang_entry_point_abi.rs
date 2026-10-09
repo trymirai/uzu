@@ -129,7 +129,11 @@ impl SlangEntryPointAbi {
                     u32::try_from(parameter.offset(ParameterCategory::SpecializationConstant))?,
                 ))
             })
-            .collect::<Result<_, Error>>()?;
+            .collect::<Result<Vec<_>, Error>>()?;
+        // One linked constant per name: a module and an import declaring the same name would size and set different IDs.
+        if let Some(global) = specialization_ids.iter().map(|(global, _)| global).duplicates().next() {
+            bail!("'{name}': global '{global}' is linked as more than one specialization constant");
+        }
 
         let [x, y, z] = entry_point.compute_thread_group_size();
         Ok(Self {

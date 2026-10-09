@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     env,
     ffi::CString,
     fs,
@@ -10,8 +10,8 @@ use std::{
 use anyhow::Context;
 use itertools::Itertools;
 use shader_slang::{
-    CompileTarget, CompilerOptions, ComponentType, GlobalSession, OptimizationLevel, ScalarType, Session, SessionDesc,
-    TargetDesc,
+    CompileTarget, CompilerOptions, ComponentType, DeclKind, GlobalSession, OptimizationLevel, ScalarType, Session,
+    SessionDesc, TargetDesc,
 };
 use walkdir::WalkDir;
 
@@ -138,11 +138,20 @@ impl SlangCompiler {
         let public_kernels = public.into_iter().map(|(_, kernel)| kernel).collect::<Box<[Kernel]>>();
         let bindings = private.into_iter().map(|(info, kernel)| (kernel.name, info.is_test())).collect::<Box<[_]>>();
 
+        // Global variables the module declares: a wrapper does not redeclare a specialization the module owns (for
+        // example, one sizing a private array), so the linked program reflects the module's own declaration.
+        let module_globals = loaded
+            .module
+            .module_reflection()
+            .children()
+            .filter(|decl| matches!(decl.kind(), DeclKind::Variable))
+            .filter_map(|decl| decl.as_variable()?.name())
+            .collect::<HashSet<_>>();
         let mut artifact_hashes = HashMap::new();
         if !kernels.is_empty() {
             let wrappers = kernels
                 .iter()
-                .map(|kernel| wrapper::generate_wrappers(kernel, &loaded.component))
+                .map(|kernel| wrapper::generate_wrappers(kernel, &loaded.component, &module_globals))
                 .collect::<Result<Vec<_>, _>>()?;
             // The wrapper names the generated types the kernels' signatures use, so it imports what the source does.
             let generated = self.out_dir.join("generated");
