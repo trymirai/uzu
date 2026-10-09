@@ -1,12 +1,10 @@
-use std::sync::mpsc::Sender;
-
 use derive_more::Debug;
 use thiserror::Error;
 
 #[cfg(grammar)]
 use crate::engine::language_model::grammar::{Grammar, GrammarError};
 use crate::{
-    backends::common::{Backend, TimestampSpan},
+    backends::common::Backend,
     encodable_block::decoder::DecoderError,
     engine::language_model::{LanguageModel, state::LanguageModelState},
     speculators::dflash_tfm::DFlashTreeError,
@@ -19,7 +17,6 @@ mod stream;
 
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,
-    pub timestamps: Option<Sender<Box<[TimestampSpan]>>>,
     #[cfg(grammar)]
     pub grammar: Option<Grammar>,
 }
@@ -47,7 +44,6 @@ impl<B: Backend> LanguageModel<B> {
     pub fn default_stream_options(&self) -> LanguageModelStreamOptions {
         LanguageModelStreamOptions {
             sampling_method: self.default_sampling_method(),
-            timestamps: None,
             #[cfg(grammar)]
             grammar: None,
         }
