@@ -67,7 +67,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let suffix_state_size = suffix_len * model_dim * state_stride;
     let mut suffix_state = create_buffer::<B, T>(&context, suffix_state_size.max(1));
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         &in_proj,
         &w,

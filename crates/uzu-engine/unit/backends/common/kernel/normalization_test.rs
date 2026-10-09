@@ -60,7 +60,7 @@ fn get_output<
         hadamard_factors.map(|hadamard_factors| create_buffer_with_data::<B, i32>(&context, hadamard_factors));
     let mut output_buffer = create_buffer_with_data::<B, OutputT>(&context, &vec![OutputT::zero(); input.len()]);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         Some(&input_buffer),
         scales_buffer.as_ref(),
@@ -176,7 +176,7 @@ fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
     let plain_buffer = create_buffer_with_data::<Cpu, T>(&context, &plain);
     let hadamard_factors_buffer = create_buffer_with_data::<Cpu, i32>(&context, &hadamard_factors);
     let mut expected_buffer = create_buffer::<Cpu, T>(&context, plain.len());
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     input_rht.encode_fp(
         &plain_buffer,
         &mut expected_buffer,

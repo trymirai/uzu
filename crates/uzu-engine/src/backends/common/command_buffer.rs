@@ -80,8 +80,6 @@ pub trait CommandBufferEncoding {
 
     fn pop_debug_group(&mut self);
 
-    fn enable_timestamps(&mut self);
-
     fn sample_start_timestamp(
         &mut self,
         name: &str,

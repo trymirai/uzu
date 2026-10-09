@@ -36,7 +36,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let mut output = create_buffer_with_data::<B, T>(&context, output_data);
 
     let mut command_buffer =
-        context.as_ref().create_command_buffer(None, None).expect("Failed to create command buffer");
+        context.as_ref().create_command_buffer(None, None, false).expect("Failed to create command buffer");
     let gate_dim = config.num_heads * config.head_dim;
     let gate_offset = (config.num_heads + 2 * config.num_kv_heads) * config.head_dim;
     let qkvg_dim = gate_offset + gate_dim;

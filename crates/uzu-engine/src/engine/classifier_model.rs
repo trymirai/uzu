@@ -147,7 +147,7 @@ impl<B: Backend> ClassifierModel<B> {
         }
 
         let mut command_buffer =
-            self.context.create_command_buffer(None, None).map_err(ClassifierModelClassifyError::Backend)?;
+            self.context.create_command_buffer(None, None, false).map_err(ClassifierModelClassifyError::Backend)?;
 
         let token_ids = command_buffer
             .allocate_constant_from_slice(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>())

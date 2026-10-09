@@ -68,7 +68,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
 
     let state = (!state_in_place).then(|| create_buffer_with_data::<B, T>(&context, &state_data));
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         &in_proj,
         &w,

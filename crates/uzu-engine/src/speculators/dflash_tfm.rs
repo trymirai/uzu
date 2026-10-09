@@ -29,7 +29,7 @@ use crate::{
     },
     parameters::{ParameterLoader, ParameterLoaderError},
     trie::TrieNode,
-    utils::timestamps::{create_command_buffer, wait},
+    utils::timestamps::wait,
 };
 
 #[derive(Debug, Error)]
@@ -239,9 +239,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let root_position = state.context_length();
 
-        let mut command_buffer =
-            create_command_buffer::<B>(&self.context, "speculator propose", &allocation_pool, timestamps)
-                .map_err(DFlashTreeError::Backend)?;
+        let mut command_buffer = self
+            .context
+            .create_command_buffer(Some("speculator propose"), Some(allocation_pool), timestamps.is_some())
+            .map_err(DFlashTreeError::Backend)?;
 
         let nodes = match shape.construction_method {
             DFlashTfmTreeConstructionMethod::Argmax => {

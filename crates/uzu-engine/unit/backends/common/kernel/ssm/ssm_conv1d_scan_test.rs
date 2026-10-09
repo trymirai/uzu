@@ -104,7 +104,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let mut c_out = create_buffer::<B, T>(&context, c_out_size);
     let mut state_out = create_buffer::<B, T>(&context, state_size);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         &padded,
         &w,

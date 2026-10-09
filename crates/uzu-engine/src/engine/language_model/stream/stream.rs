@@ -26,7 +26,7 @@ use crate::{
         },
     },
     trie::TrieNode,
-    utils::timestamps::{create_command_buffer, wait},
+    utils::timestamps::wait,
 };
 
 enum ForwardPassChaining<B: Backend> {
@@ -214,13 +214,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let mut command_buffer = create_command_buffer::<B>(
-                &model.engine.context,
-                "prefill",
-                &allocation_pool,
-                options.timestamps.as_ref(),
-            )
-            .map_err(LanguageModelStreamError::Backend)?;
+            let mut command_buffer = model
+                .engine
+                .context
+                .create_command_buffer(Some("prefill"), Some(allocation_pool.clone()), options.timestamps.is_some())
+                .map_err(LanguageModelStreamError::Backend)?;
 
             let mut output_tokens = None;
             let mut output_norm = None;
@@ -458,13 +456,16 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
                     let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
                     let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
-                    let mut command_buffer = create_command_buffer::<B>(
-                        &self.model.engine.context,
-                        "decode",
-                        &self.allocation_pool,
-                        self.options.timestamps.as_ref(),
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?;
+                    let mut command_buffer = self
+                        .model
+                        .engine
+                        .context
+                        .create_command_buffer(
+                            Some("decode"),
+                            Some(self.allocation_pool.clone()),
+                            self.options.timestamps.is_some(),
+                        )
+                        .map_err(LanguageModelStreamError::Backend)?;
                     self.model_state
                         .transformer_state
                         .encode_accept(&accepted_token_indicies, &mut command_buffer)
@@ -512,13 +513,16 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
                         drop(capture_span);
 
-                        command_buffer = create_command_buffer::<B>(
-                            &self.model.engine.context,
-                            "decode",
-                            &self.allocation_pool,
-                            self.options.timestamps.as_ref(),
-                        )
-                        .map_err(LanguageModelStreamError::Backend)?;
+                        command_buffer = self
+                            .model
+                            .engine
+                            .context
+                            .create_command_buffer(
+                                Some("decode"),
+                                Some(self.allocation_pool.clone()),
+                                self.options.timestamps.is_some(),
+                            )
+                            .map_err(LanguageModelStreamError::Backend)?;
                     }
                     self.model_state.tokens.extend(accepted_output_token_ids);
                     (
@@ -612,13 +616,16 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         self.allocation_pool = self.model.engine.context.create_allocation_pool();
 
-        let mut command_buffer = create_command_buffer::<B>(
-            &self.model.engine.context,
-            "decode",
-            &self.allocation_pool,
-            self.options.timestamps.as_ref(),
-        )
-        .map_err(LanguageModelStreamError::Backend)?;
+        let mut command_buffer = self
+            .model
+            .engine
+            .context
+            .create_command_buffer(
+                Some("decode"),
+                Some(self.allocation_pool.clone()),
+                self.options.timestamps.is_some(),
+            )
+            .map_err(LanguageModelStreamError::Backend)?;
 
         let scratch_token_ids;
         let mut constant_token_ids = None;
@@ -665,13 +672,16 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             if chain_copy.is_some() {
                 pending.push(command_buffer.end_encoding().submit());
 
-                let mut command_buffer = create_command_buffer::<B>(
-                    &self.model.engine.context,
-                    "decode",
-                    &self.allocation_pool,
-                    self.options.timestamps.as_ref(),
-                )
-                .map_err(LanguageModelStreamError::Backend)?;
+                let mut command_buffer = self
+                    .model
+                    .engine
+                    .context
+                    .create_command_buffer(
+                        Some("decode"),
+                        Some(self.allocation_pool.clone()),
+                        self.options.timestamps.is_some(),
+                    )
+                    .map_err(LanguageModelStreamError::Backend)?;
 
                 let mut bitmask = command_buffer
                     .allocate_constant(
@@ -826,13 +836,16 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                 }
 
                 if !in_flight.full_accept {
-                    let mut command_buffer = create_command_buffer::<B>(
-                        &self.model.engine.context,
-                        "drop accept",
-                        &self.allocation_pool,
-                        self.options.timestamps.as_ref(),
-                    )
-                    .unwrap();
+                    let mut command_buffer = self
+                        .model
+                        .engine
+                        .context
+                        .create_command_buffer(
+                            Some("drop accept"),
+                            Some(self.allocation_pool.clone()),
+                            self.options.timestamps.is_some(),
+                        )
+                        .unwrap();
                     self.model_state.transformer_state.encode_accept(&[0], &mut command_buffer).unwrap();
                     if let Some(speculator) = self.model.speculator.as_ref() {
                         speculator
@@ -858,13 +871,16 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
             } => {
                 assert!(num_accepted > 0 && num_accepted < full.len());
 
-                let mut command_buffer = create_command_buffer::<B>(
-                    &self.model.engine.context,
-                    "drop accept",
-                    &self.allocation_pool,
-                    self.options.timestamps.as_ref(),
-                )
-                .unwrap();
+                let mut command_buffer = self
+                    .model
+                    .engine
+                    .context
+                    .create_command_buffer(
+                        Some("drop accept"),
+                        Some(self.allocation_pool.clone()),
+                        self.options.timestamps.is_some(),
+                    )
+                    .unwrap();
                 let accepted_token_indicies =
                     full.iter().take(num_accepted + 1).map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
                 self.model_state

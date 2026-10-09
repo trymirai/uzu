@@ -62,7 +62,7 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
     let hadamard_factors = create_buffer_with_data::<B, i32>(&context, &input.hadamard_factors);
     let mut output = create_buffer::<B, T>(&context, output_length);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("create command buffer");
     kernel.encode_fp(
         &fused_up,
         None::<&<B as Backend>::GlobalBuffer>,
@@ -130,7 +130,7 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
         GatedActMulSettings::default(),
     )
     .expect("create quantized GatedActMul");
-    let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("create command buffer");
     kernel.encode_quantized(
         &act_operand,
         &mut values,
@@ -227,7 +227,7 @@ fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -
     let per_layer_input = create_buffer_with_data::<B, T>(&context, &input.per_layer_input);
     let mut output = create_buffer::<B, T>(&context, (input.batch_dim * input.gated_dim) as usize);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("create command buffer");
     kernel.encode_fp(
         &gate_out,
         Some(&per_layer_input),
@@ -302,7 +302,7 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
             .expect("create transformed GatedActMul");
         let fused_up = create_buffer_with_data::<B, T>(&context, &fused_up);
         let mut output = create_buffer::<B, T>(&context, GATED_DIM as usize);
-        let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
+        let mut command_buffer = context.create_command_buffer(None, None, false).expect("create command buffer");
         kernel.encode_fp(
             &fused_up,
             None::<&<B as Backend>::GlobalBuffer>,

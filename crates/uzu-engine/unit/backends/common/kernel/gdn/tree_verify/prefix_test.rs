@@ -25,7 +25,7 @@ fn run<B: Backend>(tree_size: usize) -> Vec<f32> {
     let log_decay = create_buffer_with_data::<B, f32>(&context, &log_decay);
     let mut prefix = create_buffer::<B, f32>(&context, tree_size * HEADS);
     let kernel = <B::Kernels as Kernels>::BuildTreePrefixKernel::new(&context).unwrap();
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     kernel.encode(&trie, &log_decay, &mut prefix, 1, tree_size as u32, HEADS as u32, &mut command_buffer);
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     buffer_to_vec(&prefix)

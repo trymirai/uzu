@@ -248,7 +248,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         .expect("supported activation quantization");
         let transform = ActivationTransform::<Cpu>::quantize(&context, T::data_type(), quantization)
             .expect("CPU activation quantization transform");
-        let mut command_buffer = context.create_command_buffer(None, None).expect("CPU command buffer");
+        let mut command_buffer = context.create_command_buffer(None, None, false).expect("CPU command buffer");
         transform.encode_quantize(
             &input,
             &mut values,
@@ -463,7 +463,7 @@ pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
         T::data_type(),
     )
     .expect("MatmulCpuKernel");
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     matmul.encode(quant_arguments(&mut buffers, input), &mut command_buffer).expect("encode cpu quant");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     buffer_to_vec::<Cpu, T>(&buffers.y)
@@ -483,7 +483,7 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
         T::data_type(),
     )
     .expect("MatmulMetalKernel");
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     let args = quant_arguments(&mut buffers, input);
     if let Some(engine) = dispatch {
         matmul.encode_with_gemm_engine(args, engine, &mut command_buffer).expect("forced GEMM engine encode failed");

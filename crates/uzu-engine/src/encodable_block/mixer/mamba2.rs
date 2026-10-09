@@ -228,7 +228,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         let mut ssm_state =
             context.create_buffer(size_for_shape(&[self.num_heads, self.head_dim, self.state_dim], INNER_DATA_TYPE))?;
 
-        let mut zero_command_buffer = context.create_command_buffer(None, None)?;
+        let mut zero_command_buffer = context.create_command_buffer(None, None, false)?;
         zero_command_buffer.encode_fill(&mut conv_state, 0);
         zero_command_buffer.encode_fill(&mut ssm_state, 0);
         zero_command_buffer.end_encoding().submit().wait_until_completed()?;

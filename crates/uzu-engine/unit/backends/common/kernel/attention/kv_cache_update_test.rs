@@ -52,7 +52,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let mut keys = create_buffer_with_data::<B, T>(&context, &input.keys);
     let mut values = create_buffer_with_data::<B, T>(&context, &input.values);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to get command buffer");
     kernel.encode(
         &mut keys,
         &mut values,
@@ -354,7 +354,7 @@ fn test_random_pattern_f32() {
     let mut key_buffer = create_buffer_with_data::<Metal, f32>(&context, key_data.as_slice().unwrap());
     let mut value_buffer = create_buffer_with_data::<Metal, f32>(&context, value_data.as_slice().unwrap());
 
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     kernel.encode(
         &mut key_buffer,
         &mut value_buffer,

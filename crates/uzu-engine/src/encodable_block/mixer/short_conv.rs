@@ -307,7 +307,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         let mut conv_state =
             context.create_buffer(size_for_shape(&[self.kernel_size - 1, self.hidden_dim], self.data_type))?;
 
-        let mut zero_command_buffer = context.create_command_buffer(None, None)?;
+        let mut zero_command_buffer = context.create_command_buffer(None, None, false)?;
         zero_command_buffer.encode_fill(&mut conv_state, 0);
         zero_command_buffer.end_encoding().submit().wait_until_completed()?;
 

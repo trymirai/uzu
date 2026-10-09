@@ -177,8 +177,9 @@ impl Context for MetalContext {
         &self,
         name: Option<&str>,
         allocation_pool: Option<Arc<<Metal as Backend>::AllocationPool>>,
+        timestamps: bool,
     ) -> Result<MetalCommandBufferEncoding, MetalError> {
-        MetalCommandBufferEncoding::new(self.weak_self.upgrade().unwrap(), name, allocation_pool)
+        MetalCommandBufferEncoding::new(self.weak_self.upgrade().unwrap(), name, allocation_pool, timestamps)
     }
 
     fn create_buffer(

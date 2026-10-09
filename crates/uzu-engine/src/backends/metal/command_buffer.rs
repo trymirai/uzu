@@ -57,6 +57,7 @@ impl MetalCommandBufferEncoding {
         context: Arc<MetalContext>,
         name: Option<&str>,
         allocation_pool: Option<Arc<<Metal as Backend>::AllocationPool>>,
+        timestamps: bool,
     ) -> Result<Self, MetalError> {
         let (command_allocator, command_buffer) = if let mut command_buffer_cache = context.command_buffer_cache.lock()
             && let Some(command_buffer_cached) = command_buffer_cache.pop()
@@ -94,6 +95,8 @@ impl MetalCommandBufferEncoding {
 
         let allocation_pool = allocation_pool.unwrap_or_else(|| context.create_allocation_pool());
 
+        let timestamps = timestamps.then(|| MetalTimestampRecorder::new(context.device.clone()));
+
         Ok(Self {
             command_allocator,
             command_buffer,
@@ -104,7 +107,7 @@ impl MetalCommandBufferEncoding {
             constant_allocator: Some(constant_allocator),
             allocation_pool,
             context,
-            timestamps: None,
+            timestamps,
         })
     }
 
@@ -215,11 +218,6 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn pop_debug_group(&mut self) {
         self.compute_encoder.pop_debug_group();
-    }
-
-    fn enable_timestamps(&mut self) {
-        assert!(self.timestamps.is_none(), "timestamps already enabled");
-        self.timestamps = Some(MetalTimestampRecorder::new(self.context.device.clone()));
     }
 
     fn sample_start_timestamp(

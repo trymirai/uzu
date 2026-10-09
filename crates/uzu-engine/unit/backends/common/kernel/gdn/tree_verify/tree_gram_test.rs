@@ -94,7 +94,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     // outputs stay comparable on the skipped batch.
     let mut kh0 = create_buffer_with_data::<B, f32>(&context, &vec![0.0f32; kh0_len]);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         &q,
         &k,

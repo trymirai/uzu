@@ -38,7 +38,7 @@ fn radix_top_k_small<B: Backend>(
     let mut ids = create_buffer::<B, u32>(&context, rows * k);
     let mut scores = create_buffer::<B, f32>(&context, rows * k);
     let kernel = <B::Kernels as Kernels>::RadixTopKSmall::new(&context, columns as u32).unwrap();
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     kernel.encode(&input, &mut ids, &mut scores, rows as u32, k as u32, &mut command_buffer).unwrap();
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     (buffer_to_vec(&ids), buffer_to_vec(&scores))
@@ -131,7 +131,7 @@ fn benchmark_radix_top_k_small() {
         <<Metal as Backend>::Kernels as Kernels>::RadixTopKSmall::new(&context, TARGET_COLUMNS as u32).unwrap();
     let mut run = || {
         let start = Instant::now();
-        let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
         for _ in 0..BATCH {
             kernel.encode(&input, &mut ids, &mut scores, ROWS as u32, TARGET_K as u32, &mut command_buffer).unwrap();
         }

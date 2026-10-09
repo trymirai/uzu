@@ -100,7 +100,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         cache: KVCacheView::full(segment_prefix_length as u32),
     };
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     let kernel = <B::Kernels as Kernels>::AttentionKernel::new(context.as_ref(), config)
         .expect("Failed to create attention kernel");
     let pooled_output = kernel.encode(args, &mut command_buffer).expect("Failed to encode attention");
@@ -121,7 +121,7 @@ fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let keys = create_buffer_with_data::<Metal, T>(context.as_ref(), &input.keys);
     let values = create_buffer_with_data::<Metal, T>(context.as_ref(), &input.values);
     let cache = KVCacheView::full((input.sequence_length - input.suffix_length) as u32);
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     let pooled = super::gemm::AttentionGemm::new(&config)
         .encode(
             AttentionArguments {

@@ -46,7 +46,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
 ) -> Result<SamplingTestResults, TestCaseError> {
     let sampling = Sampling::<B>::new(String::from("test/sampling"), T::data_type(), vocab_size as u32);
 
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     let logits_buffer = command_buffer.allocate_constant_from_slice(logits).unwrap();
     let seeds_buffer = seeds.map(|seeds| command_buffer.allocate_constant_from_slice(seeds).unwrap());
     let bitmask_buffer = bitmask.map(|bitmask| command_buffer.allocate_constant_from_slice(bitmask).unwrap());

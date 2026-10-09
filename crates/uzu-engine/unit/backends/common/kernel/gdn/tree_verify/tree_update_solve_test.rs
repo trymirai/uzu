@@ -164,7 +164,7 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
     let h0_idx = create_buffer_with_data::<B, i32>(&context, &h0_idx);
     let mut u = create_buffer::<B, f32>(&context, u_len);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     kernel.encode(
         use_h0.then_some(&kh0),
         &v,

@@ -63,7 +63,7 @@ fn run_prefill<T: ArrayElement>(
     mode: PrefillMode,
 ) -> (Vec<f32>, Vec<f32>) {
     let in_proj_data: Vec<T> = case.in_proj.iter().copied().map(|value| cast(value).unwrap()).collect();
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     let mut in_proj = command_buffer.allocate_scratch(size_of_val(in_proj_data.as_slice())).unwrap();
     in_proj.copyin(&in_proj_data);
     let a_log = create_buffer_with_data::<Metal, f32>(context, &case.a_log);

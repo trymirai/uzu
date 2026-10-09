@@ -45,13 +45,14 @@ impl CpuCommandBufferEncoding {
         constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
         allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
         context: Arc<CpuContext>,
+        timestamps: bool,
     ) -> CpuCommandBufferEncoding {
         CpuCommandBufferEncoding {
             commands: Vec::new(),
             constant_allocator,
             allocation_pool,
             context,
-            timestamp_spans: None,
+            timestamp_spans: timestamps.then(TimestampSpanRecorder::default),
         }
     }
 
@@ -125,11 +126,6 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
     }
 
     fn pop_debug_group(&mut self) {}
-
-    fn enable_timestamps(&mut self) {
-        assert!(self.timestamp_spans.is_none(), "timestamps already enabled");
-        self.timestamp_spans = Some(TimestampSpanRecorder::default());
-    }
 
     fn sample_start_timestamp(
         &mut self,

@@ -139,7 +139,7 @@ fn get_output<
     let mut qkvg = create_buffer_with_data::<B, OutputT>(&context, &input.qkvg);
     let scales = input.has_scales.then(|| create_buffer_with_data::<B, ScaleT>(&context, &input.scales));
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         None::<&B::GlobalBuffer>,
         scales.as_ref(),

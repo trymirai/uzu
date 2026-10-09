@@ -160,7 +160,7 @@ fn run_prefill_kernel_mode<B: Backend>(
     let cb_strides = fixture.cb_strides.map(|stride| stride as u32);
     let state_strides = fixture.state_strides.map(|stride| stride as u32);
 
-    let mut command_buffer = ctx.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = ctx.create_command_buffer(None, None, false).unwrap();
     match mode {
         SSDPrefillMode::Universal => {
             let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(ctx, DataType::F32)
@@ -265,7 +265,7 @@ fn run_conv_scan_once<B: Backend>(
     }
     let padded_buf = create_buffer_with_data::<B, _>(ctx, &padded_host);
 
-    let mut command_buffer = ctx.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = ctx.create_command_buffer(None, None, false).unwrap();
     if use_scratch && tap_count > 0 {
         command_buffer.encode_fill(&mut scratch_buf, 0);
     }
