@@ -42,6 +42,26 @@ const V2_T4: TrellisFormat = TrellisFormat {
     transition_bits: 4,
     restart_columns: 0,
 };
+const V4_T7: TrellisFormat = TrellisFormat {
+    vector_width: 4,
+    transition_bits: 7,
+    restart_columns: 64,
+};
+const V4_T6_R128: TrellisFormat = TrellisFormat {
+    vector_width: 4,
+    transition_bits: 6,
+    restart_columns: 128,
+};
+const V4_T7_R128: TrellisFormat = TrellisFormat {
+    vector_width: 4,
+    transition_bits: 7,
+    restart_columns: 128,
+};
+const V4_T8_R128: TrellisFormat = TrellisFormat {
+    vector_width: 4,
+    transition_bits: 8,
+    restart_columns: 128,
+};
 const V4_T8_NO_RESTART: TrellisFormat = TrellisFormat {
     vector_width: 4,
     transition_bits: 8,
@@ -195,12 +215,17 @@ fn run_projection(
 #[case::v2_t8(V2_T8)]
 #[case::v2_t4(V2_T4)]
 #[case::v4_t8_no_restart(V4_T8_NO_RESTART)]
+#[case::v4_t7(V4_T7)]
+#[case::v4_t6_r128(V4_T6_R128)]
+#[case::v4_t7_r128(V4_T7_R128)]
+#[case::v4_t8_r128(V4_T8_R128)]
 fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
     let context = shared_metal_context();
     if !context.supports_mxu {
         return;
     }
-    for (m, n, k) in CASES {
+    // A projection's K is a whole number of restart blocks.
+    for (m, n, k) in CASES.into_iter().filter(|&(_, _, k)| k.is_multiple_of(format.restart_columns.max(1) as usize)) {
         run_projection(&context, format, (m, n, k));
     }
 }
