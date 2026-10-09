@@ -133,7 +133,9 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         (actual, reference)
     }
 
-    fn with_prepared_a_layout(
+    /// `x` quantized by the CPU ActivationTransform (unit Hadamard factors) into `prepared_a` in `code_layout`; sets
+    /// `signed_codes` for U8 and I8 as the A8 Matmul expects.
+    pub fn with_prepared_a_layout(
         mut self,
         activation_scale_group_size: u32,
         sum_group_size: Option<u32>,

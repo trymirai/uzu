@@ -1,4 +1,5 @@
 import common.activation;
+import common.int8_code_layout;
 
 // Symmetric INT8 activation quantization of a tile of ACTIVATION_QUANTIZATION_TILE consecutive row elements, one per
 // invocation, as the CPU quantize_transformed_row. Scale and sum groups are powers of two up to the tile, so groups never
@@ -119,8 +120,7 @@ int activation_quantization_code(float value, float scale) {
 
 // Quantizes element `column` of row `row` of `count` columns, which tile `column / ACTIVATION_QUANTIZATION_TILE` covers:
 // the scale is the group's largest magnitude, ignoring NaNs, over 127 when finite and positive, otherwise 1. Codes are
-// stored at the Int8CodeLayout index: grouped by weight nibble, [0, 1, 2, 3, 4, 5, 6, 7] -> [0, 4, 1, 5, 2, 6, 3, 7]
-// within each 8 codes. Group sums add the codes of logical positions, before that permutation.
+// stored at int8_code_index. Group sums add the codes of logical positions, before that permutation.
 public void quantize_activation(
   float value,
   uint tid,
@@ -140,9 +140,7 @@ public void quantize_activation(
   let scale = asfloat(activation_quantization_reduce(magnitude > 0x7f800000u ? 0u : magnitude, tid, scale_group, false));
   let code = activation_quantization_code(value, scale);
   if (active) {
-    let offset = column % 8;
-    codes[row * count + (grouped_by_weight_nibble ? column - offset + offset % 2 * 4 + offset / 2 : column)] =
-      int8_t(code);
+    codes[row * count + int8_code_index(column, grouped_by_weight_nibble)] = int8_t(code);
     if (column % scale_group == 0) {
       scales[(row * count + column) / scale_group] = scale;
     }

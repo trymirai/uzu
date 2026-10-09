@@ -3,7 +3,8 @@ import common.activation;
 import common.matmul;
 
 // The CPU MatmulKernel's product of one A row and transposed B rows, D = epilogue(A Bᵀ), for every BF16/F32 triple, B
-// full precision (Gemv) or U4/U8 quantized (QuantizedGemv), read through common.matmul's weight reader. A workgroup
+// full precision (Gemv) or U4/U8 quantized (QuantizedGemv), A full precision or INT8 symmetric (A8QuantizedGemv), each
+// read through common.matmul's operand readers. A workgroup
 // computes GEMV_OUTPUTS outputs of one A row, GEMV_LANES invocations each striding K; the partial sums meet in shared
 // memory in invocation order, assuming nothing about subgroups. Outputs common.matmul classes careful are summed again
 // from exact products, those below 2^-101 summed scaled up by 2^24, where no partial flushes either, and added back with
@@ -20,9 +21,9 @@ groupshared float gemv_tiny[GEMV_THREADS];
 groupshared uint gemv_fields[GEMV_THREADS];
 groupshared uint gemv_mode[GEMV_OUTPUTS];
 
-void gemv_body<A : IModelFloat, B : IModelFloat, D : IModelFloat, W : IMatmulWeights>(
+void gemv_body<X : IMatmulOperand, B : IModelFloat, D : IModelFloat, W : IMatmulOperand>(
   W weights,
-  Ptr<A, Access.Read> a,
+  X activations,
   Ptr<D, Access.ReadWrite> d,
   Ptr<B, Access.Read> bias,
   Ptr<uint, Access.Read> gather,
@@ -51,8 +52,8 @@ void gemv_body<A : IModelFloat, B : IModelFloat, D : IModelFloat, W : IMatmulWei
   if (active) {
     b_row = gathered ? gather[row * n + column] : column;
     for (uint j = lane; j < k; j += GEMV_LANES) {
-      let x = a[a_base + j].toFloat();
-      let w = weights.weight(b_row, j, b_row * k);
+      let x = activations.value(row, j, a_base);
+      let w = weights.value(b_row, j, b_row * k);
       fields = matmul_merge_fields(fields, matmul_fields(x, w));
       partial = ordered_sum(partial, x * w);
     }
@@ -93,7 +94,7 @@ void gemv_body<A : IModelFloat, B : IModelFloat, D : IModelFloat, W : IMatmulWei
     var tiny = 0.0;
     if (mode == MATMUL_CAREFUL) {
       for (uint j = lane; j < k; j += GEMV_LANES) {
-        let product = exact_product(a[a_base + j].toFloat(), weights.weight(b_row, j, b_row * k));
+        let product = exact_product(activations.value(row, j, a_base), weights.value(b_row, j, b_row * k));
         if ((asuint(product) & 0x7fffffffu) >= 0x0d000000u) {
           main = ordered_sum(main, product);
         } else {
@@ -117,7 +118,7 @@ void gemv_body<A : IModelFloat, B : IModelFloat, D : IModelFloat, W : IMatmulWei
 
   if (lane == 0 && active) {
     if (mode == MATMUL_REPLAY) {
-      dot = matmul_replay(a, a_base, weights, b_row, k);
+      dot = matmul_replay(activations, row, weights, b_row, k);
     }
     let value = matmul_epilogue(dot, has_scale, ab_scale, accumulate, prior, has_bias, bias_value, has_soft_cap, soft_cap);
     d[row * n + column] = D.fromFloat(value);
@@ -144,8 +145,9 @@ void gemv_body<A : IModelFloat, B : IModelFloat, D : IModelFloat, W : IMatmulWei
   [[Specialize]] bool has_soft_cap,
   [[Specialize]] bool gathered,
 ) {
-  DenseWeights<B> weights = { b };
-  gemv_body<A, B, D>(
-    weights, a, d, bias, gather, k, n, m, ab_scale, soft_cap, tile, row, tid, has_scale, accumulate, has_bias,
+  DenseOperand<B> weights = { b };
+  DenseOperand<A> activations = { a };
+  gemv_body<DenseOperand<A>, B, D>(
+    weights, activations, d, bias, gather, k, n, m, ab_scale, soft_cap, tile, row, tid, has_scale, accumulate, has_bias,
     has_soft_cap, gathered);
 }

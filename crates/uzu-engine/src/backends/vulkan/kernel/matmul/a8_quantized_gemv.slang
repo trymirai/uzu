@@ -4,18 +4,23 @@ import matmul.gemv;
 import generated.quantization;
 import generated.quantization_method;
 
-// QuantizedGemv: U4/U8 quantized B through matmul.gemv's body and common.matmul's QuantizedWeights reader, in its own
-// module so the dense module's pipelines do not carry its entry points.
+// A8QuantizedGemv: the CPU MatmulKernel's symmetric INT8 A, codes at int8_code_index and FP32 scales of a_group_size
+// codes, times U4/U8 quantized B, through matmul.gemv's body with common.matmul's Int8Activations and QuantizedWeights
+// readers, in its own module so the dense and quantized modules' pipelines do not carry its entry points. Group sums are
+// never read.
 
 [[Kernel]]
-[[Precondition("new", "group_size > 0")]]
+[[Precondition("new", "group_size == 32 || group_size == 64 || group_size == 128")]]
+[[Precondition("new", "a_group_size == 32 || a_group_size == 64 || a_group_size == 128")]]
 [[Precondition("new", "quantization_mode == QuantizationMode::U4 || quantization_mode == QuantizationMode::U8")]]
-func QuantizedGemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
+[[Precondition("encode", "k.is_multiple_of(a_group_size)")]]
+func A8QuantizedGemv<B: IModelFloat, D: IModelFloat>(
   Ptr<uint8_t, Access.Read> codes,
   Ptr<B, Access.Read> scales,
   [[Optional("quantization_method == QuantizationMethod::ScaleBias")]] Ptr<B, Access.Read> biases,
   [[Optional("quantization_method == QuantizationMethod::ScaleZeroPoint")]] Ptr<uint8_t, Access.Read> zero_points,
-  Ptr<A, Access.Read> a,
+  Ptr<int8_t, Access.Read> a_codes,
+  Ptr<float, Access.Read> a_scales,
   Ptr<D, Access.ReadWrite> d,
   [[Optional("has_bias")]] Ptr<B, Access.Read> bias,
   [[Optional("gathered")]] Ptr<uint, Access.Read> gather,
@@ -40,14 +45,16 @@ func QuantizedGemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
   [[Specialize]] QuantizationMethod quantization_method,
   [[Specialize]] bool signed_codes,
   [[Specialize]] uint group_size,
+  [[Specialize]] uint a_group_size,
+  [[Specialize]] bool grouped_by_weight_nibble,
 ) {
   QuantizedWeights<B> weights = {
     codes, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
     zero_point_output_stride, zero_point_group_stride, quantization_mode == QuantizationMode.U4, signed_codes,
     quantization_method
   };
-  DenseOperand<A> activations = { a };
-  gemv_body<DenseOperand<A>, B, D>(
+  Int8Activations activations = { a_codes, a_scales, a_group_size, grouped_by_weight_nibble };
+  gemv_body<Int8Activations, B, D>(
     weights, activations, d, bias, gather, k, n, m, ab_scale, soft_cap, tile, row, tid, has_scale, accumulate, has_bias,
     has_soft_cap, gathered);
 }

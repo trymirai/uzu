@@ -3,8 +3,8 @@ import common.activation;
 import common.matmul;
 
 // The CPU MatmulKernel's product of A rows and transposed contiguous B rows, D = epilogue(A Bᵀ), for every BF16/F32
-// triple, B full precision (Gemm) or U4/U8 quantized (QuantizedGemm), read through common.matmul's weight reader. A
-// workgroup computes a GEMM_TILE x GEMM_TILE tile of D from shared slices of GEMM_DEPTH K
+// triple, B full precision (Gemm) or U4/U8 quantized (QuantizedGemm), A full precision or INT8 symmetric
+// (A8QuantizedGemm), each read through common.matmul's operand readers. A workgroup computes a GEMM_TILE x GEMM_TILE tile of D from shared slices of GEMM_DEPTH K
 // elements of A's and B's tile rows; each invocation owns GEMM_SPAN x GEMM_SPAN outputs GEMM_STRIDE apart and folds
 // each one's products from +0 in increasing K, the CPU's order, a NoContraction product and sum per step. Where
 // common.matmul classes an output fast that fold sees no operand, product or partial the device may flush, so it rounds
@@ -36,9 +36,9 @@ float gemm_step(float sum, float x, float w) {
   };
 }
 
-void gemm_body<A : IModelFloat, B : IModelFloat, D : IModelFloat, W : IMatmulWeights>(
+void gemm_body<X : IMatmulOperand, B : IModelFloat, D : IModelFloat, W : IMatmulOperand>(
   W weights,
-  Ptr<A, Access.Read> a,
+  X activations,
   Ptr<D, Access.ReadWrite> d,
   Ptr<B, Access.Read> bias,
   uint k,
@@ -83,10 +83,10 @@ void gemm_body<A : IModelFloat, B : IModelFloat, D : IModelFloat, W : IMatmulWei
       var x = 0.0;
       var w = 0.0;
       if (a_row < m && j < k) {
-        x = a[a_row * k + j].toFloat();
+        x = activations.value(a_row, j, a_row * k);
       }
       if (b_row < n && j < k) {
-        w = weights.weight(b_row, j, b_row * k);
+        w = weights.value(b_row, j, b_row * k);
       }
       a_fields = matmul_merge_fields(a_fields, matmul_fields(x, 0.0));
       b_fields = matmul_merge_fields(b_fields, matmul_fields(0.0, w));
@@ -141,7 +141,7 @@ void gemm_body<A : IModelFloat, B : IModelFloat, D : IModelFloat, W : IMatmulWei
         }
         var dot = sums[i][j];
         if (matmul_mode(fields, k, has_scale, ab_scale, accumulate, prior, has_bias, bias_value) != MATMUL_FAST) {
-          dot = matmul_replay(a, row * k, weights, column, k);
+          dot = matmul_replay(activations, row, weights, column, k);
         }
         let value =
           matmul_epilogue(dot, has_scale, ab_scale, accumulate, prior, has_bias, bias_value, has_soft_cap, soft_cap);
@@ -169,8 +169,9 @@ void gemm_body<A : IModelFloat, B : IModelFloat, D : IModelFloat, W : IMatmulWei
   [[Specialize]] bool has_bias,
   [[Specialize]] bool has_soft_cap,
 ) {
-  DenseWeights<B> weights = { b };
-  gemm_body<A, B, D>(
-    weights, a, d, bias, k, n, m, ab_scale, soft_cap, column_tile, row_tile, tid, has_scale, accumulate, has_bias,
+  DenseOperand<B> weights = { b };
+  DenseOperand<A> activations = { a };
+  gemm_body<DenseOperand<A>, B, D>(
+    weights, activations, d, bias, k, n, m, ab_scale, soft_cap, column_tile, row_tile, tid, has_scale, accumulate, has_bias,
     has_soft_cap);
 }

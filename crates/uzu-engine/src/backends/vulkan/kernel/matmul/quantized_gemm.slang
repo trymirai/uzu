@@ -44,7 +44,8 @@ func QuantizedGemm<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
     zero_point_output_stride, zero_point_group_stride, quantization_mode == QuantizationMode.U4, signed_codes,
     quantization_method
   };
-  gemm_body<A, B, D>(
-    weights, a, d, bias, k, n, m, ab_scale, soft_cap, column_tile, row_tile, tid, has_scale, accumulate, has_bias,
+  DenseOperand<A> activations = { a };
+  gemm_body<DenseOperand<A>, B, D>(
+    weights, activations, d, bias, k, n, m, ab_scale, soft_cap, column_tile, row_tile, tid, has_scale, accumulate, has_bias,
     has_soft_cap);
 }

@@ -1,5 +1,6 @@
 import definitions;
 import common.activation;
+import common.int8_code_layout;
 import common.quantized_value;
 import generated.quantization_method;
 
@@ -75,17 +76,31 @@ public uint matmul_mode(
   return MATMUL_FAST;
 }
 
-// The FP32 value of B's element `inner` of row `row`, which starts at element `base`, as the CPU reads it.
-public interface IMatmulWeights {
-  public float weight(uint row, uint inner, uint base);
+// The FP32 value of an A or B element `inner` of row `row`, which starts at element `base`, as the CPU reads it.
+public interface IMatmulOperand {
+  public float value(uint row, uint inner, uint base);
 }
 
-// Full-precision B rows of k elements.
-public struct DenseWeights<B : IModelFloat> : IMatmulWeights {
-  public Ptr<B, Access.Read> b;
+// Full-precision rows of k elements.
+public struct DenseOperand<T : IModelFloat> : IMatmulOperand {
+  public Ptr<T, Access.Read> values;
 
-  public float weight(uint row, uint inner, uint base) {
-    return b[base + inner].toFloat();
+  public float value(uint row, uint inner, uint base) {
+    return values[base + inner].toFloat();
+  }
+}
+
+// Symmetric INT8 A rows of k codes at int8_code_index, each times the FP32 scale of its group (base + inner) / group_size
+// in one rounding, as the CPU decodes them; base is a multiple of 8 and of the group.
+public struct Int8Activations : IMatmulOperand {
+  public Ptr<int8_t, Access.Read> codes;
+  public Ptr<float, Access.Read> scales;
+  public uint group_size;
+  public bool grouped_by_weight_nibble;
+
+  public float value(uint row, uint inner, uint base) {
+    let code = float(codes[base + int8_code_index(inner, grouped_by_weight_nibble)]);
+    return exact_product(code, scales[(base + inner) / group_size]);
   }
 }
 
@@ -93,7 +108,7 @@ public struct DenseWeights<B : IModelFloat> : IMatmulWeights {
 // stored signed codes with their top bit flipped. Scales, biases and zero points (nibbles for U4) of group
 // inner / group_size sit at row output_stride + group group_stride, each plane with its own strides; without zero points
 // the offset is the midpoint, 8 or 128. The value is quantized_value's, in FP32, never rounded to B.
-public struct QuantizedWeights<B : IModelFloat> : IMatmulWeights {
+public struct QuantizedWeights<B : IModelFloat> : IMatmulOperand {
   public Ptr<uint8_t, Access.Read> codes;
   public Ptr<B, Access.Read> scales;
   public Ptr<B, Access.Read> biases;
@@ -107,7 +122,7 @@ public struct QuantizedWeights<B : IModelFloat> : IMatmulWeights {
   public bool signed_codes;
   public QuantizationMethod method;
 
-  public float weight(uint row, uint inner, uint base) {
+  public float value(uint row, uint inner, uint base) {
     let index = base + inner;
     var code = u4 ? read_nibble(codes, index) : uint(codes[index]);
     if (signed_codes) {
@@ -130,18 +145,19 @@ public struct QuantizedWeights<B : IModelFloat> : IMatmulWeights {
   }
 }
 
-// The CPU's dot of A from `a_base` and B row `row`, in its order with every product and sum rounded as it rounds them.
-public float matmul_replay<A : IModelFloat, W : IMatmulWeights>(
-  Ptr<A, Access.Read> a,
-  uint a_base,
+// The CPU's dot of A row `a_row` and B row `b_row`, in its order with every product and sum rounded as it rounds them.
+public float matmul_replay<X : IMatmulOperand, W : IMatmulOperand>(
+  X activations,
+  uint a_row,
   W weights,
-  uint row,
+  uint b_row,
   uint k
 ) {
   var dot = 0.0;
-  let base = row * k;
+  let a_base = a_row * k;
+  let b_base = b_row * k;
   for (uint j = 0; j < k; j++) {
-    dot = ordered_sum(dot, exact_product(a[a_base + j].toFloat(), weights.weight(row, j, base)));
+    dot = ordered_sum(dot, exact_product(activations.value(a_row, j, a_base), weights.value(b_row, j, b_base)));
   }
   return dot;
 }

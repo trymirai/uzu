@@ -1,3 +1,4 @@
+mod a8_matmul_test;
 mod activation_test;
 mod activation_transform_test;
 mod ancestor_attention_case;
@@ -48,4 +49,5 @@ pub use normalization_case::NormalizationCase;
 pub use normalization_test::stage_oracle as normalization_stage_oracle;
 pub use qkv_norm_case::QKVNormCase;
 pub use qkv_norm_test::staged_rms_bounds;
+pub use quantized_matmul_test::{check, check_all};
 pub use short_conv_case::ShortConvCase;

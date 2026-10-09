@@ -10,9 +10,12 @@ use crate::{
                 QuantizationMethod::{self, ScaleBias, ScaleSymmetric, ScaleZeroPoint},
                 QuantizationMode,
             },
-            kernel::matmul::QuantParamsLayout::{self, GroupOutput, OutputGroup},
+            kernel::matmul::{
+                Int8CodeLayout,
+                QuantParamsLayout::{self, GroupOutput, OutputGroup},
+            },
         },
-        vulkan::{Error, QuantizedGemmVulkanKernel, QuantizedGemvVulkanKernel, VkBuffer},
+        vulkan::{Error, QuantizedGemmVulkanKernel, QuantizedGemvVulkanKernel, VkBuffer, VkCommandBufferEncoding},
     },
     data_type::DataType,
     tests::matmul::qwen3_layer_shapes,
@@ -48,18 +51,19 @@ fn quantized(
 }
 
 /// The case's `check` through QuantizedGemv, or QuantizedGemm, which without a soft cap also stores the CPU's bits as
-/// its K fold is the CPU's order.
-fn check(
+/// its K fold is the CPU's order; with prepared A through A8QuantizedGemv or A8QuantizedGemm.
+pub fn check(
     fixture: &KernelFixture,
     label: &str,
     case: &Case,
     gemm: bool,
     totals: &mut BTreeMap<String, [f64; 3]>,
 ) -> (Vec<f32>, Vec<f32>) {
-    let run = if gemm {
-        Case::quantized_gemm
-    } else {
-        Case::quantized_gemv
+    let run = match (gemm, case.prepared().is_some()) {
+        (false, false) => Case::quantized_gemv,
+        (true, false) => Case::quantized_gemm,
+        (false, true) => Case::a8_quantized_gemv,
+        (true, true) => Case::a8_quantized_gemm,
     };
     let (cpu, vulkan) = case.check(fixture, label, run, totals);
     if gemm && case.soft_cap.is_none() {
@@ -69,26 +73,27 @@ fn check(
 }
 
 /// Every case through `check`; returns how many ran.
-fn check_all(
+pub fn check_all(
     label: &str,
     gemm: bool,
     cases: impl IntoIterator<Item = Case>,
 ) -> usize {
     let fixture = KernelFixture::new();
     let mut totals = BTreeMap::new();
-    let mut count = 0;
+    let (mut count, mut a8) = (0, "");
     for case in cases {
         check(&fixture, label, &case, gemm, &mut totals);
         count += 1;
+        if case.prepared().is_some() {
+            a8 = "A8";
+        }
     }
-    Case::report(
-        if gemm {
-            "QuantizedGemm"
-        } else {
-            "QuantizedGemv"
-        },
-        &totals,
-    );
+    let kernel = if gemm {
+        "QuantizedGemm"
+    } else {
+        "QuantizedGemv"
+    };
+    Case::report(&format!("{a8}{kernel}"), &totals);
     fixture.assert_clean();
     count
 }
@@ -539,139 +544,196 @@ fn rejects_invalid_configurations() {
 /// scale of row 5). Each case is first checked, quantized and dense, against the CPU and its bounds (and CPU bits
 /// through Gemm), then timed in 4 interleaved quantized, dense pairs, each the median GPU and wall time of 10
 /// submissions after 3 warm-up ones. Bytes count codes, metadata, A and D once: logical rates, not DRAM traffic.
+/// With `a8`, the same layers with F32 A prepared as INT8 (A group 128, the canonical code layout of the bits), the
+/// tail 77 x 3001 x 1056 with A group 32, and the mixed case's row 0 A scales times 2^-110, timed against the standard
+/// quantized Matmul on the same decoded F32 A and packed B, whose outputs it must match (NaN any NaN); bytes count INT8
+/// A and its FP32 scales.
 fn throughput(
     gemm: bool,
     ms: &[u32],
     extras: bool,
+    a8: bool,
 ) {
     let fixture = KernelFixture::new();
     let configurations = [(4, 64, ScaleBias, GroupOutput, false), (8, 128, ScaleZeroPoint, OutputGroup, false)];
+    let types = if a8 {
+        [DataType::BF16, DataType::F32, DataType::BF16]
+    } else {
+        [DataType::BF16; 3]
+    };
+    let prepare = |case: Case, group: u32| match a8 {
+        true => {
+            let bits = DataType::from(case.quantized.as_ref().unwrap().mode).size_in_bits() as u32;
+            case.prepare_activations(group, Int8CodeLayout::for_right_bits(bits).unwrap(), None, false)
+        },
+        false => case,
+    };
     let mut cases = Vec::new();
     for ((label, k, n), &m, configuration) in
         itertools::iproduct!([("0.8b_qkv", 1024, 3072), ("2b_up", 2048, 12288)], ms, configurations)
     {
-        cases.push((label, quantized(Case::new([DataType::BF16; 3], m, n, k, 0, m), configuration, m.into())));
+        cases.push((label, prepare(quantized(Case::new(types, m, n, k, 0, m), configuration, m.into()), 128)));
     }
     if extras {
-        cases.push(("tail", quantized(Case::new([DataType::BF16; 3], 77, 3001, 1001, 0, 77), configurations[0], 77)));
-        let mut mixed = quantized(Case::new([DataType::BF16; 3], 64, 3072, 1024, 0, 64), configurations[0], 64);
-        mixed.a[..1024].iter_mut().for_each(|value| *value = Case::stored(*value * 2f32.powi(-110), DataType::BF16));
+        let tail_k = if a8 {
+            1056
+        } else {
+            1001
+        };
+        cases.push(("tail", prepare(quantized(Case::new(types, 77, 3001, tail_k, 0, 77), configurations[0], 77), 32)));
+        let mut mixed = prepare(quantized(Case::new(types, 64, 3072, 1024, 0, 64), configurations[0], 64), 128);
+        match mixed.quantized.as_mut().and_then(|input| input.prepared_a.as_mut()) {
+            Some(prepared) => prepared.scales[..8].iter_mut().for_each(|scale| *scale *= 2f32.powi(-110)),
+            None => mixed.a[..1024]
+                .iter_mut()
+                .for_each(|value| *value = Case::stored(*value * 2f32.powi(-110), DataType::BF16)),
+        }
+        if a8 {
+            mixed.a = mixed.decoded_activations();
+        }
         mixed.quantized.as_mut().unwrap().scales[5 * 16] = f32::NAN;
         mixed.b = mixed.decoded();
         cases.push(("0.8b_qkv mixed", mixed));
     }
     let mut totals = BTreeMap::new();
-    let mut dense_totals = BTreeMap::new();
-    let name = if gemm {
-        "QuantizedGemm"
+    let mut reference_totals = BTreeMap::new();
+    let kernel = if gemm {
+        "Gemm"
     } else {
-        "QuantizedGemv"
+        "Gemv"
     };
+    let (name, reference_name, subject_label, reference_label, short) = match a8 {
+        true => {
+            (format!("A8Quantized{kernel}"), format!("Quantized{kernel}"), "A8", "quantized F32 A", ["A8", "quantized"])
+        },
+        false => (format!("Quantized{kernel}"), kernel.to_owned(), "quantized", "dense F32 B", ["quantized", "dense"]),
+    };
+    fn whole(buffer: &Arc<VkBuffer>) -> (&Arc<VkBuffer>, Range<u64>) {
+        (buffer, 0..buffer.size())
+    }
     for (label, case) in &cases {
-        let mut dense = case.clone();
-        (dense.quantized, dense.types[0]) = (None, DataType::F32);
-        check(&fixture, "throughput", case, gemm, &mut totals);
-        let (cpu, vulkan) = dense.check(
-            &fixture,
-            "throughput",
-            if gemm {
-                Case::gemm
-            } else {
-                Case::gemv
+        let mut reference = case.clone();
+        match a8 {
+            true => reference.quantized.as_mut().unwrap().prepared_a = None,
+            false => (reference.quantized, reference.types[0]) = (None, DataType::F32),
+        }
+        let (_, subject_values) = check(&fixture, "throughput", case, gemm, &mut totals);
+        let (_, reference_values) = match a8 {
+            true => check(&fixture, "throughput", &reference, gemm, &mut reference_totals),
+            false => {
+                let run = if gemm {
+                    Case::gemm
+                } else {
+                    Case::gemv
+                };
+                let (cpu, vulkan) = reference.check(&fixture, "throughput", run, &mut reference_totals);
+                if gemm {
+                    KernelFixture::assert_bits(&cpu, &vulkan, "dense CPU bits");
+                }
+                (cpu, vulkan)
             },
-            &mut dense_totals,
-        );
-        if gemm {
-            KernelFixture::assert_bits(&cpu, &vulkan, "dense CPU bits");
+        };
+        if a8 {
+            KernelFixture::assert_bits(&reference_values, &subject_values, &format!("A8 {label} as standard"));
         }
         let planes = case.weight_planes().iter().map(|plane| fixture.buffer(plane)).collect::<Vec<_>>();
-        let dense_b = fixture.buffer(&dense.b);
-        let [a, d] =
-            [(&case.a, 1), (&case.d, 2)].map(|(values, index)| fixture.buffer(&Case::bytes(values, case.types[index])));
-        fn whole(buffer: &Arc<VkBuffer>) -> (&Arc<VkBuffer>, Range<u64>) {
-            (buffer, 0..buffer.size())
-        }
+        let [a, d] = [(&reference.a, 1), (&case.d, 2)]
+            .map(|(values, index)| fixture.buffer(&Case::bytes(values, reference.types[index])));
         let weights = planes.iter().map(whole).collect::<Vec<_>>();
         let (m, n, k) = (u64::from(case.m), u64::from(case.n), u64::from(case.k));
-        let bytes = planes.iter().map(|plane| plane.size()).sum::<u64>() + (m * k + m * n) * 2;
-        let gemv_kernels = (!gemm).then(|| (case.quantized_gemv_kernel(&fixture), dense.gemv_kernel(&fixture)));
-        let gemm_kernels = gemm.then(|| (case.quantized_gemm_kernel(&fixture), dense.gemm_kernel(&fixture)));
-        // Even pairs time the quantized dispatch first, odd pairs the dense one; both are returned quantized, dense.
+        let a_bytes =
+            case.prepared().map_or(m * k * 2, |prepared| (prepared.values.len() + 4 * prepared.scales.len()) as u64);
+        let bytes = planes.iter().map(|plane| plane.size()).sum::<u64>() + a_bytes + m * n * 2;
+        let (reference, weights, a, d) = (&reference, &weights, &a, &d);
+        // SAFETY (every recorder): whole buffers of the case's planes, INT8 or full-precision A, D and dense B; D aliases
+        // nothing.
+        let (mut subject, mut baseline): (
+            Box<dyn FnMut(&mut VkCommandBufferEncoding) + '_>,
+            Box<dyn FnMut(&mut VkCommandBufferEncoding) + '_>,
+        ) = match (gemm, case.prepared()) {
+            (false, None) => {
+                let (subject, full) = (case.quantized_gemv_kernel(&fixture), reference.gemv_kernel(&fixture));
+                let dense_b = fixture.buffer(&reference.b);
+                (
+                    Box::new(move |encoding| unsafe {
+                        case.encode_quantized_gemv(&subject, weights, [whole(a), whole(d)], None, None, encoding)
+                    }),
+                    Box::new(move |encoding| unsafe {
+                        reference.encode_gemv(&full, [whole(&dense_b), whole(a), whole(d)], None, None, encoding)
+                    }),
+                )
+            },
+            (true, None) => {
+                let (subject, full) = (case.quantized_gemm_kernel(&fixture), reference.gemm_kernel(&fixture));
+                let dense_b = fixture.buffer(&reference.b);
+                (
+                    Box::new(move |encoding| unsafe {
+                        case.encode_quantized_gemm(&subject, weights, [whole(a), whole(d)], None, encoding)
+                    }),
+                    Box::new(move |encoding| unsafe {
+                        reference.encode_gemm(&full, [whole(&dense_b), whole(a), whole(d)], None, encoding)
+                    }),
+                )
+            },
+            (false, Some(prepared)) => {
+                let (subject, standard) =
+                    (case.a8_quantized_gemv_kernel(&fixture), reference.quantized_gemv_kernel(&fixture));
+                let (codes, scales) = (fixture.buffer(&prepared.values), fixture.buffer(&prepared.scales));
+                (
+                    Box::new(move |encoding| unsafe {
+                        let int8 = [whole(&codes), whole(&scales), whole(d)];
+                        case.encode_a8_gemv(&subject, weights, int8, None, None, encoding)
+                    }),
+                    Box::new(move |encoding| unsafe {
+                        reference.encode_quantized_gemv(&standard, weights, [whole(a), whole(d)], None, None, encoding)
+                    }),
+                )
+            },
+            (true, Some(prepared)) => {
+                let (subject, standard) =
+                    (case.a8_quantized_gemm_kernel(&fixture), reference.quantized_gemm_kernel(&fixture));
+                let (codes, scales) = (fixture.buffer(&prepared.values), fixture.buffer(&prepared.scales));
+                (
+                    Box::new(move |encoding| unsafe {
+                        let int8 = [whole(&codes), whole(&scales), whole(d)];
+                        case.encode_a8_gemm(&subject, weights, int8, None, encoding)
+                    }),
+                    Box::new(move |encoding| unsafe {
+                        reference.encode_quantized_gemm(&standard, weights, [whole(a), whole(d)], None, encoding)
+                    }),
+                )
+            },
+        };
+        // Even pairs time the subject first, odd pairs the reference; both are returned subject, reference.
         fn ordered<T>(
             pair: usize,
-            mut quantized: impl FnMut() -> T,
-            mut dense: impl FnMut() -> T,
+            mut subject: impl FnMut() -> T,
+            mut reference: impl FnMut() -> T,
         ) -> [T; 2] {
             if pair.is_multiple_of(2) {
-                let first = quantized();
-                [first, dense()]
+                let first = subject();
+                [first, reference()]
             } else {
-                let first = dense();
-                [quantized(), first]
+                let first = reference();
+                [subject(), first]
             }
         }
         for pair in 0..4 {
-            // SAFETY: whole buffers of the case's planes, A, D and dense B; D aliases nothing.
-            let times = match (&gemv_kernels, &gemm_kernels) {
-                (_, Some((quantized, full))) => ordered(
-                    pair,
-                    || {
-                        fixture.median_times(|encoding| unsafe {
-                            case.encode_quantized_gemm(quantized, &weights, [whole(&a), whole(&d)], None, encoding)
-                        })
-                    },
-                    || {
-                        fixture.median_times(|encoding| unsafe {
-                            dense.encode_gemm(full, [whole(&dense_b), whole(&a), whole(&d)], None, encoding)
-                        })
-                    },
-                ),
-                (Some((quantized, full)), _) => ordered(
-                    pair,
-                    || {
-                        fixture.median_times(|encoding| unsafe {
-                            case.encode_quantized_gemv(
-                                quantized,
-                                &weights,
-                                [whole(&a), whole(&d)],
-                                None,
-                                None,
-                                encoding,
-                            )
-                        })
-                    },
-                    || {
-                        fixture.median_times(|encoding| unsafe {
-                            dense.encode_gemv(full, [whole(&dense_b), whole(&a), whole(&d)], None, None, encoding)
-                        })
-                    },
-                ),
-                (None, None) => unreachable!("one kernel pair"),
-            };
+            let times = ordered(pair, || fixture.median_times(&mut subject), || fixture.median_times(&mut baseline));
             let [[gpu, wall], [dense_gpu, dense_wall]] =
                 times.map(|(gpu, wall)| [gpu, wall].map(|time| time.as_secs_f64() * 1e6));
-            let first = if pair.is_multiple_of(2) {
-                "quantized"
-            } else {
-                "dense"
-            };
+            let first = short[pair % 2];
             eprintln!(
-                "MEASURE {name} {label} {} m {m} n {n} k {k} pair {pair} ({first} first): quantized GPU {gpu:.1} us wall \
-                 {wall:.1} us, dense F32 B GPU {dense_gpu:.1} us wall {dense_wall:.1} us, quantized {:.1} GB/s, {bytes} B",
+                "MEASURE {name} {label} {} m {m} n {n} k {k} pair {pair} ({first} first): {subject_label} GPU {gpu:.1} us \
+                 wall {wall:.1} us, {reference_label} GPU {dense_gpu:.1} us wall {dense_wall:.1} us, {subject_label} \
+                 {:.1} GB/s, {bytes} B",
                 case.label(),
                 bytes as f64 / gpu / 1e3,
             );
         }
     }
-    Case::report(name, &totals);
-    Case::report(
-        if gemm {
-            "Gemm"
-        } else {
-            "Gemv"
-        },
-        &dense_totals,
-    );
+    Case::report(&name, &totals);
+    Case::report(&reference_name, &reference_totals);
     fixture.assert_clean();
 }
 
@@ -679,23 +741,47 @@ fn throughput(
 #[uzu_test]
 #[ignore]
 fn throughput_decode() {
-    throughput(false, &[1, 2, 8], false);
+    throughput(false, &[1, 2, 8], false, false);
 }
 
 #[uzu_test]
 #[ignore]
 fn throughput_m16() {
-    throughput(true, &[16], false);
+    throughput(true, &[16], false, false);
 }
 
 #[uzu_test]
 #[ignore]
 fn throughput_m64() {
-    throughput(true, &[64], false);
+    throughput(true, &[64], false, false);
 }
 
 #[uzu_test]
 #[ignore]
 fn throughput_m128() {
-    throughput(true, &[128], true);
+    throughput(true, &[128], true, false);
+}
+
+#[uzu_test]
+#[ignore]
+fn throughput_a8_decode() {
+    throughput(false, &[1, 2, 8], false, true);
+}
+
+#[uzu_test]
+#[ignore]
+fn throughput_a8_m16() {
+    throughput(true, &[16], false, true);
+}
+
+#[uzu_test]
+#[ignore]
+fn throughput_a8_m64() {
+    throughput(true, &[64], false, true);
+}
+
+#[uzu_test]
+#[ignore]
+fn throughput_a8_m128() {
+    throughput(true, &[128], true, true);
 }
