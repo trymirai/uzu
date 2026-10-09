@@ -137,7 +137,7 @@ impl<B: Backend> dyn Linear<B> {
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
             spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
-            | AnyWeightMatrixSpec::ScaleBiasSpec(_)
+            | AnyWeightMatrixSpec::MLXSpec(_)
             | AnyWeightMatrixSpec::IntSpec(_)) => {
                 let block = LinearMatmul::load(
                     context,

@@ -35,7 +35,7 @@ pub struct ParsedWeightSpec {
 pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeightSpec, WeightMatrixError<B>> {
     let (layout, quantized) = match spec {
         AnyWeightMatrixSpec::FullPrecisionSpec(spec) => (spec.layout.clone(), None),
-        AnyWeightMatrixSpec::ScaleBiasSpec(spec) => {
+        AnyWeightMatrixSpec::MLXSpec(spec) => {
             (spec.layout.clone(), Some((spec.bits, spec.group_size, QuantizationMethod::ScaleBias)))
         },
         AnyWeightMatrixSpec::IntSpec(spec) => (
