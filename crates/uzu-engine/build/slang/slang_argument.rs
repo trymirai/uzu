@@ -190,12 +190,16 @@ impl<'a> SlangArgument<'a> {
         self.variable.user_attributes().find(|attribute| attribute.name() == Some(name))
     }
 
-    /// Pointee and access mode as reflected by Slang, e.g. `Ptr<T, Access.Read, AddressSpace.Device>`.
+    /// Pointee and access mode as reflected by Slang, e.g. `Ptr<T, Access.Read, AddressSpace.Device>`, which Slang 2026.5
+    /// reflects with its default fourth parameter as `Ptr<T, Access.Read, AddressSpace.Device, DefaultDataLayout>`.
     fn pointer(&self) -> Result<(String, KernelBufferAccess), Error> {
         let ty = self.slang_type()?;
         let pointer = ty
             .strip_prefix("Ptr<")
-            .and_then(|ty| ty.strip_suffix(", AddressSpace.Device>"))
+            .and_then(|ty| {
+                ty.strip_suffix(", AddressSpace.Device>")
+                    .or_else(|| ty.strip_suffix(", AddressSpace.Device, DefaultDataLayout>"))
+            })
             .and_then(|ty| ty.rsplit_once(", Access."));
         match pointer {
             Some((pointee, "Read")) => Ok((pointee.to_owned(), KernelBufferAccess::Read)),
