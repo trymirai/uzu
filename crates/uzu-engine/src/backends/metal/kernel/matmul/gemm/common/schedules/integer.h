@@ -196,27 +196,47 @@ struct IntegerSchedule {
   template <typename Core>
   using GroupProducts = uzu::matmul::Fragment<int, Core::TILES_M, Core::TILES_N, typename Core::FragmentOps>;
 
-  template <typename Core, typename LeftCodes, typename RightCodes>
-  static METAL_FUNC GroupProducts<Core> multiply_group(thread LeftCodes& left_codes, thread RightCodes& right_codes) {
-    constexpr int chunks_per_group = int(RIGHT_GROUP_SIZE) / int(Core::SIMDGROUP_BLOCK_K);
-    constexpr bool PREFETCH_INT4_CHUNKS = Core::TILES_M == 1 && chunks_per_group > 1 && RightOperand::BITS == 4;
+  template <typename Core>
+  static constexpr int chunks_per_k_group() {
+    return int(RIGHT_GROUP_SIZE) / int(Core::SIMDGROUP_BLOCK_K);
+  }
+
+  template <typename Core>
+  static constexpr bool prefetches_int4_chunks() {
+    return Core::TILES_M == 1 && chunks_per_k_group<Core>() > 1 && RightOperand::BITS == 4;
+  }
+
+  template <typename RightCodes, int K_GROUP_COUNT, int CHUNKS_PER_K_GROUP>
+  static METAL_FUNC void fetch_k_groups(
+      const thread RightCodes& right_codes,
+      thread typename RightCodes::PackedChunk (&packed_right_chunks)[K_GROUP_COUNT][CHUNKS_PER_K_GROUP]
+  ) {
+    for_each_static_index<K_GROUP_COUNT>([&](const ushort k_group) {
+      for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
+        packed_right_chunks[k_group][chunk] = right_codes.fetch(uint(k_group * CHUNKS_PER_K_GROUP + chunk));
+      });
+    });
+  }
+
+  template <typename Core, typename LeftCodes, typename RightCodes, int CHUNKS_PER_K_GROUP>
+  static METAL_FUNC GroupProducts<Core> multiply_k_group(
+      thread LeftCodes& left_codes,
+      thread RightCodes& right_codes,
+      const thread typename RightCodes::PackedChunk (&packed_right_chunks)[CHUNKS_PER_K_GROUP]
+  ) {
     GroupProducts<Core> group_product;
     group_product.clear();
-    if constexpr (PREFETCH_INT4_CHUNKS) {
-      typename RightCodes::PackedChunk packed_chunks[chunks_per_group];
-      for_each_static_index<chunks_per_group>([&](const ushort chunk) {
-        packed_chunks[chunk] = right_codes.fetch(uint(chunk));
-      });
-      for_each_static_index<chunks_per_group>([&](const ushort chunk) {
+    if constexpr (prefetches_int4_chunks<Core>()) {
+      for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
         auto left_tile = left_codes.load(uint(chunk));
-        auto right_tile = right_codes.decode(packed_chunks[chunk]);
+        auto right_tile = right_codes.decode(packed_right_chunks[chunk]);
         uzu::matmul::fragment_mma(group_product, left_tile, right_tile);
         left_codes.advance();
         right_codes.advance();
       });
     } else {
       METAL_PRAGMA_NO_UNROLL
-      for (int chunk = 0; chunk < chunks_per_group; ++chunk) {
+      for (int chunk = 0; chunk < CHUNKS_PER_K_GROUP; ++chunk) {
         auto left_tile = left_codes.load(uint(chunk));
         auto right_tile = right_codes.load(uint(chunk));
         uzu::matmul::fragment_mma(group_product, left_tile, right_tile);
@@ -317,15 +337,47 @@ struct IntegerSchedule {
     accumulator.clear();
 
     const int right_group_count = int(params->aligned_inner_iterations);
+    constexpr int CHUNKS_PER_K_GROUP = chunks_per_k_group<Core>();
+    constexpr bool PREFETCH_INT4_CHUNKS = prefetches_int4_chunks<Core>();
+    constexpr bool IS_ALIGNED_M_INT4_TILE16X32 =
+        PREFETCH_INT4_CHUNKS && ALIGNED_M && Core::TILING == GemmTiling::Tile16x32x256_Simdgroups1x1;
+    constexpr int K_GROUPS_PER_FETCH = IS_ALIGNED_M_INT4_TILE16X32 ? 4 : 1;
+    constexpr int MIN_K_GROUPS_PER_THREADGROUP_FOR_BATCHED_FETCH = 16;
+    using PackedRightChunk = typename decltype(right_codes)::PackedChunk;
+
+    int right_group_index = 0;
+    if constexpr (K_GROUPS_PER_FETCH > 1) {
+      const int batched_fetch_right_group_limit =
+          right_group_count >= MIN_K_GROUPS_PER_THREADGROUP_FOR_BATCHED_FETCH ? right_group_count : 0;
+      METAL_PRAGMA_NO_UNROLL
+      for (; right_group_index + K_GROUPS_PER_FETCH <= batched_fetch_right_group_limit;
+           right_group_index += K_GROUPS_PER_FETCH) {
+        PackedRightChunk packed_right_chunks[K_GROUPS_PER_FETCH][CHUNKS_PER_K_GROUP];
+        fetch_k_groups(right_codes, packed_right_chunks);
+        for_each_static_index<K_GROUPS_PER_FETCH>([&](const ushort k_group) {
+          const int fetched_right_group_index = right_group_index + int(k_group);
+          const uint right_group_offset = uint(fetched_right_group_index) * RIGHT_GROUP_SIZE;
+          left_codes.begin_k_group(right_group_offset);
+          right_codes.begin_k_group(right_group_offset);
+          auto group_product = multiply_k_group<Core>(left_codes, right_codes, packed_right_chunks[k_group]);
+          left_metadata.load(left_storage, metadata_context, tile.k_offset + right_group_offset);
+          right_metadata.load(right_storage, metadata_context, first_right_group + uint(fetched_right_group_index));
+          accumulate_group<Core, ALIGNED_M, ALIGNED_N>(accumulator, group_product, left_metadata, right_metadata);
+        });
+      }
+    }
     METAL_PRAGMA_NO_UNROLL
-    for (int right_group_index = 0; right_group_index < right_group_count; ++right_group_index) {
-      const uint absolute_right_group = first_right_group + uint(right_group_index);
-      const uint right_group_offset = uint(right_group_index * int(RIGHT_GROUP_SIZE));
+    for (; right_group_index < right_group_count; ++right_group_index) {
+      PackedRightChunk packed_right_chunks[1][CHUNKS_PER_K_GROUP];
+      if constexpr (PREFETCH_INT4_CHUNKS) {
+        fetch_k_groups(right_codes, packed_right_chunks);
+      }
+      const uint right_group_offset = uint(right_group_index) * RIGHT_GROUP_SIZE;
       left_codes.begin_k_group(right_group_offset);
       right_codes.begin_k_group(right_group_offset);
-      auto group_product = multiply_group<Core>(left_codes, right_codes);
+      auto group_product = multiply_k_group<Core>(left_codes, right_codes, packed_right_chunks[0]);
       left_metadata.load(left_storage, metadata_context, tile.k_offset + right_group_offset);
-      right_metadata.load(right_storage, metadata_context, absolute_right_group);
+      right_metadata.load(right_storage, metadata_context, first_right_group + uint(right_group_index));
       accumulate_group<Core, ALIGNED_M, ALIGNED_N>(accumulator, group_product, left_metadata, right_metadata);
     }
 
