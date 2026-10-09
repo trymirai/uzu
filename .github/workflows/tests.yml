@@ -128,8 +128,8 @@ jobs:
         run: |
           sudo apt-get install -y libclang-dev mesa-vulkan-drivers vulkan-validationlayers vulkan-tools
           curl --fail --location --retry 3 --output "$RUNNER_TEMP/slang.tar.gz" \
-            https://github.com/shader-slang/slang/releases/download/v2026.2/slang-2026.2-linux-x86_64.tar.gz
-          echo "b123968a40ee74404ffaccee2a6c6ae17cf02e76d9f26d4940c7132a19aec8a8  $RUNNER_TEMP/slang.tar.gz" | sha256sum --check
+            https://github.com/shader-slang/slang/releases/download/v2026.5/slang-2026.5-linux-x86_64.tar.gz
+          echo "3c6fa070257773dfb45ab673336c809fdf1dd8537e86b9424f6363ab55dd3eb9  $RUNNER_TEMP/slang.tar.gz" | sha256sum --check
           mkdir "$RUNNER_TEMP/slang"
           tar -xzf "$RUNNER_TEMP/slang.tar.gz" -C "$RUNNER_TEMP/slang"
           echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
