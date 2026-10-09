@@ -33,11 +33,15 @@ pub fn should_encode(
     suffix_length: u32,
     kv_length: u32,
 ) -> bool {
-    kv_length >= GEMM_GROUPED_MIN_KV_LENGTH
-        && ((GEMM_GROUPED_DECODE_SUFFIX_MIN..=GEMM_GROUPED_DECODE_SUFFIX_MAX).contains(&suffix_length)
-            || (head_dim == 256
-                && mask == MaskKind::Causal
-                && (GEMM_GROUPED_DECODE_SUFFIX_MAX + 1..=GEMM_GROUPED_PREFILL_SUFFIX_MAX).contains(&suffix_length)))
+    let decode = (GEMM_GROUPED_DECODE_SUFFIX_MIN..=GEMM_GROUPED_DECODE_SUFFIX_MAX).contains(&suffix_length);
+    // The grouped prefill path is only tuned for head_dim 256.
+    let prefill_tuned = head_dim == 256;
+    let causal_prefill = prefill_tuned
+        && mask == MaskKind::Causal
+        && (GEMM_GROUPED_DECODE_SUFFIX_MAX + 1..=GEMM_GROUPED_PREFILL_SUFFIX_MAX).contains(&suffix_length);
+    // Trie (tree-structured) attention is fastest on the grouped kernel at any KV length.
+    let enough_kv = mask == MaskKind::Trie || kv_length >= GEMM_GROUPED_MIN_KV_LENGTH;
+    enough_kv && (decode || causal_prefill)
 }
 
 type MeasuredSplits = (u32, u32, &'static [(u32, u32)]);
