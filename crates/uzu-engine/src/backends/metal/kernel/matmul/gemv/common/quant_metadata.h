@@ -12,6 +12,7 @@ struct QuantMetadata {
 private:
   float scale[Tile::ROWS_PER_LANE];
   float origin[Tile::ROWS_PER_LANE];
+  float bias[Tile::ROWS_PER_LANE];
   bool signed_codes;
 
 public:
@@ -39,9 +40,14 @@ public:
         const uint packed_index = zero_point_index % ZERO_POINTS_PER_BYTE;
         origin[R] = QuantChunk<BITS>::MANTISSA_BASE +
                     float(decode_zero_point<BITS>(ops.zero_points + zero_point_row, packed_index));
-      } else {
-        static_assert(B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant);
+        bias[R] = 0.0f;
+      } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant) {
         origin[R] = QuantChunk<BITS>::MANTISSA_BASE + float(symmetric_zero_point<BITS>());
+        bias[R] = 0.0f;
+      } else {
+        static_assert(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant);
+        origin[R] = QuantChunk<BITS>::MANTISSA_BASE;
+        bias[R] = float(ops.biases[scale_index]);
       }
     });
   }
@@ -58,15 +64,25 @@ public:
 
   METAL_FUNC void fold(
       thread float (&result)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
-      const thread float (&partial)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE]
+      const thread float (&partial)[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE],
+      const thread float (&input_sum)[Tile::INPUT_ROWS]
   ) const thread {
     Tile::for_each_input_row([&](auto input_index) UZU_ALWAYS_INLINE {
       constexpr uint I = decltype(input_index)::value;
       Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
         constexpr uint R = decltype(output_index)::value;
-        result[I][R] = fma(scale[R], partial[I][R], result[I][R]);
+        result[I][R] = finish(result[I][R], partial[I][R], input_sum[I], R);
       });
     });
+  }
+
+private:
+  METAL_FUNC float finish(float prior, float partial, float input_sum, uint row) const thread {
+    float result = fma(scale[row], partial, prior);
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
+      result = fma(bias[row], input_sum, result);
+    }
+    return result;
   }
 };
 

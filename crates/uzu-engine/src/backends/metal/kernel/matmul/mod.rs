@@ -218,7 +218,7 @@ impl MatmulKernel for MatmulMetalKernel {
         let weight_group_size = shape.b_group_size?;
         let emit_group_sums = match shape.b_prologue {
             GemmBPrologueKind::ScaleSymmetricDequant => false,
-            GemmBPrologueKind::ScaleZeroPointDequant => true,
+            GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant => true,
             GemmBPrologueKind::FullPrecision => return None,
         };
         let code_layout = shape.b_bits.and_then(Int8CodeLayout::for_right_bits)?;

@@ -62,6 +62,7 @@ template <typename LeftOperand, typename RightOperand>
 struct IntegerSchedule {
   UZU_CONST uint RIGHT_GROUP_SIZE = uint(RightOperand::GROUP_SIZE);
   UZU_CONST bool HAS_ZERO_POINTS = RightOperand::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant;
+  UZU_CONST bool HAS_BIAS = RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant;
   UZU_CONST uchar RIGHT_CODE_OFFSET = uchar(RightOperand::CODE_ORIGIN);
 
   template <typename Core, bool ALIGNED_M>
@@ -71,7 +72,7 @@ struct IntegerSchedule {
     UZU_CONST ushort LEFT_VALUE_COUNT = Core::TILES_M * THREAD_ROWS_PER_FRAGMENT;
 
     float scales[LEFT_VALUE_COUNT];
-    int group_corrections[LEFT_VALUE_COUNT];
+    metal::conditional_t<HAS_ZERO_POINTS, int, float> group_corrections[LEFT_VALUE_COUNT];
 
     struct LeftSlot {
       uint row_index;
@@ -104,14 +105,19 @@ struct IntegerSchedule {
         });
       }
 
-      if constexpr (HAS_ZERO_POINTS) {
+      if constexpr (HAS_ZERO_POINTS || HAS_BIAS) {
         const uint right_group_index = k_offset / RIGHT_GROUP_SIZE;
         for_each_static_index<int(LEFT_VALUE_COUNT)>([&](const ushort index) {
           const LeftSlot slot = left_slot(metadata_context, index);
-          group_corrections[index] =
+          const int code_sum =
               slot.live
                   ? left.correction_sums()[slot.row_index * metadata_context.right_group_count + right_group_index]
                   : 0;
+          if constexpr (HAS_ZERO_POINTS) {
+            group_corrections[index] = code_sum;
+          } else {
+            group_corrections[index] = slot.live ? (scales[index] * float(code_sum)) : 0.0f;
+          }
         });
       }
     }
@@ -129,6 +135,7 @@ struct IntegerSchedule {
     );
 
     ScaleVector scales[Core::TILES_N];
+    ScaleVector bias_offsets[Core::TILES_N];
     ZeroPointVector zero_points[Core::TILES_N];
 
     METAL_FUNC void load(
@@ -146,6 +153,12 @@ struct IntegerSchedule {
         scales[tile_n] = *reinterpret_cast<const device ScaleVector*>(
             right.scales + right_group_index * metadata_context.right_scale_group_stride + right_scale_column_start
         );
+        if constexpr (HAS_BIAS) {
+          bias_offsets[tile_n] = *reinterpret_cast<const device ScaleVector*>(
+              right.bias() + right_group_index * metadata_context.right_scale_group_stride + right_scale_column_start
+          );
+          bias_offsets[tile_n] += scales[tile_n] * ScaleElement(RIGHT_CODE_OFFSET);
+        }
         if constexpr (HAS_ZERO_POINTS) {
           constexpr uint ZERO_POINT_PACK_FACTOR = 8u / uint(RightOperand::BITS);
           const device uint8_t* zero_point_row =
@@ -169,6 +182,9 @@ struct IntegerSchedule {
           const bool4 live =
               (short4(right_column_offset) + short4(0, 1, 2, 3)) < short4(metadata_context.right_column_limit);
           scales[tile_n] = select(ScaleVector(0), scales[tile_n], live);
+          if constexpr (HAS_BIAS) {
+            bias_offsets[tile_n] = select(ScaleVector(0), bias_offsets[tile_n], live);
+          }
           if constexpr (HAS_ZERO_POINTS) {
             zero_points[tile_n] = select(ZeroPointVector(RIGHT_CODE_OFFSET), zero_points[tile_n], live);
           }
@@ -256,6 +272,12 @@ struct IntegerSchedule {
                 }
                 accumulated[element] =
                     fma(left_metadata.scales[left_row] * right_scale, float(centered_product), accumulated[element]);
+                if constexpr (HAS_BIAS) {
+                  accumulated[element] =
+                      fma(right_metadata.bias_offsets[tile_n][right_column],
+                          left_metadata.group_corrections[left_row],
+                          accumulated[element]);
+                }
               }
           );
         }

@@ -89,6 +89,7 @@ public:
       const thread QuantMetadata<Tile, AT, BT, DT, B_PROLOGUE, BITS>& metadata
   ) const thread {
     float partial[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
+    float input_sum[Tile::INPUT_ROWS] = {0};
     METAL_PRAGMA_UNROLL
     for (uint chunk = 0; chunk < CHUNKS_PER_SLICE; chunk++) {
       float weight_values[Tile::ROWS_PER_LANE][CHUNK_VALUES];
@@ -105,6 +106,12 @@ public:
         const device AT* input = ops.a + input_row * params.in_vec_size + k;
         float input_values[CHUNK_VALUES];
         QuantChunk<BITS>::template load<INPUT_ALIGNED>(input, input_values, k, params.in_vec_size, input_row);
+        if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
+          METAL_PRAGMA_UNROLL
+          for (uint i = 0; i < CHUNK_VALUES; i++) {
+            input_sum[I] += input_values[i];
+          }
+        }
         Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
           constexpr uint R = decltype(output_index)::value;
           METAL_PRAGMA_UNROLL
@@ -114,7 +121,7 @@ public:
         });
       });
     }
-    metadata.fold(result, partial);
+    metadata.fold(result, partial, input_sum);
   }
 
 private:

@@ -12,6 +12,7 @@ pub enum GemmAPrologueKind {
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GemmBPrologueKind {
     FullPrecision,
+    ScaleBiasDequant,
     ScaleZeroPointDequant,
     ScaleSymmetricDequant,
 }

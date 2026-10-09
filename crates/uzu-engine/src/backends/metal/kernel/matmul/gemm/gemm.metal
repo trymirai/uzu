@@ -55,6 +55,7 @@ VARIANTS(USE_MXU, false, true)
 VARIANTS(
     B_PROLOGUE,
     GemmBPrologueKind::FullPrecision,
+    GemmBPrologueKind::ScaleBiasDequant,
     GemmBPrologueKind::ScaleZeroPointDequant,
     GemmBPrologueKind::ScaleSymmetricDequant)
 VARIANTS(BITS, 0, 4, 8)
@@ -77,6 +78,7 @@ CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || (BITS == 4 && GROUP_SIZE == 64))
 CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
     (TRANSPOSE_B &&
@@ -106,6 +108,8 @@ KERNEL(Gemm)(
     device DT* d,
     const device BT* scales
         OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision),
+    const device BT* biases
+        OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
     const device uint8_t* zero_points
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
     const device BT* output_bias
@@ -147,7 +151,7 @@ KERNEL(Gemm)(
       "kernel bindings and operand correction policy must agree"
   );
   const auto left_storage = operands::pack_left<LeftOperand, AT>(a, a_int8, a_scales, a_group_sums);
-  const auto right_storage = operands::pack_right<RightOperand, BT>(b, scales, zero_points, signed_codes);
+  const auto right_storage = operands::pack_right<RightOperand, BT>(b, scales, biases, zero_points, signed_codes);
 
   if constexpr (USE_MXU) {
     using Core = MxuMmaCore<DT, GEMM_TILING, TRANSPOSE_B, LeftOperand, RightOperand>;

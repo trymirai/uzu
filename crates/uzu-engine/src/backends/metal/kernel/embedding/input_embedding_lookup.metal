@@ -19,6 +19,7 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
     const device uchar* values,
     const device T* scales OPTIONAL(table_kind != EmbeddingTableKind::Dense),
     const device uchar* zero_points OPTIONAL(table_kind == EmbeddingTableKind::Quantized && quantization_method == QuantizationMethod::ScaleZeroPoint),
+    const device T* biases OPTIONAL(table_kind == EmbeddingTableKind::Quantized && quantization_method == QuantizationMethod::ScaleBias),
     const device int* hadamard_factors OPTIONAL(use_hadamard),
     const device uchar* ladder_indices OPTIONAL(table_kind == EmbeddingTableKind::D4S4),
     const device half* ladder OPTIONAL(table_kind == EmbeddingTableKind::D4S4),
@@ -62,7 +63,9 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
       code = float(values[row + dim_idx]);
     }
     float bias;
-    if (quantization_method == QuantizationMethod::ScaleZeroPoint) {
+    if (quantization_method == QuantizationMethod::ScaleBias) {
+      bias = float(biases[scale_idx]);
+    } else if (quantization_method == QuantizationMethod::ScaleZeroPoint) {
       const uint zero_point = is_u4 ? read_packed<4>(zero_points, 2 * token_id * ((num_groups + 1) / 2) + group_idx)
                                     : zero_points[scale_idx];
       bias = -scale * float(zero_point);

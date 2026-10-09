@@ -6,7 +6,8 @@ using namespace metal;
 
 namespace uzu::quantization_method {
 enum class QuantizationMethod : uint32_t {
-  ScaleZeroPoint = 0,
-  ScaleSymmetric = 1,
+  ScaleBias = 0,
+  ScaleZeroPoint = 1,
+  ScaleSymmetric = 2,
 };
 } // namespace uzu::quantization_method

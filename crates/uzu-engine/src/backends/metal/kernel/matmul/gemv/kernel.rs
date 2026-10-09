@@ -304,10 +304,11 @@ impl GemvKernel {
         };
 
         let a = a.subrange(a_offset..);
-        let (scales, zero_points, scale_strides, zero_point_strides) =
-            b.quantized().map_or((None, None, Default::default(), Default::default()), |quantized| {
+        let (scales, biases, zero_points, scale_strides, zero_point_strides) =
+            b.quantized().map_or((None, None, None, Default::default(), Default::default()), |quantized| {
                 (
                     Some(quantized.scales),
+                    quantized.biases(),
                     quantized.zero_points(),
                     quantized.params.scale_strides(),
                     quantized.zero_point_strides(),
@@ -323,6 +324,7 @@ impl GemvKernel {
                 weights,
                 scales,
                 zero_points,
+                biases,
                 a,
                 d.reborrow(),
                 gemv_bias,
@@ -344,6 +346,7 @@ impl GemvKernel {
                 quantized.codes,
                 scales,
                 zero_points,
+                biases,
                 a,
                 d.reborrow(),
                 gemv_bias,
