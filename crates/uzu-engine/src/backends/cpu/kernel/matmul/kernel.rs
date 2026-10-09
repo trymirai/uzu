@@ -210,7 +210,6 @@ impl MatmulKernel for MatmulCpuKernel {
                                     weights,
                                     scales,
                                     zero_points,
-                                    biases,
                                     scale_strides,
                                     bits,
                                     group_size,
@@ -249,13 +248,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                             *zp.as_ptr().add(zero_point_index) as f32
                                         }
                                     });
-                                    let bias_term = if let Some(zp) = zero_point {
-                                        -scale * zp
-                                    } else if let Some(b) = biases {
-                                        read_f32(b.as_ptr(), weights_data_type, metadata_index)
-                                    } else {
-                                        -scale * midpoint
-                                    };
+                                    let bias_term = -scale * zero_point.unwrap_or(midpoint);
                                     scale * quantized_value + bias_term
                                 },
                             };

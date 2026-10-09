@@ -12,9 +12,8 @@ enum class GemmAPrologueKind : uint32_t {
 
 enum class GemmBPrologueKind : uint32_t {
   FullPrecision = 0,
-  ScaleBiasDequant = 1,
-  ScaleZeroPointDequant = 2,
-  ScaleSymmetricDequant = 3,
+  ScaleZeroPointDequant = 1,
+  ScaleSymmetricDequant = 2,
 };
 
 struct GemmDTransform {

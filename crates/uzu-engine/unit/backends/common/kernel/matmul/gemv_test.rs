@@ -160,7 +160,7 @@ fn gemv_bf16(
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::w4_zero_point(4, QuantizationMethod::ScaleZeroPoint)]
-#[case::w8_bias(8, QuantizationMethod::ScaleBias)]
+#[case::w8_symmetric(8, QuantizationMethod::ScaleSymmetric)]
 fn group_major_gemv_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
@@ -290,7 +290,6 @@ fn gemv_gather() {
     }
     // Quantized (bf16, per bits/method) — inline, since it isn't type-generic.
     for (bits, method, signed_codes) in [
-        (4, QuantizationMethod::ScaleBias, false),
         (4, QuantizationMethod::ScaleZeroPoint, false),
         (4, QuantizationMethod::ScaleZeroPoint, true),
         (8, QuantizationMethod::ScaleSymmetric, false),

@@ -12,7 +12,7 @@ use crate::{
             Backend, Context, Kernels,
             gpu_types::{
                 EmbeddingTableKind::{self, D4S4, Dense, Quantized},
-                QuantizationMethod::{self, ScaleBias, ScaleSymmetric, ScaleZeroPoint},
+                QuantizationMethod::{self, ScaleSymmetric, ScaleZeroPoint},
                 QuantizationMode::{self, I8, U4, U8},
                 d4s4,
             },
@@ -56,7 +56,7 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
     let context = <B as Backend>::Context::new().unwrap();
     let context = context.as_ref();
     let bytes = |data: &[u8]| create_buffer_with_data::<B, u8>(context, data);
-    let (mut scales, mut zero_points, mut biases) = (None, None, None);
+    let (mut scales, mut zero_points) = (None, None);
     let (mut ladder_indices, mut ladder, mut codebook) = (None, None, None);
     let values = match table_kind {
         Dense => {
@@ -68,9 +68,7 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
             let group_values =
                 |value: fn(u32) -> f32| create_buffer_with_data::<B, T>(context, &floats(VOCAB_SIZE * groups, value));
             scales = Some(group_values(|index| 0.02 + (index % 5) as f32 * 0.01));
-            if method == ScaleBias {
-                biases = Some(group_values(|index| -0.1 + index as f32 * 0.03));
-            } else if method == ScaleZeroPoint {
+            if method == ScaleZeroPoint {
                 zero_points = Some(bytes(&pattern(VOCAB_SIZE * groups.div_ceil(mode.packing_divisor()), 53)));
             }
             bytes(&pattern(VOCAB_SIZE * MODEL_DIM / mode.packing_divisor(), 37))
@@ -123,7 +121,6 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
         &values,
         scales.as_ref(),
         zero_points.as_ref(),
-        biases.as_ref(),
         hadamard_factors.as_ref(),
         ladder_indices.as_ref(),
         ladder.as_ref(),
@@ -157,14 +154,12 @@ fn check<T: ArrayElement + Float + Display>(
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::dense(Dense, None, false)]
-#[case::u4_bias(Quantized, Some((U4, ScaleBias, 32)), false)]
 #[case::u4_zero_point_odd_group(Quantized, Some((U4, ScaleZeroPoint, 48)), false)]
 #[case::u4_symmetric(Quantized, Some((U4, ScaleSymmetric, 32)), false)]
-#[case::u8_bias(Quantized, Some((U8, ScaleBias, 32)), false)]
 #[case::u8_zero_point(Quantized, Some((U8, ScaleZeroPoint, 32)), false)]
 #[case::u8_symmetric(Quantized, Some((U8, ScaleSymmetric, 32)), false)]
 #[case::i8_symmetric(Quantized, Some((I8, ScaleSymmetric, 32)), false)]
-#[case::u4_bias_hadamard(Quantized, Some((U4, ScaleBias, 32)), true)]
+#[case::u4_zero_point_hadamard(Quantized, Some((U4, ScaleZeroPoint, 32)), true)]
 #[case::d4s4(D4S4, None, true)]
 fn input_embedding_lookup_bf16(
     #[case] table_kind: EmbeddingTableKind,
@@ -177,7 +172,7 @@ fn input_embedding_lookup_bf16(
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::dense(Dense, None, false)]
-#[case::u4_bias(Quantized, Some((U4, ScaleBias, 32)), false)]
+#[case::u4_zero_point(Quantized, Some((U4, ScaleZeroPoint, 32)), false)]
 fn input_embedding_lookup_f32(
     #[case] table_kind: EmbeddingTableKind,
     #[case] quantization: Option<Quantization>,

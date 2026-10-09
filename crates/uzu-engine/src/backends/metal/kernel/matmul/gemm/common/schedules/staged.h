@@ -7,7 +7,6 @@
 #include "../../../common/fragment.h"
 #include "../gemm_alignment.h"
 #include "../operands.h"
-#include "../quant_scale_bias.h"
 #include "../quant_scale_zero_point.h"
 #include "tile_context.h"
 
@@ -36,29 +35,7 @@ static METAL_FUNC auto make_staged_loader(
   const device uint8_t* values = right.codes + size_t(block_col) * row_stride +
                                  size_t(k_offset) * size_t(get_bytes_per_pack<RightOperand::BITS>()) /
                                      size_t(get_pack_factor<RightOperand::BITS>());
-  if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant) {
-    const device Element* biases = right.bias() + params_offset;
-    using Loader = QuantizedBlockLoaderScaleBias<
-        Element,
-        Core::THREADGROUP_BLOCK_N,
-        Core::THREADGROUP_BLOCK_K,
-        Core::SHARED_STRIDE_B,
-        Core::THREADGROUP_THREADS,
-        RightOperand::GROUP_SIZE,
-        RightOperand::BITS>;
-    return Loader(
-        values,
-        scales,
-        biases,
-        right.signed_codes,
-        int(params->K),
-        int(params->scale_group_stride),
-        int(params->scale_output_stride),
-        staging,
-        thread_context.simdgroup_index,
-        thread_context.simd_lane_id
-    );
-  } else if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant) {
+  if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant) {
     using Loader = QuantizedBlockLoaderScaleZeroPoint<
         Element,
         Core::THREADGROUP_BLOCK_N,

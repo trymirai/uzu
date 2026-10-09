@@ -6,7 +6,7 @@ use std::{
 };
 
 use QuantParamsLayout::{GroupOutput, OutputGroup};
-use QuantizationMethod::{ScaleBias, ScaleZeroPoint};
+use QuantizationMethod::{ScaleSymmetric, ScaleZeroPoint};
 use half::bf16;
 use num_traits::Float;
 use rstest::rstest;
@@ -124,13 +124,10 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::gs32_4bit_mlx_prefill(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
-#[case::gs64_4bit_mlx_prefill(64, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
-#[case::gs32_4bit_mlx_decode(8, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
+#[case::gs32_4bit_zp_prefill(64, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs64_4bit_zp_prefill(64, 256, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs64_4bit_zp_decode(8, 256, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
-#[case::gs32_unaligned_n(64, 256, 96, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs32_narrow_n_tail_zp(64, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint)]
-#[case::gs32_narrow_n_tail_mlx(64, 256, 72, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs32_narrow_n_tail_sym(64, 256, 40, 32, 8, QuantizationMethod::ScaleSymmetric)]
 fn parity_bf16(
     #[case] m: u32,
@@ -145,7 +142,7 @@ fn parity_bf16(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::gs32_8bit_mlx_prefill(64, 256, 64, 32, 8, QuantizationMethod::ScaleBias)]
+#[case::gs32_8bit_symmetric_prefill(64, 256, 64, 32, 8, QuantizationMethod::ScaleSymmetric)]
 #[case::gs64_8bit_symmetric_prefill(64, 256, 64, 64, 8, QuantizationMethod::ScaleSymmetric)]
 fn parity_bf16_8bit_splitk(
     #[case] m: u32,
@@ -160,14 +157,12 @@ fn parity_bf16_8bit_splitk(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::m1_gs32_4bit_mlx(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
-#[case::m1_gs64_4bit_mlx(1, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
+#[case::m1_gs64_4bit_zp(1, 256, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::m1_gs32_4bit_zp(1, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::m1_gs64_8bit_sym(1, 256, 64, 64, 8, QuantizationMethod::ScaleSymmetric)]
-#[case::m2_gs32_4bit_mlx(2, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
+#[case::m2_gs32_4bit_zp(2, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::m4_gs32_4bit_zp(4, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::m8_gs32_4bit_zp(8, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
-#[case::m8_gs32_4bit_mlx(8, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 fn parity_gemv_bf16(
     #[case] m: u32,
     #[case] k: u32,
@@ -180,9 +175,9 @@ fn parity_gemv_bf16(
 }
 
 #[uzu_test]
-fn parity_bf16_gs32_4bit_mlx_with_bias() {
+fn parity_bf16_gs32_4bit_zp_with_bias() {
     let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
+    let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint, 0);
 
     let bias_f32: Vec<f32> = (0..input.n as usize).map(|j| 0.5 + 0.1 * (j % 5) as f32).collect();
     let bias_t: Vec<bf16> = bias_f32.iter().map(|&v| bf16::from_f32(v)).collect();
@@ -220,7 +215,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
 #[uzu_test]
 fn parity_bf16_gemv_qmv_fused_scale_bias() {
     let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<bf16>::new(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
+    let input = QuantInput::<bf16>::new(1, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint, 0);
 
     let scale = 2.0_f32;
     let bias_f32: Vec<f32> = (0..input.n as usize).map(|j| 0.25 + 0.1 * (j % 7) as f32).collect();
@@ -263,7 +258,7 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::gs64_4bit(1, 96, 64, 64, 4, QuantizationMethod::ScaleBias)]
+#[case::gs64_4bit_zp_m1(1, 96, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs64_4bit_zp(2, 96, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 // Whole quantization groups with an unaligned K block.
 #[case::gs64_4bit_k1152_zp(1, 1152, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
@@ -287,9 +282,9 @@ fn parity_gemv_partial_group_bf16(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::n12_gs32_4bit(1, 256, 12, 32, 4, QuantizationMethod::ScaleBias)]
+#[case::n12_gs32_4bit_zp(1, 256, 12, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::n20_gs64_4bit_zp(2, 256, 20, 64, 4, QuantizationMethod::ScaleZeroPoint)]
-#[case::n36_gs32_8bit(1, 256, 36, 32, 8, QuantizationMethod::ScaleBias)]
+#[case::n36_gs32_8bit_sym(1, 256, 36, 32, 8, QuantizationMethod::ScaleSymmetric)]
 fn parity_gemv_unaligned_width_bf16(
     #[case] m: u32,
     #[case] k: u32,
@@ -304,8 +299,8 @@ fn parity_gemv_unaligned_width_bf16(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::decode_fused(1, 256, 64, 32, QuantizationMethod::ScaleBias, true)]
-#[case::gemv(1, 256, 64, 32, QuantizationMethod::ScaleBias, false)]
+#[case::decode_fused(1, 256, 64, 32, QuantizationMethod::ScaleZeroPoint, true)]
+#[case::gemv(1, 256, 64, 32, QuantizationMethod::ScaleZeroPoint, false)]
 #[case::short_prefill_deferred_rht_then_bias(2, 5120, 6144, 64, QuantizationMethod::ScaleZeroPoint, true)]
 #[case::qmv_short_prefill_m2_g64(2, 5120, 6144, 64, QuantizationMethod::ScaleZeroPoint, false)]
 #[case::short_prefill_m5_g64(5, 5120, 6144, 64, QuantizationMethod::ScaleZeroPoint, false)]
@@ -399,9 +394,7 @@ fn parity_bf16_quant_rht(
 #[uzu_test]
 fn cpu_group_major_quantized_gemm_matches_row_major() {
     for bits in [4, 8] {
-        for method in
-            [QuantizationMethod::ScaleBias, QuantizationMethod::ScaleZeroPoint, QuantizationMethod::ScaleSymmetric]
-        {
+        for method in [QuantizationMethod::ScaleZeroPoint, QuantizationMethod::ScaleSymmetric] {
             let input = QuantInput::<bf16>::new(4, 128, 12, 32, bits, method, 0);
             let expected = run_quant_cpu(&input);
             let actual = run_quant_cpu(&input.with_group_output());
@@ -413,7 +406,7 @@ fn cpu_group_major_quantized_gemm_matches_row_major() {
 #[uzu_test]
 fn quant_gemm_accumulate_returns_unsupported_dop() {
     let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
+    let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint, 0);
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
@@ -453,8 +446,8 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
 #[case::output_group_single_group_gs64(OutputGroup, 64, 64, 64, 4, ScaleZeroPoint, 64)]
 #[case::output_group_odd_groups(OutputGroup, 192, 64, 64, 4, ScaleZeroPoint, 64)]
 #[case::group_output_padded_n(GroupOutput, 192, 66, 64, 4, ScaleZeroPoint, 66)]
-#[case::output_group_bias_prefix(OutputGroup, 128, 12, 32, 8, ScaleBias, 4)]
-#[case::group_output_bias_prefix(GroupOutput, 128, 12, 32, 8, ScaleBias, 4)]
+#[case::output_group_symmetric_prefix(OutputGroup, 128, 12, 32, 8, ScaleSymmetric, 4)]
+#[case::group_output_symmetric_prefix(GroupOutput, 128, 12, 32, 8, ScaleSymmetric, 4)]
 fn quant_gemm_parameter_layout_prefix_matches_cpu(
     #[case] params_layout: QuantParamsLayout,
     #[case] k: u32,
@@ -502,9 +495,8 @@ fn quant_gemm_parameter_layout_prefix_matches_cpu(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::gs32_4bit_mlx(128, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
-#[case::gs64_4bit_mlx(128, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
-#[case::small_m_4bit_mlx(24, 256, 512, 64, 4, QuantizationMethod::ScaleBias)]
+#[case::gs64_4bit_zp(128, 256, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::small_m_4bit_zp(24, 256, 512, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs32_4bit_zp(128, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs64_4bit_zp_g1(128, 64, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
 fn mxu_quant_parity_bf16(
@@ -534,10 +526,8 @@ fn mxu_quant_parity_bf16(
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::sym_w8_gs64(16u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
-#[case::bias_w4_gs32(16u32, 32u32, 4u32, QuantizationMethod::ScaleBias)]
-#[case::bias_w8_gs64(16u32, 64u32, 8u32, QuantizationMethod::ScaleBias)]
 #[case::zp_w4_gs32(16u32, 32u32, 4u32, QuantizationMethod::ScaleZeroPoint)]
-#[case::m1_bias_w4_gs64(1u32, 64u32, 4u32, QuantizationMethod::ScaleBias)]
+#[case::m1_zp_w4_gs64(1u32, 64u32, 4u32, QuantizationMethod::ScaleZeroPoint)]
 fn a8w_mxu_parity_bf16(
     #[case] m: u32,
     #[case] weight_gs: u32,
@@ -579,11 +569,7 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
     for (activation_group_size, weight_group_size) in
         [(ACTIVATION_SCALE_GROUP_SIZE, 32u32), (ACTIVATION_SCALE_GROUP_SIZE, 64)]
     {
-        for (bits, method) in [
-            (8, QuantizationMethod::ScaleSymmetric),
-            (8, QuantizationMethod::ScaleBias),
-            (4, QuantizationMethod::ScaleZeroPoint),
-        ] {
+        for (bits, method) in [(8, QuantizationMethod::ScaleSymmetric), (4, QuantizationMethod::ScaleZeroPoint)] {
             let (input, reference_input) = QuantInput::<bf16>::new(m, 256, 12, weight_group_size, bits, method, 0)
                 .with_prepared_a_and_reference(
                     activation_group_size,
@@ -622,10 +608,8 @@ fn a8w4_zero_point_tail_parity(#[case] m: u32) {
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::w4_bias(4u32, QuantizationMethod::ScaleBias, 256u32)]
 #[case::w4_zp(4u32, QuantizationMethod::ScaleZeroPoint, 256u32)]
 #[case::w8_sym(8u32, QuantizationMethod::ScaleSymmetric, 256u32)]
-#[case::w8_bias(8u32, QuantizationMethod::ScaleBias, 256u32)]
 fn signed_weights_full_precision_activations_parity_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,

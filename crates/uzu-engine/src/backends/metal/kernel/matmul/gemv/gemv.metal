@@ -33,7 +33,6 @@ CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
 VARIANTS(
     B_PROLOGUE,
     GemmBPrologueKind::FullPrecision,
-    GemmBPrologueKind::ScaleBiasDequant,
     GemmBPrologueKind::ScaleZeroPointDequant,
     GemmBPrologueKind::ScaleSymmetricDequant)
 VARIANTS(GROUP_SIZE, 0, 32, 64)
@@ -64,7 +63,7 @@ CONSTRAINT(
 
 CONSTRAINT(
     INPUT_ROW_TILE == 1 ||
-    (B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant && GROUP_SIZE == 64 &&
+    (GROUP_SIZE == 64 &&
      ((GEMV_TILE(16, 8, 2) && INPUT_ROWS(2, 7)) ||
       (BITS == 4 && GEMV_TILE(16, 16, 4) && INPUT_ROWS(3, 6)) ||
       (BITS == 4 && GEMV_TILE(8, 8, 2) && INPUT_ROW_TILE == 2))))
@@ -106,8 +105,6 @@ KERNEL(Gemv)(
         OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision),
     const device uint8_t* zero_points
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
-    const device BT* biases
-        OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
     const device AT* a,
     device DT* d,
     const device BT* output_bias
@@ -137,7 +134,7 @@ KERNEL(Gemv)(
     const uint simd_group THREADS(NUM_SIMDGROUPS)
 ) {
   using Ops = GemvOperands<AT, BT, DT>;
-  const Ops ops = {b, scales, zero_points, biases, a, d, output_bias, hadamard_factors, gather_indices};
+  const Ops ops = {b, scales, zero_points, a, d, output_bias, hadamard_factors, gather_indices};
   const GemvParams params = {
       in_vec_size,
       out_vec_size,

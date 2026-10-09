@@ -233,11 +233,10 @@ impl GemmKernel {
             }
             .into());
         }
-        let (scales, biases, zero_points, scale_strides, zero_point_strides) = match quantized.as_ref() {
-            None => (None, None, None, Default::default(), Default::default()),
+        let (scales, zero_points, scale_strides, zero_point_strides) = match quantized.as_ref() {
+            None => (None, None, Default::default(), Default::default()),
             Some(quantized) => (
                 Some(quantized.scales),
-                quantized.biases(),
                 quantized.zero_points(),
                 quantized.params.scale_strides(),
                 quantized.zero_point_strides(),
@@ -293,7 +292,6 @@ impl GemmKernel {
                 a,
                 weights,
                 scales,
-                biases,
                 zero_points,
                 d.reborrow(),
                 ab_scale,
@@ -355,7 +353,6 @@ impl GemmKernel {
             weights,
             d.reborrow(),
             scales,
-            biases,
             zero_points,
             output_bias,
             rht_factors,
@@ -377,7 +374,6 @@ impl GemmKernel {
         a: MatmulA<impl BufferRef<Backend = Metal>>,
         weights: impl BufferRef<Backend = Metal>,
         scales: Option<impl BufferRef<Backend = Metal>>,
-        biases: Option<impl BufferRef<Backend = Metal>>,
         zero_points: Option<impl BufferRef<Backend = Metal>>,
         mut d: impl BufferMut<Backend = Metal>,
         ab_scale: f32,
@@ -442,7 +438,6 @@ impl GemmKernel {
             weights,
             &mut temp,
             scales,
-            biases,
             zero_points,
             None::<&<Metal as Backend>::GlobalBuffer>,
             None::<&<Metal as Backend>::GlobalBuffer>,
@@ -491,8 +486,7 @@ fn validate_int8_left_operand(
         }
         .into());
     }
-    let needs_group_sums =
-        matches!(shape.b_prologue, GemmBPrologueKind::ScaleBiasDequant | GemmBPrologueKind::ScaleZeroPointDequant);
+    let needs_group_sums = shape.b_prologue == GemmBPrologueKind::ScaleZeroPointDequant;
     if needs_group_sums && !has_group_sums {
         return Err(MatmulError::IncompatibleA {
             path: "Gemm",
@@ -505,9 +499,7 @@ fn validate_int8_left_operand(
         && shape.params_layout == Some(QuantParamsLayout::GroupOutput)
         && matches!(
             shape.b_prologue,
-            GemmBPrologueKind::ScaleSymmetricDequant
-                | GemmBPrologueKind::ScaleBiasDequant
-                | GemmBPrologueKind::ScaleZeroPointDequant
+            GemmBPrologueKind::ScaleSymmetricDequant | GemmBPrologueKind::ScaleZeroPointDequant
         )
         && matches!(a_group_size, 32 | 64 | 128)
         && shape.k.is_multiple_of(a_group_size)

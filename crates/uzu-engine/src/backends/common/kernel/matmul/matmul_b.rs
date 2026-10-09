@@ -40,7 +40,6 @@ pub struct QuantizedB<TB: BufferRef> {
 #[derive(Clone, Copy)]
 pub enum QuantizedCorrection<T> {
     Symmetric,
-    Biases(T),
     ZeroPoints(T),
 }
 
@@ -48,22 +47,14 @@ impl<T> QuantizedCorrection<T> {
     pub fn as_ref(&self) -> QuantizedCorrection<&T> {
         match self {
             Self::Symmetric => QuantizedCorrection::Symmetric,
-            Self::Biases(biases) => QuantizedCorrection::Biases(biases),
             Self::ZeroPoints(zero_points) => QuantizedCorrection::ZeroPoints(zero_points),
-        }
-    }
-
-    pub fn biases(&self) -> Option<&T> {
-        match self {
-            Self::Biases(biases) => Some(biases),
-            Self::Symmetric | Self::ZeroPoints(_) => None,
         }
     }
 
     pub fn zero_points(&self) -> Option<&T> {
         match self {
             Self::ZeroPoints(zero_points) => Some(zero_points),
-            Self::Symmetric | Self::Biases(_) => None,
+            Self::Symmetric => None,
         }
     }
 }
@@ -76,13 +67,8 @@ impl<TB: BufferRef> QuantizedB<TB> {
     pub fn prologue(&self) -> GemmBPrologueKind {
         match self.correction {
             QuantizedCorrection::Symmetric => GemmBPrologueKind::ScaleSymmetricDequant,
-            QuantizedCorrection::Biases(_) => GemmBPrologueKind::ScaleBiasDequant,
             QuantizedCorrection::ZeroPoints(_) => GemmBPrologueKind::ScaleZeroPointDequant,
         }
-    }
-
-    pub fn biases(&self) -> Option<TB> {
-        self.correction.biases().copied()
     }
 
     pub fn zero_points(&self) -> Option<TB> {

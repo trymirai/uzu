@@ -41,7 +41,6 @@ pub struct QuantInput<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,
     pub scales: Vec<T>,
     pub zero_points: Option<Vec<u8>>,
-    pub biases: Option<Vec<T>>,
     pub x: Vec<T>,
     pub k: u32,
     pub n: u32,
@@ -149,26 +148,17 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         } else {
             num_groups_k
         };
-        let (zero_points, biases) = match quant_method {
-            QuantizationMethod::ScaleBias => (
-                None,
-                Some(
-                    (0..(n * num_groups_k) as usize)
-                        .map(|_| T::from(rng.random_range(-0.03f32..0.03f32)).unwrap())
-                        .collect(),
-                ),
-            ),
+        let zero_points = match quant_method {
             QuantizationMethod::ScaleZeroPoint => {
-                (Some((0..(n * zp_stride) as usize).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
+                Some((0..(n * zp_stride) as usize).map(|_| rng.random_range(0u8..u8::MAX)).collect())
             },
-            QuantizationMethod::ScaleSymmetric => (None, None),
+            QuantizationMethod::ScaleSymmetric => None,
         };
 
         Self {
             w_packed,
             scales,
             zero_points,
-            biases,
             x,
             k,
             n,
@@ -283,7 +273,6 @@ impl<T: ArrayElement + Float> QuantInput<T> {
     pub fn weight_buffer_bytes(&self) -> usize {
         size_of_val(self.w_packed.as_slice())
             + size_of_val(self.scales.as_slice())
-            + self.biases.as_ref().map_or(0, |biases| size_of_val(biases.as_slice()))
             + self.zero_points.as_ref().map_or(0, |zero_points| size_of_val(zero_points.as_slice()))
     }
 }
@@ -292,7 +281,6 @@ pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
     pub w: B::GlobalBuffer,
     pub scales: B::GlobalBuffer,
     pub zp: Option<B::GlobalBuffer>,
-    pub bias: Option<B::GlobalBuffer>,
     pub x: B::GlobalBuffer,
     pub prepared_a: Option<B::GlobalBuffer>,
     pub prepared_a_scales: Option<B::GlobalBuffer>,
@@ -318,10 +306,6 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
                 .zero_points
                 .as_ref()
                 .map(|zero_points| create_buffer_with_data::<B, u8>(context, &pad(zero_points, zero_point_bytes))),
-            bias: input
-                .biases
-                .as_ref()
-                .map(|biases| create_buffer_with_data::<B, T>(context, &pad(biases, metadata_elements))),
             x: create_buffer_with_data::<B, T>(context, &input.x),
             prepared_a: input
                 .prepared_a
@@ -349,7 +333,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         &'a self,
         input: &QuantInput<T>,
     ) -> MatmulB<&'a B::GlobalBuffer> {
-        quant_b_variant(&self.w, &self.scales, self.zp.as_ref(), self.bias.as_ref(), input.params_layout, input)
+        quant_b_variant(&self.w, &self.scales, self.zp.as_ref(), input.params_layout, input)
     }
 
     fn transpose_quant_params(
@@ -361,14 +345,6 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         let value_bits = size_of::<T>() as u32 * u8::BITS;
         transpose_metadata(self.scales.as_slice_mut(), columns, groups, value_bits);
         match input.quant_method {
-            QuantizationMethod::ScaleBias => {
-                transpose_metadata(
-                    self.bias.as_mut().expect("bias buffer").as_slice_mut(),
-                    columns,
-                    groups,
-                    value_bits,
-                );
-            },
             QuantizationMethod::ScaleZeroPoint => {
                 let correction_bits = DataType::from(input.mode).size_in_bits() as u32;
                 transpose_metadata(
@@ -387,13 +363,11 @@ fn quant_b_variant<TB: BufferRef, T: ArrayElement + Float>(
     w: TB,
     scales: TB,
     zero_points: Option<TB>,
-    biases: Option<TB>,
     params_layout: QuantParamsLayout,
     input: &QuantInput<T>,
 ) -> MatmulB<TB> {
     let params = QuantParams::new(params_layout, input.n, input.k.div_ceil(input.group_size));
     let correction = match input.quant_method {
-        QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(biases.expect("bias buffer")),
         QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(zero_points.expect("zp buffer")),
         QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
     };
@@ -416,7 +390,6 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         w,
         scales,
         zp,
-        bias,
         x,
         prepared_a,
         prepared_a_scales,
@@ -424,7 +397,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         y,
         ..
     } = buffers;
-    let b = quant_b_variant(&*w, &*scales, zp.as_ref(), bias.as_ref(), input.params_layout, input);
+    let b = quant_b_variant(&*w, &*scales, zp.as_ref(), input.params_layout, input);
     let a = match &input.prepared_a {
         Some(prepared) => MatmulA::Int8Symmetric {
             values: prepared_a.as_ref().expect("prepared activation buffer"),

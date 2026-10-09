@@ -19,7 +19,6 @@ pub fn input_embedding_lookup<T: ArrayElement + Float>(
     values: *const u8,
     #[optional(table_kind != EmbeddingTableKind::Dense)] scales: Option<*const T>,
     #[optional(quantization_method == QuantizationMethod::ScaleZeroPoint)] zero_points: Option<*const u8>,
-    #[optional(quantization_method == QuantizationMethod::ScaleBias)] biases: Option<*const T>,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
     #[optional(table_kind == EmbeddingTableKind::D4S4)] ladder_indices: Option<*const u8>,
     #[optional(table_kind == EmbeddingTableKind::D4S4)] ladder: Option<*const f16>,
@@ -83,9 +82,6 @@ pub fn input_embedding_lookup<T: ArrayElement + Float>(
                         QuantizationMode::U8 => (unsafe { *values.add(offset + column) }) as f32,
                     };
                     let bias = match quantization_method {
-                        QuantizationMethod::ScaleBias => unsafe {
-                            (*biases.expect("quantized lookup requires biases").add(index)).to_f32().unwrap()
-                        },
                         QuantizationMethod::ScaleZeroPoint => {
                             let zero_points = zero_points.expect("quantized lookup requires zero points");
                             let zero_point = if quantization_mode == QuantizationMode::U4 {

@@ -35,9 +35,6 @@ pub struct ParsedWeightSpec {
 pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeightSpec, WeightMatrixError<B>> {
     let (layout, quantized) = match spec {
         AnyWeightMatrixSpec::FullPrecisionSpec(spec) => (spec.layout.clone(), None),
-        AnyWeightMatrixSpec::MLXSpec(spec) => {
-            (spec.layout.clone(), Some((spec.bits, spec.group_size, QuantizationMethod::ScaleBias)))
-        },
         AnyWeightMatrixSpec::IntSpec(spec) => (
             spec.layout.clone(),
             Some((
@@ -145,9 +142,6 @@ impl<B: Backend> WeightMatrix<B> {
             };
         let scales = load_plane("scales", params.scale_shape(), data_type)?;
         let correction = match info.method {
-            QuantizationMethod::ScaleBias => {
-                QuantizedCorrection::Biases(load_plane("biases", params.scale_shape(), data_type)?)
-            },
             QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(load_plane(
                 "zero_points",
                 params.zero_point_shape(info.mode),
@@ -182,10 +176,6 @@ impl<B: Backend> WeightMatrix<B> {
 
     pub fn zero_points(&self) -> Option<&B::GlobalBuffer> {
         self.quantized.as_ref()?.correction.zero_points()
-    }
-
-    pub fn biases(&self) -> Option<&B::GlobalBuffer> {
-        self.quantized.as_ref()?.correction.biases()
     }
 
     pub fn matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {

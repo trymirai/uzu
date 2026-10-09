@@ -15,7 +15,6 @@ struct GemvOperands {
   const device uint32_t* b;
   const device BT* scales;
   const device uint8_t* zero_points;
-  const device BT* biases;
   const device AT* a;
   device DT* d;
   const device BT* output_bias;

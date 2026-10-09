@@ -3,7 +3,6 @@ use std::fmt;
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum QuantizationMethod {
-    ScaleBias,
     ScaleZeroPoint,
     ScaleSymmetric,
 }
