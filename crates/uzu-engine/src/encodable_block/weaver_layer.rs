@@ -25,6 +25,8 @@ pub struct PreparedPrefixAttention<B: Backend> {
 }
 
 pub struct WeaverLayer<B: Backend> {
+    prefix_attention_name: String,
+    post_attention_name: String,
     pub pre_attention_norm: Normalization<B>,
     pub qkv_projection: Box<dyn Linear<B>>,
     attention_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
@@ -42,6 +44,7 @@ pub struct WeaverLayer<B: Backend> {
 
 impl<B: Backend> WeaverLayer<B> {
     pub fn new(
+        name: String,
         context: &B::Context,
         config: &WeaverConfig,
         add_to_residual: bool,
@@ -59,6 +62,7 @@ impl<B: Backend> WeaverLayer<B> {
         let head_dim = model_dim / num_heads;
         let attention_scale = 1.0 / (head_dim as f32).sqrt();
         let qkv_projection = <dyn Linear<B>>::new(
+            format!("{name}/qkv projection"),
             model_dim,
             [3 * model_dim],
             false,
@@ -67,6 +71,7 @@ impl<B: Backend> WeaverLayer<B> {
             &parameter_tree.subtree("qkv_projection"),
         )?;
         let out_projection = <dyn Linear<B>>::new(
+            format!("{name}/out projection"),
             model_dim,
             [model_dim],
             false,
@@ -93,6 +98,7 @@ impl<B: Backend> WeaverLayer<B> {
             <B::Kernels as Kernels>::AttentionPrepareKernel::new(context, DATA_TYPE, ROPE_DATA_TYPE, true, true)
                 .map_err(WeaverNewError::Backend)?;
         let pre_attention_norm = Normalization::new(
+            format!("{name}/pre attention norm"),
             model_dim,
             None,
             if add_to_residual {
@@ -107,6 +113,7 @@ impl<B: Backend> WeaverLayer<B> {
             context,
         )?;
         let pre_mlp_norm = Normalization::new(
+            format!("{name}/pre mlp norm"),
             model_dim,
             None,
             ShortcutMode::Add,
@@ -122,12 +129,21 @@ impl<B: Backend> WeaverLayer<B> {
             true,
             true,
         ));
-        let (mlp, up_input_hadamard_factors) =
-            <dyn Mlp<B>>::new(&mlp_config, model_dim, hidden_dim, context, &parameter_tree.subtree("mlp"), DATA_TYPE)?;
+        let (mlp, up_input_hadamard_factors) = <dyn Mlp<B>>::new(
+            format!("{name}/mlp"),
+            &mlp_config,
+            model_dim,
+            hidden_dim,
+            context,
+            &parameter_tree.subtree("mlp"),
+            DATA_TYPE,
+        )?;
         assert!(up_input_hadamard_factors.is_none(), "Weaver MLP does not support input Hadamard factors");
         let ancestor_attention = <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim, num_heads)
             .map_err(WeaverNewError::Backend)?;
         Ok(Self {
+            prefix_attention_name: format!("{name}/prefix attention"),
+            post_attention_name: format!("{name}/post attention"),
             qkv_projection,
             out_projection,
             prefix_attention,
@@ -152,6 +168,7 @@ impl<B: Backend> WeaverLayer<B> {
         token_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<PreparedPrefixAttention<B>, B::Error> {
+        command_buffer.sample_start_timestamp(&self.prefix_attention_name);
         let attention_input =
             self.pre_attention_norm.encode(residual_input, 0, token_count, Some(residual_state), command_buffer)?;
         let qkv = self.qkv_projection.encode(attention_input, token_count, command_buffer)?;
@@ -176,6 +193,7 @@ impl<B: Backend> WeaverLayer<B> {
             token_count,
             command_buffer,
         );
+        command_buffer.sample_end_timestamp();
         Ok(PreparedPrefixAttention {
             queries,
             kv_cache,
@@ -189,9 +207,12 @@ impl<B: Backend> WeaverLayer<B> {
         token_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        command_buffer.sample_start_timestamp(&self.post_attention_name);
         let projected_attention = self.out_projection.encode(attention_output, token_count, command_buffer)?;
         let mlp_input =
             self.pre_mlp_norm.encode(&projected_attention, 0, token_count, Some(residual_state), command_buffer)?;
-        self.mlp.encode(mlp_input, token_count, command_buffer)
+        let output = self.mlp.encode(mlp_input, token_count, command_buffer)?;
+        command_buffer.sample_end_timestamp();
+        Ok(output)
     }
 }

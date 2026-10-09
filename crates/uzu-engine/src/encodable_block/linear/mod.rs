@@ -123,6 +123,7 @@ pub enum LinearBlockError<B: Backend> {
 
 impl<B: Backend> dyn Linear<B> {
     pub fn new_mixed_precision(
+        name: String,
         input_dimension: u32,
         output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
@@ -140,6 +141,7 @@ impl<B: Backend> dyn Linear<B> {
             | AnyWeightMatrixSpec::MLXSpec(_)
             | AnyWeightMatrixSpec::IntSpec(_)) => {
                 let block = LinearMatmul::load(
+                    name,
                     context,
                     spec,
                     input_dimension,
@@ -159,6 +161,7 @@ impl<B: Backend> dyn Linear<B> {
                 incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
                 ..
             }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(RHTLinearWrapper::new(
+                name,
                 context,
                 input_dimension,
                 output_dimension_sum,
@@ -181,6 +184,7 @@ impl<B: Backend> dyn Linear<B> {
                     return Err(LinearBlockError::UnsupportedConfiguration(format!("{adapter_spec:?}")));
                 };
                 Ok(Box::new(QLoRALinearWrapper::new(
+                    name,
                     context,
                     *quantization_spec,
                     adapter_spec,
@@ -199,6 +203,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new(
+        name: String,
         input_dimension: u32,
         output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
@@ -207,6 +212,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         Self::new_mixed_precision(
+            name,
             input_dimension,
             output_dimensions,
             has_biases,
@@ -219,6 +225,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_with_input_rht_mixed_precision(
+        name: String,
         input_dimension: u32,
         output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
@@ -230,6 +237,7 @@ impl<B: Backend> dyn Linear<B> {
     ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
         let output_dimension_sum: u32 = output_dimensions.as_ref().iter().sum();
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
+            name.clone(),
             context,
             input_dimension,
             output_dimension_sum,
@@ -244,6 +252,7 @@ impl<B: Backend> dyn Linear<B> {
         }
 
         let linear = Self::new_mixed_precision(
+            name,
             input_dimension,
             output_dimensions,
             has_biases,
@@ -257,6 +266,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_for_fused_input(
+        name: String,
         input_dimension: u32,
         output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
@@ -266,6 +276,7 @@ impl<B: Backend> dyn Linear<B> {
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
         let output_dimension_sum: u32 = output_dimensions.as_ref().iter().sum();
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
+            name.clone(),
             context,
             input_dimension,
             output_dimension_sum,
@@ -280,6 +291,7 @@ impl<B: Backend> dyn Linear<B> {
         }
 
         let linear = Self::new_mixed_precision(
+            name,
             input_dimension,
             output_dimensions,
             has_biases,
@@ -293,6 +305,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_with_input_rht(
+        name: String,
         input_dimension: u32,
         output_dimensions: impl AsRef<[u32]>,
         has_biases: bool,
@@ -301,6 +314,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
         Self::new_with_input_rht_mixed_precision(
+            name,
             input_dimension,
             output_dimensions,
             has_biases,

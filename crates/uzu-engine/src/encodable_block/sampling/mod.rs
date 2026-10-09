@@ -24,6 +24,7 @@ pub use gumbel::{gumbel_float, revidx};
 pub use prng::PRng;
 
 pub struct Sampling<B: Backend> {
+    name: String,
     vocab_size: u32,
     data_type: DataType,
     unified_kernels: Mutex<HashMap<UnifiedSamplingKey, <B::Kernels as Kernels>::UnifiedSamplingKernel>>,
@@ -31,10 +32,12 @@ pub struct Sampling<B: Backend> {
 
 impl<B: Backend> Sampling<B> {
     pub fn new(
+        name: String,
         data_type: DataType,
         vocab_size: u32,
     ) -> Self {
         Self {
+            name,
             vocab_size,
             data_type,
             unified_kernels: Mutex::new(HashMap::new()),
@@ -92,7 +95,8 @@ impl<B: Backend> Sampling<B> {
         sampling_range: Range<u32>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::GlobalBuffer, B::Error> {
-        command_buffer.push_debug_group("sampling");
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let sampling_length = sampling_range.end - sampling_range.start;
 
@@ -194,6 +198,7 @@ impl<B: Backend> Sampling<B> {
             command_buffer,
         );
 
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)
