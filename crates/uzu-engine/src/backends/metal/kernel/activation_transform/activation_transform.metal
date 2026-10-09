@@ -67,7 +67,10 @@ PUBLIC KERNEL(ActivationTransform)(
   if (!QUANTIZED) {
     if (in_bounds) {
       if (has_bias) {
-        values = float4(vec<T, HADAMARD_VECTOR_SIZE>(values)) + float4(load_hadamard_vector(bias + first_index));
+        if constexpr (metal::is_same_v<T, bfloat>) {
+          values = as_type<float4>(uint4(as_type<ushort4>(vec<bfloat, HADAMARD_VECTOR_SIZE>(values))) << 16);
+        }
+        values += float4(load_hadamard_vector(bias + first_index));
       }
       store_hadamard_vector(fp_out + element_index, values);
     }
