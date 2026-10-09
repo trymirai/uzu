@@ -262,7 +262,7 @@ pub fn oracle(
 /// Checks the CPU and Vulkan outputs against the oracle, after rounding its bounds to `T`: NaN where it is NaN, its
 /// exact infinities, the oracle's zero sign wherever both are zero, and otherwise within its bounds, which must be finite
 /// for every finite result. Returns the largest `[Vulkan, CPU]` error relative to the bound.
-fn check<T: ArrayElement + Float + Debug>(
+pub fn check<T: ArrayElement + Float + Debug>(
     input: &[T],
     activation: ActivationType,
     cpu: &[T],

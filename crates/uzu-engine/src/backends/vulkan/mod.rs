@@ -34,11 +34,12 @@ pub use vk_context_error::VkContextError;
 pub use vk_kernels::{
     A8QuantizedGemmVulkanKernel, A8QuantizedGemvVulkanKernel, ActivationTransformVulkanKernel, ActivationVulkanKernel,
     AncestorAttentionVulkanKernel, AttentionPrepareVulkanKernel, AttentionSinglePassVulkanKernel,
-    GatedActMulVulkanKernel, GemmVulkanKernel, GemvVulkanKernel, InputEmbeddingLookupVulkanKernel,
-    KVCacheUpdateVulkanKernel, LogitTransformVulkanKernel, NormalizationVulkanKernel, PoolingMeanVulkanKernel,
-    QKVNormVulkanKernel, QuantizedGemmVulkanKernel, QuantizedGemvVulkanKernel, ShortConvDecodeVulkanKernel,
-    ShortConvPackVulkanKernel, ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SigmoidGateVulkanKernel,
-    SoftmaxVulkanKernel, SplitInProjVulkanKernel, TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel,
+    Conv1dDecodeVulkanKernel, Conv1dPackVulkanKernel, Conv1dScanVulkanKernel, GatedActMulVulkanKernel,
+    GemmVulkanKernel, GemvVulkanKernel, InputEmbeddingLookupVulkanKernel, KVCacheUpdateVulkanKernel,
+    LogitTransformVulkanKernel, NormalizationVulkanKernel, PoolingMeanVulkanKernel, QKVNormVulkanKernel,
+    QuantizedGemmVulkanKernel, QuantizedGemvVulkanKernel, ShortConvDecodeVulkanKernel, ShortConvPackVulkanKernel,
+    ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SigmoidGateVulkanKernel, SoftmaxVulkanKernel,
+    SplitInProjVulkanKernel, TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel,
 };
 pub use vk_logger::VkLogger;
 pub use vk_physical_device::VkPhysicalDevice;

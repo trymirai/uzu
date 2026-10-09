@@ -8,6 +8,7 @@ mod attention_prepare_test;
 mod attention_single_pass_case;
 mod attention_single_pass_test;
 mod bf16_conversion_test;
+mod conv1d_test;
 mod gated_act_mul_test;
 mod gemm_test;
 mod gemv_test;
@@ -36,7 +37,7 @@ mod tensor_add_scale_test;
 mod typed_constants_test;
 mod validation_logger;
 
-pub use activation_test::{oracle, round32, silu_oracle, tanh_interval};
+pub use activation_test::{check as activation_check, oracle, round32, silu_oracle, tanh_interval};
 pub use activation_transform_test::{
     assert_quantized, check_bounds, cpu_outputs as transform_cpu_outputs, gpu_transformed, label, quantizations,
     quantized, raw, signs, to, transform_oracle, values,
