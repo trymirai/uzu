@@ -4,7 +4,7 @@ use bytemuck::{AnyBitPattern, NoUninit};
 
 use crate::{
     array::size_for_shape,
-    backends::common::{Backend, BufferMut, BufferRef, TimestampSpan},
+    backends::common::{Backend, BufferMut, BufferRef, EncodingSpan, TimestampSpan},
     data_type::DataType,
 };
 
@@ -19,6 +19,18 @@ pub trait CommandBuffer {
 
 pub trait CommandBufferEncoding {
     type CommandBuffer: CommandBuffer<Encoding = Self>;
+
+    /// Opens a named span, closed when the guard drops.
+    /// Records a timestamp span when enabled; Metal also opens a debug group.
+    fn span(
+        &mut self,
+        label: impl std::fmt::Display,
+    ) -> EncodingSpan<'_, Self>
+    where
+        Self: Sized,
+    {
+        EncodingSpan::new(self, label)
+    }
 
     fn context(&self) -> &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Context;
 
@@ -80,14 +92,15 @@ pub trait CommandBufferEncoding {
 
     fn pop_debug_group(&mut self);
 
-    fn enable_timestamps(&mut self);
+    #[must_use]
+    fn enable_timestamps(self) -> Self;
 
-    fn sample_start_timestamp(
+    fn begin_span(
         &mut self,
-        name: &str,
+        name: impl std::fmt::Display,
     );
 
-    fn sample_end_timestamp(&mut self);
+    fn end_span(&mut self);
 
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }

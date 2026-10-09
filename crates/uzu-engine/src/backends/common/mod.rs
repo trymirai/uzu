@@ -4,6 +4,7 @@ mod buffer;
 mod command_buffer;
 mod context;
 mod device_capabilities;
+mod encoding_span;
 pub mod gpu_types;
 pub mod kernel;
 mod timestamps;
@@ -23,5 +24,6 @@ pub use command_buffer::{
 };
 pub use context::Context;
 pub use device_capabilities::DeviceCapabilities;
+pub use encoding_span::EncodingSpan;
 pub use kernel::Kernels;
 pub use timestamps::{TimestampSpan, TimestampSpanRecorder};

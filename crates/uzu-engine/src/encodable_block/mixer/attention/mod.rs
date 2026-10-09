@@ -33,11 +33,6 @@ pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCacheView};
 pub mod rope;
 
 pub struct Attention<B: Backend> {
-    name: String,
-    core_name: String,
-    prepare_kv_and_queries_name: String,
-    prepare_queries_name: String,
-    append_projected_kv_name: String,
     head_dim: u32,
     num_q_heads: u32,
     num_kv_heads: Option<u32>,
@@ -67,7 +62,6 @@ pub enum AttentionNewError<B: Backend> {
 
 impl<B: Backend> Attention<B> {
     pub fn new(
-        name: String,
         hidden_dim: u32,
         data_type: DataType,
         rope_config: Option<&AnyRoPEConfig>,
@@ -101,7 +95,6 @@ impl<B: Backend> Attention<B> {
             qkv_dim
         };
         let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
-            format!("{name}/qkv projection"),
             hidden_dim,
             [projection_dim],
             config.has_qkvg_biases,
@@ -117,7 +110,6 @@ impl<B: Backend> Attention<B> {
         let qkv_norm = (query_norm_config.is_some() || key_norm_config.is_some() || value_norm_config.is_some())
             .then(|| {
                 QKVNorm::new(
-                    format!("{name}/qkv norm"),
                     context,
                     data_type,
                     query_norm_config,
@@ -172,7 +164,6 @@ impl<B: Backend> Attention<B> {
             .map_err(AttentionNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new(
-            format!("{name}/out projection"),
             q_dim,
             [hidden_dim],
             config.has_out_biases,
@@ -183,11 +174,6 @@ impl<B: Backend> Attention<B> {
 
         Ok((
             Self {
-                core_name: format!("{name}/core"),
-                prepare_kv_and_queries_name: format!("{name}/prepare kv and queries"),
-                prepare_queries_name: format!("{name}/prepare queries"),
-                append_projected_kv_name: format!("{name}/append projected kv"),
-                name,
                 head_dim,
                 num_q_heads,
                 num_kv_heads,
@@ -235,18 +221,12 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&self.name);
-        command_buffer.sample_start_timestamp(&self.name);
+        let mut command_buffer = command_buffer.span("attention");
 
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        let output = self.attend(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
-
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
-
-        Ok(output)
+        self.attend(hidden, precalculated_rope, batch_dim, state, &mut command_buffer)
     }
 }

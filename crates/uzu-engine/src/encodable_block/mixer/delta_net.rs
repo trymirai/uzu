@@ -48,7 +48,6 @@ enum DeltaNetSuffixStatus<B: Backend> {
 }
 
 pub struct DeltaNetState<B: Backend> {
-    accept_name: String,
     conv_state: B::GlobalBuffer,
     ssm_state: B::GlobalBuffer,
     suffix_status: Option<DeltaNetSuffixStatus<B>>,
@@ -69,7 +68,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        command_buffer.sample_start_timestamp(&self.accept_name);
+        let mut command_buffer = command_buffer.span("delta net");
         let suffix_status = self.suffix_status.take().expect("delta net state has no suffix to accept");
         let accepted_index = *accepted_indices.last().expect("delta net state attempted to accept zero indices");
 
@@ -107,18 +106,15 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                     &accepted_indices_buffer,
                     &mut self.ssm_state,
                     accepted_indices.len() as u32,
-                    command_buffer,
+                    &mut command_buffer,
                 );
             },
         }
-        command_buffer.sample_end_timestamp();
         Ok(())
     }
 }
 
 pub struct DeltaNet<B: Backend> {
-    name: String,
-    tree_verify_name: String,
     num_heads: u32,
     head_dim: u32,
     num_groups: u32,
@@ -164,7 +160,6 @@ pub enum DeltaNetNewError<B: Backend> {
 
 impl<B: Backend> DeltaNet<B> {
     pub fn new(
-        name: String,
         hidden_dim: u32,
         outer_data_type: DataType,
         config: &DeltaNetConfig,
@@ -197,7 +192,6 @@ impl<B: Backend> DeltaNet<B> {
 
         let (in_projection, in_projection_input_hadamard_factors) =
             <dyn Linear<B>>::new_with_input_rht_mixed_precision(
-                format!("{name}/in projection"),
                 hidden_dim,
                 [total_proj_dim],
                 false,
@@ -288,7 +282,6 @@ impl<B: Backend> DeltaNet<B> {
             .map_err(DeltaNetNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new_mixed_precision(
-            format!("{name}/out projection"),
             value_dim,
             [hidden_dim],
             false,
@@ -301,8 +294,6 @@ impl<B: Backend> DeltaNet<B> {
 
         Ok((
             Self {
-                tree_verify_name: format!("{name}/tree verify"),
-                name,
                 num_heads: config.num_heads,
                 head_dim: config.head_dim,
                 num_groups: config.num_groups,
@@ -344,7 +335,7 @@ impl<B: Backend> DeltaNet<B> {
         state: &mut DeltaNetState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.sample_start_timestamp(&self.tree_verify_name);
+        let mut command_buffer = command_buffer.span("tree verify");
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
         let parents = command_buffer.allocate_constant_from_slice(batch_dim.parents())?;
@@ -372,7 +363,7 @@ impl<B: Backend> DeltaNet<B> {
             tree_size,
             self.total_proj_dim,
             self.conv_dim,
-            command_buffer,
+            &mut command_buffer,
         );
 
         self.delta_net_tree_prep.encode(
@@ -389,7 +380,7 @@ impl<B: Backend> DeltaNet<B> {
             self.key_dim,
             self.value_dim,
             tree_size,
-            command_buffer,
+            &mut command_buffer,
         );
 
         let mut delta_output = tree_verify.encode(
@@ -403,7 +394,7 @@ impl<B: Backend> DeltaNet<B> {
                 h0: &state.ssm_state,
                 tree_size,
             },
-            command_buffer,
+            &mut command_buffer,
         )?;
         self.delta_net_norm_gate.encode(
             &mut delta_output,
@@ -416,10 +407,10 @@ impl<B: Backend> DeltaNet<B> {
             self.total_proj_dim,
             self.norm_epsilon,
             tree_size,
-            command_buffer,
+            &mut command_buffer,
         );
 
-        let output = self.out_projection.encode(delta_output, tree_size, command_buffer)?;
+        let output = self.out_projection.encode(delta_output, tree_size, &mut command_buffer.span("out projection"))?;
         state.suffix_status = Some(DeltaNetSuffixStatus::Tree {
             conv_states,
             k,
@@ -428,7 +419,6 @@ impl<B: Backend> DeltaNet<B> {
             beta,
             parents: batch_dim.parents().into(),
         });
-        command_buffer.sample_end_timestamp();
         Ok(output)
     }
 }
@@ -467,7 +457,6 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         )?;
 
         Ok(Box::new(DeltaNetState {
-            accept_name: format!("{}/accept", self.name),
             conv_state,
             ssm_state,
             suffix_status: None,
@@ -483,8 +472,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&self.name);
-        command_buffer.sample_start_timestamp(&self.name);
+        let mut command_buffer = command_buffer.span("delta net");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for delta net mixer");
 
@@ -496,15 +484,11 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
 
         assert!(state.suffix_status.is_none(), "delta net called with state with an unaccepted suffix");
 
-        let mut in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
+        let mut in_projected =
+            self.in_projection.encode(hidden, batch_dim.size(), &mut command_buffer.span("in projection"))?;
 
         if !batch_dim.full_accept() {
-            let output = self.encode_tree_verify(&in_projected, batch_dim, state, command_buffer)?;
-
-            command_buffer.sample_end_timestamp();
-            command_buffer.pop_debug_group();
-
-            return Ok(output);
+            return self.encode_tree_verify(&in_projected, batch_dim, state, &mut command_buffer);
         }
 
         let mut delta_output =
@@ -518,7 +502,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.kernel_size,
                 self.conv_dim,
                 self.kernel_size - 1,
-                command_buffer,
+                &mut command_buffer,
             );
 
             self.delta_net_update.encode(
@@ -534,7 +518,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.key_dim,
                 self.value_dim,
                 self.norm_epsilon,
-                command_buffer,
+                &mut command_buffer,
             );
         } else {
             let mut padded = command_buffer.allocate_scratch_for_shape(
@@ -549,7 +533,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.total_proj_dim,
                 batch_dim.size(),
                 self.conv_dim,
-                command_buffer,
+                &mut command_buffer,
             );
             self.conv_scan.encode(
                 &padded,
@@ -563,7 +547,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.kernel_size - 1,
                 self.conv_dim,
                 self.total_proj_dim,
-                command_buffer,
+                &mut command_buffer,
             );
             if let Some(chunked) = self.chunked.as_ref().filter(|chunked| chunked.should_use(batch_dim.size())) {
                 chunked.encode(
@@ -580,7 +564,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                         value_dim: self.value_dim,
                         suffix_len: batch_dim.size(),
                     },
-                    command_buffer,
+                    &mut command_buffer,
                 )?;
             } else {
                 let mut prep_q_norm =
@@ -605,7 +589,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                     self.key_dim,
                     self.value_dim,
                     batch_dim.size(),
-                    command_buffer,
+                    &mut command_buffer,
                 );
                 self.delta_net_prefill.encode(
                     &prep_q_norm,
@@ -622,7 +606,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                     self.value_dim,
                     batch_dim.size(),
                     self.value_head_dim.div_ceil(16),
-                    command_buffer,
+                    &mut command_buffer,
                 );
             }
             self.delta_net_norm_gate.encode(
@@ -636,7 +620,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 self.total_proj_dim,
                 self.norm_epsilon,
                 batch_dim.size(),
-                command_buffer,
+                &mut command_buffer,
             );
         }
 
@@ -644,11 +628,6 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             suffix_length: batch_dim.size(),
         });
 
-        let output = self.out_projection.encode(delta_output, batch_dim.size(), command_buffer)?;
-
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
-
-        Ok(output)
+        self.out_projection.encode(delta_output, batch_dim.size(), &mut command_buffer.span("out projection"))
     }
 }

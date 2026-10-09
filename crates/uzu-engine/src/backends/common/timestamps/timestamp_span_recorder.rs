@@ -1,21 +1,30 @@
-use std::time::Instant;
+use std::{fmt::Write, time::Instant};
 
 use super::{TimestampSpan, span_boundary::SpanBoundary};
 
 #[derive(Default)]
 pub struct TimestampSpanRecorder {
     boundaries: Vec<SpanBoundary>,
+    path: String,
+    path_lengths: Vec<usize>,
 }
 
 impl TimestampSpanRecorder {
     pub fn start(
         &mut self,
-        name: String,
+        name: impl std::fmt::Display,
     ) -> usize {
-        self.push(SpanBoundary::Start(name))
+        self.path_lengths.push(self.path.len());
+        if !self.path.is_empty() {
+            self.path.push('/');
+        }
+        write!(self.path, "{name}").expect("writing a String cannot fail");
+        self.push(SpanBoundary::Start(self.path.clone()))
     }
 
     pub fn end(&mut self) -> usize {
+        let length = self.path_lengths.pop().expect("timestamp ended without a start");
+        self.path.truncate(length);
         self.push(SpanBoundary::End)
     }
 

@@ -161,7 +161,6 @@ impl KVCacheState {
 }
 
 pub struct AttentionState<B: Backend> {
-    accept_name: String,
     pub element_dim: u32,
     pub data_type: DataType,
     cache: KVCacheState,
@@ -216,7 +215,6 @@ impl<B: Backend> AttentionState<B> {
         let kv_cache_update = <B::Kernels as Kernels>::KVCacheUpdateKernel::new(context, data_type)?;
 
         Ok(Self {
-            accept_name: format!("{}/accept", attention.name),
             element_dim,
             data_type,
             cache,
@@ -255,7 +253,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        command_buffer.sample_start_timestamp(&self.accept_name);
+        let mut command_buffer = command_buffer.span("attention");
         let copies = self.cache.accept(accepted_indices);
 
         if !copies.is_empty() {
@@ -265,11 +263,10 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                 &copies,
                 copies.len() as u32,
                 self.element_dim,
-                command_buffer,
+                &mut command_buffer,
             );
         }
 
-        command_buffer.sample_end_timestamp();
         Ok(())
     }
 }

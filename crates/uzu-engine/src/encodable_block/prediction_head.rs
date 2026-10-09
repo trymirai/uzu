@@ -27,7 +27,6 @@ pub enum PredictionHeadError<B: Backend> {
 }
 
 pub struct PredictionHead<B: Backend> {
-    name: String,
     hidden_dim: u32,
     activation: ActivationType,
     dense_projection: Box<dyn Linear<B>>,
@@ -38,7 +37,6 @@ pub struct PredictionHead<B: Backend> {
 
 impl<B: Backend> PredictionHead<B> {
     pub fn new(
-        name: String,
         hidden_dim: u32,
         num_labels: u32,
         data_type: DataType,
@@ -47,7 +45,6 @@ impl<B: Backend> PredictionHead<B> {
         context: &B::Context,
     ) -> Result<Self, PredictionHeadError<B>> {
         let dense_projection = <dyn Linear<B>>::new(
-            format!("{name}/dense projection"),
             hidden_dim,
             [hidden_dim],
             config.use_dense_bias,
@@ -61,7 +58,6 @@ impl<B: Backend> PredictionHead<B> {
             .map_err(PredictionHeadError::Backend)?;
 
         let normalization = Normalization::new(
-            format!("{name}/norm"),
             hidden_dim,
             None,
             ShortcutMode::None,
@@ -73,7 +69,6 @@ impl<B: Backend> PredictionHead<B> {
         )?;
 
         let readout = <dyn Linear<B>>::new(
-            format!("{name}/readout"),
             hidden_dim,
             [num_labels],
             true,
@@ -83,7 +78,6 @@ impl<B: Backend> PredictionHead<B> {
         )?;
 
         Ok(Self {
-            name,
             hidden_dim,
             activation,
             dense_projection,
@@ -99,24 +93,24 @@ impl<B: Backend> PredictionHead<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&self.name);
-        command_buffer.sample_start_timestamp(&self.name);
+        let mut command_buffer = command_buffer.span("prediction head");
 
-        let mut hidden = self.dense_projection.encode(input, batch_dim, command_buffer)?;
+        let mut hidden =
+            self.dense_projection.encode(input, batch_dim, &mut command_buffer.span("dense projection"))?;
         self.activation_kernel.encode(
             None::<&B::ScratchBuffer>,
             &mut hidden,
             self.hidden_dim,
             self.activation,
-            command_buffer,
+            &mut command_buffer,
         );
-        let normalized =
-            self.normalization.encode(&hidden, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)?;
-        let logits = self.readout.encode(normalized, batch_dim, command_buffer)?;
-
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
-
-        Ok(logits)
+        let normalized = self.normalization.encode(
+            &hidden,
+            0,
+            batch_dim,
+            None::<&mut B::ScratchBuffer>,
+            &mut command_buffer.span("norm"),
+        )?;
+        self.readout.encode(normalized, batch_dim, &mut command_buffer.span("readout"))
     }
 }

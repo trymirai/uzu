@@ -55,7 +55,6 @@ enum Mamba2SSDPrefillVariant<B: Backend> {
 }
 
 pub struct Mamba2<B: Backend> {
-    name: String,
     kernel_size: u32,
     num_heads: u32,
     num_groups: u32,
@@ -92,7 +91,6 @@ pub enum Mamba2NewError<B: Backend> {
 
 impl<B: Backend> Mamba2<B> {
     pub fn new(
-        name: String,
         hidden_dim: u32,
         outer_data_type: DataType,
         config: &Mamba2Config,
@@ -116,7 +114,6 @@ impl<B: Backend> Mamba2<B> {
 
         let (in_projection, in_projection_input_hadamard_factors) =
             <dyn Linear<B>>::new_with_input_rht_mixed_precision(
-                format!("{name}/in projection"),
                 hidden_dim,
                 [conv_dim, inner_dim, num_heads],
                 config.has_in_biases,
@@ -168,7 +165,6 @@ impl<B: Backend> Mamba2<B> {
         };
 
         let out_projection = <dyn Linear<B>>::new_mixed_precision(
-            format!("{name}/out projection"),
             inner_dim,
             [hidden_dim],
             config.has_out_biases,
@@ -181,7 +177,6 @@ impl<B: Backend> Mamba2<B> {
 
         Ok((
             Self {
-                name,
                 kernel_size,
                 num_heads,
                 num_groups,
@@ -248,8 +243,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&self.name);
-        command_buffer.sample_start_timestamp(&self.name);
+        let mut command_buffer = command_buffer.span("mamba2");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for mamba2 mixer");
 
@@ -265,7 +259,8 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         assert!(state.suffix_length.is_none(), "mamba2 called with state with unaccepted tokens");
 
-        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
+        let in_projected =
+            self.in_projection.encode(hidden, batch_dim.size(), &mut command_buffer.span("in projection"))?;
 
         let mut conv_inputs =
             command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.conv_dim], INNER_DATA_TYPE)?;
@@ -284,7 +279,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
             self.conv_dim,
             self.inner_dim,
             self.num_heads,
-            command_buffer,
+            &mut command_buffer,
         );
 
         let mut conv_x = command_buffer
@@ -312,7 +307,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 self.inner_dim,
                 self.num_groups * self.state_dim,
                 self.activation_type,
-                command_buffer,
+                &mut command_buffer,
             );
         } else {
             let mut padded = command_buffer
@@ -325,7 +320,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 self.conv_dim,
                 batch_dim.size(),
                 self.conv_dim,
-                command_buffer,
+                &mut command_buffer,
             );
             self.conv_scan.encode(
                 &padded,
@@ -343,7 +338,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 self.inner_dim,
                 self.num_groups * self.state_dim,
                 self.activation_type,
-                command_buffer,
+                &mut command_buffer,
             );
         }
 
@@ -375,7 +370,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                 batch_dim.size(),
                 self.num_heads,
                 self.head_dim,
-                command_buffer,
+                &mut command_buffer,
             );
         } else {
             let state_strides = [self.head_dim * self.state_dim, self.state_dim, 1];
@@ -398,7 +393,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                     &state_strides,
                     self.num_heads,
                     self.head_dim,
-                    command_buffer,
+                    &mut command_buffer,
                 ),
                 Mamba2SSDPrefillVariant::Special64(ssd_prefill) => ssd_prefill.encode(
                     &conv_x,
@@ -418,19 +413,14 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                     &state_strides,
                     self.num_heads,
                     self.head_dim,
-                    command_buffer,
+                    &mut command_buffer,
                 ),
             }
         }
 
         state.suffix_length = Some(batch_dim.size());
 
-        let output = self.out_projection.encode(ssd_output, batch_dim.size(), command_buffer)?;
-
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
-
-        Ok(output)
+        self.out_projection.encode(ssd_output, batch_dim.size(), &mut command_buffer.span("out projection"))
     }
 }
 

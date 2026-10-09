@@ -10,7 +10,6 @@ use crate::{
 };
 
 pub struct MlpGateActMulEncodable<B: Backend> {
-    name: String,
     fp_kernel: GatedActMul<B>,
     activation: AnyActivation,
     hidden_dim: u32,
@@ -22,7 +21,6 @@ pub struct MlpGateActMulEncodable<B: Backend> {
 
 impl<B: Backend> MlpGateActMulEncodable<B> {
     pub fn new(
-        name: String,
         context: &B::Context,
         data_type: DataType,
         activation: AnyActivation,
@@ -43,7 +41,6 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             .map(|quantization| GatedActMul::quantized(context, data_type, quantization, settings))
             .transpose()?;
         Ok(Self {
-            name,
             fp_kernel,
             activation,
             hidden_dim,
@@ -61,8 +58,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         batch_dim: u32,
         act_format: ActivationFormat,
     ) -> Result<LinearInput<B>, B::Error> {
-        command_buffer.push_debug_group(&self.name);
-        command_buffer.sample_start_timestamp(&self.name);
+        let mut command_buffer = command_buffer.span("gate act mul");
 
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
@@ -92,7 +88,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 self.hidden_dim,
                 batch_dim,
                 self.activation.act_type(),
-                command_buffer,
+                &mut command_buffer,
             );
             LinearInput::Int8Symmetric {
                 values,
@@ -114,13 +110,10 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 0,
                 0,
                 self.activation.act_type(),
-                command_buffer,
+                &mut command_buffer,
             );
             LinearInput::FullPrecision(hidden)
         };
-
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
 
         Ok(input)
     }

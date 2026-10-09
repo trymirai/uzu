@@ -16,14 +16,12 @@ use crate::{
 };
 
 pub struct UntiedReadout<B: Backend> {
-    name: String,
     linear: LinearMatmul<B>,
     input_rht: Option<InputRht<B>>,
 }
 
 impl<B: Backend> UntiedReadout<B> {
     pub fn load(
-        name: String,
         context: &B::Context,
         tree: &ParameterTree<B>,
         spec: AnyWeightMatrixSpec,
@@ -41,25 +39,13 @@ impl<B: Backend> UntiedReadout<B> {
         else {
             return Ok(Self {
                 linear: LinearMatmul::load(
-                    format!("{name}/matmul"),
-                    context,
-                    spec,
-                    model_dim,
-                    vocab_size,
-                    data_type,
-                    data_type,
-                    data_type,
-                    tree,
-                    None,
-                    None,
+                    context, spec, model_dim, vocab_size, data_type, data_type, data_type, tree, None, None,
                 )?,
                 input_rht: None,
-                name,
             });
         };
 
         let mut linear = LinearMatmul::load(
-            format!("{name}/matmul"),
             context,
             *quantization_spec,
             model_dim,
@@ -80,12 +66,10 @@ impl<B: Backend> UntiedReadout<B> {
             rht_signs,
             activation_quantization: linear.prepare_a8(context),
         };
-        let input_rht =
-            InputRht::new(format!("{name}/prepare"), context, data_type, preparation, /* in_place */ false)
-                .map_err(LinearMatmulError::BackendError)?;
+        let input_rht = InputRht::new(context, data_type, preparation, /* in_place */ false)
+            .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
-            name,
             linear,
             input_rht: Some(input_rht),
         })
@@ -98,15 +82,12 @@ impl<B: Backend> UntiedReadout<B> {
         gather: Option<Gather<impl BufferRef<Backend = B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.sample_start_timestamp(&self.name);
         let Some(input_rht) = &self.input_rht else {
             let a = MatmulA::FullPrecision {
                 values: input,
                 offset: 0,
             };
-            let output = self.linear.encode_with_a(a, batch_dim, gather, command_buffer)?;
-            command_buffer.sample_end_timestamp();
-            return Ok(output);
+            return self.linear.encode_with_a(a, batch_dim, gather, &mut command_buffer.span("matmul"));
         };
 
         let format = if gather.is_some() {
@@ -115,8 +96,6 @@ impl<B: Backend> UntiedReadout<B> {
             self.linear.select_activation_format(batch_dim, command_buffer.context())
         };
         let input = input_rht.prepare(input, batch_dim, format, command_buffer)?;
-        let output = self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, command_buffer)?;
-        command_buffer.sample_end_timestamp();
-        Ok(output)
+        self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, &mut command_buffer.span("matmul"))
     }
 }
