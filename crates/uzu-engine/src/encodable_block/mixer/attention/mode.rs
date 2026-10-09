@@ -127,7 +127,6 @@ impl<B: Backend> Attention<B> {
         state: &mut AttentionState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        command_buffer.sample_start_timestamp(&self.append_projected_kv_name);
         if let Some(norm) = &self.projection.norm {
             norm.encode_key_value(key_value.reborrow(), batch_dim, command_buffer)?;
         }
@@ -143,7 +142,6 @@ impl<B: Backend> Attention<B> {
             command_buffer,
         )?;
         state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), command_buffer)?;
-        command_buffer.sample_end_timestamp();
         Ok(())
     }
 
@@ -154,14 +152,13 @@ impl<B: Backend> Attention<B> {
         state: &AttentionState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.sample_start_timestamp(&self.core_name);
         let trie = if batch_dim.is_flat() {
             None
         } else {
             Some(command_buffer.allocate_constant_from_slice(batch_dim.nodes())?)
         };
 
-        let output = self.kernel.encode(
+        self.kernel.encode(
             AttentionArguments {
                 queries,
                 keys: state.keys.as_ref(),
@@ -172,9 +169,7 @@ impl<B: Backend> Attention<B> {
                 cache: state.view(),
             },
             command_buffer,
-        )?;
-        command_buffer.sample_end_timestamp();
-        Ok(output)
+        )
     }
 
     fn prepare_kv_and_queries(
@@ -188,7 +183,6 @@ impl<B: Backend> Attention<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.sample_start_timestamp(&self.prepare_kv_and_queries_name);
         let num_kv_heads = self.num_kv_heads.expect("KV prepare requires KV heads");
         // Appended KV is tightly packed; attention projections may have a trailing gate segment.
         let input_row_stride = if num_q_heads == 0 {
@@ -217,7 +211,6 @@ impl<B: Backend> Attention<B> {
             batch_dim,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp();
         Ok(queries)
     }
 
@@ -228,7 +221,6 @@ impl<B: Backend> Attention<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.sample_start_timestamp(&self.prepare_queries_name);
         let mut queries =
             command_buffer.allocate_scratch_for_shape(&[self.num_q_heads, batch_dim, self.head_dim], self.data_type)?;
         self.prepare.encode(
@@ -247,7 +239,6 @@ impl<B: Backend> Attention<B> {
             batch_dim,
             command_buffer,
         );
-        command_buffer.sample_end_timestamp();
         Ok(queries)
     }
 }

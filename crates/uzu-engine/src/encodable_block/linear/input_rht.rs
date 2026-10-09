@@ -10,7 +10,6 @@ use crate::{
 };
 
 pub(super) struct InputRht<B: Backend> {
-    name: String,
     rht_signs: B::GlobalBuffer,
     rht: ActivationTransform<B>,
     quantizer: Option<ActivationTransform<B>>,
@@ -18,7 +17,6 @@ pub(super) struct InputRht<B: Backend> {
 
 impl<B: Backend> InputRht<B> {
     pub(super) fn new(
-        name: String,
         context: &B::Context,
         data_type: DataType,
         preparation: LinearInputPreparation<B>,
@@ -34,7 +32,6 @@ impl<B: Backend> InputRht<B> {
             .transpose()?;
 
         Ok(Self {
-            name,
             rht_signs,
             rht,
             quantizer,
@@ -48,7 +45,6 @@ impl<B: Backend> InputRht<B> {
         format: ActivationFormat,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
-        command_buffer.sample_start_timestamp(&self.name);
         if format == ActivationFormat::Int8
             && let Some(quantizer) = &self.quantizer
         {
@@ -74,7 +70,6 @@ impl<B: Backend> InputRht<B> {
                 command_buffer,
             );
 
-            command_buffer.sample_end_timestamp();
             return Ok(LinearInput::Int8Symmetric {
                 values,
                 scales,
@@ -87,7 +82,6 @@ impl<B: Backend> InputRht<B> {
         let input_dim = self.input_dim();
         let mut transformed = command_buffer.allocate_scratch(input.size())?;
         self.rht.encode_fp(input, &mut transformed, &self.rht_signs, batch_dim, input_dim, command_buffer);
-        command_buffer.sample_end_timestamp();
         Ok(LinearInput::FullPrecision(transformed))
     }
 
@@ -102,10 +96,8 @@ impl<B: Backend> InputRht<B> {
             return self.prepare(&input, batch_dim, format, command_buffer);
         }
 
-        command_buffer.sample_start_timestamp(&self.name);
         let input_dim = self.input_dim();
         self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer);
-        command_buffer.sample_end_timestamp();
         Ok(LinearInput::FullPrecision(input))
     }
 

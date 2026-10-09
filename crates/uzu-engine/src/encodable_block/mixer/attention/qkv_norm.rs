@@ -26,7 +26,6 @@ struct Head<B: Backend> {
 }
 
 pub struct QKVNorm<B: Backend> {
-    name: String,
     query: Option<Head<B>>,
     key: Option<Head<B>>,
     value: Option<Head<B>>,
@@ -38,7 +37,6 @@ pub struct QKVNorm<B: Backend> {
 
 impl<B: Backend> QKVNorm<B> {
     pub fn new(
-        name: String,
         context: &B::Context,
         intermediate_data_type: DataType,
         query_config: Option<NormalizationConfig>,
@@ -77,7 +75,6 @@ impl<B: Backend> QKVNorm<B> {
             .transpose()?;
 
         Ok(Self {
-            name,
             query,
             key,
             value,
@@ -155,8 +152,7 @@ impl<B: Backend> QKVNorm<B> {
             "QKV norm input row stride ({input_row_stride}) is smaller than its packed row width ({packed_row_width})"
         );
 
-        command_buffer.push_debug_group(&self.name);
-        command_buffer.sample_start_timestamp(&self.name);
+        command_buffer.push_debug_group("qkv norm");
 
         let kv = self.num_kv_heads;
         let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
@@ -183,7 +179,6 @@ impl<B: Backend> QKVNorm<B> {
             );
         }
 
-        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(())

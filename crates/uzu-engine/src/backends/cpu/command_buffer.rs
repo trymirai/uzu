@@ -7,14 +7,12 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-            CommandBufferExecutable, CommandBufferPending, TimestampSpan, TimestampSpanRecorder,
-            allocator::bump::BumpAllocator,
+            CommandBufferExecutable, CommandBufferPending, allocator::bump::BumpAllocator,
         },
         cpu::{
             Cpu,
             buffer::{CpuBufferExt, dense::CpuBuffer},
             context::CpuContext,
-            cpu_command::CpuCommand,
             error::CpuError,
         },
     },
@@ -33,11 +31,10 @@ impl CommandBuffer for CpuCommandBuffer {
 }
 
 pub struct CpuCommandBufferEncoding {
-    commands: Vec<CpuCommand>,
+    commands: Vec<Box<dyn FnOnce() + Send>>,
     constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
-    timestamp_spans: Option<TimestampSpanRecorder>,
 }
 
 impl CpuCommandBufferEncoding {
@@ -51,7 +48,6 @@ impl CpuCommandBufferEncoding {
             constant_allocator,
             allocation_pool,
             context,
-            timestamp_spans: None,
         }
     }
 
@@ -59,11 +55,7 @@ impl CpuCommandBufferEncoding {
         &mut self,
         command: impl FnOnce() + Send + 'static,
     ) {
-        self.commands.push(CpuCommand::Run(Box::new(command)))
-    }
-
-    fn write_timestamp(&mut self) {
-        self.commands.push(CpuCommand::Timestamp);
+        self.commands.push(Box::new(command))
     }
 }
 
@@ -126,28 +118,6 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn pop_debug_group(&mut self) {}
 
-    fn enable_timestamps(&mut self) {
-        assert!(self.timestamp_spans.is_none(), "timestamps already enabled");
-        self.timestamp_spans = Some(TimestampSpanRecorder::default());
-    }
-
-    fn sample_start_timestamp(
-        &mut self,
-        name: &str,
-    ) {
-        if let Some(spans) = &mut self.timestamp_spans {
-            spans.start(name.to_owned());
-            self.write_timestamp();
-        }
-    }
-
-    fn sample_end_timestamp(&mut self) {
-        if let Some(spans) = &mut self.timestamp_spans {
-            spans.end();
-            self.write_timestamp();
-        }
-    }
-
     fn end_encoding(self) -> CpuCommandBufferExecutable {
         assert!(self.constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
         CpuCommandBufferExecutable {
@@ -155,17 +125,15 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
             constant_allocator: self.constant_allocator,
             allocation_pool: self.allocation_pool,
             context: self.context,
-            timestamp_spans: self.timestamp_spans,
         }
     }
 }
 
 pub struct CpuCommandBufferExecutable {
-    commands: Vec<CpuCommand>,
+    commands: Vec<Box<dyn FnOnce() + Send>>,
     constant_allocator: BumpAllocator<<Cpu as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
     context: Arc<CpuContext>,
-    timestamp_spans: Option<TimestampSpanRecorder>,
 }
 
 impl CommandBufferExecutable for CpuCommandBufferExecutable {
@@ -180,23 +148,14 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
             .send(Box::new(move || {
                 let start = Instant::now();
 
-                let instants = self
-                    .commands
-                    .into_iter()
-                    .filter_map(|command| match command {
-                        CpuCommand::Run(run) => {
-                            run();
-                            None
-                        },
-                        CpuCommand::Timestamp => Some(Instant::now()),
-                    })
-                    .collect::<Box<[Instant]>>();
+                for command in self.commands {
+                    command()
+                }
 
                 let gpu_execution_time = start.elapsed();
 
                 let completed = CpuCommandBufferCompleted {
                     gpu_execution_time,
-                    timestamps: self.timestamp_spans.map_or_else(Box::default, |spans| spans.spans(&instants)),
                     _allocation_pool: self.allocation_pool,
                 };
 
@@ -227,7 +186,6 @@ impl CommandBufferPending for CpuCommandBufferPending {
 
 pub struct CpuCommandBufferCompleted {
     gpu_execution_time: Duration,
-    timestamps: Box<[TimestampSpan]>,
     _allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
 }
 
@@ -236,9 +194,5 @@ impl CommandBufferCompleted for CpuCommandBufferCompleted {
 
     fn gpu_execution_time(&self) -> Duration {
         self.gpu_execution_time
-    }
-
-    fn timestamps(&self) -> &[TimestampSpan] {
-        &self.timestamps
     }
 }

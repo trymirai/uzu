@@ -35,7 +35,6 @@ pub enum QLoRALinearWrapperError<B: Backend> {
 }
 
 pub struct QLoRALinearWrapper<B: Backend> {
-    name: String,
     base_linear: LinearMatmul<B>,
     input_hadamard: Option<(ActivationTransform<B>, B::GlobalBuffer)>,
     output_hadamard: Option<(ActivationTransform<B>, B::GlobalBuffer)>,
@@ -52,7 +51,6 @@ pub struct QLoRALinearWrapper<B: Backend> {
 
 impl<B: Backend> QLoRALinearWrapper<B> {
     pub fn new(
-        name: String,
         context: &B::Context,
         quantization_spec: AnyWeightMatrixSpec,
         adapter_spec: LowRankSpec,
@@ -87,7 +85,6 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             ));
         };
         let base_linear = LinearMatmul::load(
-            format!("{name}/base"),
             context,
             quantization_spec,
             input_dim,
@@ -155,7 +152,6 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             .read_buffer()?;
 
         Ok(Self {
-            name,
             base_linear,
             input_hadamard,
             output_hadamard,
@@ -179,8 +175,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&self.name);
-        command_buffer.sample_start_timestamp(&self.name);
+        command_buffer.push_debug_group("linear (qlora)");
 
         let mut intermediate =
             command_buffer.allocate_scratch_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type)?;
@@ -266,7 +261,6 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             );
         }
 
-        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)
