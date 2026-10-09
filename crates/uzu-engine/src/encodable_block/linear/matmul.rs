@@ -37,7 +37,6 @@ pub enum LinearMatmulError<B: Backend> {
 }
 
 pub struct LinearMatmul<B: Backend> {
-    name: String,
     kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     matrix: WeightMatrix<B>,
     biases: Option<B::GlobalBuffer>,
@@ -67,7 +66,6 @@ impl<B: Backend> LinearMatmul<B> {
     /// Loads a linear over any parsed spec — full precision, MLX or Int. Hybrid
     /// compositions live in the wrappers, not here.
     pub fn load(
-        name: String,
         context: &B::Context,
         spec: AnyWeightMatrixSpec,
         input_dim: u32,
@@ -100,7 +98,6 @@ impl<B: Backend> LinearMatmul<B> {
                 .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
-            name,
             kernel: Mutex::new(kernel),
             matrix,
             biases,
@@ -128,7 +125,6 @@ impl<B: Backend> LinearMatmul<B> {
         gather: Option<Gather<impl BufferRef<Backend = B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.sample_start_timestamp(&self.name);
         let (output_dim, gather_indices) =
             gather.map_or((self.output_dim, None), |gather| (gather.output_dim, Some(gather.indices)));
         let mut output = command_buffer.allocate_scratch_for_shape(&[batch_dim, output_dim], self.output_data_type)?;
@@ -147,7 +143,6 @@ impl<B: Backend> LinearMatmul<B> {
             command_buffer,
         )?;
 
-        command_buffer.sample_end_timestamp();
         Ok(output)
     }
 
@@ -195,9 +190,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&self.name);
-
-        let output = self.encode_with_a(
+        self.encode_with_a(
             MatmulA::FullPrecision {
                 values: &input,
                 offset: 0,
@@ -205,11 +198,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             batch_dim,
             None::<Gather<&B::ScratchBuffer>>,
             command_buffer,
-        )?;
-
-        command_buffer.pop_debug_group();
-
-        Ok(output)
+        )
     }
 
     fn encode_input(

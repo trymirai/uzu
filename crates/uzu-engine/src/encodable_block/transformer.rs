@@ -25,7 +25,6 @@ enum TransformerLayerStateType<B: Backend> {
 }
 
 pub struct TransformerState<B: Backend> {
-    accept_name: String,
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
 }
@@ -61,21 +60,17 @@ impl<B: Backend> TransformerState<B> {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        command_buffer.push_debug_group(&self.accept_name);
-        command_buffer.sample_start_timestamp(&self.accept_name);
+        let mut command_buffer = command_buffer.span("transformer/accept");
 
-        for layer_state in &mut self.layer_states {
+        for (index, layer_state) in self.layer_states.iter_mut().enumerate() {
             let TransformerLayerStateType::Owned(layer_state) = layer_state else {
                 continue;
             };
 
-            layer_state.encode_accept(accepted_indices, command_buffer)?;
+            layer_state.encode_accept(accepted_indices, &mut command_buffer.span(format_args!("layer {index}")))?;
         }
 
         self.context_length += accepted_indices.len() as u32;
-
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
 
         Ok(())
     }
@@ -92,8 +87,6 @@ pub enum TransformerNewError<B: Backend> {
 }
 
 pub struct Transformer<B: Backend> {
-    name: String,
-    capture_residual_name: String,
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Normalization<B>,
@@ -103,7 +96,6 @@ pub struct Transformer<B: Backend> {
 
 impl<B: Backend> Transformer<B> {
     pub fn new(
-        name: String,
         context: &B::Context,
         output_norm_hadamard_factors: Option<B::GlobalBuffer>,
         data_type: DataType,
@@ -128,7 +120,6 @@ impl<B: Backend> Transformer<B> {
                 });
 
                 let layer = TransformerLayer::new(
-                    format!("{name}/layer {layer_index}"),
                     context,
                     transformer_config.model_dim,
                     transformer_config.hidden_dim,
@@ -144,7 +135,6 @@ impl<B: Backend> Transformer<B> {
             .collect::<Result<Box<[_]>, TransformerNewError<B>>>()?;
 
         let output_norm = Normalization::new(
-            format!("{name}/output norm"),
             transformer_config.model_dim,
             output_norm_hadamard_factors,
             ShortcutMode::Add,
@@ -159,8 +149,6 @@ impl<B: Backend> Transformer<B> {
             .map_err(TransformerNewError::Backend)?;
 
         Ok(Self {
-            capture_residual_name: format!("{name}/capture residual"),
-            name,
             ropes: ropes.into_boxed_slice(),
             layers,
             output_norm,
@@ -176,11 +164,10 @@ impl<B: Backend> Transformer<B> {
         batch_size: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.sample_start_timestamp(&self.capture_residual_name);
+        let mut command_buffer = command_buffer.span("capture residual");
         let mut output = command_buffer.allocate_scratch(hidden.size())?;
         let elements = batch_size * self.model_dim;
-        self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, command_buffer);
-        command_buffer.sample_end_timestamp();
+        self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, &mut command_buffer);
         Ok(output)
     }
 
@@ -232,7 +219,6 @@ impl<B: Backend> Transformer<B> {
         let context_length = 0;
 
         Ok(TransformerState {
-            accept_name: format!("{}/accept", self.name),
             layer_states,
             context_length,
         })
@@ -248,7 +234,7 @@ impl<B: Backend> Transformer<B> {
         mut state: Option<&mut TransformerState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
-        command_buffer.sample_start_timestamp(&self.name);
+        let mut command_buffer = command_buffer.span("transformer");
         let mut hidden = input;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
@@ -266,7 +252,7 @@ impl<B: Backend> Transformer<B> {
         let precalculated_ropes = self
             .ropes
             .iter()
-            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
+            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, &mut *command_buffer))
             .collect::<Result<Box<[_]>, B::Error>>()?;
 
         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
@@ -295,13 +281,14 @@ impl<B: Backend> Transformer<B> {
                 precalculated_rope,
                 batch_dim,
                 layer_state,
-                command_buffer,
+                &mut command_buffer,
             )?;
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
                     if layer_index == layer.layer_index {
-                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), command_buffer)?;
+                        let feature =
+                            self.capture_residual(&shortcut, &hidden, batch_dim.size(), &mut command_buffer)?;
                         hidden_features[feature_index] = Some(feature);
                     }
                 }
@@ -324,7 +311,6 @@ impl<B: Backend> Transformer<B> {
         });
 
         let Some(output_range) = output_range else {
-            command_buffer.sample_end_timestamp();
             return Ok(TransformerEncodeOutput {
                 output: None,
                 hidden_features,
@@ -336,10 +322,9 @@ impl<B: Backend> Transformer<B> {
             output_range.start,
             output_range.end - output_range.start,
             Some(&mut shortcut),
-            command_buffer,
+            &mut command_buffer.span("output norm"),
         )?;
 
-        command_buffer.sample_end_timestamp();
         Ok(TransformerEncodeOutput {
             output: Some(output_normalized),
             hidden_features,

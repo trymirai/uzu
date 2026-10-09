@@ -41,8 +41,6 @@ impl<B: Backend> DFlashState<B> {
 }
 
 pub struct DFlash<B: Backend> {
-    accept_name: String,
-    draft_name: String,
     target_feature_projection: Box<dyn Linear<B>>,
     projected_feature_norm: Normalization<B>,
     state_kv_projection: Box<dyn Linear<B>>,
@@ -91,7 +89,6 @@ pub enum DFlashEncodeError<B: Backend> {
 
 impl<B: Backend> DFlash<B> {
     pub fn new(
-        name: String,
         context: &B::Context,
         config: &DFlashDraftConfig,
         parameter_tree: &ParameterTree<B>,
@@ -100,7 +97,6 @@ impl<B: Backend> DFlash<B> {
         let mask_token_id = config.mask_token_id as u32;
         assert!(config.block_size <= ATTENTION_SUFFIX_CAPACITY, "DFlash block_size exceeds attention suffix capacity");
         let target_feature_projection = <dyn Linear<B>>::new(
-            format!("{name}/target feature projection"),
             config.model_dim * config.target_layer_ids.len() as u32,
             [config.model_dim],
             false,
@@ -109,7 +105,6 @@ impl<B: Backend> DFlash<B> {
             &parameter_tree.subtree("context_projection"),
         )?;
         let projected_feature_norm = Normalization::new(
-            format!("{name}/projected feature norm"),
             config.model_dim,
             None,
             ShortcutMode::None,
@@ -127,7 +122,6 @@ impl<B: Backend> DFlash<B> {
         let layer_kv_dim = 2 * attention_config.num_groups * attention_config.head_dim;
         let num_layers = config.layer_configs.len() as u32;
         let state_kv_projection = <dyn Linear<B>>::new(
-            format!("{name}/state kv projection"),
             config.model_dim,
             [num_layers * layer_kv_dim],
             false,
@@ -141,7 +135,6 @@ impl<B: Backend> DFlash<B> {
             .zip(0u32..)
             .map(|(layer_config, index)| {
                 TransformerLayer::new(
-                    format!("{name}/layer {index}"),
                     context,
                     config.model_dim,
                     config.hidden_dim,
@@ -154,7 +147,6 @@ impl<B: Backend> DFlash<B> {
             })
             .collect::<Result<Box<[_]>, TransformerLayerError<B>>>()?;
         let output_norm = Normalization::new(
-            format!("{name}/output norm"),
             config.model_dim,
             None,
             ShortcutMode::Add,
@@ -166,8 +158,6 @@ impl<B: Backend> DFlash<B> {
         )?;
 
         Ok(Self {
-            accept_name: format!("{name}/accept"),
-            draft_name: format!("{name}/draft"),
             target_feature_projection,
             projected_feature_norm,
             state_kv_projection,
@@ -217,8 +207,7 @@ impl<B: Backend> DFlash<B> {
             return Ok(());
         }
 
-        command_buffer.push_debug_group(&self.accept_name);
-        command_buffer.sample_start_timestamp(&self.accept_name);
+        let mut command_buffer = command_buffer.span("dflash/accept");
 
         let num_tokens = accepted_indices.len() as u32;
         let captured_layer_count = self.target_feature_input_dim / self.model_dim;
@@ -243,19 +232,26 @@ impl<B: Backend> DFlash<B> {
                 );
             }
         }
-        let projected_features =
-            self.target_feature_projection.encode(packed_target_features, num_tokens, command_buffer)?;
+        let projected_features = self.target_feature_projection.encode(
+            packed_target_features,
+            num_tokens,
+            &mut command_buffer.span("target feature projection"),
+        )?;
         let normalized_features = self.projected_feature_norm.encode(
             &projected_features,
             0,
             num_tokens,
             None::<&mut B::ScratchBuffer>,
-            command_buffer,
+            &mut command_buffer.span("projected feature norm"),
         )?;
         let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
-        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)?;
+        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, &mut *command_buffer)?;
 
-        let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens, command_buffer)?;
+        let projected_kv = self.state_kv_projection.encode(
+            normalized_features,
+            num_tokens,
+            &mut command_buffer.span("state kv projection"),
+        )?;
         let layer_kv_bytes = size_for_shape(&[self.layer_kv_dim], self.data_type);
         let kv_chunk =
             |chunk_index: usize| Range::from(chunk_index * layer_kv_bytes..(chunk_index + 1) * layer_kv_bytes);
@@ -280,13 +276,16 @@ impl<B: Backend> DFlash<B> {
             let attention_state = (mixer_state.as_mut() as &mut dyn Any)
                 .downcast_mut::<AttentionState<B>>()
                 .expect("DFlash draft layer states must be attention states");
-            attention.append_projected_kv(&mut key_value, &rope, num_tokens, attention_state, command_buffer)?;
+            attention.append_projected_kv(
+                &mut key_value,
+                &rope,
+                num_tokens,
+                attention_state,
+                &mut command_buffer.span(format_args!("layer {}", layer.layer_index)),
+            )?;
         }
 
         state.context_length += num_tokens;
-
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
 
         Ok(())
     }
@@ -299,8 +298,7 @@ impl<B: Backend> DFlash<B> {
         batch_size: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DFlashOutput<B>, DFlashEncodeError<B>> {
-        command_buffer.push_debug_group(&self.draft_name);
-        command_buffer.sample_start_timestamp(&self.draft_name);
+        let mut command_buffer = command_buffer.span("dflash/draft");
 
         assert!(batch_size >= 2 && batch_size <= self.block_size, "batch size exceeds DFlash block size");
         assert!(
@@ -312,7 +310,7 @@ impl<B: Backend> DFlash<B> {
         tokens[0] = target_output_token;
         let token_ids = command_buffer.allocate_constant_from_slice(&tokens).map_err(DFlashEncodeError::Backend)?;
 
-        let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, command_buffer)?;
+        let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, &mut command_buffer)?;
 
         let nodes = (0..batch_size)
             .map(|index| TrieNode {
@@ -323,7 +321,7 @@ impl<B: Backend> DFlash<B> {
             .collect::<Box<[_]>>();
         let batch_topology = BatchTopology::new(&nodes, true);
         let token_positions = (state.context_length..state.context_length + batch_size).collect::<Box<[_]>>();
-        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)
+        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, &mut *command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
 
         let mut hidden = token_embeddings;
@@ -338,13 +336,13 @@ impl<B: Backend> DFlash<B> {
                     Some(&rope),
                     &batch_topology,
                     Some(MaybeMut::Mut(mixer_state.as_mut())),
-                    command_buffer,
+                    &mut command_buffer,
                 )
                 .map_err(DFlashEncodeError::Backend)?;
         }
         let draft_hidden = self
             .output_norm
-            .encode(&hidden, 0, batch_size, Some(&mut residual), command_buffer)
+            .encode(&hidden, 0, batch_size, Some(&mut residual), &mut command_buffer.span("output norm"))
             .map_err(DFlashEncodeError::Backend)?;
 
         let row_bytes = size_for_shape(&[target_embedding.model_dim()], DataType::BF16);
@@ -358,11 +356,8 @@ impl<B: Backend> DFlash<B> {
             target_embedding.vocab_size(),
             None::<&B::ScratchBuffer>,
             false,
-            command_buffer,
+            &mut command_buffer,
         )?;
-
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
 
         Ok(DFlashOutput {
             draft_hidden,

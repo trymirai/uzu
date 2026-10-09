@@ -81,7 +81,6 @@ impl<B: Backend> Storage<B> {
 }
 
 pub struct EmbeddingTable<B: Backend> {
-    name: String,
     storage: Storage<B>,
     output_hadamard_factors: Option<B::GlobalBuffer>,
     lookup: LookupKernel<B>,
@@ -91,7 +90,6 @@ pub struct EmbeddingTable<B: Backend> {
 
 impl<B: Backend> EmbeddingTable<B> {
     pub fn load(
-        name: String,
         context: &B::Context,
         tree: &ParameterTree<B>,
         vocab_size: u32,
@@ -152,7 +150,6 @@ impl<B: Backend> EmbeddingTable<B> {
             .map_err(EmbeddingTableError::BackendError)?;
 
         Ok(Self {
-            name,
             storage,
             output_hadamard_factors,
             lookup,
@@ -178,8 +175,7 @@ impl<B: Backend> EmbeddingTable<B> {
         scale: f32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        command_buffer.push_debug_group(&self.name);
-        command_buffer.sample_start_timestamp(&self.name);
+        let mut command_buffer = command_buffer.span("lookup");
         let bindings = self.storage.lookup_bindings();
         self.lookup.encode(
             token_ids,
@@ -196,10 +192,8 @@ impl<B: Backend> EmbeddingTable<B> {
             self.vocab_size,
             self.embedding_dim,
             scale,
-            command_buffer,
+            &mut command_buffer,
         );
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
     }
 }
 

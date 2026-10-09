@@ -217,24 +217,28 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         self.compute_encoder.pop_debug_group();
     }
 
-    fn enable_timestamps(&mut self) {
+    fn enable_timestamps(mut self) -> Self {
         assert!(self.timestamps.is_none(), "timestamps already enabled");
         self.timestamps = Some(MetalTimestampRecorder::new(self.context.device.clone()));
+        self
     }
 
-    fn sample_start_timestamp(
+    fn begin_span(
         &mut self,
-        name: &str,
+        name: impl std::fmt::Display,
     ) {
+        let name = name.to_string();
+        self.push_debug_group(&name);
         if let Some(timestamps) = &mut self.timestamps {
-            timestamps.start(name.to_owned(), &self.compute_encoder);
+            timestamps.start(name, &self.compute_encoder);
         }
     }
 
-    fn sample_end_timestamp(&mut self) {
+    fn end_span(&mut self) {
         if let Some(timestamps) = &mut self.timestamps {
             timestamps.end(&self.compute_encoder);
         }
+        self.pop_debug_group();
     }
 
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {

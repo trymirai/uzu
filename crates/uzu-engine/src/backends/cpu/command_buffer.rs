@@ -126,22 +126,23 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn pop_debug_group(&mut self) {}
 
-    fn enable_timestamps(&mut self) {
+    fn enable_timestamps(mut self) -> Self {
         assert!(self.timestamp_spans.is_none(), "timestamps already enabled");
         self.timestamp_spans = Some(TimestampSpanRecorder::default());
+        self
     }
 
-    fn sample_start_timestamp(
+    fn begin_span(
         &mut self,
-        name: &str,
+        name: impl std::fmt::Display,
     ) {
         if let Some(spans) = &mut self.timestamp_spans {
-            spans.start(name.to_owned());
+            spans.start(name);
             self.write_timestamp();
         }
     }
 
-    fn sample_end_timestamp(&mut self) {
+    fn end_span(&mut self) {
         if let Some(spans) = &mut self.timestamp_spans {
             spans.end();
             self.write_timestamp();

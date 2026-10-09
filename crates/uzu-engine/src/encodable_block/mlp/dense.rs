@@ -9,7 +9,6 @@ use crate::{
 };
 
 pub struct DenseMlp<B: Backend> {
-    name: String,
     up: Box<dyn Linear<B>>,
     gate: MlpGateActMulEncodable<B>,
     down: Box<dyn Linear<B>>,
@@ -17,13 +16,11 @@ pub struct DenseMlp<B: Backend> {
 
 impl<B: Backend> DenseMlp<B> {
     pub fn new(
-        name: String,
         up: Box<dyn Linear<B>>,
         gate: MlpGateActMulEncodable<B>,
         down: Box<dyn Linear<B>>,
     ) -> Self {
         Self {
-            name,
             up,
             gate,
             down,
@@ -38,17 +35,11 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&self.name);
-        command_buffer.sample_start_timestamp(&self.name);
+        let mut command_buffer = command_buffer.span("mlp");
 
-        let fused_up = self.up.encode(input, batch_dim, command_buffer)?;
+        let fused_up = self.up.encode(input, batch_dim, &mut command_buffer.span("up projection"))?;
         let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
-        let down_input = self.gate.encode_for_linear(command_buffer, &fused_up, batch_dim, act_format)?;
-        let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
-
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
-
-        Ok(output)
+        let down_input = self.gate.encode_for_linear(&mut command_buffer, &fused_up, batch_dim, act_format)?;
+        self.down.encode_input(down_input, batch_dim, &mut command_buffer.span("down projection"))
     }
 }

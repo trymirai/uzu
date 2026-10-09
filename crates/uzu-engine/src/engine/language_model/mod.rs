@@ -78,7 +78,6 @@ impl<B: Backend> Engine<B> {
         let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
-            String::from("decoder"),
             self.context.as_ref(),
             &config.decoder_config,
             &weight_loader.tree().subtree("decoder"),
@@ -96,11 +95,10 @@ impl<B: Backend> Engine<B> {
             .transpose()?
             .flatten();
 
-        let sampling = Sampling::new(String::from("sampling"), data_type, config.decoder_config.vocab_size);
+        let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
 
         let context_ring_update =
-            ContextRingUpdate::new(String::from("update repetition penalty ring"), self.context.as_ref())
-                .map_err(EngineLoadLanguageModelError::Backend)?;
+            ContextRingUpdate::new(self.context.as_ref()).map_err(EngineLoadLanguageModelError::Backend)?;
 
         weight_loader.tree().assert_all_tensors_validated()?;
 

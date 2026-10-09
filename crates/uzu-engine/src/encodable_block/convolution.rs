@@ -21,7 +21,6 @@ pub enum ConvolutionNewError<B: Backend> {
 }
 
 pub struct SeparableCausalConv<B: Backend> {
-    name: String,
     model_dim: u32,
     data_type: DataType,
     weights: B::GlobalBuffer,
@@ -31,7 +30,6 @@ pub struct SeparableCausalConv<B: Backend> {
 
 impl<B: Backend> SeparableCausalConv<B> {
     pub fn new(
-        name: String,
         model_dim: u32,
         kernel_size: u32,
         group_size: u32,
@@ -64,7 +62,6 @@ impl<B: Backend> SeparableCausalConv<B> {
         .map_err(ConvolutionNewError::Backend)?;
 
         Ok(Self {
-            name,
             model_dim,
             data_type,
             weights,
@@ -82,8 +79,7 @@ impl<B: Backend> SeparableCausalConv<B> {
         sequence_length: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&self.name);
-        command_buffer.sample_start_timestamp(&self.name);
+        let mut command_buffer = command_buffer.span("convolution");
 
         let mut output =
             command_buffer.allocate_scratch_for_shape(&[sequence_length, self.model_dim], self.data_type)?;
@@ -96,11 +92,9 @@ impl<B: Backend> SeparableCausalConv<B> {
             &mut output,
             sequence_length,
             coefficient_row_stride,
-            command_buffer,
+            &mut command_buffer,
         );
 
-        command_buffer.sample_end_timestamp();
-        command_buffer.pop_debug_group();
         Ok(output)
     }
 }

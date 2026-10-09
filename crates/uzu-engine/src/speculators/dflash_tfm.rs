@@ -123,19 +123,12 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let weight_loader = ParameterLoader::new(&weights_file, &*context)?;
         let speculator_tree = weight_loader.tree().subtree("speculator");
 
-        let dflash = DFlash::new(
-            String::from("dflash"),
-            &*context,
-            &config.draft_config,
-            &speculator_tree.subtree("draft_model"),
-            data_type,
-        )?;
+        let dflash = DFlash::new(&*context, &config.draft_config, &speculator_tree.subtree("draft_model"), data_type)?;
         let weaver = config
             .weaver_config
             .as_ref()
             .map(|weaver_config| {
                 Weaver::new(
-                    String::from("weaver"),
                     &*context,
                     weaver_config,
                     config.draft_config.vocab_size,
@@ -146,7 +139,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
-        let sampling = Sampling::new(String::from("sampling"), data_type, config.draft_config.vocab_size);
+        let sampling = Sampling::new(data_type, config.draft_config.vocab_size);
 
         Ok(Some(Self {
             context,
