@@ -242,10 +242,17 @@ impl ArgumentEmission {
         match self {
             ArgumentEmission::Buffer(buffer) => {
                 let name = &buffer.name;
+                let address_name = format_ident!("__dsl_address_{}", name);
                 Some(if buffer.condition.is_some() {
-                    quote! { let #name = #name.map(|#name| #name.parts()); }
+                    quote! {
+                        let #name = #name.map(|#name| #name.parts());
+                        let #address_name = #name.as_ref().map(|#name| #name.0.gpu_address());
+                    }
                 } else {
-                    quote! { let #name = #name.parts(); }
+                    quote! {
+                        let #name = #name.parts();
+                        let #address_name = #name.0.gpu_address();
+                    }
                 })
             },
             ArgumentEmission::IndirectDispatch(_) => Some(quote! {
@@ -255,6 +262,7 @@ impl ArgumentEmission {
                 let constant_name = &constant.name;
                 let buffer_name = format_ident!("__dsl_argument_buffer_{}", constant_name);
                 let parts_name = format_ident!("__dsl_argument_buffer_parts_{}", constant_name);
+                let address_name = format_ident!("__dsl_address_{}", constant_name);
                 let (buffer_size, buffer_copy) = match &constant.shape {
                     ConstantShape::Scalar(ty) => (
                         quote! { std::mem::size_of::<#ty>() },
@@ -281,6 +289,7 @@ impl ArgumentEmission {
                         let mut #buffer_name = command_buffer.allocate_constant(#buffer_size).unwrap();
                         #buffer_copy
                         let #parts_name = #buffer_name.parts();
+                        let #address_name = #parts_name.0.gpu_address();
                     }
                 } else {
                     quote! {
@@ -292,6 +301,7 @@ impl ArgumentEmission {
                         } else {
                             None
                         };
+                        let #address_name = #parts_name.as_ref().map(|#parts_name| #parts_name.0.gpu_address());
                     }
                 })
             },
@@ -370,72 +380,72 @@ fn emit_constant_argument_definition(constant: &ConstantArgument) -> TokenStream
 
 fn emit_buffer_access(buffer: &BufferArgument) -> TokenStream {
     let name = &buffer.name;
+    let address_name = format_ident!("__dsl_address_{}", name);
     let write = matches!(buffer.access, MetalBufferAccess::ReadWrite);
-    let access_expression = quote! {
-        crate::backends::metal::command_buffer::Access {
-            range: #name.0.gpu_address_subrange(#name.1),
-            write: #write,
-        }
-    };
     if buffer.condition.is_some() {
-        quote! { #name.as_ref().map(|#name| #access_expression) }
+        quote! {
+            #name.as_ref().map(|#name| {
+                crate::backends::metal::command_buffer::access_at(#address_name.unwrap(), #name.0.size(), #name.1, #write)
+            })
+        }
     } else {
-        quote! { Some(#access_expression) }
+        quote! { Some(crate::backends::metal::command_buffer::access_at(#address_name, #name.0.size(), #name.1, #write)) }
     }
 }
 
 fn emit_constant_access(constant: &ConstantArgument) -> TokenStream {
     let parts_name = format_ident!("__dsl_argument_buffer_parts_{}", constant.name);
-    let access_expression = quote! {
-        crate::backends::metal::command_buffer::Access {
-            range: #parts_name.0.gpu_address_subrange(#parts_name.1),
-            write: false,
-        }
-    };
+    let address_name = format_ident!("__dsl_address_{}", constant.name);
     if constant.condition.is_some() {
-        quote! { #parts_name.as_ref().map(|#parts_name| #access_expression) }
+        quote! {
+            #parts_name.as_ref().map(|#parts_name| {
+                crate::backends::metal::command_buffer::access_at(#address_name.unwrap(), #parts_name.0.size(), #parts_name.1, false)
+            })
+        }
     } else {
-        quote! { Some(#access_expression) }
+        quote! {
+            Some(crate::backends::metal::command_buffer::access_at(#address_name, #parts_name.0.size(), #parts_name.1, false))
+        }
     }
 }
 
 fn emit_buffer_set(buffer: &BufferArgument) -> TokenStream {
     let name = &buffer.name;
     let buffer_index = buffer.buffer_index;
-    let unconditional_set = quote! {
-        command_buffer.argument_table.set_address_at_index(#name.0.gpu_address() + #name.1.start as u64, #buffer_index);
-    };
+    let address_name = format_ident!("__dsl_address_{}", name);
     match &buffer.condition {
         Some(condition) => {
             let field_name = &condition.field_name;
             quote! {
                 assert!(#name.is_some() == self.#field_name);
                 if let Some(#name) = #name {
-                    #unconditional_set
+                    command_buffer.argument_table.set_address_at_index(#address_name.unwrap() + #name.1.start as u64, #buffer_index);
                 }
             }
         },
-        None => unconditional_set,
+        None => quote! {
+            command_buffer.argument_table.set_address_at_index(#address_name + #name.1.start as u64, #buffer_index);
+        },
     }
 }
 
 fn emit_constant_set(constant: &ConstantArgument) -> TokenStream {
     let parts_name = format_ident!("__dsl_argument_buffer_parts_{}", constant.name);
     let buffer_index = constant.buffer_index;
-    let unconditional_set = quote! {
-        command_buffer.argument_table.set_address_at_index(#parts_name.0.gpu_address() + #parts_name.1.start as u64, #buffer_index);
-    };
+    let address_name = format_ident!("__dsl_address_{}", constant.name);
     match &constant.condition {
         Some(condition) => {
             let field_name = &condition.field_name;
             quote! {
                 assert!(#parts_name.is_some() == self.#field_name);
                 if let Some(#parts_name) = #parts_name {
-                    #unconditional_set
+                    command_buffer.argument_table.set_address_at_index(#address_name.unwrap() + #parts_name.1.start as u64, #buffer_index);
                 }
             }
         },
-        None => unconditional_set,
+        None => quote! {
+            command_buffer.argument_table.set_address_at_index(#address_name + #parts_name.1.start as u64, #buffer_index);
+        },
     }
 }
 
@@ -457,7 +467,7 @@ pub fn encode_accesses_call(arguments: &[ArgumentEmission]) -> TokenStream {
         quote! {}
     } else {
         quote! {
-            command_buffer.access(&[#(#access_expressions),*].into_iter().flatten().collect::<Vec<_>>());
+            command_buffer.access(&[#(#access_expressions),*]);
         }
     }
 }

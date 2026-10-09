@@ -350,7 +350,9 @@ impl<B: Backend> TransformerLayer<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group(&format!("transformer layer {}", self.layer_index));
+        if command_buffer.debug_groups_enabled() {
+            command_buffer.push_debug_group(&format!("transformer layer {}", self.layer_index));
+        }
 
         let mut hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
             pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)?

@@ -321,8 +321,48 @@ struct IntegerSchedule {
     accumulator.clear();
 
     const int right_group_count = int(params->aligned_inner_iterations);
+    // The 16x32 tile is latency bound: it fetches four 64-wide weight groups (one 128 B line per weight row) before
+    // consuming them, which is 12-20 % faster than one group at a time (also on partial row tiles, with the
+    // branch-free row loads of the cursor).
+    constexpr int SUPERBLOCK = Core::TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ? 4 : 1;
+    constexpr int MIN_SUPERBLOCK_GROUPS = 16;
+    constexpr int chunks_per_group = int(RIGHT_GROUP_SIZE) / int(Core::SIMDGROUP_BLOCK_K);
+    int right_group_index = 0;
+
+    if constexpr (SUPERBLOCK > 1 && RightOperand::BITS == 4 && chunks_per_group > 1) {
+      typename decltype(right_codes)::PackedChunk packed_chunks[SUPERBLOCK][chunks_per_group];
+      // Short K ranges (split-K draft shapes with <= 8 groups) lose more to the up-front fetch than they gain.
+      const int superblock_end = right_group_count >= MIN_SUPERBLOCK_GROUPS ? right_group_count : 0;
+      METAL_PRAGMA_NO_UNROLL
+      for (; right_group_index + SUPERBLOCK <= superblock_end; right_group_index += SUPERBLOCK) {
+        for_each_static_index<SUPERBLOCK>([&](const ushort slot) {
+          for_each_static_index<chunks_per_group>([&](const ushort chunk) {
+            packed_chunks[slot][chunk] = right_codes.fetch(uint(slot * chunks_per_group + chunk));
+          });
+        });
+        for_each_static_index<SUPERBLOCK>([&](const ushort slot) {
+          const int group_index = right_group_index + int(slot);
+          const uint absolute_right_group = first_right_group + uint(group_index);
+          const uint right_group_offset = uint(group_index * int(RIGHT_GROUP_SIZE));
+          left_codes.begin_k_group(right_group_offset);
+          GroupProducts<Core> group_product;
+          group_product.clear();
+          for_each_static_index<chunks_per_group>([&](const ushort chunk) {
+            auto left_tile = left_codes.load(uint(chunk));
+            auto right_tile = right_codes.decode(packed_chunks[slot][chunk]);
+            uzu::matmul::fragment_mma(group_product, left_tile, right_tile);
+            left_codes.advance();
+            right_codes.advance();
+          });
+          left_metadata.load(left_storage, metadata_context, tile.k_offset + right_group_offset);
+          right_metadata.load(right_storage, metadata_context, absolute_right_group);
+          accumulate_group<Core, ALIGNED_M, ALIGNED_N>(accumulator, group_product, left_metadata, right_metadata);
+        });
+      }
+    }
+
     METAL_PRAGMA_NO_UNROLL
-    for (int right_group_index = 0; right_group_index < right_group_count; ++right_group_index) {
+    for (; right_group_index < right_group_count; ++right_group_index) {
       const uint absolute_right_group = first_right_group + uint(right_group_index);
       const uint right_group_offset = uint(right_group_index * int(RIGHT_GROUP_SIZE));
       left_codes.begin_k_group(right_group_offset);

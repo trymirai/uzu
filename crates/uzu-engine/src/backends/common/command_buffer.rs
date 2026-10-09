@@ -73,6 +73,11 @@ pub trait CommandBufferEncoding {
         value: u8,
     );
 
+    /// False when debug groups are dropped (no GPU capture active), so callers can skip building names.
+    fn debug_groups_enabled(&self) -> bool {
+        true
+    }
+
     fn push_debug_group(
         &mut self,
         name: &str,

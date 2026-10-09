@@ -10,6 +10,7 @@ const GEMM_GROUPED_DECODE_SUFFIX_MAX: u32 = 64;
 const GEMM_GROUPED_PREFILL_SUFFIX_MAX: u32 = 1024;
 const GEMM_GROUPED_MIN_KV_LENGTH: u32 = 1024;
 pub const MAX_TRIE_SUFFIX: u32 = 64;
+const MAX_TREE_VERIFY_ROWS: u32 = 32;
 
 pub fn is_supported(
     arguments: &AttentionKernelConfig,
@@ -33,7 +34,9 @@ pub fn should_encode(
     suffix_length: u32,
     kv_length: u32,
 ) -> bool {
-    kv_length >= GEMM_GROUPED_MIN_KV_LENGTH
+    // hd256 tree verify (9..=32 trie rows) is fastest on the grouped kernel at every kv; the other shapes keep the floor.
+    let tree_verify = head_dim == 256 && mask == MaskKind::Trie && (9..=MAX_TREE_VERIFY_ROWS).contains(&suffix_length);
+    (tree_verify || kv_length >= GEMM_GROUPED_MIN_KV_LENGTH)
         && ((GEMM_GROUPED_DECODE_SUFFIX_MIN..=GEMM_GROUPED_DECODE_SUFFIX_MAX).contains(&suffix_length)
             || (head_dim == 256
                 && mask == MaskKind::Causal

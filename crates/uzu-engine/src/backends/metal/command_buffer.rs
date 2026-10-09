@@ -1,6 +1,6 @@
 use std::{
     range::Range,
-    sync::{Arc, mpsc},
+    sync::{Arc, OnceLock, mpsc},
     time::Duration,
 };
 
@@ -8,10 +8,9 @@ use metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandBufferExt,
     MTL4CommandEncoder, MTL4CommandEncoderExt, MTL4CommandQueue, MTL4CommandQueueExt, MTL4CommitFeedback,
     MTL4CommitFeedbackExt, MTL4CommitFeedbackHandler, MTL4CommitOptions, MTL4ComputeCommandEncoder,
-    MTL4ComputeCommandEncoderExt, MTL4VisibilityOptions, MTLDeviceExt, MTLStages,
+    MTL4ComputeCommandEncoderExt, MTL4VisibilityOptions, MTLCaptureManager, MTLDeviceExt, MTLStages,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use rangemap::RangeSet;
 
 use crate::backends::{
     common::{
@@ -32,21 +31,65 @@ impl CommandBuffer for MetalCommandBuffer {
     type Completed = MetalCommandBufferCompleted;
 }
 
+/// Small unmerged list of byte ranges touched since the last barrier; barriers are frequent, so linear scans beat a
+/// balanced-tree range set (no node allocations per dispatch).
+#[derive(Default)]
+struct AccessSet(Vec<(u64, u64)>);
+
+impl AccessSet {
+    fn overlaps(
+        &self,
+        range: Range<u64>,
+    ) -> bool {
+        range.start < range.end && self.0.iter().any(|&(start, end)| start < range.end && range.start < end)
+    }
+
+    fn insert(
+        &mut self,
+        range: Range<u64>,
+    ) {
+        if range.start < range.end && self.0.last() != Some(&(range.start, range.end)) {
+            self.0.push((range.start, range.end));
+        }
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
 pub(super) struct Access {
     pub(super) range: Range<u64>,
     pub(super) write: bool,
 }
+
+/// Builds an `Access` from a buffer's cached GPU base address (the generated encoders read it once per argument).
+pub(super) fn access_at(
+    address: u64,
+    buffer_size: usize,
+    subrange: Range<usize>,
+    write: bool,
+) -> Access {
+    assert!(subrange.end <= buffer_size, "subrange overflow: subrange={:?} length={}", subrange, buffer_size);
+    Access {
+        range: (address + subrange.start as u64..address + subrange.end as u64).into(),
+        write,
+    }
+}
+
+static DEBUG_GROUPS_OVERRIDE: OnceLock<bool> = OnceLock::new();
 
 pub struct MetalCommandBufferEncoding {
     command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
     command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
     pub(super) compute_encoder: Retained<ProtocolObject<dyn MTL4ComputeCommandEncoder>>,
     pub(super) argument_table: Retained<ProtocolObject<dyn MTL4ArgumentTable>>,
-    reads: RangeSet<u64>,
-    writes: RangeSet<u64>,
+    reads: AccessSet,
+    writes: AccessSet,
     constant_allocator: Option<BumpAllocator<<Metal as Backend>::GlobalBuffer>>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     pub(super) context: Arc<MetalContext>,
+    debug_groups: bool,
 }
 
 impl MetalCommandBufferEncoding {
@@ -91,27 +134,35 @@ impl MetalCommandBufferEncoding {
 
         let allocation_pool = allocation_pool.unwrap_or_else(|| context.create_allocation_pool());
 
+        // Debug-group names cost an NSString per call; only record them while a GPU capture is running or with the
+        // override `UZU_DEBUG_GROUPS=1` (Instruments / system-trace labels).
+        let debug_groups = MTLCaptureManager::shared_capture_manager().is_capturing()
+            || *DEBUG_GROUPS_OVERRIDE.get_or_init(|| std::env::var("UZU_DEBUG_GROUPS").is_ok_and(|value| value == "1"));
+
         Ok(Self {
             command_allocator,
             command_buffer,
             compute_encoder,
             argument_table,
-            reads: RangeSet::new(),
-            writes: RangeSet::new(),
+            reads: AccessSet::default(),
+            writes: AccessSet::default(),
             constant_allocator: Some(constant_allocator),
             allocation_pool,
             context,
+            debug_groups,
         })
     }
 
     pub(super) fn access(
         &mut self,
-        accesses: &[Access],
+        accesses: &[Option<Access>],
     ) {
         // TODO: more fine grained barriers
-        if accesses.iter().any(|access| {
-            self.writes.overlaps(&access.range.into()) || (access.write && self.reads.overlaps(&access.range.into()))
-        }) {
+        if accesses
+            .iter()
+            .flatten()
+            .any(|access| self.writes.overlaps(access.range) || (access.write && self.reads.overlaps(access.range)))
+        {
             self.compute_encoder.barrier_after_encoder_stages_before_encoder_stages_visibility_options(
                 MTLStages::Dispatch | MTLStages::Blit,
                 MTLStages::Dispatch | MTLStages::Blit,
@@ -121,11 +172,11 @@ impl MetalCommandBufferEncoding {
             self.writes.clear();
         }
 
-        for access in accesses {
+        for access in accesses.iter().flatten() {
             if access.write {
-                self.writes.insert(access.range.into());
+                self.writes.insert(access.range);
             } else {
-                self.reads.insert(access.range.into());
+                self.reads.insert(access.range);
             }
         }
     }
@@ -162,14 +213,14 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         assert_eq!(src_range.iter().len(), dst_range.iter().len());
 
         self.access(&[
-            Access {
+            Some(Access {
                 range: src.gpu_address_subrange(src_range),
                 write: false,
-            },
-            Access {
+            }),
+            Some(Access {
                 range: dst.gpu_address_subrange(dst_range),
                 write: true,
-            },
+            }),
         ]);
 
         let (src_buffer, src_offset) = src.downcast();
@@ -192,13 +243,17 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         assert!(range.end > range.start);
         assert!(range.start.is_multiple_of(4) && range.end.is_multiple_of(4));
 
-        self.access(&[Access {
+        self.access(&[Some(Access {
             range: dst.gpu_address_subrange(range),
             write: true,
-        }]);
+        })]);
 
         let (buffer, offset) = dst.downcast();
         self.compute_encoder.fill_buffer_range_value(buffer, offset + range.start..offset + range.end, value);
+    }
+
+    fn debug_groups_enabled(&self) -> bool {
+        self.debug_groups
     }
 
     // TODO: maybe port previous debug command_buffer labels
@@ -206,11 +261,15 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         &mut self,
         name: &str,
     ) {
-        ProtocolObject::<dyn MTL4CommandEncoder>::push_debug_group(self.compute_encoder.as_ref(), name);
+        if self.debug_groups {
+            ProtocolObject::<dyn MTL4CommandEncoder>::push_debug_group(self.compute_encoder.as_ref(), name);
+        }
     }
 
     fn pop_debug_group(&mut self) {
-        self.compute_encoder.pop_debug_group();
+        if self.debug_groups {
+            self.compute_encoder.pop_debug_group();
+        }
     }
 
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
