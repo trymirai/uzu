@@ -38,7 +38,7 @@ pub use vk_kernels::{
     KVCacheUpdateVulkanKernel, LogitTransformVulkanKernel, NormalizationVulkanKernel, PoolingMeanVulkanKernel,
     QKVNormVulkanKernel, QuantizedGemmVulkanKernel, QuantizedGemvVulkanKernel, ShortConvDecodeVulkanKernel,
     ShortConvPackVulkanKernel, ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SigmoidGateVulkanKernel,
-    SoftmaxVulkanKernel, TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel,
+    SoftmaxVulkanKernel, SplitInProjVulkanKernel, TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel,
 };
 pub use vk_logger::VkLogger;
 pub use vk_physical_device::VkPhysicalDevice;

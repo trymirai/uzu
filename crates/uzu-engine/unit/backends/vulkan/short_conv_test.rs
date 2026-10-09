@@ -56,7 +56,7 @@ pub fn arg(guarded: &(Arc<VkBuffer>, Range<u64>)) -> (&Arc<VkBuffer>, Range<u64>
 }
 
 /// CPU buffers cannot be empty: an empty payload, which the kernels never read, gets one placeholder element.
-fn cpu_buffer<T: ArrayElement + Default>(
+pub fn cpu_buffer<T: ArrayElement + Default>(
     context: &<Cpu as Backend>::Context,
     values: &[T],
 ) -> <Cpu as Backend>::GlobalBuffer {
@@ -72,7 +72,7 @@ fn cpu_buffer<T: ArrayElement + Default>(
 }
 
 /// Wall time of each of `submissions` CPU submissions of what `encode` records.
-fn cpu_submissions(
+pub fn cpu_submissions(
     context: &<Cpu as Backend>::Context,
     submissions: usize,
     mut encode: impl FnMut(&mut <<Cpu as Backend>::CommandBuffer as CommandBuffer>::Encoding),
@@ -448,7 +448,7 @@ fn gpu_trie<T: ArrayElement + Float>(
 }
 
 /// Bit equality including NaN payloads, for stored and copied state.
-fn assert_same_bits<T: ArrayElement + Debug>(
+pub fn assert_same_bits<T: ArrayElement + Debug>(
     expected: &[T],
     actual: &[T],
     case: &str,
@@ -689,7 +689,7 @@ fn matches_cpu_bf16() {
 }
 
 /// Signalling and quiet NaNs with payloads, signed zero, subnormals, infinity and one, as stored bits.
-fn specials<T: ArrayElement>() -> Vec<T> {
+pub fn specials<T: ArrayElement>() -> Vec<T> {
     let bits: Vec<u8> = match T::data_type() {
         DataType::F32 => {
             [0x7F80_0001u32, 0xFFA0_0F00, 0x7FC1_2345, 0x8000_0000, 0x0000_0001, 0x807F_FFFF, 0xFF80_0000, 0x3F80_0000]
