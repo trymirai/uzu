@@ -159,7 +159,7 @@ impl<B: Backend> Mamba2<B> {
             )
         } else {
             Mamba2SSDPrefillVariant::Universal(
-                <B::Kernels as Kernels>::SSDPrefillKernel::new(context, INNER_DATA_TYPE)
+                <B::Kernels as Kernels>::SSDPrefillKernel::new(context, INNER_DATA_TYPE, state_dim)
                     .map_err(Mamba2NewError::Backend)?,
             )
         };
@@ -385,7 +385,6 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
                     &mut ssd_output,
                     batch_dim.size(),
                     group_size,
-                    self.state_dim,
                     &x_strides,
                     &dt_strides,
                     &cb_strides,

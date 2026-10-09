@@ -136,9 +136,10 @@ fn get_output<B: Backend, T: ArrayElement + Float + Debug>(
     let mut y = create_buffer_with_data::<B, T>(&context, &vec![sentinel::<T>(); input.x.len()]);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    // The generic kernel takes the state size at construction, SSDPrefill64 at encode.
     macro_rules! encode {
-        ($kernel:ident) => {
-            <<B as Backend>::Kernels as Kernels>::$kernel::new(&context, T::data_type())
+        ($kernel:ident, [$($new:expr),*], [$($state:expr),*]) => {
+            <<B as Backend>::Kernels as Kernels>::$kernel::new(&context, T::data_type() $(, $new)*)
                 .expect("Failed to create the SSD prefill kernel")
                 .encode(
                     &x,
@@ -151,7 +152,7 @@ fn get_output<B: Backend, T: ArrayElement + Float + Debug>(
                     &mut y,
                     input.suffix_len as u32,
                     input.group_size,
-                    input.state_dim as u32,
+                    $($state,)*
                     &input.x_strides.map(|s| s as u32),
                     &input.dt_strides.map(|s| s as u32),
                     &input.cb_strides.map(|s| s as u32),
@@ -163,8 +164,8 @@ fn get_output<B: Backend, T: ArrayElement + Float + Debug>(
         };
     }
     match special64 {
-        true => encode!(SSDPrefill64Kernel),
-        false => encode!(SSDPrefillKernel),
+        true => encode!(SSDPrefill64Kernel, [], [input.state_dim as u32]),
+        false => encode!(SSDPrefillKernel, [input.state_dim as u32], []),
     }
     command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 

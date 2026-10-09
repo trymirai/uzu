@@ -110,7 +110,7 @@ PUBLIC KERNEL(SSDPrefill)(
     device T* y,            // (suffix, h, dh)
     constant const uint& suffix_len,
     constant const uint& group_size,
-    constant const uint& state_size,
+    const uint state_size SPECIALIZE,
     constant const uint x_strides[3],
     constant const uint dt_strides[2],
     constant const uint cb_strides[3],

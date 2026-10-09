@@ -163,8 +163,12 @@ fn run_prefill_kernel_mode<B: Backend>(
     let mut command_buffer = ctx.create_command_buffer(None, None).unwrap();
     match mode {
         SSDPrefillMode::Universal => {
-            let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(ctx, DataType::F32)
-                .expect("Failed to create SSD prefill kernel");
+            let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(
+                ctx,
+                DataType::F32,
+                fixture.state_dim as u32,
+            )
+            .expect("Failed to create SSD prefill kernel");
             kernel.encode(
                 &x_buf,
                 &dt_buf,
@@ -176,7 +180,6 @@ fn run_prefill_kernel_mode<B: Backend>(
                 &mut y_buf,
                 fixture.suffix_len as u32,
                 fixture.group_size as u32,
-                fixture.state_dim as u32,
                 &x_strides,
                 &dt_strides,
                 &cb_strides,

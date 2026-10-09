@@ -73,7 +73,7 @@ pub fn ssd_prefill<T: ArrayElement + Float>(
     y: *mut T,
     suffix_len: u32,
     group_size: u32,
-    state_size: u32,
+    #[specialize] state_size: u32,
     x_strides: &[u32; 3],
     dt_strides: &[u32; 2],
     cb_strides: &[u32; 3],
