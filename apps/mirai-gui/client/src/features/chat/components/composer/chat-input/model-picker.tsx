@@ -39,7 +39,7 @@ const SelectionRow = forwardRef<HTMLElement, SelectionRowProps>(function Selecti
       ref={ref}
       active={active}
       selected={selected}
-      className="flex items-center gap-2 w-full border-none outline-hidden bg-transparent text-text-primary hover:bg-surface-tertiary"
+      className="flex items-center gap-2 w-full border-none outline-hidden bg-transparent text-text-primary"
       {...rest}
       onClick={onClick}
     >
@@ -93,23 +93,24 @@ export function ModelPicker({
 
           <Transition
             as={Fragment}
-            enter="transition-[opacity,transform] duration-[120ms] ease-spring"
-            enterFrom="transform opacity-0 scale-90"
-            enterTo="transform opacity-100 scale-100"
-            leave="transition-[opacity,transform] duration-[80ms] ease-spring"
-            leaveFrom="transform opacity-100 scale-100"
-            leaveTo="transform opacity-0 scale-90"
+            enter="transition-[opacity,scale] duration-[120ms] ease-spring"
+            enterFrom="opacity-0 scale-90"
+            enterTo="opacity-100 scale-100"
+            leave="transition-[opacity,scale] duration-[80ms] ease-spring"
+            leaveFrom="opacity-100 scale-100"
+            leaveTo="opacity-0 scale-90"
           >
             <div
               className={
                 menuPlacement === "up"
-                  ? "absolute right-0 bottom-full pb-1 z-50"
-                  : "absolute right-0 top-full pt-1 z-50"
+                  ? "absolute right-0 bottom-full pb-1 z-50 origin-bottom-right"
+                  : "absolute right-0 top-full pt-1 z-50 origin-top-right"
               }
             >
               <MenuItems className="outline-hidden">
                 <SelectionPanel className="pt-1.5 min-w-[240px]">
-                  <SelectionSection className="max-h-[280px] overflow-y-auto thin-scrollbar">
+                  {/* Reserve the scrollbar width before WebKit measures the popup. */}
+                  <SelectionSection className="max-h-[280px] overflow-y-scroll overscroll-y-contain thin-scrollbar">
                     {models?.map((model) => (
                       <MenuItem key={model.id}>
                         {({ focus }) => (
@@ -150,10 +151,10 @@ export function ModelPicker({
                               moreModelsLink.onClick?.();
                               close();
                             }}
-                            className="flex items-center w-full bg-transparent text-text-primary hover:bg-surface-tertiary"
+                            className="flex items-center w-full bg-transparent text-text-primary"
                           >
                             <Text as="span" color="primary" opticalSize={14} className={TEXT_13_CLASSNAME}>
-                              Download more local models
+                              Download more models
                             </Text>
                           </SelectionItem>
                         )}

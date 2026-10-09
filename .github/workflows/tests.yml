@@ -151,7 +151,7 @@ jobs:
           cargo tools test typescript
 
   linters-mirai-gui:
-    name: linters-mirai-gui
+    name: linters (mirai-gui)
     runs-on: [self-hosted, macos, arm64]
 
     defaults:
@@ -205,7 +205,7 @@ jobs:
         run: cargo deny check -D warnings
 
   tests-mirai-gui:
-    name: tests-mirai-gui
+    name: tests (mirai-gui)
     runs-on: [self-hosted, macos, arm64]
 
     defaults:
@@ -232,7 +232,7 @@ jobs:
         run: pnpm test:rust
 
   build-mirai-gui:
-    name: build-mirai-gui
+    name: build (mirai-gui)
     runs-on: [self-hosted, macos, arm64]
 
     defaults:

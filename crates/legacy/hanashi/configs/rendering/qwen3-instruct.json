@@ -66,6 +66,7 @@
                     "blocks": [
                         "tool_call_result"
                     ],
+                    "as_text": true,
                     "limit": 1
                 }
             }

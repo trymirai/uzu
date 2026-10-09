@@ -1,6 +1,40 @@
 import type { Message, PerfStats, MessageVersion as StoreMessageVersion } from "@/types/message";
 import { parse } from "date-fns";
 import type { ChatMetadata } from "..";
+import type { TranscriptItem } from "@/types/llm-stream";
+import { isChartSpec } from "@/types/chart";
+import { transcriptMetadata } from "./transcript-metadata";
+
+const extractTranscript = (text: string): TranscriptItem[] | undefined => {
+  const json = transcriptMetadata(text).next().value?.json;
+  if (json === undefined) return undefined;
+  try {
+    const items: unknown = JSON.parse(json);
+    if (
+      !Array.isArray(items) ||
+      !items.every((item) => {
+        if (!item || typeof item !== "object") return false;
+        if (item.type === "toolCall")
+          return (
+            typeof item.name === "string" &&
+            typeof item.called === "boolean" &&
+            (item.failed === undefined || typeof item.failed === "boolean")
+          );
+        if (item.type === "text") return typeof item.text === "string";
+        if (item.type === "chart") return isChartSpec(item.chart);
+        return (
+          item.type === "thinking" &&
+          typeof item.text === "string" &&
+          (item.completed === undefined || typeof item.completed === "boolean")
+        );
+      })
+    )
+      return undefined;
+    return items;
+  } catch {
+    return undefined;
+  }
+};
 
 const extractContent = (text: string): string => {
   const match = text.match(/<!-- START_CONTENT -->\n([\s\S]*?)\n<!-- END_CONTENT -->/);
@@ -63,9 +97,11 @@ const parseVersions = (block: string): { versions: StoreMessageVersion[]; curren
       const cot = extractChainOfThought(content);
       const versionError = extractError(content);
       const versionPerf = parsePerf(content);
+      const transcript = extractTranscript(content);
       const outputParsed =
-        cot || versionText
+        cot || versionText || transcript !== undefined
           ? {
+              ...(transcript !== undefined ? { transcript } : {}),
               text: {
                 parsed: { ...(cot ? { chainOfThought: cot } : {}), ...(versionText ? { response: versionText } : {}) },
               },
@@ -122,9 +158,13 @@ export const parseMessage = (block: string): Message | null => {
   const resp = extractContent(block);
   const errorText = extractError(block);
   const perf = parsePerf(block);
+  const transcript = extractTranscript(block);
   const outputParsed =
-    cot || resp
-      ? { text: { parsed: { ...(cot ? { chainOfThought: cot } : {}), ...(resp ? { response: resp } : {}) } } }
+    cot || resp || transcript !== undefined
+      ? {
+          ...(transcript !== undefined ? { transcript } : {}),
+          text: { parsed: { ...(cot ? { chainOfThought: cot } : {}), ...(resp ? { response: resp } : {}) } },
+        }
       : undefined;
 
   return {

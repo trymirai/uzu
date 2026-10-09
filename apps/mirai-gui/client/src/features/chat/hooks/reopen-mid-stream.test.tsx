@@ -12,6 +12,7 @@ import { useLlmStream, type StartStreamOptions } from "./use-llm-stream";
 const mocks = vi.hoisted(() => ({ chats: new Map<string, ChatData>() }));
 vi.mock("@/platform/platform-singleton", () => ({
   getPlatform: () => ({
+    settings: { getModelChatNamingEnabled: async () => true },
     storage: {
       loadChat: async (id: string) => mocks.chats.get(id) ?? null,
       listChats: async () => [...mocks.chats.values()].map((c) => c.metadata),
@@ -87,17 +88,34 @@ it("keeps streaming into the message after leaving and reopening the chat", asyn
     void useChatSessionStore.getState().withOperation("running", () => page.result.current.startStream(options));
   });
   await waitFor(() => expect(page.result.current.isStreaming).toBe(true));
-  act(() => emit({ type: "chunk", delta: "Hello" }));
+  act(() => {
+    emit({ type: "transcript", items: [{ type: "text", text: "Hel" }] });
+    emit({ type: "transcriptDelta", index: 0, delta: "lo" });
+  });
   await waitFor(() => expect(useChatStore.getState().messages.at(-1)?.text).toBe("Hello"));
 
   page.rerender({ chatId: CHAT_B });
   await waitFor(() => expect(useChatStore.getState().currentChatId).toBe(CHAT_B));
-  act(() => emit({ type: "chunk", delta: " world" }));
+  const transcript = [
+    { type: "thinking" as const, text: "Check the clock", completed: true },
+    { type: "text" as const, text: "Hello" },
+    { type: "toolCall" as const, name: "get_current_date_time", called: true },
+    { type: "text" as const, text: "world" },
+  ];
+  act(() => {
+    emit({ type: "transcript", items: [...transcript.slice(0, -1), { type: "text", text: "wor" }] });
+    emit({ type: "transcriptDelta", index: 3, delta: "ld" });
+  });
 
   page.rerender({ chatId: CHAT_A });
   await waitFor(() => expect(useChatStore.getState().messages.map((m) => m.id)).toEqual(["user-1", MESSAGE_ID]));
-  await waitFor(() => expect(useChatStore.getState().messages.at(-1)?.text).toBe("Hello world"));
+  await waitFor(() => expect(useChatStore.getState().messages.at(-1)?.text).toBe("Hello\n\nworld"));
+  await waitFor(() => expect(useChatStore.getState().messages.at(-1)?.output?.transcript).toEqual(transcript));
+  expect(useChatStore.getState().messages.at(-1)?.output?.text?.parsed).toEqual({
+    response: "Hello\n\nworld",
+    chainOfThought: "Check the clock",
+  });
 
-  act(() => emit({ type: "chunk", delta: "!" }));
-  await waitFor(() => expect(useChatStore.getState().messages.at(-1)?.text).toBe("Hello world!"));
+  act(() => emit({ type: "transcriptDelta", index: 3, delta: "!" }));
+  await waitFor(() => expect(useChatStore.getState().messages.at(-1)?.text).toBe("Hello\n\nworld!"));
 });

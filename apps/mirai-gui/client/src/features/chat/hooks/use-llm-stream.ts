@@ -1,12 +1,13 @@
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
+import { getPlatform } from "@/platform/platform-singleton";
 import type { Message } from "@/types/message";
 import { withParsedOutput } from "@/stores/chat/message-patches";
 import { getRunMetrics } from "../services/run-metrics";
 import type {
   LlmAsyncStream,
   LlmRunParams,
-  ParsedPatch,
+  OutputShape,
   SessionOutputFinishReason,
   SessionOutputStats,
 } from "@/types/llm-stream";
@@ -16,6 +17,10 @@ import { createRevealLoop } from "../services/reveal-loop";
 export type StartStreamOptions = {
   repoId: string;
   messages: LlmRunParams["messages"];
+  modelChatNamingEnabled?: boolean;
+  dateTimeToolEnabled?: boolean;
+  chartToolEnabled?: boolean;
+  signal?: AbortSignal;
   messageId: string;
   chatId: string;
   updateText: (messageId: string, updatedText: string) => void;
@@ -24,23 +29,20 @@ export type StartStreamOptions = {
   onFinishReason?: (reason: SessionOutputFinishReason) => void;
 };
 
-export const STALL_TIMEOUT_MS = 15000;
-
 const activeVersionIndex = (message: Message | undefined): number | undefined =>
   message?.versions?.length ? (message.currentVersionIndex ?? message.versions.length - 1) : undefined;
 
-const applyParsed = (messageId: string, patch: ParsedPatch): void => {
+const outputPatch = (message: Message, output: OutputShape, text?: string): Partial<Message> => {
+  const versionIndex = activeVersionIndex(message);
+  const patch = { output, ...(text !== undefined ? { text } : {}) };
+  if (versionIndex === undefined) return patch;
+  return { versions: message.versions?.map((v, i) => (i === versionIndex ? { ...v, ...patch } : v)) };
+};
+
+const applyOutput = (messageId: string, output: OutputShape): void => {
   const store = useChatStore.getState();
   const target = store.messages.find((m) => m.id === messageId);
-  const versionIndex = activeVersionIndex(target);
-  if (versionIndex === undefined) {
-    store.updateMessage(messageId, { output: withParsedOutput(target?.output, patch) });
-    return;
-  }
-  const versions = (target?.versions || []).map((v, i) =>
-    i === versionIndex ? { ...v, output: withParsedOutput(v.output, patch) } : v,
-  );
-  store.updateMessage(messageId, { versions });
+  if (target) store.updateMessage(messageId, outputPatch(target, output));
 };
 
 const applyPerf = (messageId: string, stats: SessionOutputStats): void => {
@@ -64,28 +66,16 @@ export const useLlmStream = (chatId: string) => {
 
   const activeRunIdRef = useRef<string | null>(null);
   const canceledRunIdRef = useRef<string | null>(null);
-  const stallTimeoutRef = useRef<number | null>(null);
-
-  const clearStallTimeout = useCallback(() => {
-    if (stallTimeoutRef.current === null) return;
-    window.clearTimeout(stallTimeoutRef.current);
-    stallTimeoutRef.current = null;
+  const finalize = useCallback((onDone?: () => void) => {
+    setIsStreaming(false);
+    setIsLoading(false);
+    currentLlmRef.current = null;
+    currentReaderRef.current = null;
+    currentRevealCancelRef.current = null;
+    useChatSessionStore.getState().setGenerating(false);
+    useChatSessionStore.getState().clearActiveGenerating();
+    onDone?.();
   }, []);
-
-  const finalize = useCallback(
-    (onDone?: () => void) => {
-      clearStallTimeout();
-      setIsStreaming(false);
-      setIsLoading(false);
-      currentLlmRef.current = null;
-      currentReaderRef.current = null;
-      currentRevealCancelRef.current = null;
-      useChatSessionStore.getState().setGenerating(false);
-      useChatSessionStore.getState().clearActiveGenerating();
-      onDone?.();
-    },
-    [clearStallTimeout],
-  );
 
   const releaseCurrentRun = useCallback(async () => {
     currentRevealCancelRef.current?.();
@@ -126,7 +116,25 @@ export const useLlmStream = (chatId: string) => {
 
       if (session.operationState !== "running") throw new Error("startStream called without the run operation");
 
+      const stopIfAborted = () => {
+        if (!options.signal?.aborted) return false;
+        options.onDone?.();
+        return true;
+      };
+      if (stopIfAborted()) return;
+
       await releaseCurrentRun();
+      if (stopIfAborted()) return;
+
+      const modelChatNamingEnabled =
+        options.modelChatNamingEnabled !== false && (await getPlatform().settings.getModelChatNamingEnabled());
+      if (stopIfAborted()) return;
+      // Compare against the title at the start of this run so a manual rename
+      // made while the model thinks wins over its automatic naming.
+      let expectedTitle = modelChatNamingEnabled
+        ? (await getPlatform().storage.loadChat(chatId))?.metadata.title
+        : undefined;
+      if (stopIfAborted()) return;
 
       session.setGenerating(true);
       session.setActiveGenerating(chatId, messageId);
@@ -137,7 +145,13 @@ export const useLlmStream = (chatId: string) => {
         return;
       }
 
-      const llm = useChatStore.getState().runChatStream({ repoId, messages: options.messages });
+      const llm = useChatStore.getState().runChatStream({
+        repoId,
+        messages: options.messages,
+        modelChatNamingEnabled,
+        dateTimeToolEnabled: options.dateTimeToolEnabled,
+        chartToolEnabled: options.chartToolEnabled,
+      });
       const runId = llm.runId;
       const reader = llm.stream.getReader();
       currentLlmRef.current = llm;
@@ -146,21 +160,9 @@ export const useLlmStream = (chatId: string) => {
       session.setActiveRunId(runId);
       const isCurrentRun = () => activeRunIdRef.current === runId;
 
-      // Reasoning arrives as parsed patches before any text does.
-      let hasContent = false;
-      const offParsed = llm.onParsed((patch) => {
-        if (!hasContent && (patch.chainOfThought || patch.response)) {
-          hasContent = true;
-          setIsLoading(false);
-        }
-        applyParsed(messageId, patch);
-      });
-
-      setIsStreaming(true);
-      setIsLoading(true);
-
       const storeText = useChatStore.getState().messages.find((m) => m.id === messageId)?.text || "";
       const bufferText = useChatSessionStore.getState().activeAssistantMessageText || "";
+      let transcriptText: string | undefined;
       const reveal = createRevealLoop({
         baseText: bufferText.length >= storeText.length ? bufferText : storeText,
         isActive: isCurrentRun,
@@ -171,29 +173,72 @@ export const useLlmStream = (chatId: string) => {
       });
       currentRevealCancelRef.current = reveal.cancel;
 
+      let titleUpdates = Promise.resolve();
+      const offChatName = llm.onChatName((name) => {
+        if (!modelChatNamingEnabled) return;
+        titleUpdates = titleUpdates.then(async () => {
+          if (expectedTitle === undefined) return;
+          try {
+            await useChatStore.getState().updateChatTitle(chatId, name, expectedTitle);
+            expectedTitle = name;
+          } catch (error) {
+            console.error("[storage] failed to save model chat name", { chatId }, error);
+            useChatStore.setState((s) => ({ saveFailureCount: s.saveFailureCount + 1 }));
+          }
+        });
+      });
+
+      // Reasoning arrives as parsed patches before any text does.
+      let hasContent = false;
+      let output: OutputShape = {};
+      const updateOutput = (next: OutputShape) => {
+        output = next;
+        applyOutput(messageId, output);
+        session.setActiveAssistantMessageOutput(output);
+      };
+      const offParsed = llm.onParsed((patch) => {
+        if (!hasContent && (patch.chainOfThought || patch.response)) {
+          hasContent = true;
+          setIsLoading(false);
+        }
+        updateOutput(withParsedOutput(output, patch));
+      });
+      const offTranscript = llm.onTranscript((items) => {
+        if (items.length > 0) {
+          hasContent = true;
+          setIsLoading(false);
+        }
+        // The transcript is already visible. Keep the saved text and subsequent
+        // model history at the same point, without waiting for the legacy pacer.
+        reveal.cancel();
+        transcriptText = items
+          .flatMap((item) => (item.type === "text" && item.text.length > 0 ? [item.text] : []))
+          .join("\n\n");
+        const chainOfThought = items
+          .flatMap((item) => (item.type === "thinking" && item.text.length > 0 ? [item.text] : []))
+          .join("\n\n");
+        options.updateText(messageId, transcriptText);
+        session.setActiveAssistantMessageText(transcriptText);
+        updateOutput({ ...withParsedOutput(output, { response: transcriptText, chainOfThought }), transcript: items });
+      });
+
+      setIsStreaming(true);
+      setIsLoading(!hasContent);
+
       const fail = (message: string) => {
         // The pump may still be awaiting a read that resolves after this;
         // retiring the run id keeps it from finalizing a second time.
         activeRunIdRef.current = null;
         options.onError(messageId, `Error: ${message}`);
+        if (transcriptText !== undefined) options.updateText(messageId, transcriptText);
         reveal.cancel();
         offParsed();
+        offChatName();
+        offTranscript();
         finalize(options.onDone);
       };
 
       let hasText = false;
-      const armStallTimeout = () => {
-        if (!hasText) return;
-        clearStallTimeout();
-        stallTimeoutRef.current = window.setTimeout(() => {
-          if (!isCurrentRun()) return;
-          canceledRunIdRef.current = runId;
-          void reader.cancel();
-          void llm.cancel();
-          fail("Stream timeout");
-        }, STALL_TIMEOUT_MS);
-      };
-
       const pump = async (): Promise<void> => {
         for (;;) {
           const { value, done } = await reader.read();
@@ -203,8 +248,7 @@ export const useLlmStream = (chatId: string) => {
             return;
           }
           if (done) {
-            clearStallTimeout();
-            await reveal.drain();
+            if (output.transcript === undefined) await reveal.drain();
             offParsed();
             if (!isCurrentRun()) return;
             session.setActiveAssistantMessageText(null);
@@ -214,9 +258,8 @@ export const useLlmStream = (chatId: string) => {
           if (value) {
             if (!hasText) setIsLoading(false);
             hasText = true;
-            reveal.append(value);
+            if (output.transcript === undefined) reveal.append(value);
           }
-          armStallTimeout();
         }
       };
 
@@ -234,30 +277,39 @@ export const useLlmStream = (chatId: string) => {
       }
 
       const result = await llm.result;
-      if (result.error) return;
+      offChatName();
+      offTranscript();
+      await titleUpdates;
       // Stop pressed after leaving and reopening the chat: the stop handler saved
       // the text at that moment, and this stream kept printing after it.
       const wasCanceled = canceledRunIdRef.current === runId || result.finishReason === "Cancelled";
-      if (wasCanceled) {
+      if (wasCanceled || result.error) {
         canceledRunIdRef.current = null;
-        const current = useChatStore.getState().messages.find((m) => m.id === messageId);
-        if (isCurrentRun() && current) {
-          void useChatStore.getState().persistMessagePatch(chatId, messageId, {
-            text: current.text,
+        const current =
+          useChatStore.getState().messages.find((m) => m.id === messageId) ??
+          (await getPlatform().storage.loadChat(chatId))?.messages?.find((m) => m.id === messageId);
+        if (current) {
+          const patch = {
+            text: transcriptText ?? current.text,
             versions: current.versions,
             error: current.error,
             output: current.output,
-          });
+            ...(Object.keys(output).length > 0 ? outputPatch(current, output, transcriptText) : {}),
+          };
+          await useChatStore.getState().persistMessagePatch(chatId, messageId, patch);
         }
-        return;
+        return result;
       }
       if (!isCurrentRun()) return;
 
       applyPerf(messageId, result.stats);
-      await useChatStore.getState().finalizeAssistantMessage(chatId, messageId, result.text || "", result.parsed);
+      await useChatStore
+        .getState()
+        .finalizeAssistantMessage(chatId, messageId, result.text || "", result.parsed, result.transcript);
       if (result.finishReason) options.onFinishReason?.(result.finishReason);
+      return result;
     },
-    [clearStallTimeout, finalize, releaseCurrentRun],
+    [finalize, releaseCurrentRun],
   );
 
   return { isStreaming, isLoading, cancel, startStream };

@@ -12,6 +12,8 @@ type MessageListProps = {
   onScrolled?: () => void;
   isUiStreaming?: boolean;
   onMessageModelSelect?: (messageId: string, modelId: string, modelName: string) => void;
+  onEditMessage?: (messageId: string, text: string, onSaved: () => void) => Promise<void>;
+  canEditMessages?: boolean;
   loadingMessageId?: string | null;
   canceledMessageId?: string | null;
   isModelLoading?: boolean;
@@ -25,6 +27,8 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   onScrolled,
   isUiStreaming,
   onMessageModelSelect,
+  onEditMessage,
+  canEditMessages,
   loadingMessageId,
   canceledMessageId,
   isModelLoading,
@@ -163,8 +167,11 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   const loaderText = showWaiting ? "Waiting for the model to be ready…" : "Generating reply…";
 
   return (
-    <div className="relative flex flex-1 flex-col overflow-hidden h-full">
-      <div ref={scrollContainerRef} className="absolute inset-0 flex flex-col gap-4 overflow-y-auto scrollbar-hide">
+    <div className="relative flex flex-1 flex-col overflow-clip h-full">
+      <div
+        ref={scrollContainerRef}
+        className="absolute inset-0 flex flex-col overflow-y-auto overscroll-y-contain scrollbar-hide"
+      >
         {messages.length > 0 ? (
           messages.map((message, idx) => {
             const isLastAssistant = idx === lastAssistantIndex;
@@ -176,10 +183,12 @@ const MessageListComponent: React.FC<MessageListProps> = ({
               : undefined;
             const activeParsed = hasVersions ? activeVersion?.output?.text?.parsed : message.output?.text?.parsed;
             const activeText = hasVersions ? activeVersion?.text : message.text;
+            const activeTranscript = hasVersions ? activeVersion?.output?.transcript : message.output?.transcript;
 
             const hasVisibleParsed = Boolean(
               (activeParsed?.chainOfThought && activeParsed.chainOfThought.length > 0) ||
               (activeParsed?.response && activeParsed.response.length > 0) ||
+              activeTranscript?.length ||
               (activeText && activeText.length > 0),
             );
 
@@ -200,7 +209,10 @@ const MessageListComponent: React.FC<MessageListProps> = ({
                   ref={(el) => {
                     itemRefs.current[message.id] = el;
                   }}
-                  className={isLastAssistant ? "flex flex-col min-h-8" : undefined}
+                  className={[
+                    isLastAssistant ? "flex flex-col min-h-8" : "",
+                    idx > 0 ? (message.sender === "user" ? "mt-3" : "mt-1") : "",
+                  ].join(" ")}
                 >
                   {showAssistantLoader ? (
                     <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
@@ -220,6 +232,8 @@ const MessageListComponent: React.FC<MessageListProps> = ({
                     isUiStreaming={Boolean(isUiStreaming && isLastAssistant)}
                     isCanceled={canceledMessageId === message.id}
                     onModelSelect={onMessageModelSelect}
+                    onEdit={onEditMessage}
+                    canEdit={canEditMessages}
                     {...message}
                   />
                 </div>
@@ -241,11 +255,11 @@ const MessageListComponent: React.FC<MessageListProps> = ({
           </div>
         )}
         {lastAssistantIndex === -1 && isBusy && !loadingMessageId && (
-          <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
+          <div className="mt-1 flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
             <Loader text={loaderText} />
           </div>
         )}
-        <div ref={messagesEndRef} />
+        <div ref={messagesEndRef} className="h-4 shrink-0" />
       </div>
     </div>
   );

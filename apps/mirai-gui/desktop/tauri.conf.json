@@ -8,7 +8,8 @@
     "beforeDevCommand": "pnpm run client:dev",
     "devUrl": "http://localhost:3002",
     "beforeBuildCommand": "pnpm run client:build",
-    "frontendDist": "../client/dist-tauri"
+    "frontendDist": "../client/dist-tauri",
+    "additionalWatchFolders": ["../../../crates"]
   },
   "app": {
     "windows": [],

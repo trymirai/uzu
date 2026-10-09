@@ -10,19 +10,24 @@ export const useActiveAssistantBuffer = (chatId: string): (() => void) => {
   const generatingHere = useChatSessionStore((s) => isChatGenerating(s, chatId));
   const activeAssistantMessageId = useChatSessionStore((s) => s.activeAssistantMessageId);
   const activeAssistantMessageText = useChatSessionStore((s) => s.activeAssistantMessageText);
+  const activeAssistantMessageOutput = useChatSessionStore((s) => s.activeAssistantMessageOutput);
 
   const apply = useCallback(() => {
-    if (!chatId || !generatingHere || !activeAssistantMessageId || typeof activeAssistantMessageText !== "string")
-      return;
+    if (!chatId || !generatingHere || !activeAssistantMessageId) return;
+    if (activeAssistantMessageText === null && activeAssistantMessageOutput === null) return;
     const s = useChatStore.getState();
     const msg = s.messages.find((m) => m.id === activeAssistantMessageId);
     if (!msg) return;
     const hasVersions = Array.isArray(msg.versions) && msg.versions.length > 0;
+    const patch = {
+      ...(activeAssistantMessageText !== null ? { text: activeAssistantMessageText } : {}),
+      ...(activeAssistantMessageOutput !== null ? { output: activeAssistantMessageOutput } : {}),
+    };
     s.updateMessage(activeAssistantMessageId, {
-      text: activeAssistantMessageText,
-      ...(hasVersions ? { versions: patchActiveVersion(msg.versions, { text: activeAssistantMessageText }) } : {}),
+      ...patch,
+      ...(hasVersions ? { versions: patchActiveVersion(msg.versions, patch) } : {}),
     });
-  }, [chatId, generatingHere, activeAssistantMessageId, activeAssistantMessageText]);
+  }, [chatId, generatingHere, activeAssistantMessageId, activeAssistantMessageText, activeAssistantMessageOutput]);
 
   useEffect(() => {
     apply();

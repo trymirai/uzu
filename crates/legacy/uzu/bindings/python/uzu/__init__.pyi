@@ -337,7 +337,7 @@ class ChatReplyConfig:
     def tool_turn_limit(self) -> typing.Optional[builtins.int]:
         r"""
         Maximum number of automatic tool-call turns per reply.
-        `None` falls back to the session default.
+        `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
         """
     def __new__(cls, token_limit: typing.Optional[builtins.int], sampling_policy: SamplingPolicy, grammar: typing.Optional[Grammar], tool_turn_limit: typing.Optional[builtins.int]) -> ChatReplyConfig: ...
     @staticmethod
@@ -507,6 +507,13 @@ class ChatSessionStreamChunk:
         def error(self) -> builtins.str: ...
         def __new__(cls, error: builtins.str) -> ChatSessionStreamChunk.Error: ...
     
+    @typing.final
+    class ToolResults(ChatSessionStreamChunk):
+        __match_args__ = ("messages",)
+        @property
+        def messages(self) -> builtins.list[ChatMessage]: ...
+        def __new__(cls, messages: typing.Sequence[ChatMessage]) -> ChatSessionStreamChunk.ToolResults: ...
+    
     ...
 
 @typing.final
@@ -644,6 +651,11 @@ class DownloadPhase:
         @property
         def message(self) -> builtins.str: ...
         def __new__(cls, message: builtins.str) -> DownloadPhase.Error: ...
+    
+    @typing.final
+    class Initializing(DownloadPhase):
+        __match_args__ = ()
+        def __new__(cls) -> DownloadPhase.Initializing: ...
     
     ...
 

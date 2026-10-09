@@ -1,3 +1,4 @@
+mod analytics;
 mod chat;
 mod cli_installer;
 mod downloads;
@@ -46,13 +47,13 @@ fn install_panic_logger() {
 }
 
 pub fn run() {
+    use tauri::Manager;
+
     install_panic_logger();
     tauri::Builder::default()
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .setup(|app| {
             let window = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
                 .title("Mirai")
@@ -73,8 +74,7 @@ pub fn run() {
                     false
                 })
                 .build()?;
-            // Closing hides the window but keeps the process alive so the global
-            // shortcut stays registered; ⌘Q quits.
+            // Closing hides the window; the Dock reopens it and ⌘Q quits.
             let hide_target = window.clone();
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested {
@@ -87,11 +87,14 @@ pub fn run() {
                 }
             });
             logger::info("app:start", Some(serde_json::json!({ "version": app.package_info().version.to_string() })));
+            if let Err(error) = system_ui::remove_legacy_autostart() {
+                logger::warn("autostart:cleanup", Some(serde_json::json!({ "error": error.to_string() })));
+            }
             if let Err(error) = system_ui::setup_app_menu(app.handle()) {
                 logger::error("menu:setup", Some(serde_json::json!({ "error": error.to_string() })));
             }
-            system_ui::restore_from_settings(app.handle());
             chat::restore_auto_eject_config(app.handle());
+            app.state::<analytics::AnalyticsState>().restore();
             cli_installer::trigger_if_needed(app.handle());
             // Warm the engine so the first models/chat request doesn't pay init latency.
             tauri::async_runtime::spawn(async {
@@ -101,6 +104,7 @@ pub fn run() {
             Ok(())
         })
         .manage(chat::ChatState::default())
+        .manage(analytics::AnalyticsState::default())
         .manage(downloads::DownloadsState::default())
         .manage(updater::UpdaterState::default())
         .invoke_handler(tauri::generate_handler![
@@ -108,6 +112,7 @@ pub fn run() {
             cli_installer::cli_install,
             cli_installer::cli_status,
             models::chat_models_get,
+            models::chat_models_refresh,
             chat::run_stream,
             chat::title_gen,
             chat::cancel_run,
@@ -132,11 +137,6 @@ pub fn run() {
             storage::model_params_set,
             storage::cleanup::cleanup_preview,
             storage::cleanup::cleanup_execute,
-            system_ui::get_run_on_startup,
-            system_ui::set_run_on_startup,
-            system_ui::register_quick_entry_shortcut,
-            system_ui::unregister_quick_entry_shortcut,
-            system_ui::get_quick_entry_shortcut,
             system_ui::set_window_theme,
             updater::update_check,
             updater::update_download,

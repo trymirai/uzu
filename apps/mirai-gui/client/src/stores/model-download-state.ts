@@ -31,6 +31,12 @@ export const downloadStatePatch = (
   event: DownloadEvent,
 ): Partial<ModelDownloadState> | null => {
   switch (event.kind) {
+    case "state":
+      return {
+        ...toDownloadProgressKbytes(event.completedBytes, event.totalBytes),
+        phase: event.phase,
+        error: event.error ?? "",
+      };
     case "progress":
       return progressPatch(current, event.completedBytes, event.totalBytes);
     case "done":

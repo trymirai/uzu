@@ -24,7 +24,7 @@ export function ModelTable({ title, children, compact = false }: ModelTableProps
         <span aria-hidden />
       </div>
 
-      <div className="rounded-md border-[0.5px] border-border-default overflow-hidden divide-y-[0.5px] divide-border-default bg-surface-elevated">
+      <div className="rounded-md border-[0.5px] border-border-default overflow-clip divide-y-[0.5px] divide-border-default bg-surface-elevated">
         {children}
       </div>
     </div>

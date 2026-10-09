@@ -5,6 +5,7 @@ import { TextArea } from "@/components/ui/text-area";
 import { AttachMenu } from "./attach-menu";
 import { FileChip } from "./file-chip";
 import { ModelPicker } from "./model-picker";
+import { ReasoningSelector } from "./reasoning-selector";
 import { SendButton } from "./send-button";
 import { CHAT_INPUT_TEXTAREA_CLASSNAME, CHAT_INPUT_TEXTAREA_STYLE } from "./constants";
 import type { ChatInputProps } from "./types";
@@ -18,7 +19,7 @@ export function ChatInput({
   onBlockedSend,
   onAttach,
   attachAccept = ".txt,.md,.json,.csv,.yaml,.yml",
-  placeholder = "Send a message to the local model…",
+  placeholder = "Send a message to the model…",
   files,
   onRemoveFile,
   models,
@@ -83,7 +84,7 @@ export function ChatInput({
         style={{ ...CHAT_INPUT_TEXTAREA_STYLE, minHeight: 23, maxHeight: 320 }}
       />
 
-      <div className="flex items-center justify-between mt-4">
+      <div className="flex items-center justify-between gap-2 mt-4">
         <AttachMenu onSelectFile={handleFileSelect} />
 
         <div className="flex items-center gap-2 min-w-0">
@@ -94,6 +95,9 @@ export function ChatInput({
             moreModelsLink={moreModelsLink}
             disabled={modelPickerDisabled}
           />
+          {activeModelId ? (
+            <ReasoningSelector key={activeModelId} repoId={activeModelId} disabled={modelPickerDisabled} />
+          ) : null}
           {onModelSettingsClick ? (
             <span className="relative inline-flex shrink-0">
               <button

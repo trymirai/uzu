@@ -1,4 +1,4 @@
-import { Download, RefreshCw, X } from "lucide-react";
+import { Download, LoaderCircle, RefreshCw, X } from "lucide-react";
 import { IconAction } from "@/components/ui/icon-action";
 import { IconPauseFilled } from "@/components/icons/pause-filled-icon";
 import { IconPlayFilled } from "@/components/icons/play-filled-icon";
@@ -31,6 +31,16 @@ export function DownloadActions({
 }: DownloadActionsProps) {
   return (
     <>
+      {status === "initializing" && (
+        <span
+          role="status"
+          aria-label="Checking model"
+          title="Checking model"
+          className="flex h-7 w-7 items-center justify-center text-text-muted"
+        >
+          <LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" />
+        </span>
+      )}
       {isError && onRetry && (
         <Tooltip content="Retry" side="top">
           <span>

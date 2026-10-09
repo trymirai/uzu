@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::{basic::Value, session::chat::ChatModelCapabilities};
+use shoji::types::{
+    basic::{ReasoningEffort, Value},
+    session::chat::ChatModelCapabilities,
+};
 
 use crate::chat::{Error, hanashi::config::HanashiConfig, harmony::HarmonyConfig};
 
@@ -17,6 +20,17 @@ pub enum EncodingConfig {
 }
 
 impl EncodingConfig {
+    pub fn default_reasoning_effort(&self) -> Result<Option<ReasoningEffort>, Error> {
+        match self {
+            EncodingConfig::Hanashi {
+                config,
+            } => config.default_reasoning_effort().map_err(Error::from),
+            EncodingConfig::Harmony {
+                config,
+            } => Ok(config.default_reasoning_effort()),
+        }
+    }
+
     pub fn select(encodings: &[Value]) -> Option<Value> {
         let parse = |value: &Value| serde_json::from_str::<EncodingConfig>(&value.json).ok();
         encodings

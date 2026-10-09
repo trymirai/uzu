@@ -1,5 +1,5 @@
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions, Transition } from "@headlessui/react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, RefreshCw } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import React from "react";
 import { twMerge } from "tailwind-merge";
@@ -10,16 +10,10 @@ import { ModelVendorIcon } from "@/components/model-vendor-icon";
 type ModelSelectorProps = {
   selectedModel?: string;
   onModelSelect?: (modelId: string, modelName: string) => void;
-  menuContent: React.ReactNode;
   disabled?: boolean;
 };
 
-export const ModelSelector: React.FC<ModelSelectorProps> = ({
-  selectedModel,
-  onModelSelect,
-  menuContent,
-  disabled = false,
-}) => {
+export const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onModelSelect, disabled = false }) => {
   const navigate = useNavigate();
 
   const models = useModelsStore((s) => s.models);
@@ -39,23 +33,16 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     navigate({ to: "/local-models" });
   };
 
-  const variantClasses = disabled
-    ? "text-label-muted rounded-md py-1"
-    : "text-label-muted group-hover:text-label-title group-hover:bg-bg-hover rounded-md py-1";
-
   return (
-    <div className="group w-fit">
+    <div className="w-fit">
       <Listbox value={selectedModel || ""} onChange={handleModelSelect} disabled={disabled}>
         <div>
           <ListboxButton
-            className={twMerge(
-              "flex items-center px-[6px] transition-colors focus:outline-hidden focus:ring-0",
-              "gap-2",
-              variantClasses,
-              disabled ? "opacity-60 cursor-not-allowed" : undefined,
-            )}
+            aria-label="Regenerate with model"
+            title="Regenerate with model"
+            className="flex size-8 items-center justify-center rounded-md text-label-muted transition-colors enabled:hover:bg-bg-hover enabled:hover:text-label-title focus:outline-hidden focus-visible:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {menuContent}
+            <RefreshCw className="size-4" aria-hidden="true" />
           </ListboxButton>
 
           <Transition
@@ -67,8 +54,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             leaveTo="transform scale-95 opacity-0"
           >
             <ListboxOptions
-              anchor="bottom end"
-              className="thin-scrollbar [--anchor-gap:8px] [--anchor-max-height:360px] bg-bg-modal border border-cell-border rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
+              anchor="bottom start"
+              className="overscroll-y-contain thin-scrollbar [--anchor-gap:8px] [--anchor-max-height:360px] bg-bg-modal border border-cell-border rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
             >
               <div className="p-[6px] flex flex-col gap-2">
                 {loadingModels ? (
@@ -105,7 +92,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   onClick={handleMoreModelsClick}
                   className="w-full flex items-center justify-between px-[14px] py-2 rounded-md hover:bg-bg-hover transition-colors text-label-title focus:outline-hidden focus:ring-0"
                 >
-                  <span className="text-sm text-label-title">More local models</span>
+                  <span className="text-sm text-label-title">More models</span>
                   <ChevronRight className="h-4 w-4 text-label-muted" />
                 </button>
               </div>

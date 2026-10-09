@@ -714,10 +714,12 @@ fn test_decoding_muse_glimmer_reasoning_and_tool_call() {
 }
 
 #[test]
-fn test_rendering_functiongemma_non_object_tool_results() {
+fn test_rendering_functiongemma_structured_tool_results() {
     let config = HanashiConfig::FunctionGemma.resolve().unwrap();
     let renderer = hanashi::chat::hanashi::renderer::Renderer::new(config.rendering);
     let cases = [
+        (serde_json::json!({"count": 2, "series": [1, 2]}), "response:get_value{count:2,series:[1,2]}"),
+        (serde_json::json!("ready"), "response:get_value{value:<escape>ready<escape>}"),
         (serde_json::json!(42), "response:get_value{value:42}"),
         (
             serde_json::json!(["first", "second"]),

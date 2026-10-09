@@ -131,7 +131,6 @@ impl DownloadManager {
             DownloadTaskKind::File {
                 source_url,
                 bearer_token,
-                expected_checksum,
                 expected_bytes,
             } => {
                 if bearer_token.is_some() && !carries_token_securely(source_url) {
@@ -143,7 +142,6 @@ impl DownloadManager {
                     bearer_token: bearer_token.clone(),
                     destination: request.destination.clone(),
                     resume_artifact_path: self.backend.resume_artifact_path(&request.destination),
-                    expected_checksum: expected_checksum.clone(),
                     expected_bytes: *expected_bytes,
                     owner: self.owner.clone(),
                 });
