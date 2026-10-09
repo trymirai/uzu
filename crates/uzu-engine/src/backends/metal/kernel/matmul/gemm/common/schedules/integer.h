@@ -171,16 +171,12 @@ struct IntegerSchedule {
                 metadata_context.right_zero_point_group_stride
             );
           }
-          if constexpr (RightOperand::BITS == 4) {
-            const ushort packed =
-                *reinterpret_cast<const device ushort*>(zero_point_row + (right_zero_point_column_start >> 1));
-            uint spread = (uint(packed) | (uint(packed) << 8)) & 0x00FF00FFu;
-            spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
-            zero_points[tile_n] = as_type<ZeroPointVector>(spread);
-          } else {
-            zero_points[tile_n] =
-                *reinterpret_cast<const device ZeroPointVector*>(zero_point_row + right_zero_point_column_start);
-          }
+          static_assert(RightOperand::BITS == 4, "zero points are 4-bit");
+          const ushort packed =
+              *reinterpret_cast<const device ushort*>(zero_point_row + (right_zero_point_column_start >> 1));
+          uint spread = (uint(packed) | (uint(packed) << 8)) & 0x00FF00FFu;
+          spread = (spread | (spread << 4)) & 0x0F0F0F0Fu;
+          zero_points[tile_n] = as_type<ZeroPointVector>(spread);
         }
         if constexpr (!ALIGNED_N) {
           const bool4 live =

@@ -59,12 +59,12 @@ VARIANTS(
     GemmBPrologueKind::ScaleZeroPointDequant,
     GemmBPrologueKind::ScaleSymmetricDequant)
 VARIANTS(BITS, 0, 4, 8)
-VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
+VARIANTS(GROUP_SIZE, 0, 32, 64)
 VARIANTS(
     A_PROLOGUE,
     GemmAPrologueKind::FullPrecision,
     GemmAPrologueKind::Int8Symmetric)
-VARIANTS(A_GROUP_SIZE, 0, 32, 64, 128)
+VARIANTS(A_GROUP_SIZE, 0, 128)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
@@ -76,37 +76,31 @@ CONSTRAINT(
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
-CONSTRAINT(
-    GROUP_SIZE != 16 ||
-    GEMM_TILING == GemmTiling::Tile64x64x16_Simdgroups2x2)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
 CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
     (TRANSPOSE_B &&
-     (GEMM_TILING != GemmTiling::Tile64x64x16_Simdgroups2x2 ||
-      GROUP_SIZE == 16)))
+     GEMM_TILING != GemmTiling::Tile64x64x16_Simdgroups2x2 &&
+     GEMM_TILING != GemmTiling::Tile64x32x32_Simdgroups2x2))
 CONSTRAINT(
-    B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
-    GEMM_TILING != GemmTiling::Tile128x128x256_Simdgroups4x4 ||
-    GROUP_SIZE <= 64)
+    B_PROLOGUE != GemmBPrologueKind::FullPrecision || USE_MXU ||
+    GEMM_TILING == GemmTiling::Tile64x64x16_Simdgroups2x2 ||
+    GEMM_TILING == GemmTiling::Tile64x32x32_Simdgroups2x2)
 CONSTRAINT(
-    !(GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
-      GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4) ||
+    GEMM_TILING != GemmTiling::Tile16x32x256_Simdgroups1x1 ||
     (TRANSPOSE_B &&
      (B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
       A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)))
-CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
-CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || BITS == 4 || BITS == 8)
 CONSTRAINT(
-    A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
-    (GROUP_SIZE % METAL_SIMD_SIZE == 0 && GROUP_SIZE != 0))
+    GEMM_TILING != GemmTiling::Tile16x128x256_Simdgroups1x4 ||
+    (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
     (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
 CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (A_GROUP_SIZE == 0))
-// The integer schedule drains one weight group at a time, so an activation
-// group narrower than the weight group has no kernel.
-CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || A_GROUP_SIZE >= GROUP_SIZE)
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
     const device BT* b,

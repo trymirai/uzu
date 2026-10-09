@@ -46,7 +46,7 @@ pub enum GemmTiling {
     Tile128x128x256_Simdgroups4x4,
 }
 
-const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
+pub const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
 
 impl GemmTiling {
     pub const fn block_m(self) -> u32 {
@@ -139,24 +139,6 @@ impl GemmTiling {
                 | Self::Tile64x64x256_Simdgroups2x2
                 | Self::Tile128x128x256_Simdgroups4x4
         )
-    }
-
-    pub const fn simdgroup_block_k(self) -> u32 {
-        if self.is_mxu_variant() {
-            MXU_SIMDGROUP_BLOCK_K
-        } else {
-            self.block_k()
-        }
-    }
-
-    pub const fn fits_quant_group_size(
-        self,
-        group_size: u32,
-    ) -> bool {
-        match self {
-            Self::Tile128x128x256_Simdgroups4x4 => group_size <= 64,
-            _ => true,
-        }
     }
 }
 
