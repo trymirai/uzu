@@ -290,6 +290,7 @@ fn gemv_gather() {
     }
     // Quantized (bf16, per bits/method) — inline, since it isn't type-generic.
     for (bits, method, signed_codes) in [
+        (4, QuantizationMethod::ScaleBias, false),
         (4, QuantizationMethod::ScaleZeroPoint, false),
         (4, QuantizationMethod::ScaleZeroPoint, true),
         (8, QuantizationMethod::ScaleSymmetric, false),
