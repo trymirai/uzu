@@ -432,19 +432,5 @@ METAL_FUNC void fragment_mma(thread OutputFragment& output, thread LeftFragment&
   );
 }
 
-template <class OutputFragment, class LeftFragment, class RightFragment>
-METAL_FUNC void fragment_mm(thread OutputFragment& output, thread LeftFragment& left, thread RightFragment& right) {
-  static_assert(
-      metal::is_same_v<typename OutputFragment::FragmentOpsType, typename LeftFragment::FragmentOpsType> &&
-          metal::is_same_v<typename OutputFragment::FragmentOpsType, typename RightFragment::FragmentOpsType>,
-      "fragment_mm requires output, left, and right fragments to use the same FragmentOps"
-  );
-  OutputFragment::FragmentOpsType::template fragment_mm<LeftFragment::MMA_TRANSPOSE, RightFragment::MMA_TRANSPOSE>(
-      output,
-      left,
-      right
-  );
-}
-
 } // namespace matmul
 } // namespace uzu

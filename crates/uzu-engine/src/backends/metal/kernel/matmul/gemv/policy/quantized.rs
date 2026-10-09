@@ -35,7 +35,7 @@ pub fn gathered_tile(
     m: u32,
     n: u32,
 ) -> Option<GemvTile> {
-    if !matches!(bits, 4 | 8) || !matches!(group, 16 | 32 | 64 | 128) || !(1..=8).contains(&m) {
+    if !matches!(bits, 4 | 8) || !matches!(group, 32 | 64) || !(1..=8).contains(&m) {
         return None;
     }
     let tile = lane_default(bits, group);
@@ -105,7 +105,7 @@ pub fn select(
     k: u32,
     bf16_io: bool,
 ) -> Option<GemvTile> {
-    if !matches!(bits, 4 | 8) || !matches!(group, 16 | 32 | 64 | 128) || !(1..=8).contains(&m) {
+    if !matches!(bits, 4 | 8) || !matches!(group, 32 | 64) || !(1..=8).contains(&m) {
         return None;
     }
 

@@ -293,8 +293,7 @@ fn gemv_gather() {
         (4, QuantizationMethod::ScaleBias, false),
         (4, QuantizationMethod::ScaleZeroPoint, false),
         (4, QuantizationMethod::ScaleZeroPoint, true),
-        (4, QuantizationMethod::ScaleSymmetric, false),
-        (8, QuantizationMethod::ScaleZeroPoint, false),
+        (8, QuantizationMethod::ScaleSymmetric, false),
     ] {
         let mut input = QuantInput::new(8, 128, 64, 32, bits, method, 0x5EED);
         if signed_codes {
