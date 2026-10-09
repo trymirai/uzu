@@ -1,4 +1,4 @@
-#![cfg(all(feature = "metal", target_os = "macos"))]
+#![cfg(any(feature = "vulkan", all(feature = "metal", target_os = "macos")))]
 
 use std::{
     fs,

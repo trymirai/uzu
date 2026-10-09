@@ -116,6 +116,38 @@ jobs:
             ${{ matrix.target && format('--target {0}', matrix.target) || '' }} \
             ${{ matrix.tests == 'kernels' && '-p uzu-engine backends::common::kernel::tests --lib' || '' }}
 
+  vulkan:
+    name: vulkan
+    runs-on: ubuntu-24.04
+    env:
+      UZU_BACKEND: cpu
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: Install Vulkan and Slang
+        run: |
+          sudo apt-get install -y libclang-dev mesa-vulkan-drivers vulkan-validationlayers vulkan-tools
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/slang.tar.gz" \
+            https://github.com/shader-slang/slang/releases/download/v2026.2/slang-2026.2-linux-x86_64.tar.gz
+          echo "b123968a40ee74404ffaccee2a6c6ae17cf02e76d9f26d4940c7132a19aec8a8  $RUNNER_TEMP/slang.tar.gz" | sha256sum --check
+          mkdir "$RUNNER_TEMP/slang"
+          tar -xzf "$RUNNER_TEMP/slang.tar.gz" -C "$RUNNER_TEMP/slang"
+          echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/slang/lib" >> "$GITHUB_ENV"
+          drivers=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test "${#drivers[@]}" -eq 1 && test -f "${drivers[0]}"
+          echo "VK_DRIVER_FILES=${drivers[0]}" >> "$GITHUB_ENV"
+          rustup component add clippy --toolchain stable
+      - name: Build and lint Vulkan
+        run: |
+          cargo +stable build -p uzu-engine --no-default-features --features cpu,vulkan --example vulkan --locked
+          cargo +stable clippy -p uzu-engine --no-default-features --features cpu,vulkan --lib --example vulkan --locked -- -D warnings
+      - name: Test CPU and Vulkan contracts
+        run: |
+          cargo +nightly test -p uzu-engine --no-default-features --features cpu,vulkan --lib --locked
+          cargo +stable run -p uzu-engine --no-default-features --features cpu,vulkan --example vulkan --locked 2>&1 | tee vulkan.log
+          ! grep -q '\[Error\]' vulkan.log
+
   validate-bindings:
     name: validate-bindings
     runs-on: [self-hosted, macos, arm64]
@@ -262,13 +294,14 @@ jobs:
   completed:
     name: completed
     runs-on: ubuntu-latest
-    needs: [linters, tests, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui]
+    needs: [linters, tests, vulkan, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui]
     if: ${{ always() }}
 
     steps:
       - run: |
           [ "${{ needs.linters.result }}" = success ]
           [ "${{ needs.tests.result }}" = success ]
+          [ "${{ needs.vulkan.result }}" = success ]
           [ "${{ needs.validate-bindings.result }}" = success ]
           [ "${{ needs.linters-mirai-gui.result }}" = success ]
           [ "${{ needs.tests-mirai-gui.result }}" = success ]
