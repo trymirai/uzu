@@ -1,6 +1,6 @@
 mod config;
 
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, time::Duration};
 
 use async_openai::{Client, config::OpenAIConfig};
 pub use config::Config;
@@ -75,9 +75,14 @@ impl RegistryTrait for Registry {
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ShojiModel>, RegistryError>> + Send + '_>> {
         Box::pin(async {
             let response: ListModelsResponse =
-                self.client.models().list_byot().await.map_err(|error| RegistryError::UnableToGetModels {
-                    message: error.to_string(),
-                })?;
+                tokio::time::timeout(Duration::from_secs(30), self.client.models().list_byot())
+                    .await
+                    .map_err(|_| RegistryError::UnableToGetModels {
+                        message: "Model catalog request timed out after 30 seconds".to_string(),
+                    })?
+                    .map_err(|error| RegistryError::UnableToGetModels {
+                        message: error.to_string(),
+                    })?;
             let mut identifiers = response.data.into_iter().map(|model| model.id).collect::<Vec<_>>();
             identifiers.sort();
 

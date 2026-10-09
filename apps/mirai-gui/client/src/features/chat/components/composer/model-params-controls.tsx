@@ -1,20 +1,14 @@
-import { getPlatform } from "@/platform/platform-singleton";
 import type { SamplingDefaults } from "@/platform/services/chat";
-import { STOCHASTIC_SEED, defaultReasoningEffort, useModelParamsStore } from "@/stores/use-model-params-store";
+import { resolveModelTools, useModelParamsStore } from "@/stores/use-model-params-store";
 import { useModelsStore } from "@/stores/use-models-store";
-import { useRuntimeSessionStore } from "@/stores/use-runtime-session-store";
-import {
-  TEMPERATURE_MIN,
-  type ReasoningEffort,
-  type ReasoningSupport,
-  type SamplingPolicyPayload,
-} from "@/types/sampling";
+import { TEMPERATURE_MIN, type SamplingPolicyPayload } from "@/types/sampling";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState, useId } from "react";
 import { Toggle } from "@/components/ui/toggle";
+import { RotateCcw } from "lucide-react";
 
 const TOP_K_MIN = 1;
 const TOP_K_MAX = 4096;
@@ -28,71 +22,95 @@ const SUFFIX_REPETITION_LENGTH_SEED = 32;
 
 type ModelParamsControlsProps = {
   repoId: string;
+  samplingDefaults: SamplingDefaults | null;
 };
 
 const MODE_OPTIONS = [
-  { value: "Default", label: "Default" },
-  { value: "Argmax", label: "Argmax" },
   { value: "Stochastic", label: "Stochastic" },
+  { value: "Greedy", label: "Greedy" },
 ] as const;
 
-const EFFORT_LABELS: Record<ReasoningEffort, string> = {
-  disabled: "Off",
-  default: "Default",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "XHigh",
-};
+type StochasticSampling = Extract<SamplingDefaults, { type: "Stochastic" }>;
+type SamplingField = Exclude<keyof StochasticSampling, "type">;
 
-const sectionLabel = "text-[12px] font-[450] text-label-muted";
+const samplingValue = (sampling: StochasticSampling, field: SamplingField) =>
+  sampling[field] ?? (field === "temperature" ? 1 : null);
 
-export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
+const sameSampling = (left: SamplingDefaults, right: SamplingDefaults) =>
+  left.type === right.type &&
+  (left.type === "Greedy" ||
+    (right.type === "Stochastic" &&
+      (["temperature", "topK", "topP", "minP", "repetitionPenalty", "suffixRepetitionLength"] as const).every(
+        (field) => samplingValue(left, field) === samplingValue(right, field),
+      )));
+
+const ChangedMarker = () => (
+  <span aria-hidden="true" title="Changed from default" className="ml-0.5 text-red-500">
+    *
+  </span>
+);
+
+const SectionHeading = ({ name, changed, onReset }: { name: string; changed: boolean; onReset: () => void }) => (
+  <div className="flex h-5 items-center gap-1">
+    <span className="text-[12px] font-[450] text-label-muted">{name}</span>
+    {changed && (
+      <button
+        type="button"
+        onClick={onReset}
+        aria-label={`Reset ${name.toLowerCase()} to defaults`}
+        title={`Reset ${name.toLowerCase()} to defaults`}
+        className="inline-flex size-5 items-center justify-center rounded text-red-500 transition-colors hover:bg-red-500/10 outline-hidden focus-visible:shadow-focus"
+      >
+        <RotateCcw aria-hidden="true" className="size-3" />
+      </button>
+    )}
+  </div>
+);
+
+export const ModelParamsControls = ({ repoId, samplingDefaults: modelDefaults }: ModelParamsControlsProps) => {
   const model = useModelsStore((s) => s.models.find((m) => m.repoId === repoId));
   const params = useModelParamsStore((s) => s.paramsByRepoId[repoId] ?? null);
-  const globalReasoningEnabled = useModelParamsStore((s) => s.globalReasoningEnabled);
+  const globalModelChatNamingEnabled = useModelParamsStore((s) => s.globalModelChatNamingEnabled);
   const setParams = useModelParamsStore((s) => s.setParams);
 
   const sampling: SamplingPolicyPayload = params?.sampling ?? { type: "Default" };
-  const reasoningEffort = params?.reasoningEffort ?? defaultReasoningEffort(globalReasoningEnabled);
-  const reasoning: ReasoningSupport = model?.reasoning ?? { kind: "unsupported" };
-  const stochastic = sampling.type === "Stochastic" ? sampling : null;
+  const tools = resolveModelTools(params ?? undefined, globalModelChatNamingEnabled, model?.paramSize);
+  const defaultTools = resolveModelTools(undefined, globalModelChatNamingEnabled, model?.paramSize);
+  const supportsTools = model?.supportsTools === true;
 
-  const isResident = useRuntimeSessionStore((s) => s.residentSession?.repoId === repoId);
-  const [modelDefaults, setModelDefaults] = useState<SamplingDefaults | null>(null);
-  useEffect(() => setModelDefaults(null), [repoId]);
-  useEffect(() => {
-    if (!isResident) return;
-    let alive = true;
-    void getPlatform()
-      .chat.getSamplingDefaults(repoId)
-      .then((defaults) => {
-        if (alive) setModelDefaults(defaults);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [repoId, isResident]);
+  const resolvedSampling = sampling.type === "Default" ? modelDefaults : sampling;
+  const stochastic = resolvedSampling?.type === "Stochastic" ? resolvedSampling : null;
+  const defaultStochastic = modelDefaults?.type === "Stochastic" ? modelDefaults : null;
+  const samplingChanged = sampling.type !== "Default" && (!modelDefaults || !sameSampling(sampling, modelDefaults));
+  const modeChanged = modelDefaults !== null && resolvedSampling?.type !== modelDefaults.type;
+  const fieldChanged = (field: SamplingField) =>
+    stochastic !== null &&
+    defaultStochastic !== null &&
+    samplingValue(stochastic, field) !== samplingValue(defaultStochastic, field);
+  const dateTimeChanged = tools.dateTimeToolEnabled !== defaultTools.dateTimeToolEnabled;
+  const chartChanged = tools.chartToolEnabled !== defaultTools.chartToolEnabled;
+  const chatNamingChanged = tools.modelChatNamingEnabled !== defaultTools.modelChatNamingEnabled;
+  // Seeds are only for explicitly enabling a filter; missing parameters stay disabled.
   const seed = {
-    temperature: Math.max(TEMPERATURE_MIN, modelDefaults?.temperature ?? STOCHASTIC_SEED.temperature),
-    topK: modelDefaults?.topK ?? STOCHASTIC_SEED.topK,
-    topP: modelDefaults?.topP ?? STOCHASTIC_SEED.topP,
-    minP: modelDefaults?.minP ?? STOCHASTIC_SEED.minP,
-    repetitionPenalty: modelDefaults?.repetitionPenalty ?? REPETITION_PENALTY_SEED,
-    suffixRepetitionLength: modelDefaults?.suffixRepetitionLength ?? SUFFIX_REPETITION_LENGTH_SEED,
+    topK: defaultStochastic?.topK ?? 40,
+    topP: defaultStochastic?.topP ?? 0.95,
+    minP: defaultStochastic?.minP ?? 0.05,
+    repetitionPenalty: defaultStochastic?.repetitionPenalty ?? REPETITION_PENALTY_SEED,
+    suffixRepetitionLength: defaultStochastic?.suffixRepetitionLength ?? SUFFIX_REPETITION_LENGTH_SEED,
   };
 
-  const update = (next: SamplingPolicyPayload) => {
-    setParams(repoId, { ...params, sampling: next });
+  const update = (next: SamplingDefaults) => {
+    setParams(repoId, {
+      ...params,
+      sampling: modelDefaults && sameSampling(next, modelDefaults) ? { type: "Default" } : next,
+    });
   };
 
   const onModeChange = (value: string) => {
     if (value === "Stochastic") {
-      update({ type: "Stochastic", temperature: seed.temperature, topK: seed.topK, topP: seed.topP, minP: seed.minP });
-    } else if (value === "Argmax") {
-      update({ type: "Argmax" });
-    } else {
-      update({ type: "Default" });
+      update(defaultStochastic ?? { type: "Stochastic" });
+    } else if (value === "Greedy") {
+      update({ type: "Greedy" });
     }
   };
 
@@ -107,19 +125,10 @@ export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
     }>,
   ) => {
     const base = stochastic ?? { type: "Stochastic" as const };
-    update({
-      type: "Stochastic",
-      temperature: base.temperature ?? seed.temperature,
-      topK: base.topK ?? seed.topK,
-      ...(base.topP !== undefined ? { topP: base.topP } : {}),
-      ...(base.minP !== undefined ? { minP: base.minP } : {}),
-      ...(base.repetitionPenalty !== undefined ? { repetitionPenalty: base.repetitionPenalty } : {}),
-      ...(base.suffixRepetitionLength !== undefined ? { suffixRepetitionLength: base.suffixRepetitionLength } : {}),
-      ...patch,
-    });
+    update({ ...base, ...patch });
   };
 
-  const onToggleOptional = (field: "topP" | "minP" | "repetitionPenalty", on: boolean) => {
+  const onToggleOptional = (field: "topK" | "topP" | "minP" | "repetitionPenalty", on: boolean) => {
     if (on) {
       const patch =
         field === "repetitionPenalty"
@@ -134,28 +143,45 @@ export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
     }
   };
 
-  const onReasoningChange = (effort: ReasoningEffort) => {
-    const override = effort === defaultReasoningEffort(globalReasoningEnabled) ? undefined : effort;
-    setParams(repoId, { sampling, ...(override ? { reasoningEffort: override } : {}) });
+  const onToolChange = (
+    field: "modelChatNamingEnabled" | "dateTimeToolEnabled" | "chartToolEnabled",
+    enabled: boolean,
+  ) => {
+    const next = { ...params, sampling };
+    if (enabled === defaultTools[field]) delete next[field];
+    else next[field] = enabled;
+    setParams(repoId, next);
   };
 
-  const levelOptions =
-    reasoning.kind === "levels"
-      ? reasoning.efforts.map((effort) => ({ value: effort, label: EFFORT_LABELS[effort] }))
-      : [];
-  const levelValue =
-    reasoning.kind === "levels"
-      ? reasoning.efforts.includes(reasoningEffort)
-        ? reasoningEffort
-        : (reasoning.efforts.find((effort) => effort === "default") ??
-          reasoning.efforts.find((effort) => effort !== "disabled"))
-      : undefined;
+  const resetSampling = () => setParams(repoId, { ...params, sampling: { type: "Default" } });
+  const resetTools = () => {
+    const next = { ...params, sampling };
+    delete next.dateTimeToolEnabled;
+    delete next.chartToolEnabled;
+    if (globalModelChatNamingEnabled) delete next.modelChatNamingEnabled;
+    setParams(repoId, next);
+  };
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5">
-        <span className={sectionLabel}>Sampling</span>
-        <SegmentedControl ariaLabel="Sampling" value={sampling.type} onChange={onModeChange} options={MODE_OPTIONS} />
+        <SectionHeading name="Sampling" changed={samplingChanged} onReset={resetSampling} />
+        <SegmentedControl
+          ariaLabel="Sampling"
+          value={resolvedSampling?.type ?? ""}
+          onChange={onModeChange}
+          options={MODE_OPTIONS.map((option) => ({
+            ...option,
+            ariaLabel: option.label,
+            label: (
+              <span>
+                {option.label}
+                {modeChanged && option.value === resolvedSampling?.type && <ChangedMarker />}
+              </span>
+            ),
+          }))}
+        />
+        {!resolvedSampling && <p className="text-[12px] text-label-muted">Model sampling settings are unavailable.</p>}
       </div>
 
       <AnimatePresence initial={false}>
@@ -166,66 +192,80 @@ export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="overflow-hidden"
+            className="overflow-clip"
           >
             <div className="flex flex-col gap-3 pt-3">
               <NumberSliderRow
                 label="Temperature"
-                min={TEMPERATURE_MIN}
-                max={1}
+                changed={fieldChanged("temperature")}
+                min={Math.min(TEMPERATURE_MIN, stochastic.temperature ?? 1)}
+                max={Math.max(2, stochastic.temperature ?? 1)}
                 step={0.01}
                 decimals={2}
-                value={stochastic.temperature ?? seed.temperature}
+                value={stochastic.temperature ?? 1}
                 onChange={(v) => onStochasticChange({ temperature: v })}
               />
               <NumberSliderRow
                 label="Top K"
+                changed={fieldChanged("topK")}
                 min={TOP_K_MIN}
-                max={TOP_K_MAX}
+                max={Math.max(TOP_K_MAX, stochastic.topK ?? 0)}
                 step={1}
                 decimals={0}
                 noSlider
                 value={stochastic.topK ?? seed.topK}
+                enabled={stochastic.topK != null}
+                onToggle={(on) => onToggleOptional("topK", on)}
                 onChange={(v) => onStochasticChange({ topK: v })}
               />
               <NumberSliderRow
                 label="Top P"
+                changed={fieldChanged("topP")}
                 min={0}
                 max={1}
                 step={0.01}
                 decimals={2}
                 value={stochastic.topP ?? seed.topP}
-                enabled={stochastic.topP !== undefined}
+                enabled={stochastic.topP != null}
                 onToggle={(on) => onToggleOptional("topP", on)}
                 onChange={(v) => onStochasticChange({ topP: v })}
               />
               <NumberSliderRow
                 label="Min P"
+                changed={fieldChanged("minP")}
                 min={0}
                 max={1}
                 step={0.01}
                 decimals={2}
                 value={stochastic.minP ?? seed.minP}
-                enabled={stochastic.minP !== undefined}
+                enabled={stochastic.minP != null}
                 onToggle={(on) => onToggleOptional("minP", on)}
                 onChange={(v) => onStochasticChange({ minP: v })}
               />
               <NumberSliderRow
                 label="Repetition penalty"
-                min={REPETITION_PENALTY_MIN}
-                max={REPETITION_PENALTY_MAX}
+                changed={fieldChanged("repetitionPenalty")}
+                min={Math.min(REPETITION_PENALTY_MIN, stochastic.repetitionPenalty ?? REPETITION_PENALTY_MIN)}
+                max={Math.max(REPETITION_PENALTY_MAX, stochastic.repetitionPenalty ?? REPETITION_PENALTY_MAX)}
                 step={0.05}
                 decimals={2}
                 value={stochastic.repetitionPenalty ?? seed.repetitionPenalty}
-                enabled={stochastic.repetitionPenalty !== undefined}
+                enabled={stochastic.repetitionPenalty != null}
                 onToggle={(on) => onToggleOptional("repetitionPenalty", on)}
                 onChange={(v) => onStochasticChange({ repetitionPenalty: v })}
               />
-              {stochastic.repetitionPenalty !== undefined && (
+              {stochastic.repetitionPenalty != null && (
                 <NumberSliderRow
                   label="Suffix repetition length"
-                  min={SUFFIX_REPETITION_LENGTH_MIN}
-                  max={SUFFIX_REPETITION_LENGTH_MAX}
+                  changed={fieldChanged("suffixRepetitionLength")}
+                  min={Math.min(
+                    SUFFIX_REPETITION_LENGTH_MIN,
+                    stochastic.suffixRepetitionLength ?? SUFFIX_REPETITION_LENGTH_MIN,
+                  )}
+                  max={Math.max(
+                    SUFFIX_REPETITION_LENGTH_MAX,
+                    stochastic.suffixRepetitionLength ?? SUFFIX_REPETITION_LENGTH_MAX,
+                  )}
                   step={SUFFIX_REPETITION_LENGTH_STEP}
                   decimals={0}
                   noSlider
@@ -238,34 +278,65 @@ export const ModelParamsControls = ({ repoId }: ModelParamsControlsProps) => {
         )}
       </AnimatePresence>
 
-      {reasoning.kind === "toggle" && (
-        <div className="flex items-center justify-between gap-3 border-t border-cell-border pt-3">
-          <span className="text-[13px] text-label-title">Reasoning</span>
+      <div className="flex flex-col gap-3 border-t border-cell-border pt-3">
+        <SectionHeading
+          name="Tools"
+          changed={dateTimeChanged || chartChanged || chatNamingChanged}
+          onReset={resetTools}
+        />
+        {!supportsTools && (
+          <p className="text-[12px] leading-relaxed text-label-muted">This model does not support tool calls.</p>
+        )}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-[13px] text-label-title">
+              Current date and time{dateTimeChanged && <ChangedMarker />}
+            </span>
+            <p className="text-[12px] leading-relaxed text-label-muted">Look up the current local date and time.</p>
+          </div>
           <Toggle
-            label="Reasoning"
-            checked={reasoningEffort !== "disabled"}
-            onChange={(checked) => onReasoningChange(checked ? "default" : "disabled")}
+            label="Current date and time"
+            checked={supportsTools && tools.dateTimeToolEnabled}
+            disabled={!supportsTools}
+            onChange={(enabled) => onToolChange("dateTimeToolEnabled", enabled)}
           />
         </div>
-      )}
-
-      {reasoning.kind === "levels" && levelValue !== undefined && (
-        <div className="flex flex-col gap-1.5 border-t border-cell-border pt-3">
-          <span className={sectionLabel}>Reasoning</span>
-          <SegmentedControl
-            ariaLabel="Reasoning"
-            value={levelValue}
-            onChange={(value) => onReasoningChange(value as ReasoningEffort)}
-            options={levelOptions}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-[13px] text-label-title">Draw charts{chartChanged && <ChangedMarker />}</span>
+            <p className="text-[12px] leading-relaxed text-label-muted">Show charts in replies.</p>
+          </div>
+          <Toggle
+            label="Draw charts"
+            checked={supportsTools && tools.chartToolEnabled}
+            disabled={!supportsTools}
+            onChange={(enabled) => onToolChange("chartToolEnabled", enabled)}
           />
         </div>
-      )}
+        {globalModelChatNamingEnabled && (
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-[13px] text-label-title">Name chat{chatNamingChanged && <ChangedMarker />}</span>
+              <p className="text-[12px] leading-relaxed text-label-muted">
+                Name and rename the chat using a tool call.
+              </p>
+            </div>
+            <Toggle
+              label="Name chat using a tool"
+              checked={supportsTools && tools.modelChatNamingEnabled}
+              disabled={!supportsTools}
+              onChange={(enabled) => onToolChange("modelChatNamingEnabled", enabled)}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 };
 
 type NumberSliderRowProps = {
   label: string;
+  changed: boolean;
   min: number;
   max: number;
   step: number;
@@ -281,6 +352,7 @@ const fmt = (value: number, decimals: number) => (decimals > 0 ? String(value) :
 
 const NumberSliderRow = ({
   label,
+  changed,
   min,
   max,
   step,
@@ -318,13 +390,16 @@ const NumberSliderRow = ({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span id={labelId} className="text-[13px] text-label-title">
-            {label}
-          </span>
-          {optional && (
-            <Checkbox checked={active} onChange={(on) => onToggle?.(on)} size="sm" aria-label={`Enable ${label}`} />
-          )}
+        <div className="flex items-center">
+          <div className="flex items-center gap-2">
+            <span id={labelId} className="text-[13px] text-label-title">
+              {label}
+            </span>
+            {optional && (
+              <Checkbox checked={active} onChange={(on) => onToggle?.(on)} size="sm" aria-label={`Enable ${label}`} />
+            )}
+          </div>
+          {changed && <ChangedMarker />}
         </div>
         <Input
           size="sm"

@@ -4,6 +4,8 @@ use uzu::types::{
     session::chat::{ChatReply, ChatReplyFinishReason, ChatRole},
 };
 
+use super::chart::ChartSpec;
+
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStreamPayload {
@@ -15,17 +17,49 @@ pub struct RunStreamPayload {
     pub sampling_policy: Option<SamplingPolicyPayload>,
     #[serde(default)]
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub model_chat_naming_enabled: Option<bool>,
+    #[serde(default)]
+    pub date_time_tool_enabled: Option<bool>,
+    #[serde(default)]
+    pub chart_tool_enabled: Option<bool>,
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SamplingDefaults {
-    pub temperature: Option<f64>,
-    pub top_k: Option<i64>,
-    pub top_p: Option<f64>,
-    pub min_p: Option<f64>,
-    pub repetition_penalty: Option<f64>,
-    pub suffix_repetition_length: Option<i64>,
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
+pub enum SamplingDefaults {
+    Greedy,
+    Stochastic {
+        temperature: Option<f64>,
+        top_k: Option<i64>,
+        top_p: Option<f64>,
+        min_p: Option<f64>,
+        repetition_penalty: Option<f64>,
+        suffix_repetition_length: Option<i64>,
+    },
+}
+
+impl From<SamplingMethod> for SamplingDefaults {
+    fn from(method: SamplingMethod) -> Self {
+        match method {
+            SamplingMethod::Greedy {} => Self::Greedy,
+            SamplingMethod::Stochastic {
+                temperature,
+                top_k,
+                top_p,
+                min_p,
+                repetition_penalty,
+                suffix_repetition_length,
+            } => Self::Stochastic {
+                temperature,
+                top_k,
+                top_p,
+                min_p,
+                repetition_penalty,
+                suffix_repetition_length,
+            },
+        }
+    }
 }
 
 #[derive(Deserialize, Clone, PartialEq)]
@@ -40,7 +74,8 @@ pub struct MsgIn {
 #[serde(tag = "type")]
 pub enum SamplingPolicyPayload {
     Default,
-    Argmax,
+    #[serde(alias = "Argmax")]
+    Greedy,
     #[serde(rename_all = "camelCase")]
     Stochastic {
         temperature: Option<f64>,
@@ -91,10 +126,15 @@ pub struct SessionOutputStats {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum RunEvent {
     #[serde(rename_all = "camelCase")]
-    Chunk {
+    ChatName {
+        name: String,
+    },
+    Transcript {
+        items: Vec<TranscriptItem>,
+    },
+    TranscriptDelta {
+        index: usize,
         delta: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        parsed: Option<Parsed>,
     },
     #[serde(rename_all = "camelCase")]
     Done {
@@ -104,10 +144,34 @@ pub enum RunEvent {
         finish_reason: Option<ChatReplyFinishReason>,
         #[serde(skip_serializing_if = "Option::is_none")]
         parsed: Option<Parsed>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chat_name: Option<String>,
+        transcript: Vec<TranscriptItem>,
     },
     #[serde(rename_all = "camelCase")]
     Error {
         error: String,
+    },
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TranscriptItem {
+    Thinking {
+        text: String,
+        completed: bool,
+    },
+    Text {
+        text: String,
+    },
+    Chart {
+        chart: ChartSpec,
+    },
+    ToolCall {
+        name: String,
+        called: bool,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        failed: bool,
     },
 }
 
@@ -140,7 +204,7 @@ pub(super) fn map_reply_stats(reply: Option<&ChatReply>) -> SessionOutputStats {
 pub(super) fn sampling_policy(payload: &Option<SamplingPolicyPayload>) -> SamplingPolicy {
     match payload {
         None | Some(SamplingPolicyPayload::Default) => SamplingPolicy::Default {},
-        Some(SamplingPolicyPayload::Argmax) => SamplingPolicy::Custom {
+        Some(SamplingPolicyPayload::Greedy) => SamplingPolicy::Custom {
             method: SamplingMethod::Greedy {},
         },
         Some(SamplingPolicyPayload::Stochastic {
@@ -199,6 +263,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn omitted_tool_preferences_remain_distinct_from_explicit_choices() {
+        let payload = |extra: serde_json::Value| {
+            let mut value = serde_json::json!({ "runId": "run", "repoId": "model" });
+            value.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            serde_json::from_value::<RunStreamPayload>(value).unwrap()
+        };
+        let defaults = payload(serde_json::json!({}));
+        assert_eq!(defaults.model_chat_naming_enabled, None);
+        assert_eq!(defaults.date_time_tool_enabled, None);
+        assert_eq!(defaults.chart_tool_enabled, None);
+        for enabled in [true, false] {
+            let naming = payload(serde_json::json!({ "modelChatNamingEnabled": enabled }));
+            assert_eq!(naming.model_chat_naming_enabled, Some(enabled));
+            assert_eq!(naming.date_time_tool_enabled, None);
+            assert_eq!(naming.chart_tool_enabled, None);
+            let date = payload(serde_json::json!({ "dateTimeToolEnabled": enabled }));
+            assert_eq!(date.model_chat_naming_enabled, None);
+            assert_eq!(date.date_time_tool_enabled, Some(enabled));
+            assert_eq!(date.chart_tool_enabled, None);
+            let chart = payload(serde_json::json!({ "chartToolEnabled": enabled }));
+            assert_eq!(chart.model_chat_naming_enabled, None);
+            assert_eq!(chart.date_time_tool_enabled, None);
+            assert_eq!(chart.chart_tool_enabled, Some(enabled));
+        }
+    }
+
+    #[test]
     fn deserializes_client_reasoning_content() {
         let message: MsgIn = serde_json::from_value(serde_json::json!({
             "role": "assistant",
@@ -234,6 +325,43 @@ mod tests {
                 method: SamplingMethod::Stochastic { .. }
             }
         ));
+    }
+
+    #[test]
+    fn greedy_accepts_the_previous_argmax_payload_name() {
+        for name in ["Greedy", "Argmax"] {
+            let payload = serde_json::from_value(serde_json::json!({ "type": name })).unwrap();
+            assert!(matches!(payload, SamplingPolicyPayload::Greedy));
+            assert!(matches!(
+                sampling_policy(&Some(payload)),
+                SamplingPolicy::Custom {
+                    method: SamplingMethod::Greedy {}
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn sampling_defaults_include_the_actual_method_and_keep_disabled_filters_null() {
+        let defaults = SamplingDefaults::from(SamplingMethod::Stochastic {
+            temperature: None,
+            top_k: None,
+            top_p: Some(0.95),
+            min_p: None,
+            repetition_penalty: None,
+            suffix_repetition_length: None,
+        });
+        assert_eq!(
+            serde_json::to_value(defaults).unwrap(),
+            serde_json::json!({
+                "type": "Stochastic", "temperature": null, "topK": null, "topP": 0.95,
+                "minP": null, "repetitionPenalty": null, "suffixRepetitionLength": null,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(SamplingDefaults::from(SamplingMethod::Greedy {})).unwrap(),
+            serde_json::json!({ "type": "Greedy" })
+        );
     }
 
     #[test]

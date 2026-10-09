@@ -64,7 +64,7 @@ const MarkdownTable = ({ children, ...props }: MarkdownComponentProps<"table">) 
       <div className="absolute right-1 top-[10px] z-10">
         <CopyButton className="!min-w-6 !min-h-6" onCopy={handleTableCopy} />
       </div>
-      <div className="overflow-x-auto thin-scrollbar">
+      <div className="overflow-x-auto overscroll-x-contain overscroll-y-auto thin-scrollbar">
         <table ref={tableRef} className="min-w-full" {...props}>
           {children}
         </table>

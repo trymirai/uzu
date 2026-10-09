@@ -809,6 +809,9 @@ async fn run_blocking(
             } => {
                 final_replies = replies;
             },
+            ChatSessionStreamChunk::ToolResults {
+                ..
+            } => {},
             ChatSessionStreamChunk::Error {
                 error,
             } => {
@@ -1075,6 +1078,9 @@ async fn run_stream(
                     .iter()
                     .any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
             },
+            ChatSessionStreamChunk::ToolResults {
+                ..
+            } => {},
             ChatSessionStreamChunk::Error {
                 error,
             } => {

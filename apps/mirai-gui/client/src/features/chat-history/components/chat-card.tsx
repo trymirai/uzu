@@ -68,7 +68,7 @@ const ChatCard: React.FC<ChatCardProps> = ({
           )}
         </div>
         <div className="min-w-0">
-          <h3 className="text-[15px] leading-[150%] font-[350] text-label-title overflow-hidden text-ellipsis whitespace-nowrap">
+          <h3 className="text-[15px] leading-[150%] font-[350] text-label-title overflow-clip text-ellipsis whitespace-nowrap">
             {title}
           </h3>
         </div>

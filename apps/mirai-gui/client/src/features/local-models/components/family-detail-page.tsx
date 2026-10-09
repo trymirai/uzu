@@ -5,7 +5,6 @@ import { formatModelSize } from "@/utils/format";
 import { ModelVendorIcon } from "@/components/model-vendor-icon";
 import { ModelCard } from "./model-card";
 import { ModelTable } from "./model-table";
-import { useShiftHeld } from "@/hooks/use-shift-held";
 import { useMemo, type MouseEvent } from "react";
 import { buildFamilyDetailView, formatQuantization, toModelCardState, type FamilyEntry } from "../lib/view";
 
@@ -33,7 +32,6 @@ export function FamilyDetailPage({
   onOpen,
 }: FamilyDetailPageProps) {
   const isMobile = useIsMobile();
-  const shiftHeld = useShiftHeld();
   const models = useModelsStore((s) => s.models);
   const modelStatesById = useModelsStore((s) => s.modelStatesById);
   const modelPhasesById = useModelsStore((s) => s.modelPhasesById);
@@ -68,7 +66,6 @@ export function FamilyDetailPage({
         onCancel={() => void onCancel(model)}
         onRetry={() => void onDownload(model)}
         onDelete={(event) => onDelete(model, event)}
-        quickDelete={shiftHeld}
         onOpen={() => onOpen(model)}
       />
     );
@@ -89,7 +86,7 @@ export function FamilyDetailPage({
   return (
     <div className="flex flex-col gap-6">
       {detail.installed.length > 0 && (
-        <ModelTable title="Installed" compact={isMobile}>
+        <ModelTable title="Downloaded" compact={isMobile}>
           {detail.installed.map((m) => renderRow(m))}
         </ModelTable>
       )}

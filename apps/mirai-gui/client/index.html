@@ -7,12 +7,20 @@
     <link rel="icon" type="image/png" href="/icons/icon_mirai_app.png" />
     <script>
       {
-        let isDark = true;
+        let theme = "system";
         try {
-          isDark = JSON.parse(localStorage.getItem("mirai-store") ?? "{}")?.state?.isDarkMode !== false;
-        } catch {
-          isDark = true;
-        }
+          const stored = JSON.parse(
+            localStorage.getItem("mirai-store") || localStorage.getItem("mirai-electron-store") || "{}",
+          )?.state;
+          theme = ["system", "light", "dark"].includes(stored?.theme)
+            ? stored.theme
+            : stored?.isDarkMode === false
+              ? "light"
+              : "system";
+        } catch {}
+        const isDark =
+          theme === "dark" ||
+          (theme === "system" && (window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false));
         document.documentElement.classList.toggle("dark", isDark);
       }
     </script>

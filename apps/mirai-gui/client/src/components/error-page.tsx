@@ -16,12 +16,12 @@ export function ErrorPage() {
   };
 
   return (
-    <div className="min-h-screen min-w-[360px] w-full flex flex-col bg-background text-label-title">
-      <div className="flex px-8 py-8 justify-center">
+    <div className="h-full min-h-0 min-w-[360px] w-full flex flex-col bg-background text-label-title">
+      <div className="shrink-0 flex px-8 py-8 justify-center">
         {isDarkMode ? <Logo width={66} height={57} /> : <LogoLightMode width={48} height={24} />}
       </div>
-      <div className="flex-1 flex items-center justify-center px-4">
-        <div className="flex flex-col items-center gap-10">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-4">
+        <div className="flex min-h-full flex-col items-center justify-center gap-10 py-4">
           <ErrorIcon color="#FF2020" />
           <div className="flex flex-col items-center justify-center gap-3 text-center">
             <h1 className="text-2xl font-bold">Page Not Found</h1>

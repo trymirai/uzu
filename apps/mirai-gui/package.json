@@ -67,6 +67,7 @@
     "@tanstack/react-router": "^1.170.41",
     "@tauri-apps/api": "^2.12.0",
     "@tauri-apps/plugin-dialog": "^2.8.0",
+    "chart.js": "^4.5.1",
     "date-fns": "^4.4.0",
     "jszip": "^3.10.2",
     "katex": "^0.16.47",

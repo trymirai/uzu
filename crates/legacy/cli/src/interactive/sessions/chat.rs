@@ -235,13 +235,10 @@ pub async fn run_session(
                 if let Some(reply) = replies.last() {
                     latest_stats = Some(reply.stats.clone());
                 }
-                let items = build_transcript(&session.messages().await, history_offset);
-                let mut state = state.write();
-                if let Some(chat_state) = chat_state_mut(&mut state) {
-                    chat_state.pending_items = items;
-                    chat_state.pending_stats = latest_stats.clone();
-                }
             },
+            ChatSessionStreamChunk::ToolResults {
+                ..
+            } => {},
             ChatSessionStreamChunk::Error {
                 error,
             } => {
@@ -250,6 +247,12 @@ pub async fn run_session(
                 });
                 break;
             },
+        }
+        let items = build_transcript(&session.messages().await, history_offset);
+        let mut state = state.write();
+        if let Some(chat_state) = chat_state_mut(&mut state) {
+            chat_state.pending_items = items;
+            chat_state.pending_stats = latest_stats.clone();
         }
     }
 

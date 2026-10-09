@@ -93,6 +93,19 @@ impl Message {
             }
         }
 
+        // Adapt only the final template field; canonical values and chat history
+        // stay structured. Only templates requiring text opt in.
+        for (fields, destination) in destinations {
+            for (field_name, field) in *fields {
+                if field.as_text
+                    && let Some(value) = destination.get_mut(field_name)
+                    && !value.is_string()
+                {
+                    *value = Value::String(value.to_string());
+                }
+            }
+        }
+
         // Check required fields
         for (field_name, field) in config.message.iter().chain(config.context.iter()) {
             if field.required && !seen_fields.contains_key(field_name) {

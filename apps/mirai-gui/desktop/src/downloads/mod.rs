@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use uzu::types::model::Model;
 
 use crate::{
+    analytics::{AnalyticsState, Event as AnalyticsEvent},
     engine::engine,
     error::AppResult,
     models::{PhaseKind, find_downloadable_model},
@@ -78,11 +79,23 @@ impl DownloadsState {
     async fn repo_info(
         &self,
         identifier: &str,
+        engine: &uzu::engine::Engine,
     ) -> RepoInfo {
-        let map = self.repo_by_identifier.lock().await;
-        map.get(identifier).cloned().unwrap_or_else(|| RepoInfo {
-            event_key: identifier.to_string(),
-        })
+        if let Some(info) = self.repo_by_identifier.lock().await.get(identifier).cloned() {
+            return info;
+        }
+        // A model may finish its initial check before the UI fetches its catalog row.
+        let event_key = engine
+            .catalog_snapshot()
+            .await
+            .ok()
+            .and_then(|(models, _)| models.into_iter().find(|model| model.identifier == identifier))
+            .and_then(|model| model.repo_ids().first().cloned())
+            .unwrap_or_else(|| identifier.to_string());
+        self.remember_one(identifier, &event_key).await;
+        RepoInfo {
+            event_key,
+        }
     }
 
     async fn remember_one(
@@ -116,15 +129,41 @@ pub fn ensure_watcher(
             },
         };
         let mut stream = engine.storage_subscribe();
-        while let Some(item) = stream.next().await {
+        let mut catalog = engine.catalog_subscribe();
+        // Close the gap between the first command's snapshot and this task subscribing.
+        let _ = app.emit("models-changed", ());
+        loop {
+            let item = tokio::select! {
+                update = catalog.next() => {
+                    if update.is_none() { break; }
+                    let _ = app.emit("models-changed", ());
+                    continue;
+                },
+                item = stream.next() => {
+                    let Some(item) = item else { break; };
+                    item
+                },
+            };
             let Ok((identifier, download_state)) = item else {
+                // A lagged storage subscriber recovers from a fresh snapshot.
+                let _ = app.emit("models-changed", ());
                 continue;
             };
             let downloads = app.state::<DownloadsState>();
-            let previous =
-                downloads.last_phase.lock().await.insert(identifier.clone(), PhaseKind::from(&download_state.phase));
-            let info = downloads.repo_info(&identifier).await;
+            let phase = PhaseKind::from(&download_state.phase);
+            let previous = downloads.last_phase.lock().await.insert(identifier.clone(), phase);
+            let info = downloads.repo_info(&identifier, &engine).await;
+            if phase == PhaseKind::Downloading && previous != Some(PhaseKind::Downloading) {
+                app.state::<AnalyticsState>().report(|| AnalyticsEvent::DownloadStarted {
+                    model_id: identifier.clone(),
+                });
+            }
             for event in events_for(&download_state, previous) {
+                if matches!(event, DownloadEvent::Done) {
+                    app.state::<AnalyticsState>().report(|| AnalyticsEvent::DownloadFinished {
+                        model_id: identifier.clone(),
+                    });
+                }
                 downloads.emit(&app, &info, event);
             }
         }

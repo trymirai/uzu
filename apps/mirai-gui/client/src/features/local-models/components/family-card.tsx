@@ -1,17 +1,13 @@
 import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { twMerge } from "tailwind-merge";
-import { Tooltip } from "@/components/ui/tooltip";
 import { Text } from "@/components/ui/typography";
 
 export type FamilyCardBadgeTone = "neutral" | "success";
-export type FamilyCardBadgeVariant = "outline" | "filled";
 
 export type FamilyCardBadge = {
   label: ReactNode;
-  tooltip?: ReactNode;
   tone?: FamilyCardBadgeTone;
-  variant?: FamilyCardBadgeVariant;
 };
 
 export type FamilyCardProps = {
@@ -23,29 +19,26 @@ export type FamilyCardProps = {
   compact?: boolean;
 };
 
-const TONE_CLASSES: Record<FamilyCardBadgeTone, { outline: string; filled: string; text: string }> = {
+const TONE_CLASSES: Record<FamilyCardBadgeTone, { border: string; text: string }> = {
   neutral: {
-    outline: "border-border-outlined bg-transparent",
-    filled: "border-border-outlined bg-surface-secondary",
+    border: "border-border-outlined",
     text: "text-text-muted",
   },
   success: {
-    outline: "border-success-border bg-transparent",
-    filled: "border-success-border bg-success-bg",
+    border: "border-success-border",
     text: "text-success",
   },
 };
 
 function Chip({ badge }: { badge: FamilyCardBadge }) {
-  const { label, tooltip, tone = "neutral", variant = "outline" } = badge;
+  const { label, tone = "neutral" } = badge;
   const tones = TONE_CLASSES[tone];
-  const surface = variant === "filled" ? tones.filled : tones.outline;
 
-  const chip = (
+  return (
     <div
       className={twMerge(
-        "flex items-center justify-center h-7 px-2 py-0.5 rounded border-[0.5px] cursor-default",
-        surface,
+        "flex items-center justify-center h-7 px-2 py-0.5 rounded border-[0.5px] bg-transparent cursor-default",
+        tones.border,
       )}
     >
       <Text
@@ -57,15 +50,6 @@ function Chip({ badge }: { badge: FamilyCardBadge }) {
       </Text>
     </div>
   );
-
-  if (tooltip) {
-    return (
-      <Tooltip content={tooltip} side="top">
-        {chip}
-      </Tooltip>
-    );
-  }
-  return chip;
 }
 
 export function FamilyCard({ vendorIcon, familyName, vendorName, badges, onClick, compact = false }: FamilyCardProps) {

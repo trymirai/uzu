@@ -33,7 +33,7 @@ export const projectAssistantVersion = (
     ...(target.perf ? { perf: target.perf } : {}),
     ...(target.stats ? { stats: target.stats } : {}),
     ...(target.error ? { error: target.error } : {}),
-    ...(target.output?.text?.parsed ? { output: { text: { parsed: target.output.text.parsed } } } : {}),
+    ...(target.output ? { output: target.output } : {}),
   };
 
   return [frozenOriginal, newVersion];

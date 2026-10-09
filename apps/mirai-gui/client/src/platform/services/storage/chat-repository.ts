@@ -14,6 +14,7 @@ type ChatRepository = Pick<
   | "removeMessage"
   | "appendMessage"
   | "updateStoredMessage"
+  | "editUserMessage"
   | "updateChatTitle"
   | "deleteChat"
 >;
@@ -84,6 +85,41 @@ export const chatRepository: ChatRepository = {
         metadata: { ...existing.metadata, updatedAt: Date.now() },
         messages,
       });
+    });
+  },
+
+  editUserMessage(chatId, messageId, text) {
+    return withChatLock(chatId, async () => {
+      const existing = await loadChat(chatId);
+      if (!existing) throw new ChatNotFoundError(chatId);
+      const index = existing.messages.findIndex((message) => message.id === messageId);
+      const original = existing.messages[index];
+      if (!original) throw new Error(`Message ${messageId} not found in chat ${chatId}`);
+      if (original.sender !== "user") throw new Error("Only user messages can be edited");
+      const edited: Message = {
+        ...original,
+        text,
+        // Loaded user messages also have parsed output, which the serializer
+        // prefers over text. Keep that projection in sync with the edit.
+        ...(original.output
+          ? {
+              output: {
+                ...original.output,
+                text: {
+                  ...original.output.text,
+                  parsed: { ...original.output.text?.parsed, response: text },
+                },
+              },
+            }
+          : {}),
+      };
+      const messages = [...existing.messages.slice(0, index), edited];
+      const saved = {
+        metadata: { ...existing.metadata, messageCount: messages.length, updatedAt: Date.now() },
+        messages,
+      };
+      await writeChat(saved);
+      return saved;
     });
   },
 

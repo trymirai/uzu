@@ -110,6 +110,8 @@ public func runChat() async throws {
             print("Generated tokens: \(reply?.stats.tokensCountOutput ?? 0)")
         case .error(let error):
             print("Error: \(error)")
+        case .toolResults:
+            break
         }
     }
     print("Reasoning: \(message?.reasoning() ?? "empty")")

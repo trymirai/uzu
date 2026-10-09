@@ -13,10 +13,11 @@ pub enum DownloadPhase {
     Error {
         message: String,
     },
+    Initializing {},
 }
 
 impl DownloadPhase {
     pub fn is_in_progress(&self) -> bool {
-        matches!(self, Self::Downloading {} | Self::Locked { .. })
+        matches!(self, Self::Initializing {} | Self::Downloading {} | Self::Locked { .. })
     }
 }

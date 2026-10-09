@@ -4,6 +4,8 @@ import { persist } from "zustand/middleware";
 type SidebarState = {
   isOpen: boolean;
   isMobile: boolean;
+  chatVisibility: { chatId: string; ratio: number } | null;
+  setChatVisibility: (visibility: SidebarState["chatVisibility"]) => void;
   toggle: () => void;
   setMobile: (isMobile: boolean) => void;
   closeOnMobile: () => void;
@@ -14,6 +16,8 @@ export const useSidebarStore = create<SidebarState>()(
     (set, get) => ({
       isOpen: true,
       isMobile: false,
+      chatVisibility: null,
+      setChatVisibility: (chatVisibility) => set({ chatVisibility }),
       toggle: () => set((state) => ({ isOpen: !state.isOpen })),
       setMobile: (isMobile: boolean) => {
         const currentState = get();

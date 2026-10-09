@@ -1,12 +1,13 @@
 import { invoke } from "../shared/invoke";
 import type { ModelParams } from "@/types/sampling";
-import type { SettingsService } from ".";
+import { DEFAULT_AUTO_EJECT_MINUTES, type SettingsService } from ".";
 
 // Keys are read by every installed version; renaming one resets that
 // preference on upgrade.
 
 type StoredSettings = {
-  enableThinking?: boolean;
+  analyticsEnabled?: boolean;
+  modelChatNamingEnabled?: boolean;
   autoEjectEnabled?: boolean;
   autoEjectMinutes?: number;
   modelParams?: Record<string, ModelParams>;
@@ -18,14 +19,15 @@ const patch = (values: Record<string, unknown>): Promise<void> => invoke("settin
 
 const autoEjectEnabledOf = (s: StoredSettings): boolean => s.autoEjectEnabled !== false;
 const autoEjectMinutesOf = (s: StoredSettings): number =>
-  typeof s.autoEjectMinutes === "number" && Number.isFinite(s.autoEjectMinutes) ? s.autoEjectMinutes : 2;
+  typeof s.autoEjectMinutes === "number" && Number.isFinite(s.autoEjectMinutes) && s.autoEjectMinutes > 0
+    ? s.autoEjectMinutes
+    : DEFAULT_AUTO_EJECT_MINUTES;
 
 export const tauriSettings: SettingsService = {
-  getEnableThinking: async () => (await load()).enableThinking !== false,
-  setEnableThinking: async (enabled) => {
-    await patch({ enableThinking: enabled });
-    return enabled;
-  },
+  getAnalyticsEnabled: async () => (await load()).analyticsEnabled === true,
+  setAnalyticsEnabled: (enabled) => patch({ analyticsEnabled: enabled }),
+  getModelChatNamingEnabled: async () => (await load()).modelChatNamingEnabled !== false,
+  setModelChatNamingEnabled: (enabled) => patch({ modelChatNamingEnabled: enabled }),
   getModelParams: async () => (await load()).modelParams ?? {},
   setModelParams: (repoId, params) => invoke("model_params_set", { repoId, params }),
   getAutoEjectEnabled: async () => autoEjectEnabledOf(await load()),

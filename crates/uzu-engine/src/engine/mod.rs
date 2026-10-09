@@ -6,6 +6,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{Backend, Context},
     config::model::AnyModelConfig,
+    encodable_block::sampling::SamplingMethod,
     engine::capture::CaptureManager,
 };
 
@@ -59,11 +60,20 @@ pub enum ResolveModelTypeError {
 }
 
 pub fn resolve_model_type(model_path: &Path) -> Result<ModelType, ResolveModelTypeError> {
-    let config_path = model_path.join("config.json");
-    let file = File::open(&config_path)?;
-    let config: AnyModelConfig = serde_json::from_reader(BufReader::new(file))?;
-    Ok(match config {
+    Ok(match read_model_config(model_path)? {
         AnyModelConfig::LanguageModelConfig(_) => ModelType::LanguageModel,
         AnyModelConfig::ClassifierModelConfig(_) => ModelType::Classifier,
     })
+}
+
+pub fn resolve_model_sampling_method(model_path: &Path) -> Result<Option<SamplingMethod>, ResolveModelTypeError> {
+    Ok(match read_model_config(model_path)? {
+        AnyModelConfig::LanguageModelConfig(config) => Some(config.generation_config.default_sampling_method()),
+        AnyModelConfig::ClassifierModelConfig(_) => None,
+    })
+}
+
+fn read_model_config(model_path: &Path) -> Result<AnyModelConfig, ResolveModelTypeError> {
+    let file = File::open(model_path.join("config.json"))?;
+    Ok(serde_json::from_reader(BufReader::new(file))?)
 }

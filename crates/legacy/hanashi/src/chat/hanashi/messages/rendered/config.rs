@@ -9,6 +9,9 @@ pub struct Field {
     pub required: bool,
     #[serde(default)]
     pub disable_raw: bool,
+    /// Serialize non-string values as JSON text for templates expecting a text field.
+    #[serde(default)]
+    pub as_text: bool,
     #[serde(flatten)]
     pub config: FieldConfig,
 }

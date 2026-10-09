@@ -4,14 +4,29 @@ import { runLlmStream, type RunEvent, type RunTransport } from "@/platform/servi
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import { Roles } from "@/types/chat";
-import type { SessionOutputStats } from "@/types/llm-stream";
-import { STALL_TIMEOUT_MS, useLlmStream, type StartStreamOptions } from "./use-llm-stream";
+import type { SessionOutputStats, TranscriptItem } from "@/types/llm-stream";
+import type { Message } from "@/types/message";
+import { useLlmStream, type StartStreamOptions } from "./use-llm-stream";
 
-const mocks = vi.hoisted(() => ({ cancelRun: vi.fn(async () => {}), updateStoredMessage: vi.fn(async () => {}) }));
+const mocks = vi.hoisted(() => ({
+  getModelChatNamingEnabled: vi.fn(async () => true),
+  cancelRun: vi.fn(async () => {}),
+  updateStoredMessage: vi.fn(async () => {}),
+  updateChatTitle: vi.fn<(id: string, name: string, expected?: string) => Promise<void>>(async () => {}),
+  loadChat: vi.fn<() => Promise<{ metadata: { title: string }; messages?: Message[] }>>(async () => ({
+    metadata: { title: "Untitled" },
+  })),
+}));
 vi.mock("@/platform/platform-singleton", () => ({
   getPlatform: () => ({
     chat: { cancelRun: mocks.cancelRun },
-    storage: { updateStoredMessage: mocks.updateStoredMessage },
+    settings: { getModelChatNamingEnabled: mocks.getModelChatNamingEnabled },
+    storage: {
+      updateStoredMessage: mocks.updateStoredMessage,
+      loadChat: mocks.loadChat,
+      updateChatTitle: mocks.updateChatTitle,
+      listChats: async () => [],
+    },
   }),
 }));
 
@@ -80,8 +95,65 @@ const messageText = () => useChatStore.getState().messages.find((m) => m.id === 
 
 describe("useLlmStream", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getModelChatNamingEnabled.mockResolvedValue(true);
+    mocks.loadChat.mockResolvedValue({ metadata: { title: "Untitled" } });
     useChatSessionStore.setState(sessionDefaults, true);
     useChatStore.setState(chatDefaults, true);
+  });
+
+  it("enforces the global naming switch even with an explicit stream opt-in", async () => {
+    mocks.getModelChatNamingEnabled.mockResolvedValue(false);
+    const { hook, start, options, emit } = setup();
+    const runChatStream = vi.spyOn(useChatStore.getState(), "runChatStream");
+    let run!: Promise<unknown>;
+    act(() => {
+      run = start({ ...options, modelChatNamingEnabled: true });
+    });
+    await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    expect(runChatStream).toHaveBeenCalledWith(expect.objectContaining({ modelChatNamingEnabled: false }));
+    expect(mocks.loadChat).not.toHaveBeenCalled();
+    act(() => {
+      emit({ type: "chatName", name: "Unexpected name" });
+      emit({ type: "done", text: "Answer", stats, finishReason: "Stop" });
+    });
+    await act(() => run);
+    expect(mocks.updateChatTitle).not.toHaveBeenCalled();
+  });
+
+  it("does not start a native run when its chat operation is canceled while loading the saved title", async () => {
+    const { hook, options, callbacks, runId } = setup();
+    const runChatStream = vi.spyOn(useChatStore.getState(), "runChatStream");
+    let resolveTitle!: (value: { metadata: { title: string } }) => void;
+    mocks.loadChat.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveTitle = resolve;
+      }),
+    );
+    let run!: Promise<unknown>;
+    act(() => {
+      run = useChatSessionStore
+        .getState()
+        .withOperation("running", (signal) => hook.result.current.startStream({ ...options, signal }), CHAT_ID);
+    });
+    await waitFor(() => expect(mocks.loadChat).toHaveBeenCalled());
+    expect(useChatSessionStore.getState().activeRunId).toBeNull();
+    await act(() => useChatSessionStore.getState().cancelActiveRunForChat(CHAT_ID));
+    await act(async () => {
+      resolveTitle({ metadata: { title: "Untitled" } });
+      await run;
+    });
+
+    expect(runChatStream).not.toHaveBeenCalled();
+    expect(runId()).toBe("");
+    expect(callbacks.onDone).toHaveBeenCalledOnce();
+    expect(callbacks.onError).not.toHaveBeenCalled();
+    expect(hook.result.current.isStreaming).toBe(false);
+    expect(useChatSessionStore.getState()).toMatchObject({
+      isGenerating: false,
+      activeRunId: null,
+      operationState: "idle",
+    });
   });
 
   it("reveals streamed text, records perf and finalizes the message", async () => {
@@ -108,9 +180,15 @@ describe("useLlmStream", () => {
     const message = useChatStore.getState().messages.find((m) => m.id === MESSAGE_ID);
     expect(message?.output?.text?.parsed).toEqual({ chainOfThought: "let me think", response: "Hello world" });
     expect(message?.perf).toEqual({ ttftSec: 0.25, totalSec: 2.25, tps: 20, tokensOut: 40 });
-    expect(finalizeAssistantMessage).toHaveBeenCalledWith(CHAT_ID, MESSAGE_ID, "Hello world", {
-      response: "Hello world",
-    });
+    expect(finalizeAssistantMessage).toHaveBeenCalledWith(
+      CHAT_ID,
+      MESSAGE_ID,
+      "Hello world",
+      {
+        response: "Hello world",
+      },
+      undefined,
+    );
     expect(callbacks.onFinishReason).toHaveBeenCalledWith("Stop");
     expect(callbacks.onDone).toHaveBeenCalledTimes(1);
     expect(callbacks.onError).not.toHaveBeenCalled();
@@ -121,6 +199,169 @@ describe("useLlmStream", () => {
       activeAssistantMessageText: null,
       operationState: "idle",
     });
+  });
+
+  it("keeps a tool-only partial reply when canceled and forwards tool preferences", async () => {
+    const { hook, start, options, emit } = setup();
+    const runChatStream = vi.spyOn(useChatStore.getState(), "runChatStream");
+    let run!: Promise<unknown>;
+    act(() => {
+      run = start({ ...options, dateTimeToolEnabled: false, chartToolEnabled: false });
+    });
+    await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    const transcript: TranscriptItem[] = [{ type: "toolCall", name: "get_current_date_time", called: true }];
+    act(() => emit({ type: "transcript", items: transcript }));
+    expect(hook.result.current.isLoading).toBe(false);
+    expect(useChatStore.getState().messages[0]?.output?.transcript).toEqual(transcript);
+    expect(useChatSessionStore.getState().activeAssistantMessageOutput?.transcript).toEqual(transcript);
+    await act(() => hook.result.current.cancel());
+    await act(() => run);
+    expect(runChatStream).toHaveBeenCalledWith(
+      expect.objectContaining({ dateTimeToolEnabled: false, chartToolEnabled: false }),
+    );
+    expect(mocks.updateStoredMessage).toHaveBeenCalledWith(
+      CHAT_ID,
+      MESSAGE_ID,
+      expect.objectContaining({ output: expect.objectContaining({ transcript }) }),
+    );
+  });
+
+  it.each(["cancel", "error"] as const)(
+    "saves incrementally streamed text and reasoning on %s without legacy chunks",
+    async (end) => {
+      const { hook, start, options, emit } = setup();
+      let run!: Promise<unknown>;
+      act(() => {
+        run = start({
+          ...options,
+          onError: (id, error) => useChatStore.getState().updateMessage(id, { text: "", error }),
+        });
+      });
+      await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+      const transcript: TranscriptItem[] = [
+        { type: "thinking", text: "Check the clock 🕰️", completed: true },
+        { type: "text", text: "Before the tool." },
+        { type: "toolCall", name: "get_current_date_time", called: true },
+        { type: "text", text: "A long response. ".repeat(100) },
+      ];
+      const fullText = transcript.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n\n");
+      act(() => {
+        emit({ type: "transcript", items: [{ type: "thinking", text: "Check" }] });
+        emit({ type: "transcriptDelta", index: 0, delta: " the clock 🕰️" });
+        emit({ type: "transcript", items: [...transcript.slice(0, -1), { type: "text", text: "" }] });
+        emit({ type: "transcriptDelta", index: 3, delta: "A long response. ".repeat(100) });
+      });
+      expect(messageText()).toBe(fullText);
+      expect(useChatSessionStore.getState().activeAssistantMessageText).toBe(fullText);
+      if (end === "cancel") await act(() => hook.result.current.cancel());
+      else act(() => emit({ type: "error", error: "Model failed" }));
+      await act(() => run);
+      expect(messageText()).toBe(fullText);
+      expect(mocks.updateStoredMessage).toHaveBeenCalledWith(
+        CHAT_ID,
+        MESSAGE_ID,
+        expect.objectContaining({
+          text: fullText,
+          output: expect.objectContaining({
+            transcript,
+            text: { parsed: { response: fullText, chainOfThought: "Check the clock 🕰️" } },
+          }),
+        }),
+      );
+    },
+  );
+
+  it("clears superseded parsed reasoning when a snapshot promotes it to visible text", async () => {
+    const { hook, start, options, emit } = setup();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = start(options);
+    });
+    await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    act(() => {
+      emit({ type: "transcript", items: [{ type: "thinking", text: "Visible" }] });
+      emit({ type: "transcriptDelta", index: 0, delta: " answer" });
+    });
+    expect(useChatStore.getState().messages[0]?.output?.text?.parsed).toEqual({
+      response: "",
+      chainOfThought: "Visible answer",
+    });
+    act(() => emit({ type: "transcript", items: [{ type: "text", text: "Visible answer" }] }));
+    expect(useChatStore.getState().messages[0]?.output?.text?.parsed).toEqual({
+      response: "Visible answer",
+      chainOfThought: "",
+    });
+    await act(() => hook.result.current.cancel());
+    await act(() => run);
+  });
+
+  it("finalizes the complete transcript even after leaving the chat", async () => {
+    const { hook, start, options, emit, finalizeAssistantMessage } = setup();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = start(options);
+    });
+    await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    act(() => useChatStore.setState({ currentChatId: "another-chat", messages: [] }));
+    const transcript: TranscriptItem[] = [
+      { type: "text", text: "Before" },
+      { type: "toolCall", name: "get_current_date_time", called: true },
+      { type: "text", text: "After" },
+    ];
+    act(() => emit({ type: "done", text: "Before\n\nAfter", stats, transcript }));
+    await act(() => run);
+    expect(finalizeAssistantMessage).toHaveBeenCalledWith(
+      CHAT_ID,
+      MESSAGE_ID,
+      "Before\n\nAfter",
+      undefined,
+      transcript,
+    );
+    expect(useChatStore.getState().messages).toEqual([]);
+  });
+
+  it("saves the active version's visible text and transcript when stopped from another chat", async () => {
+    const { hook, start, options, emit } = setup();
+    const message: Message = {
+      id: MESSAGE_ID,
+      text: "",
+      sender: "assistant",
+      timestamp: 1,
+      versions: [
+        { id: "old", text: "Previous response", modelId: "model", modelName: "Model", timestamp: 1 },
+        { id: "new", text: "", modelId: "model", modelName: "Model", timestamp: 2 },
+      ],
+      currentVersionIndex: 1,
+    };
+    useChatStore.setState({ messages: [message] });
+    mocks.loadChat.mockResolvedValue({ metadata: { title: "Untitled" }, messages: [message] });
+    let run!: Promise<unknown>;
+    act(() => {
+      run = start(options);
+    });
+    await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    act(() => useChatStore.setState({ currentChatId: "other", messages: [] }));
+    const transcript: TranscriptItem[] = [
+      { type: "toolCall", name: "get_current_date_time", called: true },
+      { type: "text", text: "New visible response" },
+    ];
+    act(() => {
+      emit({ type: "transcript", items: [transcript[0]!, { type: "text", text: "New visible" }] });
+      emit({ type: "transcriptDelta", index: 1, delta: " response" });
+    });
+    await act(() => hook.result.current.cancel());
+    await act(() => run);
+    expect(mocks.updateStoredMessage).toHaveBeenCalledWith(
+      CHAT_ID,
+      MESSAGE_ID,
+      expect.objectContaining({
+        text: "New visible response",
+        versions: [
+          message.versions![0],
+          expect.objectContaining({ text: "New visible response", output: expect.objectContaining({ transcript }) }),
+        ],
+      }),
+    );
   });
 
   it("reports a backend error and does not finalize", async () => {
@@ -207,24 +448,31 @@ describe("useLlmStream", () => {
     expect(hook.result.current.isStreaming).toBe(false);
   });
 
-  it("reports a stalled stream once", async () => {
+  it("keeps a quiet generation running until the backend finishes", async () => {
     vi.useFakeTimers();
     try {
-      const { start, options, callbacks, emit } = setup();
-
+      const { hook, start, options, callbacks, emit, transport } = setup();
+      let run!: Promise<unknown>;
       act(() => {
-        void start(options);
+        run = start(options);
       });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
       act(() => emit({ type: "chunk", delta: "partial" }));
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(STALL_TIMEOUT_MS + 1);
+        await vi.advanceTimersByTimeAsync(120_000);
       });
 
-      expect(callbacks.onError).toHaveBeenCalledWith(MESSAGE_ID, "Error: Stream timeout");
+      expect(hook.result.current.isStreaming).toBe(true);
+      expect(callbacks.onError).not.toHaveBeenCalled();
+      expect(callbacks.onDone).not.toHaveBeenCalled();
+      expect(transport.cancel).not.toHaveBeenCalled();
+
+      act(() => emit({ type: "done", text: "partial", stats, finishReason: "Stop" }));
+      await act(() => run);
       expect(callbacks.onDone).toHaveBeenCalledTimes(1);
+      expect(hook.result.current.isStreaming).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -239,5 +487,86 @@ describe("useLlmStream", () => {
     expect(callbacks.onDone).toHaveBeenCalledTimes(1);
     expect(finalizeAssistantMessage).not.toHaveBeenCalled();
     expect(useChatSessionStore.getState().isGenerating).toBe(false);
+  });
+
+  it("saves model names to the originating chat even after navigation and a later stream error", async () => {
+    const { hook, start, options, emit } = setup();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = start(options);
+    });
+    await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    act(() => useChatStore.getState().createNewChat("another-chat"));
+
+    act(() => emit({ type: "chatName", name: "First name" }));
+    await waitFor(() => expect(mocks.updateChatTitle).toHaveBeenCalledWith(CHAT_ID, "First name", "Untitled"));
+    act(() => {
+      emit({ type: "chatName", name: "Changed topic" });
+      emit({ type: "error", error: "later generation failure" });
+    });
+    await act(() => run);
+
+    expect(mocks.updateChatTitle).toHaveBeenLastCalledWith(CHAT_ID, "Changed topic", "First name");
+    expect(useChatStore.getState().currentChatId).toBe("another-chat");
+  });
+
+  it("keeps a manual rename made during a run", async () => {
+    let storedName = "Untitled";
+    mocks.updateChatTitle.mockImplementationOnce(async (_id, name, expected) => {
+      if (storedName === expected) storedName = name;
+    });
+    const { hook, start, options, emit } = setup();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = start(options);
+    });
+    await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    storedName = "My chosen name";
+
+    act(() => {
+      emit({ type: "chatName", name: "Automatic name" });
+      emit({ type: "done", text: "Answer", stats, finishReason: "Stop" });
+    });
+    await act(() => run);
+
+    expect(storedName).toBe("My chosen name");
+  });
+
+  it("reports a failed name save without losing the response", async () => {
+    mocks.updateChatTitle.mockRejectedValueOnce(new Error("disk full"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { hook, start, options, callbacks, finalizeAssistantMessage, emit } = setup();
+      let run!: Promise<unknown>;
+      act(() => {
+        run = start(options);
+      });
+      await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+      act(() => {
+        emit({ type: "chatName", name: "Automatic name" });
+        emit({ type: "done", text: "Answer", stats, finishReason: "Stop" });
+      });
+      await act(() => run);
+
+      expect(useChatStore.getState().saveFailureCount).toBe(1);
+      expect(callbacks.onError).not.toHaveBeenCalled();
+      expect(finalizeAssistantMessage).toHaveBeenCalledWith(CHAT_ID, MESSAGE_ID, "Answer", undefined, undefined);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("keeps a name already set when the response is canceled", async () => {
+    const { hook, start, options, emit } = setup();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = start(options);
+    });
+    await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    act(() => emit({ type: "chatName", name: "Accepted name" }));
+    await act(() => hook.result.current.cancel());
+    await act(() => run);
+
+    expect(mocks.updateChatTitle).toHaveBeenCalledWith(CHAT_ID, "Accepted name", "Untitled");
   });
 });
