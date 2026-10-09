@@ -6,7 +6,8 @@ use quote::{format_ident, quote};
 use syn::{Ident, Type};
 
 use super::super::{
-    ast::{MetalArgumentType, MetalKernelInfo},
+    MetalKernelInfo,
+    ast::MetalArgumentType,
     enum_path_rewrite::{gpu_type_kind_for_c_type, rewrite_for_rust},
 };
 use crate::common::enum_paths::{EnumPaths, GpuTypeKind};

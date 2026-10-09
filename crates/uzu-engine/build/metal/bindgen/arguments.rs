@@ -6,10 +6,8 @@ use syn::{Expr, Ident, Type};
 use crate::{
     common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with},
     metal::{
-        ast::{
-            MetalArgument, MetalArgumentType, MetalBufferAccess, MetalConstantType, MetalGroupsType, MetalKernelInfo,
-            shared_element_byte_size,
-        },
+        MetalArgument, MetalKernelInfo,
+        ast::{MetalArgumentType, MetalBufferAccess, MetalConstantType, MetalGroupsType, shared_element_byte_size},
         bindgen::host_expression_rewriter::HostExpressionRewriter,
         enum_path_rewrite::rewrite_for_rust,
     },

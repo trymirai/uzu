@@ -7,9 +7,10 @@ use quote::{format_ident, quote};
 use syn::Type;
 
 use crate::common::{
+    KernelParameterType,
     codegen::write_tokens,
     identifiers::KernelPath,
-    kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
+    kernel::{Kernel, KernelArgumentType, KernelBufferAccess},
 };
 
 pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
@@ -19,7 +20,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
     let params = kernel.parameters.iter().map(|p| {
         let name = format_ident!("{}", p.name.as_ref());
         let ty = match &p.ty {
-            KernelParameterType::Type => quote! { crate::data_type::DataType },
+            KernelParameterType::Type(_) => quote! { crate::data_type::DataType },
             KernelParameterType::Value(ty) => {
                 let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
                 quote! { #ty }

@@ -10,7 +10,10 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 use tempfile::NamedTempFile;
 
-use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo};
+use super::{
+    MetalKernelInfo,
+    ast::{MetalAstKind, MetalAstNode},
+};
 
 #[derive(Debug)]
 pub enum MetalSdk {

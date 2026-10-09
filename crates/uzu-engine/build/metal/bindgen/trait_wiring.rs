@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
 
-use super::super::ast::MetalKernelInfo;
+use super::super::MetalKernelInfo;
 
 pub struct TraitWiring {
     pub trait_implementation_for: TokenStream,

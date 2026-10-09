@@ -5,7 +5,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Ident, Type};
 
-use super::super::ast::{MetalKernelInfo, MetalTemplateParameterType};
+use super::super::{MetalKernelInfo, ast::MetalTemplateParameterType};
 
 pub struct VariantBind {
     pub parameter_name: Ident,

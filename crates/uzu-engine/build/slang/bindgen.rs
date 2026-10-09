@@ -14,10 +14,11 @@ use super::{
     Error, SlangArgumentType, SlangEntryPointAbi, SlangFieldAbi, SlangKernelInfo, wrapper::specialization_name,
 };
 use crate::common::{
+    KernelParameterType, data_type,
     enum_paths::{EnumPaths, GpuTypeKind},
     expr_rewrite::rewrite_paths_with,
     gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes},
-    kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
+    kernel::{Kernel, KernelArgumentType, KernelBufferAccess},
 };
 
 /// Generated file holding a kernel's binding type, next to its SPIR-V.
@@ -71,7 +72,7 @@ pub fn bindgen(
     let type_parameters = kernel
         .parameters
         .iter()
-        .filter(|parameter| matches!(parameter.ty, KernelParameterType::Type))
+        .filter(|parameter| matches!(parameter.ty, KernelParameterType::Type(_)))
         .map(|parameter| format_ident!("{}", parameter.name.as_ref()))
         .collect::<Vec<_>>();
     // A 32-bit word of one of `scalars` or a canonical enum, by discriminant, as Slang lays it out; a `bool` is 0 or 1.
@@ -385,7 +386,7 @@ pub fn bindgen(
     let names = |constants: bool| {
         let parameters = kernel.parameters.iter().filter(|parameter| match parameter.ty {
             KernelParameterType::Value(_) => true,
-            KernelParameterType::Type => !constants,
+            KernelParameterType::Type(_) => !constants,
         });
         let parameters = parameters.map(|parameter| parameter.name.as_ref());
         let uniforms = kernel
@@ -636,22 +637,6 @@ fn binding_module(kernel_name: &str) -> Ident {
         module.push(character.to_ascii_lowercase());
     }
     format_ident!("{module}_vulkan_kernel")
-}
-
-fn data_type(slang_type: &str) -> Result<Ident, Error> {
-    Ok(format_ident!(
-        "{}",
-        match slang_type {
-            "float" => "F32",
-            "half" => "F16",
-            "bf16" => "BF16",
-            "uint" => "U32",
-            "int" => "I32",
-            "uint8_t" => "U8",
-            "int8_t" => "I8",
-            other => bail!("no DataType for Slang type '{other}'"),
-        }
-    ))
 }
 
 /// `T` of an `Option<T>` type.

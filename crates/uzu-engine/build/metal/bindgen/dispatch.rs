@@ -6,7 +6,10 @@ use quote::quote;
 use syn::LitInt;
 
 use super::{
-    super::ast::{MetalArgumentType, MetalGroupsType, MetalKernelInfo},
+    super::{
+        MetalKernelInfo,
+        ast::{MetalArgumentType, MetalGroupsType},
+    },
     host_expression_rewriter::HostExpressionRewriter,
 };
 

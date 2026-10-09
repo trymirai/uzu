@@ -4,7 +4,8 @@ use anyhow::bail;
 use itertools::Itertools;
 
 use super::{
-    ast::{MetalArgument, MetalArgumentType, MetalKernelInfo, shared_element_type},
+    MetalArgument, MetalKernelInfo,
+    ast::{MetalArgumentType, shared_element_type},
     enum_path_rewrite::is_enum_c_type,
     variant_combinations::constrained_combinations,
 };

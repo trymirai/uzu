@@ -6,9 +6,10 @@ use shader_slang::{
 
 use super::{Error, SlangArgument, SlangArgumentType, slang_api};
 use crate::common::{
+    KernelParameterType, data_type,
     enum_paths::EnumPaths,
     identifiers::{ArgumentName, KernelName},
-    kernel::{Kernel, KernelArgument, KernelArgumentType, KernelParameter, KernelParameterType},
+    kernel::{Kernel, KernelArgument, KernelArgumentType, KernelParameter},
 };
 
 pub struct SlangKernelInfo<'a> {
@@ -122,11 +123,14 @@ impl<'a> SlangKernelInfo<'a> {
         let mut parameters = self
             .type_parameters
             .iter()
-            .map(|(name, _)| KernelParameter {
-                name: name.as_str().into(),
-                ty: KernelParameterType::Type,
+            .map(|(name, variants)| {
+                let data_types = variants.iter().map(|variant| Ok(data_type(variant)?.to_string().into()));
+                Ok(KernelParameter {
+                    name: name.as_str().into(),
+                    ty: KernelParameterType::types(data_types.collect::<Result<Vec<_>, Error>>()?),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, Error>>()?;
         let mut arguments = Vec::new();
         for argument in self.arguments() {
             let name = argument.name()?;
