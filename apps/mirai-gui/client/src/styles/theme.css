@@ -61,10 +61,14 @@
   --color-surface-secondary: var(--color-gray-100);
   --color-surface-tertiary: var(--color-gray-300);
   --color-surface-elevated: var(--color-gray-50);
+  --color-selection-selected: #e1e1e1;
+  --color-selection-hover: #ededed;
   --color-overlay: rgba(0, 0, 0, 0.4);
 
   --color-bg-sidebar: #f5f5f5;
   --color-bg-hover: #e5e5e5;
+  --color-sidebar-chat-selected: #e1e1e1;
+  --color-sidebar-chat-hover: #ededed;
   --color-bg-sub: #f4f5f5;
   --color-bg-modal: #ffffff;
   --color-card-hover: #f6f8f8;
@@ -116,10 +120,14 @@
   --color-border-outlined-hover: rgb(from var(--color-white) r g b / 0.2);
   --color-surface-tertiary: var(--color-gray-200);
   --color-surface-elevated: var(--color-gray-100);
+  --color-selection-selected: color-mix(in srgb, var(--color-surface-elevated), var(--color-text-primary) 8%);
+  --color-selection-hover: color-mix(in srgb, var(--color-surface-elevated), var(--color-text-primary) 4%);
   --color-overlay: rgba(0, 0, 0, 0.7);
 
   --color-bg-sidebar: #050506;
   --color-bg-hover: #181a1b;
+  --color-sidebar-chat-selected: #1c1e1f;
+  --color-sidebar-chat-hover: #101213;
   --color-bg-sub: #1f1f1f;
   --color-bg-modal: #141414;
   --color-card-hover: #1f1f1f;

@@ -1,87 +1,63 @@
 import { create } from "zustand";
 import { getPlatform } from "@/platform/platform-singleton";
+import { DEFAULT_AUTO_EJECT_MINUTES } from "@/platform/services/settings";
 import { useModelParamsStore } from "./use-model-params-store";
 
 type SettingsState = {
-  enableThinking: boolean;
-  runOnStartup: boolean;
-  quickEntryShortcut: string | null;
+  analyticsEnabled: boolean;
+  modelChatNamingEnabled: boolean;
   autoEjectEnabled: boolean;
   autoEjectMinutes: number;
 
   fetch: () => Promise<void>;
-  fetchDesktopSettings: () => Promise<void>;
-  setEnableThinking: (enabled: boolean) => Promise<void>;
-  setRunOnStartup: (value: boolean) => Promise<void>;
-  registerQuickEntryShortcut: (accelerator: string) => Promise<boolean>;
-  unregisterQuickEntryShortcut: () => Promise<void>;
+  setAnalyticsEnabled: (enabled: boolean) => Promise<void>;
+  setModelChatNamingEnabled: (enabled: boolean) => Promise<void>;
   setAutoEjectEnabled: (value: boolean) => Promise<void>;
   setAutoEjectMinutes: (minutes: number) => Promise<void>;
   exportLogs: () => Promise<"ok" | "cancelled" | "error">;
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  enableThinking: true,
-  runOnStartup: false,
-  quickEntryShortcut: null,
+  analyticsEnabled: false,
+  modelChatNamingEnabled: true,
   autoEjectEnabled: true,
-  autoEjectMinutes: 2,
+  autoEjectMinutes: DEFAULT_AUTO_EJECT_MINUTES,
 
   fetch: async () => {
     const { settings } = getPlatform();
-    const [thinking, aeEnabled, aeMinutes] = await Promise.all([
-      settings.getEnableThinking().catch(() => true),
+    const [analyticsEnabled, modelChatNamingEnabled, aeEnabled, aeMinutes] = await Promise.all([
+      settings.getAnalyticsEnabled().catch(() => false),
+      settings.getModelChatNamingEnabled().catch(() => true),
       settings.getAutoEjectEnabled().catch(() => true),
-      settings.getAutoEjectMinutes().catch(() => 2),
+      settings.getAutoEjectMinutes().catch(() => DEFAULT_AUTO_EJECT_MINUTES),
     ]);
     set({
-      enableThinking: thinking,
+      analyticsEnabled,
+      modelChatNamingEnabled,
       autoEjectEnabled: aeEnabled,
-      autoEjectMinutes: Number.isFinite(aeMinutes) ? aeMinutes : 2,
+      autoEjectMinutes: Number.isFinite(aeMinutes) && aeMinutes > 0 ? aeMinutes : DEFAULT_AUTO_EJECT_MINUTES,
     });
+    useModelParamsStore.getState().setGlobalModelChatNamingEnabled(modelChatNamingEnabled);
   },
 
-  fetchDesktopSettings: async () => {
-    const { systemUi } = getPlatform();
-    const [startup, shortcut] = await Promise.all([
-      systemUi.getRunOnStartup().catch(() => false),
-      systemUi.getQuickEntryShortcut().catch(() => null),
-    ]);
-    set({ runOnStartup: startup, quickEntryShortcut: shortcut });
-  },
-
-  setEnableThinking: async (enabled) => {
-    const { settings } = getPlatform();
-    set({ enableThinking: enabled });
-    useModelParamsStore.getState().setGlobalReasoningEnabled(enabled);
-    await settings.setEnableThinking(enabled).catch(() => {
-      set({ enableThinking: !enabled });
-      useModelParamsStore.getState().setGlobalReasoningEnabled(!enabled);
-    });
-  },
-
-  setRunOnStartup: async (value) => {
-    set({ runOnStartup: value });
+  setAnalyticsEnabled: async (enabled) => {
+    const previous = get().analyticsEnabled;
     await getPlatform()
-      .systemUi.setRunOnStartup(value)
-      .catch(() => set({ runOnStartup: !value }));
+      .settings.setAnalyticsEnabled(enabled)
+      .then(() => set({ analyticsEnabled: enabled }))
+      .catch(() => set({ analyticsEnabled: previous }));
   },
 
-  registerQuickEntryShortcut: async (accelerator) => {
-    const ok = await getPlatform()
-      .systemUi.registerQuickEntryShortcut(accelerator)
-      .catch(() => false);
-    if (ok) set({ quickEntryShortcut: accelerator });
-    return ok;
-  },
-
-  unregisterQuickEntryShortcut: async () => {
-    try {
-      await getPlatform().systemUi.unregisterQuickEntryShortcut();
-      set({ quickEntryShortcut: null });
-    } catch (e) {
-      console.error("[settings] unregisterQuickEntryShortcut failed", e);
-    }
+  setModelChatNamingEnabled: async (enabled) => {
+    const previous = get().modelChatNamingEnabled;
+    set({ modelChatNamingEnabled: enabled });
+    useModelParamsStore.getState().setGlobalModelChatNamingEnabled(enabled);
+    await getPlatform()
+      .settings.setModelChatNamingEnabled(enabled)
+      .catch(() => {
+        set({ modelChatNamingEnabled: previous });
+        useModelParamsStore.getState().setGlobalModelChatNamingEnabled(previous);
+      });
   },
 
   setAutoEjectEnabled: async (value) => {

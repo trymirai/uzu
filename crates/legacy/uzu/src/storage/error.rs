@@ -13,11 +13,6 @@ pub enum StorageError {
     DownloadManager {
         message: String,
     },
-    #[error("Hash not found for file: {identifier}/{name}")]
-    HashNotFound {
-        identifier: ModelIdentifier,
-        name: String,
-    },
     #[error("Model not found: {identifier}")]
     ModelNotFound {
         identifier: ModelIdentifier,

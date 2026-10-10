@@ -82,13 +82,16 @@ pub async fn run_non_interactive(
                     if let Some(reply) = replies.last() {
                         stats = Some(reply.stats.clone());
                     }
-                    let items = build_transcript(&session.messages().await, 0);
-                    plain.write(&mut stdout, items, false)?;
                 },
+                ChatSessionStreamChunk::ToolResults {
+                    ..
+                } => {},
                 ChatSessionStreamChunk::Error {
                     error,
                 } => return Err(error.into()),
             }
+            let items = build_transcript(&session.messages().await, 0);
+            plain.write(&mut stdout, items, false)?;
         }
 
         let stats = stats.context("No response generated")?;

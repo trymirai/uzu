@@ -1,16 +1,17 @@
-name: "Release mirai-gui"
+name: "Build / release mirai-gui"
 
 # The app ships with every engine release under the engine's version, stamped
 # by `cargo tools sync`; the engine's GitHub Release is also the update feed.
 on:
+  workflow_dispatch:
   release:
     types: [published]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-mirai-gui
+  group: mirai-gui-${{ github.event_name }}
   cancel-in-progress: false
 
 defaults:
@@ -20,13 +21,16 @@ defaults:
 jobs:
   decide:
     name: decide
-    if: ${{ !github.event.release.prerelease }}
+    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     outputs:
-      publish: ${{ steps.decide.outputs.publish }}
+      build: ${{ steps.decide.outputs.build }}
+      version: ${{ steps.decide.outputs.version }}
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
 
       - id: decide
         env:
@@ -34,12 +38,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ ! "${TAG}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::notice::${TAG} is not an engine release tag; nothing to publish"
-            echo "publish=false" >> "$GITHUB_OUTPUT"
+          STAMPED="$(node -p "require('./apps/mirai-gui/package.json').version")"
+          echo "version=${STAMPED}" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          STAMPED="$(node -p "require('./apps/mirai-gui/package.json').version")"
+          if [[ ! "${TAG}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::${TAG} is not an engine release tag; nothing to publish"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "${STAMPED}" != "${TAG}" ]; then
             echo "apps/mirai-gui/package.json is at ${STAMPED}, tag is ${TAG}: cargo tools sync did not run before tagging" >&2
             exit 1
@@ -48,16 +57,18 @@ jobs:
           ASSETS="$(gh release view "${TAG}" --json assets --jq '.assets[].name')"
           if grep -qxF latest.json <<< "${ASSETS}"; then
             echo "::notice::${TAG} already carries the app; nothing to do"
-            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "build=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "build=true" >> "$GITHUB_OUTPUT"
 
-  release:
-    name: release-mirai-gui
+  build:
+    name: Build signed macOS app
     needs: decide
-    if: ${{ needs.decide.outputs.publish == 'true' }}
+    if: ${{ needs.decide.outputs.build == 'true' }}
     runs-on: macos-26
+    outputs:
+      artifact-id: ${{ steps.artifacts.outputs.artifact-id }}
 
     defaults:
       run:
@@ -65,6 +76,7 @@ jobs:
 
     env:
       TAG: ${{ github.event.release.tag_name }}
+      APP_VERSION: ${{ needs.decide.outputs.version }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -77,6 +89,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: ./.github/actions/setup
         with:
           metal: true
@@ -96,6 +111,7 @@ jobs:
       # Already signed and notarized by the engine's release job; Tauri leaves
       # files under Resources unsigned.
       - name: Take the mirai CLI from the engine release
+        if: ${{ github.event_name == 'release' }}
         run: |
           set -euo pipefail
           gh release download "${TAG}" --dir "${RUNNER_TEMP}" --pattern mirai-aarch64-apple-darwin.tar.gz
@@ -105,6 +121,31 @@ jobs:
           codesign --verify --strict --verbose=2 \
             -R="anchor apple generic and certificate leaf[subject.OU] = \"${APPLE_TEAM_ID}\"" \
             desktop/resources/cli/mirai
+
+      - name: Build the mirai CLI from the selected commit
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        working-directory: .
+        run: |
+          set -euo pipefail
+          uv run --no-project --python 3.12 python - <<'PY'
+          import os
+          import subprocess
+          import tomllib
+          from pathlib import Path
+
+          config = tomllib.loads(Path('.config/platforms.toml').read_text())
+          target = 'aarch64-apple-darwin'
+          platform = config['targets'][target]
+          features = [f"backend-{platform['backend']}"]
+          features += [f'capability-{cap}' for cap in platform['capabilities_default']]
+          env = os.environ | {key: config['envs'][key] for key in platform['required_envs']}
+          subprocess.run([
+              'cargo', 'build', '--locked', '--release', '-p', config['binaries']['mirai']['crate'],
+              '--target', target, '--no-default-features', '--features', ','.join(features),
+          ], env=env, check=True)
+          PY
+          install -d apps/mirai-gui/desktop/resources/cli
+          install -m 755 target/aarch64-apple-darwin/release/cli apps/mirai-gui/desktop/resources/cli/mirai
 
       - name: Import signing certificate and read its identity
         run: |
@@ -121,15 +162,31 @@ jobs:
             -P "${APPLE_DEVELOPER_ID_PASSWORD}" \
             -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PW}" "${KEYCHAIN}" >/dev/null
-          security list-keychains -d user -s "${KEYCHAIN}" $(security list-keychains -d user | tr -d '"')
+          KEYCHAINS=()
+          while IFS='"' read -r _ EXISTING_KEYCHAIN _; do
+            KEYCHAINS+=("${EXISTING_KEYCHAIN}")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${KEYCHAIN}" "${KEYCHAINS[@]}"
           IDENTITY="$(security find-identity -v -p codesigning "${KEYCHAIN}" | grep -m1 'Developer ID Application' | awk -F'"' '{print $2}')"
           if [ -z "${IDENTITY}" ]; then
             echo "No Developer ID Application identity found in the imported certificate" >&2
             exit 1
           fi
           rm -f "${RUNNER_TEMP}/app_cert.p12"
-          echo "APPLE_SIGNING_IDENTITY=${IDENTITY}" >> $GITHUB_ENV
+          echo "APPLE_SIGNING_IDENTITY=${IDENTITY}" >> "$GITHUB_ENV"
           echo "::add-mask::${IDENTITY}"
+
+      - name: Sign and notarize the locally built CLI
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+          codesign --force --options runtime --timestamp --sign "${APPLE_SIGNING_IDENTITY}" desktop/resources/cli/mirai
+          codesign --verify --strict --verbose=2 \
+            -R="anchor apple generic and certificate leaf[subject.OU] = \"${APPLE_TEAM_ID}\"" \
+            desktop/resources/cli/mirai
+          ditto -c -k --sequesterRsrc --keepParent desktop/resources/cli/mirai "${RUNNER_TEMP}/mirai-cli.zip"
+          xcrun notarytool submit "${RUNNER_TEMP}/mirai-cli.zip" \
+            --apple-id "${APPLE_ID}" --team-id "${APPLE_TEAM_ID}" --password "${APPLE_PASSWORD}" --wait
 
       - name: Build and sign Tauri app
         run: |
@@ -151,7 +208,7 @@ jobs:
             test -e "${p}" || { echo "Missing bundle artifact: ${p}" >&2; ls -la "${BUNDLE_DIR}/macos" >&2; exit 1; }
           done
           # public.api matches ^mirai-<version>-aarch64-apple-darwin.dmg$ exactly.
-          DMG_NAME="mirai-${TAG}-aarch64-apple-darwin.dmg"
+          DMG_NAME="mirai-${APP_VERSION}-aarch64-apple-darwin.dmg"
           DMG_TARGET="${BUNDLE_DIR}/dmg/${DMG_NAME}"
           mkdir -p "${BUNDLE_DIR}/dmg"
           DMG_APP_PATH="${APP_PATH}" \
@@ -173,8 +230,8 @@ jobs:
           base64 -d < "${SIG_PATH}" > "${RUNNER_TEMP}/updater.minisig"
           minisign -Vm "${TARGZ_PATH}" -p "${RUNNER_TEMP}/updater.pub" -x "${RUNNER_TEMP}/updater.minisig"
           BUILT="$(defaults read "${APP_PATH}/Contents/Info" CFBundleShortVersionString)"
-          if [ "${BUILT}" != "${TAG}" ]; then
-            echo "Built app is ${BUILT}, the manifest would say ${TAG}: every client would update forever" >&2
+          if [ "${BUILT}" != "${APP_VERSION}" ]; then
+            echo "Built app is ${BUILT}, expected ${APP_VERSION}" >&2
             exit 1
           fi
           # Installed /usr/local/bin wrappers point at this path.
@@ -194,12 +251,54 @@ jobs:
             --wait
           xcrun stapler staple -v "${DMG_TARGET}"
 
+      - name: Stage downloadable app artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/mirai-gui-artifacts"
+          cp "${DMG_TARGET}" "${RUNNER_TEMP}/mirai-gui-artifacts/"
+          cp "${TARGZ_PATH}" "${RUNNER_TEMP}/mirai-gui-artifacts/mirai-${APP_VERSION}.app.tar.gz"
+          cp "${SIG_PATH}" "${RUNNER_TEMP}/mirai-gui-artifacts/mirai-${APP_VERSION}.app.tar.gz.sig"
+
+      - uses: actions/upload-artifact@v4
+        id: artifacts
+        with:
+          name: mirai-macos-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mirai-gui-artifacts/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Remove signing credentials
+        if: ${{ always() }}
+        run: |
+          rm -f "${RUNNER_TEMP}/app_cert.p12"
+          if [ -f "${RUNNER_TEMP}/mirai-signing.keychain-db" ]; then
+            security delete-keychain "${RUNNER_TEMP}/mirai-signing.keychain-db"
+          fi
+
+  publish:
+    name: Publish release assets
+    needs: [decide, build]
+    if: ${{ github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      DMG_TARGET: mirai-${{ needs.decide.outputs.version }}-aarch64-apple-darwin.dmg
+      TARGZ_NAME: mirai-${{ needs.decide.outputs.version }}.app.tar.gz
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          merge-multiple: true
+
       - name: Build the updater manifest
         run: |
           set -euo pipefail
-          TARGZ_NAME="mirai-${TAG}.app.tar.gz"
-          cp "${TARGZ_PATH}" "${TARGZ_NAME}"
-          cp "${SIG_PATH}" "${TARGZ_NAME}.sig"
           jq -n \
             --arg version "${TAG}" \
             --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -207,7 +306,6 @@ jobs:
             --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${TARGZ_NAME}" \
             '{version: $version, pub_date: $pub_date, platforms: {"darwin-aarch64": {signature: $signature, url: $url}}}' \
             > latest.json
-          echo "TARGZ_NAME=${TARGZ_NAME}" >> "$GITHUB_ENV"
 
       # Clients read latest.json as soon as it is attached.
       - name: Attach the release assets

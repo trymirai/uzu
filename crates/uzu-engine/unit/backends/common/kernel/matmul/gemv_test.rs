@@ -160,7 +160,7 @@ fn gemv_bf16(
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::w4_zero_point(4, QuantizationMethod::ScaleZeroPoint)]
-#[case::w8_bias(8, QuantizationMethod::ScaleBias)]
+#[case::w8_symmetric(8, QuantizationMethod::ScaleSymmetric)]
 fn group_major_gemv_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,

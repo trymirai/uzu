@@ -165,14 +165,7 @@ impl<B: Backend> LanguageModel<B> {
     }
 
     pub fn default_sampling_method(&self) -> SamplingMethod {
-        SamplingMethod::Stochastic {
-            temperature: self.generation_config.temperature,
-            top_k: self.generation_config.top_k,
-            top_p: self.generation_config.top_p,
-            min_p: self.generation_config.min_p,
-            repetition_penalty: self.generation_config.repetition_penalty,
-            suffix_repetition_length: self.generation_config.suffix_repetition_length,
-        }
+        self.generation_config.default_sampling_method()
     }
 
     pub fn generation_config(&self) -> &GenerationConfig {

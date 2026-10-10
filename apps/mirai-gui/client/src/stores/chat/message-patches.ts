@@ -1,5 +1,5 @@
 import type { Message, MessageVersion, ParsedOutput } from "@/types/message";
-import type { OutputShape, ParsedPatch } from "@/types/llm-stream";
+import type { OutputShape, ParsedPatch, TranscriptItem } from "@/types/llm-stream";
 
 export function withParsedOutput(output: OutputShape | undefined, patch: ParsedPatch): OutputShape {
   return {
@@ -18,7 +18,11 @@ export function withParsedOutput(output: OutputShape | undefined, patch: ParsedP
 const mergeParsedIntoOutput = (
   output: Message["output"] | undefined,
   parsed?: ParsedOutput,
-): Message["output"] | undefined => (parsed ? withParsedOutput(output, parsed) : output);
+  transcript?: TranscriptItem[],
+): Message["output"] | undefined => {
+  const merged = parsed ? withParsedOutput(output, parsed) : output;
+  return transcript !== undefined ? { ...merged, transcript } : merged;
+};
 
 export const computeErrorPatch = (
   message: Message,
@@ -38,7 +42,12 @@ export const computeErrorPatch = (
   return { text, error, ...(attachmentIds ? { attachmentIds } : {}) };
 };
 
-export const computeFinalizedUpdates = (message: Message, text: string, parsed?: ParsedOutput): Partial<Message> => {
+export const computeFinalizedUpdates = (
+  message: Message,
+  text: string,
+  parsed?: ParsedOutput,
+  transcript?: TranscriptItem[],
+): Partial<Message> => {
   const hasVersions = Array.isArray(message.versions) && (message.versions.length || 0) > 0;
   if (hasVersions) {
     const versionsArr = message.versions || [];
@@ -49,12 +58,12 @@ export const computeFinalizedUpdates = (message: Message, text: string, parsed?:
             ...v,
             text,
             error: undefined,
-            output: mergeParsedIntoOutput(v.output, parsed),
+            output: mergeParsedIntoOutput(v.output, parsed, transcript),
           }
         : v,
     );
     return { text, error: undefined, versions };
   }
-  const output = mergeParsedIntoOutput(message.output, parsed);
+  const output = mergeParsedIntoOutput(message.output, parsed, transcript);
   return { text, error: undefined, ...(output ? { output } : {}) };
 };

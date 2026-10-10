@@ -50,17 +50,13 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bindings"
-version = "0.5.26"
+version = "0.6.2"
 dependencies = [
  "heck",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
 ]
-
-[[package]]
-name = "bindings-types"
-version = "0.5.26"
 
 [[package]]
 name = "bitflags"
@@ -212,15 +208,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crc32c"
-version = "0.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47"
-dependencies = [
- "rustc_version",
-]
-
-[[package]]
 name = "darling"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -277,15 +264,12 @@ dependencies = [
 
 [[package]]
 name = "download-manager"
-version = "0.5.26"
+version = "0.6.2"
 dependencies = [
  "async-trait",
- "base64",
  "bindings",
- "bindings-types",
  "block2",
  "bon",
- "crc32c",
  "futures-util",
  "kiban",
  "objc2",
@@ -780,7 +764,7 @@ dependencies = [
 
 [[package]]
 name = "kiban"
-version = "0.5.26"
+version = "0.6.2"
 dependencies = [
  "async-trait",
  "futures-util",

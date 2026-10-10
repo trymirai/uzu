@@ -281,6 +281,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut last_message: Option<ChatMessage> = None;
     while let Some(chunk) = stream.next().await {
         match chunk {
+            ChatSessionStreamChunk::ToolResults {
+                ..
+            } => {},
             ChatSessionStreamChunk::Replies {
                 replies,
             } => {
@@ -396,6 +399,8 @@ public func runChat() async throws {
             print("Generated tokens: \(reply?.stats.tokensCountOutput ?? 0)")
         case .error(let error):
             print("Error: \(error)")
+        case .toolResults:
+            break
         }
     }
     print("Reasoning: \(message?.reasoning() ?? "empty")")

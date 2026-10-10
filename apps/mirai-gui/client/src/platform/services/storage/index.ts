@@ -35,9 +35,11 @@ export type StorageService = {
   createOrReplaceChat(chat: ChatData): Promise<void>;
   appendMessage(chatId: string, message: Message): Promise<void>;
   updateStoredMessage(chatId: string, messageId: string, patch: Partial<Message>): Promise<void>;
+  /** Edits a user message and removes all later messages in one stored update. */
+  editUserMessage(chatId: string, messageId: string, text: string): Promise<ChatData>;
   removeMessage(chatId: string, messageId: string): Promise<void>;
-  /** With `expectedTitle`, writes only while the stored title is still that one. */
-  updateChatTitle(chatId: string, title: string, expectedTitle?: string): Promise<void>;
+  /** Returns whether the title was saved; with `expectedTitle`, the stored title must still match. */
+  updateChatTitle(chatId: string, title: string, expectedTitle?: string): Promise<boolean>;
   deleteChat(chatId: string): Promise<void>;
   exportAllChatsZip(): Promise<Uint8Array | null>;
 

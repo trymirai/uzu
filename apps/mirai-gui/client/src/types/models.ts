@@ -10,6 +10,7 @@ export type UzuModel = {
   name: string;
   vendor: string;
   reasoning: ReasoningSupport;
+  supportsTools: boolean;
   quantization?: string | null;
   quantizationBits?: number;
 };
