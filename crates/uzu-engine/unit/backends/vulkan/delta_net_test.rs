@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fmt::Debug,
     ops::Range,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -11,20 +12,26 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use super::{
-    NormalizationCase, arg, assert_same_bits, bounds, conv1d_values, cpu_buffer, cpu_submissions,
-    kernel_fixture::KernelFixture, mul, point, silu_oracle, staged_rms_bounds, union,
+    NAN, NEG_ZERO, NormalizationCase, POS_INF, POS_ZERO, add, arg, assert_same_bits, bounds, conv1d_values, cpu_buffer,
+    cpu_submissions, decay, exp, interval, kernel_fixture::KernelFixture, mean_bounds, mul, oracle, point,
+    reciprocal_root_bounds, round32, silu_oracle, staged_rms_bounds, sum_bounds, union,
 };
 use crate::{
     array::ArrayElement,
     backends::{
         common::{
             Backend, Kernels,
-            kernel::{DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel},
+            gpu_types::ActivationType,
+            kernel::{
+                DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel, DeltaNetPrefillKernel,
+                DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
+            },
         },
         cpu::Cpu,
         vulkan::{
-            DeltaNetConvScanVulkanKernel, DeltaNetConvUpdateVulkanKernel, DeltaNetNormGateVulkanKernel, Error,
-            VkBuffer, VkCommandBufferEncoding,
+            DeltaNetConvScanVulkanKernel, DeltaNetConvUpdateVulkanKernel, DeltaNetNormGateVulkanKernel,
+            DeltaNetPrefillPrepVulkanKernel, DeltaNetPrefillVulkanKernel, DeltaNetUpdateVulkanKernel, Error, VkBuffer,
+            VkCommandBufferEncoding,
         },
     },
     data_type::DataType,
@@ -1024,6 +1031,1133 @@ fn throughput() {
         eprintln!("DeltaNet throughput round {round}");
         measure::<f32>(&fixture, lengths);
         measure::<bf16>(&fixture, lengths);
+    }
+    fixture.assert_clean();
+}
+
+/// [H, G, Dv, key_dim, value_dim] of the recurrence Update: two v heads sharing one k head; the model's G k heads of
+/// 128 with grouped v heads; Dv 129 rows striding past the workgroup; q and k rows overlapping where key_dim is below
+/// G 128, which the CPU reads alike; key and value slack.
+const RECURRENCE_UPDATE_SHAPES: [[u32; 5]; 5] =
+    [[2, 1, 4, 128, 8], [4, 2, 3, 256, 12], [1, 1, 129, 128, 129], [2, 2, 2, 100, 4], [3, 3, 5, 400, 17]];
+
+/// [H, G, Dv, key_dim, value_dim, Q] of Prefill: 1024 productive tokens; 1024 tokens without v heads; H 3 over G 2,
+/// whose floor(H / G) = 1 maps the v heads to k heads 0 to 2, which key_dim holds; the remainder H 5 over G 2 with value
+/// slack; Dv 129 with grouped heads; one token.
+const RECURRENCE_PREFILL_SHAPES: [[u32; 6]; 6] = [
+    [1, 1, 1, 128, 1, 1024],
+    [0, 1, 4, 128, 0, 1024],
+    [3, 2, 5, 384, 15, 3],
+    [5, 2, 2, 384, 12, 2],
+    [4, 2, 129, 256, 516, 2],
+    [2, 2, 3, 256, 8, 1],
+];
+
+/// [H, G, key_dim, value_dim, Q] of Prep: grouped heads; the remainder H 5 over G 2, whose lane 4 stays untouched; no v
+/// heads; fewer v heads than k heads, which write no lane; compact V past one workgroup; compact V in fewer blocks than
+/// k heads, with key slack.
+const RECURRENCE_PREP_SHAPES: [[u32; 5]; 6] = [
+    [4, 2, 256, 6, 3],
+    [5, 2, 256, 4, 2],
+    [0, 2, 256, 3, 2],
+    [1, 2, 256, 5, 2],
+    [2, 1, 128, 300, 1],
+    [3, 3, 400, 130, 2],
+];
+
+/// Update's RMS epsilon; the q and k normalizations add the kernels' own 1e-6.
+const RECURRENCE_EPSILON: f32 = 1e-5;
+
+/// Elements of [in_proj, a_log, dt_bias, norm_weight, state, out] Update reads or writes, through the last one it
+/// accesses: none without v heads or rows.
+fn recurrence_update_extents(shape: [u32; 5]) -> [usize; 6] {
+    let [h, g, d, k, v] = shape.map(|n| n as usize);
+    match h * d {
+        0 => [0; 6],
+        _ => [(k + g * 128).max(2 * k + v + h * d).max(2 * (k + v + h)), h, h, d, h * d * 128, h * d],
+    }
+}
+
+/// Elements of [q_norm/k_norm, beta/decay, in_proj, state, out] Prefill reads or writes, through the last one: the k
+/// heads up to (H - 1) / floor(H / G); none without tokens, v heads or rows.
+fn recurrence_prefill_extents(shape: [u32; 6]) -> [usize; 5] {
+    let [h, g, d, k, v, q] = shape.map(|n| n as usize);
+    match q * h * d {
+        0 => [0; 5],
+        _ => [
+            (q - 1) * k + ((h - 1) / (h / g) + 1) * 128,
+            q * h,
+            (q - 1) * 2 * (k + v + h) + 2 * k + h * d,
+            h * d * 128,
+            (q - 1) * v + h * d,
+        ],
+    }
+}
+
+/// Elements of [in_proj, a_log/dt_bias, q_norm/k_norm_out, compact_v_out, beta/decay_out] Prep reads or writes, through
+/// the last one: compact V only with write_compact_v, the gate region and lanes only for G floor(H / G) > 0 lanes; none
+/// without tokens.
+fn recurrence_prep_extents(
+    shape: [u32; 5],
+    compact: bool,
+) -> [usize; 5] {
+    let [h, g, k, v, q] = shape.map(|n| n as usize);
+    if q == 0 {
+        return [0; 5];
+    }
+    let lanes = g * (h / g);
+    let reads =
+        [k + g * 128, usize::from(compact && v > 0) * (2 * k + v), usize::from(lanes > 0) * (2 * (k + v) + h + lanes)];
+    let written = usize::from(lanes > 0) * ((q - 1) * h + lanes);
+    [
+        (q - 1) * 2 * (k + v + h) + reads.into_iter().max().unwrap(),
+        lanes,
+        (q - 1) * k + g * 128,
+        usize::from(compact) * q * v,
+        written,
+    ]
+}
+
+/// Update's in_proj and [a_log, dt_bias, norm_weight, state]: finite eighths, a_log in [-2, 0) so the decays spread
+/// over (0, 1).
+fn recurrence_update_inputs<T: ArrayElement + Float>(shape: [u32; 5]) -> (Vec<T>, [Vec<f32>; 4]) {
+    let [proj, a_log, dt_bias, weight, state, _] = recurrence_update_extents(shape);
+    let a_log = conv1d_values::<f32>(a_log, 1, 0).iter().map(|x| x / 4.0 - 1.0).collect();
+    (
+        conv1d_values(proj, 0, 0),
+        [a_log, conv1d_values(dt_bias, 2, 0), conv1d_values(weight, 3, 0), conv1d_values(state, 4, 0)],
+    )
+}
+
+/// Prefill's in_proj and [q_norm, k_norm, beta, decay, state]: eighths, q scaled by 1/8, k by 1/64 so long recurrences
+/// stay finite, beta and decay by 1/4; the specials at every `every`-th element when it is nonzero.
+fn recurrence_prefill_inputs<T: ArrayElement + Float>(
+    shape: [u32; 6],
+    every: usize,
+) -> (Vec<T>, [Vec<f32>; 5]) {
+    let [qk, lanes, proj, state, _] = recurrence_prefill_extents(shape);
+    let scaled = |len: usize, seed: usize, scale: f32| -> Vec<f32> {
+        conv1d_values::<f32>(len, seed, every).iter().map(|x| x / scale).collect()
+    };
+    let f32s = [
+        scaled(qk, 0, 8.0),
+        scaled(qk, 1, 64.0),
+        scaled(lanes, 2, 4.0),
+        scaled(lanes, 3, 4.0),
+        conv1d_values(state, 4, every),
+    ];
+    (conv1d_values(proj, 5, every), f32s)
+}
+
+/// Prep's in_proj, the specials at every `every`-th element when it is nonzero, and [a_log in [-2, 0), dt_bias].
+fn recurrence_prep_inputs<T: ArrayElement + Float>(
+    shape: [u32; 5],
+    compact: bool,
+    every: usize,
+) -> (Vec<T>, [Vec<f32>; 2]) {
+    let [proj, lanes, ..] = recurrence_prep_extents(shape, compact);
+    let a_log = conv1d_values::<f32>(lanes, 1, 0).iter().map(|x| x / 4.0 - 1.0).collect();
+    (conv1d_values(proj, 0, every), [a_log, conv1d_values(lanes, 2, 0)])
+}
+
+/// 1 / sqrt(Σ x² + 1e-6) of a q or k row: the square sum is exact FP32 in order on the CPU and the shader, so the shifted
+/// sum is one value; NaN gives NaN, +inf gives +0, and any other value, at least 1e-6 and normal, the root's 2 ULPs.
+fn recurrence_inverse(row: &[f32]) -> ((f64, f64), u8) {
+    let shifted = row.iter().map(|x| x * x).sum::<f32>() + 1e-6;
+    let root = 1.0 / f64::from(shifted).sqrt();
+    match shifted {
+        _ if shifted.is_nan() => point(f64::NAN),
+        f32::INFINITY => point(0.0),
+        _ => bounds::<f32>(interval(root, root, 2.0)),
+    }
+}
+
+/// The normalized q (x inv) qs, qs the CPU's FP32 1 / sqrt(128), and k x inv of one head's rows as FP32 products, the
+/// last rounded to U.
+fn recurrence_qk<U: Float>(
+    q: &[f32],
+    k: &[f32],
+) -> [Vec<((f64, f64), u8)>; 2] {
+    let ([q_inv, k_inv], qs) = ([q, k].map(recurrence_inverse), point(f64::from(1.0 / 128f32.sqrt())));
+    [
+        q.iter().map(|&x| mul::<U>(mul::<f32>(point(f64::from(x)), q_inv), qs)).collect(),
+        k.iter().map(|&x| mul::<U>(point(f64::from(x)), k_inv)).collect(),
+    ]
+}
+
+/// [β, dt] of one v head: β = 1 / (1 + e^-β_raw), the SiLU oracle of 1 with slope β_raw; dt = e^a_log softplus(sum) with
+/// sum = a_raw + dt_bias, one exact FP32 sum, e^a_log within Vulkan's exp bound, which holds the CPU's expf, and the
+/// shader's flush of a subnormal result to +0.
+fn recurrence_gates(
+    beta_raw: f32,
+    a_log: f32,
+    sum: f32,
+) -> [((f64, f64), u8); 2] {
+    let (lo, hi) = exp(f64::from(a_log)).0;
+    let e = match hi > 0.0 && lo < f64::from(f32::MIN_POSITIVE) {
+        true => union(bounds::<f32>((lo, hi)), point(0.0)),
+        false => bounds::<f32>((lo, hi)),
+    };
+    let softplus = bounds::<f32>(oracle(f64::from(sum), ActivationType::SOFTPLUS).0);
+    [bounds::<f32>(silu_oracle(1.0, beta_raw).0), mul::<f32>(e, softplus)]
+}
+
+/// e^-dt by the canonical decay oracle, which iterates over dt's FP32 members: their ordinal span is asserted within the
+/// test data's 2^12 before it runs, and the largest one kept in `span` for the report.
+fn recurrence_decay(
+    dt: ((f64, f64), u8),
+    span: &mut i64,
+) -> ((f64, f64), u8) {
+    let ((lo, hi), _) = dt;
+    if lo <= hi {
+        let members = KernelFixture::ordinal(hi as f32) - KernelFixture::ordinal(lo as f32);
+        assert!(members <= 1 << 12, "dt {dt:?} spans {members} FP32 values");
+        *span = (*span).max(members);
+    }
+    decay::<f32, f32>(dt, true)
+}
+
+/// The reciprocal RMS over every member of `o`, staged as `staged_rms_bounds`: each square's finite or zero members as a
+/// nonnegative term of the canonical any-order `sum_bounds` over a workgroup of 128, its `mean_bounds`, the exact FP32
+/// epsilon sum and `reciprocal_root_bounds`. NaN squares add NaN, infinite ones a +inf sum and so +0.
+fn recurrence_rms(
+    o: &[((f64, f64), u8)],
+    epsilon: f32,
+) -> ((f64, f64), u8) {
+    let squares = o.iter().map(|&value| mul::<f32>(value, value)).collect::<Vec<_>>();
+    let (mask, zeros) = (squares.iter().fold(0, |mask, square| mask | square.1), NEG_ZERO | POS_ZERO);
+    let mut set = ((f64::INFINITY, f64::NEG_INFINITY), mask & NAN);
+    if mask & POS_INF != 0 {
+        set = union(set, point(0.0));
+    }
+    if squares.iter().all(|&((lo, hi), classes)| lo <= hi || classes & zeros != 0) {
+        let terms = squares.iter().map(|&((a, b), classes)| match a <= b {
+            true => (f64::from(u8::from(classes & zeros == 0)) * a.max(0.0), b),
+            false => (0.0, 0.0),
+        });
+        let (lo, hi) = sum_bounds(&terms.collect::<Vec<_>>(), 128);
+        let mean = mean_bounds((lo.max(0.0), hi), f64::from(o.len() as f32));
+        let shifted = [mean.0, mean.1].map(|variance| round32(variance + f64::from(epsilon)));
+        let roots = [reciprocal_root_bounds(shifted[1]).0, reciprocal_root_bounds(shifted[0]).1];
+        set = union(set, bounds::<f32>((roots[0], roots[1])));
+    }
+    set
+}
+
+/// Update's sets of every [state, out] element in buffer order, as the CPU and the shader stage them: per v head the
+/// normalized q and k, kq from -0 as the CPU's iterator sum, β and the decay of `recurrence_gates`; per row sq and sk
+/// from +0, retrieved = decay sk, delta = β (v - retrieved), o = decay sq + delta kq and s <- decay s + k delta; the
+/// output T(((o inv) w) silu(z)) with `recurrence_rms`. Every product and sum is an FP32 set operation in the CPU's
+/// order; the largest dt span goes to `span`.
+fn recurrence_update_sets<T: ArrayElement + Float>(
+    shape: [u32; 5],
+    in_proj: &[T],
+    [a_log, dt_bias, weight, state]: &[Vec<f32>; 4],
+    span: &mut i64,
+) -> [Vec<((f64, f64), u8)>; 2] {
+    let [h, g, d, k, v] = shape.map(|n| n as usize);
+    let x = |i: usize| in_proj[i].to_f32().unwrap();
+    let (mut next, mut out) = (Vec::new(), Vec::new());
+    for hv in 0..h * d.min(1) {
+        let hk = hv / (h / g);
+        let rows = [hk * 128, k + hk * 128].map(|base| (base..base + 128).map(x).collect::<Vec<_>>());
+        let [qn, kn] = recurrence_qk::<f32>(&rows[0], &rows[1]);
+        let kq = kn.iter().zip(&qn).fold(point(-0.0), |acc, (&a, &b)| add::<f32>(acc, mul::<f32>(a, b)));
+        let gates = 2 * (k + v);
+        let [beta, dt] = recurrence_gates(x(gates + hv), a_log[hv], x(gates + h + hv) + dt_bias[hv]);
+        let decay = recurrence_decay(dt, span);
+        let mut outputs = Vec::new();
+        for i in 0..d {
+            let row = &state[(hv * d + i) * 128..][..128];
+            let dot = |factors: &[((f64, f64), u8)]| {
+                let terms = row.iter().zip(factors);
+                terms.fold(point(0.0), |acc, (&s, &factor)| add::<f32>(acc, mul::<f32>(point(f64::from(s)), factor)))
+            };
+            let retrieved = mul::<f32>(point(-1.0), mul::<f32>(decay, dot(&kn)));
+            let delta = mul::<f32>(beta, add::<f32>(point(f64::from(x(2 * k + hv * d + i))), retrieved));
+            outputs.push(add::<f32>(mul::<f32>(decay, dot(&qn)), mul::<f32>(delta, kq)));
+            next.extend(
+                row.iter()
+                    .zip(&kn)
+                    .map(|(&s, &kj)| add::<f32>(mul::<f32>(decay, point(f64::from(s))), mul::<f32>(kj, delta))),
+            );
+        }
+        let inv = recurrence_rms(&outputs, RECURRENCE_EPSILON);
+        for (i, &o) in outputs.iter().enumerate() {
+            let gate = silu_set::<f32>(f64::from(x(2 * k + v + hv * d + i)));
+            out.push(mul::<T>(mul::<f32>(mul::<f32>(o, inv), point(f64::from(weight[i]))), gate));
+        }
+    }
+    [next, out]
+}
+
+/// Prep's sets and owners over [q_norm_out, k_norm_out, beta_out, decay_out], in buffer order: the normalized q and k
+/// rounded to QKT, and β with the log decay -(dt) or its decay e^-dt as Update stages them for every lane below
+/// G floor(H / G); the q and k slack between tokens and the remaining lanes own none. The largest dt span goes to
+/// `span`.
+fn recurrence_prep_sets<T: ArrayElement + Float, QKT: Float>(
+    shape: [u32; 5],
+    log: bool,
+    in_proj: &[T],
+    [a_log, dt_bias]: &[Vec<f32>; 2],
+    span: &mut i64,
+) -> [(Vec<((f64, f64), u8)>, Vec<Option<usize>>); 4] {
+    let [_, _, qk, _, lanes] = recurrence_prep_extents(shape, false);
+    let [h, g, k, v, q] = shape.map(|n| n as usize);
+    let x = |i: usize| in_proj[i].to_f32().unwrap();
+    let mut buffers = [qk, qk, lanes, lanes].map(|len| (Vec::new(), vec![None; len]));
+    for (token, hk) in itertools::iproduct!(0..q, 0..g) {
+        let row = token * 2 * (k + v + h);
+        let rows = [row + hk * 128, row + k + hk * 128].map(|base| (base..base + 128).map(x).collect::<Vec<_>>());
+        let [q_sets, k_sets] = recurrence_qk::<QKT>(&rows[0], &rows[1]);
+        let mut entries = (0..128).map(|j| (0, token * k + hk * 128 + j, [q_sets[j], k_sets[j]])).collect::<Vec<_>>();
+        let gates = row + 2 * (k + v);
+        for hv in hk * (h / g)..(hk + 1) * (h / g) {
+            let [beta, dt] = recurrence_gates(x(gates + hv), a_log[hv], x(gates + h + hv) + dt_bias[hv]);
+            let decay = match log {
+                true => mul::<f32>(point(-1.0), dt),
+                false => recurrence_decay(dt, span),
+            };
+            entries.push((2, token * h + hv, [beta, decay]));
+        }
+        for (first, at, pair) in entries {
+            for (index, set) in pair.into_iter().enumerate() {
+                let (sets, owner) = &mut buffers[first + index];
+                owner[at] = Some(sets.len());
+                sets.push(set);
+            }
+        }
+    }
+    buffers
+}
+
+/// The largest relative width of the sets' finite intervals, reported with each check.
+fn widest(sets: &[((f64, f64), u8)]) -> f64 {
+    let finite = sets.iter().filter(|((lo, hi), _)| lo < hi);
+    finite.map(|((lo, hi), _)| (hi - lo) / lo.abs().max(hi.abs())).fold(0.0, f64::max)
+}
+
+/// Every FP32 value of a set's finite interval, ascending: the enumeration of the concrete witnesses only.
+fn members(((lo, hi), _): ((f64, f64), u8)) -> Vec<f32> {
+    let values = std::iter::successors((lo <= hi).then_some(lo as f32), |&value| Some(value.next_up()));
+    values.take_while(|&value| f64::from(value) <= hi).collect()
+}
+
+/// Whether no value is a member of both sets: a fault's exclusion from the correct oracle.
+fn disjoint(
+    ((a, b), m): ((f64, f64), u8),
+    ((c, d), n): ((f64, f64), u8),
+) -> bool {
+    m & n == 0 && (a > b || c > d || b < c || d < a)
+}
+
+/// The CPU Update on a fresh context, one fresh [state, out] bundle per submission: the first bundle's results (every
+/// bundle does the same work) and the wall times.
+fn cpu_recurrence_update<T: ArrayElement + Float + Default>(
+    shape: [u32; 5],
+    head_k_dim: u32,
+    in_proj: &[T],
+    [a_log, dt_bias, weight, state]: &[Vec<f32>; 4],
+    submissions: usize,
+) -> (Vec<f32>, Vec<T>, Vec<Duration>) {
+    let ([h, g, d, k, v], out_len) = (shape, recurrence_update_extents(shape)[5]);
+    let context = create_context::<Cpu>();
+    let kernel =
+        <<Cpu as Backend>::Kernels as Kernels>::DeltaNetUpdateKernel::new(&context, T::data_type(), head_k_dim)
+            .expect("CPU DeltaNetUpdate");
+    let projection = cpu_buffer(&context, in_proj);
+    let [a_log, dt_bias, weight] = [a_log, dt_bias, weight].map(|values| cpu_buffer(&context, values));
+    let mut bundles = (0..submissions)
+        .map(|_| (cpu_buffer(&context, state), cpu_buffer(&context, &vec![sentinel::<T>(); out_len])))
+        .collect::<Vec<_>>();
+    let mut next = bundles.iter_mut();
+    let times = cpu_submissions(&context, submissions, |command_buffer| {
+        let (state, out) = next.next().expect("one bundle per submission");
+        kernel.encode(
+            &projection,
+            &a_log,
+            &dt_bias,
+            &weight,
+            state,
+            out,
+            h,
+            g,
+            d,
+            k,
+            v,
+            RECURRENCE_EPSILON,
+            command_buffer,
+        );
+    });
+    let (first_state, first_out) = &bundles[0];
+    (
+        buffer_prefix_to_vec::<Cpu, f32>(first_state, state.len()),
+        buffer_prefix_to_vec::<Cpu, T>(first_out, out_len),
+        times,
+    )
+}
+
+/// The Vulkan Update over guarded ranges, one fresh guarded [state, out] bundle per submission (13 when `timed`): every
+/// bundle's results after asserting the read-only inputs and every guard.
+fn gpu_recurrence_update<T: ArrayElement + Float>(
+    fixture: &KernelFixture,
+    kernel: &DeltaNetUpdateVulkanKernel,
+    shape: [u32; 5],
+    in_proj: &[T],
+    f32s: &[Vec<f32>; 4],
+    timed: bool,
+) -> (Vec<(Vec<f32>, Vec<T>)>, Option<(Duration, Duration)>) {
+    let ([h, g, d, k, v], out_len) = (shape, recurrence_update_extents(shape)[5]);
+    let projection = fixture.guarded(in_proj, sentinel::<T>());
+    let inputs = [&f32s[0], &f32s[1], &f32s[2]].map(|values| fixture.guarded(values, sentinel::<f32>()));
+    let bundles = (0..if timed {
+        13
+    } else {
+        1
+    })
+        .map(|_| {
+            (
+                fixture.guarded(&f32s[3], sentinel::<f32>()),
+                fixture.guarded(&vec![sentinel::<T>(); out_len], sentinel::<T>()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut next = bundles.iter();
+    // SAFETY: each range holds every element the shape addresses, aligned; each submission writes its own bundle.
+    let record = |encoding: &mut VkCommandBufferEncoding| unsafe {
+        let (state, out) = next.next().expect("one bundle per submission");
+        let [a_log, dt_bias, weight] = inputs.each_ref().map(arg);
+        let (projection, state, out) = (arg(&projection), arg(state), arg(out));
+        kernel.encode(projection, a_log, dt_bias, weight, state, out, h, g, d, k, v, RECURRENCE_EPSILON, encoding)
+    };
+    let times = submit(fixture, timed, record);
+    // SAFETY: every command buffer using these buffers has completed.
+    unsafe {
+        KernelFixture::assert_unchanged(&projection, sentinel::<T>(), in_proj, "Update in_proj");
+        assert_inputs(&inputs, &[&f32s[0][..], &f32s[1][..], &f32s[2][..]], "Update input");
+        let results = bundles.iter().map(|(state, out)| {
+            (KernelFixture::read_guarded(state, sentinel()), KernelFixture::read_guarded(out, sentinel()))
+        });
+        (results.collect(), times)
+    }
+}
+
+/// Update on the CPU in `submissions` submissions and on Vulkan, timed from 2: every state and output element of every
+/// bundle a member of its set, every input and guard unchanged. Returns the CPU's and the first Vulkan bundle's states
+/// and the times.
+fn recurrence_update_check<T: ArrayElement + Float + Debug + Default>(
+    fixture: &KernelFixture,
+    shape: [u32; 5],
+    in_proj: &[T],
+    f32s: &[Vec<f32>; 4],
+    submissions: usize,
+    label: &str,
+) -> ([Vec<f32>; 2], Option<(Duration, Duration)>, Vec<Duration>) {
+    let kernel = DeltaNetUpdateVulkanKernel::new(&fixture.context, T::data_type(), 128).expect("Update");
+    let mut span = 0;
+    let [state_sets, out_sets] = recurrence_update_sets(shape, in_proj, f32s, &mut span);
+    let (cpu_state, cpu_out, cpu_times) = cpu_recurrence_update(shape, 128, in_proj, f32s, submissions);
+    let (mut results, times) = gpu_recurrence_update(fixture, &kernel, shape, in_proj, f32s, submissions > 1);
+    results.insert(0, (cpu_state, cpu_out));
+    let owner = |len: usize| (0..len).map(Some).collect::<Vec<_>>();
+    for (index, (state, out)) in results.iter().enumerate() {
+        let side = match index {
+            0 => format!("{label} CPU"),
+            _ => format!("{label} Vulkan bundle {index}"),
+        };
+        check(&state_sets, &owner(state.len()), &f32s[3], state, &format!("{side} state"));
+        check(&out_sets, &owner(out.len()), &vec![sentinel::<T>(); out.len()], out, &format!("{side} out"));
+    }
+    let widths = [&state_sets, &out_sets].map(|sets| widest(sets));
+    eprintln!("{label}: widest relative sets state {:.2e}, out {:.2e}; widest dt span {span}", widths[0], widths[1]);
+    let mut states = results.into_iter().map(|(state, _)| state);
+    ([states.next().unwrap(), states.next().unwrap()], times, cpu_times)
+}
+
+/// The CPU Prefill on a fresh context, one fresh [state, out] bundle per submission: the first bundle's results and the
+/// wall times.
+fn cpu_recurrence_prefill<T: ArrayElement + Float + Default>(
+    shape: [u32; 6],
+    head_k_dim: u32,
+    in_proj: &[T],
+    [q_norm, k_norm, beta, decay, state]: &[Vec<f32>; 5],
+    submissions: usize,
+) -> (Vec<f32>, Vec<T>, Vec<Duration>) {
+    let ([h, g, d, k, v, q], out_len) = (shape, recurrence_prefill_extents(shape)[4]);
+    let context = create_context::<Cpu>();
+    let kernel =
+        <<Cpu as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(&context, T::data_type(), head_k_dim)
+            .expect("CPU DeltaNetPrefill");
+    let [q_norm, k_norm, beta, decay] = [q_norm, k_norm, beta, decay].map(|values| cpu_buffer(&context, values));
+    let projection = cpu_buffer(&context, in_proj);
+    let mut bundles = (0..submissions)
+        .map(|_| (cpu_buffer(&context, state), cpu_buffer(&context, &vec![sentinel::<T>(); out_len])))
+        .collect::<Vec<_>>();
+    let mut next = bundles.iter_mut();
+    let times = cpu_submissions(&context, submissions, |command_buffer| {
+        let (state, out) = next.next().expect("one bundle per submission");
+        let groups = d.div_ceil(16);
+        kernel.encode(
+            &q_norm,
+            &k_norm,
+            &beta,
+            &decay,
+            &projection,
+            state,
+            out,
+            h,
+            g,
+            d,
+            k,
+            v,
+            q,
+            groups,
+            command_buffer,
+        );
+    });
+    let (first_state, first_out) = &bundles[0];
+    (
+        buffer_prefix_to_vec::<Cpu, f32>(first_state, state.len()),
+        buffer_prefix_to_vec::<Cpu, T>(first_out, out_len),
+        times,
+    )
+}
+
+/// The Vulkan Prefill over guarded ranges, one fresh guarded [state, out] bundle per submission (13 when `timed`):
+/// every bundle's results after asserting the read-only inputs and every guard.
+fn gpu_recurrence_prefill<T: ArrayElement + Float>(
+    fixture: &KernelFixture,
+    kernel: &DeltaNetPrefillVulkanKernel,
+    shape: [u32; 6],
+    in_proj: &[T],
+    f32s: &[Vec<f32>; 5],
+    timed: bool,
+) -> (Vec<(Vec<f32>, Vec<T>)>, Option<(Duration, Duration)>) {
+    let ([h, g, d, k, v, q], out_len) = (shape, recurrence_prefill_extents(shape)[4]);
+    let projection = fixture.guarded(in_proj, sentinel::<T>());
+    let inputs = [&f32s[0], &f32s[1], &f32s[2], &f32s[3]].map(|values| fixture.guarded(values, sentinel::<f32>()));
+    let bundles = (0..if timed {
+        13
+    } else {
+        1
+    })
+        .map(|_| {
+            (
+                fixture.guarded(&f32s[4], sentinel::<f32>()),
+                fixture.guarded(&vec![sentinel::<T>(); out_len], sentinel::<T>()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut next = bundles.iter();
+    // SAFETY: each range holds every element the shape addresses, aligned; each submission writes its own bundle.
+    let record = |encoding: &mut VkCommandBufferEncoding| unsafe {
+        let (state, out) = next.next().expect("one bundle per submission");
+        let [q_norm, k_norm, beta, decay] = inputs.each_ref().map(arg);
+        let (projection, state, out, groups) = (arg(&projection), arg(state), arg(out), d.div_ceil(16));
+        kernel.encode(q_norm, k_norm, beta, decay, projection, state, out, h, g, d, k, v, q, groups, encoding)
+    };
+    let times = submit(fixture, timed, record);
+    // SAFETY: every command buffer using these buffers has completed.
+    unsafe {
+        KernelFixture::assert_unchanged(&projection, sentinel::<T>(), in_proj, "Prefill in_proj");
+        assert_inputs(&inputs, &[&f32s[0][..], &f32s[1][..], &f32s[2][..], &f32s[3][..]], "Prefill input");
+        let results = bundles.iter().map(|(state, out)| {
+            (KernelFixture::read_guarded(state, sentinel()), KernelFixture::read_guarded(out, sentinel()))
+        });
+        (results.collect(), times)
+    }
+}
+
+/// Prefill on the CPU in `submissions` submissions and on Vulkan, timed from 2: every bundle's state and output equal to
+/// the CPU's bit for bit up to NaN payloads, the slack keeping its sentinels. Returns the first Vulkan bundle and the
+/// times.
+fn recurrence_prefill_check<T: ArrayElement + Float + Debug + Default>(
+    fixture: &KernelFixture,
+    shape: [u32; 6],
+    in_proj: &[T],
+    f32s: &[Vec<f32>; 5],
+    submissions: usize,
+    label: &str,
+) -> ((Vec<f32>, Vec<T>), Option<(Duration, Duration)>, Vec<Duration>) {
+    let kernel = DeltaNetPrefillVulkanKernel::new(&fixture.context, T::data_type(), 128).expect("Prefill");
+    let (cpu_state, cpu_out, cpu_times) = cpu_recurrence_prefill(shape, 128, in_proj, f32s, submissions);
+    let (mut results, times) = gpu_recurrence_prefill(fixture, &kernel, shape, in_proj, f32s, submissions > 1);
+    for (index, (state, out)) in results.iter().enumerate() {
+        KernelFixture::assert_bits(&cpu_state, state, &format!("{label} bundle {index} state"));
+        KernelFixture::assert_bits(&cpu_out, out, &format!("{label} bundle {index} out"));
+    }
+    (results.swap_remove(0), times, cpu_times)
+}
+
+/// The CPU Prep on a fresh context in `submissions` submissions: [q_norm_out, k_norm_out], compact V,
+/// [beta_out, decay_out] and the wall times.
+fn cpu_recurrence_prep<T: ArrayElement + Float + Default, QKT: ArrayElement + Float + Default>(
+    shape: [u32; 5],
+    head_k_dim: u32,
+    [log, compact]: [bool; 2],
+    in_proj: &[T],
+    [a_log, dt_bias]: &[Vec<f32>; 2],
+    submissions: usize,
+) -> ([Vec<QKT>; 2], Vec<T>, [Vec<f32>; 2], Vec<Duration>) {
+    let ([h, g, k, v, q], [_, _, qk, compact_len, lanes]) = (shape, recurrence_prep_extents(shape, compact));
+    let context = create_context::<Cpu>();
+    let kernel = <<Cpu as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
+        &context,
+        T::data_type(),
+        QKT::data_type(),
+        head_k_dim,
+        log,
+        compact,
+    )
+    .expect("CPU DeltaNetPrefillPrep");
+    let projection = cpu_buffer(&context, in_proj);
+    let [a_log, dt_bias] = [a_log, dt_bias].map(|values| cpu_buffer(&context, values));
+    let [mut q_out, mut k_out] = [0; 2].map(|_| cpu_buffer(&context, &vec![sentinel::<QKT>(); qk]));
+    let mut compact_v = cpu_buffer(&context, &vec![sentinel::<T>(); compact_len]);
+    let [mut beta, mut decay] = [0; 2].map(|_| cpu_buffer(&context, &vec![sentinel::<f32>(); lanes]));
+    let times = cpu_submissions(&context, submissions, |command_buffer| {
+        let compact_v = compact.then_some(&mut compact_v);
+        kernel.encode(
+            &projection,
+            &a_log,
+            &dt_bias,
+            &mut q_out,
+            &mut k_out,
+            compact_v,
+            &mut beta,
+            &mut decay,
+            h,
+            g,
+            k,
+            v,
+            q,
+            command_buffer,
+        );
+    });
+    (
+        [&q_out, &k_out].map(|buffer| buffer_prefix_to_vec::<Cpu, QKT>(buffer, qk)),
+        buffer_prefix_to_vec::<Cpu, T>(&compact_v, compact_len),
+        [&beta, &decay].map(|buffer| buffer_prefix_to_vec::<Cpu, f32>(buffer, lanes)),
+        times,
+    )
+}
+
+/// The Vulkan Prep over guarded ranges, its outputs starting as sentinels, once or in timed submissions:
+/// [q_norm_out, k_norm_out], compact V and [beta_out, decay_out] after asserting the inputs and every guard.
+fn gpu_recurrence_prep<T: ArrayElement + Float, QKT: ArrayElement + Float>(
+    fixture: &KernelFixture,
+    kernel: &DeltaNetPrefillPrepVulkanKernel,
+    shape: [u32; 5],
+    compact: bool,
+    in_proj: &[T],
+    f32s: &[Vec<f32>; 2],
+    timed: bool,
+) -> ([Vec<QKT>; 2], Vec<T>, [Vec<f32>; 2], Option<(Duration, Duration)>) {
+    let ([h, g, k, v, q], [_, _, qk, compact_len, lanes]) = (shape, recurrence_prep_extents(shape, compact));
+    let projection = fixture.guarded(in_proj, sentinel::<T>());
+    let inputs = f32s.each_ref().map(|values| fixture.guarded(values, sentinel::<f32>()));
+    let normalized = [0; 2].map(|_| fixture.guarded(&vec![sentinel::<QKT>(); qk], sentinel::<QKT>()));
+    let compact_v = fixture.guarded(&vec![sentinel::<T>(); compact_len], sentinel::<T>());
+    let gates = [0; 2].map(|_| fixture.guarded(&vec![sentinel::<f32>(); lanes], sentinel::<f32>()));
+    // SAFETY: each range holds every element the shape addresses, aligned; the written ranges alias nothing.
+    let record = |encoding: &mut VkCommandBufferEncoding| unsafe {
+        let ([a_log, dt_bias], [q_out, k_out], [beta, decay]) =
+            (inputs.each_ref().map(arg), normalized.each_ref().map(arg), gates.each_ref().map(arg));
+        let (projection, compact_v) = (arg(&projection), compact.then(|| arg(&compact_v)));
+        kernel.encode(projection, a_log, dt_bias, q_out, k_out, compact_v, beta, decay, h, g, k, v, q, encoding)
+    };
+    let times = submit(fixture, timed, record);
+    // SAFETY: every command buffer using these buffers has completed.
+    unsafe {
+        KernelFixture::assert_unchanged(&projection, sentinel::<T>(), in_proj, "Prep in_proj");
+        assert_inputs(&inputs, &[&f32s[0][..], &f32s[1][..]], "Prep input");
+        (
+            normalized.each_ref().map(|buffer| KernelFixture::read_guarded(buffer, sentinel())),
+            KernelFixture::read_guarded(&compact_v, sentinel()),
+            gates.each_ref().map(|buffer| KernelFixture::read_guarded(buffer, sentinel())),
+            times,
+        )
+    }
+}
+
+/// Prep on the CPU in `submissions` submissions and on Vulkan once and, from 2 submissions, timed: every owned element
+/// of q_norm_out, k_norm_out, beta_out and decay_out a member of its set and every other one its sentinel, compact V the
+/// raw T values of every token bit for bit, every input and guard unchanged. Returns the times.
+fn recurrence_prep_check<T: ArrayElement + Float + Debug + Default, QKT: ArrayElement + Float + Debug + Default>(
+    fixture: &KernelFixture,
+    shape: [u32; 5],
+    modes: [bool; 2],
+    in_proj: &[T],
+    f32s: &[Vec<f32>; 2],
+    submissions: usize,
+    label: &str,
+) -> (Option<(Duration, Duration)>, Vec<Duration>) {
+    let kernel = DeltaNetPrefillPrepVulkanKernel::new(
+        &fixture.context,
+        T::data_type(),
+        QKT::data_type(),
+        128,
+        modes[0],
+        modes[1],
+    )
+    .expect("Prep");
+    let mut span = 0;
+    let sets = recurrence_prep_sets::<T, QKT>(shape, modes[0], in_proj, f32s, &mut span);
+    let [h, _, k, v, q] = shape.map(|n| n as usize);
+    let compact: Vec<T> = match modes[1] {
+        true => (0..q * v).map(|i| in_proj[i / v * 2 * (k + v + h) + 2 * k + i % v]).collect(),
+        false => Vec::new(),
+    };
+    let (normalized, copied, gates, cpu_times) =
+        cpu_recurrence_prep::<T, QKT>(shape, 128, modes, in_proj, f32s, submissions);
+    let (mut results, mut times) = (vec![("CPU", normalized, copied, gates)], None);
+    for timed in [false, true].into_iter().take(1 + usize::from(submissions > 1)) {
+        let (normalized, copied, gates, elapsed) =
+            gpu_recurrence_prep::<T, QKT>(fixture, &kernel, shape, modes[1], in_proj, f32s, timed);
+        results.push(("Vulkan", normalized, copied, gates));
+        times = times.or(elapsed);
+    }
+    for (side, normalized, copied, gates) in &results {
+        for (index, name) in ["q_norm_out", "k_norm_out", "beta_out", "decay_out"].into_iter().enumerate() {
+            let ((sets, owner), label) = (&sets[index], format!("{label} {side} {name}"));
+            match index {
+                0 | 1 => check(sets, owner, &vec![sentinel::<QKT>(); owner.len()], &normalized[index], &label),
+                _ => check(sets, owner, &vec![sentinel::<f32>(); owner.len()], &gates[index - 2], &label),
+            }
+        }
+        assert_same_bits(&compact, copied, &format!("{label} {side} compact_v_out"));
+    }
+    let width = sets.iter().map(|(sets, _)| widest(sets)).fold(0.0, f64::max);
+    eprintln!("{label}: widest relative set {width:.2e}; widest dt span {span}");
+    (times, cpu_times)
+}
+
+fn recurrence_update_oracle<T: ArrayElement + Float + Debug + Default>(fixture: &KernelFixture) {
+    for shape in RECURRENCE_UPDATE_SHAPES {
+        let (in_proj, f32s) = recurrence_update_inputs::<T>(shape);
+        recurrence_update_check(fixture, shape, &in_proj, &f32s, 1, &format!("Update {:?} {shape:?}", T::data_type()));
+    }
+}
+
+/// Every Update shape over exactly its addressed extents: the whole state and every output within the class-aware
+/// interval oracle on the CPU and Vulkan, every input and guard unchanged.
+#[uzu_test]
+fn recurrence_update_matches_oracle() {
+    let fixture = KernelFixture::new();
+    recurrence_update_oracle::<f32>(&fixture);
+    recurrence_update_oracle::<bf16>(&fixture);
+    fixture.assert_clean();
+}
+
+fn recurrence_update_witness<T: ArrayElement + Float + Debug + Default>(fixture: &KernelFixture) {
+    let (shape, big, ty) = ([1, 1, 1, 128, 1], 2f32.powi(24), format!("{:?}", T::data_type()));
+    let row = |head: &[f32], tail: f32| [head.to_vec(), vec![tail; 128 - head.len()]].concat();
+    // in_proj [q, k, v, z, β_raw, a_raw] and [a_log, dt_bias 0, norm_weight 1, state].
+    let inputs = |q: &[f32], k: &[f32], state: &[f32], scalars: [f32; 4], a_log: f32| {
+        let in_proj = [q, k, &scalars[..]].concat().iter().map(|&x| T::from(x).unwrap()).collect::<Vec<T>>();
+        (in_proj, [vec![a_log], vec![0.0], vec![1.0], state.to_vec()])
+    };
+    let (q, k, state, scalars) =
+        (row(&[1.0], 0.0), row(&[1.0; 3], 0.0), row(&[big, 1.0, -big], 0.0), [0.0, 1.0, 0.0, 21.0]);
+    // β = 1/2 exactly and softplus(21) = 21 above 20: state[1] = d + k_1 δ with retrieved = d sk, which only the staging
+    // separates from F1 (decay inside the k dot) and F2 (retrieved without decay), enumerated over every candidate inverse,
+    // e^a_log and decay of each dt.
+    let (in_proj, f32s) = inputs(&q, &k, &state, scalars, 0.0);
+    let ([cpu, gpu], ..) =
+        recurrence_update_check(fixture, shape, &in_proj, &f32s, 1, &format!("{ty} staging witness"));
+    let [q_inv, k_inv] = [&q, &k].map(|values| members(recurrence_inverse(values)));
+    let es = members(bounds::<f32>(exp(0.0).0));
+    let decays = es.iter().map(|&e| members(decay::<f32, f32>(point(f64::from(e * 21.0)), true))).collect::<Vec<_>>();
+    let combinations = q_inv.len() * k_inv.len() * decays.iter().map(Vec::len).sum::<usize>();
+    assert_eq!(combinations, 22_750, "{ty}: the witness's candidate combinations");
+    let (mut correct, mut faults) = (HashSet::new(), [HashSet::new(), HashSet::new()]);
+    for (_, &ck, &d) in itertools::iproduct!(&q_inv, &k_inv, decays.iter().flatten()) {
+        let terms = [big, 1.0, -big];
+        let sk = terms.iter().fold(0.0f32, |acc, &s| acc + s * ck);
+        let decayed = terms.iter().fold(0.0f32, |acc, &s| acc + d * s * ck);
+        let next = |retrieved: f32| d * 1.0 + ck * (0.5 * (0.0 - retrieved));
+        correct.insert(next(d * sk).to_bits());
+        faults[0].insert(next(decayed).to_bits());
+        faults[1].insert(next(sk).to_bits());
+    }
+    assert!(faults.iter().all(|fault| fault.is_disjoint(&correct)), "{ty}: a fault's state[1] is a correct candidate");
+    for (side, next) in [("CPU", &cpu), ("Vulkan", &gpu)] {
+        assert!(correct.contains(&next[1].to_bits()), "{ty} {side}: state[1] {} outside the candidates", next[1]);
+    }
+    eprintln!(
+        "{ty} staging witness: {} and {} inverses, {} e^a_log, {combinations} combinations, {} state[1] values",
+        q_inv.len(),
+        k_inv.len(),
+        es.len(),
+        correct.len()
+    );
+    // [name, inputs, the output's one class]: NaN q; +inf k, whose inverse +0 makes k_0 NaN; -inf v, an infinite o and so
+    // a +0 inverse times it; o² past FP32 with decay e^0 (a_log -inf), a +0 inverse of finite o; Root's iterator seed
+    // witness, where kq = -0 from the -0 start makes o = -0 + +0 = +0, which a +0 start would make -0.
+    let classes = [
+        ("q NaN", inputs(&row(&[f32::NAN], 0.0), &k, &state, scalars, 0.0), point(f64::NAN)),
+        ("k +inf", inputs(&q, &row(&[f32::INFINITY, 1.0, 1.0], 0.0), &state, scalars, 0.0), point(f64::NAN)),
+        ("v -inf", inputs(&q, &k, &state, [f32::NEG_INFINITY, 1.0, 0.0, 21.0], 0.0), point(f64::NAN)),
+        ("o² +inf", inputs(&q, &k, &row(&[2f32.powi(70), 1.0, -big], 0.0), scalars, f32::NEG_INFINITY), point(0.0)),
+        (
+            "kq -0",
+            inputs(
+                &row(&[-65536.0], -0.0),
+                &row(&[], 0.0),
+                &row(&[f32::MIN_POSITIVE], 0.0),
+                [-0.0, 1.0, 0.0, 21.0],
+                0.0,
+            ),
+            point(0.0),
+        ),
+    ];
+    for (name, (in_proj, f32s), expected) in classes {
+        let [_, out] = recurrence_update_sets(shape, &in_proj, &f32s, &mut 0);
+        assert_eq!(out, [expected], "{ty} {name}: oracle");
+        recurrence_update_check(fixture, shape, &in_proj, &f32s, 1, &format!("{ty} {name} witness"));
+    }
+}
+
+/// Update witnesses, F32 first: Method 2's enumeration of 22,750 candidate combinations of the staging witness, whose
+/// state[1] the CPU and Vulkan must take while faults F1 and F2 fall outside; NaN, infinities, a +0 inverse after an
+/// overflowing square sum and the signed zero of kq's -0 start, each a single output class of the oracle.
+#[uzu_test]
+fn update_witnesses() {
+    let fixture = KernelFixture::new();
+    recurrence_update_witness::<f32>(&fixture);
+    recurrence_update_witness::<bf16>(&fixture);
+    fixture.assert_clean();
+}
+
+fn recurrence_prefill_cpu<T: ArrayElement + Float + Debug + Default>(fixture: &KernelFixture) {
+    for shape in RECURRENCE_PREFILL_SHAPES {
+        let (in_proj, f32s) = recurrence_prefill_inputs::<T>(
+            shape,
+            if shape[5] > 64 {
+                0
+            } else {
+                11
+            },
+        );
+        recurrence_prefill_check(
+            fixture,
+            shape,
+            &in_proj,
+            &f32s,
+            1,
+            &format!("Prefill {:?} {shape:?}", T::data_type()),
+        );
+    }
+}
+
+/// Every Prefill shape over exactly its addressed extents, with the specials on the short ones: state and output equal
+/// to the CPU's bit for bit up to NaN payloads, every input, slack and guard unchanged.
+#[uzu_test]
+fn prefill_matches_cpu() {
+    let fixture = KernelFixture::new();
+    recurrence_prefill_cpu::<f32>(&fixture);
+    recurrence_prefill_cpu::<bf16>(&fixture);
+    fixture.assert_clean();
+}
+
+fn recurrence_prefill_witness<T: ArrayElement + Float + Debug + Default>(fixture: &KernelFixture) {
+    let (big, ty) = (2f32.powi(24), format!("{:?}", T::data_type()));
+    let row = |head: &[f32]| [head.to_vec(), vec![0.0; 128 - head.len()]].concat();
+    let f32s = [row(&[1.0]), row(&[1.0; 3]), vec![0.5], vec![0.75], row(&[big, 1.0, -big])];
+    let label = format!("{ty} Prefill witness");
+    let ((state, out), ..) =
+        recurrence_prefill_check(fixture, [1, 1, 1, 128, 1, 1], &[T::zero(); 257], &f32s, 1, &label);
+    // kv = (0.75 2^24 + 0.75) - 0.75 2^24 = 1 after rounding, so delta = -1/2 and the state 0.75 2^24 (to even), 0.25,
+    // -0.75 2^24 and +0, and out its first element. F3 (decay after the dot, kv = 0) would leave state[1] 0.75 and F4
+    // (o from the old state) give 2^24.
+    assert_same_bits(&row(&[0.75 * big, 0.25, -0.75 * big]), &state, &format!("{label} state"));
+    assert_same_bits(&[T::from(0.75 * big).unwrap()], &out, &format!("{label} out"));
+    assert!(state[1] != 0.75 && out[0] != T::from(big).unwrap(), "{label}: a fault's value");
+}
+
+/// Prefill's exact witness for both storage types on the CPU and Vulkan, separating F3 and F4.
+#[uzu_test]
+fn prefill_witnesses() {
+    let fixture = KernelFixture::new();
+    recurrence_prefill_witness::<f32>(&fixture);
+    recurrence_prefill_witness::<bf16>(&fixture);
+    fixture.assert_clean();
+}
+
+fn recurrence_prep_oracle<T: ArrayElement + Float + Debug + Default, QKT: ArrayElement + Float + Debug + Default>(
+    fixture: &KernelFixture
+) {
+    for shape in RECURRENCE_PREP_SHAPES {
+        for modes in [[false, false], [false, true], [true, false], [true, true]] {
+            let (in_proj, f32s) = recurrence_prep_inputs::<T>(shape, modes[1], 13);
+            let types = format!("{:?}/{:?}", T::data_type(), QKT::data_type());
+            let label = format!("Prep {types} {shape:?} log {} compact {}", modes[0], modes[1]);
+            recurrence_prep_check::<T, QKT>(fixture, shape, modes, &in_proj, &f32s, 1, &label);
+        }
+    }
+}
+
+/// Every Prep shape with the specials in in_proj, for both T and QKT and the four mode combinations: q, k, beta and the
+/// (log) decay within the oracle on the CPU and Vulkan, untouched lanes and slack, every input and guard unchanged,
+/// compact V bit for bit.
+#[uzu_test]
+fn prep_matches_oracle() {
+    let fixture = KernelFixture::new();
+    recurrence_prep_oracle::<f32, f32>(&fixture);
+    recurrence_prep_oracle::<f32, bf16>(&fixture);
+    recurrence_prep_oracle::<bf16, f32>(&fixture);
+    recurrence_prep_oracle::<bf16, bf16>(&fixture);
+    fixture.assert_clean();
+}
+
+fn recurrence_prep_witness<T: ArrayElement + Float + Debug + Default, QKT: ArrayElement + Float + Debug + Default>(
+    fixture: &KernelFixture
+) {
+    let (shape, label) = ([1, 1, 128, 1, 1], format!("{:?}/{:?} Prep witness", T::data_type(), QKT::data_type()));
+    let row = [vec![1.0], vec![0.0; 127]].concat();
+    let in_proj =
+        [&row[..], &row[..], &[0.0, 0.0, 0.0, 21.0]].concat().iter().map(|&x| T::from(x).unwrap()).collect::<Vec<T>>();
+    let f32s = [vec![0.0], vec![0.0]];
+    let sets = [true, false].map(|log| recurrence_prep_sets::<T, QKT>(shape, log, &in_proj, &f32s, &mut 0));
+    let (query, decays) = (sets[0][0].0[0], [sets[0][3].0[0], sets[1][3].0[0]]);
+    // F5 drops the scale, leaving QKT(1 inv), about 1, against about 0.0884; F6 swaps the modes, about -21 against about
+    // 7.6e-10.
+    let unscaled = mul::<QKT>(point(1.0), recurrence_inverse(&row));
+    assert!(disjoint(query, unscaled) && disjoint(decays[0], decays[1]), "{label}: {query:?} {unscaled:?} {decays:?}");
+    eprintln!("{label}: q_norm_out[0] {query:?}, log decay {:?}, decay {:?}", decays[0], decays[1]);
+    for log in [true, false] {
+        recurrence_prep_check::<T, QKT>(fixture, shape, [log, true], &in_proj, &f32s, 1, &format!("{label} log {log}"));
+    }
+}
+
+/// Prep witnesses for the four type pairs, F32 first: the CPU and Vulkan within the q scale's and each decay mode's
+/// sets, which exclude F5 and F6.
+#[uzu_test]
+fn prep_witnesses() {
+    let fixture = KernelFixture::new();
+    recurrence_prep_witness::<f32, f32>(&fixture);
+    recurrence_prep_witness::<f32, bf16>(&fixture);
+    recurrence_prep_witness::<bf16, f32>(&fixture);
+    recurrence_prep_witness::<bf16, bf16>(&fixture);
+    fixture.assert_clean();
+}
+
+/// Prep's compact V presence, the generated binding's invariant, failing before any precondition, also without work;
+/// every precondition with its message, HEAD_K_DIM's first; nothing recorded or changed. Then the CPU's own failures,
+/// each on a fresh context: its encode-time variant panic for HEAD_K_DIM 129, its divisions by G = 0 or by
+/// floor(H / G) = 0, also without tokens, and with debug assertions Update's H % G check; no CPU run for the ownership
+/// guards, which the CPU would complete. Only F32 and BF16 exist.
+#[uzu_test]
+fn recurrence_presence_and_preconditions() {
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
+    let buffers = [0; 8].map(|_| fixture.guarded(&[sentinel::<f32>(); 64], sentinel::<f32>()));
+    let [a, b, c, d, e, f, g, h] = buffers.each_ref().map(arg);
+    let mut encoding = fixture.encoding();
+    for (compact, q) in [(true, 2), (true, 0), (false, 2), (false, 0)] {
+        let prep = DeltaNetPrefillPrepVulkanKernel::new(context, DataType::F32, DataType::F32, 129, false, compact)
+            .expect("Prep");
+        let wrong = (!compact).then(|| f.clone());
+        // SAFETY: the presence check panics before anything is recorded.
+        let message = panics(|| unsafe {
+            let (a, b, c, d, e, g, h) = (a.clone(), b.clone(), c.clone(), d.clone(), e.clone(), g.clone(), h.clone());
+            prep.encode(a, b, c, d, e, wrong, g, h, 2, 0, 128, 4, q, &mut encoding)
+        });
+        let presence = "DeltaNetPrefillPrep: argument 'compact_v_out' must be present exactly when write_compact_v";
+        let expected = format!("assertion `left == right` failed: {presence}\n  left: {}\n right: {compact}", !compact);
+        assert_eq!(message, expected, "Prep compact {compact}, Q {q}");
+    }
+    let violated = |kernel: &str, text: &str| format!("{kernel}: precondition {text} violated");
+    let (dims, groups, positive) = (
+        "HEAD_K_DIM == 128",
+        "num_v_heads == 0 || num_k_heads > 0 && num_v_heads.is_multiple_of(num_k_heads)",
+        "num_k_heads > 0",
+    );
+    let enough = "num_v_heads == 0 || num_v_heads >= num_k_heads";
+    let rows = "suffix_len <= 1 || num_v_heads == 0 || head_v_dim == 0 || num_v_heads <= value_dim / head_v_dim";
+    let keys = "suffix_len <= 1 || num_k_heads <= key_dim / 128";
+    for (dim, [hv, hk], text) in [(129, [2, 0], dims), (128, [2, 0], groups), (128, [3, 2], groups)] {
+        let update = DeltaNetUpdateVulkanKernel::new(context, DataType::F32, dim).expect("Update");
+        // SAFETY: the precondition panics before anything is recorded.
+        let actual = panics(|| unsafe {
+            let (a, b, c, d, e, f) = (a.clone(), b.clone(), c.clone(), d.clone(), e.clone(), f.clone());
+            update.encode(a, b, c, d, e, f, hv, hk, 1, 128, 4, 1e-5, &mut encoding)
+        });
+        assert_eq!(actual, violated("DeltaNetUpdate", text), "Update HEAD_K_DIM {dim}, H {hv}, G {hk}");
+    }
+    let prefills = [
+        (129, [0, 0, 1, 4, 0], dims),
+        (128, [0, 0, 1, 4, 0], positive),
+        (128, [1, 2, 1, 4, 0], enough),
+        (128, [2, 1, 4, 7, 2], rows),
+    ];
+    for (dim, [hv, hk, dv, v, q], text) in prefills {
+        let prefill = DeltaNetPrefillVulkanKernel::new(context, DataType::F32, dim).expect("Prefill");
+        // SAFETY: as above.
+        let actual = panics(|| unsafe {
+            let (a, b, c, d, e, f, g) = (a.clone(), b.clone(), c.clone(), d.clone(), e.clone(), f.clone(), g.clone());
+            prefill.encode(a, b, c, d, e, f, g, hv, hk, dv, 128, v, q, 1, &mut encoding)
+        });
+        assert_eq!(actual, violated("DeltaNetPrefill", text), "Prefill HEAD_K_DIM {dim}, H {hv}, G {hk}, Q {q}");
+    }
+    for (dim, [hv, hk, k, q], text) in
+        [(129, [0, 0, 128, 0], dims), (128, [0, 0, 128, 0], positive), (128, [2, 2, 255, 2], keys)]
+    {
+        let prep = DeltaNetPrefillPrepVulkanKernel::new(context, DataType::F32, DataType::F32, dim, true, false)
+            .expect("Prep");
+        // SAFETY: as above.
+        let actual = panics(|| unsafe {
+            let (a, b, c, d, e, g, h) = (a.clone(), b.clone(), c.clone(), d.clone(), e.clone(), g.clone(), h.clone());
+            prep.encode(a, b, c, d, e, None, g, h, hv, hk, k, 4, q, &mut encoding)
+        });
+        assert_eq!(actual, violated("DeltaNetPrefillPrep", text), "Prep HEAD_K_DIM {dim}, H {hv}, G {hk}, Q {q}");
+    }
+    KernelFixture::complete(encoding);
+    // SAFETY: every command buffer using these buffers has completed.
+    unsafe {
+        for buffer in &buffers {
+            KernelFixture::assert_unchanged(buffer, sentinel::<f32>(), &[sentinel::<f32>(); 64], "buffer");
+        }
+    }
+    let unsupported = |variant: String| format!("not implemented: variant doesn't exist: {variant}");
+    let update = |shape: [u32; 5], dim: u32| {
+        panics(|| drop(cpu_recurrence_update::<f32>(shape, dim, &[], &Default::default(), 1)))
+    };
+    assert_eq!(update([2, 0, 1, 128, 4], 128), CPU_FAILURE, "CPU Update G 0");
+    if cfg!(debug_assertions) {
+        assert_eq!(update([3, 2, 1, 128, 4], 128), CPU_FAILURE, "CPU Update H % G");
+    }
+    assert_eq!(update([1, 1, 1, 128, 4], 129), unsupported(format!("{:?}", (DataType::F32, 129))));
+    let prefill = |shape: [u32; 6], dim: u32| {
+        panics(|| drop(cpu_recurrence_prefill::<f32>(shape, dim, &[], &Default::default(), 1)))
+    };
+    assert_eq!(prefill([0, 0, 1, 128, 4, 0], 128), CPU_FAILURE, "CPU Prefill G 0");
+    assert_eq!(prefill([1, 2, 1, 128, 4, 0], 128), CPU_FAILURE, "CPU Prefill floor(H / G) 0");
+    assert_eq!(prefill([1, 1, 1, 128, 4, 1], 129), unsupported(format!("{:?}", (DataType::F32, 129))));
+    let prep = |shape: [u32; 5], dim: u32| {
+        panics(|| drop(cpu_recurrence_prep::<f32, f32>(shape, dim, [false, false], &[], &Default::default(), 1)))
+    };
+    assert_eq!(prep([0, 0, 128, 4, 0], 128), CPU_FAILURE, "CPU Prep G 0");
+    assert_eq!(prep([1, 1, 128, 4, 1], 129), unsupported(format!("{:?}", (DataType::F32, DataType::F32, 129))));
+    let f16 = DataType::F16;
+    let variant = |kernel: &str, error: Option<Error>| match error {
+        Some(Error::KernelVariant {
+            kernel: name,
+            ..
+        }) => assert_eq!(name, kernel),
+        _ => panic!("{kernel}: F16 accepted"),
+    };
+    variant("DeltaNetUpdate", DeltaNetUpdateVulkanKernel::new(context, f16, 128).err());
+    variant("DeltaNetPrefill", DeltaNetPrefillVulkanKernel::new(context, f16, 128).err());
+    for [t, qkt] in [[f16, DataType::F32], [DataType::F32, f16]] {
+        variant("DeltaNetPrefillPrep", DeltaNetPrefillPrepVulkanKernel::new(context, t, qkt, 128, false, false).err());
+    }
+    fixture.assert_clean();
+}
+
+/// No work at u32::MAX scalars and empty ranges, past the preconditions: Update without v heads (also with G = 0, which
+/// the CPU completes too) or rows; Prefill without tokens, v heads or rows; Prep without tokens, with and without
+/// compact V. Nothing is recorded or changed.
+#[uzu_test]
+fn recurrence_zero_work_records_nothing() {
+    let fixture = KernelFixture::new();
+    let (context, empty, m) = (&fixture.context, fixture.guarded::<f32>(&[], sentinel()), u32::MAX);
+    let e = || arg(&empty);
+    let update = DeltaNetUpdateVulkanKernel::new(context, DataType::F32, 128).expect("Update");
+    let prefill = DeltaNetPrefillVulkanKernel::new(context, DataType::F32, 128).expect("Prefill");
+    let mut encoding = fixture.encoding();
+    // SAFETY: without work nothing is indexed or recorded.
+    unsafe {
+        for [h, g, d] in [[0, m, m], [0, 0, m], [m, 1, 0]] {
+            update.encode(e(), e(), e(), e(), e(), e(), h, g, d, m, m, 1e-5, &mut encoding);
+        }
+        for [h, g, d, q] in [[m, 1, m, 0], [0, m, m, m], [m, 1, 0, m]] {
+            prefill.encode(e(), e(), e(), e(), e(), e(), e(), h, g, d, m, m, q, m, &mut encoding);
+        }
+        for compact in [false, true] {
+            let prep =
+                DeltaNetPrefillPrepVulkanKernel::new(context, DataType::F32, DataType::F32, 128, compact, compact)
+                    .expect("Prep");
+            prep.encode(e(), e(), e(), e(), e(), compact.then(e), e(), e(), m, m, m, m, 0, &mut encoding);
+        }
+    }
+    KernelFixture::complete(encoding);
+    // SAFETY: the only command buffer using the buffer has completed.
+    unsafe { KernelFixture::assert_unchanged(&empty, sentinel::<f32>(), &[], "empty") };
+    let (state, out, _) = cpu_recurrence_update::<f32>([0, 0, 4, 128, 4], 128, &[], &Default::default(), 1);
+    assert!(state.is_empty() && out.is_empty(), "CPU Update without v heads and G 0");
+    fixture.assert_clean();
+}
+
+fn recurrence_measure<T: ArrayElement + Float + Debug + Default>(
+    fixture: &KernelFixture,
+    lengths: &[u32],
+) {
+    let ([h, g, d, k, v], size, ty) =
+        ([48u32, 16, 128, 2048, 6144], size_of::<T>() as u64, format!("{:?}", T::data_type()));
+    let [h64, d64, v64] = [h, d, v].map(u64::from);
+    let print = |kernel: &str, q: u32, bytes: u64, (times, mut cpu): (Option<(Duration, Duration)>, Vec<Duration>)| {
+        let (gpu, wall) = times.expect("timed");
+        cpu.drain(..3);
+        cpu.sort();
+        let rate = bytes as f64 / gpu.as_secs_f64() / 1e9;
+        eprintln!(
+            "DeltaNet{kernel} {ty} Q {q}: {bytes} B logical, provisional ({rate:.1} GB/s effective); GPU {gpu:?}, wall {wall:?}; CPU wall {:?}",
+            cpu[cpu.len() / 2]
+        );
+    };
+    let shape = [h, g, d, k, v];
+    let (in_proj, f32s) = recurrence_update_inputs::<T>(shape);
+    let (_, times, cpu) = recurrence_update_check(fixture, shape, &in_proj, &f32s, 13, &format!("{ty} Update"));
+    print("Update", 1, h64 * (768 * size + 1024) + h64 * d64 * (2048 + 4 * size + 4), (times, cpu));
+    for &q in lengths {
+        let (shape, q64, lanes) = ([h, g, k, v, q], u64::from(q), 48 * (2 * size + 16));
+        let (in_proj, f32s) = recurrence_prep_inputs::<T>(shape, false, 0);
+        let flat = recurrence_prep_check::<T, f32>(
+            fixture,
+            shape,
+            [false, false],
+            &in_proj,
+            &f32s,
+            13,
+            &format!("{ty} flat Prep Q {q}"),
+        );
+        print("PrefillPrep flat", q, q64 * (16 * (512 * size + 1024) + lanes), flat);
+        let (in_proj, f32s) = recurrence_prep_inputs::<T>(shape, true, 0);
+        let tree = recurrence_prep_check::<T, T>(
+            fixture,
+            shape,
+            [true, true],
+            &in_proj,
+            &f32s,
+            13,
+            &format!("{ty} tree Prep Q {q}"),
+        );
+        print("PrefillPrep tree", q, q64 * (16 * 768 * size + lanes + 2 * v64 * size), tree);
+        let shape = [h, g, d, k, v, q];
+        let (in_proj, f32s) = recurrence_prefill_inputs::<T>(shape, 0);
+        let (_, times, cpu) =
+            recurrence_prefill_check(fixture, shape, &in_proj, &f32s, 13, &format!("{ty} Prefill Q {q}"));
+        print("Prefill", q, q64 * h64 * d64 * (3080 + 2 * size), (times, cpu));
+    }
+}
+
+/// Run alone, without sync validation: `... delta_net_test::recurrence_throughput -- --ignored --nocapture`. Synthetic
+/// inputs at the common test's Qwen3.5-labelled shapes (48 v heads, 16 k heads of 128, Dv 128, so key_dim 2048,
+/// value_dim 6144 and total_proj_dim 16480), not verified model files: Update for one token, flat Prep (FP32 q and k,
+/// decays), tree Prep (T q and k, log decays, compact V) and Prefill for 64 and 1024 tokens, in two rounds of opposite
+/// order. Prints the GPU and wall medians of 10 Vulkan submissions after 3 warm-up ones and the CPU kernels' wall
+/// medians. Update and Prefill write their state, so every submission gets its own fresh bundle, each checked after
+/// completion against the oracle or the CPU; Prep's outputs are checked once and after timing. The bytes are the logical
+/// loads and stores of the shaders' loops, provisional until reviewed, not measured bandwidth.
+#[uzu_test]
+#[ignore]
+fn recurrence_throughput() {
+    let fixture = KernelFixture::new();
+    for (round, lengths) in [[64, 1024], [1024, 64]].iter().enumerate() {
+        eprintln!("DeltaNet recurrence throughput round {round}");
+        recurrence_measure::<f32>(&fixture, lengths);
+        recurrence_measure::<bf16>(&fixture, lengths);
     }
     fixture.assert_clean();
 }

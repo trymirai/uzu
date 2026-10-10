@@ -582,6 +582,7 @@ pub fn bindgen(
         #(#stride_checks)*
         #(#layout_checks)*
 
+        #[allow(non_snake_case)]
         pub struct #struct_name {
             #pipeline_field,
             #(#referenced: #referenced_types,)*
@@ -620,7 +621,7 @@ pub fn bindgen(
             /// cover every element the kernel indexes for these scalar arguments. Ranges written by the
             /// kernel must not alias other arguments unless the kernel defines that aliasing. Range
             /// bounds are checked; shader indexing within them is not.
-            #[allow(clippy::too_many_arguments)]
+            #[allow(non_snake_case, clippy::too_many_arguments)]
             pub unsafe fn encode(
                 &self,
                 #(#encode_arguments,)*

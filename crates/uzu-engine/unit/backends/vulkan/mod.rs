@@ -56,7 +56,7 @@ pub use matmul_case::MatmulCase;
 pub use normalization_case::NormalizationCase;
 pub use normalization_test::stage_oracle as normalization_stage_oracle;
 pub use qkv_norm_case::QKVNormCase;
-pub use qkv_norm_test::staged_rms_bounds;
+pub use qkv_norm_test::{mean_bounds, reciprocal_root_bounds, staged_rms_bounds, sum_bounds};
 pub use quantized_matmul_test::{check, check_all};
 pub use short_conv_case::ShortConvCase;
 pub use short_conv_test::{arg, assert_same_bits, cpu_buffer, cpu_submissions, specials};

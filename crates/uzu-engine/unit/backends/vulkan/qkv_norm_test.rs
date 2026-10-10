@@ -87,7 +87,7 @@ fn widened(
 /// some 2^k with Σ|t| < 2^(k + 24), since every partial sum is then representable. Where any invocation's partial may
 /// reach 2^-101 the device sums natively and may flush a subnormal partial or result: at most 2 threads 2^-126 more;
 /// otherwise it sums scaled, which is IEEE. Non-finite terms sum exactly to their class.
-fn sum_bounds(
+pub fn sum_bounds(
     terms: &[(f64, f64)],
     threads: usize,
 ) -> (f64, f64) {
@@ -125,7 +125,7 @@ fn sum_bounds(
 }
 
 /// Bounds of staged_mean's quotient of an FP32 sum by the FP32 count: zeros exact, otherwise within 2.5 binade ULPs.
-fn mean_bounds(
+pub fn mean_bounds(
     (lo, hi): (f64, f64),
     count: f64,
 ) -> (f64, f64) {
@@ -134,6 +134,17 @@ fn mean_bounds(
         false => [widened(sum / count, 2.5).0, widened(sum / count, 2.5).1][end],
     };
     (quotient(lo, 0), quotient(hi, 1))
+}
+
+/// Bounds of the reciprocal square root of an FP32 shifted variance: within Vulkan's 2 ULPs of positive finite values,
+/// exact by class otherwise (zeros give infinities of their sign, +inf gives +0, NaN and negative values NaN).
+pub fn reciprocal_root_bounds(shifted: f64) -> (f64, f64) {
+    match shifted {
+        _ if shifted.is_nan() || shifted < 0.0 => (f64::NAN, f64::NAN),
+        0.0 => (f64::INFINITY.copysign(shifted), f64::INFINITY.copysign(shifted)),
+        f64::INFINITY => (0.0, 0.0),
+        _ => widened(1.0 / shifted.sqrt(), 2.0),
+    }
 }
 
 /// Endpoints of the CPU's FP32 staging of each row of a plain RMS or LayerNorm Normalization `case` (no biases,
@@ -154,12 +165,6 @@ pub fn staged_rms_bounds<I: Float, S: Float, O: Float>(
     let n = case.element_count as usize;
     let count = f64::from(n as f32);
     let (epsilon, offset) = (f64::from(case.epsilon), f64::from(case.scale_offset));
-    let reciprocal_root = |shifted: f64| match shifted {
-        _ if shifted.is_nan() || shifted < 0.0 => (f64::NAN, f64::NAN),
-        0.0 => (f64::INFINITY.copysign(shifted), f64::INFINITY.copysign(shifted)),
-        f64::INFINITY => (0.0, 0.0),
-        _ => widened(1.0 / shifted.sqrt(), 2.0),
-    };
     let mut bounds = Vec::new();
     for row in case.input.chunks(n.max(1)) {
         let x = row.iter().map(|value| value.to_f32().unwrap()).collect::<Vec<_>>();
@@ -195,7 +200,7 @@ pub fn staged_rms_bounds<I: Float, S: Float, O: Float>(
             count,
         );
         let shifted = [round32(variance.0 + epsilon), round32(variance.1 + epsilon)];
-        let roots = [reciprocal_root(shifted[1]).0, reciprocal_root(shifted[0]).1];
+        let roots = [reciprocal_root_bounds(shifted[1]).0, reciprocal_root_bounds(shifted[0]).1];
         for (i, &(deviation_lo, deviation_hi)) in deviations.iter().enumerate() {
             let stage = |normalized: f64| match &case.scales {
                 None => to::<O>(normalized),
