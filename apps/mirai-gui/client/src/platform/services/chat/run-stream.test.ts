@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LlmRunParams, SessionOutputStats, TranscriptItem } from "@/types/llm-stream";
 import { runLlmStream, type RunEvent, type RunTransport } from "./run-stream";
 
@@ -37,6 +37,9 @@ const readAll = async (stream: ReadableStream<string>): Promise<string> => {
 };
 
 describe("runLlmStream", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
   it("replays ordered transcript snapshots including explicit naming calls", async () => {
     const initial: TranscriptItem[] = [
       { type: "thinking", text: "Check the clock", completed: true },
@@ -66,6 +69,7 @@ describe("runLlmStream", () => {
     run.onTranscript((items) => snapshots.push(items));
     emit({ type: "transcript", items: initial });
     emit({ type: "transcriptDelta", index: 0, delta: "える 🧠" });
+    vi.advanceTimersToNextFrame();
     emit({ type: "transcriptDelta", index: 2, delta: ", თბილისი 👋" });
     emit({ type: "done", text: "Hello, თბილისი 👋", stats });
 
@@ -110,6 +114,7 @@ describe("runLlmStream", () => {
     });
     emit({ type: "transcript", items: [{ type: "text", text: "Revised" }] });
     emit({ type: "transcriptDelta", index: 0, delta: " answer" });
+    vi.advanceTimersToNextFrame();
     expect(listener).toHaveBeenLastCalledWith([{ type: "text", text: "Revised answer" }]);
     const final: TranscriptItem[] = [{ type: "text", text: "Final answer" }];
     emit({ type: "done", text: "Final answer", stats, transcript: final });
@@ -144,7 +149,6 @@ describe("runLlmStream", () => {
       run.onTranscript(listener);
       emit({ type: "transcript", items: [...items.slice(0, -1), { type: "text", text: "It is" }] });
       emit({ type: "transcriptDelta", index: 2, delta: " noon." });
-      expect(listener).toHaveBeenLastCalledWith(items);
       listener.mockClear();
       if (end === "done") emit({ type: "done", text: "Checking.\n\nIt is noon.", stats });
       else {
@@ -154,12 +158,36 @@ describe("runLlmStream", () => {
           await expect(readAll(run.stream)).rejects.toThrow("Stopped");
         }
       }
+      expect(listener).toHaveBeenCalledExactlyOnceWith(items);
+      listener.mockClear();
       emit({ type: "transcript", items: [] });
       emit({ type: "transcriptDelta", index: 2, delta: " Ignore this." });
+      vi.advanceTimersToNextFrame();
       expect(listener).not.toHaveBeenCalled();
       expect((await run.result).transcript).toEqual(items);
     },
   );
+
+  it("publishes a burst of tokens once per frame and keeps unchanged items by reference", async () => {
+    const { transport, emit } = fakeTransport();
+    const run = runLlmStream(transport, params);
+    const completed: TranscriptItem = { type: "text", text: "Earlier reply" };
+    emit({ type: "transcript", items: [completed, { type: "thinking", text: "" }] });
+    const listener = vi.fn();
+    run.onTranscript(listener);
+    listener.mockClear();
+    for (let i = 0; i < 1000; i++) emit({ type: "transcriptDelta", index: 1, delta: "考" });
+    expect(listener).not.toHaveBeenCalled();
+    vi.advanceTimersToNextFrame();
+    expect(listener).toHaveBeenCalledExactlyOnceWith([completed, { type: "thinking", text: "考".repeat(1000) }]);
+    expect(listener.mock.calls[0]?.[0][0]).toBe(completed);
+    emit({ type: "transcriptDelta", index: 1, delta: " done" });
+    await run.stream.getReader().cancel();
+    expect((await run.result).transcript?.[1]).toEqual({ type: "thinking", text: "考".repeat(1000) + " done" });
+    expect(listener).toHaveBeenCalledTimes(2);
+    vi.advanceTimersToNextFrame();
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
 
   it("streams chunks, closes on done and resolves the result", async () => {
     const { transport, emit } = fakeTransport();

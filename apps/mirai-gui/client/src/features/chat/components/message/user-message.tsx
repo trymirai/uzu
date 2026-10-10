@@ -1,5 +1,6 @@
 import { CopyButton } from "@/components/ui/copy-button";
 import { Button } from "@/components/ui/button";
+import { Button as HeadlessButton } from "@headlessui/react";
 import { TextArea } from "@/components/ui/text-area";
 import { writeItemsWithFocus } from "@/utils/clipboard";
 import { Pencil } from "lucide-react";
@@ -113,20 +114,20 @@ export const UserMessage = ({ id, text, attachmentIds, canEdit = false, onEdit }
           <div className="font-[350] text-label-title relative w-fit max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-[5px] text-[15px] leading-[140%] px-2.5 py-[6px] bg-bg-hover ml-auto">
             {text}
           </div>
-          <div className="mt-1 flex h-8 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/user:opacity-100 group-focus-within/user:opacity-100 [@media(hover:none)]:opacity-100">
+          <div className="mt-2 flex h-8 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/user:opacity-100 group-focus-within/user:opacity-100 [@media(hover:none)]:opacity-100">
             <CopyButton className="[&_svg]:size-4" onCopy={copy} />
             {onEdit && (
-              <button
+              <HeadlessButton
                 ref={editButtonRef}
                 type="button"
                 aria-label="Edit message"
                 title="Edit message"
                 disabled={!canEdit}
                 onClick={startEditing}
-                className="flex min-h-8 min-w-8 items-center justify-center rounded-[5px] p-[6px] text-label-muted outline-hidden transition-colors hover:bg-card-hover hover:text-label-title focus-visible:shadow-focus disabled:opacity-50"
+                className="flex min-h-8 min-w-8 items-center justify-center rounded-[5px] p-[6px] text-label-muted outline-hidden transition-colors hover:bg-card-hover hover:text-label-title data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
               >
                 <Pencil className="size-4" />
-              </button>
+              </HeadlessButton>
             )}
           </div>
         </>

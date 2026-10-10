@@ -1,4 +1,5 @@
 import { twMerge } from "tailwind-merge";
+import { DataInteractive } from "@headlessui/react";
 import { IconCheckmark } from "../../icons/checkmark-icon";
 import { CHECKBOX_SIZE, CHECKED_BG, CHECKED_BORDER, FOCUS_RING, UNCHECKED_BORDER } from "./constants";
 import type { CheckboxProps } from "./types";
@@ -24,15 +25,17 @@ export function Checkbox({
 
   return (
     <span className="relative inline-flex shrink-0 items-center justify-center">
-      <input
-        type="checkbox"
-        className={boxClasses}
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        disabled={disabled}
-        aria-checked={checked}
-        aria-label={ariaLabel}
-      />
+      <DataInteractive>
+        <input
+          type="checkbox"
+          className={boxClasses}
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          disabled={disabled}
+          aria-checked={checked}
+          aria-label={ariaLabel}
+        />
+      </DataInteractive>
       <IconCheckmark
         strokeWidth={2.5}
         size={sizeConfig.icon}

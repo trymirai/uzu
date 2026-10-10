@@ -29,7 +29,7 @@ export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropd
         disabled={disabled}
         aria-label="Performance"
         title="Performance"
-        className="flex size-8 items-center justify-center rounded-md text-label-muted transition-colors enabled:hover:bg-bg-hover enabled:hover:text-label-title focus:outline-hidden focus-visible:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed"
+        className="flex size-8 items-center justify-center rounded-md text-label-muted transition-colors enabled:hover:bg-bg-hover enabled:hover:text-label-title focus:outline-hidden data-[focus]:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed"
       >
         <Activity className="size-4" aria-hidden="true" />
       </PopoverButton>

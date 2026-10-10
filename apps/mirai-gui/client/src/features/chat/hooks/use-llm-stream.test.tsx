@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runLlmStream, type RunEvent, type RunTransport } from "@/platform/services/chat/run-stream";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
+import type { ChatMetadata } from "@/platform/services/storage";
 import { Roles } from "@/types/chat";
 import type { SessionOutputStats, TranscriptItem } from "@/types/llm-stream";
 import type { Message } from "@/types/message";
@@ -12,7 +13,8 @@ const mocks = vi.hoisted(() => ({
   getModelChatNamingEnabled: vi.fn(async () => true),
   cancelRun: vi.fn(async () => {}),
   updateStoredMessage: vi.fn(async () => {}),
-  updateChatTitle: vi.fn<(id: string, name: string, expected?: string) => Promise<void>>(async () => {}),
+  updateChatTitle: vi.fn<(id: string, name: string, expected?: string) => Promise<boolean>>(async () => true),
+  listChats: vi.fn<() => Promise<ChatMetadata[]>>(async () => []),
   loadChat: vi.fn<() => Promise<{ metadata: { title: string }; messages?: Message[] }>>(async () => ({
     metadata: { title: "Untitled" },
   })),
@@ -25,7 +27,7 @@ vi.mock("@/platform/platform-singleton", () => ({
       updateStoredMessage: mocks.updateStoredMessage,
       loadChat: mocks.loadChat,
       updateChatTitle: mocks.updateChatTitle,
-      listChats: async () => [],
+      listChats: mocks.listChats,
     },
   }),
 }));
@@ -97,6 +99,7 @@ describe("useLlmStream", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getModelChatNamingEnabled.mockResolvedValue(true);
+    mocks.listChats.mockResolvedValue([]);
     mocks.loadChat.mockResolvedValue({ metadata: { title: "Untitled" } });
     useChatSessionStore.setState(sessionDefaults, true);
     useChatStore.setState(chatDefaults, true);
@@ -251,8 +254,9 @@ describe("useLlmStream", () => {
         emit({ type: "transcript", items: [...transcript.slice(0, -1), { type: "text", text: "" }] });
         emit({ type: "transcriptDelta", index: 3, delta: "A long response. ".repeat(100) });
       });
-      expect(messageText()).toBe(fullText);
-      expect(useChatSessionStore.getState().activeAssistantMessageText).toBe(fullText);
+      // The last delta is still waiting for a paint; either terminal path must
+      // flush it before saving, even if that frame never runs.
+      expect(messageText()).toBe("Before the tool.");
       if (end === "cancel") await act(() => hook.result.current.cancel());
       else act(() => emit({ type: "error", error: "Model failed" }));
       await act(() => run);
@@ -282,10 +286,12 @@ describe("useLlmStream", () => {
       emit({ type: "transcript", items: [{ type: "thinking", text: "Visible" }] });
       emit({ type: "transcriptDelta", index: 0, delta: " answer" });
     });
-    expect(useChatStore.getState().messages[0]?.output?.text?.parsed).toEqual({
-      response: "",
-      chainOfThought: "Visible answer",
-    });
+    await waitFor(() =>
+      expect(useChatStore.getState().messages[0]?.output?.text?.parsed).toEqual({
+        response: "",
+        chainOfThought: "Visible answer",
+      }),
+    );
     act(() => emit({ type: "transcript", items: [{ type: "text", text: "Visible answer" }] }));
     expect(useChatStore.getState().messages[0]?.output?.text?.parsed).toEqual({
       response: "Visible answer",
@@ -513,7 +519,9 @@ describe("useLlmStream", () => {
   it("keeps a manual rename made during a run", async () => {
     let storedName = "Untitled";
     mocks.updateChatTitle.mockImplementationOnce(async (_id, name, expected) => {
-      if (storedName === expected) storedName = name;
+      if (storedName !== expected) return false;
+      storedName = name;
+      return true;
     });
     const { hook, start, options, emit } = setup();
     let run!: Promise<unknown>;
@@ -530,6 +538,25 @@ describe("useLlmStream", () => {
     await act(() => run);
 
     expect(storedName).toBe("My chosen name");
+  });
+
+  it("stops automatic renaming after a rejected update even if its candidate matches a manual rename", async () => {
+    const { hook, start, options, emit } = setup();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = start(options);
+    });
+    await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+    mocks.updateChatTitle.mockResolvedValueOnce(false);
+
+    act(() => {
+      emit({ type: "chatName", name: "My manual title" });
+      emit({ type: "chatName", name: "Another automatic title" });
+      emit({ type: "done", text: "Answer", stats, chatName: "Another automatic title" });
+    });
+    await act(() => run);
+
+    expect(mocks.updateChatTitle).toHaveBeenCalledExactlyOnceWith(CHAT_ID, "My manual title", "Untitled");
   });
 
   it("reports a failed name save without losing the response", async () => {
@@ -553,6 +580,56 @@ describe("useLlmStream", () => {
       expect(finalizeAssistantMessage).toHaveBeenCalledWith(CHAT_ID, MESSAGE_ID, "Answer", undefined, undefined);
     } finally {
       logged.mockRestore();
+    }
+  });
+
+  it("keeps the saved title visible and accepts the next correction after the chat list refresh fails", async () => {
+    const { hook, start, options, emit } = setup();
+    const metadata: ChatMetadata = {
+      id: CHAT_ID,
+      title: "Untitled",
+      createdAt: 1,
+      updatedAt: 1,
+      messageCount: 2,
+    };
+    const other = { ...metadata, id: "other-chat", title: "Other chat" };
+    useChatStore.setState({ savedChats: [metadata, other] });
+    let storedTitle = "Untitled";
+    const saveTitle = async (_id: string, next: string, expected?: string) => {
+      if (expected !== storedTitle) return false;
+      storedTitle = next;
+      return true;
+    };
+    mocks.updateChatTitle.mockImplementationOnce(saveTitle).mockImplementationOnce(saveTitle);
+    const first = "First accepted title";
+    const corrected = "Corrected title";
+    const refreshed = [other, { ...metadata, title: corrected, updatedAt: 2 }];
+    mocks.listChats.mockRejectedValueOnce(new Error("read failed")).mockResolvedValueOnce(refreshed);
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let run!: Promise<unknown>;
+      act(() => {
+        run = start(options);
+      });
+      await waitFor(() => expect(hook.result.current.isStreaming).toBe(true));
+      act(() => emit({ type: "chatName", name: first }));
+      await waitFor(() => expect(warned).toHaveBeenCalledOnce());
+
+      expect(useChatStore.getState().savedChats).toEqual([{ ...metadata, title: first }, other]);
+      expect(useChatStore.getState().saveFailureCount).toBe(0);
+
+      act(() => {
+        emit({ type: "chatName", name: corrected });
+        emit({ type: "done", text: "Answer", stats, chatName: corrected });
+      });
+      await act(() => run);
+
+      expect(mocks.updateChatTitle).toHaveBeenLastCalledWith(CHAT_ID, corrected, first);
+      expect(storedTitle).toEqual(corrected);
+      expect(useChatStore.getState().savedChats).toEqual(refreshed);
+      expect(useChatStore.getState().saveFailureCount).toBe(0);
+    } finally {
+      warned.mockRestore();
     }
   });
 

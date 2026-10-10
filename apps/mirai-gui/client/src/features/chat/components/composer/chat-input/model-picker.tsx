@@ -70,7 +70,7 @@ export function ModelPicker({
             as="button"
             type="button"
             disabled={disabled}
-            className="group/model flex items-center gap-2 h-7 px-2 max-w-full rounded-md bg-surface-tertiary hover:bg-control-surface-hover data-[headlessui-state~=open]:bg-control-surface-active data-[focus]:bg-control-surface-hover cursor-pointer border-none outline-hidden data-[focus]:shadow-focus disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface-tertiary"
+            className="group/model flex items-center gap-2 h-7 px-2 max-w-full rounded-md bg-surface-tertiary hover:bg-control-surface-hover data-[headlessui-state~=open]:bg-control-surface-active data-[focus]:bg-control-surface-hover cursor-pointer border-none outline-hidden data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-40"
           >
             {activeModel && (
               <span className="shrink-0 flex items-center justify-center w-3.5 h-3.5 [&>svg]:w-3.5 [&>svg]:h-3.5">

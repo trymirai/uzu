@@ -52,7 +52,6 @@ type SessionStoreState = {
   setActiveGenerating: (chatId: string, assistantMessageId: string) => void;
   clearActiveGenerating: () => void;
   setActiveAssistantMessageText: (text: string | null) => void;
-  setActiveAssistantMessageOutput: (output: OutputShape | null) => void;
   cancelTitleGen: () => Promise<boolean>;
   activeRunId: string | null;
   setActiveRunId: (runId: string | null) => void;
@@ -137,7 +136,6 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
       activeRunId: null,
     }),
   setActiveAssistantMessageText: (text) => set({ activeAssistantMessageText: text }),
-  setActiveAssistantMessageOutput: (output) => set({ activeAssistantMessageOutput: output }),
 
   activeRunId: null,
   setActiveRunId: (runId) => set({ activeRunId: runId }),

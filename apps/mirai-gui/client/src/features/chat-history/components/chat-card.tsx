@@ -1,8 +1,8 @@
 import React from "react";
+import { DataInteractive } from "@headlessui/react";
 import { formatDistanceToNow } from "date-fns";
 import { ChatsIcon } from "@/components/icons/chats-icon";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CardContainer } from "@/components/ui/card-container";
 import { twMerge } from "tailwind-merge";
 
 type ChatCardProps = {
@@ -29,7 +29,8 @@ const ChatCard: React.FC<ChatCardProps> = ({
   const timeAgo = formatDistanceToNow(updatedAt, { addSuffix: true });
 
   return (
-    <CardContainer
+    <DataInteractive
+      as="div"
       key={id}
       onClick={onClick}
       // In select mode the checkbox is the focusable control, so the card must not
@@ -46,8 +47,8 @@ const ChatCard: React.FC<ChatCardProps> = ({
             },
           })}
       className={twMerge(
-        "bg-background cursor-pointer transition-colors border-[0.5px] border-cell-border",
-        !selectMode && "outline-hidden focus-visible:shadow-focus",
+        "rounded-lg overflow-clip bg-background cursor-pointer transition-colors border-[0.5px] border-cell-border",
+        !selectMode && "outline-hidden data-[focus]:shadow-focus",
         selectMode ? "hover:bg-card-hover" : "hover:bg-card-hover",
         selected ? "bg-bg-modal border-button-border" : "",
       )}
@@ -76,7 +77,7 @@ const ChatCard: React.FC<ChatCardProps> = ({
           <span className="text-xs text-label-muted font-mono whitespace-nowrap">{timeAgo}</span>
         </div>
       </div>
-    </CardContainer>
+    </DataInteractive>
   );
 };
 

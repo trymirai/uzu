@@ -16,6 +16,7 @@ vi.mock("@/platform/platform-singleton", () => ({
     storage: {
       loadChat: async (id: string) => mocks.chats.get(id) ?? null,
       listChats: async () => [...mocks.chats.values()].map((c) => c.metadata),
+      updateStoredMessage: async () => {},
     },
   }),
 }));
@@ -118,4 +119,16 @@ it("keeps streaming into the message after leaving and reopening the chat", asyn
 
   act(() => emit({ type: "transcriptDelta", index: 3, delta: "!" }));
   await waitFor(() => expect(useChatStore.getState().messages.at(-1)?.text).toBe("Hello\n\nworld!"));
+
+  let messageUpdates = 0;
+  const unsubscribe = useChatStore.subscribe((state, previous) => {
+    if (state.messages !== previous.messages) messageUpdates++;
+  });
+  act(() => {
+    for (let i = 0; i < 100; i++) emit({ type: "transcriptDelta", index: 3, delta: "!" });
+  });
+  await waitFor(() => expect(useChatStore.getState().messages.at(-1)?.text).toBe(`Hello\n\nworld${"!".repeat(101)}`));
+  expect(messageUpdates).toBe(1);
+  unsubscribe();
+  await act(() => page.result.current.cancel());
 });

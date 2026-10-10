@@ -45,7 +45,7 @@ export function SettingsPage() {
               {sections.map((s) => (
                 <Link key={s.key} to="/settings" search={{ tab: s.key }} className="flex px-3">
                   <div
-                    className={`flex items-center gap-3 px-2 py-[6px] w-full rounded-md ${s.key === tab ? "bg-bg-hover dark:bg-bg-hover" : ""} hover:bg-bg-hover `}
+                    className={`flex items-center gap-3 px-2 py-[6px] w-full rounded-md transition-colors duration-150 ${s.key === tab ? "bg-sidebar-chat-selected" : "hover:bg-sidebar-chat-hover"}`}
                   >
                     <span className="text-[13px] font-[350] leading-[150%] text-label-title">{s.label}</span>
                   </div>
@@ -56,7 +56,7 @@ export function SettingsPage() {
 
           <section
             className={twMerge(
-              "flex-1 min-w-0 lg:px-0 h-full overflow-y-auto overscroll-y-contain thin-scrollbar [scrollbar-gutter:stable]",
+              "flex-1 min-w-0 lg:px-0 h-full overflow-y-scroll overscroll-y-contain thin-scrollbar",
               "pt-5 lg:pt-5",
             )}
           >

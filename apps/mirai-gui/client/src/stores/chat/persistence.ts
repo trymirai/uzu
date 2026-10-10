@@ -26,10 +26,11 @@ export const persistMessage = async (
     } catch (e) {
       if (!(e instanceof ChatNotFoundError)) throw e;
       const chatModel = get().chatModels[chatId];
+      const savedMetadata = get().savedChats.find((chat) => chat.id === chatId);
       const now = Date.now();
       const fallbackMetadata: ChatMetadata = {
         id: chatId,
-        title: UNTITLED_CHAT_TITLE,
+        title: savedMetadata?.title ?? UNTITLED_CHAT_TITLE,
         modelId: chatModel?.modelId,
         modelName: chatModel?.modelName,
         createdAt: now,

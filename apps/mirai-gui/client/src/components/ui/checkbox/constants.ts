@@ -11,4 +11,4 @@ export const CHECKED_BORDER = "border-primary";
 
 export const UNCHECKED_BORDER = "border-border-strong";
 
-export const FOCUS_RING = "focus-visible:shadow-focus";
+export const FOCUS_RING = "data-[focus]:shadow-focus";

@@ -390,6 +390,36 @@ mod tests {
     use super::{payloads::test_message, *};
 
     #[test]
+    fn normalized_client_history_continues_the_resident_session() {
+        let state = ChatState::default();
+        let question = test_message(ChatRole::User {}, "question", None);
+        let raw_text = "An\u{0000} answer\u{FFFD} 👩\u{200D}💻\n";
+        let raw_reasoning = "\nConsider\u{FEFF} this\u{FFFD}.\n";
+        let projected = messages::assistant_history_message(raw_text, raw_reasoning, false).unwrap();
+        assert_eq!(projected.content, "An answer 👩\u{200D}💻\n");
+        assert_eq!(projected.reasoning_content.as_deref(), Some("Consider this."));
+        state.remember_history("model", vec![question.clone(), projected], Some(ReasoningEffort::Medium));
+
+        // The next request uses the finalized client fields, not raw engine output.
+        let parsed = messages::parsed_from(raw_text, raw_reasoning).unwrap();
+        let next_question = test_message(ChatRole::User {}, "next", None);
+        let request = vec![
+            question,
+            test_message(ChatRole::Assistant {}, &messages::sanitize(raw_text), parsed.chain_of_thought.as_deref()),
+            next_question.clone(),
+        ];
+        match state.plan_run("model", &request, Some(ReasoningEffort::Medium)) {
+            RunPlan::Continue {
+                tail,
+            } => assert!(tail == vec![next_question]),
+            RunPlan::Replay => panic!("client normalization should not discard the resident session"),
+        }
+
+        assert!(matches!(state.plan_run("other-model", &request, Some(ReasoningEffort::Medium)), RunPlan::Replay));
+        assert!(matches!(state.plan_run("model", &request, Some(ReasoningEffort::High)), RunPlan::Replay));
+    }
+
+    #[test]
     fn continues_only_when_reasoning_prefix_matches() {
         let state = ChatState::default();
         let history = vec![

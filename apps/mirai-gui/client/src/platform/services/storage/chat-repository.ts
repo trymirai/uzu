@@ -136,12 +136,13 @@ export const chatRepository: ChatRepository = {
   updateChatTitle(chatId, title, expectedTitle) {
     return withChatLock(chatId, async () => {
       const existing = await loadChat(chatId);
-      if (!existing) return;
-      if (expectedTitle !== undefined && existing.metadata.title !== expectedTitle) return;
+      if (!existing) return false;
+      if (expectedTitle !== undefined && existing.metadata.title !== expectedTitle) return false;
       await writeChat({
         ...existing,
         metadata: { ...existing.metadata, title, updatedAt: Date.now() },
       });
+      return true;
     });
   },
 

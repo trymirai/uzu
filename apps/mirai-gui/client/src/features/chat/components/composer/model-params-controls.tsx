@@ -9,6 +9,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState, useId } from "react";
 import { Toggle } from "@/components/ui/toggle";
 import { RotateCcw } from "lucide-react";
+import { Button } from "@headlessui/react";
 
 const TOP_K_MIN = 1;
 const TOP_K_MAX = 4096;
@@ -54,15 +55,15 @@ const SectionHeading = ({ name, changed, onReset }: { name: string; changed: boo
   <div className="flex h-5 items-center gap-1">
     <span className="text-[12px] font-[450] text-label-muted">{name}</span>
     {changed && (
-      <button
+      <Button
         type="button"
         onClick={onReset}
         aria-label={`Reset ${name.toLowerCase()} to defaults`}
         title={`Reset ${name.toLowerCase()} to defaults`}
-        className="inline-flex size-5 items-center justify-center rounded text-red-500 transition-colors hover:bg-red-500/10 outline-hidden focus-visible:shadow-focus"
+        className="inline-flex size-5 items-center justify-center rounded text-red-500 transition-colors hover:bg-red-500/10 outline-hidden data-[focus]:shadow-focus"
       >
         <RotateCcw aria-hidden="true" className="size-3" />
-      </button>
+      </Button>
     )}
   </div>
 );

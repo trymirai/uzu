@@ -82,7 +82,7 @@ function LeftBar() {
     <div
       className={twMerge(
         "relative z-30 h-full min-h-0 shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none",
-        !isMobile && isSidebarOpen ? "w-[200px]" : "w-0",
+        !isMobile && isSidebarOpen ? "w-62" : "w-0",
       )}
     >
       {toggleSidebarButton}
@@ -100,7 +100,7 @@ function LeftBar() {
         data-tauri-drag-region
         className={twMerge(
           "relative min-h-0 bg-bg-sidebar border-[1px] border-cell-border border-b-0 border-t-0 flex flex-col py-3 overflow-clip transition-transform duration-300 ease-in-out motion-reduce:transition-none",
-          isMobile ? "fixed top-0 left-0 h-dvh w-[280px] z-50" : "h-full w-[200px]",
+          isMobile ? "fixed top-0 left-0 h-dvh w-[280px] z-50" : "h-full w-62",
           isSidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >

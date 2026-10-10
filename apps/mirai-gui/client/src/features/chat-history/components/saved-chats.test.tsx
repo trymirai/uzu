@@ -7,7 +7,7 @@ const { chatStore, navigate } = vi.hoisted(() => ({
     savedChats: [{ id: "saved-chat", title: "Saved chat", createdAt: 0, updatedAt: 0, messageCount: 2 }],
     loadSavedChats: vi.fn(),
     deleteChat: vi.fn(async () => {}),
-    updateChatTitle: vi.fn(),
+    updateChatTitle: vi.fn(async () => true),
   },
   navigate: vi.fn(),
 }));
@@ -53,6 +53,16 @@ async function openMenu() {
   fireEvent.click(screen.getByRole("button", { name: "Options for Saved chat" }));
   return screen.findByRole("menu");
 }
+
+it("renames inline without enforcing a minimum beyond a nonempty title", async () => {
+  render(<SavedChats />);
+  fireEvent.doubleClick(screen.getByText("Saved chat"));
+  const input = screen.getByRole("textbox");
+  fireEvent.change(input, { target: { value: "A" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+
+  await waitFor(() => expect(chatStore.updateChatTitle).toHaveBeenCalledWith("saved-chat", "A"));
+});
 
 it("keeps the open menu mounted while Shift is pressed and released", async () => {
   const menu = await openMenu();

@@ -1,6 +1,6 @@
 import { useInstalledPickerModels } from "../../hooks/use-picker-models";
 import { useChatStore } from "@/stores/use-chat-store";
-import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
+import { Button, Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
 import { ModelPicker } from "./chat-input/model-picker";
 import { X } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
@@ -74,13 +74,13 @@ export const ModelParamsDrawer = ({ open, chatId, repoId, onClose }: ModelParams
                 <DialogTitle as="h3" className="text-[17px] font-medium leading-[130%] text-label-title">
                   Edit parameters
                 </DialogTitle>
-                <button
+                <Button
                   onClick={onClose}
-                  className="text-label-muted transition-colors hover:text-label-title"
+                  className="text-label-muted transition-colors hover:text-label-title outline-hidden data-[focus]:shadow-focus"
                   aria-label="Close"
                 >
                   <X className="h-5 w-5" />
-                </button>
+                </Button>
               </div>
 
               <div className="mt-4">

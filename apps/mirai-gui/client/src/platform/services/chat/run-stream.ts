@@ -39,6 +39,8 @@ export function runLlmStream(transport: RunTransport, params: LlmRunParams): Llm
   const transcriptListeners = new Set<(items: TranscriptItem[]) => void>();
   let chatName: string | undefined;
   let transcript: TranscriptItem[] | undefined;
+  const pendingDeltas = new Map<number, string[]>();
+  let transcriptFrame: number | undefined;
   let settled = false;
   let resolveResult!: (result: LlmRunResult) => void;
   const result = new Promise<LlmRunResult>((resolve) => {
@@ -48,6 +50,7 @@ export function runLlmStream(transport: RunTransport, params: LlmRunParams): Llm
   // The first terminal outcome wins; anything the backend sends afterwards is dropped.
   const settle = (outcome: LlmRunResult): boolean => {
     if (settled) return false;
+    flushTranscript();
     settled = true;
     resolveResult({
       ...outcome,
@@ -71,8 +74,26 @@ export function runLlmStream(transport: RunTransport, params: LlmRunParams): Llm
   };
 
   const notifyTranscript = (items: TranscriptItem[]) => {
+    if (transcriptFrame !== undefined) cancelAnimationFrame(transcriptFrame);
+    transcriptFrame = undefined;
+    pendingDeltas.clear();
     transcript = items;
     transcriptListeners.forEach((listener) => listener(items));
+  };
+
+  // IPC can deliver many tokens before the browser gets a chance to paint.
+  // Keep that work proportional to the deltas; publish one immutable snapshot
+  // per frame, and always publish the final tail before settling the run.
+  const flushTranscript = () => {
+    if (!transcript || pendingDeltas.size === 0) return;
+    const items = [...transcript];
+    for (const [index, deltas] of pendingDeltas) {
+      const item = items[index];
+      if (item?.type === "text" || item?.type === "thinking") {
+        items[index] = { ...item, text: item.text + deltas.join("") };
+      }
+    }
+    notifyTranscript(items);
   };
 
   const stream = new ReadableStream<string>({
@@ -101,9 +122,10 @@ export function runLlmStream(transport: RunTransport, params: LlmRunParams): Llm
               fail(`Invalid transcript delta at index ${event.index}`);
               return;
             }
-            const items = [...transcript];
-            items[event.index] = { ...item, text: item.text + event.delta };
-            notifyTranscript(items);
+            const deltas = pendingDeltas.get(event.index);
+            if (deltas) deltas.push(event.delta);
+            else pendingDeltas.set(event.index, [event.delta]);
+            transcriptFrame ??= requestAnimationFrame(flushTranscript);
             return;
           }
           case "done":
@@ -153,6 +175,7 @@ export function runLlmStream(transport: RunTransport, params: LlmRunParams): Llm
       return () => chatNameListeners.delete(listener);
     },
     onTranscript: (listener) => {
+      flushTranscript();
       transcriptListeners.add(listener);
       if (transcript !== undefined) listener(transcript);
       return () => transcriptListeners.delete(listener);

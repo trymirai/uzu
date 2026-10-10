@@ -132,3 +132,56 @@ describe("editUserMessage", () => {
     await expect(webStorage.editUserMessage("chat", "u2", "Edit")).rejects.toBeInstanceOf(ChatNotFoundError);
   });
 });
+
+describe("updateChatTitle", () => {
+  const generated = "Generated title";
+
+  it("updates the title when the stored value matches", async () => {
+    const before = (await chatRepository.loadChat("chat"))!;
+    expect(await chatRepository.updateChatTitle("chat", generated, original.metadata.title)).toBe(true);
+    const saved = (await chatRepository.loadChat("chat"))!;
+
+    expect(saved.metadata).toEqual({ ...before.metadata, title: generated, updatedAt: now });
+    expect(saved.messages).toEqual(before.messages);
+    expect(files.save).toHaveBeenCalledOnce();
+  });
+
+  it("does not overwrite the title if the expected value changed", async () => {
+    expect(await chatRepository.updateChatTitle("chat", generated, "Different title")).toBe(false);
+
+    expect((await chatRepository.loadChat("chat"))?.metadata).toMatchObject(original.metadata);
+    expect(files.save).not.toHaveBeenCalled();
+  });
+
+  it("reports a rejected CAS even when the proposed title happens to match a manual rename", async () => {
+    const renamed = "My chosen title";
+    expect(await chatRepository.updateChatTitle("chat", renamed)).toBe(true);
+    expect(await chatRepository.updateChatTitle("chat", renamed, original.metadata.title)).toBe(false);
+    // A rejected write must not advance the caller's expected title to `renamed`.
+    expect(await chatRepository.updateChatTitle("chat", generated, original.metadata.title)).toBe(false);
+
+    expect((await chatRepository.loadChat("chat"))?.metadata.title).toBe(renamed);
+    expect(files.save).toHaveBeenCalledOnce();
+  });
+
+  it("reports missing chats and the browser provider as unapplied updates", async () => {
+    expect(await chatRepository.updateChatTitle("missing-chat", generated)).toBe(false);
+    expect(await webStorage.updateChatTitle("chat", generated)).toBe(false);
+    expect(files.save).not.toHaveBeenCalled();
+  });
+
+  it("preserves a manual rename when a stale generated title and a message save are queued", async () => {
+    const renamed = "My chosen title";
+    const message = { id: "a3", sender: "assistant" as const, text: "New answer", timestamp: now };
+    await Promise.all([
+      chatRepository.updateChatTitle("chat", renamed),
+      chatRepository.updateChatTitle("chat", generated, original.metadata.title),
+      chatRepository.appendMessage("chat", message),
+    ]);
+
+    const saved = (await chatRepository.loadChat("chat"))!;
+    expect(saved.metadata).toMatchObject({ title: renamed, messageCount: 5 });
+    expect(saved.messages.at(-1)).toMatchObject(message);
+    expect(files.save).toHaveBeenCalledTimes(2);
+  });
+});

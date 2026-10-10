@@ -20,8 +20,11 @@ export const ChatHeader = ({
 }) => {
   const { chatId } = useParams({ strict: false }) as { chatId?: string };
   const chatVisibility = useSidebarStore((s) => s.chatVisibility);
-  const sidebarVisibility =
-    isSidebarOpen && chatVisibility && chatVisibility.chatId === chatId ? chatVisibility.ratio : 0;
+  const sidebarVisibility = isSidebarOpen
+    ? chatVisibility && chatVisibility.chatId === chatId
+      ? chatVisibility.ratio
+      : 1
+    : 0;
   // Fade smoothly between 15% and 75% clipped, staying flat at either end.
   const fadeProgress = Math.max(0, Math.min(1, (0.85 - sidebarVisibility) / 0.6));
   const opacity = title === UNTITLED_CHAT_TITLE ? 0 : fadeProgress * fadeProgress * (3 - 2 * fadeProgress);

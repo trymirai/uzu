@@ -36,13 +36,16 @@ const outputPatch = (message: Message, output: OutputShape, text?: string): Part
   const versionIndex = activeVersionIndex(message);
   const patch = { output, ...(text !== undefined ? { text } : {}) };
   if (versionIndex === undefined) return patch;
-  return { versions: message.versions?.map((v, i) => (i === versionIndex ? { ...v, ...patch } : v)) };
+  return {
+    ...(text !== undefined ? { text } : {}),
+    versions: message.versions?.map((v, i) => (i === versionIndex ? { ...v, ...patch } : v)),
+  };
 };
 
-const applyOutput = (messageId: string, output: OutputShape): void => {
+const applyOutput = (messageId: string, output: OutputShape, text?: string): void => {
   const store = useChatStore.getState();
   const target = store.messages.find((m) => m.id === messageId);
-  if (target) store.updateMessage(messageId, outputPatch(target, output));
+  if (target) store.updateMessage(messageId, outputPatch(target, output, text));
 };
 
 const applyPerf = (messageId: string, stats: SessionOutputStats): void => {
@@ -179,8 +182,8 @@ export const useLlmStream = (chatId: string) => {
         titleUpdates = titleUpdates.then(async () => {
           if (expectedTitle === undefined) return;
           try {
-            await useChatStore.getState().updateChatTitle(chatId, name, expectedTitle);
-            expectedTitle = name;
+            const updated = await useChatStore.getState().updateChatTitle(chatId, name, expectedTitle);
+            expectedTitle = updated ? name : undefined;
           } catch (error) {
             console.error("[storage] failed to save model chat name", { chatId }, error);
             useChatStore.setState((s) => ({ saveFailureCount: s.saveFailureCount + 1 }));
@@ -191,10 +194,13 @@ export const useLlmStream = (chatId: string) => {
       // Reasoning arrives as parsed patches before any text does.
       let hasContent = false;
       let output: OutputShape = {};
-      const updateOutput = (next: OutputShape) => {
+      const updateOutput = (next: OutputShape, text?: string) => {
         output = next;
-        applyOutput(messageId, output);
-        session.setActiveAssistantMessageOutput(output);
+        applyOutput(messageId, output, text);
+        useChatSessionStore.setState({
+          activeAssistantMessageOutput: output,
+          ...(text !== undefined ? { activeAssistantMessageText: text } : {}),
+        });
       };
       const offParsed = llm.onParsed((patch) => {
         if (!hasContent && (patch.chainOfThought || patch.response)) {
@@ -217,9 +223,10 @@ export const useLlmStream = (chatId: string) => {
         const chainOfThought = items
           .flatMap((item) => (item.type === "thinking" && item.text.length > 0 ? [item.text] : []))
           .join("\n\n");
-        options.updateText(messageId, transcriptText);
-        session.setActiveAssistantMessageText(transcriptText);
-        updateOutput({ ...withParsedOutput(output, { response: transcriptText, chainOfThought }), transcript: items });
+        updateOutput(
+          { ...withParsedOutput(output, { response: transcriptText, chainOfThought }), transcript: items },
+          transcriptText,
+        );
       });
 
       setIsStreaming(true);
