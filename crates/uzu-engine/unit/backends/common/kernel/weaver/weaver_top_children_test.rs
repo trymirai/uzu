@@ -58,7 +58,7 @@ fn top_children<B: Backend>(
     let mut output_model_logprobs = create_buffer::<B, f32>(&context, rows * CHILDREN);
     let mut output_prune_logprobs = prune_noise_scale.map(|_| create_buffer::<B, f32>(&context, rows * CHILDREN));
     let kernel = <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(&context, prune_noise_scale.is_some()).unwrap();
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     kernel.encode(
         &residual,
         &candidate_logits,

@@ -197,7 +197,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     )
     .expect("MatmulMetalKernel");
 
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     let mut args = quant_arguments(&mut buffers, &input);
     args.output.ops = MatmulDOps {
         bias: Some(&bias_pp_buf),
@@ -247,7 +247,7 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
     )
     .expect("MatmulMetalKernel");
 
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     let mut args = quant_arguments(&mut buffers, &input);
     args.output.ops = MatmulDOps {
         ab_scale: scale,
@@ -351,7 +351,7 @@ fn parity_bf16_quant_rht(
         bf16::data_type(),
     )
     .expect("MatmulCpuKernel");
-    let mut cpu_command_buffer = cpu_context.create_command_buffer(None, None).expect("cpu command buffer");
+    let mut cpu_command_buffer = cpu_context.create_command_buffer(None, None, false).expect("cpu command buffer");
     let mut cpu_args = quant_arguments(&mut cpu_buffers, &input);
     cpu_args.output.ops = MatmulDOps {
         bias: with_bias.then_some(&cpu_bias),
@@ -372,7 +372,7 @@ fn parity_bf16_quant_rht(
         bf16::data_type(),
     )
     .expect("MatmulMetalKernel");
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     let mut args = quant_arguments(&mut buffers, &input);
     args.output.ops = MatmulDOps {
         bias: with_bias.then_some(&metal_bias),
@@ -423,7 +423,7 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
     )
     .expect("MatmulMetalKernel");
 
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     let mut args = quant_arguments(&mut buffers, &input);
     args.output.ops = MatmulDOps {
         accumulate: true,
@@ -485,7 +485,7 @@ fn quant_gemm_parameter_layout_prefix_matches_cpu(
             continue;
         }
         let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-        let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+        let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
         let mut args = quant_arguments(&mut buffers, &input);
         args.n = logical_n;
         matmul.encode_with_gemm_engine(args, engine, &mut command_buffer).unwrap();
@@ -693,7 +693,7 @@ fn a8w_mxu_output_bias_parity_bf16(
         bf16::data_type(),
     )
     .expect("CPU matmul kernel");
-    let mut cpu_command_buffer = cpu_context.create_command_buffer(None, None).expect("CPU command buffer");
+    let mut cpu_command_buffer = cpu_context.create_command_buffer(None, None, false).expect("CPU command buffer");
     let mut cpu_arguments = quant_arguments(&mut cpu_buffers, &reference_input);
     cpu_arguments.output.ops = MatmulDOps {
         rht_factors: cpu_output_hadamard_factors.as_ref(),
@@ -720,7 +720,7 @@ fn a8w_mxu_output_bias_parity_bf16(
         bf16::data_type(),
     )
     .expect("Metal matmul kernel");
-    let mut metal_command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut metal_command_buffer = context.create_command_buffer(None, None, false).unwrap();
     let mut metal_arguments = quant_arguments(&mut metal_buffers, &input);
     metal_arguments.output.ops = MatmulDOps {
         bias: Some(&metal_output_bias),
@@ -753,7 +753,7 @@ fn run_widened_f32<B: Backend>(
         <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(context, DataType::BF16, DataType::BF16, DataType::F32)
             .expect("MatmulKernel widened");
     let b = buffers.matmul_b(input);
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     matmul
         .encode(
             crate::backends::common::kernel::matmul::MatmulArguments {

@@ -140,7 +140,7 @@ fn run_projection(
     };
     let mut matmul =
         <MetalMatmul as MatmulKernel>::new(context, DataType::BF16, DataType::BF16, DataType::BF16).unwrap();
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     matmul.encode(arguments, &mut command_buffer).unwrap();
     submit_command_buffer(command_buffer);
     let decoded_levels: Vec<i32> = stored

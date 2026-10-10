@@ -157,7 +157,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
         soft_cap: None,
     };
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     encode(
         kernel,
         MatmulArguments {

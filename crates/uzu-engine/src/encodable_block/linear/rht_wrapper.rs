@@ -27,6 +27,7 @@ pub enum RHTLinearWrapperError<B: Backend> {
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
+    name: String,
     input_rht: InputRht<B>,
     inner_linear: LinearMatmul<B>,
 }
@@ -45,6 +46,7 @@ fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
 
 impl<B: Backend> RHTLinearWrapper<B> {
     pub(super) fn new(
+        name: String,
         context: &B::Context,
         input_dimension: u32,
         output_dimension: u32,
@@ -61,6 +63,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         }
 
         let (rht_signs, mut inner_linear) = Self::load_inner_with_output_rht(
+            format!("{name}/matmul"),
             context,
             input_dimension,
             output_dimension,
@@ -72,6 +75,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )?;
         let activation_quantization = inner_linear.prepare_a8(context);
         Self::build_self_contained(
+            name,
             context,
             input_data_type,
             LinearInputPreparation {
@@ -83,6 +87,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
     }
 
     pub(super) fn try_new_with_input_preparation(
+        name: String,
         context: &B::Context,
         input_dimension: u32,
         output_dimension: u32,
@@ -100,6 +105,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         }
 
         let (rht_signs, mut inner_linear) = Self::load_inner_with_output_rht(
+            format!("{name}/matmul"),
             context,
             input_dimension,
             output_dimension,
@@ -114,7 +120,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             activation_quantization: inner_linear.prepare_a8(context),
         };
         if input_preparation.activation_quantization.is_some() && !allow_prequantized_activation {
-            let wrapper = Self::build_self_contained(context, input_data_type, input_preparation, inner_linear)?;
+            let wrapper = Self::build_self_contained(name, context, input_data_type, input_preparation, inner_linear)?;
             Ok(Some((Box::new(wrapper), None)))
         } else {
             Ok(Some((Box::new(inner_linear), Some(input_preparation))))
@@ -122,6 +128,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
     }
 
     fn load_inner_with_output_rht(
+        name: String,
         context: &B::Context,
         input_dimension: u32,
         output_dimension: u32,
@@ -143,6 +150,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             .validate(&[output_dimension], DataType::I32)?
             .read_buffer()?;
         let inner_linear = LinearMatmul::load(
+            name,
             context,
             quantization_spec,
             input_dimension,
@@ -158,15 +166,17 @@ impl<B: Backend> RHTLinearWrapper<B> {
     }
 
     fn build_self_contained(
+        name: String,
         context: &B::Context,
         input_data_type: DataType,
         input_preparation: LinearInputPreparation<B>,
         inner_linear: LinearMatmul<B>,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
-        let input_rht = InputRht::new(context, input_data_type, input_preparation, true)
+        let input_rht = InputRht::new(format!("{name}/prepare"), context, input_data_type, input_preparation, true)
             .map_err(RHTLinearWrapperError::BackendError)?;
 
         Ok(Self {
+            name,
             input_rht,
             inner_linear,
         })
@@ -189,12 +199,14 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("linear (rht)");
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let input = match input {
             LinearInput::FullPrecision(input) => input,
             input => {
                 let output = self.inner_linear.encode_input(input, batch_dim, command_buffer);
+                command_buffer.sample_end_timestamp();
                 command_buffer.pop_debug_group();
                 return output;
             },
@@ -208,6 +220,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             command_buffer,
         )?;
 
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
         Ok(output)
     }

@@ -117,7 +117,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     if input.state_in_place {
         let mut next_state = create_buffer_with_data::<B, T>(&context, &input.state);
 
-        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+        let mut command_buffer =
+            context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
         kernel.encode(
             &x,
             &w,
@@ -149,7 +150,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         let state = create_buffer_with_data::<B, T>(&context, &input.state);
         let mut next_state = create_buffer::<B, T>(&context, state_size);
 
-        let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+        let mut command_buffer =
+            context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
         kernel.encode(
             &x,
             &w,

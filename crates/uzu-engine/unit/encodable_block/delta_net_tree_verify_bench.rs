@@ -41,7 +41,7 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
     group.sample_size(20).warm_up_time(Duration::from_millis(300)).measurement_time(Duration::from_secs(1));
 
     for tree_size in [32usize, 49, 64, 128] {
-        let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
         let mut q = command_buffer.allocate_scratch(tree_size * K_HEADS * HEAD_DIM * size_of::<bf16>()).unwrap();
         q.copyin(&vec![bf16::from_f32(0.01); tree_size * K_HEADS * HEAD_DIM]);
         let mut k = command_buffer.allocate_scratch(tree_size * K_HEADS * HEAD_DIM * size_of::<bf16>()).unwrap();

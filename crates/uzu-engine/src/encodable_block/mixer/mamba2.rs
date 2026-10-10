@@ -55,6 +55,7 @@ enum Mamba2SSDPrefillVariant<B: Backend> {
 }
 
 pub struct Mamba2<B: Backend> {
+    name: String,
     kernel_size: u32,
     num_heads: u32,
     num_groups: u32,
@@ -91,6 +92,7 @@ pub enum Mamba2NewError<B: Backend> {
 
 impl<B: Backend> Mamba2<B> {
     pub fn new(
+        name: String,
         hidden_dim: u32,
         outer_data_type: DataType,
         config: &Mamba2Config,
@@ -114,6 +116,7 @@ impl<B: Backend> Mamba2<B> {
 
         let (in_projection, in_projection_input_hadamard_factors) =
             <dyn Linear<B>>::new_with_input_rht_mixed_precision(
+                format!("{name}/in projection"),
                 hidden_dim,
                 [conv_dim, inner_dim, num_heads],
                 config.has_in_biases,
@@ -165,6 +168,7 @@ impl<B: Backend> Mamba2<B> {
         };
 
         let out_projection = <dyn Linear<B>>::new_mixed_precision(
+            format!("{name}/out projection"),
             inner_dim,
             [hidden_dim],
             config.has_out_biases,
@@ -177,6 +181,7 @@ impl<B: Backend> Mamba2<B> {
 
         Ok((
             Self {
+                name,
                 kernel_size,
                 num_heads,
                 num_groups,
@@ -223,7 +228,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         let mut ssm_state =
             context.create_buffer(size_for_shape(&[self.num_heads, self.head_dim, self.state_dim], INNER_DATA_TYPE))?;
 
-        let mut zero_command_buffer = context.create_command_buffer(None, None)?;
+        let mut zero_command_buffer = context.create_command_buffer(None, None, false)?;
         zero_command_buffer.encode_fill(&mut conv_state, 0);
         zero_command_buffer.encode_fill(&mut ssm_state, 0);
         zero_command_buffer.end_encoding().submit().wait_until_completed()?;
@@ -243,7 +248,8 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("mamba2");
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         assert!(precalculated_rope.is_none(), "unexpected rope for mamba2 mixer");
 
@@ -421,6 +427,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         let output = self.out_projection.encode(ssd_output, batch_dim.size(), command_buffer)?;
 
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(output)

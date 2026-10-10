@@ -3,7 +3,7 @@ use std::{
     fs::File,
     io::{self, BufReader},
     path::Path,
-    sync::Arc,
+    sync::{Arc, mpsc::Sender},
 };
 
 use derive_more::Debug;
@@ -15,8 +15,8 @@ pub use crate::encodable_block::dflash::DFlashState;
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-        Context, gpu_types::trie::TrieNode as GpuTrieNode,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, TimestampSpan,
+        gpu_types::trie::TrieNode as GpuTrieNode,
     },
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
@@ -29,6 +29,7 @@ use crate::{
     },
     parameters::{ParameterLoader, ParameterLoaderError},
     trie::TrieNode,
+    utils::timestamps::wait,
 };
 
 #[derive(Debug, Error)]
@@ -122,12 +123,19 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let weight_loader = ParameterLoader::new(&weights_file, &*context)?;
         let speculator_tree = weight_loader.tree().subtree("speculator");
 
-        let dflash = DFlash::new(&*context, &config.draft_config, &speculator_tree.subtree("draft_model"), data_type)?;
+        let dflash = DFlash::new(
+            String::from("dflash"),
+            &*context,
+            &config.draft_config,
+            &speculator_tree.subtree("draft_model"),
+            data_type,
+        )?;
         let weaver = config
             .weaver_config
             .as_ref()
             .map(|weaver_config| {
                 Weaver::new(
+                    String::from("weaver"),
                     &*context,
                     weaver_config,
                     config.draft_config.vocab_size,
@@ -138,7 +146,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
-        let sampling = Sampling::new(data_type, config.draft_config.vocab_size);
+        let sampling = Sampling::new(String::from("sampling"), data_type, config.draft_config.vocab_size);
 
         Ok(Some(Self {
             context,
@@ -217,6 +225,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
         prng: &PRng,
         allocation_pool: Arc<B::AllocationPool>,
+        timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
     ) -> Result<TrieNode, DFlashTreeError<B>> {
         assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
 
@@ -232,7 +241,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let mut command_buffer = self
             .context
-            .create_command_buffer(Some("speculator propose"), Some(allocation_pool))
+            .create_command_buffer(Some("speculator propose"), Some(allocation_pool), timestamps.is_some())
             .map_err(DFlashTreeError::Backend)?;
 
         let nodes = match shape.construction_method {
@@ -283,7 +292,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     )
                     .map_err(DFlashTreeError::Backend)?;
                 let completed =
-                    command_buffer.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
+                    wait(command_buffer.end_encoding().submit(), timestamps).map_err(DFlashTreeError::Backend)?;
                 let tokens = sampled.copyout::<u32>();
                 drop(completed);
                 nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
@@ -358,7 +367,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     &mut command_buffer,
                 )?;
                 let completed =
-                    command_buffer.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
+                    wait(command_buffer.end_encoding().submit(), timestamps).map_err(DFlashTreeError::Backend)?;
                 let nodes = tree.read_nodes();
                 drop(completed);
                 nodes

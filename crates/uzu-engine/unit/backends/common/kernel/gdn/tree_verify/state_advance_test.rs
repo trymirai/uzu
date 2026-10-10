@@ -64,7 +64,7 @@ fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32
     let accepted_indices = create_buffer_with_data::<B, u32>(&context, accepted_indices);
     let mut committed_state = create_buffer_with_data::<B, f32>(&context, &initial_state);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     kernel.encode(
         &k_norm,
         &v,

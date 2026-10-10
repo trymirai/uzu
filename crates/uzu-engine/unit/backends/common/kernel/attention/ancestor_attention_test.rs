@@ -116,7 +116,7 @@ impl<B: Backend> Runner<B> {
         &mut self,
         repetitions: u32,
     ) -> Duration {
-        let mut command_buffer = self.context.create_command_buffer(None, None).unwrap();
+        let mut command_buffer = self.context.create_command_buffer(None, None, false).unwrap();
         for _ in 0..repetitions {
             self.kernel.encode(
                 &self.prefix_kv,

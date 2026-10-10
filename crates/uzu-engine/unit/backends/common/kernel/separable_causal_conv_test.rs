@@ -48,7 +48,7 @@ fn run_kernel<B: Backend>() -> Vec<bf16> {
     let weights = create_buffer_with_data::<B, bf16>(&context, &weights);
     let mut output = create_buffer::<B, bf16>(&context, (SEQUENCE_LENGTH * MODEL_DIM) as usize);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     kernel.encode(
         &input,
         &coefficient_deltas,

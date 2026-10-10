@@ -41,6 +41,8 @@ impl<B: Backend> DFlashState<B> {
 }
 
 pub struct DFlash<B: Backend> {
+    accept_name: String,
+    draft_name: String,
     target_feature_projection: Box<dyn Linear<B>>,
     projected_feature_norm: Normalization<B>,
     state_kv_projection: Box<dyn Linear<B>>,
@@ -89,6 +91,7 @@ pub enum DFlashEncodeError<B: Backend> {
 
 impl<B: Backend> DFlash<B> {
     pub fn new(
+        name: String,
         context: &B::Context,
         config: &DFlashDraftConfig,
         parameter_tree: &ParameterTree<B>,
@@ -97,6 +100,7 @@ impl<B: Backend> DFlash<B> {
         let mask_token_id = config.mask_token_id as u32;
         assert!(config.block_size <= ATTENTION_SUFFIX_CAPACITY, "DFlash block_size exceeds attention suffix capacity");
         let target_feature_projection = <dyn Linear<B>>::new(
+            format!("{name}/target feature projection"),
             config.model_dim * config.target_layer_ids.len() as u32,
             [config.model_dim],
             false,
@@ -105,6 +109,7 @@ impl<B: Backend> DFlash<B> {
             &parameter_tree.subtree("context_projection"),
         )?;
         let projected_feature_norm = Normalization::new(
+            format!("{name}/projected feature norm"),
             config.model_dim,
             None,
             ShortcutMode::None,
@@ -122,6 +127,7 @@ impl<B: Backend> DFlash<B> {
         let layer_kv_dim = 2 * attention_config.num_groups * attention_config.head_dim;
         let num_layers = config.layer_configs.len() as u32;
         let state_kv_projection = <dyn Linear<B>>::new(
+            format!("{name}/state kv projection"),
             config.model_dim,
             [num_layers * layer_kv_dim],
             false,
@@ -135,6 +141,7 @@ impl<B: Backend> DFlash<B> {
             .zip(0u32..)
             .map(|(layer_config, index)| {
                 TransformerLayer::new(
+                    format!("{name}/layer {index}"),
                     context,
                     config.model_dim,
                     config.hidden_dim,
@@ -147,6 +154,7 @@ impl<B: Backend> DFlash<B> {
             })
             .collect::<Result<Box<[_]>, TransformerLayerError<B>>>()?;
         let output_norm = Normalization::new(
+            format!("{name}/output norm"),
             config.model_dim,
             None,
             ShortcutMode::Add,
@@ -158,6 +166,8 @@ impl<B: Backend> DFlash<B> {
         )?;
 
         Ok(Self {
+            accept_name: format!("{name}/accept"),
+            draft_name: format!("{name}/draft"),
             target_feature_projection,
             projected_feature_norm,
             state_kv_projection,
@@ -207,7 +217,8 @@ impl<B: Backend> DFlash<B> {
             return Ok(());
         }
 
-        command_buffer.push_debug_group("dflash accept");
+        command_buffer.push_debug_group(&self.accept_name);
+        command_buffer.sample_start_timestamp(&self.accept_name);
 
         let num_tokens = accepted_indices.len() as u32;
         let captured_layer_count = self.target_feature_input_dim / self.model_dim;
@@ -274,6 +285,7 @@ impl<B: Backend> DFlash<B> {
 
         state.context_length += num_tokens;
 
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(())
@@ -287,7 +299,8 @@ impl<B: Backend> DFlash<B> {
         batch_size: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DFlashOutput<B>, DFlashEncodeError<B>> {
-        command_buffer.push_debug_group("dflash draft");
+        command_buffer.push_debug_group(&self.draft_name);
+        command_buffer.sample_start_timestamp(&self.draft_name);
 
         assert!(batch_size >= 2 && batch_size <= self.block_size, "batch size exceeds DFlash block size");
         assert!(
@@ -348,6 +361,7 @@ impl<B: Backend> DFlash<B> {
             command_buffer,
         )?;
 
+        command_buffer.sample_end_timestamp();
         command_buffer.pop_debug_group();
 
         Ok(DFlashOutput {

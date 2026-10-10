@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         gpu_types::{EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, d4s4},
         kernel::InputEmbeddingLookupKernel,
     },
@@ -81,6 +81,7 @@ impl<B: Backend> Storage<B> {
 }
 
 pub struct EmbeddingTable<B: Backend> {
+    name: String,
     storage: Storage<B>,
     output_hadamard_factors: Option<B::GlobalBuffer>,
     lookup: LookupKernel<B>,
@@ -90,6 +91,7 @@ pub struct EmbeddingTable<B: Backend> {
 
 impl<B: Backend> EmbeddingTable<B> {
     pub fn load(
+        name: String,
         context: &B::Context,
         tree: &ParameterTree<B>,
         vocab_size: u32,
@@ -150,6 +152,7 @@ impl<B: Backend> EmbeddingTable<B> {
             .map_err(EmbeddingTableError::BackendError)?;
 
         Ok(Self {
+            name,
             storage,
             output_hadamard_factors,
             lookup,
@@ -175,6 +178,8 @@ impl<B: Backend> EmbeddingTable<B> {
         scale: f32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
+        command_buffer.push_debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
         let bindings = self.storage.lookup_bindings();
         self.lookup.encode(
             token_ids,
@@ -193,6 +198,8 @@ impl<B: Backend> EmbeddingTable<B> {
             scale,
             command_buffer,
         );
+        command_buffer.sample_end_timestamp();
+        command_buffer.pop_debug_group();
     }
 }
 

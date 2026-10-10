@@ -227,7 +227,7 @@ fn run_single_pass_attention(
     let key_cache_buffer = create_attention_cache_buffer(keys, seq_len, context);
     let value_cache_buffer = create_attention_cache_buffer(values, seq_len, context);
     let sinks_buffer = sinks.map(|sinks| create_sinks_buffer(sinks, context));
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     let pooled_output = kernel.encode(
         AttentionArguments {
             queries: &query_buffer,
@@ -296,7 +296,7 @@ fn run_gemm_attention(
     let value_buffer = create_attention_cache_buffer(values, seq_len, context);
 
     let sinks_buffer = sinks.map(|sinks| create_sinks_buffer(sinks, context));
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
 
     let args = AttentionArguments {
         queries: &query_buffer,
@@ -478,7 +478,7 @@ fn run_two_pass_attention(
     let keys_buffer = create_attention_cache_buffer(keys, seq_len, context);
     let values_buffer = create_attention_cache_buffer(values, seq_len, context);
     let sinks_buffer = sinks.map(|sinks| create_sinks_buffer(sinks, context));
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
 
     let pooled_output = kernel.encode(
         AttentionArguments {
@@ -613,7 +613,7 @@ fn run_attention_with_kernel<B: Backend>(
         sinks: None,
         cache,
     };
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     let pooled = kernel.encode(arguments, &mut command_buffer).expect("encode");
     let mut output = create_buffer::<B, bf16>(context, suffix_length * num_q_heads * head_dim);
     command_buffer.encode_copy(&pooled, &mut output);

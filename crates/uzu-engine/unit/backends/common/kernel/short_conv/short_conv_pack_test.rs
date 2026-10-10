@@ -42,7 +42,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let padded_size = padded_rows * input.model_dim as usize;
     let mut padded = create_buffer::<B, T>(&context, padded_size);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         &state_in,
         &in_proj,

@@ -42,7 +42,7 @@ fn run<T: ArrayElement + Float + Debug, B: Backend>(
     let mut output = create_buffer::<B, T>(context.as_ref(), data.len());
     let factors = create_buffer_with_data::<B, i32>(context.as_ref(), factors);
     let batch_count = (data.len() / channel_count) as u32;
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     if in_place {
         kernel.encode_fp_in_place(&mut input, &factors, None, batch_count, channel_count as u32, &mut command_buffer);
     } else {
@@ -133,7 +133,7 @@ fn output_rht_fused_bias_matches_separate_mixed_dtype() {
         let bias = create_buffer_with_data::<B, f32>(context.as_ref(), &bias_data);
         let factors = create_buffer_with_data::<B, i32>(context.as_ref(), &factors_data);
 
-        let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+        let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
         ActivationTransform::<B>::output_rht(context.as_ref(), bf16::data_type(), Some(f32::data_type()), true)
             .expect("fused transform")
             .encode_fp_in_place(&mut fused, &factors, Some(&bias), 2, channels as u32, &mut command_buffer);
@@ -191,7 +191,7 @@ mod quantize {
             .expect("supported activation quantization"),
         )
         .expect("quantize transform");
-        let mut command_buffer = context.as_ref().create_command_buffer(None, None).expect("command buffer");
+        let mut command_buffer = context.as_ref().create_command_buffer(None, None, false).expect("command buffer");
         kernel.encode_quantize(
             &input,
             &mut values,
