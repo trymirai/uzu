@@ -32,6 +32,11 @@ pub trait MixerState<B: Backend>: Any + Send {
         suffix_length: u32,
     ) -> Result<(), B::Error>;
 
+    fn set_context_length(
+        &mut self,
+        context_length: u32,
+    );
+
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
@@ -83,6 +88,7 @@ pub enum MixerNewError<B: Backend> {
 
 impl<B: Backend> dyn Mixer<B> {
     pub fn new(
+        layer_name: &str,
         hidden_dim: u32,
         data_type: DataType,
         rope_config: Option<&AnyRoPEConfig>,
@@ -92,32 +98,57 @@ impl<B: Backend> dyn Mixer<B> {
     ) -> Result<(Box<dyn Mixer<B>>, Option<B::GlobalBuffer>), MixerNewError<B>> {
         match config {
             AnyTokenMixerConfig::AttentionConfig(config) => {
-                let (attention, in_projection_input_hadamard_factors) =
-                    Attention::new(hidden_dim, data_type, rope_config, config, parameter_tree, context)?;
+                let (attention, in_projection_input_hadamard_factors) = Attention::new(
+                    format!("{layer_name}/attention"),
+                    hidden_dim,
+                    data_type,
+                    rope_config,
+                    config,
+                    parameter_tree,
+                    context,
+                )?;
 
                 Ok((Box::new(attention), in_projection_input_hadamard_factors))
             },
             AnyTokenMixerConfig::DeltaNetConfig(config) => {
                 assert!(rope_config.is_none(), "unexpected rope for delta net mixer");
 
-                let (delta_net, in_projection_input_hadamard_factors) =
-                    DeltaNet::new(hidden_dim, data_type, config, parameter_tree, context)?;
+                let (delta_net, in_projection_input_hadamard_factors) = DeltaNet::new(
+                    format!("{layer_name}/delta net"),
+                    hidden_dim,
+                    data_type,
+                    config,
+                    parameter_tree,
+                    context,
+                )?;
 
                 Ok((Box::new(delta_net), in_projection_input_hadamard_factors))
             },
             AnyTokenMixerConfig::Mamba2Config(config) => {
                 assert!(rope_config.is_none(), "unexpected rope for mamba2 mixer");
 
-                let (mamba2, in_projection_input_hadamard_factors) =
-                    Mamba2::new(hidden_dim, data_type, config, parameter_tree, context)?;
+                let (mamba2, in_projection_input_hadamard_factors) = Mamba2::new(
+                    format!("{layer_name}/mamba2"),
+                    hidden_dim,
+                    data_type,
+                    config,
+                    parameter_tree,
+                    context,
+                )?;
 
                 Ok((Box::new(mamba2), in_projection_input_hadamard_factors))
             },
             AnyTokenMixerConfig::ShortConvConfig(config) => {
                 assert!(rope_config.is_none(), "unexpected rope for short conv mixer");
 
-                let (short_conv, in_projection_input_hadamard_factors) =
-                    ShortConv::new(hidden_dim, data_type, config, parameter_tree, context)?;
+                let (short_conv, in_projection_input_hadamard_factors) = ShortConv::new(
+                    format!("{layer_name}/short conv"),
+                    hidden_dim,
+                    data_type,
+                    config,
+                    parameter_tree,
+                    context,
+                )?;
 
                 Ok((Box::new(short_conv), in_projection_input_hadamard_factors))
             },

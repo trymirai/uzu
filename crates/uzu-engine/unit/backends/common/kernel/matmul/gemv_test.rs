@@ -77,7 +77,7 @@ fn run_gemv<B: Backend, T: ArrayElement + Float>(
     let mut kernel =
         <B::Kernels as Kernels>::MatmulKernel::new(context, T::data_type(), T::data_type(), T::data_type())
             .expect("MatmulKernel");
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     kernel
         .encode(
             MatmulArguments {

@@ -99,7 +99,7 @@ fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
     let mut o =
         create_buffer::<B, T>(&context, shape.batch_size * shape.tree_size * shape.value_heads * shape.head_v_dim);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         &q,
         &prefix,

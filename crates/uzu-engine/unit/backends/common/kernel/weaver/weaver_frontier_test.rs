@@ -45,7 +45,7 @@ fn select<B: Backend>() -> Vec<u32> {
     let mut candidate_ids = create_buffer_with_data::<B, u32>(&context, &[0; 4 * 3]);
     let mut candidate_scores = create_buffer_with_data::<B, f32>(&context, &[0.0; 4 * 3]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(&context).unwrap();
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     kernel.encode(
         &mut frontier,
         &mut tree,
@@ -97,7 +97,7 @@ fn insert_children<B: Backend>() -> Vec<u32> {
     let prune_scores = create_buffer_with_data::<B, f32>(&context, &PRUNE_LOGPROBS);
     let mut frontier = create_buffer_with_data::<B, u32>(&context, &[42; FrontierIdx::COUNT * 16]);
     let kernel = <B::Kernels as Kernels>::WeaverFrontierInsertChildrenKernel::new(&context).unwrap();
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     kernel.encode(
         &tree,
         &metadata,

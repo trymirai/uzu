@@ -117,7 +117,7 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
     .unwrap();
     let token_ids = create_buffer_with_data::<B, u32>(context, &TOKEN_IDS);
     let mut output = create_buffer::<B, T>(context, TOKEN_IDS.len() * MODEL_DIM as usize);
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
     kernel.encode(
         &token_ids,
         &values,

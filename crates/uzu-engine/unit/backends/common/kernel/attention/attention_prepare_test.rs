@@ -38,7 +38,7 @@ fn run<B: Backend>() -> Output {
     let mut queries = create_buffer::<B, bf16>(&context, 8);
     let mut keys = create_buffer::<B, bf16>(&context, 4);
     let mut values = create_buffer::<B, bf16>(&context, 4);
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
 
     kernel.encode(
         &qkvg,
@@ -92,7 +92,7 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
         .map(bf16::from_f32);
     let qg = create_buffer_with_data::<B, bf16>(&context, &qg);
     let mut queries = create_buffer::<B, bf16>(&context, 8);
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
 
     kernel.encode(
         &qg,

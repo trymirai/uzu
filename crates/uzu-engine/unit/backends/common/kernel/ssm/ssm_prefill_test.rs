@@ -107,7 +107,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let cb_strides: [u32; 3] = input.cb_strides.map(|s| s as u32);
     let state_strides: [u32; 3] = input.state_strides.map(|s| s as u32);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(&context, T::data_type())
         .expect("Failed to create SSDPrefillKernel");
     kernel.encode(

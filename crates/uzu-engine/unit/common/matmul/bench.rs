@@ -64,7 +64,7 @@ pub fn iter_encode_loop_named<B: Backend, F>(
 {
     bencher.iter_custom(|n_iters| {
         let capture = start_benchmark_capture::<B>(context, benchmark_path);
-        let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None, false).unwrap();
         for _ in 0..n_iters {
             encode(&mut command_buffer);
         }

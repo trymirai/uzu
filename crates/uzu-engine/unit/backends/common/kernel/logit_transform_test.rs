@@ -31,7 +31,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
             .expect("Failed to create LogitTransformKernel");
 
     let mut logits_buffer = create_buffer_with_data::<B, T>(&context, logits);
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(&mut logits_buffer, logits.len() as u32, scale, soft_cap.unwrap_or(0.0), &mut command_buffer);
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 

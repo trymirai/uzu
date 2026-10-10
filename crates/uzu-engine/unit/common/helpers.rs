@@ -90,7 +90,7 @@ pub fn buffer_readback<B: Backend>(
 ) -> B::GlobalBuffer {
     let mut output_buffer = create_buffer::<B, u8>(context, buffer.size());
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     command_buffer.encode_copy(buffer, &mut output_buffer);
     submit_command_buffer(command_buffer);
 

@@ -85,7 +85,7 @@ fn run<B: Backend>(
     let mut output = create_buffer::<B, f32>(&context, tree_size * TOTAL_PROJ_DIM);
     let mut suffix_state = create_buffer::<B, f32>(&context, tree_size * CONV_DIM * STATE_STRIDE);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     kernel.encode(
         &input,
         &weights,

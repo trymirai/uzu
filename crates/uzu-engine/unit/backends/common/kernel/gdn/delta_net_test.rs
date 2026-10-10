@@ -42,7 +42,7 @@ fn run_conv_update<B: Backend>(
     let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(&context, DataType::F32, true)
         .expect("Failed to create kernel");
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         &w_array,
         Some(&b_array),
@@ -85,7 +85,7 @@ fn run_delta_net_update<B: Backend, T: ArrayElement>(
     let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetUpdateKernel::new(&context, T::data_type(), head_k_dim)
         .expect("Failed to create kernel");
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         &in_proj_array,
         &a_log_array,
@@ -205,7 +205,7 @@ fn test_delta_net_conv_scan() {
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetConvScanKernel::new(&context, DataType::BF16, true)
             .expect("scan");
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     pack_kernel.encode(
         &state_array,
         &in_proj_array,
@@ -363,7 +363,7 @@ fn run_prefill_with_norm_gate_typed<B: Backend, T: ArrayElement>(
             .unwrap();
     let norm_k = <<B as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, T::data_type()).unwrap();
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     prep_k.encode(
         &in_proj_array,
         &a_log_array,
@@ -541,7 +541,7 @@ fn test_delta_net_prefill_prep() {
         true,
     )
     .unwrap();
-    let mut cpu_enc = cpu_ctx.create_command_buffer(None, None).expect("command buffer");
+    let mut cpu_enc = cpu_ctx.create_command_buffer(None, None, false).expect("command buffer");
     cpu_prep.encode(
         &cpu_in_proj,
         &cpu_a_log,
@@ -593,7 +593,7 @@ fn test_delta_net_prefill_prep() {
     )
     .unwrap();
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     prep_k.encode(
         &in_proj_array,
         &a_log_array,
@@ -687,7 +687,7 @@ fn bench_delta_net_prefill() {
     eprintln!("  state_size={state_size} ({:.2} MB)", state_size as f64 * 4.0 / 1024.0 / 1024.0);
 
     let prep_result = run_perf_with_warmup("prep_only", 5, 50, || {
-        let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+        let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
         prep_k.encode(
             &in_proj_array,
             &a_log_array,
@@ -712,7 +712,7 @@ fn bench_delta_net_prefill() {
     let mut state_array = create_buffer::<Metal, f32>(&context, state_size);
 
     let prefill_result = run_perf_with_warmup("prep+prefill+norm_gate", 5, 50, || {
-        let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+        let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
         command_buffer.encode_fill(&mut state_array, 0);
         prep_k.encode(
             &in_proj_array,

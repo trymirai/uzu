@@ -20,6 +20,19 @@ impl<B: Backend> LanguageModelState<B> {
     pub fn tokens(&self) -> &[u64] {
         &self.tokens
     }
+
+    pub fn set_context_length(
+        &mut self,
+        context_length: u32,
+    ) {
+        assert!(
+            self.speculator_state.is_none(),
+            "language model state with a speculator can't change its context length"
+        );
+        self.tokens.resize(context_length as usize, 0);
+        self.last_output_token = None;
+        self.transformer_state.set_context_length(context_length);
+    }
 }
 
 #[derive(Debug, Error)]

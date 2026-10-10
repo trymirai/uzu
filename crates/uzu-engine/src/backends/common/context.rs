@@ -13,6 +13,7 @@ pub trait Context: Sized + Send + Sync {
         &self,
         name: Option<&str>,
         allocation_pool: Option<Arc<<Self::Backend as Backend>::AllocationPool>>,
+        timestamps: bool,
     ) -> Result<<<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding, <Self::Backend as Backend>::Error>;
 
     fn create_buffer(

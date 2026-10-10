@@ -47,7 +47,7 @@ fn run<B: Backend>(
     let context = B::Context::new().expect("context");
     let transform =
         <B::Kernels as Kernels>::TrellisTransformKernel::new(context.as_ref(), columns).expect("trellis transform");
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("command buffer");
     // kept alive until the command buffer has run: the CPU backend reads them at submit time
     let input = create_buffer_with_data::<B, bf16>(context.as_ref(), input);
     let rht_factors = create_buffer_with_data::<B, f32>(context.as_ref(), rht_factors);

@@ -75,7 +75,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let mut z_out = create_buffer::<B, T>(&context, z_out_size);
     let mut dt_out = create_buffer::<B, T>(&context, dt_out_size);
 
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+    let mut command_buffer = context.create_command_buffer(None, None, false).expect("Failed to create command buffer");
     kernel.encode(
         &input_buffer,
         &mut conv_out,
