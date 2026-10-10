@@ -159,20 +159,22 @@ impl AttentionSinglePassCase {
 
     /// The canonical nodes of the trie: preorder index, last index of the subtree, depth.
     pub fn trie_nodes(&self) -> Option<Vec<TrieNode>> {
-        let parents = self.parents.as_ref()?;
+        Some(Self::nodes(self.parents.as_ref()?))
+    }
+
+    /// The canonical nodes of the trie of preorder parent links: preorder index, last index of the subtree, depth.
+    pub fn nodes(parents: &[Option<u32>]) -> Vec<TrieNode> {
         let count = parents.len() as u32;
-        Some(
-            (0..count)
-                .map(|node| TrieNode {
-                    trie_start: node,
-                    trie_end: (node..count)
-                        .take_while(|&other| Self::path(parents, other).any(|ancestor| ancestor == node))
-                        .last()
-                        .unwrap(),
-                    height: Self::depth(parents, node),
-                })
-                .collect(),
-        )
+        (0..count)
+            .map(|node| TrieNode {
+                trie_start: node,
+                trie_end: (node..count)
+                    .take_while(|&other| Self::path(parents, other).any(|ancestor| ancestor == node))
+                    .last()
+                    .unwrap(),
+                height: Self::depth(parents, node),
+            })
+            .collect()
     }
 
     /// Keys `query` attends to, in index order, from logical positions: a ring holds positions oldest first from its

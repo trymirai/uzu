@@ -70,7 +70,7 @@ const NORM_SHAPES: [[u32; 6]; 7] = [
     [2, 4, 11, 3, 16, 2],
 ];
 
-const CPU_FAILURE: &str = "called `Result::unwrap()` on an `Err` value: CommandBufferExecutionFailed(RecvError)";
+pub const CPU_FAILURE: &str = "called `Result::unwrap()` on an `Err` value: CommandBufferExecutionFailed(RecvError)";
 const UPDATE_KERNEL_SIZE: &str =
     "DeltaNetConvUpdate: precondition kernel_size >= 2 || kernel_size == 1 && conv_dim == 0 violated";
 const UPDATE_ROWS: &str = "DeltaNetConvUpdate: precondition conv_dim <= 1 || state_stride >= kernel_size - 1 violated";
@@ -78,13 +78,13 @@ const SCAN_ROWS: &str = "DeltaNetConvScan: precondition suffix_len <= 1 || conv_
 const NORM_ROWS: &str = "DeltaNetNormGate: precondition suffix_len <= 1 || num_v_heads == 0 || head_v_dim == 0 || \
                          num_v_heads <= value_dim / head_v_dim violated";
 
-fn sentinel<T: Float>() -> T {
+pub fn sentinel<T: Float>() -> T {
     T::from(-7.0).unwrap()
 }
 
 /// The values U(silu(x)) may take under the reviewed SiLU oracle: the exact value where it is one, keeping its class,
 /// otherwise its bounds rounded to U.
-fn silu_set<U: Float>(x: f64) -> ((f64, f64), u8) {
+pub fn silu_set<U: Float>(x: f64) -> ((f64, f64), u8) {
     let ((lo, hi), _) = silu_oracle(x, 1.0);
     match lo.to_bits() == hi.to_bits() {
         true => point(U::from(lo).unwrap().to_f64().unwrap()),
@@ -92,7 +92,7 @@ fn silu_set<U: Float>(x: f64) -> ((f64, f64), u8) {
     }
 }
 
-fn member(
+pub fn member(
     ((lo, hi), mask): ((f64, f64), u8),
     actual: f64,
 ) -> bool {
@@ -103,7 +103,7 @@ fn member(
 }
 
 /// Every element with an owner is a member of its set; every other keeps its initial bits.
-fn check<T: ArrayElement + Float + Debug>(
+pub fn check<T: ArrayElement + Float + Debug>(
     sets: &[((f64, f64), u8)],
     owner: &[Option<usize>],
     initial: &[T],
@@ -127,7 +127,7 @@ fn check<T: ArrayElement + Float + Debug>(
 
 /// # Safety
 /// Every command buffer using the buffers has completed.
-unsafe fn assert_inputs<T: ArrayElement + Float>(
+pub unsafe fn assert_inputs<T: ArrayElement + Float>(
     buffers: &[(Arc<VkBuffer>, Range<u64>)],
     inputs: &[&[T]],
     label: &str,
@@ -138,7 +138,7 @@ unsafe fn assert_inputs<T: ArrayElement + Float>(
 }
 
 /// Records once, or in `median_times` submissions when `timed`.
-fn submit(
+pub fn submit(
     fixture: &KernelFixture,
     timed: bool,
     mut record: impl FnMut(&mut VkCommandBufferEncoding),
@@ -786,7 +786,7 @@ fn norm_gate_witnesses() {
 }
 
 /// The expected panic message of a closure that must fail before recording.
-fn panics(run: impl FnOnce()) -> String {
+pub fn panics(run: impl FnOnce()) -> String {
     let error = catch_unwind(AssertUnwindSafe(run)).expect_err("accepted");
     *error.downcast::<String>().expect("panic message")
 }

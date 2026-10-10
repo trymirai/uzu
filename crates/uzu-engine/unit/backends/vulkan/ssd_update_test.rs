@@ -75,7 +75,7 @@ pub fn union(
 }
 
 /// The negated members, whose classes swap signs.
-fn negate(((lo, hi), mask): ((f64, f64), u8)) -> ((f64, f64), u8) {
+pub fn negate(((lo, hi), mask): ((f64, f64), u8)) -> ((f64, f64), u8) {
     ((-hi, -lo), mask & NAN | (mask & (NEG_INF | NEG_ZERO)) << 1 | (mask & (POS_INF | POS_ZERO)) >> 1)
 }
 

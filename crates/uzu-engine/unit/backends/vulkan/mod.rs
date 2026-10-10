@@ -10,6 +10,7 @@ mod attention_single_pass_test;
 mod bf16_conversion_test;
 mod conv1d_test;
 mod delta_net_test;
+mod delta_net_tree_test;
 mod gated_act_mul_test;
 mod gemm_test;
 mod gemv_test;
@@ -50,6 +51,9 @@ pub use ancestor_attention_case::{AncestorAttentionCase, HEAD_DIM};
 pub use attention_prepare_case::AttentionPrepareCase;
 pub use attention_single_pass_case::{AttentionSinglePassCase, hashed};
 pub use conv1d_test::values as conv1d_values;
+pub use delta_net_test::{
+    CPU_FAILURE, assert_inputs, check as delta_net_check, member, panics, sentinel, silu_set, submit,
+};
 pub use gemv_test::{exact_witnesses, overflow_and_nonfinite_witnesses, soft_cap_edges, soft_cap_follows_bias};
 pub use input_embedding_lookup_case::InputEmbeddingLookupCase;
 pub use matmul_case::MatmulCase;
@@ -61,5 +65,5 @@ pub use quantized_matmul_test::{check, check_all};
 pub use short_conv_case::ShortConvCase;
 pub use short_conv_test::{arg, assert_same_bits, cpu_buffer, cpu_submissions, specials};
 pub use ssd_update_test::{
-    NAN, NEG_INF, NEG_ZERO, POS_INF, POS_ZERO, add, bounds, decay, mul, point, round, single, union,
+    NAN, NEG_INF, NEG_ZERO, POS_INF, POS_ZERO, add, bounds, decay, mul, negate, point, round, single, union,
 };
