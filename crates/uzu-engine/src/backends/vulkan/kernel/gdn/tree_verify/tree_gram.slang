@@ -1,5 +1,6 @@
 import definitions;
 import common.activation;
+import common.ordered_dot;
 import common.storage_address;
 import gdn.prefill_prep;
 import generated.trie;
@@ -17,16 +18,6 @@ groupshared float tree_gram_diag[TREE_GRAM_BLOCK * TREE_GRAM_BLOCK];
 // The element (b, row, head) of a [batch, tree_size, heads] lane array.
 uint2 tree_gram_lane(uint b, uint tree_size, uint row, uint heads, uint head) {
   return add_address(byte_offset(element_index(b, tree_size, row), heads), uint2(head, 0));
-}
-
-// The ordered dot from +0 over d ascending of x[d] y[d].
-float tree_gram_dot<X: IModelFloat, Y: IModelFloat>(Ptr<X, Access.Read> x, Ptr<Y, Access.Read> y, uint dim) {
-  var sum = 0.0;
-  for (uint d = 0; d < dim; d++) {
-    let y_d = element_pointer(y, uint2(d, 0))[0].toFloat();
-    sum = ordered_sum(sum, exact_product(element_pointer(x, uint2(d, 0))[0].toFloat(), y_d));
-  }
-  return sum;
 }
 
 [[Kernel]] [[Public]]
@@ -81,7 +72,7 @@ func BuildTreeGram<T: IModelFloat>(
             var value = 0.0;
             if (row >= node.trie_start && row <= node.trie_end) {
               let k_col = element_pointer(k, byte_offset(tree_gram_lane(b, tree_size, col, k_heads, hk), head_k_dim));
-              let qk = tree_gram_dot(q_row, k_col, head_k_dim);
+              let qk = ordered_dot(q_row, k_col, head_k_dim);
               let p_col = element_pointer(prefix, tree_gram_lane(b, tree_size, col, value_heads, hv))[0];
               value = exact_product(exact_product(delta_net_exp(ordered_sum(p_row, -p_col)), scale), qk);
             }
@@ -108,7 +99,7 @@ func BuildTreeGram<T: IModelFloat>(
                 let row_lane = tree_gram_lane(b, tree_size, row, value_heads, hv);
                 let k_row = element_pointer(k, byte_offset(tree_gram_lane(b, tree_size, row, k_heads, hk), head_k_dim));
                 let k_col = element_pointer(k, byte_offset(tree_gram_lane(b, tree_size, col, k_heads, hk), head_k_dim));
-                let kk = tree_gram_dot(k_row, k_col, head_k_dim);
+                let kk = ordered_dot(k_row, k_col, head_k_dim);
                 let p_col = element_pointer(prefix, tree_gram_lane(b, tree_size, col, value_heads, hv))[0];
                 let e = delta_net_exp(ordered_sum(element_pointer(prefix, row_lane)[0], -p_col));
                 value = exact_product(exact_product(element_pointer(beta, row_lane)[0], e), kk);
@@ -152,7 +143,7 @@ func BuildTreeGram<T: IModelFloat>(
               var dv = thread_idx;
               while (dv < head_v_dim) {
                 let h0_row = element_pointer(h0, byte_offset(add_address(h0_head, uint2(dv, 0)), head_k_dim));
-                element_pointer(kh0_row, uint2(dv, 0))[0] = tree_gram_dot(k_row, h0_row, head_k_dim);
+                element_pointer(kh0_row, uint2(dv, 0))[0] = ordered_dot(k_row, h0_row, head_k_dim);
                 if (head_v_dim - dv <= TREE_GRAM_THREADS) {
                   break;
                 }

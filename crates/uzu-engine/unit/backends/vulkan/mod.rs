@@ -40,6 +40,7 @@ mod storage_address_test;
 mod tensor_add_bias_test;
 mod tensor_add_scale_test;
 mod tree_gram_test;
+mod tree_solve_out_test;
 mod typed_constants_test;
 mod validation_logger;
 
@@ -55,7 +56,7 @@ pub use conv1d_test::values as conv1d_values;
 pub use delta_net_test::{
     CPU_FAILURE, assert_inputs, check as delta_net_check, member, panics, sentinel, silu_set, submit,
 };
-pub use delta_net_tree_test::{decay_set, tree as delta_net_tree};
+pub use delta_net_tree_test::{cpu_prefix as cpu_tree_prefix, decay_set, tree as delta_net_tree};
 pub use gemv_test::{exact_witnesses, overflow_and_nonfinite_witnesses, soft_cap_edges, soft_cap_follows_bias};
 pub use input_embedding_lookup_case::InputEmbeddingLookupCase;
 pub use matmul_case::MatmulCase;
@@ -69,3 +70,4 @@ pub use short_conv_test::{arg, assert_same_bits, cpu_buffer, cpu_submissions, sp
 pub use ssd_update_test::{
     NAN, NEG_INF, NEG_ZERO, POS_INF, POS_ZERO, add, bounds, decay, mul, negate, point, round, single, union,
 };
+pub use tree_gram_test::{cpu_gram as cpu_tree_gram, gram_inputs as tree_gram_inputs};

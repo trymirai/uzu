@@ -45,7 +45,7 @@ fn extents(
 }
 
 /// Synthetic inputs, not model data: q and k through the CPU's last mapped k head, prefix specials every 9th element.
-fn gram_inputs<T: ArrayElement + Float>(
+pub fn gram_inputs<T: ArrayElement + Float>(
     shape: [u32; 6],
     kind: &str,
     slots: &[i32],
@@ -131,7 +131,7 @@ fn inverse_replay(
     inverse
 }
 
-fn cpu_gram<T: ArrayElement + Float + Default>(
+pub fn cpu_gram<T: ArrayElement + Float + Default>(
     shape: [u32; 6],
     [mxu, use_h0]: [bool; 2],
     scale: f32,

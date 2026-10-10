@@ -297,7 +297,7 @@ fn prefix_replay(
 }
 
 /// The CPU BuildTreePrefix on a fresh context in `submissions` submissions: the prefix and the wall times.
-fn cpu_prefix(
+pub fn cpu_prefix(
     shape: [u32; 3],
     words: &[u32],
     log_decay: &[f32],

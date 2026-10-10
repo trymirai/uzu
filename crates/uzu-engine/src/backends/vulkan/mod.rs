@@ -34,16 +34,17 @@ pub use vk_context_error::VkContextError;
 pub use vk_kernels::{
     A8QuantizedGemmVulkanKernel, A8QuantizedGemvVulkanKernel, ActivationTransformVulkanKernel, ActivationVulkanKernel,
     AncestorAttentionVulkanKernel, AttentionPrepareVulkanKernel, AttentionSinglePassVulkanKernel,
-    BuildTreeGramVulkanKernel, BuildTreePrefixVulkanKernel, Conv1dDecodeVulkanKernel, Conv1dPackVulkanKernel,
-    Conv1dScanVulkanKernel, ConvTreeScanVulkanKernel, DeltaNetConvScanVulkanKernel, DeltaNetConvUpdateVulkanKernel,
-    DeltaNetNormGateVulkanKernel, DeltaNetPrefillPrepVulkanKernel, DeltaNetPrefillVulkanKernel,
-    DeltaNetUpdateVulkanKernel, GatedActMulVulkanKernel, GemmVulkanKernel, GemvVulkanKernel,
-    InputEmbeddingLookupVulkanKernel, KVCacheUpdateVulkanKernel, LogitTransformVulkanKernel, NormalizationVulkanKernel,
-    PoolingMeanVulkanKernel, QKVNormVulkanKernel, QuantizedGemmVulkanKernel, QuantizedGemvVulkanKernel,
-    SSDPrefill64VulkanKernel, SSDPrefillVulkanKernel, SSDUpdateVulkanKernel, SeparableCausalConvVulkanKernel,
-    ShortConvDecodeVulkanKernel, ShortConvPackVulkanKernel, ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel,
-    SigmoidGateVulkanKernel, SoftmaxVulkanKernel, SplitInProjVulkanKernel, StateAdvanceVulkanKernel,
-    TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel,
+    BuildTreeGramVulkanKernel, BuildTreeOutVulkanKernel, BuildTreePrefixVulkanKernel, Conv1dDecodeVulkanKernel,
+    Conv1dPackVulkanKernel, Conv1dScanVulkanKernel, ConvTreeScanVulkanKernel, DeltaNetConvScanVulkanKernel,
+    DeltaNetConvUpdateVulkanKernel, DeltaNetNormGateVulkanKernel, DeltaNetPrefillPrepVulkanKernel,
+    DeltaNetPrefillVulkanKernel, DeltaNetUpdateVulkanKernel, GatedActMulVulkanKernel, GemmVulkanKernel,
+    GemvVulkanKernel, InputEmbeddingLookupVulkanKernel, KVCacheUpdateVulkanKernel, LogitTransformVulkanKernel,
+    NormalizationVulkanKernel, PoolingMeanVulkanKernel, QKVNormVulkanKernel, QuantizedGemmVulkanKernel,
+    QuantizedGemvVulkanKernel, SSDPrefill64VulkanKernel, SSDPrefillVulkanKernel, SSDUpdateVulkanKernel,
+    SeparableCausalConvVulkanKernel, ShortConvDecodeVulkanKernel, ShortConvPackVulkanKernel,
+    ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SigmoidGateVulkanKernel, SoftmaxVulkanKernel,
+    SplitInProjVulkanKernel, StateAdvanceVulkanKernel, TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel,
+    TreeUpdateSolveVulkanKernel,
 };
 pub use vk_logger::VkLogger;
 pub use vk_physical_device::VkPhysicalDevice;
