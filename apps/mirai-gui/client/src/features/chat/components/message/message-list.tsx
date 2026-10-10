@@ -171,6 +171,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
       <div
         ref={scrollContainerRef}
         className="absolute inset-0 flex flex-col overflow-y-auto overscroll-y-contain scrollbar-hide"
+        style={{ paddingInline: "max(1.25rem, calc((100% - var(--chat-width)) / 2))" }}
       >
         {messages.length > 0 ? (
           messages.map((message, idx) => {
