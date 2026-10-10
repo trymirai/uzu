@@ -1,0 +1,18 @@
+[project]
+name = "benchmarks-mlx"
+version = "0.0.1"
+requires-python = ">=3.13.7"
+dependencies = ["benchmarks-common", "mlx==0.32.3", "mlx-lm==0.32.0", "typer>=0.27.2"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+bench-mlx = "bench_mlx:main"
+
+[tool.setuptools]
+py-modules = ["bench_mlx"]
+
+[tool.uv.sources]
+benchmarks-common = { path = "../common-py", editable = true }

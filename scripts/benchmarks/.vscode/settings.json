@@ -1,0 +1,24 @@
+{
+    "cmake.sourceDirectory": [
+        "${workspaceFolder}/engine-llamacpp",
+        "${workspaceFolder}/engine-splash"
+    ],
+    "cmake.useCMakePresets": "always",
+    "cmake.debugConfig": {
+        "type": "lldb"
+    },
+    "ruff.path": [
+        "${workspaceFolder}/.venv/bin/ruff"
+    ],
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/engine-splash/deps"
+    ],
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        }
+    }
+}

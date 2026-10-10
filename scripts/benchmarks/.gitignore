@@ -1,0 +1,13 @@
+.codex/
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+__pycache__/
+*.egg-info/
+
+build/
+dist/
+workspace/
+
+*.so
