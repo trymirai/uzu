@@ -25,6 +25,7 @@ mod qkv_norm_case;
 mod qkv_norm_test;
 mod quantized_matmul_test;
 mod runtime_test;
+mod separable_causal_conv_test;
 mod short_conv_case;
 mod short_conv_test;
 mod sigmoid_gate_test;
