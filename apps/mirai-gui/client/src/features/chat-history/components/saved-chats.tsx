@@ -143,7 +143,7 @@ export default function SavedChats() {
 
   return (
     <div ref={scrollViewportRef} className="flex-1 overflow-y-auto overscroll-y-contain min-h-0 scrollbar-hide">
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1">
         {savedChats.length === 0 ? (
           <div className="px-4 py-2 text-[13px] font-[350] leading-[150%] text-label-muted">No chats yet</div>
         ) : (

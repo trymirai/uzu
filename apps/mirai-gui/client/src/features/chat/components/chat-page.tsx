@@ -162,7 +162,7 @@ export function ChatPage() {
           isTitleGenerating={isTitleGeneratingForChat}
         />
 
-        <div className="flex-1 overflow-clip min-h-0 w-full max-w-[var(--chat-width)] mx-auto">
+        <div className="flex-1 overflow-clip min-h-0 -mx-5">
           <ChatMessageList
             isNewChat={!!search.isNew}
             isChatStreaming={isChatStreaming}
