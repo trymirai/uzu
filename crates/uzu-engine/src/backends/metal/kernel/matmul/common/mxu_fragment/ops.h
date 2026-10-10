@@ -19,7 +19,7 @@ UZU_CONST ushort MXU_MMA_ROWS = 16;
 UZU_CONST ushort MXU_MMA_COLS = 16;
 
 // RELAXED=false uses the strict MPP layout; it currently performs about the same as simdgroup.
-template <bool RELAXED = true>
+template <bool RELAXED = true, bool INTERLEAVE_INTEGER_ROWS = false>
 struct MxuFragmentOps {
   using MatmulMode = mpp::tensor_ops::matmul2d_descriptor::mode;
 

@@ -11,7 +11,10 @@ using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
-#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant)
+#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION                                                                             \
+  (A_IS_INT8 &&                                                                                                        \
+   (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant || (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant &&    \
+                                                          !(BITS == 4 && (GROUP_SIZE == 32 || GROUP_SIZE == 64)))))
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
@@ -100,7 +103,8 @@ CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
     (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
-CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
+           (AT == "bfloat" && (DT == "bfloat" || DT == "float")))
 CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (A_GROUP_SIZE == 0))
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
@@ -147,7 +151,9 @@ KERNEL(Gemm)(
       LeftOperandFor<A_PROLOGUE, AT, ushort(A_GROUP_SIZE), A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && BITS == 4>;
   using RightOperand = operands::RightOperandFor<B_PROLOGUE, ushort(BITS), ushort(GROUP_SIZE), BT>;
   static_assert(
-      NEEDS_ASYMMETRIC_WEIGHT_CORRECTION == (A_IS_INT8 && RightOperand::NEEDS_CORRECTION),
+      NEEDS_ASYMMETRIC_WEIGHT_CORRECTION ==
+          (A_IS_INT8 && (schedules::IntegerSchedule<LeftOperand, RightOperand>::HAS_ZERO_POINTS ||
+                         schedules::IntegerSchedule<LeftOperand, RightOperand>::HAS_BIAS)),
       "kernel bindings and operand correction policy must agree"
   );
   const auto left_storage = operands::pack_left<LeftOperand, AT>(a, a_int8, a_scales, a_group_sums);
