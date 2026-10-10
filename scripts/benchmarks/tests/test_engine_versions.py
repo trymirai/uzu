@@ -98,6 +98,17 @@ def test_llamacpp_uses_latest_version() -> None:
     assert current == latest, f"engine-llamacpp/CMakeLists.txt: LLAMA_VERSION is {current}, latest release is {latest}"
 
 
+def test_mldrift_uses_latest_revision() -> None:
+    source = (ROOT / "engine-mldrift/bootstrap.sh").read_text()
+    revision = re.search(r'^REVISION="([0-9a-f]{40})"$', source, re.MULTILINE)
+    assert revision, "engine-mldrift/bootstrap.sh: missing REVISION"
+    latest = fetch_json("https://api.github.com/repos/google-ai-edge/ml-drift/commits/main")["sha"]
+    assert revision[1] == latest, (
+        f"engine-mldrift/bootstrap.sh: REVISION is {revision[1]}, latest main commit is {latest}; "
+        "ML Drift has no releases, so update REVISION and refresh patches/benchmark-metrics.patch"
+    )
+
+
 def test_mlxserve_uses_latest_version() -> None:
     project = ROOT / "engine-mlxserve"
     source = (project / "bootstrap.sh").read_text()
