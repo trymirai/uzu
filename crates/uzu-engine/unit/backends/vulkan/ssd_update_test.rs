@@ -30,11 +30,11 @@ use crate::{
 // A set of values is `((lo, hi), classes)`: its finite nonzero members lie in [lo, hi], none when lo > hi, and its other
 // members are the classes below. It is one bit pattern only as one finite value or one class other than NaN, so a zero's
 // sign is never inferred from +0 == -0.
-const NAN: u8 = 1;
-const NEG_INF: u8 = 2;
-const POS_INF: u8 = 4;
-const NEG_ZERO: u8 = 8;
-const POS_ZERO: u8 = 16;
+pub const NAN: u8 = 1;
+pub const NEG_INF: u8 = 2;
+pub const POS_INF: u8 = 4;
+pub const NEG_ZERO: u8 = 8;
+pub const POS_ZERO: u8 = 16;
 const NONE: (f64, f64) = (f64::INFINITY, f64::NEG_INFINITY);
 /// The smallest positive FP32 value.
 const TINY: f64 = f32::from_bits(1) as f64;
@@ -57,7 +57,7 @@ const BATCHED: [u32; 12] = [0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0];
 const DT_RAW: [f32; 10] = [-104.0, 0.0, 21.0, 32.0, 90.0, 104.0, f32::INFINITY, f32::NEG_INFINITY, f32::NAN, -0.0];
 
 /// The set of one value; each negative class is its positive one shifted right once.
-fn point(value: f64) -> ((f64, f64), u8) {
+pub fn point(value: f64) -> ((f64, f64), u8) {
     let negative = u8::from(value.is_sign_negative());
     match value {
         _ if value.is_nan() => (NONE, NAN),
@@ -67,7 +67,7 @@ fn point(value: f64) -> ((f64, f64), u8) {
     }
 }
 
-fn union(
+pub fn union(
     ((a, b), m): ((f64, f64), u8),
     ((c, d), n): ((f64, f64), u8),
 ) -> ((f64, f64), u8) {
@@ -81,7 +81,7 @@ fn negate(((lo, hi), mask): ((f64, f64), u8)) -> ((f64, f64), u8) {
 
 /// The reals [a, b], nonzero and of one sign, each rounded to FP32 and then to U. That is monotonic, so the rounded
 /// endpoints bound it: one rounding to zero or infinity adds that class, and only finite results bound finite members.
-fn round<U: Float>((a, b): (f64, f64)) -> ((f64, f64), u8) {
+pub fn round<U: Float>((a, b): (f64, f64)) -> ((f64, f64), u8) {
     if b < 0.0 {
         return negate(round::<U>((-b, -a)));
     }
@@ -120,7 +120,7 @@ fn combine(
 
 /// T(a b) of every pair of members, rounded from FP32: classes by IEEE rules, finite products between the exact corner
 /// products of each sign.
-fn mul<T: Float>(
+pub fn mul<T: Float>(
     a: ((f64, f64), u8),
     b: ((f64, f64), u8),
 ) -> ((f64, f64), u8) {
@@ -144,7 +144,7 @@ fn mul<T: Float>(
 
 /// T(a + b) of every pair of members of T, rounded from FP32: classes by IEEE rules, finite sums between the endpoint
 /// sums, where opposite signs may cancel to +0 and other sums are at least T's smallest positive value.
-fn add<T: Float>(
+pub fn add<T: Float>(
     a: ((f64, f64), u8),
     b: ((f64, f64), u8),
 ) -> ((f64, f64), u8) {
@@ -180,7 +180,7 @@ fn by_sign<U: Float>(
 }
 
 /// An oracle's bounds on an FP32 result rounded to U: NaN bounds give NaN, and bounds holding 0 both zeros.
-fn bounds<U: Float>((lo, hi): (f64, f64)) -> ((f64, f64), u8) {
+pub fn bounds<U: Float>((lo, hi): (f64, f64)) -> ((f64, f64), u8) {
     match lo.is_nan() || hi.is_nan() {
         true => (NONE, NAN),
         false => by_sign::<U>((lo, hi), TINY, NEG_ZERO | POS_ZERO),
@@ -188,7 +188,7 @@ fn bounds<U: Float>((lo, hi): (f64, f64)) -> ((f64, f64), u8) {
 }
 
 /// The one bit pattern of a set, if it holds exactly one.
-fn single(((lo, hi), mask): ((f64, f64), u8)) -> Option<f64> {
+pub fn single(((lo, hi), mask): ((f64, f64), u8)) -> Option<f64> {
     let classes = [(NEG_INF, f64::NEG_INFINITY), (POS_INF, f64::INFINITY), (NEG_ZERO, -0.0), (POS_ZERO, 0.0)];
     match mask {
         0 => (lo.to_bits() == hi.to_bits()).then_some(lo),
@@ -201,7 +201,7 @@ fn single(((lo, hi), mask): ((f64, f64), u8)) -> Option<f64> {
 /// and +inf gives +0 (the shader's branch, the CPU's expf(-inf)). Zeros and finite t give, on Vulkan, Exp's bound, whose
 /// subnormal results may flush to the zero of their sign; on the CPU 1 ULP, glibc's expf as characterized, not a Rust
 /// guarantee.
-fn decay<U: ArrayElement + Float, V: Float>(
+pub fn decay<U: ArrayElement + Float, V: Float>(
     dt: ((f64, f64), u8),
     shader: bool,
 ) -> ((f64, f64), u8) {

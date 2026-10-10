@@ -25,7 +25,7 @@ T ssd_sum<T: IStorageFloat>(T a, T b) {
 
 // exp(-dt) for dt = softplus, which is +0 or more, +inf or NaN. GLSL Exp does not guarantee its result for special
 // inputs, so these bit branches decide them: NaN propagates and +inf gives +0, the CPU's expf(-inf).
-float ssd_decay(float dt) {
+public float ssd_decay(float dt) {
   let bits = asuint(dt);
   if ((bits & 0x7fffffffu) > 0x7f800000u) {
     return dt;
@@ -101,7 +101,7 @@ void ssd_update_item<T: IStorageFloat, let IN_PLACE : bool>(
 
 [[Kernel]] [[Public]]
 [[Precondition("encode", "group_size > 0 || b_size == 0 || h_size == 0 || dh_size == 0")]]
-func SSDUpdate<T: IStorageFloat>(
+public func SSDUpdate<T: IStorageFloat>(
   Ptr<T, Access.Read> x,
   Ptr<T, Access.Read> dt_raw,
   Ptr<T, Access.Read> b,
