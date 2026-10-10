@@ -69,7 +69,7 @@ const WITNESSES: [(&str, [u32; 3], u32); 35] = [
 /// `sum + residual`. Every FP32 rounding boundary is an FP64 value, so rounding to nearest keeps `sum` on the side of
 /// each boundary the exact sum is on: the residual decides only when `sum` is itself an FP32 midpoint, the overflow
 /// midpoint 2^128 - 2^103 between max finite and 2^128 (which stands for infinity) included.
-fn fma_oracle(
+pub fn fma_oracle(
     a: f32,
     b: f32,
     c: f32,

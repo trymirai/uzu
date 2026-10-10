@@ -222,7 +222,7 @@ impl<T: ArrayElement + Float + NoUninit> InputEmbeddingLookupCase<T> {
             }
             let row = (0..dim).map(|column| staged(token as usize, column)).map(|value| ((value, value), value));
             match &self.factors {
-                Some(factors) => result.extend(transform_oracle(&row.collect::<Vec<_>>(), factors, false)),
+                Some(factors) => result.extend(transform_oracle(&row.collect::<Vec<_>>(), factors, false, 32)),
                 None => result.extend(row),
             }
         }

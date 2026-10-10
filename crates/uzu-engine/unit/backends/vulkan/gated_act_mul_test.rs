@@ -345,7 +345,7 @@ fn output_bounds<T: Float>(
     if !hadamard {
         return products;
     }
-    let transformed = transform_oracle(&products, factors, true);
+    let transformed = transform_oracle(&products, factors, true, 32);
     transformed.into_iter().map(|((lo, hi), center)| ((to::<T>(lo), to::<T>(hi)), to::<T>(center))).collect()
 }
 
@@ -572,7 +572,7 @@ fn bf16_rounding_stages_are_observable() {
         });
         let unstaged = unstaged.collect::<Vec<_>>();
         let unstaged = match hadamard {
-            true => transform_oracle(&unstaged, &factors, true),
+            true => transform_oracle(&unstaged, &factors, true, 32),
             false => unstaged,
         };
         let outside = staged.iter().zip(&unstaged).filter(|(((lo, hi), _), (_, value))| {
@@ -659,7 +659,8 @@ fn quantization_matches<T: ArrayElement + Float + Debug>() {
                 (ActivationTransformOp::InputRht, false, None::<&[f32]>, None, &cpu_products[..], data.2, batch);
             let (gpu_stage, cpu_stage) =
                 (gpu_transformed(&fixture, &gpu_products, data.2, batch), transform_cpu_outputs(cpu_stage).0);
-            check_bounds(&transform_oracle(&products, data.2, true), &cpu_stage, &gpu_stage, &format!("{label} stage"));
+            let stage_bounds = transform_oracle(&products, data.2, true, 32);
+            check_bounds(&stage_bounds, &cpu_stage, &gpu_stage, &format!("{label} stage"));
             let gpu = (gpu.1, gpu.2, gpu.3);
             assert_quantized(&gpu, &quantized(&gpu_stage, dim, setting), &gpu_stage, &label);
             let cpu = cpu_outputs(settings, act, data, shape);

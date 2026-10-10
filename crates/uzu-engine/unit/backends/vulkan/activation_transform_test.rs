@@ -152,28 +152,28 @@ fn signed(
 
 /// The staged FP32 transform of rows of `factors.len()` bounded FP32 values `((lo, hi), center)` in FP64, each stage
 /// rounded to FP32 (subnormals kept): the factored values (before the transform for the input transform, after it for
-/// the output one), the five butterfly stages, then the product with the FP32 reciprocal of sqrt(32). Every stage is
-/// exact or a single correctly rounded, monotonic operation, so bounds propagate: sums add like bounds, differences
-/// opposite ones. Exact inputs give one value as degenerate bounds.
+/// the output one), the butterfly stages of each block of `block` values, then the product with the CPU's FP32
+/// reciprocal of sqrt(block). Every stage is exact or a single correctly rounded, monotonic operation, so bounds
+/// propagate: sums add like bounds, differences opposite ones. Exact inputs give one value as degenerate bounds.
 pub fn transform_oracle(
     rows: &[((f64, f64), f64)],
     factors: &[i32],
     input_rht: bool,
+    block: usize,
 ) -> Vec<((f64, f64), f64)> {
     assert!(factors.iter().all(|factor| factor.abs() == 1), "factors are signs");
     assert!(rows.len().is_multiple_of(factors.len().max(1)), "whole rows");
-    let reciprocal = f64::from(f32::from_bits(0x3e35_04f3));
-    assert_eq!((1.0 / (BLOCK as f32).sqrt()).to_bits(), 0x3e35_04f3, "the CPU's FP32 reciprocal of sqrt(32)");
+    let reciprocal = f64::from(1.0 / (block as f32).sqrt());
     let mut result = Vec::with_capacity(rows.len());
     for row in rows.chunks_exact(factors.len().max(1)) {
-        for (block, signs) in row.as_chunks::<BLOCK>().0.iter().zip(factors.as_chunks::<BLOCK>().0) {
-            let mut values = *block;
+        for (values, signs) in row.chunks_exact(block).zip(factors.chunks_exact(block)) {
+            let mut values = values.to_vec();
             if input_rht {
                 values.iter_mut().zip(signs).for_each(|(value, &sign)| *value = signed(*value, f64::from(sign)));
             }
             let mut stride = 1;
-            while stride < BLOCK {
-                for lane in (0..BLOCK).filter(|lane| lane & stride == 0) {
+            while stride < block {
+                for lane in (0..block).filter(|lane| lane & stride == 0) {
                     let (((a_lo, a_hi), a), ((b_lo, b_hi), b)) = (values[lane], values[lane | stride]);
                     values[lane] = ((round32(a_lo + b_lo), round32(a_hi + b_hi)), round32(a + b));
                     values[lane | stride] = ((round32(a_lo - b_hi), round32(a_hi - b_lo)), round32(a - b));
@@ -470,7 +470,7 @@ fn full_precision_bounds<T: Float, BiasT: Float>(
 ) -> Vec<((f64, f64), f64)> {
     let rows =
         input.iter().map(|value| value.to_f64().unwrap()).map(|value| ((value, value), value)).collect::<Vec<_>>();
-    let oracle = transform_oracle(&rows, factors, input_rht);
+    let oracle = transform_oracle(&rows, factors, input_rht, BLOCK);
     let stage = |index: usize, value: f64| match bias {
         Some(bias) => to::<T>(round32(to::<T>(value) + bias[index % factors.len()].to_f64().unwrap())),
         None => to::<T>(value),
