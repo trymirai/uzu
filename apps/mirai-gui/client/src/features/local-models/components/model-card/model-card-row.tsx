@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from "react";
+import { Button, DataInteractive } from "@headlessui/react";
 import { Trash2 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import { IconCheckStroke } from "@/components/icons/check-stroke-icon";
@@ -27,10 +28,11 @@ export function ModelCardRow({
   const { status, isDownloading, isDownloaded, isPaused, isError, progress } = deriveModelCardState(state);
 
   return (
-    <div
+    <DataInteractive
+      as="div"
       className={twMerge(
         "relative py-2.5 transition-colors duration-150",
-        isDownloaded && "cursor-pointer hover:bg-surface-tertiary outline-hidden focus-visible:shadow-focus",
+        isDownloaded && "cursor-pointer hover:bg-surface-tertiary outline-hidden data-[focus]:shadow-focus",
         isError && "bg-danger-bg",
       )}
       {...(isDownloaded && onOpen
@@ -112,7 +114,7 @@ export function ModelCardRow({
                   <IconCheckStroke />
                 </div>
               </Tooltip>
-              <button
+              <Button
                 type="button"
                 aria-label={`Delete ${name}`}
                 title="Delete model (hold Shift to skip confirmation)"
@@ -120,10 +122,10 @@ export function ModelCardRow({
                   event.stopPropagation();
                   onDelete?.(event);
                 }}
-                className="flex items-center justify-center h-7 w-7 rounded cursor-pointer text-text-muted hover:text-danger bg-transparent hover:border-border-outlined-hover border-[0.5px] border-border-outlined outline-hidden focus-visible:shadow-focus"
+                className="flex items-center justify-center h-7 w-7 rounded cursor-pointer text-text-muted hover:text-danger bg-transparent hover:border-border-outlined-hover border-[0.5px] border-border-outlined outline-hidden data-[focus]:shadow-focus"
               >
                 <Trash2 size={14} />
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -142,6 +144,6 @@ export function ModelCardRow({
           </div>
         </div>
       )}
-    </div>
+    </DataInteractive>
   );
 }

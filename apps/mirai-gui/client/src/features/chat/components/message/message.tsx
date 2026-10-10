@@ -191,8 +191,11 @@ const AssistantMessage: React.FC<MessageProps> = ({
     : messageFromStore?.modelName;
 
   return (
-    <div className="pb-3 text-label-title relative w-full rounded-[5px] text-[15px] leading-[140%]">
-      <div ref={messageRef}>
+    <div className="text-label-title relative w-full rounded-[5px] text-[15px] leading-[140%]">
+      <div
+        ref={messageRef}
+        className="[&>:last-child]:mb-0 [&>.markdown-body:last-child>div>:last-child]:mb-0 [&>[data-message-reasoning]:has(+.markdown-body>div>*)]:mb-[7px]"
+      >
         {transcript !== undefined ? (
           transcript.map((item, index) => {
             const key = `${currentMsgVersion?.id ?? id}:${index}`;
@@ -253,7 +256,7 @@ const AssistantMessage: React.FC<MessageProps> = ({
       </div>
       {(hasVersions ||
         (!streamInProgress && (isStreamFinished || isCanceled || text.length === 0 || !!visibleChainOfThought))) && (
-        <div className="flex flex-wrap items-center gap-1 mt-4">
+        <div className="flex flex-wrap items-center gap-1 mt-2">
           {(visibleResponseText.length !== 0 || hasError || transcript?.some((item) => item.type === "chart")) && (
             <CopyButton className="[&_svg]:size-4" onCopy={handleMessageCopy} />
           )}

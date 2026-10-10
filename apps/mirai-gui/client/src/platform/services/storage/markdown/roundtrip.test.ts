@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { ChatData } from "..";
-import { extractMessageBlocks, parseMessage } from "./parse";
+import { extractMessageBlocks, parseMessage, parseMetadata } from "./parse";
 import { serializeToMarkdown } from "./serialize";
 import { projectAssistantVersion } from "@/features/chat/services/regenerate-versions";
 import type { TranscriptItem } from "@/types/llm-stream";
@@ -20,6 +20,19 @@ const chat: ChatData = {
     { id: "a1", text: "", sender: "assistant", modelName: "Model", timestamp: 1_700_000_000_001, perf: {} },
   ],
 };
+
+it("round-trips an over-budget title in the original Markdown heading without truncating it", () => {
+  const title = "Understanding GPU memory ownership and asynchronous lifetimes";
+  const markdown = serializeToMarkdown({ ...chat, metadata: { ...chat.metadata, title } });
+
+  expect(markdown.startsWith(`# ${title}\n\n**Model:**`)).toBe(true);
+  expect(parseMetadata(markdown, "chat", 2)).toEqual({ ...chat.metadata, title });
+});
+
+it("does not use a heading from message content as a missing chat title", () => {
+  const markdown = "**Model:** Model\n\n---\n\n# Heading in a message";
+  expect(parseMetadata(markdown, "chat", 0).title).toBe("Untitled");
+});
 
 it("keeps an empty assistant placeholder through a serialize/parse round-trip", () => {
   const markdown = serializeToMarkdown(chat);

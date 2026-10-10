@@ -21,8 +21,7 @@ export const tauriChat: ChatService = {
   runStream: (params: LlmRunParams) => runLlmStream(tauriRunTransport, params),
   cancelRun,
 
-  generateTitle: (params: TitleGenParams) =>
-    invoke<string>("title_gen", { payload: { repoId: params.repoId, messages: params.messages } }),
+  generateTitle: (params: TitleGenParams) => invoke<string>("title_gen", { payload: params }),
 
   cancelTitleGen: async () => {
     await invoke("cancel_title_gen");

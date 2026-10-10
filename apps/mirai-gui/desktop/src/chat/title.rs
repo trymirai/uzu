@@ -10,7 +10,8 @@ use uzu::{
 use super::{
     ChatState,
     messages::{build_messages, sanitize},
-    payloads::TitleGenPayload,
+    naming::{TITLE_STYLE_INSTRUCTION, TITLE_TARGET_LENGTH, normalize_name},
+    payloads::{MsgIn, TitleGenPayload},
     session::ensure_session,
 };
 use crate::{error::AppResult, models::ReasoningSupport};
@@ -37,7 +38,14 @@ pub(super) async fn title_gen_inner(
         );
         return Ok(String::new());
     }
-    let messages = build_messages(&payload.messages, support.cheapest());
+    let messages = build_messages(
+        &[MsgIn {
+            role: uzu::types::session::chat::ChatRole::User {},
+            content: title_prompt(&payload.user_text),
+            reasoning_content: None,
+        }],
+        support.cheapest(),
+    );
 
     let reply_config = ChatReplyConfig::create()
         .with_token_limit(Some(DEFAULT_TITLE_GEN_TOKENS_LIMIT))
@@ -81,5 +89,28 @@ pub(super) async fn title_gen_inner(
             "reasoningLen": reasoning.chars().count(),
         })),
     );
-    Ok(sanitize(text.trim()))
+    if state.cancel_requested(TITLE_GEN_RUN_ID) {
+        return Ok(String::new());
+    }
+    Ok(normalize_name(&sanitize(text.trim())).unwrap_or_default())
+}
+
+fn title_prompt(user_text: &str) -> String {
+    format!(
+        "Give this chat a concise, descriptive title. {TITLE_STYLE_INSTRUCTION} Aim for about {TITLE_TARGET_LENGTH} characters \
+         so it fits in the sidebar. Reply with only the title, without quotes or explanation.\n\nMessage: {}",
+        serde_json::to_string(user_text).expect("serialize user message"),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_prompt_uses_the_same_target_length_as_the_naming_tool() {
+        let prompt = title_prompt("One\n\"two\"");
+        assert!(prompt.contains("Aim for about 25 characters"));
+        assert!(prompt.contains(r#""One\n\"two\"""#));
+    }
 }

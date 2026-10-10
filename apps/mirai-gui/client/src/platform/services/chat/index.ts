@@ -3,7 +3,7 @@ import type { SamplingPolicyPayload } from "@/types/sampling";
 
 export type TitleGenParams = {
   repoId: string;
-  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  userText: string;
 };
 
 export type SamplingDefaults = Exclude<SamplingPolicyPayload, { type: "Default" }>;

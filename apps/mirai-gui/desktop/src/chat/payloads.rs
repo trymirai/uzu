@@ -241,8 +241,7 @@ pub(super) fn sampling_policy(payload: &Option<SamplingPolicyPayload>) -> Sampli
 #[serde(rename_all = "camelCase")]
 pub struct TitleGenPayload {
     pub repo_id: String,
-    #[serde(default)]
-    pub messages: Vec<MsgIn>,
+    pub user_text: String,
 }
 
 #[cfg(test)]

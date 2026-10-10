@@ -182,10 +182,15 @@ async fn create_session(
     Ok((session, naming))
 }
 
-/// Returns current date and time in RFC 3339 format: YYYY-MM-DDTHH:MM:SSZ
+/// Returns the current date and time in UTC and the device's local time, with explicit UTC offsets.
 #[uzu_tool_function]
 fn get_current_date_time() -> String {
-    chrono::Local::now().to_rfc3339()
+    let now = chrono::Local::now();
+    format!(
+        "Current UTC date and time: {}.\nDevice local date and time: {}.",
+        now.with_timezone(&chrono::Utc).format("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
+        now.format("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
+    )
 }
 
 #[cfg(test)]
@@ -221,15 +226,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn date_time_tool_returns_the_current_local_rfc3339_timestamp() {
+    async fn date_time_tool_returns_the_same_current_instant_in_utc_and_local_time() {
         let tool: ToolDescriptor = get_current_date_time.into();
         assert_eq!(tool.name, "get_current_date_time");
         let before = chrono::Local::now();
         let result = tool.execute(serde_json::json!({}).into()).await.unwrap();
         let after = chrono::Local::now();
         let value: serde_json::Value = result.try_into().unwrap();
-        let date = chrono::DateTime::parse_from_rfc3339(value.as_str().unwrap()).unwrap();
-        assert!(date >= before && date <= after);
-        assert_eq!(date.offset(), before.offset());
+        let (utc, local) = value.as_str().unwrap().split_once('\n').unwrap();
+        let utc =
+            chrono::DateTime::parse_from_str(utc, "Current UTC date and time: %A, %-d %B %Y at %H:%M:%S (UTC%:z).")
+                .unwrap();
+        let local =
+            chrono::DateTime::parse_from_str(local, "Device local date and time: %A, %-d %B %Y at %H:%M:%S (UTC%:z).")
+                .unwrap();
+        assert_eq!(utc, local);
+        assert!(utc.timestamp() >= before.timestamp() && utc.timestamp() <= after.timestamp());
+        assert_eq!(utc.offset().local_minus_utc(), 0);
+        assert_eq!(local.offset(), local.with_timezone(&chrono::Local).offset());
     }
 }

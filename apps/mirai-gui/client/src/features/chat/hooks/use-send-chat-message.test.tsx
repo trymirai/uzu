@@ -79,9 +79,10 @@ const editUserMessage = vi.fn(async (id: string, messageId: string, text: string
 });
 const updateChatTitle = vi.fn(async (id: string, title: string, expectedTitle?: string) => {
   const chat = chats.get(id);
-  if (!chat) return;
-  if (expectedTitle !== undefined && chat.metadata.title !== expectedTitle) return;
+  if (!chat) return false;
+  if (expectedTitle !== undefined && chat.metadata.title !== expectedTitle) return false;
   chat.metadata.title = title;
+  return true;
 });
 
 const deferred = <T,>() => {
@@ -314,6 +315,19 @@ it("does not start a reply for a chat deleted during title generation", async ()
   expect(cancelTitleGen).toHaveBeenCalledTimes(1);
   expect(startStream).not.toHaveBeenCalled();
   expect(chats.has(CHAT_A)).toBe(false);
+});
+
+it("does not launch fallback naming after Stop while loading the existing title", async () => {
+  const loaded = deferred<ChatData | null>();
+  const storage = mocks.platform.storage as { loadChat: ReturnType<typeof vi.fn> };
+  storage.loadChat.mockReturnValueOnce(loaded.promise);
+  const naming = useChatStore.getState().generateChatTitle(CHAT_A, "hello");
+  await waitFor(() => expect(storage.loadChat).toHaveBeenCalled());
+  await useChatSessionStore.getState().cancelActiveRunForChat(CHAT_A);
+  loaded.resolve({ metadata, messages: [] });
+  await naming;
+  expect(generateTitle).not.toHaveBeenCalled();
+  expect(updateChatTitle).not.toHaveBeenCalled();
 });
 
 it("keeps a manual rename made while the title was generating", async () => {

@@ -197,9 +197,10 @@ export const extractMessageBlocks = (markdown: string): string[] => {
 };
 
 export const parseMetadata = (markdown: string, chatId: string, messagesCount: number): ChatMetadata => {
+  const header = markdown.split(/\r?\n---\r?\n/, 1)[0] ?? markdown;
   return {
     id: chatId,
-    title: markdown.match(/^# (.+)$/m)?.[1] ?? "Untitled",
+    title: header.match(/^# (.+)$/m)?.[1] ?? "Untitled",
     modelId: markdown.match(/\*\*ModelId:\*\* (.+)$/m)?.[1],
     modelName: markdown.match(/\*\*Model:\*\* (.+)$/m)?.[1],
     createdAt: parseDate(markdown.match(/\*\*Created:\*\* (.+)$/m)?.[1]),

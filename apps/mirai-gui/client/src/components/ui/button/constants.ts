@@ -26,7 +26,7 @@ export const KIND_STYLES: Record<ButtonKind, string> = {
 export const DISABLED_STYLES = "opacity-50 cursor-not-allowed pointer-events-none";
 export const LOADING_STYLES = "cursor-wait pointer-events-none";
 export const BASE_STYLES =
-  "inline-flex shrink-0 items-center justify-center whitespace-nowrap select-none outline-hidden antialiased transition-all duration-150 ease-out will-change-transform touch-manipulation focus-visible:shadow-focus [&_svg]:pointer-events-none [&_svg]:shrink-0";
+  "inline-flex shrink-0 items-center justify-center whitespace-nowrap select-none outline-hidden antialiased transition-all duration-150 ease-out will-change-transform touch-manipulation data-[focus]:shadow-focus [&_svg]:pointer-events-none [&_svg]:shrink-0";
 export const FULL_WIDTH_STYLES = "w-full";
 
 export const SPINNER_SIZE_MAP: Record<ButtonSize, number> = {

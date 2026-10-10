@@ -164,7 +164,7 @@ it("updates and persists chat width from General settings", () => {
   }
 });
 
-it("persists System, Light, and Dark choices through the custom theme selector", async () => {
+it("persists System, Dark, and Light choices through the custom theme selector", async () => {
   render(<GeneralTab />);
   let selectedLabel = "System";
   for (const [mode, label] of [
@@ -174,9 +174,10 @@ it("persists System, Light, and Dark choices through the custom theme selector",
   ] as const) {
     fireEvent.click(screen.getByRole("button", { name: `Theme: ${selectedLabel}` }));
     const popup = await screen.findByRole("listbox", { name: `Theme: ${selectedLabel}` });
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["System", "Dark", "Light"]);
     expect(screen.getByRole("option", { name: selectedLabel }).getAttribute("aria-selected")).toBe("true");
     const option = screen.getByRole("option", { name: label });
-    if (mode === "dark") {
+    if (mode === "light") {
       fireEvent.keyDown(popup, { key: "End" });
       await waitFor(() => expect(popup.getAttribute("aria-activedescendant")).toBe(option.id));
       fireEvent.keyDown(popup, { key: "Enter" });

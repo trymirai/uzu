@@ -332,10 +332,15 @@ fn chat_state_mut(state: &mut ApplicationState) -> Option<&mut ChatSessionState>
         .and_then(|session_state| session_state.as_any_mut().downcast_mut::<ChatSessionState>())
 }
 
-/// Returns current date and time in RFC 3339 format: YYYY-MM-DDTHH:MM:SSZ
+/// Returns the current date and time in UTC and the device's local time, with explicit UTC offsets.
 #[uzu_tool_function]
 fn get_current_date_time() -> String {
-    Local::now().to_rfc3339()
+    let now = Local::now();
+    format!(
+        "Current UTC date and time: {}.\nDevice local date and time: {}.",
+        now.with_timezone(&chrono::Utc).format("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
+        now.format("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
+    )
 }
 
 /// Sleeps for the given number of seconds before responding, at most 60 seconds.

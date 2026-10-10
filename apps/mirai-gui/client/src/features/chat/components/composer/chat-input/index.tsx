@@ -1,3 +1,4 @@
+import { Button } from "@headlessui/react";
 import { Settings } from "lucide-react";
 import { useCallback, useRef } from "react";
 import { twMerge } from "tailwind-merge";
@@ -100,15 +101,15 @@ export function ChatInput({
           ) : null}
           {onModelSettingsClick ? (
             <span className="relative inline-flex shrink-0">
-              <button
+              <Button
                 type="button"
                 onClick={onModelSettingsClick}
                 disabled={settingsDisabled}
                 aria-label="Model settings"
-                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-tertiary text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-control-surface-hover hover:text-text-primary focus-visible:shadow-focus disabled:pointer-events-none disabled:opacity-50"
+                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-tertiary text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-control-surface-hover hover:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
               >
                 <Settings size={16} />
-              </button>
+              </Button>
               {settingsModified && (
                 <span className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 rounded-full bg-danger ring-1 ring-surface-elevated" />
               )}

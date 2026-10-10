@@ -165,7 +165,7 @@ export function ChatHistoryPage() {
                 <Button
                   kind="secondary"
                   size="sm"
-                  className="text-label-muted h-8 px-3 rounded-[8px] border border-cell-border text-sm leading-[150%]"
+                  className="text-label-muted h-8 px-3 rounded-[8px] text-sm leading-[150%]"
                   onClick={() => setIsSelectionMode(true)}
                 >
                   Select

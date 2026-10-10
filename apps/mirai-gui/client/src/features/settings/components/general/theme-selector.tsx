@@ -8,8 +8,8 @@ import type { ThemeMode } from "@/stores/use-app-store";
 
 const THEMES: { value: ThemeMode; label: string }[] = [
   { value: "system", label: "System" },
-  { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
 ];
 
 type Props = { value: ThemeMode; onChange: (theme: ThemeMode) => void };

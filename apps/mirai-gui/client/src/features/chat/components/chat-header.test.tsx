@@ -6,7 +6,7 @@ import SavedChats from "@/features/chat-history/components/saved-chats";
 import { ChatHeader } from "./chat-header";
 import { UNTITLED_CHAT_TITLE } from "@/constants/chat";
 
-const route = vi.hoisted(() => ({ chatId: "first" }));
+const route = vi.hoisted(() => ({ chatId: "first" as string | undefined }));
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => route,
   useNavigate: () => vi.fn(),
@@ -41,7 +41,7 @@ const Harness = () => {
   return (
     <>
       <SavedChats />
-      <ChatHeader title={`Chat ${route.chatId}`} isSidebarOpen={isOpen} />
+      {route.chatId && <ChatHeader title={`Chat ${route.chatId}`} isSidebarOpen={isOpen} />}
     </>
   );
 };
@@ -71,6 +71,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   useChatStore.setState(chatDefaults, true);
   useSidebarStore.setState(sidebarDefaults, true);
@@ -148,13 +149,55 @@ it("tracks the new active row on chat switches and clears visibility when it dis
   expect(titleWrapper().style.opacity).toBe("1");
   expect(observers.at(-1)!.observed).toBe(screen.getByRole("button", { name: "Chat second" }));
   act(() => old.emit(1));
-  expect(useSidebarStore.getState().chatVisibility).toBeNull();
+  expect(useSidebarStore.getState().chatVisibility).toEqual({ chatId: "second", ratio: 0 });
   act(() => observers.at(-1)!.emit(1));
   expect(titleWrapper().style.opacity).toBe("0");
 
   act(() => useChatStore.setState({ savedChats: [] }));
   expect(titleWrapper().style.opacity).toBe("1");
-  expect(useSidebarStore.getState().chatVisibility).toBeNull();
+  expect(useSidebarStore.getState().chatVisibility).toEqual({ chatId: "second", ratio: 0 });
+});
+
+const measureRowAt = (top: number) => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return this.getAttribute("role") === "button" ? new DOMRect(0, top, 200, 20) : new DOMRect(0, 100, 200, 200);
+  });
+};
+
+it.each(["Models", "Chats"])("does not flash a visible sidebar title when entering from %s", () => {
+  measureRowAt(140);
+  route.chatId = undefined;
+  const view = render(<Harness />);
+  expect(screen.queryByRole("heading", { hidden: true })).toBeNull();
+  route.chatId = "first";
+  view.rerender(<Harness />);
+
+  // No IntersectionObserver callback has been delivered yet.
+  expect(useSidebarStore.getState().chatVisibility).toEqual({ chatId: "first", ratio: 1 });
+  expect(titleWrapper().style.opacity).toBe("0");
+  act(() => observers[0]!.emit(1));
+  expect(titleWrapper().style.opacity).toBe("0");
+});
+
+it("initializes clipped rows before the first observer callback", () => {
+  measureRowAt(91);
+  const view = render(<Harness />);
+  expect(useSidebarStore.getState().chatVisibility).toEqual({ chatId: "first", ratio: 0.55 });
+  expect(Number(titleWrapper().style.opacity)).toBeCloseTo(0.5);
+
+  measureRowAt(400);
+  route.chatId = "second";
+  view.rerender(<Harness />);
+  expect(titleWrapper().style.opacity).toBe("1");
+});
+
+it("waits for current-row visibility only while the sidebar is open", () => {
+  const view = render(<ChatHeader title="Cities" isSidebarOpen />);
+  expect(titleWrapper().style.opacity).toBe("0");
+  act(() => useSidebarStore.getState().setChatVisibility({ chatId: "another", ratio: 0 }));
+  expect(titleWrapper().style.opacity).toBe("0");
+  view.rerender(<ChatHeader title="Cities" isSidebarOpen={false} />);
+  expect(titleWrapper().style.opacity).toBe("1");
 });
 
 it("keeps the title visible when its row is not mounted or observation is unavailable", () => {

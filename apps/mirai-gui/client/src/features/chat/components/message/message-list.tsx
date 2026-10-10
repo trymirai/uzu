@@ -209,10 +209,9 @@ const MessageListComponent: React.FC<MessageListProps> = ({
                   ref={(el) => {
                     itemRefs.current[message.id] = el;
                   }}
-                  className={[
-                    isLastAssistant ? "flex flex-col min-h-8" : "",
-                    idx > 0 ? (message.sender === "user" ? "mt-3" : "mt-1") : "",
-                  ].join(" ")}
+                  className={["shrink-0", isLastAssistant ? "flex flex-col min-h-8" : "", idx > 0 ? "mt-6" : ""].join(
+                    " ",
+                  )}
                 >
                   {showAssistantLoader ? (
                     <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
@@ -255,11 +254,11 @@ const MessageListComponent: React.FC<MessageListProps> = ({
           </div>
         )}
         {lastAssistantIndex === -1 && isBusy && !loadingMessageId && (
-          <div className="mt-1 flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
+          <div className="mt-6 flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
             <Loader text={loaderText} />
           </div>
         )}
-        <div ref={messagesEndRef} className="h-4 shrink-0" />
+        <div ref={messagesEndRef} className="h-6 shrink-0" />
       </div>
     </div>
   );

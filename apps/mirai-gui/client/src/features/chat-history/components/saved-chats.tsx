@@ -1,10 +1,9 @@
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { Edit3, MoreHorizontal, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useSidebarStore } from "@/stores/use-sidebar-store";
-import { CHAT_TITLE_MAX_LENGTH, CHAT_TITLE_MIN_LENGTH } from "@/constants/chat";
 import { useShiftHeld } from "@/hooks/use-shift-held";
 import { ChatDeleteModal } from "@/features/chat-history/components/chat-delete-modal";
 import type { ChatMetadata } from "@/platform/services/storage";
@@ -27,11 +26,23 @@ export default function SavedChats() {
 
   // Keep the measurement while collapsed so the title and sidebar start
   // their transitions together when reopened.
-  useEffect(() => {
-    setChatVisibility(null);
+  useLayoutEffect(() => {
     const root = scrollViewportRef.current;
     const row = currentChatRowRef.current;
-    if (!currentChatId || !currentChatExists || !root || !row || typeof IntersectionObserver === "undefined") return;
+    if (!currentChatId) {
+      setChatVisibility(null);
+      return;
+    }
+    if (!currentChatExists || !root || !row || typeof IntersectionObserver === "undefined") {
+      setChatVisibility({ chatId: currentChatId, ratio: 0 });
+      return;
+    }
+    // The observer's first callback can arrive after paint when entering a chat.
+    // Measure now so an already-visible sidebar title never flashes in the header.
+    const viewport = root.getBoundingClientRect();
+    const bounds = row.getBoundingClientRect();
+    const visibleHeight = Math.max(0, Math.min(bounds.bottom, viewport.bottom) - Math.max(bounds.top, viewport.top));
+    setChatVisibility({ chatId: currentChatId, ratio: bounds.height > 0 ? visibleHeight / bounds.height : 0 });
     let active = true;
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -89,12 +100,7 @@ export default function SavedChats() {
     const chat = savedChats.find((c) => c.id === editingChatId);
     const newTitle = draftTitle.trim();
     cancelRename();
-    if (
-      !chat ||
-      newTitle === chat.title ||
-      newTitle.length < CHAT_TITLE_MIN_LENGTH ||
-      newTitle.length > CHAT_TITLE_MAX_LENGTH
-    ) {
+    if (!chat || !newTitle || newTitle === chat.title) {
       return;
     }
     try {
@@ -168,14 +174,13 @@ export default function SavedChats() {
                       e.stopPropagation();
                       startRename(chat);
                     }}
-                    className={`flex items-center gap-3 py-[6px] px-2 w-full rounded-md group transition-colors duration-150 ${currentChatId === chat.id ? "bg-sidebar-chat-selected" : editingChatId === chat.id || open ? "bg-sidebar-chat-hover" : "hover:bg-sidebar-chat-hover"}`}
+                    className={`flex items-center gap-2 py-[6px] px-2 w-full rounded-md group transition-colors duration-150 ${currentChatId === chat.id ? "bg-sidebar-chat-selected" : editingChatId === chat.id || open ? "bg-sidebar-chat-hover" : "hover:bg-sidebar-chat-hover"}`}
                   >
                     <div className="flex-1 min-w-0">
                       {editingChatId === chat.id ? (
                         <input
                           ref={renameInputRef}
                           value={draftTitle}
-                          maxLength={CHAT_TITLE_MAX_LENGTH}
                           onChange={(e) => setDraftTitle(e.target.value)}
                           onClick={(e) => e.stopPropagation()}
                           onKeyDown={(e) => {

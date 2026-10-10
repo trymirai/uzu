@@ -65,7 +65,7 @@ export const ReasoningSelector = ({ repoId, disabled = false }: ReasoningSelecto
         disabled={disabled}
         aria-label={selected ? `Reasoning: ${label}${isDefault ? ", model default" : ""}` : "Reasoning"}
         title={selected ? `Reasoning: ${label}` : "Reasoning"}
-        className="flex h-7 items-center gap-1.5 rounded-md bg-surface-tertiary px-2 text-text-muted text-[13px] font-[450] leading-[1.3] outline-hidden hover:bg-control-surface-hover hover:text-text-primary data-[headlessui-state~=open]:bg-control-surface-active data-[headlessui-state~=open]:text-text-primary data-[focus]:bg-control-surface-hover data-[focus]:text-text-primary data-[focus]:shadow-focus disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface-tertiary"
+        className="flex h-7 items-center gap-1.5 rounded-md bg-surface-tertiary px-2 text-text-muted text-[13px] font-[450] leading-[1.3] outline-hidden hover:bg-control-surface-hover hover:text-text-primary data-[headlessui-state~=open]:bg-control-surface-active data-[headlessui-state~=open]:text-text-primary data-[focus]:bg-control-surface-hover data-[focus]:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-40"
       >
         <Brain size={14} aria-hidden="true" />
         <span>{label}</span>

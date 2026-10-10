@@ -1,6 +1,6 @@
 import { Transition } from "@headlessui/react";
 import { ChevronDownIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type UIEvent } from "react";
 import { twMerge } from "tailwind-merge";
 import { ThinkingBubbleIcon } from "@/components/icons/thinking-bubble";
 import { MarkdownRenderer } from "./markdown-renderer";
@@ -11,7 +11,11 @@ const FADE_RAMP_PX = 32;
 const MAX_FADE_HEIGHT_PX = 42;
 const END_FADE_HEIGHT_PX = MAX_FADE_HEIGHT_PX / 2;
 
-export const ThinkingBlock = ({ text, reasoningInProgress, isThinking = reasoningInProgress }: Props) => {
+export const ThinkingBlock = memo(function ThinkingBlock({
+  text,
+  reasoningInProgress,
+  isThinking = reasoningInProgress,
+}: Props) {
   const [isReasoningVisible, setIsReasoningVisible] = useState(false);
   const wasReasoningInProgressRef = useRef(false);
   const userToggledRef = useRef(false);
@@ -118,7 +122,7 @@ export const ThinkingBlock = ({ text, reasoningInProgress, isThinking = reasonin
         leaveTo="grid-rows-[0fr]"
       >
         <div className="grid">
-          <div className="min-h-0 overflow-clip">
+          <div className="min-h-0 min-w-0 overflow-clip">
             <div className="relative contain-layout">
               <div
                 ref={setReasoningScrollElement}
@@ -155,4 +159,4 @@ export const ThinkingBlock = ({ text, reasoningInProgress, isThinking = reasonin
       </Transition>
     </button>
   );
-};
+});

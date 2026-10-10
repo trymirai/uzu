@@ -66,7 +66,7 @@ export type ChatState = {
   loadSavedChats: () => Promise<void>;
   deleteChat: (chatId: string) => Promise<void>;
   createNewChat: (chatId: string) => void;
-  updateChatTitle: (chatId: string, title: string, expectedTitle?: string) => Promise<void>;
+  updateChatTitle: (chatId: string, title: string, expectedTitle?: string) => Promise<boolean>;
   generateChatTitle: (chatId: string, userText: string) => Promise<{ ok: boolean; error?: string }>;
   suppressAutoSelect: (chatId: string, value: boolean) => void;
 
@@ -255,9 +255,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   updateChatTitle: async (chatId: string, title: string, expectedTitle?: string) => {
     const { storage } = getPlatform();
-    await storage.updateChatTitle(chatId, title, expectedTitle);
-    const savedChats = await storage.listChats();
-    set({ savedChats });
+    const updated = await storage.updateChatTitle(chatId, title, expectedTitle);
+    if (updated) {
+      set((state) => ({
+        savedChats: state.savedChats.map((chat) => (chat.id === chatId ? { ...chat, title } : chat)),
+      }));
+    }
+    try {
+      set({ savedChats: await storage.listChats() });
+    } catch (error) {
+      console.warn("[storage] failed to refresh chats after title update", { chatId }, error);
+    }
+    return updated;
   },
 
   generateChatTitle: async (chatId: string, userText: string): Promise<{ ok: boolean; error?: string }> => {

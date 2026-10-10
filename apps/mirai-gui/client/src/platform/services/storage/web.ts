@@ -11,7 +11,7 @@ export const webStorage: StorageService = {
   updateStoredMessage: () => Promise.resolve(),
   editUserMessage: (chatId) => Promise.reject(new ChatNotFoundError(chatId)),
   removeMessage: () => Promise.resolve(),
-  updateChatTitle: () => Promise.resolve(),
+  updateChatTitle: () => Promise.resolve(false),
   deleteChat: () => Promise.resolve(),
   exportAllChatsZip: () => Promise.resolve(null),
 
