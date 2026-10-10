@@ -9,6 +9,7 @@ mod attention_single_pass_case;
 mod attention_single_pass_test;
 mod bf16_conversion_test;
 mod conv1d_test;
+mod delta_net_test;
 mod gated_act_mul_test;
 mod gemm_test;
 mod gemv_test;

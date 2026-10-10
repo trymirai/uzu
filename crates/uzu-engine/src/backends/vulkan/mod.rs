@@ -34,11 +34,12 @@ pub use vk_context_error::VkContextError;
 pub use vk_kernels::{
     A8QuantizedGemmVulkanKernel, A8QuantizedGemvVulkanKernel, ActivationTransformVulkanKernel, ActivationVulkanKernel,
     AncestorAttentionVulkanKernel, AttentionPrepareVulkanKernel, AttentionSinglePassVulkanKernel,
-    Conv1dDecodeVulkanKernel, Conv1dPackVulkanKernel, Conv1dScanVulkanKernel, GatedActMulVulkanKernel,
-    GemmVulkanKernel, GemvVulkanKernel, InputEmbeddingLookupVulkanKernel, KVCacheUpdateVulkanKernel,
-    LogitTransformVulkanKernel, NormalizationVulkanKernel, PoolingMeanVulkanKernel, QKVNormVulkanKernel,
-    QuantizedGemmVulkanKernel, QuantizedGemvVulkanKernel, SSDPrefill64VulkanKernel, SSDPrefillVulkanKernel,
-    SSDUpdateVulkanKernel, SeparableCausalConvVulkanKernel, ShortConvDecodeVulkanKernel, ShortConvPackVulkanKernel,
+    Conv1dDecodeVulkanKernel, Conv1dPackVulkanKernel, Conv1dScanVulkanKernel, DeltaNetConvScanVulkanKernel,
+    DeltaNetConvUpdateVulkanKernel, DeltaNetNormGateVulkanKernel, GatedActMulVulkanKernel, GemmVulkanKernel,
+    GemvVulkanKernel, InputEmbeddingLookupVulkanKernel, KVCacheUpdateVulkanKernel, LogitTransformVulkanKernel,
+    NormalizationVulkanKernel, PoolingMeanVulkanKernel, QKVNormVulkanKernel, QuantizedGemmVulkanKernel,
+    QuantizedGemvVulkanKernel, SSDPrefill64VulkanKernel, SSDPrefillVulkanKernel, SSDUpdateVulkanKernel,
+    SeparableCausalConvVulkanKernel, ShortConvDecodeVulkanKernel, ShortConvPackVulkanKernel,
     ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SigmoidGateVulkanKernel, SoftmaxVulkanKernel,
     SplitInProjVulkanKernel, TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel,
 };
