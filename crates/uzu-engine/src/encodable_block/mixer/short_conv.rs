@@ -42,6 +42,12 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
         Ok(())
     }
 
+    fn set_context_length(
+        &mut self,
+        _context_length: u32,
+    ) {
+    }
+
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],

@@ -376,3 +376,7 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
         &self.timestamps
     }
 }
+
+#[cfg(test)]
+#[path = "../../../unit/backends/metal/command_buffer_test.rs"]
+mod tests;

@@ -32,6 +32,11 @@ pub trait MixerState<B: Backend>: Any + Send {
         suffix_length: u32,
     ) -> Result<(), B::Error>;
 
+    fn set_context_length(
+        &mut self,
+        context_length: u32,
+    );
+
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],

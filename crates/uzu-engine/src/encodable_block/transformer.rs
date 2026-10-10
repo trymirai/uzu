@@ -56,6 +56,21 @@ impl<B: Backend> TransformerState<B> {
         Ok(())
     }
 
+    pub fn set_context_length(
+        &mut self,
+        context_length: u32,
+    ) {
+        for layer_state in &mut self.layer_states {
+            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
+                continue;
+            };
+
+            layer_state.set_context_length(context_length);
+        }
+
+        self.context_length = context_length;
+    }
+
     pub fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
