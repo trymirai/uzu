@@ -39,6 +39,7 @@ pub struct GemvSpecialization {
     group_lanes: u32,
     gathered: bool,
     signed_codes: bool,
+    packed_codes: bool,
     full_tile: bool,
 }
 
@@ -136,6 +137,7 @@ impl GemvSpecialization {
             group_lanes: tile.group_lanes,
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
+            packed_codes: false,
             full_tile: full_tile(shape, tile),
         };
         Some(specialization)
@@ -174,6 +176,7 @@ impl GemvSpecialization {
             self.output_transform,
             self.gathered,
             self.signed_codes,
+            self.packed_codes,
             self.full_tile,
         )
     }
@@ -267,7 +270,7 @@ impl GemvKernel {
             impl BufferMut<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
-        specialization: GemvSpecialization,
+        mut specialization: GemvSpecialization,
         output_work: &MatmulOutputWork,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulError<Metal>> {
@@ -315,6 +318,7 @@ impl GemvKernel {
                 )
             });
         let output_group_count = n.div_ceil(specialization.output_row_tile());
+        specialization.packed_codes = b.quantized().is_some_and(|q| q.packed_codes);
         let context = command_buffer.context();
         let pipeline = self.get_or_create(context, specialization)?;
         match b {

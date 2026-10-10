@@ -80,6 +80,8 @@ impl GemmKernel {
                     specialization.output_transform,
                     specialization.alignment,
                     specialization.signed_codes,
+                    specialization.packed_inner_size,
+                    specialization.packed_group_count,
                 )?;
                 Ok(entry.insert(kernel))
             },
@@ -288,10 +290,13 @@ impl GemmKernel {
             },
         };
 
+        let packed_codes = quantized.as_ref().is_some_and(|q| q.packed_codes);
+
         if plan.split_k > 1 {
             self.encode_split_k(
                 a,
                 weights,
+                packed_codes,
                 scales,
                 biases,
                 zero_points,
@@ -340,7 +345,7 @@ impl GemmKernel {
         }
         params.use_morton = use_morton;
 
-        let specialization = GemmSpecialization::from_plan(
+        let mut specialization = GemmSpecialization::from_plan(
             plan,
             shape,
             self.weights_data_type,
@@ -349,6 +354,10 @@ impl GemmKernel {
             a_prologue,
             a_group_size,
         )?;
+        if packed_codes {
+            specialization.packed_inner_size = k;
+            specialization.packed_group_count = k / 64;
+        }
         let kernel = self.get_or_create(command_buffer.context(), specialization)?;
         kernel.encode(
             a_full_precision,
@@ -376,6 +385,7 @@ impl GemmKernel {
         &mut self,
         a: MatmulA<impl BufferRef<Backend = Metal>>,
         weights: impl BufferRef<Backend = Metal>,
+        packed_codes: bool,
         scales: Option<impl BufferRef<Backend = Metal>>,
         biases: Option<impl BufferRef<Backend = Metal>>,
         zero_points: Option<impl BufferRef<Backend = Metal>>,
@@ -421,7 +431,7 @@ impl GemmKernel {
         let base_gy = m.div_ceil(tiling.block_m());
         let alignment =
             GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
-        let part_spec = GemmSpecialization::from_plan(
+        let mut part_spec = GemmSpecialization::from_plan(
             plan,
             shape,
             self.weights_data_type,
@@ -430,6 +440,11 @@ impl GemmKernel {
             a_prologue,
             a_group_size,
         )?;
+
+        if packed_codes {
+            part_spec.packed_inner_size = k;
+            part_spec.packed_group_count = kp / 64;
+        }
 
         let elem = (m as usize) * (n as usize);
         let slice_bytes = elem * self.output_data_type.size_in_bytes();

@@ -12,7 +12,7 @@ pub enum ParameterLoaderError<B: Backend> {
     KeyNotFound(String),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
-    #[error("Failed to read data")]
+    #[error("Failed to access parameter data: {0}")]
     ArrayLoadingError(#[from] std::io::Error),
     #[error("Failed to deserialize metadata")]
     MetadataDeserializationError(#[from] serde_json::Error),

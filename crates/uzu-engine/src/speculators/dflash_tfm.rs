@@ -118,7 +118,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
         let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
 
-        let weights_file = File::open(model_path.join("model.safetensors"))?;
+        let weights_file = ParameterLoader::<B>::open(model_path, &*context)?;
         let weight_loader = ParameterLoader::new(&weights_file, &*context)?;
         let speculator_tree = weight_loader.tree().subtree("speculator");
 

@@ -81,7 +81,8 @@ static METAL_FUNC auto make_staged_loader(
         uint(block_col) * params->zero_point_output_stride + first_group * params->zero_point_group_stride,
         staging,
         thread_context.simdgroup_index,
-        thread_context.simd_lane_id
+        thread_context.simd_lane_id,
+        right.packed_codes ? right.codes : nullptr
     );
   } else {
     static_assert(

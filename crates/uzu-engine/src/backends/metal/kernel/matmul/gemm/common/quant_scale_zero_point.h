@@ -4,6 +4,7 @@
 #include <metal_stdlib>
 
 #include "../../common/defines.h"
+#include "../../common/packed_w4.h"
 #include "../../common/quant_pack.h"
 #include "../../common/quant_unpack.h"
 
@@ -51,6 +52,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   const device uint8_t* zero_points_row_start;
   uint zero_point_index;
   const bool signed_codes;
+  const device uint8_t* packed_base;
 
   QuantizedBlockLoaderScaleZeroPoint(
       const device uint8_t* src_,
@@ -65,7 +67,8 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       const uint zero_point_index_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-      ushort simd_lane_id [[thread_index_in_simdgroup]]
+      ushort simd_lane_id [[thread_index_in_simdgroup]],
+      const device uint8_t* packed_base_ = nullptr
   )
       : src_leading_dim(src_leading_dim_), tile_stride(THREADGROUP_TILE_COLS_PACKED * BYTES_PER_PACK),
         group_step_counter(0), group_stride(params_group_stride_), zero_point_group_stride(zero_point_group_stride_),
@@ -77,7 +80,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
         scales(scales_ + tile_row_index * params_output_stride_),
         zero_points_row_start(SCALE_SYMMETRIC ? nullptr : zero_points_row_start_),
         zero_point_index(zero_point_index_ + uint(tile_row_index) * zero_point_output_stride_),
-        signed_codes(signed_codes_) {}
+        signed_codes(signed_codes_), packed_base(packed_base_) {}
 
   QuantizedBlockLoaderScaleZeroPoint(
       const device uint8_t* src_,
@@ -123,6 +126,20 @@ struct QuantizedBlockLoaderScaleZeroPoint {
     out_bias = static_cast<T>(-scale_value * static_cast<T>(zero_point_value));
   }
 
+  const device uint8_t* source_at(uint index) const {
+    const device uint8_t* source = src + index * BYTES_PER_PACK;
+    if constexpr (BITS == 4) {
+      if (packed_base) {
+        const uint offset = uint(source - packed_base);
+        const uint row_stride = uint(src_leading_dim) / 2;
+        const uint column = offset % row_stride;
+        return packed_base + 4 * packed_w4_word_offset(offset / row_stride, column / 4, uint(src_leading_dim)) +
+               column % 4;
+      }
+    }
+    return source;
+  }
+
   void load_unsafe() const {
     if constexpr (TILE_HAS_IDLE_THREADS) {
       if (tile_row_index >= THREADGROUP_TILE_ROWS) {
@@ -134,7 +151,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
     T bias;
     current_scale_bias(scale, bias);
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, PACK_FACTOR, BITS>(src + i * BYTES_PER_PACK, scale, bias, dst + i * PACK_FACTOR, signed_codes);
+      dequantize<T, PACK_FACTOR, BITS>(source_at(i), scale, bias, dst + i * PACK_FACTOR, signed_codes);
     }
   }
 
@@ -160,7 +177,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
     for (int i = 0; i < READS_PER_THREAD; i++) {
       const int pack_index = tile_col_index + i;
       if (pack_index < valid_packs) {
-        dequantize<T, PACK_FACTOR, BITS>(src + i * BYTES_PER_PACK, scale, bias, dst + i * PACK_FACTOR, signed_codes);
+        dequantize<T, PACK_FACTOR, BITS>(source_at(i), scale, bias, dst + i * PACK_FACTOR, signed_codes);
         if (pack_index == valid_packs - 1) {
           const int remaining = valid_cols - pack_index * PACK_FACTOR;
           for (int lane = remaining; lane < PACK_FACTOR; ++lane) {

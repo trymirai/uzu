@@ -20,6 +20,8 @@ pub(super) struct GemmSpecialization {
     pub(super) bits_per_b: Option<u32>,
     pub(super) b_group_size: Option<u32>,
     pub(super) signed_codes: bool,
+    pub(super) packed_inner_size: u32,
+    pub(super) packed_group_count: u32,
     pub(super) a_group_size: Option<u32>,
 }
 
@@ -45,6 +47,8 @@ impl GemmSpecialization {
             bits_per_b: shape.b_bits,
             b_group_size: shape.b_group_size,
             signed_codes: shape.signed_codes,
+            packed_inner_size: 0,
+            packed_group_count: 0,
             a_group_size,
         };
         specialization.validate()?;

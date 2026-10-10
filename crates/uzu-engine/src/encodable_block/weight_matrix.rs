@@ -86,6 +86,7 @@ struct Quantized<B: Backend> {
     params: QuantParams,
     info: QuantizationInfo,
     signed_codes: bool,
+    packed_codes: bool,
 }
 
 pub struct WeightMatrix<B: Backend> {
@@ -164,6 +165,7 @@ impl<B: Backend> WeightMatrix<B> {
                 params,
                 info,
                 signed_codes: false,
+                packed_codes: tree.is_mxu_packed("weights"),
             }),
         })
     }
@@ -198,6 +200,7 @@ impl<B: Backend> WeightMatrix<B> {
         let group_size = quantized.info.group_size;
         let signed_codes = quantized.signed_codes;
         MatmulB::Quantized(QuantizedB {
+            packed_codes: quantized.packed_codes,
             codes: &self.values,
             scales: &quantized.scales,
             correction: quantized.correction.as_ref(),

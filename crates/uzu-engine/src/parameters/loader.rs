@@ -6,6 +6,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     fs::File,
+    path::Path,
 };
 
 use super::{
@@ -35,6 +36,19 @@ pub struct ParameterLoader<'a, B: Backend> {
 }
 
 impl<'a, B: Backend> ParameterLoader<'a, B> {
+    pub fn open(
+        model_path: &Path,
+        context: &B::Context,
+    ) -> Result<File, ParameterLoaderError<B>> {
+        let file = File::open(model_path.join("model.safetensors"))?;
+        #[cfg(backend = "metal")]
+        if context.device_name() == Some("Apple M5 Max") {
+            return super::mxu_cache::open::<B>(model_path, file);
+        }
+        let _ = context;
+        Ok(file)
+    }
+
     pub fn new(
         file: &'a File,
         context: &'a B::Context,
@@ -147,6 +161,14 @@ pub struct ParameterTree<'loader, B: Backend> {
 }
 
 impl<'loader, B: Backend> ParameterTree<'loader, B> {
+    pub(crate) fn is_mxu_packed(
+        &self,
+        name: &str,
+    ) -> bool {
+        self.loader.metadata.get(&self.join_prefix(&format!("{name}.mxu_layout"))).map(String::as_str)
+            == Some(super::MXU_LAYOUT)
+    }
+
     fn join_prefix(
         &self,
         name: &str,

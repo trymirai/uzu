@@ -36,6 +36,7 @@ struct GemvParams {
   GemmDTransform output_transform;
   bool gathered;
   bool signed_codes;
+  bool packed_codes;
 };
 
 } // namespace gemm

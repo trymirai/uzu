@@ -50,7 +50,7 @@ struct QuantBSource {
       Metadata metadata;
       metadata.load(position.group, weight_row_indices, ops, params);
       for (position.slice = 0; position.slice < Slice::SLICES_PER_LANE; position.slice++) {
-        current.load_weights(position, weights, weight_row_indices, row_stride, group_offset);
+        current.load_weights(position, weights, weight_row_indices, row_stride, group_offset, params.packed_codes);
         current.accumulate(result, position, ops, params, tile, group_offset, batch_remaining, metadata);
       }
       position.group += Tile::GROUPS_PER_STEP;

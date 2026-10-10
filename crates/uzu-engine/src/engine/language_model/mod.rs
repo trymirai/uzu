@@ -65,7 +65,7 @@ impl<B: Backend> Engine<B> {
         let config: LanguageModelConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
 
-        let weights_file = File::open(model_path.join("model.safetensors"))?;
+        let weights_file = ParameterLoader::<B>::open(model_path, &*self.context)?;
         let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
 
         // TODO

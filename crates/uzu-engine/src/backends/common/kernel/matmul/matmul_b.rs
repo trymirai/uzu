@@ -29,6 +29,8 @@ pub enum MatmulB<TB: BufferRef> {
 
 pub struct QuantizedB<TB: BufferRef> {
     pub codes: TB,
+    /// W4 codes stored in N=32, K=128 MXU tiles.
+    pub packed_codes: bool,
     pub scales: TB,
     pub correction: QuantizedCorrection<TB>,
     pub params: QuantParams,

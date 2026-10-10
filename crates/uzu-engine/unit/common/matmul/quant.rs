@@ -398,6 +398,7 @@ fn quant_b_variant<TB: BufferRef, T: ArrayElement + Float>(
         QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
     };
     MatmulB::Quantized(QuantizedB {
+        packed_codes: false,
         codes: w,
         scales,
         correction,

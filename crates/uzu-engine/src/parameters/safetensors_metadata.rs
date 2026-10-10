@@ -37,7 +37,7 @@ pub enum HeaderLoadingError {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HashMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "__metadata__")]
@@ -46,7 +46,7 @@ pub struct HashMetadata {
     pub tensors: HashMap<String, TensorInfo>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct TensorInfo {
     pub dtype: Dtype,
     pub shape: Vec<u32>,

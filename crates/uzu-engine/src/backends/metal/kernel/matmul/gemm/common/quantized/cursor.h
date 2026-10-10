@@ -5,6 +5,7 @@
 #include "../../../../common/thread_context.h"
 #include "../../../../generated/gemm.h"
 #include "../../../common/fragment.h"
+#include "../../../common/packed_w4.h"
 #include "../../../common/quant_pack.h"
 #include "../../../common/quant_unpack.h"
 #include "../schedules/tile_context.h"
@@ -123,6 +124,9 @@ struct W4Cursor {
   short tile_row_limit;
   short2 position;
   bool signed_codes;
+  const device uint8_t* packed_base;
+  uint packed_row;
+  uint packed_word;
 
   METAL_FUNC PackedChunk fetch(const uint chunk_index) const thread {
     // Padding decodes to zero after the optional sign flip and code-origin adjustment.
@@ -134,7 +138,16 @@ struct W4Cursor {
     for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
       uint word = padding_word;
       if (ALIGNED || row_offset < row_limit) {
-        word = *reinterpret_cast<const device uint*>(base + int(row_offset) * row_stride_bytes);
+        const device uint8_t* source = base + int(row_offset) * row_stride_bytes;
+        if (packed_base) {
+          word = reinterpret_cast<const device uint*>(packed_base)[packed_w4_word_offset(
+              packed_row + uint(position.y + row_offset),
+              packed_word + chunk_index * (CHUNK_BYTES / 4) + uint(position.x) / 4,
+              uint(row_stride_bytes) * 2
+          )];
+        } else {
+          word = *reinterpret_cast<const device uint*>(source);
+        }
       }
       packed_chunk.words[PackedChunk::word_index(fragment_row, row_slot)] = word;
     });
@@ -160,7 +173,10 @@ struct W4Cursor {
 
   METAL_FUNC Fragment load(const uint) const thread { return decode(fetch(0)); }
 
-  METAL_FUNC void advance() thread { current += CHUNK_BYTES; }
+  METAL_FUNC void advance() thread {
+    current += CHUNK_BYTES;
+    packed_word += CHUNK_BYTES / 4;
+  }
 
   METAL_FUNC void begin_k_group(const uint) thread {}
 };
@@ -205,7 +221,10 @@ static METAL_FUNC auto make_right_cursor(
         row_stride_bytes,
         tile.simdgroup_limit_n,
         Ops::get_position(thread_context.simd_lane_id),
-        source.signed_codes
+        source.signed_codes,
+        source.packed_codes ? source.codes : nullptr,
+        tile.absolute_column_base(),
+        tile.k_offset / 8
     };
   } else {
     static_assert(Operand::BITS == 8, "integer tile cursors support 4-bit and 8-bit codes");

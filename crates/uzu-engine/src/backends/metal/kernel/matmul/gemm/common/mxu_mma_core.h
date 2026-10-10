@@ -123,6 +123,8 @@ struct MxuMmaCore {
     const bool apply_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
     const bool apply_rht = output_transform.contains(GemmDTransform::RHT);
+    const bool fragment_rht =
+        right.packed_codes && Left::QUANTIZED && !apply_bias && TILING == GemmTiling::Tile16x32x256_Simdgroups1x1;
 
     const device RightElementType* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
 
@@ -173,6 +175,16 @@ struct MxuMmaCore {
                   });
                 }
 
+                if constexpr (Left::QUANTIZED && TILING == GemmTiling::Tile16x32x256_Simdgroups1x1) {
+                  if (apply_rht && fragment_rht) {
+                    apply_fragment_output_rht<OutputElementType>(
+                        accumulator_tile,
+                        rht_factors + block_col,
+                        ushort(thread_context.simd_lane_id)
+                    );
+                  }
+                }
+
                 if constexpr (aligned_m.value && aligned_n.value) {
                   accumulator_tile.store(thread_context.simd_lane_id, d_simdgroup, int(params->leading_dimension_d));
                 } else {
@@ -188,7 +200,7 @@ struct MxuMmaCore {
         }
     );
 
-    if (output_transform.contains(GemmDTransform::RHT)) {
+    if (output_transform.contains(GemmDTransform::RHT) && !fragment_rht) {
       // Metal rejects a threadgroup barrier when the threadgroup contains one simdgroup.
       if constexpr (SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN == 1) {
         simdgroup_barrier(mem_flags::mem_device);

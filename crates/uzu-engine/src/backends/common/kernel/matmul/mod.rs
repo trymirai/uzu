@@ -116,3 +116,34 @@ impl QuantParams {
         }
     }
 }
+
+/// Packs complete N=32, K=128 W4 tiles for four contiguous words per SIMD lane.
+/// Values and nibble order within each word are unchanged.
+#[cfg(backend = "metal")]
+pub(crate) fn pack_mxu_w4_tiles(
+    source: &[u32],
+    destination: &mut [u32],
+    n: u32,
+    k: u32,
+) {
+    assert!(n.is_multiple_of(32) && k.is_multiple_of(128));
+    assert_eq!(source.len(), n as usize * k as usize / 8);
+    assert_eq!(destination.len(), source.len());
+    let groups = k as usize / 128;
+    let row_words = k as usize / 8;
+    for block in 0..n as usize / 32 {
+        for batch in 0..groups {
+            for word in 0..4 {
+                for lane in 0..32 {
+                    let quad = lane / 4;
+                    let row = (quad & 4) + (lane / 2) % 4;
+                    let column = (quad & 2) + lane % 2;
+                    for chunk in 0..4 {
+                        destination[(((block * groups + batch) * 4 + word) * 32 + lane) * 4 + chunk] =
+                            source[(block * 32 + row + word * 8) * row_words + batch * 16 + chunk * 4 + column];
+                    }
+                }
+            }
+        }
+    }
+}

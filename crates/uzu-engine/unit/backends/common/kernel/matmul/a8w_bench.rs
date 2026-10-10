@@ -138,6 +138,7 @@ impl BenchmarkData {
                 offset: 0,
             },
             b: MatmulB::Quantized(QuantizedB {
+                packed_codes: false,
                 codes: &self.unsigned_weights,
                 scales: &self.weight_scales,
                 correction: QuantizedCorrection::Symmetric,
@@ -189,6 +190,7 @@ fn encode_step(
                             .expect("W4/W8 benchmark"),
                     },
                     b: MatmulB::Quantized(QuantizedB {
+                        packed_codes: false,
                         codes: &data.a8_weights,
                         scales: &data.group_major_weight_scales,
                         correction: QuantizedCorrection::Symmetric,

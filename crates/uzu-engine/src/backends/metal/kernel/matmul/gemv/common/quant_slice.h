@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../common/packed_w4.h"
 #include "arguments.h"
 #include "quant_chunk.h"
 #include "quant_metadata.h"
@@ -54,13 +55,24 @@ public:
       const device uint8_t* weights_base,
       const thread uint (&weight_row_indices)[Tile::ROWS_PER_LANE],
       uint row_stride,
-      uint group_offset
+      uint group_offset,
+      bool packed_codes
   ) thread {
     const uint k = position.group * GROUP_SIZE + group_offset + position.slice * SLICE_VALUES;
     const uint offset_bytes = k * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
       const uint row = weight_row_indices[R];
+      if constexpr (BITS == 4) {
+        if (packed_codes) {
+          const device uint* packed = reinterpret_cast<const device uint*>(weights_base);
+          METAL_PRAGMA_UNROLL
+          for (uint word = 0; word < SLICE_BYTES / 4; word++) {
+            weights[R][word / 4][word % 4] = packed[packed_w4_word_offset(row, k / 8 + word, row_stride * 2)];
+          }
+          return;
+        }
+      }
       const device uint8_t* source = weights_base + row * row_stride + offset_bytes;
       if constexpr (INPUT_ALIGNED) {
         load_words<false>(weights[R], source);
