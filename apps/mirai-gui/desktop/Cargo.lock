@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "backend-remote"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "async-openai",
  "futures",
@@ -531,7 +531,7 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "bindings"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -1603,7 +1603,7 @@ dependencies = [
 
 [[package]]
 name = "download-manager"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "async-trait",
  "bindings",
@@ -2431,7 +2431,7 @@ dependencies = [
 
 [[package]]
 name = "hanashi"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "indexmap 2.14.0",
  "libc",
@@ -3014,7 +3014,7 @@ dependencies = [
 
 [[package]]
 name = "json-transform"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3038,7 +3038,7 @@ dependencies = [
 
 [[package]]
 name = "kanka"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "libc",
  "obfstr",
@@ -3047,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "keisoku"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "bitflags 2.13.0",
  "kanka",
@@ -3082,7 +3082,7 @@ dependencies = [
 
 [[package]]
 name = "kiban"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3429,7 +3429,7 @@ dependencies = [
 
 [[package]]
 name = "mirai-gui"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "chrono",
  "futures",
@@ -3519,7 +3519,7 @@ dependencies = [
 
 [[package]]
 name = "nagare"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "bindings",
  "bon",
@@ -3543,7 +3543,7 @@ dependencies = [
 
 [[package]]
 name = "nagare-macros"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "proc-macro-crate 3.5.0",
  "proc-macro2",
@@ -5455,7 +5455,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shoji"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "bindings",
  "futures",
@@ -6393,7 +6393,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "token-stream-parser"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "indexmap 2.14.0",
  "json-transform",
@@ -6893,7 +6893,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -6937,7 +6937,7 @@ dependencies = [
 
 [[package]]
 name = "uzu-engine"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "bitflags 2.13.0",
@@ -6975,7 +6975,7 @@ dependencies = [
 
 [[package]]
 name = "uzu-engine-macros"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "quote",
  "syn 2.0.118",
