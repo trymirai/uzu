@@ -22,7 +22,7 @@ use super::{
 use crate::{
     common::{
         caching,
-        codegen::write_tokens,
+        codegen::{write_if_changed, write_tokens},
         compiler::Compiler,
         enum_paths::EnumPaths,
         gpu_types::GpuTypes,
@@ -168,7 +168,7 @@ impl SlangCompiler {
                 .collect::<String>();
             let contents =
                 once(imports).chain(wrappers.iter().flat_map(|(blocks, _)| blocks.iter().cloned())).join("\n\n");
-            fs::write(&wrapper_file, contents)?;
+            write_if_changed(&wrapper_file, contents)?;
             let wrapper_path = wrapper_file.to_str().context("Slang wrapper path is not UTF-8")?;
             let loaded = slang_api::load_module(&self.session, wrapper_path)?;
             if let Some(diagnostics) = &loaded.diagnostics {
@@ -187,7 +187,7 @@ impl SlangCompiler {
                 .link()
                 .context("cannot link Slang wrapper module")?;
             let blob = compiled.target_code(0).context("cannot emit SPIR-V")?;
-            fs::write(&object_file, blob.as_slice())?;
+            write_if_changed(&object_file, blob.as_slice())?;
 
             let program = compiled.layout(0).context("linked Slang program has no layout")?;
             // Specialization constants declared by the module's kernels, `[[PipelineVariants]]` ones included, with their
