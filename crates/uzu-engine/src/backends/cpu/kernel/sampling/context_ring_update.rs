@@ -15,7 +15,8 @@ pub fn context_ring_update(
 
         for input_index in 0..input_length {
             let slot = if ring.ring_length < suffix_repetition_length {
-                let slot = (ring.ring_offset + ring.ring_length) % suffix_repetition_length;
+                let slot = ((u64::from(ring.ring_offset) + u64::from(ring.ring_length))
+                    % u64::from(suffix_repetition_length)) as u32;
                 ring.ring_length += 1;
                 slot
             } else {

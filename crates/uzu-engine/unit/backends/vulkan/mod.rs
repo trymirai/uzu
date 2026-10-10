@@ -8,6 +8,7 @@ mod attention_prepare_test;
 mod attention_single_pass_case;
 mod attention_single_pass_test;
 mod bf16_conversion_test;
+mod context_ring_update_test;
 mod conv1d_test;
 mod delta_net_test;
 mod delta_net_tree_test;
