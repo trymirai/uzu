@@ -29,32 +29,32 @@ UZU_CONST uint TWO_BIT_FIELD_SHIFT = 2, NIBBLE_SHIFT = 4, FIELD_SUM_SHIFT = 3;
 UZU_CONST uint TWO_BIT_FIELDS_MASK = 0x33333333u, BYTE_NIBBLES_MASK = 0x0F0F0F0Fu;
 UZU_CONST uint FIELD_PAIR_SUM_MULTIPLIER = 3, DITHER_MULTIPLIER = 3;
 
-// Row layout
-static METAL_FUNC uint block_bytes(const GemmTrellisFormat format, const uint block_columns) {
+// Row layout: restart blocks sit back to back; only the row pads to a byte.
+static METAL_FUNC uint block_bits(const GemmTrellisFormat format, const uint block_columns) {
   const uint state_count = block_columns / format.vector_width;
   const uint transition_count = state_count - 1;
-  return (STATE_BITS + transition_count * format.transition_bits + BYTE_BITS - 1) / BYTE_BITS;
+  return STATE_BITS + transition_count * format.transition_bits;
 }
 
 static METAL_FUNC uint row_bytes(const GemmTrellisFormat format, const uint code_columns) {
   const uint block_columns = format.restart_columns == 0 ? code_columns : format.restart_columns;
-  return code_columns / block_columns * block_bytes(format, block_columns);
+  return (code_columns / block_columns * block_bits(format, block_columns) + BYTE_BITS - 1) / BYTE_BITS;
 }
 
 // MSB-first codes. code_column must be a multiple of 4.
 static METAL_FUNC uint2
 states_at(const GemmTrellisFormat format, const device uchar* code_row, const uint code_column) {
   if (format.vector_width == V4_VECTOR_WIDTH) {
-    const device uchar* block_codes = code_row;
+    uint block_first_bit = 0;
     uint block_column = code_column;
     if (format.restart_columns != 0) {
-      block_codes += code_column / format.restart_columns * block_bytes(format, format.restart_columns);
+      block_first_bit = code_column / format.restart_columns * block_bits(format, format.restart_columns);
       block_column %= format.restart_columns;
     }
-    const uint first_bit = block_column / V4_VECTOR_WIDTH * format.transition_bits;
-    const device uchar* state_bytes = block_codes + first_bit / BYTE_BITS;
+    const uint first_bit = block_first_bit + block_column / V4_VECTOR_WIDTH * format.transition_bits;
+    const device uchar* state_bytes = code_row + first_bit / BYTE_BITS;
     const uint shift = first_bit % BYTE_BITS;
-    // A state at a byte boundary may be the block's last; any other one spans three bytes of its block.
+    // A state at a byte boundary may be the row's last; any other one spans three bytes of its row.
     const uint third_byte = shift == 0 ? 0 : uint(state_bytes[2]);
     const uint window = uint(state_bytes[0]) << 16 | uint(state_bytes[1]) << 8 | third_byte;
     return uint2((window >> (BYTE_BITS - shift)) & ((1u << STATE_BITS) - 1), 0);
