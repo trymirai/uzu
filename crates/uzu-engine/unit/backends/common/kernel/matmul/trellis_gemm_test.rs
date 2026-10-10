@@ -42,6 +42,11 @@ const V2_T4: TrellisFormat = TrellisFormat {
     transition_bits: 4,
     restart_columns: 0,
 };
+const V4_T6: TrellisFormat = TrellisFormat {
+    vector_width: 4,
+    transition_bits: 6,
+    restart_columns: 64,
+};
 const V4_T7: TrellisFormat = TrellisFormat {
     vector_width: 4,
     transition_bits: 7,
@@ -75,15 +80,23 @@ fn decode_state(
 ) -> u16 {
     let width = format.vector_width as usize;
     let restart_columns = format.restart_columns as usize;
-    let (block, local, block_bytes) = match column.checked_div(restart_columns) {
-        Some(block) => (block, column % restart_columns, row_bytes(format, restart_columns)),
-        None => (0, column, 0),
+    let (block_start_bit, local) = match column.checked_div(restart_columns) {
+        Some(block) => (block * block_bits(format, restart_columns), column % restart_columns),
+        None => (0, column),
     };
-    let start_bit = block * block_bytes * 8 + local / width * format.transition_bits as usize;
+    let start_bit = block_start_bit + local / width * format.transition_bits as usize;
     (start_bit..start_bit + 16).fold(0u32, |state, bit| (state << 1) | u32::from(row[bit / 8] >> (7 - bit % 8) & 1))
         as u16
 }
 
+fn block_bits(
+    format: TrellisFormat,
+    block_columns: usize,
+) -> usize {
+    16 + (block_columns / format.vector_width as usize - 1) * format.transition_bits as usize
+}
+
+// Restart blocks sit back to back; only the row pads to a byte.
 fn row_bytes(
     format: TrellisFormat,
     columns: usize,
@@ -93,9 +106,7 @@ fn row_bytes(
     } else {
         format.restart_columns as usize
     };
-    let transitions = block_columns / format.vector_width as usize - 1;
-    let bytes_per_block = (16 + transitions * format.transition_bits as usize).div_ceil(8);
-    columns.div_ceil(block_columns) * bytes_per_block
+    (columns.div_ceil(block_columns) * block_bits(format, block_columns)).div_ceil(8)
 }
 
 fn decode_level(
@@ -215,6 +226,7 @@ fn run_projection(
 #[case::v2_t8(V2_T8)]
 #[case::v2_t4(V2_T4)]
 #[case::v4_t8_no_restart(V4_T8_NO_RESTART)]
+#[case::v4_t6(V4_T6)]
 #[case::v4_t7(V4_T7)]
 #[case::v4_t6_r128(V4_T6_R128)]
 #[case::v4_t7_r128(V4_T7_R128)]
