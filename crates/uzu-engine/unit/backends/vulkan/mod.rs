@@ -39,6 +39,7 @@ mod ssd_update_test;
 mod storage_address_test;
 mod tensor_add_bias_test;
 mod tensor_add_scale_test;
+mod tree_gram_test;
 mod typed_constants_test;
 mod validation_logger;
 
@@ -54,6 +55,7 @@ pub use conv1d_test::values as conv1d_values;
 pub use delta_net_test::{
     CPU_FAILURE, assert_inputs, check as delta_net_check, member, panics, sentinel, silu_set, submit,
 };
+pub use delta_net_tree_test::{decay_set, tree as delta_net_tree};
 pub use gemv_test::{exact_witnesses, overflow_and_nonfinite_witnesses, soft_cap_edges, soft_cap_follows_bias};
 pub use input_embedding_lookup_case::InputEmbeddingLookupCase;
 pub use matmul_case::MatmulCase;

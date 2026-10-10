@@ -34,8 +34,8 @@ pub use vk_context_error::VkContextError;
 pub use vk_kernels::{
     A8QuantizedGemmVulkanKernel, A8QuantizedGemvVulkanKernel, ActivationTransformVulkanKernel, ActivationVulkanKernel,
     AncestorAttentionVulkanKernel, AttentionPrepareVulkanKernel, AttentionSinglePassVulkanKernel,
-    BuildTreePrefixVulkanKernel, Conv1dDecodeVulkanKernel, Conv1dPackVulkanKernel, Conv1dScanVulkanKernel,
-    ConvTreeScanVulkanKernel, DeltaNetConvScanVulkanKernel, DeltaNetConvUpdateVulkanKernel,
+    BuildTreeGramVulkanKernel, BuildTreePrefixVulkanKernel, Conv1dDecodeVulkanKernel, Conv1dPackVulkanKernel,
+    Conv1dScanVulkanKernel, ConvTreeScanVulkanKernel, DeltaNetConvScanVulkanKernel, DeltaNetConvUpdateVulkanKernel,
     DeltaNetNormGateVulkanKernel, DeltaNetPrefillPrepVulkanKernel, DeltaNetPrefillVulkanKernel,
     DeltaNetUpdateVulkanKernel, GatedActMulVulkanKernel, GemmVulkanKernel, GemvVulkanKernel,
     InputEmbeddingLookupVulkanKernel, KVCacheUpdateVulkanKernel, LogitTransformVulkanKernel, NormalizationVulkanKernel,

@@ -63,7 +63,7 @@ const PREFIX_SHAPES: [([u32; 3], &str); 8] = [
 
 /// Parent links of `count` rows: a chain, a star, a binary tree in preorder, AttentionSinglePassCase's random preorder
 /// trie, or row 0 under row 1, which is no preorder.
-fn tree(
+pub fn tree(
     kind: &str,
     count: u32,
 ) -> Vec<Option<u32>> {
@@ -395,7 +395,7 @@ fn build_tree_prefix_witnesses() {
 /// e^a as the shader's delta_net_exp (`shader`) or the CPU's expf decides it: NaN and +inf themselves; a <= 0, -inf
 /// and both zeros included, the canonical decay oracle of e^-(-a), with Vulkan's exp bound and its flush of subnormal
 /// results to +0 for the shader and 1 ULP for the CPU; finite a > 0 Vulkan's exp bound or 1 ULP.
-fn decay_set(
+pub fn decay_set(
     a: f32,
     shader: bool,
 ) -> ((f64, f64), u8) {
