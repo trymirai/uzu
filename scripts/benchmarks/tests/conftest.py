@@ -4,10 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.engines import llamacpp, mlx, mlxserve, mtplx, omlx, splash, uzu
+from tests.engines import llamacpp, mldrift, mlx, mlxserve, mtplx, omlx, splash, uzu
 
 ENGINE_TEST_CLASSES = {
     "llamacpp": "TestLlamaCpp",
+    "mldrift": "TestMLDrift",
     "mlx": "TestMLX",
     "mlxserve": "TestMLXServe",
     "mtplx": "TestMTPLX",
@@ -28,6 +29,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     group.addoption("--engine-timeout", type=float, default=600, help="Response timeout in seconds, including startup.")
     llamacpp.add_options(parser)
+    mldrift.add_options(parser)
     mlx.add_options(parser)
     mlxserve.add_options(parser)
     mtplx.add_options(parser)

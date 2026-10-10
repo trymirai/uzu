@@ -1,0 +1,182 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 098b839..e8cc263 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -266,3 +266,16 @@ http_archive(
+     strip_prefix = "tokenizers-cpp-0.1.1",
+     url = "https://github.com/mlc-ai/tokenizers-cpp/archive/refs/tags/v0.1.1.tar.gz",
+ )
++
++http_archive(
++    name = "glaze",
++    build_file_content = """cc_library(
++    name = "glaze",
++    hdrs = glob(["include/**/*.hpp"]),
++    includes = ["include"],
++    visibility = ["//visibility:public"],
++)""",
++    sha256 = "dd7b033c5bf6e4308615bb7834c541291d5b20f64121d9a68222a39414635517",
++    strip_prefix = "glaze-9.0.0",
++    url = "https://github.com/stephenberry/glaze/archive/refs/tags/v9.0.0.tar.gz",
++)
+diff --git a/ml_drift/samples/llm/BUILD b/ml_drift/samples/llm/BUILD
+index a5c281a..a55ebf1 100644
+--- a/ml_drift/samples/llm/BUILD
++++ b/ml_drift/samples/llm/BUILD
+@@ -15,7 +15,10 @@
+ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test", "objc_library")
+ load("//ml_drift:pytype.default.bzl", "pytype_strict_binary")
+ 
+-package(licenses = ["notice"])
++package(
++    default_visibility = ["//benchmarks:__pkg__"],
++    licenses = ["notice"],
++)
+ 
+ # Extracts weights from a HuggingFace model (safetensors).
+ # bazel run //ml_drift/samples/llm:extract_weights_hf -- --model_path=/tmp/model.safetensors --output_dir=/tmp/extracted/
+@@ -346,8 +349,7 @@ cc_test(
+ )
+ 
+ cc_library(
+-    name = "llm_runner",
+-    srcs = ["llm_runner.cc"],
++    name = "llm_runner_interface",
+     hdrs = ["llm_runner.h"],
+     deps = [
+         ":llm_config",
+@@ -365,6 +367,12 @@ cc_library(
+         "@sentencepiece//:sentencepiece_processor",
+         "@tokenizers_cpp//:huggingface_tokenizer",
+     ],
++)
++
++cc_library(
++    name = "llm_runner",
++    srcs = ["llm_runner.cc"],
++    deps = [":llm_runner_interface"],
+     alwayslink = 1,
+ )
+ 
+@@ -475,7 +483,7 @@ objc_library(
+         ":gemma4_model_builder",
+         ":llm_config",
+         ":llm_file_tensor_loader",
+-        ":llm_runner",
++        ":llm_runner_interface",
+         ":llm_tensor_loader",
+         ":qwen3_model_builder",
+         "//ml_drift/common:data_type",
+diff --git a/ml_drift/samples/llm/llm_config.h b/ml_drift/samples/llm/llm_config.h
+index 8839d72..f2c3481 100644
+--- a/ml_drift/samples/llm/llm_config.h
++++ b/ml_drift/samples/llm/llm_config.h
+@@ -196,6 +196,22 @@ inline LlmConfig GetQwen3ModelConfig8B() {
+   };
+ }
+ 
++inline LlmConfig GetQwen3ModelConfig14B() {
++  return LlmConfig{
++      .batch_size = 1,
++      .sequence_size = 1,
++      .model_dimension = 5120,
++      .hidden_dimension = 17408,
++      .head_dimension = 128,
++      .number_of_heads = 40,
++      .number_of_kv_heads = 8,  // GQA
++      .vocabulary_size = 151936,
++      .stack_size = 40,
++      .num_local_layers_per_global = 0,
++      .sliding_window_size = 0,
++  };
++}
++
+ struct ModelInfo {
+   ModelType type;
+   LlmConfig config;
+@@ -240,6 +256,11 @@ inline absl::StatusOr<ModelInfo> GetModelInfo(absl::string_view model_name) {
+         .type = ModelType::kQwen3,
+         .config = GetQwen3ModelConfig8B(),
+     };
++  } else if (model_name == "qwen3:14b") {
++    return ModelInfo{
++        .type = ModelType::kQwen3,
++        .config = GetQwen3ModelConfig14B(),
++    };
+   }
+   return absl::InvalidArgumentError(
+       absl::StrCat("Unknown model: ", model_name));
+diff --git a/ml_drift/samples/llm/llm_metal.cc b/ml_drift/samples/llm/llm_metal.cc
+index 47e06d2..510a1b1 100644
+--- a/ml_drift/samples/llm/llm_metal.cc
++++ b/ml_drift/samples/llm/llm_metal.cc
+@@ -168,6 +168,7 @@ class MetalLlmModelRunner : public LlmModelRunner {
+   GpuModelBuilder::TensorHandle greedy_input_logits_handle_;
+   GpuModelBuilder::TensorHandle greedy_output_token_handle_;
+   std::unique_ptr<MetalSpatialTensor> greedy_output_token_;
++  absl::Time decode_end_;
+ };
+ 
+ absl::Status MetalLlmModelRunner::Init(const std::string& weights_path,
+@@ -626,6 +627,8 @@ absl::Status MetalLlmModelRunner::Decode(const DecodeOptions& options) {
+     }
+   }
+ 
++  decode_end_ = absl::Now();
++
+   // Drain any remaining GPU work.
+   metal::WaitUntilCompleted(command_queue_);
+ 
+@@ -641,10 +644,15 @@ absl::Status MetalLlmModelRunner::PostProcessGreedy(
+     int num_gen_tokens, std::vector<int>& output_tokens_vec) {
+   // 1. Prefill Step: Process all prompt input tokens on the GPU.
+   ABSL_LOG(INFO) << "Running prefill...";
++  stats_ = {};
+   int first_token = 0;
++  const absl::Time prefill_start = absl::Now();
+   ABSL_RETURN_IF_ERROR(
+       Prefill(input_tokens_vec, /*download_token=*/true, &first_token))
+       << "Error during prefill";
++  const absl::Time first_token_time = absl::Now();
++  stats_.prefill_seconds =
++      absl::ToDoubleSeconds(first_token_time - prefill_start);
+   output_tokens_vec.push_back(first_token);
+ 
+   if (num_gen_tokens <= 1) {
+@@ -666,6 +674,8 @@ absl::Status MetalLlmModelRunner::PostProcessGreedy(
+   options.tokenizer = &tokenizer;
+   options.output_tokens = &output_tokens_vec;
+   ABSL_RETURN_IF_ERROR(Decode(options));
++  stats_.decode_seconds =
++      absl::ToDoubleSeconds(decode_end_ - first_token_time);
+   std::cout << std::endl;
+ 
+   return absl::OkStatus();
+diff --git a/ml_drift/samples/llm/llm_runner.h b/ml_drift/samples/llm/llm_runner.h
+index 130c493..a360343 100644
+--- a/ml_drift/samples/llm/llm_runner.h
++++ b/ml_drift/samples/llm/llm_runner.h
+@@ -192,6 +192,11 @@ class Tokenizer {
+   int end_of_turn_id_ = -1;
+ };
+ 
++struct GenerationStats {
++  double prefill_seconds = 0.0;
++  double decode_seconds = 0.0;
++};
++
+ // Abstract base class for the backend-specific LLM runner.
+ class LlmModelRunner {
+  public:
+@@ -212,6 +217,11 @@ class LlmModelRunner {
+     return absl::UnimplementedError(
+         "PostProcessGreedyBench is not implemented.");
+   }
++
++  const GenerationStats& stats() const { return stats_; }
++
++ protected:
++  GenerationStats stats_;
+ };
+ 
+ // Factory function implemented by each backend.
