@@ -6,10 +6,6 @@
 #include <filesystem>
 #include <string>
 
-#include "memory_counters.h"
-
-memory_counters_t collect_memory_counters();
-
 std::filesystem::path get_model_path(
     const std::string& model,
     bool dflash = false

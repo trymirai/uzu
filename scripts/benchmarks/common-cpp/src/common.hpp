@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "bench.hpp"
+#include "memory_counters.h"
 
 class InferenceEngine {
 public:
@@ -13,6 +14,8 @@ public:
 };
 
 std::FILE* redirect_stdout_to_stderr();
+
+memory_counters_t collect_memory_counters();
 
 void run_loop(
     const InferenceEngine& engine,

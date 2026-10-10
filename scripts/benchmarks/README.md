@@ -37,6 +37,21 @@ Also DFlash is supported
     -d "ggml-org/Qwen3.6-27B-GGUF:BF16"
 ```
 
+### [ML Drift](https://github.com/google-ai-edge/ml-drift)
+
+```bash
+./engine-mldrift/run.sh -m "Qwen/Qwen3-0.6B"
+```
+
+Requires `bazelisk` (`brew install bazelisk`). The Metal LLM sample runner supports the `gemma3:270m`, `gemma3:1b`, `gemma4:12b`, `qwen3:0.6b`, `qwen3:1.7b`, `qwen3:8b`, and `qwen3:14b` presets (the last added by the benchmark patch), selected from the checkpoint's `config.json`. The first run of a checkpoint converts its float weights with upstream `extract_weights_hf.py`: to Q4_0 (block size 32) by default, or unquantized with `--precision f16`.
+
+Prompts are tokenized with the checkpoint's Hugging Face chat template. Decoding is greedy only, so requests with `sampling` or a positive `speculative_depth` are rejected. The prefill graph is compiled for each prompt length, so each request rebuilds the runner before its first run.
+
+Compare against uzu on the same Qwen3 checkpoint at 4 bits (uzu runs a lalamo conversion of `mlx-community/<model>-4bit`, ML Drift its Q4_0 extraction), or at 16 bits with `--bits 16`:
+```bash
+uv run compare/uzu_mldrift.py --model Qwen/Qwen3-14B --bits 4 --num-runs 5 --max-tokens 256
+```
+
 ### [MLX](https://github.com/ml-explore/mlx-lm)
 ```bash
 uv run --project engine-mlx bench-mlx -m "mlx-community/Qwen3.5-0.8B-4bit"
