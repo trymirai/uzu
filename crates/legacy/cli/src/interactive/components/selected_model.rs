@@ -129,7 +129,7 @@ pub fn SelectedModel(
                             } => {
                                 let _ = downloader.resume().await;
                             },
-                            DownloadPhase::Downloaded {} => {},
+                            DownloadPhase::Initializing {} | DownloadPhase::Downloaded {} => {},
                         }
                     },
                     StorageAction::Delete => {

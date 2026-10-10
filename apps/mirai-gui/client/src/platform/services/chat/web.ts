@@ -15,7 +15,15 @@ export const webChat: ChatService = {
       error: "Chat not available on web",
       stats: emptyStats(),
     });
-    return { runId: "", stream, result, cancel: () => Promise.resolve(), onParsed: noopUnsubscribe };
+    return {
+      runId: "",
+      stream,
+      result,
+      cancel: () => Promise.resolve(),
+      onParsed: noopUnsubscribe,
+      onChatName: noopUnsubscribe,
+      onTranscript: noopUnsubscribe,
+    };
   },
   cancelRun: () => Promise.resolve(),
   generateTitle: () => Promise.reject(new Error("Not available on web")),

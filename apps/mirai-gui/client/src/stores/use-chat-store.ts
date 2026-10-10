@@ -1,11 +1,12 @@
 import { useChatSessionStore } from "./use-chat-session-store";
-import { defaultReasoningEffort, useModelParamsStore } from "./use-model-params-store";
+import { resolveModelTools, useModelParamsStore } from "./use-model-params-store";
+import { useModelsStore } from "./use-models-store";
 import type { Message, PerfStats } from "@/types/message";
 import type { ChatMetadata } from "@/platform/services/storage";
 import { v4 as uuidv4 } from "uuid";
 import { create } from "zustand";
 import { getPlatform } from "@/platform/platform-singleton";
-import type { LlmAsyncStream, LlmRunParams, SessionOutputStats } from "@/types/llm-stream";
+import type { LlmAsyncStream, LlmRunParams, SessionOutputStats, TranscriptItem } from "@/types/llm-stream";
 import { finalizeAssistantMessage, persistMessage, persistMessageError, persistMessagePatch } from "./chat/persistence";
 import { runChatTitleGeneration } from "./chat/title-generation";
 
@@ -28,6 +29,7 @@ export type ChatState = {
   // while that chat is open, the caller persists it by value.
   addMessageTo: (chatId: string, message: Omit<Message, "id" | "timestamp">) => Message;
   updateMessage: (id: string, updates: Partial<Message>) => void;
+  editUserMessage: (chatId: string, messageId: string, text: string, signal?: AbortSignal) => Promise<Message[]>;
   discardMessage: (chatId: string, id: string) => Promise<void>;
   switchMessageVersion: (messageId: string, versionIndex: number) => void;
   updateMessagePerf: (messageId: string, perf: Partial<PerfStats>, stats?: SessionOutputStats) => void;
@@ -58,12 +60,13 @@ export type ChatState = {
     messageId: string,
     text: string,
     parsed?: { chainOfThought?: string; response?: string },
+    transcript?: TranscriptItem[],
   ) => Promise<void>;
   loadChat: (chatId: string) => Promise<void>;
   loadSavedChats: () => Promise<void>;
   deleteChat: (chatId: string) => Promise<void>;
   createNewChat: (chatId: string) => void;
-  updateChatTitle: (chatId: string, title: string) => Promise<void>;
+  updateChatTitle: (chatId: string, title: string, expectedTitle?: string) => Promise<boolean>;
   generateChatTitle: (chatId: string, userText: string) => Promise<{ ok: boolean; error?: string }>;
   suppressAutoSelect: (chatId: string, value: boolean) => void;
 
@@ -101,6 +104,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
+  editUserMessage: async (chatId, messageId, text, signal) => {
+    signal?.throwIfAborted();
+    const chat = await getPlatform().storage.editUserMessage(chatId, messageId, text);
+    if (!signal?.aborted) {
+      set((state) => ({
+        ...(state.currentChatId === chatId ? { messages: chat.messages } : {}),
+        savedChats: [chat.metadata, ...state.savedChats.filter((c) => c.id !== chatId)],
+      }));
+    }
+    return chat.messages;
+  },
+
   discardMessage: async (chatId: string, id: string) => {
     if (get().currentChatId === chatId) {
       set((s) => ({ messages: s.messages.filter((m) => m.id !== id) }));
@@ -115,24 +130,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   switchMessageVersion: (messageId: string, versionIndex: number) => {
-    set((state) => ({
-      messages: state.messages.map((msg) => {
-        if (msg.id !== messageId || !msg.versions) return msg;
-
-        const version = msg.versions[versionIndex];
-        if (!version) return msg;
-
-        return {
-          ...msg,
-          text: version.text,
-          modelId: version.modelId,
-          modelName: version.modelName,
-          currentVersionIndex: versionIndex,
-          timestamp: version.timestamp,
-          output: version.output || msg.output,
-        };
-      }),
-    }));
+    const { currentChatId, messages } = get();
+    const message = messages.find((m) => m.id === messageId);
+    const version = message?.versions?.[versionIndex];
+    if (!version) return;
+    const patch: Partial<Message> = {
+      text: version.text,
+      modelId: version.modelId,
+      modelName: version.modelName,
+      currentVersionIndex: versionIndex,
+      timestamp: version.timestamp,
+      output: version.output || message?.output,
+    };
+    get().updateMessage(messageId, patch);
+    if (currentChatId) void get().persistMessagePatch(currentChatId, messageId, patch);
   },
 
   updateMessagePerf: (messageId, perf, stats) => {
@@ -199,8 +210,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   persistMessageError: (chatId, messageId, text, error, attachmentIds) =>
     persistMessageError({ get, set }, chatId, messageId, text, error, attachmentIds),
 
-  finalizeAssistantMessage: (chatId, messageId, text, parsed) =>
-    finalizeAssistantMessage({ get, set }, chatId, messageId, text, parsed),
+  finalizeAssistantMessage: (chatId, messageId, text, parsed, transcript) =>
+    finalizeAssistantMessage({ get, set }, chatId, messageId, text, parsed, transcript),
 
   loadChat: async (chatId: string) => {
     const chatData = await getPlatform().storage.loadChat(chatId);
@@ -242,11 +253,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateChatTitle: async (chatId: string, title: string) => {
+  updateChatTitle: async (chatId: string, title: string, expectedTitle?: string) => {
     const { storage } = getPlatform();
-    await storage.updateChatTitle(chatId, title);
-    const savedChats = await storage.listChats();
-    set({ savedChats });
+    const updated = await storage.updateChatTitle(chatId, title, expectedTitle);
+    if (updated) {
+      set((state) => ({
+        savedChats: state.savedChats.map((chat) => (chat.id === chatId ? { ...chat, title } : chat)),
+      }));
+    }
+    try {
+      set({ savedChats: await storage.listChats() });
+    } catch (error) {
+      console.warn("[storage] failed to refresh chats after title update", { chatId }, error);
+    }
+    return updated;
   },
 
   generateChatTitle: async (chatId: string, userText: string): Promise<{ ok: boolean; error?: string }> => {
@@ -285,12 +305,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   runChatStream: (params: LlmRunParams) => {
-    const { getParams, globalReasoningEnabled } = useModelParamsStore.getState();
+    const { getParams, globalModelChatNamingEnabled } = useModelParamsStore.getState();
     const modelParams = getParams(params.repoId);
+    const paramSize = useModelsStore.getState().models.find((model) => model.repoId === params.repoId)?.paramSize;
+    const tools = resolveModelTools(modelParams, globalModelChatNamingEnabled, paramSize);
     return getPlatform().chat.runStream({
       ...params,
+      modelChatNamingEnabled: tools.modelChatNamingEnabled && params.modelChatNamingEnabled !== false,
+      dateTimeToolEnabled: params.dateTimeToolEnabled ?? tools.dateTimeToolEnabled,
+      chartToolEnabled: params.chartToolEnabled ?? tools.chartToolEnabled,
       samplingPolicy: modelParams.sampling,
-      reasoningEffort: modelParams.reasoningEffort ?? defaultReasoningEffort(globalReasoningEnabled),
+      reasoningEffort: modelParams.reasoningEffort ?? "default",
     });
   },
 }));

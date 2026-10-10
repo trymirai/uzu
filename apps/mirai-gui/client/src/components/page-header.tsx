@@ -9,13 +9,8 @@ export const PageHeader = ({ title }: { title: ReactElement }) => {
 
   return (
     <div
-      style={
-        !isSidebarOpen
-          ? {
-              paddingLeft: `clamp(0px, calc(${HEADER_LEFT_RESERVE_PX}px - var(--sidebar-width, 0px)), ${HEADER_LEFT_RESERVE_PX}px)`,
-            }
-          : undefined
-      }
+      className="transition-[padding-left] duration-300 ease-in-out motion-reduce:transition-none"
+      style={{ paddingLeft: isSidebarOpen ? 0 : HEADER_LEFT_RESERVE_PX }}
     >
       {title}
     </div>

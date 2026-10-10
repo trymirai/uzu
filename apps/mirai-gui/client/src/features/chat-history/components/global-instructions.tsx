@@ -129,7 +129,7 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
       </CardContainer>
 
       <CardContainer
-        className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? "max-h-96 opacity-100 mt-3" : "max-h-0 opacity-0"}`}
+        className={`overflow-clip transition-all duration-300 ease-in-out ${isExpanded ? "max-h-96 opacity-100 mt-3" : "max-h-0 opacity-0"}`}
       >
         <div className="p-3">
           <HeadlessTextarea
@@ -138,7 +138,7 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
             onChange={handleChange}
             onBlur={flushSave}
             placeholder="Add instructions to all chats"
-            className="w-full p-1 bg-bg-modal rounded-md text-sm leading-[150%] text-label-title placeholder:text-label-muted focus:outline-hidden focus:border-primary resize-none thin-scrollbar"
+            className="w-full p-1 bg-bg-modal rounded-md text-sm leading-[150%] text-label-title placeholder:text-label-muted focus:outline-hidden focus:border-primary resize-none overscroll-y-auto thin-scrollbar"
             rows={7}
           />
         </div>

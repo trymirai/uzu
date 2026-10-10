@@ -8,6 +8,7 @@ export function toModelCardState(phase?: string, downloadedKbytes?: number, tota
     totalKbytes && totalKbytes > 0 ? Math.min(100, Math.round(((downloadedKbytes ?? 0) / totalKbytes) * 100)) : 0;
 
   const mappedState: Record<string, ModelCardState> = {
+    [modelDownloadPhases.initializing]: { status: "initializing" },
     [modelDownloadPhases.downloaded]: { status: "downloaded" },
     [modelDownloadPhases.paused]: { status: "paused", progress },
     [modelDownloadPhases.downloading]: { status: "downloading", progress },
@@ -68,12 +69,6 @@ type FamilyAccumulator = {
 
 function familyKey(model: PlatformModel): string {
   return model.familyIdentifier ?? model.family ?? model.vendor ?? model.repoId;
-}
-
-const PARTNER_FAMILIES = new Set<string>(["LFM2.5"]);
-
-export function isPartnerFamily(familyName: string): boolean {
-  return PARTNER_FAMILIES.has(familyName.trim());
 }
 
 export function buildFamiliesView(params: {

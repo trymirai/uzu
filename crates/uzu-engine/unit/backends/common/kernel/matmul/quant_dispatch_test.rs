@@ -145,7 +145,7 @@ fn parity_bf16(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::gs32_8bit_mlx_prefill(64, 256, 64, 32, 8, QuantizationMethod::ScaleBias)]
+#[case::gs32_8bit_symmetric_prefill(64, 256, 64, 32, 8, QuantizationMethod::ScaleSymmetric)]
 #[case::gs64_8bit_symmetric_prefill(64, 256, 64, 64, 8, QuantizationMethod::ScaleSymmetric)]
 fn parity_bf16_8bit_splitk(
     #[case] m: u32,
@@ -289,7 +289,7 @@ fn parity_gemv_partial_group_bf16(
 #[test_attr(uzu_test)]
 #[case::n12_gs32_4bit(1, 256, 12, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::n20_gs64_4bit_zp(2, 256, 20, 64, 4, QuantizationMethod::ScaleZeroPoint)]
-#[case::n36_gs32_8bit(1, 256, 36, 32, 8, QuantizationMethod::ScaleBias)]
+#[case::n36_gs32_8bit_sym(1, 256, 36, 32, 8, QuantizationMethod::ScaleSymmetric)]
 fn parity_gemv_unaligned_width_bf16(
     #[case] m: u32,
     #[case] k: u32,
@@ -453,8 +453,8 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
 #[case::output_group_single_group_gs64(OutputGroup, 64, 64, 64, 4, ScaleZeroPoint, 64)]
 #[case::output_group_odd_groups(OutputGroup, 192, 64, 64, 4, ScaleZeroPoint, 64)]
 #[case::group_output_padded_n(GroupOutput, 192, 66, 64, 4, ScaleZeroPoint, 66)]
-#[case::output_group_bias_prefix(OutputGroup, 128, 12, 32, 8, ScaleBias, 4)]
-#[case::group_output_bias_prefix(GroupOutput, 128, 12, 32, 8, ScaleBias, 4)]
+#[case::output_group_bias_prefix(OutputGroup, 128, 12, 32, 4, ScaleBias, 4)]
+#[case::group_output_bias_prefix(GroupOutput, 128, 12, 32, 4, ScaleBias, 4)]
 fn quant_gemm_parameter_layout_prefix_matches_cpu(
     #[case] params_layout: QuantParamsLayout,
     #[case] k: u32,
@@ -535,7 +535,6 @@ fn mxu_quant_parity_bf16(
 #[test_attr(uzu_test)]
 #[case::sym_w8_gs64(16u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
 #[case::bias_w4_gs32(16u32, 32u32, 4u32, QuantizationMethod::ScaleBias)]
-#[case::bias_w8_gs64(16u32, 64u32, 8u32, QuantizationMethod::ScaleBias)]
 #[case::zp_w4_gs32(16u32, 32u32, 4u32, QuantizationMethod::ScaleZeroPoint)]
 #[case::m1_bias_w4_gs64(1u32, 64u32, 4u32, QuantizationMethod::ScaleBias)]
 fn a8w_mxu_parity_bf16(
@@ -579,11 +578,7 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
     for (activation_group_size, weight_group_size) in
         [(ACTIVATION_SCALE_GROUP_SIZE, 32u32), (ACTIVATION_SCALE_GROUP_SIZE, 64)]
     {
-        for (bits, method) in [
-            (8, QuantizationMethod::ScaleSymmetric),
-            (8, QuantizationMethod::ScaleBias),
-            (4, QuantizationMethod::ScaleZeroPoint),
-        ] {
+        for (bits, method) in [(8, QuantizationMethod::ScaleSymmetric), (4, QuantizationMethod::ScaleZeroPoint)] {
             let (input, reference_input) = QuantInput::<bf16>::new(m, 256, 12, weight_group_size, bits, method, 0)
                 .with_prepared_a_and_reference(
                     activation_group_size,
@@ -625,7 +620,6 @@ fn a8w4_zero_point_tail_parity(#[case] m: u32) {
 #[case::w4_bias(4u32, QuantizationMethod::ScaleBias, 256u32)]
 #[case::w4_zp(4u32, QuantizationMethod::ScaleZeroPoint, 256u32)]
 #[case::w8_sym(8u32, QuantizationMethod::ScaleSymmetric, 256u32)]
-#[case::w8_bias(8u32, QuantizationMethod::ScaleBias, 256u32)]
 fn signed_weights_full_precision_activations_parity_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,

@@ -46,7 +46,7 @@ impl Section {
             | DownloadPhase::Error {
                 ..
             } => Section::Downloading,
-            DownloadPhase::NotDownloaded {} => Section::Available,
+            DownloadPhase::Initializing {} | DownloadPhase::NotDownloaded {} => Section::Available,
         }
     }
 

@@ -1,4 +1,6 @@
 import type { KeyboardEvent } from "react";
+import { Button, DataInteractive } from "@headlessui/react";
+import { Trash2 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import { IconCheckStroke } from "@/components/icons/check-stroke-icon";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -8,7 +10,6 @@ import { deriveModelCardState } from "./model-card-state";
 import { DownloadActions } from "./download-actions";
 import { ModelBadges } from "./model-badges";
 import { ModelHeading } from "./model-heading";
-import { ModelOptions } from "./model-options";
 
 export function ModelCardRow({
   name,
@@ -23,15 +24,15 @@ export function ModelCardRow({
   onRetry,
   onOpen,
   compact = false,
-  quickDelete = false,
 }: ModelCardProps) {
   const { status, isDownloading, isDownloaded, isPaused, isError, progress } = deriveModelCardState(state);
 
   return (
-    <div
+    <DataInteractive
+      as="div"
       className={twMerge(
         "relative py-2.5 transition-colors duration-150",
-        isDownloaded && "cursor-pointer hover:bg-surface-tertiary outline-hidden focus-visible:shadow-focus",
+        isDownloaded && "cursor-pointer hover:bg-surface-tertiary outline-hidden data-[focus]:shadow-focus",
         isError && "bg-danger-bg",
       )}
       {...(isDownloaded && onOpen
@@ -108,14 +109,23 @@ export function ModelCardRow({
           />
           {isDownloaded && (
             <>
-              <Tooltip content="Installed" side="top">
+              <Tooltip content="Downloaded" side="top">
                 <div className="flex items-center justify-center h-7 w-7 rounded border-[0.5px] border-border-outlined text-success">
                   <IconCheckStroke />
                 </div>
               </Tooltip>
-              <div className="relative" onClick={(event) => event.stopPropagation()}>
-                <ModelOptions quickDelete={quickDelete} onDelete={onDelete} />
-              </div>
+              <Button
+                type="button"
+                aria-label={`Delete ${name}`}
+                title="Delete model (hold Shift to skip confirmation)"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete?.(event);
+                }}
+                className="flex items-center justify-center h-7 w-7 rounded cursor-pointer text-text-muted hover:text-danger bg-transparent hover:border-border-outlined-hover border-[0.5px] border-border-outlined outline-hidden data-[focus]:shadow-focus"
+              >
+                <Trash2 size={14} />
+              </Button>
             </>
           )}
         </div>
@@ -129,11 +139,11 @@ export function ModelCardRow({
 
       {isDownloading && (
         <div className="mt-2.5 pl-4 pr-3">
-          <div className="h-0.5 bg-border-default rounded overflow-hidden">
+          <div className="h-0.5 bg-border-default rounded overflow-clip">
             <div className="h-full bg-primary transition-[width] duration-200" style={{ width: `${progress}%` }} />
           </div>
         </div>
       )}
-    </div>
+    </DataInteractive>
   );
 }

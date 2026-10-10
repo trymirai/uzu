@@ -1,29 +1,27 @@
 import GlobalInstructions from "@/features/chat-history/components/global-instructions";
 import { Toggle } from "@/components/ui/toggle";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { platformInfo } from "@/platform/platform-info";
 import { useAppStore } from "@/stores/use-app-store";
 import { useGlobalInstructionsStore } from "@/stores/use-global-instructions-store";
 import { useSettingsStore } from "@/stores/use-settings-store";
 import { useEffect } from "react";
+import { AnalyticsSetting } from "./general/analytics-setting";
 import { AutoEjectSetting } from "./general/auto-eject-setting";
 import { CliInstallSetting } from "./general/cli-install-setting";
-import { FeedbackFooter } from "./general/feedback-footer";
-import { QuickEntryShortcutSetting } from "./general/quick-entry-shortcut-setting";
+import { DataSettings } from "./general/data-settings";
 import { SettingDivider, SettingRow } from "./general/setting-row";
+import { ThemeSelector } from "./general/theme-selector";
 
 export default function GeneralTab() {
   const {
-    enableThinking,
-    runOnStartup,
-    quickEntryShortcut,
+    analyticsEnabled,
+    modelChatNamingEnabled,
     autoEjectEnabled,
     autoEjectMinutes,
     fetch: fetchSettings,
-    fetchDesktopSettings,
-    setEnableThinking,
-    setRunOnStartup,
-    registerQuickEntryShortcut,
-    unregisterQuickEntryShortcut,
+    setAnalyticsEnabled,
+    setModelChatNamingEnabled,
     setAutoEjectEnabled,
     setAutoEjectMinutes,
   } = useSettingsStore();
@@ -32,14 +30,15 @@ export default function GeneralTab() {
   const loadInstructions = useGlobalInstructionsStore((s) => s.loadInstructions);
   const saveInstructions = useGlobalInstructionsStore((s) => s.saveInstructions);
 
-  const isDarkMode = useAppStore((s) => s.isDarkMode);
-  const setDarkMode = useAppStore((s) => s.setDarkMode);
+  const theme = useAppStore((s) => s.theme);
+  const setTheme = useAppStore((s) => s.setTheme);
+  const chatWidth = useAppStore((s) => s.chatWidth);
+  const setChatWidth = useAppStore((s) => s.setChatWidth);
 
   useEffect(() => {
     loadInstructions();
     fetchSettings();
-    fetchDesktopSettings().catch(() => {});
-  }, [loadInstructions, fetchSettings, fetchDesktopSettings]);
+  }, [loadInstructions, fetchSettings]);
 
   return (
     <div className="h-full flex flex-col">
@@ -50,46 +49,42 @@ export default function GeneralTab() {
 
         <SettingDivider />
         <SettingRow
-          title="Dark mode"
-          description="Use the dark appearance across the app"
-          control={<Toggle label="Dark mode" checked={isDarkMode} onChange={() => setDarkMode(!isDarkMode)} />}
+          title="Theme"
+          description="Choose an appearance or follow your system settings"
+          control={<ThemeSelector value={theme} onChange={setTheme} />}
         />
 
-        {platformInfo.features.startupLaunch && (
-          <>
-            <SettingDivider />
-            <SettingRow
-              title="Run on startup"
-              description="Automatically start Mirai when you log in to your computer"
-              control={
-                <Toggle label="Run on startup" checked={runOnStartup} onChange={() => setRunOnStartup(!runOnStartup)} />
-              }
-            />
-          </>
-        )}
-
-        {platformInfo.features.globalShortcut && (
-          <>
-            <SettingDivider />
-            <QuickEntryShortcutSetting
-              quickEntryShortcut={quickEntryShortcut}
-              registerQuickEntryShortcut={registerQuickEntryShortcut}
-              unregisterQuickEntryShortcut={unregisterQuickEntryShortcut}
-            />
-          </>
-        )}
+        <SettingDivider />
+        <SettingRow
+          title="Chat width"
+          description="Maximum width of messages, the message box, and chat history. Adapts to fit smaller windows."
+          control={
+            <div className="shrink-0">
+              <SegmentedControl
+                ariaLabel="Chat width"
+                value={String(chatWidth)}
+                onChange={(value) => setChatWidth(Number(value))}
+                options={[
+                  { value: "800", label: "Narrow" },
+                  { value: "1000", label: "Medium" },
+                  { value: "1200", label: "Wide" },
+                ]}
+              />
+            </div>
+          }
+        />
 
         <CliInstallSetting />
 
         <SettingDivider />
         <SettingRow
-          title="Default reasoning mode"
-          description="Let reasoning models think by default. You can override this for each model."
+          title="Let models name chats via tool call"
+          description="Enabled by default for supported models with 2B or more parameters. Otherwise, the same model is asked to name the chat separately."
           control={
             <Toggle
-              label="Default reasoning mode"
-              checked={enableThinking}
-              onChange={() => setEnableThinking(!enableThinking)}
+              label="Let models name chats via tool call"
+              checked={modelChatNamingEnabled}
+              onChange={setModelChatNamingEnabled}
             />
           }
         />
@@ -105,9 +100,12 @@ export default function GeneralTab() {
             />
           </>
         )}
-      </div>
 
-      <FeedbackFooter />
+        <SettingDivider />
+        <AnalyticsSetting enabled={analyticsEnabled} onChange={setAnalyticsEnabled} />
+
+        <DataSettings />
+      </div>
     </div>
   );
 }
