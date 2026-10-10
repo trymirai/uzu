@@ -111,7 +111,10 @@ fn install_declined() -> bool {
 }
 
 fn persist_declined(declined: bool) {
-    if let Err(e) = crate::storage::settings_patch(serde_json::json!({ "cliInstallDeclined": declined })) {
+    if let Err(e) = crate::storage::settings_merge(serde_json::Map::from_iter([(
+        "cliInstallDeclined".to_string(),
+        declined.into(),
+    )])) {
         crate::logger::warn(
             "cli-installer:settings-write-failed",
             Some(serde_json::json!({ "declined": declined, "error": e })),

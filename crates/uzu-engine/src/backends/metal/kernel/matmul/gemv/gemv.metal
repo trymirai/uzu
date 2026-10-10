@@ -36,7 +36,7 @@ VARIANTS(
     GemmBPrologueKind::ScaleBiasDequant,
     GemmBPrologueKind::ScaleZeroPointDequant,
     GemmBPrologueKind::ScaleSymmetricDequant)
-VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
+VARIANTS(GROUP_SIZE, 0, 32, 64)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
@@ -49,6 +49,9 @@ VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 4)
 CONSTRAINT(BITS == 0 || K_SPLIT == 1)
 CONSTRAINT(BITS != 0 || (INPUT_ROW_TILE == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && GROUP_LANES == 1))
 CONSTRAINT(INPUT_ROW_TILE != 1 || REDUCTION_LANES == 32)
@@ -62,16 +65,10 @@ CONSTRAINT(
 
 CONSTRAINT(
     INPUT_ROW_TILE == 1 ||
-    (((B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8) ||
-      (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant && BITS == 4)) &&
-     (GROUP_SIZE == 32 || GROUP_SIZE == 64) &&
+    (B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant && GROUP_SIZE == 64 &&
      ((GEMV_TILE(16, 8, 2) && INPUT_ROWS(2, 7)) ||
-      (GEMV_TILE(16, 16, 4) && INPUT_ROWS(2, 6) &&
-       ((GROUP_SIZE == 32 && (BITS == 4 || INPUT_ROW_TILE >= 3)) ||
-        (BITS == 4 && GROUP_SIZE == 64 && INPUT_ROW_TILE >= 3))) ||
-      (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant && GEMV_TILE(8, 8, 2) &&
-       ((GROUP_SIZE == 32 && (INPUT_ROW_TILE == 4 || INPUT_ROW_TILE == 8)) ||
-        (GROUP_SIZE == 64 && INPUT_ROW_TILE == 2))))))
+      (BITS == 4 && GEMV_TILE(16, 16, 4) && INPUT_ROWS(3, 6)) ||
+      (BITS == 4 && GEMV_TILE(8, 8, 2) && INPUT_ROW_TILE == 2))))
 
 // Keep only selector-reachable geometry families.
 CONSTRAINT(
@@ -80,9 +77,7 @@ CONSTRAINT(
      (OUTPUT_ROW_TILE == 2 || OUTPUT_ROW_TILE == 4 || OUTPUT_ROW_TILE == 8 ||
       (INPUT_ROW_TILE > 1 && OUTPUT_ROW_TILE == 16))) ||
     (NUM_SIMDGROUPS == 4 && (OUTPUT_ROW_TILE == 8 || OUTPUT_ROW_TILE == 16 || OUTPUT_ROW_TILE == 32)) ||
-    (NUM_SIMDGROUPS == 8 &&
-     (OUTPUT_ROW_TILE == 16 || OUTPUT_ROW_TILE == 32 ||
-      (BITS == 4 && INPUT_ALIGNED && OUTPUT_ROW_TILE == 64))))
+    (NUM_SIMDGROUPS == 8 && (OUTPUT_ROW_TILE == 16 || OUTPUT_ROW_TILE == 32)))
 CONSTRAINT(
     BITS == 0 || (AT == "bfloat" && DT == "bfloat") ||
     (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32))
@@ -103,12 +98,9 @@ CONSTRAINT(BITS != 4 || (GROUP_SIZE / GROUP_LANES) % 16 == 0)
 CONSTRAINT(BITS != 8 || (GROUP_SIZE / GROUP_LANES) % 8 == 0)
 CONSTRAINT(BITS != 0 || REDUCTION_LANES == 32)
 CONSTRAINT(
-    BITS == 0 || INPUT_ROW_TILE > 1 || (BITS == 4 &&
-     ((GROUP_SIZE == 16 && GROUP_LANES == 1) || (GROUP_SIZE == 32 && GROUP_LANES == 2) ||
-      (GROUP_SIZE == 64 && GROUP_LANES == 4) || (GROUP_SIZE == 128 && GROUP_LANES == 8))) ||
-    (BITS == 8 &&
-     ((GROUP_SIZE == 16 && GROUP_LANES == 2) || (GROUP_SIZE == 32 && GROUP_LANES == 4) ||
-      (GROUP_SIZE == 64 && GROUP_LANES == 8) || (GROUP_SIZE == 128 && GROUP_LANES == 16))))
+    BITS == 0 || INPUT_ROW_TILE > 1 ||
+    (BITS == 4 && ((GROUP_SIZE == 32 && GROUP_LANES == 2) || (GROUP_SIZE == 64 && GROUP_LANES == 4))) ||
+    (BITS == 8 && ((GROUP_SIZE == 32 && GROUP_LANES == 4) || (GROUP_SIZE == 64 && GROUP_LANES == 8))))
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales

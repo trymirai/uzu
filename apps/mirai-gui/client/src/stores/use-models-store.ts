@@ -21,12 +21,15 @@ type ModelsState = {
   initialized: boolean;
   /** At least one fetch succeeded; gates logic that must trust `models`. */
   hasLoadedModels: boolean;
+  catalogComplete: boolean;
+  catalogRefreshing: boolean;
   error: string | null;
   modelStatesById: Record<string, ModelDownloadState>;
   modelPhasesById: Record<string, ModelDownloadPhase>;
   installedAtById: Record<string, number>;
   vendorIconsByName: Record<string, VendorIcons>;
   fetchModels: () => Promise<void>;
+  refreshModels: () => Promise<void>;
   deleteLocalModel: (repoId: string) => Promise<void>;
   getModelState: (repoId: string) => ModelDownloadState | undefined;
   updateModelState: (repoId: string, patch: Partial<ModelDownloadState>) => void;
@@ -34,6 +37,7 @@ type ModelsState = {
 };
 
 let fetchInFlight: Promise<void> | null = null;
+let fetchAgain = false;
 
 export const useModelsStore = create<ModelsState>()(
   persist(
@@ -42,6 +46,8 @@ export const useModelsStore = create<ModelsState>()(
       loading: false,
       initialized: false,
       hasLoadedModels: false,
+      catalogComplete: false,
+      catalogRefreshing: false,
       error: null,
       modelStatesById: {},
       modelPhasesById: {},
@@ -49,88 +55,106 @@ export const useModelsStore = create<ModelsState>()(
       vendorIconsByName: {},
 
       fetchModels: async () => {
-        if (fetchInFlight) return fetchInFlight;
+        if (fetchInFlight) {
+          fetchAgain = true;
+          return fetchInFlight;
+        }
         fetchInFlight = (async () => {
           const firstLoad = get().initialized === false;
           set(firstLoad ? { loading: true, error: null } : { error: null });
-          try {
-            const rawModels = await getPlatform().models.getModels();
+          do {
+            fetchAgain = false;
+            try {
+              const { models: rawModels, complete, refreshing } = await getPlatform().models.getModels();
 
-            const prevById = get().modelStatesById;
-            const prevInstalledAt = get().installedAtById;
+              const prevById = get().modelStatesById;
+              const prevInstalledAt = get().installedAtById;
 
-            const entries = rawModels.map((m) => {
-              const repoId = m.repoId ?? m.identifier;
-              const prev = prevById[repoId];
-              const mergedState = prev && prev.seq > m.state.seq ? prev : preserveTotalKbytes(m.state, prev);
-              return { repoId, mergedState };
-            });
+              const entries = rawModels.map((m) => {
+                const repoId = m.repoId ?? m.identifier;
+                const prev = prevById[repoId];
+                const mergedState = prev && prev.seq > m.state.seq ? prev : preserveTotalKbytes(m.state, prev);
+                return { repoId, mergedState };
+              });
 
-            const byId: Record<string, ModelDownloadState> = Object.fromEntries(
-              entries.map(({ repoId, mergedState }) => [repoId, mergedState]),
-            );
-            const phaseById: Record<string, ModelDownloadPhase> = Object.fromEntries(
-              entries.map(({ repoId, mergedState }) => [repoId, mergedState.phase]),
-            );
+              const byId: Record<string, ModelDownloadState> = Object.fromEntries(
+                entries.map(({ repoId, mergedState }) => [repoId, mergedState]),
+              );
+              const phaseById: Record<string, ModelDownloadPhase> = Object.fromEntries(
+                entries.map(({ repoId, mergedState }) => [repoId, mergedState.phase]),
+              );
 
-            const now = Date.now();
-            const newlyInstalledEntries = entries.flatMap(({ repoId, mergedState }) =>
-              mergedState.phase === modelDownloadPhases.downloaded && prevInstalledAt[repoId] === undefined
-                ? [[repoId, now] as const]
-                : [],
-            );
-            const installedAt: Record<string, number> =
-              newlyInstalledEntries.length > 0
-                ? { ...prevInstalledAt, ...Object.fromEntries(newlyInstalledEntries) }
-                : prevInstalledAt;
+              const now = Date.now();
+              const newlyInstalledEntries = entries.flatMap(({ repoId, mergedState }) =>
+                mergedState.phase === modelDownloadPhases.downloaded && prevInstalledAt[repoId] === undefined
+                  ? [[repoId, now] as const]
+                  : [],
+              );
+              const installedAt: Record<string, number> =
+                newlyInstalledEntries.length > 0
+                  ? { ...prevInstalledAt, ...Object.fromEntries(newlyInstalledEntries) }
+                  : prevInstalledAt;
 
-            const mapped: PlatformModel[] = rawModels.map((m, sourceIndex) => {
-              const repoId = m.repoId ?? m.identifier;
-              const mergedState = byId[repoId];
-              const totalBytes = (mergedState?.totalKbytes ?? 0) * 1024;
-              const familyName = m.familyName ?? extractFamily(m.name);
-              return {
-                vendor: m.vendor,
-                name: m.name,
-                quantization: m.quantization ?? null,
-                ...(typeof m.quantizationBits === "number" ? { quantizationBits: m.quantizationBits } : {}),
-                repoId,
-                kind: ModelKind.Text,
-                reasoning: m.reasoning,
-                size: totalBytes,
-                ...(typeof m.paramSize === "number" ? { paramSize: m.paramSize } : {}),
-                family: familyName,
-                ...(m.familyIdentifier ? { familyIdentifier: m.familyIdentifier } : {}),
-                sourceIndex,
-              };
-            });
+              const mapped: PlatformModel[] = rawModels.map((m, sourceIndex) => {
+                const repoId = m.repoId ?? m.identifier;
+                const mergedState = byId[repoId];
+                const totalBytes = (mergedState?.totalKbytes ?? 0) * 1024;
+                const familyName = m.familyName ?? extractFamily(m.name);
+                return {
+                  vendor: m.vendor,
+                  name: m.name,
+                  quantization: m.quantization ?? null,
+                  ...(typeof m.quantizationBits === "number" ? { quantizationBits: m.quantizationBits } : {}),
+                  repoId,
+                  kind: ModelKind.Text,
+                  reasoning: m.reasoning,
+                  supportsTools: m.supportsTools,
+                  size: totalBytes,
+                  ...(typeof m.paramSize === "number" ? { paramSize: m.paramSize } : {}),
+                  family: familyName,
+                  ...(m.familyIdentifier ? { familyIdentifier: m.familyIdentifier } : {}),
+                  sourceIndex,
+                };
+              });
 
-            const vendorIconsByName: Record<string, VendorIcons> = Object.fromEntries(
-              rawModels.flatMap((m) => (m.vendorIcons ? [[m.vendor, m.vendorIcons] as const] : [])),
-            );
+              const vendorIconsByName: Record<string, VendorIcons> = Object.fromEntries(
+                rawModels.flatMap((m) => (m.vendorIcons ? [[m.vendor, m.vendorIcons] as const] : [])),
+              );
 
-            set({
-              models: mapped,
-              modelStatesById: byId,
-              modelPhasesById: phaseById,
-              installedAtById: installedAt,
-              vendorIconsByName,
-              loading: false,
-              initialized: true,
-              hasLoadedModels: true,
-              error: null,
-            });
-          } catch (error) {
-            set({
-              loading: false,
-              initialized: true,
-              error: error instanceof Error ? error.message : "Failed to fetch models",
-            });
-          }
+              set({
+                models: mapped,
+                modelStatesById: byId,
+                modelPhasesById: phaseById,
+                installedAtById: installedAt,
+                vendorIconsByName,
+                loading: false,
+                initialized: true,
+                hasLoadedModels: true,
+                catalogComplete: complete,
+                catalogRefreshing: refreshing,
+                error: null,
+              });
+            } catch (error) {
+              set({
+                loading: false,
+                initialized: true,
+                error: error instanceof Error ? error.message : "Failed to fetch models",
+              });
+            }
+          } while (fetchAgain);
         })().finally(() => {
           fetchInFlight = null;
         });
         return fetchInFlight;
+      },
+
+      refreshModels: async () => {
+        try {
+          await getPlatform().models.refreshModels();
+          await get().fetchModels();
+        } catch (error) {
+          set({ error: error instanceof Error ? error.message : "Failed to refresh models" });
+        }
       },
 
       deleteLocalModel: async (repoId: string) => {

@@ -8,7 +8,7 @@ use metal::MTLGPUFamily;
 
 use crate::backends::common::gpu_types::gemm::GemmTiling;
 
-pub(super) const MXU_DEFAULT_TILE: GemmTiling = GemmTiling::Tile64x64x256_Simdgroups2x2;
+const MXU_DEFAULT_TILE: GemmTiling = GemmTiling::Tile64x64x256_Simdgroups2x2;
 
 const MXU_SKINNY_M_MAX: u32 = 16;
 const SKINNY_SQUARE_K_MAX: u32 = 2560;
@@ -108,12 +108,9 @@ fn prefers_wide_partial_m_tile(apple_gpu_family: MTLGPUFamily) -> bool {
 pub(super) fn simdgroup_quant_tile(
     m: u32,
     n: u32,
-    group_size: u32,
     apple_gpu_family: MTLGPUFamily,
 ) -> GemmTiling {
-    if group_size < 32 {
-        GemmTiling::Tile64x64x16_Simdgroups2x2
-    } else if m < SIMDGROUP_QUANT_SMALL_M_MAX {
+    if m < SIMDGROUP_QUANT_SMALL_M_MAX {
         if !prefers_wide_partial_m_tile(apple_gpu_family)
             || m <= SIMDGROUP_QUANT_NARROW_BLOCK_M
             || m.is_multiple_of(SIMDGROUP_QUANT_NARROW_BLOCK_M)

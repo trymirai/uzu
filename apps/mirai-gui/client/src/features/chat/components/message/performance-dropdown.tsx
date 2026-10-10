@@ -1,6 +1,5 @@
 import { Popover, PopoverButton, PopoverPanel, Transition } from "@headlessui/react";
-import { twMerge } from "tailwind-merge";
-import { PerformanceIcon } from "@/components/icons/performance-icon";
+import { Activity } from "lucide-react";
 import type { PerfStats } from "@/types/message";
 
 type PerformanceDropdownProps = {
@@ -14,11 +13,6 @@ const formatSeconds = (seconds?: number): string =>
 const formatTps = (tps?: number): string =>
   typeof tps === "number" && Number.isFinite(tps) ? `${Math.round(tps)}` : "—";
 
-const BUTTON_BASE =
-  "flex items-center px-[6px] transition-colors focus:outline-hidden focus:ring-0 gap-2 text-label-muted rounded-md py-1";
-const BUTTON_ENABLED = "group-hover:text-label-title group-hover:bg-bg-hover";
-const BUTTON_DISABLED = "opacity-60 cursor-not-allowed";
-
 function PerfStat({ value, label }: { value: string; label: string }) {
   return (
     <div className="flex flex-col items-center">
@@ -30,10 +24,14 @@ function PerfStat({ value, label }: { value: string; label: string }) {
 
 export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropdownProps) {
   return (
-    <Popover className="group w-fit">
-      <PopoverButton disabled={disabled} className={twMerge(BUTTON_BASE, disabled ? BUTTON_DISABLED : BUTTON_ENABLED)}>
-        <PerformanceIcon />
-        <span className="text-[13px]">Performance</span>
+    <Popover className="w-fit">
+      <PopoverButton
+        disabled={disabled}
+        aria-label="Performance"
+        title="Performance"
+        className="flex size-8 items-center justify-center rounded-md text-label-muted transition-colors enabled:hover:bg-bg-hover enabled:hover:text-label-title focus:outline-hidden data-[focus]:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        <Activity className="size-4" aria-hidden="true" />
       </PopoverButton>
       <Transition
         enter="transition duration-100 ease-out"
@@ -44,7 +42,7 @@ export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropd
         leaveTo="transform scale-95 opacity-0"
       >
         <PopoverPanel
-          anchor="bottom end"
+          anchor="top start"
           className="[--anchor-gap:8px] bg-bg-modal border border-cell-border rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
         >
           <div className="p-[10px]">

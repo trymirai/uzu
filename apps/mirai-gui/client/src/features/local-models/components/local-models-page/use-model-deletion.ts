@@ -27,7 +27,7 @@ export function useModelDeletion(fetchModels: () => Promise<void>): ModelDeletio
         }
 
         await useModelsStore.getState().deleteLocalModel(model.repoId);
-        toast.success(`Uninstalled ${model.name}`);
+        toast.success(`Deleted ${model.name}`);
       } catch (error) {
         toast.error(`Failed to uninstall ${model.name}`);
         console.error(error);

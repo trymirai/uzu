@@ -7,17 +7,19 @@ import GlobalInstructions from "./global-instructions";
 import { GroupButton } from "@/components/ui/group-button";
 import { useNavigate } from "@tanstack/react-router";
 import { X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SearchInput } from "@/components/ui/search-input";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { useChatStore } from "@/stores/use-chat-store";
+import { useAppStore } from "@/stores/use-app-store";
 import { useGlobalInstructionsStore } from "@/stores/use-global-instructions-store";
 
 export function ChatHistoryPage() {
   const navigate = useNavigate();
   const toast = useToast();
+  const chatWidth = useAppStore((s) => s.chatWidth);
   const [searchQuery, setSearchQuery] = useState("");
   const savedChats = useChatStore((s) => s.savedChats);
   const loadSavedChats = useChatStore((s) => s.loadSavedChats);
@@ -89,23 +91,23 @@ export function ChatHistoryPage() {
   const labelText = isAllSelected ? "All selected" : selectedCount === 0 ? "Select all" : `${selectedCount} selected`;
 
   return (
-    <>
-      <div className="sticky top-0 z-10">
+    <div className="flex h-full min-h-0 flex-col" style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}>
+      <div className="shrink-0 z-10">
         <div className="w-full bg-bg-modal">
-          <div className="pt-7 pb-7 flex flex-col justify-center px-5 lg:px-0 lg:max-w-[800px] mx-auto gap-6 lg:gap-0">
+          <div className="pt-7 pb-7 flex flex-col justify-center px-5 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto gap-6 lg:gap-0">
             <h1 className="leading-[130%] text-xl font-medium text-label-title text-center lg:text-left">
               Chat history
             </h1>
           </div>
 
-          <div className="px-5 lg:px-0 pt-4 pb-7 lg:max-w-[800px] mx-auto">
+          <div className="px-5 pt-4 pb-7 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
             <GlobalInstructions instructions={instructions} onSave={saveInstructions} />
           </div>
           <div className="h-[1px] bg-cell-border" />
         </div>
 
         <div className="w-full bg-background">
-          <div className="px-5 lg:px-0 pt-5 pb-2.5 flex items-center justify-between lg:max-w-[800px] mx-auto">
+          <div className="px-5 pt-5 pb-2.5 flex items-center justify-between w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
             <h2 className="text-sm font-[350] text-label-title">Your chats</h2>
             <div className="flex items-center gap-2">
               <SearchInput
@@ -163,7 +165,7 @@ export function ChatHistoryPage() {
                 <Button
                   kind="secondary"
                   size="sm"
-                  className="text-label-muted h-8 px-3 rounded-[8px] border border-cell-border text-sm leading-[150%]"
+                  className="text-label-muted h-8 px-3 rounded-[8px] text-sm leading-[150%]"
                   onClick={() => setIsSelectionMode(true)}
                 >
                   Select
@@ -174,8 +176,8 @@ export function ChatHistoryPage() {
         </div>
       </div>
 
-      <div className="w-full lg:max-w-[808px] pl-2 overflow-auto mx-auto bg-background">
-        <div className="px-5 lg:px-0 overflow-visible w-full">
+      <div className="flex-1 min-h-0 w-full overflow-y-auto overscroll-y-contain thin-scrollbar bg-background">
+        <div className="px-5 overflow-visible w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
           {filteredChats.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-label-muted">
@@ -222,6 +224,6 @@ export function ChatHistoryPage() {
           currentName={singleSelectedChat.title}
         />
       )}
-    </>
+    </div>
   );
 }

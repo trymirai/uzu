@@ -98,9 +98,9 @@ impl HuggingFace {
                         }),
                     ),
                 };
-                let (Some(size), Some(hash)) = (size, hash) else {
+                let Some(size) = size else {
                     return Err(RegistryError::UnableToGetModels {
-                        message: format!("Hugging Face is missing size or digest for {name}"),
+                        message: format!("Hugging Face is missing size for {name}"),
                     });
                 };
                 Ok(File {
@@ -111,7 +111,7 @@ impl HuggingFace {
                     size: i64::try_from(size).map_err(|_| RegistryError::UnableToGetModels {
                         message: format!("file size overflow for {name}"),
                     })?,
-                    hashes: vec![hash],
+                    hashes: hash.into_iter().collect(),
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;

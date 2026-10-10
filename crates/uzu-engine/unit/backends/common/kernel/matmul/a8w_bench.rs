@@ -278,19 +278,13 @@ fn bench_a8w(c: &mut Criterion) {
     }
     let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, true).expect("hadamard kernel");
 
-    for bits in [8u32, 4u32] {
-        let prepare = ActivationTransform::<Metal>::quantize(
-            &context,
-            DataType::BF16,
-            ActivationQuantization::new(
-                128,
-                128,
-                false,
-                Int8CodeLayout::for_right_bits(bits).expect("W4/W8 benchmark"),
-            )
+    let bits = 8;
+    let prepare = ActivationTransform::<Metal>::quantize(
+        &context,
+        DataType::BF16,
+        ActivationQuantization::new(128, 128, false, Int8CodeLayout::for_right_bits(bits).expect("W8 benchmark"))
             .expect("supported activation quantization"),
-        )
-        .expect("prepare kernel");
-        bench_bits(c, &context, &prepare, &hadamard, bits);
-    }
+    )
+    .expect("prepare kernel");
+    bench_bits(c, &context, &prepare, &hadamard, bits);
 }

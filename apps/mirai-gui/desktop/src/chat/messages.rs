@@ -18,18 +18,14 @@ pub(super) fn sanitize(s: &str) -> String {
         .collect()
 }
 
-pub(super) fn build_non_system_message(
-    message: &MsgIn,
-    include_reasoning: bool,
-) -> ChatMessage {
+fn build_non_system_message(message: &MsgIn) -> ChatMessage {
     let content = message.content.clone();
     if matches!(message.role, ChatRole::User {}) {
         return ChatMessage::user().with_text(content);
     }
 
     let mut assistant = ChatMessage::assistant();
-    if include_reasoning && let Some(reasoning) = message.reasoning_content.as_deref().filter(|value| !value.is_empty())
-    {
+    if let Some(reasoning) = message.reasoning_content.as_deref().filter(|value| !value.is_empty()) {
         assistant = assistant.with_reasoning(reasoning.to_string());
     }
     assistant.with_text(content)
@@ -44,7 +40,7 @@ pub(super) fn build_messages(
         .iter()
         .map(|m| match m.role {
             ChatRole::System {} => ChatMessage::system().with_text(m.content.clone()),
-            _ => build_non_system_message(m, false),
+            _ => build_non_system_message(m),
         })
         .collect();
 
@@ -60,7 +56,7 @@ pub(super) fn build_messages(
 
 // uzu rejects another system message in an accumulated session.
 pub(super) fn build_tail_messages(tail: &[MsgIn]) -> Vec<ChatMessage> {
-    tail.iter().filter(|m| !matches!(m.role, ChatRole::System {})).map(|m| build_non_system_message(m, true)).collect()
+    tail.iter().filter(|m| !matches!(m.role, ChatRole::System {})).map(build_non_system_message).collect()
 }
 
 pub(super) fn assistant_history_message(
@@ -73,9 +69,8 @@ pub(super) fn assistant_history_message(
     }
     let content = sanitize(text);
     let reasoning_content = sanitize(reasoning.trim());
-    if content != text || reasoning_content != reasoning {
-        return None;
-    }
+    // Match the final text/parsed fields sent to the client. The resident session
+    // keeps the original reasoning bytes and internal tool messages.
     Some(MsgIn {
         role: ChatRole::Assistant {},
         content,
@@ -125,17 +120,15 @@ mod tests {
     }
 
     #[test]
-    fn full_replay_omits_assistant_reasoning_blocks() {
+    fn full_replay_keeps_assistant_reasoning_blocks() {
         let messages = build_messages(&[test_message(ChatRole::Assistant {}, "answer", Some("reasoning"))], None);
         assert_eq!(messages[0].text().as_deref(), Some("answer"));
-        assert_eq!(messages[0].reasoning(), None);
+        assert_eq!(messages[0].reasoning().as_deref(), Some("reasoning"));
     }
 
     #[test]
-    fn unsafe_generated_history_is_not_reused() {
-        assert!(assistant_history_message("broken \u{FFFD}", "", false).is_none());
-        assert!(assistant_history_message("emoji \u{2764}\u{FE0F}", "", false).is_some());
-        assert!(assistant_history_message("answer", " reasoning ", false).is_none());
+    fn incomplete_or_promoted_generated_history_is_not_reused() {
+        assert!(assistant_history_message("\n ", "reasoning", false).is_none());
         assert!(assistant_history_message("answer", "reasoning", true).is_none());
     }
 

@@ -56,6 +56,6 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
 #[uzu_bench]
 fn bench_qwen3_layers(c: &mut Criterion) {
     let context = crate::tests::util::shared_metal_context();
-    bench_qwen3_layers_typed::<bf16>(c, &context, "ScaleBias_BF16_gs128_4b", 128, 4, QuantizationMethod::ScaleBias);
-    bench_qwen3_layers_typed::<bf16>(c, &context, "ZP_BF16_gs128_4b", 128, 4, QuantizationMethod::ScaleZeroPoint);
+    bench_qwen3_layers_typed::<bf16>(c, &context, "ScaleBias_BF16_gs64_4b", 64, 4, QuantizationMethod::ScaleBias);
+    bench_qwen3_layers_typed::<bf16>(c, &context, "ZP_BF16_gs64_4b", 64, 4, QuantizationMethod::ScaleZeroPoint);
 }

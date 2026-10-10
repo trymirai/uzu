@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { useParams, useSearch } from "@tanstack/react-router";
 
 import { ChatHeader } from "./chat-header";
@@ -7,6 +7,8 @@ import { useToast } from "@/components/ui/toast/use-toast";
 import { useRuntimeSessionStore } from "@/stores/use-runtime-session-store";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
+import { useModelsStore } from "@/stores/use-models-store";
+import { useAppStore } from "@/stores/use-app-store";
 import { useGlobalInstructionsStore } from "@/stores/use-global-instructions-store";
 import { useSidebarStore } from "@/stores/use-sidebar-store";
 import { isChatGenerating } from "@/features/runtime/runtime-busy";
@@ -40,10 +42,14 @@ export function ChatPage() {
   const toast = useToast();
 
   const isSidebarOpen = useSidebarStore((s) => s.isOpen);
+  const chatWidth = useAppStore((s) => s.chatWidth);
   const globalInstructions = useGlobalInstructionsStore((s) => s.instructions);
   const loadInstructions = useGlobalInstructionsStore((s) => s.loadInstructions);
   const residentSession = useRuntimeSessionStore((s) => s.residentSession);
   const isModelLoading = useChatSessionStore((s) => s.isModelLoading);
+  const isSessionBusy = useChatSessionStore(
+    (s) => s.operationState !== "idle" || s.isGenerating || s.isTitleGenerating || s.isModelLoading || s.isEjecting,
+  );
   const isTitleGenerating = useChatSessionStore((s) => s.isTitleGenerating);
   const titleGenChatId = useChatSessionStore((s) => s.titleGenChatId);
   const isTitleGeneratingForChat = isTitleGenerating && titleGenChatId === chatId;
@@ -112,6 +118,11 @@ export function ChatPage() {
     startStream,
   });
 
+  const handleEditMessage = useCallback(
+    (messageId: string, text: string, onSaved: () => void) => handleSendMessage(text, { messageId, onSaved }),
+    [handleSendMessage],
+  );
+
   const handleChatModelSelect = useModelSwitch({
     chatId,
     toast,
@@ -132,19 +143,26 @@ export function ChatPage() {
   const selectedModelParams = useModelParamsStore((s) =>
     effectiveSelectedModelId ? s.paramsByRepoId[effectiveSelectedModelId] : undefined,
   );
-  const globalReasoningEnabled = useModelParamsStore((s) => s.globalReasoningEnabled);
-  const modelParamsModified = isCustomParams(selectedModelParams, globalReasoningEnabled);
+  const globalModelChatNamingEnabled = useModelParamsStore((s) => s.globalModelChatNamingEnabled);
+  const selectedModelSize = useModelsStore(
+    (s) => s.models.find((model) => model.repoId === effectiveSelectedModelId)?.paramSize,
+  );
+  const modelParamsModified = isCustomParams(selectedModelParams, globalModelChatNamingEnabled, selectedModelSize);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-24px)] bg-background pt-4 pb-5 px-5">
-      <div className="w-full flex flex-col h-full">
+    <div
+      className="flex flex-col h-full min-h-0 bg-background pt-4 pb-5 px-5"
+      style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}
+    >
+      <div className="w-full flex flex-col h-full min-h-0">
         <ChatHeader
+          className="shrink-0"
           title={currentChatTitle}
           isSidebarOpen={isSidebarOpen}
           isTitleGenerating={isTitleGeneratingForChat}
         />
 
-        <div className="flex-1 overflow-hidden min-h-0 w-full lg:max-w-[800px] mx-auto">
+        <div className="flex-1 overflow-clip min-h-0 -mx-5">
           <ChatMessageList
             isNewChat={!!search.isNew}
             isChatStreaming={isChatStreaming}
@@ -157,10 +175,12 @@ export function ChatPage() {
             loadingMessageId={loadingMessageId}
             canceledMessageId={canceledMessageId}
             onMessageModelSelect={handleMessageModelSelect}
+            onEditMessage={handleEditMessage}
+            canEditMessages={runStatus.canRun && !isSessionBusy}
           />
         </div>
 
-        <div className="flex-shrink-0 w-full lg:max-w-[800px] mx-auto">
+        <div className="flex-shrink-0 w-full max-w-[var(--chat-width)] mx-auto">
           <ChatComposer
             chatId={chatId}
             isChatStreaming={isChatStreaming}

@@ -1,14 +1,54 @@
 use tauri::{
     AppHandle, Emitter, Manager,
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{AboutMetadata, HELP_SUBMENU_ID, MenuBuilder, MenuItem, SubmenuBuilder, WINDOW_SUBMENU_ID},
 };
-use tauri_plugin_autostart::ManagerExt as AutostartExt;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
-
-use crate::error::{AppError, AppResult};
 
 const MENU_NEW_CHAT_ID: &str = "menu:new-chat";
 const MENU_SETTINGS_ID: &str = "menu:settings";
+
+// Before the startup setting was removed, tauri-plugin-autostart used the
+// product name (Mirai) and LaunchAgent mode. Retire only that registration for
+// this executable; a similarly named agent may belong to something else.
+pub fn remove_legacy_autostart() -> std::io::Result<()> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return Ok(());
+    };
+    let path = std::path::PathBuf::from(home).join("Library/LaunchAgents/Mirai.plist");
+    remove_legacy_autostart_at(&path, &std::env::current_exe()?.canonicalize()?)
+}
+
+fn remove_legacy_autostart_at(
+    path: &std::path::Path,
+    executable: &std::path::Path,
+) -> std::io::Result<()> {
+    use std::io::Read;
+
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !metadata.is_file() || metadata.len() > 16 * 1024 {
+        return Ok(());
+    }
+    let Ok(entry) = plist::Value::from_reader_xml(std::fs::File::open(path)?.take(16 * 1024)) else {
+        return Ok(());
+    };
+    let Some(entry) = entry.as_dictionary() else {
+        return Ok(());
+    };
+    let arguments = entry.get("ProgramArguments").and_then(plist::Value::as_array);
+    if entry.len() == 3
+        && entry.get("Label").and_then(plist::Value::as_string) == Some("Mirai")
+        && entry.get("RunAtLoad").and_then(plist::Value::as_boolean) == Some(true)
+        && arguments.is_some_and(|arguments| {
+            arguments.len() == 1 && arguments[0].as_string().map(std::path::Path::new) == Some(executable)
+        })
+    {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
 
 pub(crate) fn show_and_focus_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -18,42 +58,46 @@ pub(crate) fn show_and_focus_main(app: &AppHandle) {
     }
 }
 
-#[tauri::command]
-pub fn get_run_on_startup(app: AppHandle) -> bool {
-    app.autolaunch().is_enabled().unwrap_or(false)
-}
-
-#[tauri::command]
-pub fn set_run_on_startup(
-    app: AppHandle,
-    value: bool,
-) -> AppResult<()> {
-    let manager = app.autolaunch();
-    let result = if value {
-        manager.enable()
-    } else {
-        manager.disable()
-    };
-    result.map_err(AppError::msg)
-}
-
 pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
-    let menu = Menu::default(app)?;
-    for item in menu.items()? {
-        let Some(submenu) = item.as_submenu() else {
-            continue;
-        };
-        if submenu.text().unwrap_or_default() == "File" {
-            submenu.insert_items(
-                &[
-                    &MenuItem::with_id(app, MENU_NEW_CHAT_ID, "New Chat", true, Some("CmdOrCtrl+N"))?,
-                    &MenuItem::with_id(app, MENU_SETTINGS_ID, "Settings", true, Some("CmdOrCtrl+,"))?,
-                    &PredefinedMenuItem::separator(app)?,
-                ],
-                0,
-            )?;
-        }
-    }
+    let package = app.package_info();
+    let bundle = &app.config().bundle;
+    let app_menu = SubmenuBuilder::new(app, &package.name)
+        .about(Some(AboutMetadata {
+            name: Some(package.name.clone()),
+            version: Some(package.version.to_string()),
+            copyright: bundle.copyright.clone(),
+            authors: bundle.publisher.clone().map(|publisher| vec![publisher]),
+            ..Default::default()
+        }))
+        .separator()
+        .item(&MenuItem::with_id(app, MENU_SETTINGS_ID, "Settings…", true, Some("CmdOrCtrl+,"))?)
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+    let file_menu = SubmenuBuilder::new(app, "File")
+        .item(&MenuItem::with_id(app, MENU_NEW_CHAT_ID, "New Chat", true, Some("CmdOrCtrl+N"))?)
+        .separator()
+        .close_window()
+        .build()?;
+    let edit_menu =
+        SubmenuBuilder::new(app, "Edit").undo().redo().separator().cut().copy().paste().select_all().build()?;
+    let view_menu = SubmenuBuilder::new(app, "View").fullscreen().build()?;
+    let window_menu = SubmenuBuilder::with_id(app, WINDOW_SUBMENU_ID, "Window")
+        .minimize()
+        .maximize()
+        .separator()
+        .bring_all_to_front()
+        .build()?;
+    let help_menu = SubmenuBuilder::with_id(app, HELP_SUBMENU_ID, "Help").build()?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu, &help_menu])
+        .build()?;
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| match event.id().as_ref() {
         MENU_NEW_CHAT_ID => {
@@ -69,85 +113,75 @@ pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn apply_quick_entry_shortcut(
-    app: &AppHandle,
-    accelerator: &str,
-) -> bool {
-    let shortcut = app.global_shortcut();
-    if shortcut.is_registered(accelerator) {
-        return true;
-    }
-    let handler_app = app.clone();
-    let registered = shortcut
-        .on_shortcut(accelerator, move |_app, _shortcut, event| {
-            if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                show_and_focus_main(&handler_app);
-            }
-        })
-        .is_ok();
-    if registered && let Some(previous) = get_quick_entry_shortcut().filter(|p| p != accelerator) {
-        let _ = shortcut.unregister(previous.as_str());
-    }
-    registered
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowTheme {
+    System,
+    Light,
+    Dark,
 }
 
-#[tauri::command]
-pub fn register_quick_entry_shortcut(
-    app: AppHandle,
-    accelerator: String,
-) -> bool {
-    let ok = apply_quick_entry_shortcut(&app, &accelerator);
-    if ok {
-        persist_quick_entry_accelerator(Some(&accelerator));
-    }
-    ok
-}
-
-#[tauri::command]
-pub fn unregister_quick_entry_shortcut(app: AppHandle) -> AppResult<()> {
-    app.global_shortcut().unregister_all().map_err(AppError::msg)?;
-    persist_quick_entry_accelerator(None);
-    Ok(())
-}
-
-// The shortcut already works for this session; a failed write only loses it on
-// the next launch, so log instead of failing the command.
-fn persist_quick_entry_accelerator(accelerator: Option<&str>) {
-    if let Err(e) = crate::storage::settings_patch(serde_json::json!({ "quickEntryAccelerator": accelerator })) {
-        crate::logger::warn("shortcut:settings-write-failed", Some(serde_json::json!({ "error": e })));
-    }
-}
-
-// Sync the native window appearance to the app theme: otherwise the window
-// keeps the system appearance and macOS paints the inactive traffic lights for
-// the wrong one (grey lights vanish on a dark background).
+// Follow the OS in system mode. Explicit app themes also set the native
+// appearance so macOS paints the traffic lights for the matching background.
 #[tauri::command]
 pub fn set_window_theme(
     app: AppHandle,
-    dark: bool,
+    theme: WindowTheme,
 ) -> bool {
-    let theme = if dark {
-        tauri::Theme::Dark
-    } else {
-        tauri::Theme::Light
+    let theme = match theme {
+        WindowTheme::System => None,
+        WindowTheme::Light => Some(tauri::Theme::Light),
+        WindowTheme::Dark => Some(tauri::Theme::Dark),
     };
-    app.get_webview_window("main").map(|w| w.set_theme(Some(theme)).is_ok()).unwrap_or(false)
+    app.get_webview_window("main").map(|w| w.set_theme(theme).is_ok()).unwrap_or(false)
 }
 
-#[tauri::command]
-pub fn get_quick_entry_shortcut() -> Option<String> {
-    let settings = crate::storage::settings_load().ok()?;
-    settings.get("quickEntryAccelerator").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub fn restore_from_settings(app: &AppHandle) {
-    let settings = crate::storage::settings_load().unwrap_or_else(|_| serde_json::json!({}));
-    if let Some(accelerator) = settings.get("quickEntryAccelerator").and_then(|v| v.as_str())
-        && !accelerator.is_empty()
-        && !apply_quick_entry_shortcut(app, accelerator)
-    {
-        // Otherwise settings keep showing a shortcut that does not work.
-        crate::logger::warn("shortcut:restore-failed", Some(serde_json::json!({ "accelerator": accelerator })));
-        persist_quick_entry_accelerator(None);
+    #[test]
+    fn autostart_cleanup_only_removes_the_released_apps_own_registration() {
+        let directory = std::env::temp_dir().join(format!("mirai-autostart-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("Mirai.plist");
+        let executable = std::path::Path::new("/Applications/Mirai.app/Contents/MacOS/Mirai");
+        let original = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>Mirai</string>
+<key>ProgramArguments</key><array><string>{}</string></array>
+<key>RunAtLoad</key><true/>
+</dict></plist>"#,
+            executable.display()
+        );
+        remove_legacy_autostart_at(&path, executable).unwrap();
+        for contents in [
+            original.replace("<string>Mirai</string>", "<string>Other</string>"),
+            original.replace("/Applications/Mirai.app", "/Applications/Other.app"),
+            original.replace("</array>", "<string>--custom</string></array>"),
+            original.replace("<true/>", "<false/>"),
+            original.replace("</dict>", "<key>KeepAlive</key><true/></dict>"),
+            "invalid plist".into(),
+            " ".repeat(16 * 1024 + 1),
+        ] {
+            std::fs::write(&path, &contents).unwrap();
+            remove_legacy_autostart_at(&path, executable).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+        }
+        std::fs::write(&path, &original).unwrap();
+        remove_legacy_autostart_at(&path, executable).unwrap();
+        assert!(!path.exists());
+        #[cfg(unix)]
+        {
+            let other = directory.join("other.plist");
+            std::fs::write(&other, &original).unwrap();
+            std::os::unix::fs::symlink(&other, &path).unwrap();
+            remove_legacy_autostart_at(&path, executable).unwrap();
+            assert_eq!(std::fs::read_to_string(&other).unwrap(), original);
+            assert!(std::fs::symlink_metadata(&path).unwrap().is_symlink());
+        }
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 }

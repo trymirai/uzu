@@ -79,6 +79,7 @@ async fn download_internal(
     task.download().await?;
     while let Some(state) = progress.next().await {
         let (phase, message) = match &state.phase {
+            DownloadPhase::Initializing {} => ("initializing", None),
             DownloadPhase::NotDownloaded {} => ("not_downloaded", None),
             DownloadPhase::Downloading {} => ("downloading", None),
             DownloadPhase::Paused {} => ("paused", None),

@@ -62,6 +62,9 @@ async fn test_engine_chat() {
     let stream = session.reply_with_stream(messages, ChatReplyConfig::default()).await;
     while let Some(progress) = stream.next().await {
         match progress {
+            ChatSessionStreamChunk::ToolResults {
+                ..
+            } => {},
             ChatSessionStreamChunk::Replies {
                 replies,
             } => {

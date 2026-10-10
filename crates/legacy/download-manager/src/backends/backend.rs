@@ -7,8 +7,7 @@ use kiban::fs;
 
 use crate::{
     DownloadPhase, DownloadState,
-    backends::{ActiveTask, BackendError, BackendEventSender, DownloadGeneration, VerifyError},
-    checksum_receipt::ChecksumReceipt,
+    backends::{ActiveTask, BackendError, BackendEventSender, DownloadGeneration},
     file_download::DownloadConfig,
     locks::{DestinationLock, LockError},
 };
@@ -55,14 +54,24 @@ pub trait Backend: Send + Sync {
         &self,
         config: &DownloadConfig,
     ) -> Result<(DownloadState, Option<DestinationLock>), BackendError> {
-        let untouched = !fs::asyn::is_file(&config.destination).await
+        let destination_exists = fs::asyn::is_file(&config.destination).await;
+        let untouched = !destination_exists
             && !fs::asyn::is_file(&config.resume_artifact_path).await
-            && !ChecksumReceipt::exists(&config.destination).await
-            && DestinationLock::foreign_owner(&config.destination, &config.owner).await.is_none();
-        let pending_task = self.has_pending_task(config).await?;
-        if untouched && !pending_task {
+            && !DestinationLock::exists(&config.destination).await;
+        // A download acquires its destination lock before creating a native
+        // task. A process crash releases the OS lock but leaves the file behind.
+        if untouched {
             return Ok((DownloadState::new(config, DownloadPhase::NotDownloaded {}, 0, None), None));
         }
+        if let Some(owner) = DestinationLock::foreign_owner(&config.destination, &config.owner).await {
+            return Ok((self.observe(config, Some(owner)).await, None));
+        }
+        // Completed files need only a size check, never native task discovery.
+        let pending_task = if destination_exists && self.completed_size(config).await.is_ok() {
+            false
+        } else {
+            self.has_pending_task(config).await?
+        };
         let lock = match DestinationLock::acquire(&config.destination, &config.owner).await {
             Ok(lock) => lock,
             Err(LockError::LockedByOther {
@@ -86,7 +95,7 @@ pub trait Backend: Send + Sync {
             None
         };
         let downloaded = if fs::asyn::is_file(&config.destination).await {
-            self.verify(config).await.ok()
+            self.completed_size(config).await.ok()
         } else {
             None
         };
@@ -95,47 +104,36 @@ pub trait Backend: Send + Sync {
                 let _ = fs::asyn::remove_file(&config.resume_artifact_path).await;
             } else {
                 let _ = fs::asyn::remove_file(&config.destination).await;
-                ChecksumReceipt::remove(&config.destination).await;
             }
         }
         let (phase, downloaded_bytes, total_bytes) = match (downloaded, resume_bytes, foreign_owner) {
-            (Some(size), _, _) => (DownloadPhase::Downloaded {}, size, Some(size)),
-            (None, downloaded_bytes, Some(manager_id)) => (
+            (downloaded, downloaded_bytes, Some(manager_id)) => (
                 DownloadPhase::Locked {
                     manager_id,
                 },
-                downloaded_bytes.unwrap_or(0),
+                downloaded.or(downloaded_bytes).unwrap_or(0),
                 None,
             ),
+            (Some(size), _, None) => (DownloadPhase::Downloaded {}, size, Some(size)),
             (None, Some(downloaded_bytes), None) => (DownloadPhase::Paused {}, downloaded_bytes, None),
             (None, None, None) => (DownloadPhase::NotDownloaded {}, 0, None),
         };
         DownloadState::new(config, phase, downloaded_bytes, total_bytes)
     }
 
-    async fn verify(
+    async fn completed_size(
         &self,
         config: &DownloadConfig,
-    ) -> Result<u64, VerifyError> {
+    ) -> Result<u64, BackendError> {
         let actual = fs::asyn::file_length(&config.destination).await?;
         if let Some(expected) = config.expected_bytes
             && expected != actual
         {
-            return Err(VerifyError::Size {
+            return Err(BackendError::Size {
                 expected,
                 actual,
             });
         }
-        let Some(checksum) = &config.expected_checksum else {
-            return Ok(actual);
-        };
-        if ChecksumReceipt::matches(&config.destination, checksum).await {
-            return Ok(actual);
-        }
-        if !checksum.verify(&config.destination).await? {
-            return Err(VerifyError::Checksum(checksum.algorithm()));
-        }
-        let _ = ChecksumReceipt::save(&config.destination, checksum).await;
         Ok(actual)
     }
 
@@ -145,6 +143,100 @@ pub trait Backend: Send + Sync {
     ) {
         let _ = fs::asyn::remove_file(&config.resume_artifact_path).await;
         let _ = fs::asyn::remove_file(&config.destination).await;
-        ChecksumReceipt::remove(&config.destination).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::locks::LockOwner;
+
+    struct UnavailableNativeBackend;
+
+    #[async_trait::async_trait]
+    impl Backend for UnavailableNativeBackend {
+        fn name(&self) -> &'static str {
+            "unavailable"
+        }
+        fn resume_artifact_extension(&self) -> &'static str {
+            "resume_data"
+        }
+
+        async fn start(
+            &self,
+            _config: Arc<DownloadConfig>,
+            _generation: DownloadGeneration,
+            _events: BackendEventSender,
+        ) -> Result<Box<dyn ActiveTask>, BackendError> {
+            unreachable!()
+        }
+
+        async fn read_resume_progress(
+            &self,
+            _path: &Path,
+        ) -> u64 {
+            0
+        }
+
+        async fn has_pending_task(
+            &self,
+            _config: &DownloadConfig,
+        ) -> Result<bool, BackendError> {
+            Err(std::io::Error::other("native discovery unavailable").into())
+        }
+
+        async fn attach_pending_task(
+            &self,
+            _config: Arc<DownloadConfig>,
+            _generation: DownloadGeneration,
+            _events: BackendEventSender,
+        ) -> Result<Option<Box<dyn ActiveTask>>, BackendError> {
+            unreachable!()
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_uses_metadata_and_preserves_native_recovery_markers() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("large-model.bin");
+        let config = DownloadConfig {
+            download_id: Uuid::new_v4(),
+            source_url: "https://example.invalid/model".to_string(),
+            bearer_token: None,
+            resume_artifact_path: destination.with_extension("bin.resume_data"),
+            destination: destination.clone(),
+            expected_bytes: Some(15_000_000_000),
+            owner: LockOwner {
+                manager_id: "test".to_string(),
+                instance_id: Uuid::new_v4(),
+            },
+        };
+        let backend = UnavailableNativeBackend;
+        let (state, _) = backend.reconcile(&config).await.unwrap();
+        assert_eq!(state.phase, DownloadPhase::NotDownloaded {});
+
+        // This sparse file has no receipt; catalog initialization must never read its contents.
+        tokio::fs::File::create(&destination).await.unwrap().set_len(config.expected_bytes.unwrap()).await.unwrap();
+        let (state, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), backend.reconcile(&config)).await.unwrap().unwrap();
+        assert_eq!(state.phase, DownloadPhase::Downloaded {});
+
+        let foreign = LockOwner {
+            manager_id: "other".to_string(),
+            instance_id: Uuid::new_v4(),
+        };
+        let lock = DestinationLock::acquire(&destination, &foreign).await.unwrap();
+        let (state, _) = backend.reconcile(&config).await.unwrap();
+        assert!(matches!(state.phase, DownloadPhase::Locked { .. }));
+        assert!(destination.is_file());
+        drop(lock);
+
+        tokio::fs::remove_file(&destination).await.unwrap();
+        let marker = destination.with_extension("bin.lock");
+        tokio::fs::write(&marker, b"stale marker from interrupted native download").await.unwrap();
+        assert!(backend.reconcile(&config).await.is_err());
+        assert!(marker.is_file(), "failed discovery must retain evidence of a possible background task");
     }
 }

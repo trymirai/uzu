@@ -24,7 +24,7 @@ Add the dependency:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/trymirai/uzu.git", from: "0.6.1")
+    .package(url: "https://github.com/trymirai/uzu.git", from: "0.6.2")
 ]
 ```
 
@@ -110,6 +110,8 @@ public func runChat() async throws {
             print("Generated tokens: \(reply?.stats.tokensCountOutput ?? 0)")
         case .error(let error):
             print("Error: \(error)")
+        case .toolResults:
+            break
         }
     }
     print("Reasoning: \(message?.reasoning() ?? "empty")")

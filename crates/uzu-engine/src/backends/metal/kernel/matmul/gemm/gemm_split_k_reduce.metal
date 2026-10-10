@@ -6,7 +6,7 @@ using namespace metal;
 using namespace uzu::gemm;
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 KERNEL(GemmSplitKReduce)(
     const device T* partial_sums,
     device T* output,

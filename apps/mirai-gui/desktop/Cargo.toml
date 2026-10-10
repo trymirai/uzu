@@ -1,6 +1,6 @@
 [package]
 name = "mirai-gui"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 license = "MIT"
 publish = false
@@ -12,17 +12,18 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-autostart = "2"
-tauri-plugin-global-shortcut = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+plist = "1"
+schemars = "1.2.1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 futures = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+uuid = { version = "1", features = ["v4"] }
 
 uzu = { path = "../../../crates/legacy/uzu", default-features = false, features = ["backend-metal"] }
 hanashi = { path = "../../../crates/legacy/hanashi", default-features = false }

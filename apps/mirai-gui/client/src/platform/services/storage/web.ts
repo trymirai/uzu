@@ -1,4 +1,5 @@
 import type { StorageService } from ".";
+import { ChatNotFoundError } from ".";
 
 // Inference is native, so the browser build can never produce a chat. Nothing
 // is persisted here: the calls exist only to satisfy the platform contract.
@@ -8,8 +9,9 @@ export const webStorage: StorageService = {
   createOrReplaceChat: () => Promise.resolve(),
   appendMessage: () => Promise.resolve(),
   updateStoredMessage: () => Promise.resolve(),
+  editUserMessage: (chatId) => Promise.reject(new ChatNotFoundError(chatId)),
   removeMessage: () => Promise.resolve(),
-  updateChatTitle: () => Promise.resolve(),
+  updateChatTitle: () => Promise.resolve(false),
   deleteChat: () => Promise.resolve(),
   exportAllChatsZip: () => Promise.resolve(null),
 

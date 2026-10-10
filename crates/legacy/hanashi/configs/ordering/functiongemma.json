@@ -15,7 +15,8 @@
         ],
         "tool": [
             "tool",
-            "assistant"
+            "assistant",
+            "user"
         ]
     }
 }

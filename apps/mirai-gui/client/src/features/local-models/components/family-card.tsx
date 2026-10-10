@@ -1,17 +1,14 @@
 import { ChevronRight } from "lucide-react";
+import { Button } from "@headlessui/react";
 import type { ReactNode } from "react";
 import { twMerge } from "tailwind-merge";
-import { Tooltip } from "@/components/ui/tooltip";
 import { Text } from "@/components/ui/typography";
 
 export type FamilyCardBadgeTone = "neutral" | "success";
-export type FamilyCardBadgeVariant = "outline" | "filled";
 
 export type FamilyCardBadge = {
   label: ReactNode;
-  tooltip?: ReactNode;
   tone?: FamilyCardBadgeTone;
-  variant?: FamilyCardBadgeVariant;
 };
 
 export type FamilyCardProps = {
@@ -23,29 +20,26 @@ export type FamilyCardProps = {
   compact?: boolean;
 };
 
-const TONE_CLASSES: Record<FamilyCardBadgeTone, { outline: string; filled: string; text: string }> = {
+const TONE_CLASSES: Record<FamilyCardBadgeTone, { border: string; text: string }> = {
   neutral: {
-    outline: "border-border-outlined bg-transparent",
-    filled: "border-border-outlined bg-surface-secondary",
+    border: "border-border-outlined",
     text: "text-text-muted",
   },
   success: {
-    outline: "border-success-border bg-transparent",
-    filled: "border-success-border bg-success-bg",
+    border: "border-success-border",
     text: "text-success",
   },
 };
 
 function Chip({ badge }: { badge: FamilyCardBadge }) {
-  const { label, tooltip, tone = "neutral", variant = "outline" } = badge;
+  const { label, tone = "neutral" } = badge;
   const tones = TONE_CLASSES[tone];
-  const surface = variant === "filled" ? tones.filled : tones.outline;
 
-  const chip = (
+  return (
     <div
       className={twMerge(
-        "flex items-center justify-center h-7 px-2 py-0.5 rounded border-[0.5px] cursor-default",
-        surface,
+        "flex items-center justify-center h-7 px-2 py-0.5 rounded border-[0.5px] bg-transparent cursor-default",
+        tones.border,
       )}
     >
       <Text
@@ -57,15 +51,6 @@ function Chip({ badge }: { badge: FamilyCardBadge }) {
       </Text>
     </div>
   );
-
-  if (tooltip) {
-    return (
-      <Tooltip content={tooltip} side="top">
-        {chip}
-      </Tooltip>
-    );
-  }
-  return chip;
 }
 
 export function FamilyCard({ vendorIcon, familyName, vendorName, badges, onClick, compact = false }: FamilyCardProps) {
@@ -91,33 +76,33 @@ export function FamilyCard({ vendorIcon, familyName, vendorName, badges, onClick
 
   if (compact) {
     return (
-      <button
+      <Button
         type="button"
         onClick={onClick}
         aria-label={fallbackAria}
-        className="w-full flex flex-col items-stretch gap-3 px-4 py-3 rounded-lg border-[0.5px] border-border-default bg-surface-elevated transition-colors duration-150 cursor-pointer outline-hidden focus-visible:shadow-focus hover:bg-surface-tertiary text-left"
+        className="w-full flex flex-col items-stretch gap-3 px-4 py-3 rounded-lg border-[0.5px] border-border-default bg-surface-elevated transition-colors duration-150 cursor-pointer outline-hidden data-[focus]:shadow-focus hover:bg-surface-tertiary text-left"
       >
         <div className="flex items-center gap-3 min-w-0">
           {heading}
           {chevron}
         </div>
         {chips && chips.length > 0 && <div className="flex items-center gap-1.5 flex-wrap">{chips}</div>}
-      </button>
+      </Button>
     );
   }
 
   return (
-    <button
+    <Button
       type="button"
       onClick={onClick}
       aria-label={fallbackAria}
-      className="w-full flex items-center justify-between gap-4 h-12 pl-4 pr-3 rounded-lg border-[0.5px] border-border-default bg-surface-elevated transition-colors duration-150 cursor-pointer outline-hidden focus-visible:shadow-focus hover:bg-surface-tertiary"
+      className="w-full flex items-center justify-between gap-4 h-12 pl-4 pr-3 rounded-lg border-[0.5px] border-border-default bg-surface-elevated transition-colors duration-150 cursor-pointer outline-hidden data-[focus]:shadow-focus hover:bg-surface-tertiary"
     >
       {heading}
       <div className="flex items-center gap-1.5 shrink-0">
         {chips}
         <span className="ml-1">{chevron}</span>
       </div>
-    </button>
+    </Button>
   );
 }

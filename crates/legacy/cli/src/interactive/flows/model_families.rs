@@ -1,6 +1,7 @@
 use indexmap::IndexSet;
 use iocraft::prelude::*;
 use shoji::types::model::ModelFamily;
+use tokio_stream::StreamExt;
 
 use crate::interactive::{
     components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle},
@@ -46,22 +47,30 @@ fn ModelFamilies(
         let engine = state.read().engine.clone();
         let registry_id = registry_id.clone();
         async move {
-            let loaded = match registry_id {
-                Some(identifier) => {
-                    let mut seen: IndexSet<String> = IndexSet::new();
-                    engine
-                        .models()
-                        .await
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|model| model.registry.identifier == identifier)
-                        .filter_map(|model| model.family.clone())
-                        .filter(|family| seen.insert(family.identifier.clone()))
-                        .collect()
-                },
-                None => engine.model_families().await.unwrap_or_default(),
-            };
-            families.set(Some(loaded));
+            let mut updates = engine.catalog_subscribe();
+            loop {
+                let loaded: Vec<ModelFamily> = match registry_id.clone() {
+                    Some(identifier) => {
+                        let mut seen: IndexSet<String> = IndexSet::new();
+                        engine
+                            .models()
+                            .await
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|model| model.registry.identifier == identifier)
+                            .filter_map(|model| model.family.clone())
+                            .filter(|family| seen.insert(family.identifier.clone()))
+                            .collect()
+                    },
+                    None => engine.model_families().await.unwrap_or_default(),
+                };
+                if !engine.catalog_is_refreshing() || !loaded.is_empty() {
+                    families.set(Some(loaded));
+                }
+                if updates.next().await.is_none() {
+                    break;
+                }
+            }
         }
     });
 

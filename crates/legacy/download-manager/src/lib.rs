@@ -3,8 +3,6 @@ uniffi::setup_scaffolding!();
 
 mod backends;
 mod bearer_token;
-mod checksum;
-mod checksum_receipt;
 mod download_error;
 mod download_id;
 mod download_manager;
@@ -22,7 +20,6 @@ mod locks;
 pub use backends::AppleBackendError;
 pub use backends::BackendError;
 pub use bearer_token::BearerToken;
-pub use checksum::Checksum;
 pub use download_error::DownloadError;
 pub use download_id::DownloadId;
 pub use download_manager::DownloadManager;
