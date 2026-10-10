@@ -204,6 +204,119 @@ public float exact_product(float a, float b) {
   return asfloat(sign | (uint(biased - 1) << 23) + round_shift(product.y, product.x, shift));
 }
 
+// A 64-bit integer as (low, high) words shifted right by any count, `dropped` also set when a nonzero bit is lost: the
+// exact fused multiply-add aligns its smaller term and compresses its sum with it. No shift reaches a word's width.
+uint2 shift_right_wide(uint2 value, uint count, inout bool dropped) {
+  if (count == 0) {
+    return value;
+  }
+  if (count >= 64) {
+    dropped = dropped || value.x != 0 || value.y != 0;
+    return uint2(0, 0);
+  }
+  if (count >= 32) {
+    let rest = count - 32;
+    dropped = dropped || value.x != 0;
+    if (rest != 0) {
+      dropped = dropped || (value.y << (32 - rest)) != 0;
+    }
+    return uint2(value.y >> rest, 0);
+  }
+  dropped = dropped || (value.x << (32 - count)) != 0;
+  return uint2((value.x >> count) | (value.y << (32 - count)), value.y >> count);
+}
+
+// a * b + c rounded once to nearest even, the IEEE FP32 fusedMultiplyAdd of the CPU f32::mul_add, on integers only: no
+// device fusion, contraction or subnormal flushing reaches it. Each finite term is an exact integer with its top bit at
+// bit 62 of a 64-bit window; the smaller is shifted onto the larger's grid, exactly unless it drops nonzero bits, which
+// takes more than 15 places for the product or 39 for c and leaves it below 2^47. The exact sum then lies strictly
+// between the window sum S >= 2^61 and S + 1. S is compressed below 2^47 with every dropped bit folded into bit 0, under
+// the guard bit, and rounded onto the result's grid, 2^-149 for subnormals; a carry rounds into the exponent and results
+// from 2^128 on are infinite. Exact cancellation gives +0. Classes follow IEEE: NaN for a NaN operand, infinity times
+// zero or opposite infinities; a zero product keeps c, or gives -0 only from -0 + -0.
+public float exact_fma(float a, float b, float c) {
+  let a_bits = asuint(a);
+  let b_bits = asuint(b);
+  let c_bits = asuint(c);
+  let a_magnitude = a_bits & 0x7fffffffu;
+  let b_magnitude = b_bits & 0x7fffffffu;
+  let c_magnitude = c_bits & 0x7fffffffu;
+  let product_sign = (a_bits ^ b_bits) & 0x80000000u;
+  let c_sign = c_bits & 0x80000000u;
+  if (a_magnitude > 0x7f800000u || b_magnitude > 0x7f800000u || c_magnitude > 0x7f800000u) {
+    return asfloat(0x7fc00000u);
+  }
+  if (a_magnitude == 0x7f800000u || b_magnitude == 0x7f800000u) {
+    let invalid = a_magnitude == 0 || b_magnitude == 0 || (c_magnitude == 0x7f800000u && c_sign != product_sign);
+    return asfloat(invalid ? 0x7fc00000u : product_sign | 0x7f800000u);
+  }
+  if (c_magnitude == 0x7f800000u) {
+    return asfloat(c_bits);
+  }
+  if (a_magnitude == 0 || b_magnitude == 0) {
+    return asfloat(c_magnitude != 0 ? c_bits : product_sign & c_bits);
+  }
+  int a_exponent;
+  int b_exponent;
+  let product = multiply_extended(significand(a_magnitude, a_exponent), significand(b_magnitude, b_exponent));
+  // The significands' product lies in [2^46, 2^48) and weighs 2^(a_exponent + b_exponent - 46); bit 62 weighs 2^top.
+  let lift = product.y >= (1u << 15) ? 15u : 16u;
+  var larger = uint2(product.x << lift, (product.y << lift) | (product.x >> (32 - lift)));
+  var top = a_exponent + b_exponent + 16 - int(lift);
+  var sign = product_sign;
+  var smaller = uint2(0, 0);
+  var smaller_sign = sign;
+  var sticky = false;
+  if (c_magnitude != 0) {
+    int c_exponent;
+    let addend = uint2(0, significand(c_magnitude, c_exponent) << 7);
+    if (c_exponent > top) {
+      smaller = shift_right_wide(larger, uint(c_exponent - top), sticky);
+      smaller_sign = sign;
+      larger = addend;
+      top = c_exponent;
+      sign = c_sign;
+    } else {
+      smaller = shift_right_wide(addend, uint(top - c_exponent), sticky);
+      smaller_sign = c_sign;
+    }
+  }
+  uint2 sum;
+  if (sign == smaller_sign) {
+    let low = larger.x + smaller.x;
+    sum = uint2(low, larger.y + smaller.y + (low < smaller.x ? 1u : 0u));
+  } else {
+    // Only terms sharing a top bit, never sticky, may order either way: the difference takes the larger one's sign.
+    if (smaller.y > larger.y || (smaller.y == larger.y && smaller.x > larger.x)) {
+      let swapped = larger;
+      larger = smaller;
+      smaller = swapped;
+      sign = smaller_sign;
+    }
+    sum = uint2(larger.x - smaller.x, larger.y - smaller.y - (larger.x < smaller.x ? 1u : 0u));
+    if (sticky) {
+      sum = uint2(sum.x - 1, sum.y - (sum.x == 0 ? 1u : 0u));
+    }
+  }
+  if (sum.x == 0 && sum.y == 0) {
+    return asfloat(0u);
+  }
+  // The window's lowest bit weighs 2^(top - 62); the result's lowest weighs 2^grid, 24 bits below its top or 2^-149.
+  let msb = sum.y != 0 ? 32 + int(firstbithigh(sum.y)) : int(firstbithigh(sum.x));
+  let grid = max(msb + top - 85, -149);
+  let compress = max(msb - 46, 0);
+  var dropped = sticky;
+  let kept = shift_right_wide(sum, uint(compress), dropped);
+  let shift = grid - (top - 62) - compress;
+  var rounded = 0u;
+  if (shift <= 0) {
+    rounded = kept.x << uint(-shift);
+  } else {
+    rounded = round_shift(kept.y, kept.x | (dropped ? 1u : 0u), uint(shift));
+  }
+  return asfloat(sign | min((uint(grid + 149) << 23) + rounded, 0x7f800000u));
+}
+
 // The log of the FP32 sum s = 1 + e^x as the CPU rounds it. Below 2, where the builtin log keeps only an absolute error,
 // it is 2 atanh(w) = 2w (1 + w²/3 + ... + w¹²/13) with w = f / (2 + f) <= 1/3, where f = s - 1 is read exactly from the
 // mantissa bits; the omitted terms are under 2^-25 relative.

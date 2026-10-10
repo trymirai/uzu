@@ -1,7 +1,15 @@
+use std::{ops::Range, sync::Arc, time::Instant};
+
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use uzu_engine_macros::uzu_test;
 
-use super::kernel_fixture::KernelFixture;
+use super::{arg, kernel_fixture::KernelFixture};
+use crate::backends::vulkan::{VkBuffer, vk_kernels::TestExactFmaVulkanKernel};
+
+const SENTINEL: u32 = 0xa5a5_a5a5;
+
+/// Triples per GPU submission.
+const CHUNK: usize = 1 << 16;
 
 /// The 24 signed classes: ±0, ±min/mid/max subnormal, ±min normal, ±1, ±(1 + ulp), ±(2 - ulp), ±max finite, ±infinity,
 /// ±quiet NaN and ±signalling NaN.
@@ -110,15 +118,86 @@ fn power_of_two(exponent: i32) -> f32 {
     f32::from_bits(((exponent + 127) as u32) << 23)
 }
 
-#[uzu_test]
-fn every_class_triple_agrees() {
+/// Every triple of the 24 classes.
+fn visit_classes(mut visit: impl FnMut([u32; 3])) {
     for a in CLASSES {
         for b in CLASSES {
             for c in CLASSES {
-                agree([a, b, c]);
+                visit([a, b, c]);
             }
         }
     }
+}
+
+/// 2^20 uniform bit triples, then 2^20 products near the subnormal edge, the min normal, one and max finite, cancelled
+/// by c within two bits of -a * b.
+fn visit_random(mut visit: impl FnMut([u32; 3])) {
+    let mut rng = SmallRng::seed_from_u64(0x0fa5_7f3a);
+    for _ in 0..1 << 20 {
+        visit([0; 3].map(|_| rng.random_range(..=u32::MAX)));
+    }
+    for _ in 0..1 << 20 {
+        let target = [0, 1, 127, 254][rng.random_range(0..4)];
+        let a_exponent = rng.random_range(1..=254i32);
+        let b_exponent = (target + 127 + rng.random_range(-1..=1) - a_exponent).clamp(1, 254);
+        let [a, b] = [a_exponent, b_exponent]
+            .map(|exponent| rng.random_range(0..2u32) << 31 | (exponent as u32) << 23 | rng.random_range(..1u32 << 23));
+        let product = f32::from_bits(a) * f32::from_bits(b);
+        visit([a, b, (-product).to_bits().wrapping_add(rng.random_range(0..5)).wrapping_sub(2)]);
+    }
+}
+
+/// Every gap with every significand triple and both addend signs, then product rounding alone (c = ±0) across the
+/// subnormal, min normal and overflow edges.
+fn visit_gaps(mut visit: impl FnMut([u32; 3])) {
+    for gap in GAPS {
+        let (addend_exponent, product_exponent) = (-(gap / 2), gap - gap / 2);
+        for a in SIGNIFICANDS {
+            for b in SIGNIFICANDS {
+                for c in SIGNIFICANDS {
+                    for sign in [0, 0x8000_0000] {
+                        let a = (power_of_two(product_exponent) * f32::from_bits(a)).to_bits();
+                        let c = (power_of_two(addend_exponent) * f32::from_bits(c)).to_bits() | sign;
+                        visit([a, b, c]);
+                    }
+                }
+            }
+        }
+    }
+    for exponent_sum in [-152, -151, -150, -149, -148, -147, -127, -126, -125, 124, 125, 126, 127, 128] {
+        for a in SIGNIFICANDS {
+            for b in SIGNIFICANDS {
+                let a = (power_of_two(exponent_sum / 2) * f32::from_bits(a)).to_bits();
+                let b = (power_of_two(exponent_sum - exponent_sum / 2) * f32::from_bits(b)).to_bits();
+                visit([a, b, 0]);
+                visit([a, b | 0x8000_0000, 0x8000_0000]);
+            }
+        }
+    }
+}
+
+/// Asserts a completed TestExactFma dispatch kept its guarded triples and wrote `expected` between untouched guards.
+///
+/// # Safety
+/// Every command buffer using the buffers has completed.
+unsafe fn verify(
+    (input, output): &((Arc<VkBuffer>, Range<u64>), (Arc<VkBuffer>, Range<u64>)),
+    triples: &[[u32; 3]],
+    expected: &[f32],
+) {
+    // SAFETY: the caller guarantees completion.
+    let actual = unsafe {
+        KernelFixture::assert_unchanged(input, SENTINEL, triples.as_flattened(), "triples");
+        KernelFixture::read_guarded::<u32>(output, SENTINEL)
+    };
+    KernelFixture::assert_bits(expected, &actual.into_iter().map(f32::from_bits).collect::<Vec<_>>(), "TestExactFma");
+}
+
+#[uzu_test]
+fn every_class_triple_agrees() {
+    visit_classes(|triple| {
+        agree(triple);
+    });
 }
 
 #[uzu_test]
@@ -130,47 +209,104 @@ fn frozen_witnesses_match_both_oracles() {
 
 #[uzu_test]
 fn random_triples_agree() {
-    let mut rng = SmallRng::seed_from_u64(0x0fa5_7f3a);
-    for _ in 0..1 << 20 {
-        agree([0; 3].map(|_| rng.random_range(..=u32::MAX)));
-    }
-    // Products near the subnormal edge, the min normal, one and max finite, cancelled by c within two bits of -a * b.
-    for _ in 0..1 << 20 {
-        let target = [0, 1, 127, 254][rng.random_range(0..4)];
-        let a_exponent = rng.random_range(1..=254i32);
-        let b_exponent = (target + 127 + rng.random_range(-1..=1) - a_exponent).clamp(1, 254);
-        let [a, b] = [a_exponent, b_exponent]
-            .map(|exponent| rng.random_range(0..2u32) << 31 | (exponent as u32) << 23 | rng.random_range(..1u32 << 23));
-        let product = f32::from_bits(a) * f32::from_bits(b);
-        agree([a, b, (-product).to_bits().wrapping_add(rng.random_range(0..5)).wrapping_sub(2)]);
-    }
+    visit_random(|triple| {
+        agree(triple);
+    });
 }
 
 #[uzu_test]
 fn exponent_gap_families_agree() {
-    for gap in GAPS {
-        let (addend_exponent, product_exponent) = (-(gap / 2), gap - gap / 2);
-        for a in SIGNIFICANDS {
-            for b in SIGNIFICANDS {
-                for c in SIGNIFICANDS {
-                    for sign in [0, 0x8000_0000] {
-                        let a = (power_of_two(product_exponent) * f32::from_bits(a)).to_bits();
-                        let c = (power_of_two(addend_exponent) * f32::from_bits(c)).to_bits() | sign;
-                        agree([a, b, c]);
-                    }
+    visit_gaps(|triple| {
+        agree(triple);
+    });
+}
+
+/// Every host family through TestExactFma in submissions of at most CHUNK triples, each first checked by both host
+/// oracles, then an empty dispatch over empty guarded spans.
+#[uzu_test]
+fn matches_cpu_fused_rounding() {
+    let fixture = KernelFixture::new();
+    let kernel = TestExactFmaVulkanKernel::new(&fixture.context).expect("TestExactFma");
+    let run = |triples: &[[u32; 3]]| {
+        let expected = triples.iter().map(|&triple| agree(triple)).collect::<Vec<_>>();
+        let output = vec![SENTINEL; triples.len()];
+        let pair = (fixture.guarded(triples.as_flattened(), SENTINEL), fixture.guarded(&output, SENTINEL));
+        let mut encoding = fixture.encoding();
+        // SAFETY: the input holds 3 words and the output 1 word per triple; they do not alias.
+        unsafe { kernel.encode(arg(&pair.0), arg(&pair.1), triples.len() as u32, &mut encoding) };
+        KernelFixture::complete(encoding);
+        // SAFETY: the only command buffer using these buffers has completed.
+        unsafe { verify(&pair, triples, &expected) };
+    };
+    let mut pending = Vec::with_capacity(CHUNK);
+    let mut push = |triple: [u32; 3]| {
+        pending.push(triple);
+        if pending.len() == CHUNK {
+            run(&pending);
+            pending.clear();
+        }
+    };
+    visit_classes(&mut push);
+    WITNESSES.iter().for_each(|&(_, triple, _)| push(triple));
+    visit_gaps(&mut push);
+    visit_random(&mut push);
+    run(&pending);
+    run(&[]);
+    fixture.assert_clean();
+}
+
+/// Run alone: `cargo test ... exact_fma_test::throughput -- --ignored --nocapture`; test-only presence flag
+/// UZU_FMA_REVERSE runs the descending round of the 6 cells first: 12 rows. After both host oracles agree, 3 warm-up and
+/// 10 timed submissions each use their own guarded triples and results, each pair checked after completion before the
+/// next encode (wall includes it). Host encode: median of the 10 timed. Raw helper timings.
+#[uzu_test]
+#[ignore]
+fn throughput() {
+    let fixture = KernelFixture::new();
+    let kernel = TestExactFmaVulkanKernel::new(&fixture.context).expect("TestExactFma");
+    let reverse = std::env::var_os("UZU_FMA_REVERSE").is_some();
+    let cells = ["normal", "edges"].map(|family| [1, 4096, 65536].map(|count| (family, count)));
+    let ascending = cells.as_flattened().to_vec();
+    let mut rounds = [ascending.clone(), ascending.iter().rev().copied().collect()];
+    if reverse {
+        rounds.reverse();
+    }
+    let finite = |index: usize| (((index * 7919) % 4001) as f32 / 1000.0 - 2.0).to_bits();
+    for (round, cells) in rounds.iter().enumerate() {
+        for &(family, count) in cells {
+            let triples = (0..count)
+                .map(|index| match family {
+                    "normal" => [0, 1, 2].map(|operand| finite(3 * index + operand)),
+                    _ => WITNESSES[index % WITNESSES.len()].1,
+                })
+                .collect::<Vec<_>>();
+            let expected = triples.iter().map(|&triple| agree(triple)).collect::<Vec<_>>();
+            let output = vec![SENTINEL; count];
+            let pairs = (0..13)
+                .map(|_| (fixture.guarded(triples.as_flattened(), SENTINEL), fixture.guarded(&output, SENTINEL)))
+                .collect::<Vec<_>>();
+            let (mut submitted, mut encodes) = (0, Vec::new());
+            let (gpu, wall) = fixture.median_times(|encoding| {
+                if submitted > 0 {
+                    // SAFETY: the submission using this pair has completed and no recording uses it.
+                    unsafe { verify(&pairs[submitted - 1], &triples, &expected) };
                 }
-            }
+                let start = Instant::now();
+                // SAFETY: each input holds 3 words and its output 1 word per triple; they do not alias.
+                unsafe { kernel.encode(arg(&pairs[submitted].0), arg(&pairs[submitted].1), count as u32, encoding) };
+                encodes.push(start.elapsed());
+                submitted += 1;
+            });
+            assert_eq!(submitted, pairs.len(), "submissions");
+            // SAFETY: median_times has completed every submission.
+            unsafe { verify(&pairs[submitted - 1], &triples, &expected) };
+            let mut timed = encodes.split_off(3);
+            timed.sort();
+            let encode = timed[timed.len() / 2];
+            eprintln!(
+                "MEASURE ExactFma reverse {reverse} round {round} family {family} count {count}: median of 10 after 3 warm-up: GPU {gpu:?}, host encode {encode:?}, wall {wall:?} (with the previous check)"
+            );
         }
     }
-    // Product rounding alone (c = ±0) across the subnormal, min normal and overflow edges.
-    for exponent_sum in [-152, -151, -150, -149, -148, -147, -127, -126, -125, 124, 125, 126, 127, 128] {
-        for a in SIGNIFICANDS {
-            for b in SIGNIFICANDS {
-                let a = (power_of_two(exponent_sum / 2) * f32::from_bits(a)).to_bits();
-                let b = (power_of_two(exponent_sum - exponent_sum / 2) * f32::from_bits(b)).to_bits();
-                agree([a, b, 0]);
-                agree([a, b | 0x8000_0000, 0x8000_0000]);
-            }
-        }
-    }
+    fixture.assert_clean();
 }
