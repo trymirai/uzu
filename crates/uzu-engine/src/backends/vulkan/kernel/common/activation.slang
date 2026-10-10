@@ -317,6 +317,59 @@ public float exact_fma(float a, float b, float c) {
   return asfloat(sign | min((uint(grid + 149) << 23) + rounded, 0x7f800000u));
 }
 
+// a / b rounded once to nearest even, the IEEE FP32 division of the CPU, on integers only: no native division, whose
+// rounding and subnormal flushing the device chooses, reaches it. Classes are decided on the bits: NaN for a NaN
+// operand, 0 / 0 or infinity / infinity; else an infinite a or zero b gives infinity, a zero a or infinite b zero,
+// signed by the operands' sign XOR. The significands X and P in [2^23, 2^24) give the exponent E, one less when
+// X < P, and by s + 1 restoring steps q = floor(X 2^s / P) in [2^25, 2^26), s = 25 or 26 when X < P; a step leaves
+// its remainder below P, so the doubled remainder stays below 2^25, and q 2^(E - 25) <= |a / b| < (q + 1) 2^(E - 25),
+// infinite from E = 128 on. A nonzero remainder sets bit 0 of 2q: each rounding point and midpoint of a shift by 2 or
+// more is an even integer, none strictly between 2q and 2q + 2, and an exact quotient is 2q itself, so rounding
+// 2q | sticky by 3, or further onto the 2^-149 grid, rounds the exact quotient, ties included; a carry rounds into the
+// next exponent, also to infinity.
+public float exact_quotient(float a, float b) {
+  let a_bits = asuint(a);
+  let b_bits = asuint(b);
+  let sign = (a_bits ^ b_bits) & 0x80000000u;
+  let a_magnitude = a_bits & 0x7fffffffu;
+  let b_magnitude = b_bits & 0x7fffffffu;
+  if (a_magnitude > 0x7f800000u || b_magnitude > 0x7f800000u ||
+      (a_magnitude == b_magnitude && (a_magnitude == 0 || a_magnitude == 0x7f800000u))) {
+    return asfloat(0x7fc00000u);
+  }
+  if (a_magnitude == 0x7f800000u || b_magnitude == 0) {
+    return asfloat(sign | 0x7f800000u);
+  }
+  if (a_magnitude == 0 || b_magnitude == 0x7f800000u) {
+    return asfloat(sign);
+  }
+  int a_exponent;
+  int b_exponent;
+  let numerator = significand(a_magnitude, a_exponent);
+  let divisor = significand(b_magnitude, b_exponent);
+  let below = numerator < divisor;
+  let exponent = a_exponent - b_exponent - (below ? 1 : 0);
+  if (exponent >= 128) {
+    return asfloat(sign | 0x7f800000u);
+  }
+  let steps = below ? 27u : 26u;
+  var remainder = numerator;
+  var quotient = 0u;
+  for (uint step = 1; step <= steps; step++) {
+    let fits = remainder >= divisor;
+    quotient = (quotient << 1) | (fits ? 1u : 0u);
+    remainder -= fits ? divisor : 0u;
+    if (step < steps) {
+      remainder <<= 1;
+    }
+  }
+  // Below 2^-126 the 2^-149 grid lies -126 - E places further down; from 28 places on, 2q | sticky < 2^27 rounds to 0.
+  let biased = max(exponent + 127, 1);
+  let shift = min(3u + uint(biased - exponent - 127), 28u);
+  let doubled = (quotient << 1) | (remainder != 0 ? 1u : 0u);
+  return asfloat(sign | (uint(biased - 1) << 23) + round_shift(0, doubled, shift));
+}
+
 // The log of the FP32 sum s = 1 + e^x as the CPU rounds it. Below 2, where the builtin log keeps only an absolute error,
 // it is 2 atanh(w) = 2w (1 + w²/3 + ... + w¹²/13) with w = f / (2 + f) <= 1/3, where f = s - 1 is read exactly from the
 // mantissa bits; the omitted terms are under 2^-25 relative.

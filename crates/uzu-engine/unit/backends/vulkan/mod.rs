@@ -13,6 +13,7 @@ mod conv1d_test;
 mod delta_net_test;
 mod delta_net_tree_test;
 mod exact_fma_test;
+mod exact_quotient_test;
 mod gated_act_mul_test;
 mod gemm_test;
 mod gemv_test;
