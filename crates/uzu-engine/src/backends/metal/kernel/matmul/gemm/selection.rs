@@ -63,12 +63,10 @@ impl GemmProblem {
         self,
         engine: GemmEngine,
     ) -> Result<GemmPlan, GemmPlanError> {
-        if self.shape.b_is_trellis {
-            let mut plan = select_trellis_plan(self.shape.m, self.shape.n, self.shape.k);
-            plan.engine = engine;
-            return Ok(plan);
-        }
         self.validate_engine(engine)?;
+        if self.shape.b_is_trellis {
+            return Ok(select_trellis_plan(self.shape.m, self.shape.n, self.shape.k));
+        }
         Ok(self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family)))
     }
 
@@ -79,8 +77,10 @@ impl GemmProblem {
         if engine == GemmEngine::Mxu && !self.supports_mxu {
             return Err(GemmPlanError::MxuUnavailable);
         }
-        if self.shape.is_quant() && (!self.shape.b_transpose || self.shape.b_leading_dimension.is_some()) {
-            return Err(GemmPlanError::UnsupportedLayout("quantized weights require transposed contiguous B"));
+        if (self.shape.is_quant() || self.shape.b_is_trellis)
+            && (!self.shape.b_transpose || self.shape.b_leading_dimension.is_some())
+        {
+            return Err(GemmPlanError::UnsupportedLayout("packed weights require transposed contiguous B"));
         }
         if self.shape.b_is_trellis && !self.shape.k.is_multiple_of(TRELLIS_K_STEP) {
             return Err(GemmPlanError::UnsupportedLayout("Trellis K must be divisible by 64"));
@@ -163,7 +163,11 @@ pub(super) fn select_trellis_plan(
     };
     let output_workgroups = (n.div_ceil(tiling.block_n()) * m.div_ceil(tiling.block_m())).max(1);
     let k_steps = (k / TRELLIS_K_STEP).max(1);
-    let mut split_k = (target_workgroups / output_workgroups).clamp(1, k_steps);
+    let mut split_k = if n.is_multiple_of(4) {
+        (target_workgroups / output_workgroups).clamp(1, k_steps)
+    } else {
+        1
+    };
     while !k_steps.is_multiple_of(split_k) {
         split_k -= 1;
     }

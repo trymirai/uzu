@@ -16,7 +16,7 @@ using namespace uzu::gemm;
 namespace {
 
 struct TrellisEpilogue {
-  const device float* scale_and_offsets;
+  const constant float* scale_and_offsets;
   const device float4* group_sums;
   const device float* activation_scales;
   const device float* row_scales;
@@ -49,7 +49,7 @@ KERNEL(GemmTrellis)(
     const device float* activation_scales,
     const device uint8_t* codes,
     const device float* row_scales,
-    const device float* scale_and_offsets,
+    const constant float scale_and_offsets[5],
     device bfloat* output,
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
@@ -166,7 +166,7 @@ KERNEL(GemmTrellisReduce)(
     const device float4* column_group_sums,
     const device float* activation_scales,
     const device float* row_scales,
-    const device float* scale_and_offsets,
+    const constant float scale_and_offsets[5],
     device bfloat* output,
     const constant uint& token_count,
     const constant uint& row_count,

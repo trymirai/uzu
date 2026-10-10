@@ -152,6 +152,7 @@ fn trellis_plan_matches_projection_cases() {
         (17, 80, 64, Tile64x64x256_Simdgroups2x2, 1),
         (2048, 2048, 128, Tile128x128x256_Simdgroups4x4, 1),
         (1, 80, 5120, Tile16x32x256_Simdgroups1x1, 80),
+        (1, 6, 5120, Tile64x64x256_Simdgroups2x2, 1),
     ] {
         let mut trellis_shape = shape(m, n, k);
         trellis_shape.a_full_precision = false;
@@ -170,12 +171,15 @@ fn forced_engine_errors_are_preserved() {
         Err(GemmPlanError::MxuUnavailable)
     );
 
-    let mut invalid_layout = quant(huge);
-    invalid_layout.b_transpose = false;
-    assert_eq!(
-        problem(invalid_layout, DataType::BF16).select_plan_for_engine(GemmEngine::Mxu),
-        Err(GemmPlanError::UnsupportedLayout("quantized weights require transposed contiguous B"))
-    );
+    let mut trellis = huge;
+    trellis.b_is_trellis = true;
+    for mut packed in [quant(huge), trellis] {
+        packed.b_transpose = false;
+        assert_eq!(
+            problem(packed, DataType::BF16).select_plan_for_engine(GemmEngine::Mxu),
+            Err(GemmPlanError::UnsupportedLayout("packed weights require transposed contiguous B"))
+        );
+    }
 }
 
 #[uzu_test]

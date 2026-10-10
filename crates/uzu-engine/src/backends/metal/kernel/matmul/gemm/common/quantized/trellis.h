@@ -51,8 +51,13 @@ states_at(const GemmTrellisFormat format, const device uchar* code_row, const ui
       block_codes += code_column / format.restart_columns * block_bytes(format, format.restart_columns);
       block_column %= format.restart_columns;
     }
-    const device uchar* state_bytes = block_codes + block_column / V4_VECTOR_WIDTH;
-    return uint2(uint(state_bytes[0]) << BYTE_BITS | state_bytes[1], 0);
+    const uint first_bit = block_column / V4_VECTOR_WIDTH * format.transition_bits;
+    const device uchar* state_bytes = block_codes + first_bit / BYTE_BITS;
+    const uint shift = first_bit % BYTE_BITS;
+    // A state at a byte boundary may be the block's last; any other one spans three bytes of its block.
+    const uint third_byte = shift == 0 ? 0 : uint(state_bytes[2]);
+    const uint window = uint(state_bytes[0]) << 16 | uint(state_bytes[1]) << 8 | third_byte;
+    return uint2((window >> (BYTE_BITS - shift)) & ((1u << STATE_BITS) - 1), 0);
   }
   const uint first_bit = code_column / format.vector_width * format.transition_bits;
   const device uchar* bytes = code_row + first_bit / BYTE_BITS;

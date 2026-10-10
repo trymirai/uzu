@@ -1,6 +1,6 @@
 use std::collections::{HashMap, hash_map::Entry};
 
-use super::{GemmEngine, GemmPlan, selection::TRELLIS_K_STEP as K_STEP};
+use super::{GemmPlan, selection::TRELLIS_K_STEP as K_STEP};
 use crate::backends::{
     common::{
         BufferMut, BufferRef, CommandBufferEncoding,
@@ -62,13 +62,7 @@ impl TrellisGemm {
         let (m, n, k) = (arguments.m, arguments.n, arguments.k);
         let output_stride = arguments.output.row_stride.unwrap_or(n);
         let (tiling, split_k) = (plan.tiling, plan.split_k);
-        if plan.engine != GemmEngine::Mxu
-            || !arguments.output.ops.mask().is_empty()
-            || !arguments.b_transpose
-            || arguments.b_leading_dimension.is_some()
-            || output_stride < n
-            || (split_k > 1 && !n.is_multiple_of(4))
-        {
+        if !arguments.output.ops.mask().is_empty() || output_stride < n {
             return Err(unsupported());
         }
 
@@ -94,7 +88,7 @@ impl TrellisGemm {
                 alignment,
                 format.vector_width,
                 format.transition_bits,
-                format.restart_columns.unwrap_or(0),
+                format.restart_columns,
             )?),
         };
         macro_rules! encode_gemm {
@@ -105,7 +99,7 @@ impl TrellisGemm {
                     activation_scales,
                     codes,
                     row_scales,
-                    codebook,
+                    &codebook,
                     $destination,
                     std::slice::from_ref(&params),
                     params.threadgroups_per_row,
@@ -132,7 +126,7 @@ impl TrellisGemm {
             column_group_sums,
             activation_scales,
             row_scales,
-            codebook,
+            &codebook,
             arguments.output.values,
             m,
             n,

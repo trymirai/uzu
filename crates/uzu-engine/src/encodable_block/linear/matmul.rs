@@ -4,13 +4,11 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
+        gpu_types::QuantizationMode,
         kernel::{
             ActivationQuantization, Kernels,
-            matmul::{
-                ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
-                MatmulShape,
-            },
+            matmul::{ActivationFormat, MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulOutput, MatmulShape},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -42,8 +40,8 @@ pub struct LinearMatmul<B: Backend> {
     biases: Option<B::GlobalBuffer>,
     output_hadamard_factors: Option<B::GlobalBuffer>,
     input_dim: u32,
-    output_dim: u32,
-    output_data_type: DataType,
+    pub(super) output_dim: u32,
+    pub(super) output_data_type: DataType,
 }
 
 fn load_biases<B: Backend>(
@@ -63,8 +61,6 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    /// Loads a linear over any parsed spec — full precision, MLX or Int. Hybrid
-    /// compositions live in the wrappers, not here.
     pub fn load(
         context: &B::Context,
         spec: AnyWeightMatrixSpec,
@@ -82,7 +78,6 @@ impl<B: Backend> LinearMatmul<B> {
                 return Err(LinearMatmulError::UnsupportedDataType(data_type));
             }
         }
-
         let matrix =
             WeightMatrix::load(weights_tree, spec, Layout::OutputInput, output_dim, input_dim, weights_data_type)?;
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
@@ -108,12 +103,17 @@ impl<B: Backend> LinearMatmul<B> {
         })
     }
 
+    pub(super) fn is_trellis(&self) -> bool {
+        self.matrix.matmul_b().is_trellis()
+    }
+
     pub(super) fn prepare_a8(
         &mut self,
         context: &B::Context,
     ) -> Option<ActivationQuantization> {
+        let signed_codes = self.matrix.quantization()?.mode != QuantizationMode::U4;
         let mut candidate = self.matmul_shape(1, false);
-        candidate.signed_codes = self.matrix.a8_signed_codes()?;
+        candidate.signed_codes = signed_codes;
         let quantization = self.kernel.lock().select_activation_quantization(&candidate, context)?;
         self.matrix.try_prepare_a8_storage().then_some(quantization)
     }
@@ -125,25 +125,42 @@ impl<B: Backend> LinearMatmul<B> {
         gather: Option<Gather<impl BufferRef<Backend = B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let (output_dim, gather_indices) =
-            gather.map_or((self.output_dim, None), |gather| (gather.output_dim, Some(gather.indices)));
+        let output_dim = gather.as_ref().map_or(self.output_dim, |gather| gather.output_dim);
         let mut output = command_buffer.allocate_scratch_for_shape(&[batch_dim, output_dim], self.output_data_type)?;
+        self.encode_into(a, batch_dim, gather, &mut output, 0, None, command_buffer)?;
+        Ok(output)
+    }
+
+    pub(super) fn encode_into(
+        &self,
+        a: MatmulA<impl BufferRef<Backend = B>>,
+        batch_dim: u32,
+        gather: Option<Gather<impl BufferRef<Backend = B>>>,
+        output: &mut B::ScratchBuffer,
+        column_offset: u32,
+        row_stride: Option<u32>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        let (n, gather_indices) =
+            gather.map_or((self.output_dim, None), |gather| (gather.output_dim, Some(gather.indices)));
         self.kernel.lock().encode(
             MatmulArguments {
                 a,
-                b: self.matmul_b(),
+                b: self.matrix.matmul_b(),
                 b_leading_dimension: None,
                 b_transpose: true,
-                output: MatmulOutput::new(&mut output, self.d_ops()),
+                output: MatmulOutput {
+                    values: output.subrange_mut(column_offset as usize * self.output_data_type.size_in_bytes()..),
+                    row_stride,
+                    ops: self.d_ops(),
+                },
+                n,
                 gather_indices,
                 m: batch_dim,
-                n: output_dim,
                 k: self.input_dim,
             },
             command_buffer,
-        )?;
-
-        Ok(output)
+        )
     }
 
     fn matmul_shape(
@@ -151,7 +168,7 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: u32,
         a_full_precision: bool,
     ) -> MatmulShape {
-        let b = self.matmul_b();
+        let b = self.matrix.matmul_b();
         MatmulShape {
             m: batch_dim,
             n: self.output_dim,
@@ -168,10 +185,6 @@ impl<B: Backend> LinearMatmul<B> {
             params_layout: b.quant_params_layout(),
             d_transform: self.d_ops().mask(),
         }
-    }
-
-    fn matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
-        self.matrix.matmul_b()
     }
 
     fn d_ops(&self) -> MatmulDOps<'_, B> {
@@ -221,7 +234,6 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        let bf16_shape = self.matmul_shape(batch_dim, true);
-        self.kernel.lock().select_activation_format(&bf16_shape, context)
+        self.kernel.lock().select_activation_format(&self.matmul_shape(batch_dim, true), context)
     }
 }

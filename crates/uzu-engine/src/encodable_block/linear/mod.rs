@@ -1,15 +1,15 @@
 use derive_more::Debug;
 use thiserror::Error;
 
-mod input_rht;
+mod input_transform;
 mod matmul;
 mod qlora_wrapper;
-mod rht_wrapper;
+mod transformed_linear;
 mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
-pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
+pub use transformed_linear::{TransformedLinear, TransformedLinearError};
 pub use untied_readout::UntiedReadout;
 
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{HybridSpec, IncoherenceKind, IncoherenceProcessingMode},
     },
     data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
@@ -45,11 +45,7 @@ pub trait Linear<B: Backend>: Send + Sync {
     ) -> Result<B::ScratchBuffer, B::Error> {
         match input {
             LinearInput::FullPrecision(input) => self.encode(input, batch_dim, command_buffer),
-            LinearInput::Int8Symmetric {
-                ..
-            } => {
-                panic!("linear does not support pre-quantized activations")
-            },
+            _ => panic!("linear does not support pre-quantized activations"),
         }
     }
 
@@ -70,6 +66,11 @@ pub enum LinearInput<B: Backend> {
         group_sums: Option<B::ScratchBuffer>,
         scale_group_size: u32,
         code_layout: Int8CodeLayout,
+    },
+    Trellis {
+        values: B::ScratchBuffer,
+        column_group_sums: B::ScratchBuffer,
+        scales: B::ScratchBuffer,
     },
 }
 
@@ -98,6 +99,15 @@ impl<B: Backend> LinearInput<B> {
                 scale_group_size: *scale_group_size,
                 code_layout: *code_layout,
             },
+            Self::Trellis {
+                values,
+                column_group_sums,
+                scales,
+            } => MatmulA::Trellis {
+                values,
+                column_group_sums,
+                scales,
+            },
         }
     }
 }
@@ -113,8 +123,8 @@ pub enum LinearBlockError<B: Backend> {
     LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("QLoRALinearWrapper error: {0}")]
     QLoRALinearWrapperError(#[from] QLoRALinearWrapperError<B>),
-    #[error("RHTLinearWrapper error: {0}")]
-    RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
+    #[error("TransformedLinear error: {0}")]
+    TransformedLinearError(#[from] TransformedLinearError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported linear configuration: {0}")]
@@ -153,26 +163,34 @@ impl<B: Backend> dyn Linear<B> {
                 )?;
                 Ok(Box::new(block))
             },
-            AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+            spec @ (AnyWeightMatrixSpec::RowStackSpec(_)
+            | AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 adapter_spec: None,
-                incoherence_block_size: Some(block_size),
+                incoherence_processing_mode: IncoherenceProcessingMode::Input,
+                ..
+            })
+            | AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                adapter_spec: None,
+                incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
                 incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
                 ..
-            }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(RHTLinearWrapper::new(
+            })) => Ok(Box::new(TransformedLinear::new_stacked(
                 context,
+                spec,
                 input_dimension,
                 output_dimension_sum,
-                has_biases,
                 weights_data_type,
                 input_data_type,
                 output_data_type,
-                parameter_tree,
+                weights_tree,
+                has_biases.then_some(parameter_tree),
             )?)),
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
                 adapter_spec: Some(adapter_spec),
                 incoherence_block_size,
                 incoherence_processing_mode,
+                incoherence_kind: IncoherenceKind::Hadamard,
                 ..
             }) => {
                 assert!(!has_biases, "QLoRA linear with biases is not supported");
@@ -229,7 +247,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
         let output_dimension_sum: u32 = output_dimensions.as_ref().iter().sum();
-        if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
+        if let Some(linear) = TransformedLinear::try_new_with_input_preparation(
             context,
             input_dimension,
             output_dimension_sum,
@@ -265,7 +283,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<B>,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
         let output_dimension_sum: u32 = output_dimensions.as_ref().iter().sum();
-        if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
+        if let Some(linear) = TransformedLinear::try_new_with_input_preparation(
             context,
             input_dimension,
             output_dimension_sum,

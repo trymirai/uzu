@@ -10,10 +10,18 @@ pub enum IncoherenceProcessingMode {
     InputOutput,
 }
 
+#[uzu_config]
+#[serde(rename_all = "snake_case")]
+pub enum IncoherenceKind {
+    Hadamard,
+    Kronecker,
+}
+
 #[uzu_config(super::WeightMatrixSpec)]
 pub struct HybridSpec {
     pub quantization_spec: Box<AnyWeightMatrixSpec>,
     pub adapter_spec: Option<Box<AnyWeightMatrixSpec>>,
     pub incoherence_block_size: Option<u32>,
     pub incoherence_processing_mode: IncoherenceProcessingMode,
+    pub incoherence_kind: IncoherenceKind,
 }

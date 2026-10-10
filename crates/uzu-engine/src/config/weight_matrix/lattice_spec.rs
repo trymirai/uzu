@@ -2,8 +2,14 @@ use uzu_engine_macros::uzu_config;
 
 use crate::config::weight_matrix::Layout;
 
-/// Lookup-only embedding table: one D4 lattice code per 4 columns and a ladder scale per 64 columns.
+#[uzu_config]
+#[serde(rename_all = "snake_case")]
+pub enum LatticeKind {
+    D4,
+}
+
 #[uzu_config(super::WeightMatrixSpec)]
-pub struct D4S4Spec {
+pub struct LatticeSpec {
+    pub kind: LatticeKind,
     pub layout: Layout,
 }
