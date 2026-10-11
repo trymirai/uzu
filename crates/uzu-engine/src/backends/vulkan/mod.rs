@@ -45,7 +45,7 @@ pub use vk_kernels::{
     ShortConvPackVulkanKernel, ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SigmoidGateVulkanKernel,
     SoftmaxVulkanKernel, SplitInProjVulkanKernel, StateAdvanceVulkanKernel, TensorAddBiasVulkanKernel,
     TensorAddScaleVulkanKernel, TreeUpdateSolveVulkanKernel, WeaverFrontierInsertChildrenVulkanKernel,
-    WeaverFrontierSelectVulkanKernel,
+    WeaverFrontierSelectVulkanKernel, WeaverTopChildrenVulkanKernel,
 };
 pub use vk_logger::VkLogger;
 pub use vk_physical_device::VkPhysicalDevice;

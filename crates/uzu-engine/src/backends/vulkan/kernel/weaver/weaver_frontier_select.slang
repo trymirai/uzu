@@ -1,23 +1,10 @@
 import definitions;
 import common.storage_address;
+import common.ranking;
 import generated.weaver;
 
 groupshared uint4 weaver_select_reduce[FRONTIER_SELECT_THREADS];
 groupshared uint weaver_select_winners[FRONTIER_MAX_WIDTH];
-
-uint4 weaver_select_better(uint4 a, uint4 b) {
-  return b.x > a.x || (b.x == a.x && (b.y < a.y ||
-      (b.y == a.y && (b.z < a.z || (b.z == a.z && b.w < a.w))))) ? b : a;
-}
-
-uint4 weaver_select_wave(uint4 value) {
-  uint4 best;
-  best.x = WaveActiveMax(value.x);
-  best.y = WaveActiveMin(value.x == best.x ? value.y : FRONTIER_NO_WINNER);
-  best.z = WaveActiveMin(all(value.xy == best.xy) ? value.z : FRONTIER_NO_WINNER);
-  best.w = WaveActiveMin(all(value.xyz == best.xyz) ? value.w : FRONTIER_NO_WINNER);
-  return best;
-}
 
 // Complete, distinct CPU-shaped buffers. F32 candidate logits are copied as words, preserving every payload bit.
 [[Kernel]] [[Public]]
@@ -66,9 +53,9 @@ func WeaverFrontierSelect(
   for (uint node = 0; node < node_count; node++) {
     var local = neutral;
     for (uint entry = 0; entry < FRONTIER_ENTRIES_PER_THREAD; entry++) {
-      local = weaver_select_better(local, entries[entry]);
+      local = weaver_rank_better(local, entries[entry]);
     }
-    let partial = weaver_select_wave(local);
+    let partial = weaver_rank_wave(local);
     let lane = WavePrefixSum(1u);
     let lanes = WaveActiveSum(1u);
     if (lane == 0) { weaver_select_reduce[subgroup_id()] = partial; }
@@ -76,9 +63,9 @@ func WeaverFrontierSelect(
     if (subgroup_id() == 0) {
       var total = neutral;
       for (uint subgroup = lane; subgroup < subgroup_count(); subgroup += lanes) {
-        total = weaver_select_better(total, weaver_select_reduce[subgroup]);
+        total = weaver_rank_better(total, weaver_select_reduce[subgroup]);
       }
-      total = weaver_select_wave(total);
+      total = weaver_rank_wave(total);
       if (lane == 0) { weaver_select_winners[node] = total.w; }
     }
     GroupMemoryBarrierWithGroupSync();

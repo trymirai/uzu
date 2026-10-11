@@ -1,5 +1,6 @@
 import definitions;
 import common.activation;
+import common.ranking;
 
 // One entry per subgroup; 256 covers the smallest possible subgroup width of the largest workgroup.
 groupshared float workgroup_sum_scratch[256];
@@ -56,6 +57,33 @@ public float workgroup_sum<let THREADS : uint>(float value) {
     return total;
   }
   return exact_scale_down(workgroup_native_sum(exact_scale_up_24(value), largest), 24);
+}
+
+// f32::max's NaN-ignoring fold from -infinity, over two values per invocation. Integer keys retain subnormals that
+// native floating maxima can flush. Every invocation reads the result before the scratch is reused.
+public float workgroup_max<let THREADS : uint>(float2 values) {
+  static_assert(THREADS <= 256, "the workgroup must fit the subgroup scratch");
+  let x = asuint(values.x);
+  let y = asuint(values.y);
+  let first = float_order_key((x & 0x7fffffffu) > 0x7f800000u ? 0xff800000u : x);
+  let second = float_order_key((y & 0x7fffffffu) > 0x7f800000u ? 0xff800000u : y);
+  let partial = WaveActiveMax(max(first, second));
+  let lane = WavePrefixSum(1u);
+  let lanes = WaveActiveSum(1u);
+  if (lane == 0) { workgroup_magnitude_scratch[subgroup_id()] = partial; }
+  GroupMemoryBarrierWithGroupSync();
+  if (subgroup_id() == 0) {
+    uint total = float_order_key(0xff800000u);
+    for (uint subgroup = lane; subgroup < subgroup_count(); subgroup += lanes) {
+      total = max(total, workgroup_magnitude_scratch[subgroup]);
+    }
+    total = WaveActiveMax(total);
+    if (lane == 0) { workgroup_magnitude_scratch[0] = total; }
+  }
+  GroupMemoryBarrierWithGroupSync();
+  let total = asfloat(float_order_bits(workgroup_magnitude_scratch[0]));
+  GroupMemoryBarrierWithGroupSync();
+  return total;
 }
 
 // partial + x x for a non-negative partial of earlier squares, as the CPU's separately rounded square and sum with

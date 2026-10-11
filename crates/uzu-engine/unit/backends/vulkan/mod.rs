@@ -51,6 +51,7 @@ mod typed_constants_test;
 mod validation_logger;
 mod weaver_frontier_insert_children_test;
 mod weaver_frontier_select_test;
+mod weaver_top_children_test;
 
 pub use activation_test::{check as activation_check, exp, interval, oracle, round32, silu_oracle, tanh_interval};
 pub use activation_transform_test::{

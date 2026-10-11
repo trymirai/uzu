@@ -1,6 +1,7 @@
 import definitions;
 import common.activation;
 import common.storage_address;
+import common.ranking;
 import generated.weaver;
 
 // The CPU's explicit path_logprob_bits contract: propagate signaling child/parent before quiet child/parent.
@@ -50,7 +51,7 @@ func WeaverFrontierInsertChildren(
         let parent_bits = element_pointer(packed_tree, element_index(uint(TreeIdx.PathLogprobBits), tree_slot_count, parent))[0];
         let sum_bits = weaver_path_logprob_bits(parent_bits, asuint(element_pointer(child_logprobs, source)[0]));
         let depth = element_pointer(packed_tree, element_index(uint(TreeIdx.Depth), tree_slot_count, parent))[0] + 1;
-        let score_key = (sum_bits & 0x80000000u) != 0 ? ~sum_bits : sum_bits ^ 0x80000000u;
+        let score_key = float_order_key(sum_bits);
         element_pointer(frontier, element_index(uint(FrontierIdx.TokenId), frontier_capacity, slot))[0] = element_pointer(child_ids, source)[0];
         element_pointer(frontier, element_index(uint(FrontierIdx.ParentSlot), frontier_capacity, slot))[0] = parent;
         element_pointer(frontier, element_index(uint(FrontierIdx.Depth), frontier_capacity, slot))[0] = depth;
