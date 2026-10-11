@@ -10,8 +10,11 @@ use crate::{
             },
         },
         metal::{
-            Metal, MetalContext, command_buffer::MetalCommandBufferEncoding, context::LARGE_MIN_GPU_CORES,
-            error::MetalError, kernel::MetalKernels,
+            Metal, MetalContext,
+            command_buffer::MetalCommandBufferEncoding,
+            context::LARGE_MIN_GPU_CORES,
+            error::MetalError,
+            kernel::{MetalKernels, TreeUpdateOutMetalKernel},
         },
     },
     data_type::DataType,
@@ -60,6 +63,7 @@ pub struct MetalDeltaNetTreeVerify {
     gram: <MetalKernels as Kernels>::BuildTreeGramKernel,
     solve: <MetalKernels as Kernels>::TreeUpdateSolveKernel,
     out: <MetalKernels as Kernels>::BuildTreeOutKernel,
+    update_out: Option<TreeUpdateOutMetalKernel>,
 }
 
 impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
@@ -90,6 +94,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
                 transposed_h0,
                 true,
             )?,
+            update_out: use_mxu.then(|| TreeUpdateOutMetalKernel::new(context, arguments.data_type)).transpose()?,
         })
     }
 
@@ -99,8 +104,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let layout = Layout::new(arguments.tree_size, &self.arguments);
-        let mut h0_indices = command_buffer.allocate_scratch(DataType::I32.size_in_bytes())?;
-        command_buffer.encode_fill(&mut h0_indices, 0);
+        let h0_indices = command_buffer.allocate_constant_from_slice(&[0i32])?;
 
         let mut prefix =
             command_buffer.allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads], INNER_DATA_TYPE)?;
@@ -110,8 +114,6 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
         let mut a_inverse = command_buffer.allocate_scratch_for_shape(&layout.a_inverse_shape(), INNER_DATA_TYPE)?;
         let mut kh0 = command_buffer
             .allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads, layout.head_v_dim], INNER_DATA_TYPE)?;
-        let mut u = command_buffer
-            .allocate_scratch_for_shape(&[layout.num_v_heads, layout.tree_size, layout.head_v_dim], INNER_DATA_TYPE)?;
         let mut output = command_buffer.allocate_scratch_for_shape(
             &[layout.tree_size, layout.num_v_heads, layout.head_v_dim],
             self.arguments.data_type,
@@ -147,6 +149,30 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             self.arguments.head_v_dim,
             command_buffer,
         );
+        if arguments.tree_size <= TOKEN_BLOCK
+            && let Some(update_out) = &self.update_out
+        {
+            update_out.encode(
+                arguments.q,
+                arguments.v,
+                &prefix,
+                arguments.beta,
+                &kh0,
+                &a_inverse,
+                &qkd,
+                arguments.h0,
+                &mut output,
+                arguments.tree_size,
+                self.arguments.num_k_heads,
+                self.arguments.num_v_heads,
+                self.arguments.head_k_dim,
+                self.arguments.head_v_dim,
+                command_buffer,
+            );
+            return Ok(output);
+        }
+        let mut u = command_buffer
+            .allocate_scratch_for_shape(&[layout.num_v_heads, layout.tree_size, layout.head_v_dim], INNER_DATA_TYPE)?;
         self.solve.encode(
             Some(&kh0),
             arguments.v,

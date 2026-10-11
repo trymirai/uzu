@@ -121,7 +121,11 @@ PUBLIC KERNEL(BuildTreeGram)(
     const uint batch_idx GROUPS(batch_size),
     const uint value_head_idx GROUPS(value_heads),
     const uint tile_idx GROUPS(
-        tree_size.div_ceil(ROW_TILE) * tree_size.div_ceil(COL_TILE).div_ceil(NUM_SIMDGROUPS)
+        if USE_MXU && tree_size > 0 && tree_size <= ROW_TILE {
+          (head_v_dim.div_ceil(COL_TILE) + 1).div_ceil(NUM_SIMDGROUPS)
+        } else {
+          tree_size.div_ceil(ROW_TILE) * tree_size.div_ceil(COL_TILE).div_ceil(NUM_SIMDGROUPS)
+        }
     ),
     const uint thread_idx THREADS(NUM_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
@@ -141,7 +145,9 @@ PUBLIC KERNEL(BuildTreeGram)(
   const uint mat_base = (batch_idx * value_heads + value_head_idx) * tree_size * tree_size;
 
   const uint col_tiles = div_ceil(tree_size, COL_TILE);
-  const uint col_tile_groups = div_ceil(col_tiles, NUM_SIMDGROUPS);
+  const bool small_tree = USE_MXU && tree_size > 0 && tree_size <= ROW_TILE;
+  const uint col_tile_groups =
+      small_tree ? div_ceil(div_ceil(head_v_dim, COL_TILE) + 1, NUM_SIMDGROUPS) : div_ceil(col_tiles, NUM_SIMDGROUPS);
   const uint row_tile_idx = tile_idx / col_tile_groups;
   const uint col_tile_group_idx = tile_idx - row_tile_idx * col_tile_groups;
   const uint row_base = row_tile_idx * ROW_TILE;
@@ -274,8 +280,10 @@ PUBLIC KERNEL(BuildTreeGram)(
 
   // kh0 dv chunks are distributed round-robin over this row tile's simdgroups
   // (across its col-tile-group threadgroups); chunking also bounds registers.
-  if (use_h0) {
-    const uint row_simdgroups = col_tile_groups * NUM_SIMDGROUPS;
+  // For a single row tile, reserve the first simdgroup for Gram/inversion;
+  // the remaining simdgroups can project the initial state concurrently.
+  if (use_h0 && (!small_tree || col_tile_idx != 0)) {
+    const uint row_simdgroups = col_tile_groups * NUM_SIMDGROUPS - uint(small_tree);
     tree_kh0<T, Ops, AccFragment, LeftFragment, RightFragment>(
         k_rows,
         h0,
@@ -291,7 +299,7 @@ PUBLIC KERNEL(BuildTreeGram)(
         head_k_dim,
         head_v_dim,
         qk_stride,
-        col_tile_idx * COL_TILE,
+        (col_tile_idx - uint(small_tree)) * COL_TILE,
         row_simdgroups * COL_TILE,
         lane
     );
