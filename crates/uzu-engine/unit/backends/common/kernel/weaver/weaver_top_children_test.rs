@@ -9,7 +9,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    encodable_block::sampling::{gumbel_float, revidx},
+    encodable_block::sampling::{gumbel_float, gumbel_float_full_word, revidx},
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
 
@@ -37,6 +37,7 @@ fn top_children<B: Backend>(
     residual: &[bf16],
     candidate_logits: &[f32],
     ids: &[u32],
+    seeds: &[u64],
     prune_noise_scale: Option<f32>,
 ) -> (Vec<u32>, Vec<f32>, Option<Vec<f32>>) {
     let rows = residual.len() / CANDIDATES;
@@ -48,7 +49,7 @@ fn top_children<B: Backend>(
     let residual = create_buffer_with_data::<B, bf16>(&context, residual);
     let candidate_logits = create_buffer_with_data::<B, f32>(&context, candidate_logits);
     let ids = create_buffer_with_data::<B, u32>(&context, ids);
-    let depth_seeds = create_buffer_with_data::<B, u64>(&context, &DEPTH_SEEDS);
+    let depth_seeds = create_buffer_with_data::<B, u64>(&context, seeds);
     let mut metadata_values = vec![0u32; rows * MetadataIdx::COUNT];
     for row in 0..rows {
         metadata_values[MetadataIdx::Depth as usize * rows + row] = DEPTHS[row];
@@ -89,8 +90,8 @@ fn weaver_top_children_matches_cpu() {
 
     for prune_noise_scale in [None, Some(PRUNE_NOISE_SCALE)] {
         for_each_non_cpu_backend!(|B| {
-            let expected = top_children::<Cpu>(&residual, &candidate_logits, &ids, prune_noise_scale);
-            let actual = top_children::<B>(&residual, &candidate_logits, &ids, prune_noise_scale);
+            let expected = top_children::<Cpu>(&residual, &candidate_logits, &ids, &DEPTH_SEEDS, prune_noise_scale);
+            let actual = top_children::<B>(&residual, &candidate_logits, &ids, &DEPTH_SEEDS, prune_noise_scale);
             assert_eq!(actual.0, expected.0);
             for (actual, expected) in actual.1.iter().zip(expected.1) {
                 assert!((actual - expected).abs() < 1e-5);
@@ -111,9 +112,9 @@ fn weaver_top_children_matches_cpu() {
 #[uzu_test]
 fn weaver_top_children_prune_logprobs_match_reference() {
     let (residual, candidate_logits, ids) = inputs();
-    let (tokens, model, none) = top_children::<Cpu>(&residual, &candidate_logits, &ids, None);
+    let (tokens, model, none) = top_children::<Cpu>(&residual, &candidate_logits, &ids, &DEPTH_SEEDS, None);
     let (prune_tokens, prune_model, prune) =
-        top_children::<Cpu>(&residual, &candidate_logits, &ids, Some(PRUNE_NOISE_SCALE));
+        top_children::<Cpu>(&residual, &candidate_logits, &ids, &DEPTH_SEEDS, Some(PRUNE_NOISE_SCALE));
     assert!(none.is_none());
     let prune = prune.unwrap();
     assert_eq!(prune_tokens, tokens);
@@ -144,4 +145,32 @@ fn weaver_top_children_prune_logprobs_match_reference() {
         }
     }
     assert!(prune.iter().zip(&model).any(|(prune, model)| (prune - model).abs() > 0.1));
+}
+
+#[uzu_test]
+fn weaver_top_children_keeps_selection_and_pruning_distinct() {
+    // Seed 2871038, offset 0, word 2 is 0xffffffa1: a full32 uniform rounds to 1.0.
+    let seeds = [2_871_038];
+    assert!(gumbel_float(seeds[0], revidx(2048, VOCAB_SIZE)).is_finite());
+    assert_eq!(gumbel_float_full_word(seeds[0], revidx(2048, VOCAB_SIZE)), f32::INFINITY);
+    let residual = vec![bf16::ZERO; CANDIDATES];
+    let mut logits = (0..CANDIDATES).map(|index| -1000.0 - index as f32 * 32.0).collect::<Vec<_>>();
+    logits[0] = 0.0;
+    logits[1] = 100.0;
+    let mut ids = (0..CANDIDATES as u32).collect::<Vec<_>>();
+    ids[0] = 2048;
+    for scale in [None, Some(PRUNE_NOISE_SCALE)] {
+        let expected = top_children::<Cpu>(&residual, &logits, &ids, &seeds, scale);
+        assert_eq!(expected.0, [2048, 1, 2, 3, 4, 5, 6, 7]);
+        for_each_non_cpu_backend!(|B| {
+            let actual = top_children::<B>(&residual, &logits, &ids, &seeds, scale);
+            assert_eq!(actual.0, expected.0);
+            for (actual, expected) in actual.1.iter().zip(&expected.1) {
+                assert!(actual.is_finite() && (actual - expected).abs() < 1e-5);
+            }
+            for (actual, expected) in actual.2.iter().flatten().zip(expected.2.iter().flatten()) {
+                assert!(actual.is_finite() && (actual - expected).abs() < 1e-3);
+            }
+        });
+    }
 }

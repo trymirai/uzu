@@ -54,3 +54,7 @@ pub use vk_physical_device_subgroup_properties::VkPhysicalDeviceSubgroupProperti
 pub use vk_println_logger::VkPrintlnLogger;
 pub use vk_shader::VkShader;
 pub use vk_timestamp_query_pool::VkTimestampQueryPool;
+
+#[cfg(test)]
+#[path = "../../../unit/backends/vulkan/mod.rs"]
+mod tests;

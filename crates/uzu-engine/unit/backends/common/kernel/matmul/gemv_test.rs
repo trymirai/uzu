@@ -5,6 +5,8 @@ use num_traits::Float;
 use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::metal::{Metal, MetalContext};
 use crate::{
     array::ArrayElement,
     backends::{
@@ -21,13 +23,8 @@ use crate::{
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
-        matmul::{QuantBuffers, QuantInput},
+        matmul::{QuantBuffers, QuantInput, run_quant_cpu},
     },
-};
-#[cfg(backend = "metal")]
-use crate::{
-    backends::metal::{Metal, MetalContext},
-    tests::matmul::run_quant_cpu,
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -279,6 +276,24 @@ fn quant_gather_case(
             run_gemv::<B, bf16>(&context, &buffers.x, b(), Some(&ids_alloc), m, ids_per_row, k, None),
         )
     });
+}
+
+/// The packed codes hold the whole final u32 word when n·k·bits is not a multiple of 32: 2 x 3 outputs over K 36 (U4,
+/// 108 codes in 14 words, the last nibble 3 of word 13) and K 35 (U8, 105 codes in 27 words, the last byte 0 of word
+/// 26). The length is asserted before any word is written or decoded; with zero codes, unit scales, zero points 0 and
+/// A all 1, only the final code 3 contributes, to column 2 of each row.
+#[uzu_test]
+fn quant_final_packed_word() {
+    for (bits, k, words, word, shift) in [(4, 36, 14, 13, 12), (8, 35, 27, 26, 0)] {
+        let mut input = QuantInput::<f32>::new(2, k, 3, 32, bits, QuantizationMethod::ScaleZeroPoint, 0);
+        assert_eq!(input.w_packed.len(), words, "U{bits} K{k} packed words");
+        input.w_packed.fill(0);
+        input.scales.fill(1.0);
+        input.zero_points.as_mut().expect("zero points").fill(0);
+        input.x.fill(1.0);
+        input.w_packed[word] = 3 << shift;
+        assert_eq!(run_quant_cpu(&input), [0.0, 0.0, 3.0, 0.0, 0.0, 3.0], "U{bits} K{k} outputs");
+    }
 }
 
 #[uzu_test]

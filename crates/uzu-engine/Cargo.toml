@@ -113,3 +113,7 @@ tokio = { workspace = true, features = ["full"] }
 uzu.workspace = true
 criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }
+
+[[example]]
+name = "vulkan"
+required-features = ["vulkan"]
