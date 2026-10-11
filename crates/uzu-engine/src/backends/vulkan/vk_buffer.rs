@@ -1,9 +1,15 @@
-use std::{os::raw::c_void, ptr::NonNull, sync::Arc};
+use std::{ops::Range, os::raw::c_void, ptr::NonNull, sync::Arc};
 
 use ash::vk;
-use vk_mem::Alloc;
 
-use super::{Error, VkBufferError, VkContext};
+use super::{Error, VkBufferError, VkContext, VkSparseBuffer, Vulkan};
+use crate::{
+    backends::common::{
+        Buffer, BufferCpuAccessible, BufferRef, ConstantBuffer, GlobalBuffer, ScratchBuffer,
+        allocator::{bump::BumpAllocation, pool::PoolAllocation},
+    },
+    utils::downcast::downcast_ref,
+};
 
 /// Storage buffer that is permanently mapped into host-visible, host-coherent memory.
 pub struct VkBuffer {
@@ -24,26 +30,10 @@ impl VkBuffer {
         context: Arc<VkContext>,
         size: vk::DeviceSize,
     ) -> Result<Self, Error> {
-        if size == 0 {
-            return Err(Error::EmptyBuffer);
-        }
-        let buffer_info = vk::BufferCreateInfo::default().size(size).usage(
-            vk::BufferUsageFlags::STORAGE_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_SRC
-                | vk::BufferUsageFlags::TRANSFER_DST
-                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-        );
-        let allocation_info = vk_mem::AllocationCreateInfo {
-            usage: vk_mem::MemoryUsage::AutoPreferDevice,
-            flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_RANDOM,
-            required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            ..Default::default()
-        };
-        let allocator = context.memory_allocator();
-        let (buffer, mut allocation) =
-            unsafe { allocator.create_buffer(&buffer_info, &allocation_info) }.map_err(VkBufferError::Allocation)?;
-        let Some(cpu_ptr) = NonNull::new(allocator.get_allocation_info(&allocation).mapped_data) else {
-            unsafe { allocator.destroy_buffer(buffer, &mut allocation) };
+        let (buffer, mut allocation, info) = context.allocate_buffer(size)?;
+        let Some(cpu_ptr) = NonNull::new(info.mapped_data) else {
+            // SAFETY: the buffer was just allocated on `context` and nothing has used it.
+            unsafe { context.free_buffer(buffer, &mut allocation) };
             return Err(VkBufferError::MemoryMap(vk::Result::ERROR_MEMORY_MAP_FAILED).into());
         };
         let device_address = unsafe {
@@ -101,12 +91,77 @@ impl VkBuffer {
     pub unsafe fn get_bytes(&self) -> Box<[u8]> {
         Box::from(unsafe { std::slice::from_raw_parts(self.cpu_ptr.as_ptr().cast::<u8>(), self.size as usize) })
     }
+
+    /// The `VkBuffer` behind any buffer of the Vulkan backend, with `range` of it in that buffer's bytes.
+    pub fn resolve(
+        buffer: &(impl Buffer<Backend = Vulkan> + ?Sized),
+        range: std::range::Range<usize>,
+    ) -> (&Arc<VkBuffer>, Range<u64>) {
+        let (buffer, offset) = if let Some(buffer) = downcast_ref::<Arc<VkBuffer>>(buffer) {
+            (buffer, 0)
+        } else if let Some(allocation) = downcast_ref::<BumpAllocation<Arc<VkBuffer>>>(buffer) {
+            (allocation.page(), allocation.range().start)
+        } else if let Some(allocation) = downcast_ref::<PoolAllocation<Arc<VkBuffer>>>(buffer) {
+            (allocation.page(), allocation.range().start)
+        } else if let Some(sparse) = downcast_ref::<VkSparseBuffer>(buffer) {
+            (sparse.buffer(), 0)
+        } else {
+            unreachable!("unsupported Vulkan buffer type")
+        };
+        (buffer, (offset + range.start) as u64..(offset + range.end) as u64)
+    }
+
+    pub fn resolve_ref<'a>(buffer: impl BufferRef<Backend = Vulkan> + 'a) -> (&'a Arc<Self>, Range<u64>) {
+        let (buffer, range) = buffer.parts();
+        Self::resolve(buffer, range)
+    }
 }
 
 impl Drop for VkBuffer {
     fn drop(&mut self) {
-        unsafe {
-            self.context.memory_allocator().destroy_buffer(self.buffer, &mut self.allocation);
-        }
+        // SAFETY: allocated by `new` on this context; command buffers retain the `Arc` until their GPU work completes.
+        unsafe { self.context.free_buffer(self.buffer, &mut self.allocation) };
     }
 }
+
+impl Buffer for Arc<VkBuffer> {
+    type Backend = Vulkan;
+
+    fn size(&self) -> usize {
+        VkBuffer::size(self) as usize
+    }
+}
+
+impl BufferCpuAccessible for Arc<VkBuffer> {
+    fn cpu_ptr(&self) -> NonNull<c_void> {
+        VkBuffer::cpu_ptr(self)
+    }
+}
+
+impl GlobalBuffer for Arc<VkBuffer> {}
+
+impl Buffer for BumpAllocation<Arc<VkBuffer>> {
+    type Backend = Vulkan;
+
+    fn size(&self) -> usize {
+        self.range().iter().len()
+    }
+}
+
+impl BufferCpuAccessible for BumpAllocation<Arc<VkBuffer>> {
+    fn cpu_ptr(&self) -> NonNull<c_void> {
+        unsafe { VkBuffer::cpu_ptr(self.page()).byte_add(self.range().start) }
+    }
+}
+
+impl ConstantBuffer for BumpAllocation<Arc<VkBuffer>> {}
+
+impl Buffer for PoolAllocation<Arc<VkBuffer>> {
+    type Backend = Vulkan;
+
+    fn size(&self) -> usize {
+        self.range().iter().len()
+    }
+}
+
+impl ScratchBuffer for PoolAllocation<Arc<VkBuffer>> {}

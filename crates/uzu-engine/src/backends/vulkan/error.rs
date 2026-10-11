@@ -64,4 +64,11 @@ pub enum Error {
         groups: [u32; 3],
         limit: [u32; 3],
     },
+    #[error("GPU capture is not supported by the Vulkan backend")]
+    CaptureUnsupported,
+    #[error("sparse buffer mapping of {requested} bytes exceeds its capacity of {capacity} bytes")]
+    SparseCapacity {
+        requested: usize,
+        capacity: usize,
+    },
 }

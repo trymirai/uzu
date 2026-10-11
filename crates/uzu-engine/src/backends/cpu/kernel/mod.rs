@@ -31,7 +31,7 @@ impl Kernels for CpuKernels {
     type Backend = Cpu;
 
     autogen_kernels!();
-    type AttentionKernel = attention::AttentionCpuKernel;
+    type AttentionKernel = attention::Attention;
     type DeltaNetChunkedPrefill = Unsupported<Cpu>;
     type DeltaNetTreeVerify = Unsupported<Cpu>;
     type MatmulKernel = matmul::MatmulCpuKernel;

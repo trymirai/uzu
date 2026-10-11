@@ -2,7 +2,8 @@ use std::{mem::take, sync::Arc};
 
 use ash::vk;
 
-use super::{VkCommandBufferPending, VkCommandBufferResources, VkContext, VkTimestampQueryPool};
+use super::{VkCommandBuffer, VkCommandBufferPending, VkCommandBufferResources, VkContext, VkTimestampQueryPool};
+use crate::backends::common::CommandBufferExecutable;
 
 /// An ended command buffer that has not been submitted yet; dropping it recycles its resources.
 pub struct VkCommandBufferExecutable {
@@ -29,9 +30,13 @@ impl VkCommandBufferExecutable {
             retained,
         }
     }
+}
+
+impl CommandBufferExecutable for VkCommandBufferExecutable {
+    type CommandBuffer = VkCommandBuffer;
 
     /// Submission errors are reported by `VkCommandBufferPending::wait_until_completed`.
-    pub fn submit(mut self) -> VkCommandBufferPending {
+    fn submit(mut self) -> VkCommandBufferPending {
         let resources = self.resources.take().expect("executable owns resources until submission");
         let command_buffers = [vk::CommandBufferSubmitInfo::default().command_buffer(resources.command_buffer())];
         let submits = [vk::SubmitInfo2::default().command_buffer_infos(&command_buffers)];

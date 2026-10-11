@@ -20,6 +20,10 @@ fn resolve_test_model_path() -> PathBuf {
 
     const TEST_MODEL_REPO_ID: &str = "meta-llama/Llama-3.2-1B-Instruct";
     let repo_id = std::env::var("TEST_MODEL").unwrap_or_else(|_| TEST_MODEL_REPO_ID.to_string());
+    let local_path = PathBuf::from(&repo_id);
+    if local_path.is_dir() {
+        return local_path;
+    }
     let runtime = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     runtime.block_on(async {
         let config = EngineConfig::default().with_allow_ollama_usage(false).with_allow_lmstudio_usage(false);

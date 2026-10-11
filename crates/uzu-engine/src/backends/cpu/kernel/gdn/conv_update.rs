@@ -17,6 +17,7 @@ pub fn delta_net_conv_update<T: ArrayElement + Float>(
     state_stride: u32,
     #[specialize] has_bias: bool,
 ) {
+    assert!(kernel_size > 0 && (conv_dim == 0 || kernel_size >= 2), "invalid DeltaNet conv kernel_size");
     let kernel_size = kernel_size as usize;
     let conv_dim = conv_dim as usize;
     let state_stride = state_stride as usize;

@@ -4,7 +4,10 @@ use std::{
     time::Duration,
 };
 
-use super::{Error, VkCommandBufferCompleted, VkCommandBufferResources, VkContext, VkTimestampQueryPool};
+use super::{
+    Error, VkCommandBuffer, VkCommandBufferCompleted, VkCommandBufferResources, VkContext, VkTimestampQueryPool,
+};
+use crate::backends::common::CommandBufferPending;
 
 /// A submitted command buffer. Dropping it waits for the GPU before releasing anything it retains.
 pub struct VkCommandBufferPending {
@@ -36,19 +39,6 @@ impl VkCommandBufferPending {
         }
     }
 
-    pub fn wait_until_completed(mut self) -> Result<VkCommandBufferCompleted, Error> {
-        if let Some(error) = self.submit_error.take() {
-            return Err(error);
-        }
-        if let Err(error) = self.wait() {
-            self.retain_forever();
-            return Err(error);
-        }
-        self.retained.clear();
-        let nanos = self.timestamps.take().expect("pending owns timestamps until completion").get_duration_nanos(0)?;
-        Ok(VkCommandBufferCompleted::new(Duration::from_nanos(nanos.round() as u64)))
-    }
-
     fn wait(&mut self) -> Result<(), Error> {
         let Some(resources) = self.resources.as_ref().filter(|_| self.submitted) else {
             return Ok(());
@@ -64,6 +54,23 @@ impl VkCommandBufferPending {
         self.resources = None;
         forget(self.timestamps.take());
         forget(take(&mut self.retained));
+    }
+}
+
+impl CommandBufferPending for VkCommandBufferPending {
+    type CommandBuffer = VkCommandBuffer;
+
+    fn wait_until_completed(mut self) -> Result<VkCommandBufferCompleted, Error> {
+        if let Some(error) = self.submit_error.take() {
+            return Err(error);
+        }
+        if let Err(error) = self.wait() {
+            self.retain_forever();
+            return Err(error);
+        }
+        self.retained.clear();
+        let nanos = self.timestamps.take().expect("pending owns timestamps until completion").get_duration_nanos(0)?;
+        Ok(VkCommandBufferCompleted::new(Duration::from_nanos(nanos.round() as u64)))
     }
 }
 

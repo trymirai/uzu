@@ -1,6 +1,6 @@
 use std::{
     ffi::CStr,
-    sync::{Arc, Weak},
+    sync::{Arc, Barrier, Weak},
     time::Duration,
 };
 
@@ -8,9 +8,12 @@ use ash::vk;
 use uzu_engine_macros::uzu_test;
 
 use super::kernel_fixture::KernelFixture;
-use crate::backends::vulkan::{
-    Error, VkBuffer, VkCommandBufferEncoding, VkComputePipeline, VkContext, VkShader, VkTimestampQueryPool,
-    vk_kernels::TestKernelAxisFloatVulkanKernel,
+use crate::backends::{
+    common::{CommandBufferCompleted, CommandBufferExecutable, CommandBufferPending, Context},
+    vulkan::{
+        Error, VkBuffer, VkCommandBufferEncoding, VkComputePipeline, VkContext, VkShader, VkTimestampQueryPool,
+        vk_kernels::TestKernelAxisFloatVulkanKernel,
+    },
 };
 
 const GROUP_SIZE: u32 = 64;
@@ -94,7 +97,7 @@ fn copy_and_fill_round_trip() {
     let pattern = (0..4096).map(|index| (index % 251) as u8).collect::<Vec<_>>();
     let source = fixture.buffer(&pattern);
     let destination = fixture.buffer(&[0u8; 4096]);
-    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    let mut encoding = context.create_command_buffer(None, None).unwrap();
     encoding.encode_fill(&destination, 0..4096, 0xab).unwrap();
     encoding.encode_copy(&source, 256..1280, &destination, 512).unwrap();
     encoding.encode_fill(&destination, 2048..2052, 0x01).unwrap();
@@ -115,7 +118,7 @@ fn invalid_ranges_return_errors_without_recording() {
     let pipeline = add_pipeline(context);
     let first = fixture.buffer(&[7u8; 4096]);
     let second = fixture.buffer(&[0u8; 4096]);
-    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    let mut encoding = context.create_command_buffer(None, None).unwrap();
     let range_error = |result| matches!(result, Err(Error::BufferRange { .. }));
     assert!(range_error(encoding.encode_copy(&first, 0..0, &second, 0)));
     assert!(range_error(encoding.encode_copy(&first, 4000..4100, &second, 0)));
@@ -180,7 +183,7 @@ fn foreign_context_objects_are_rejected() {
     let foreign_pipeline = add_pipeline(other_context);
     let foreign_error = |result| matches!(result, Err(Error::ForeignContext));
 
-    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    let mut encoding = context.create_command_buffer(None, None).unwrap();
     assert!(foreign_error(encoding.encode_copy(&foreign, 0..64, &local_output, 0)));
     assert!(foreign_error(encoding.encode_copy(&local_a, 0..64, &foreign, 0)));
     assert!(foreign_error(encoding.encode_fill(&foreign, 0..64, 0)));
@@ -256,7 +259,7 @@ fn transfer_and_dispatch_chain_is_ordered() {
     let [sum, copied, result] = [(); 3].map(|_| fixture.buffer(&vec![-1.0f32; size as usize]));
     let bytes = 0..size as u64 * 4;
 
-    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    let mut encoding = context.create_command_buffer(None, None).unwrap();
     encoding.encode_fill(&sum, bytes.clone(), 0).unwrap();
     encode_add(&mut encoding, &pipeline, [&a, &b, &sum], size).unwrap();
     encoding.encode_copy(&sum, bytes.clone(), &copied, 0).unwrap();
@@ -279,7 +282,7 @@ fn multiple_command_buffers_in_flight() {
     let pending = (0..8u8)
         .map(|index| {
             let source = fixture.buffer(&[index + 1; 256]);
-            let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+            let mut encoding = context.create_command_buffer(None, None).unwrap();
             encoding.encode_copy(&source, 0..256, &destination, index as u64 * 256).unwrap();
             encoding.end_encoding().unwrap().submit()
         })
@@ -306,7 +309,7 @@ fn retains_resources_until_completion() {
     let pending = {
         let pipeline = add_pipeline(context);
         let [a, b] = [&input, &input].map(|values| fixture.buffer(values));
-        let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+        let mut encoding = context.create_command_buffer(None, None).unwrap();
         encode_add(&mut encoding, &pipeline, [&a, &b, &output], size).unwrap();
         retained.push(Arc::downgrade(&pipeline) as Weak<dyn Send + Sync>);
         retained.extend([&a, &b].map(|buffer| Arc::downgrade(buffer) as Weak<dyn Send + Sync>));
@@ -321,7 +324,7 @@ fn retains_resources_until_completion() {
 
     let source = fixture.buffer(&[1u8; 64]);
     let weak_source = Arc::downgrade(&source);
-    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    let mut encoding = context.create_command_buffer(None, None).unwrap();
     encoding.encode_copy(&source, 0..64, &output, 0).unwrap();
     drop(source);
     drop(encoding.end_encoding().unwrap());
@@ -337,7 +340,7 @@ fn dropped_pending_waits_for_gpu() {
     let source = fixture.buffer(&pattern);
     let weak_source = Arc::downgrade(&source);
     let destination = fixture.buffer(&vec![0u8; pattern.len()]);
-    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+    let mut encoding = context.create_command_buffer(None, None).unwrap();
     encoding.encode_copy(&source, 0..pattern.len() as u64, &destination, 0).unwrap();
     drop(source);
     drop(encoding.end_encoding().unwrap().submit());
@@ -355,13 +358,13 @@ fn command_resources_survive_thousand_reuse_cycles() {
     let mut gpu_time = Duration::ZERO;
     for cycle in 0..1000u32 {
         if cycle.is_multiple_of(10) {
-            let mut abandoned = VkCommandBufferEncoding::new(context.clone()).unwrap();
+            let mut abandoned = context.create_command_buffer(None, None).unwrap();
             abandoned.encode_fill(&destination, 0..256, 0xff).unwrap();
             if cycle.is_multiple_of(20) {
                 drop(abandoned.end_encoding().unwrap());
             }
         }
-        let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+        let mut encoding = context.create_command_buffer(None, None).unwrap();
         encoding.encode_fill(&destination, 0..256, cycle as u8).unwrap();
         gpu_time += KernelFixture::complete(encoding).gpu_execution_time();
         // SAFETY: this cycle's command buffer completed; abandoned ones were never submitted.
@@ -384,7 +387,7 @@ fn four_threads_submit_concurrently() {
                 let destination = fixture.buffer(&[0u8; 1024]);
                 for submit in 0..32u8 {
                     let value = thread * 32 + submit;
-                    let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+                    let mut encoding = context.create_command_buffer(None, None).unwrap();
                     encoding.encode_fill(&source, 0..1024, value).unwrap();
                     encoding.encode_copy(&source, 0..1024, &destination, 0).unwrap();
                     KernelFixture::complete(encoding);
@@ -397,6 +400,39 @@ fn four_threads_submit_concurrently() {
     fixture.assert_clean();
 }
 
+/// The peak covers every simultaneously live buffer, including ones allocated on concurrent threads, and survives drops.
+#[uzu_test]
+fn peak_memory_covers_live_buffers() {
+    let fixture = KernelFixture::new();
+    let context = &fixture.context;
+    assert_eq!(context.peak_memory_usage(), Some(0));
+    let sizes = [1usize << 20, 3 << 20, 5 << 20];
+    let buffers = sizes.map(|size| context.create_buffer(size).unwrap());
+    let peak = context.peak_memory_usage().unwrap();
+    assert!(peak >= sizes.iter().sum::<usize>(), "peak {peak}");
+    assert!(matches!(context.create_buffer(0), Err(Error::EmptyBuffer)));
+    drop(buffers);
+    assert_eq!(context.peak_memory_usage(), Some(peak));
+
+    // A fresh context, so the peak reflects only the four buffers the barrier keeps alive at once.
+    let concurrent = KernelFixture::new();
+    let (threads, size) = (4, 80usize << 20);
+    let barrier = Barrier::new(threads);
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                let buffer = concurrent.context.create_buffer(size);
+                barrier.wait();
+                drop(buffer.unwrap());
+            });
+        }
+    });
+    let peak = concurrent.context.peak_memory_usage().unwrap();
+    assert!(peak >= threads * size, "peak {peak}");
+    fixture.assert_clean();
+    concurrent.assert_clean();
+}
+
 #[uzu_test]
 fn timestamps_measure_each_submission() {
     let fixture = KernelFixture::new();
@@ -407,7 +443,7 @@ fn timestamps_measure_each_submission() {
     let source = fixture.buffer(&vec![3u8; 16 << 20]);
     let destination = fixture.buffer(&vec![0u8; 16 << 20]);
     for _ in 0..3 {
-        let mut encoding = VkCommandBufferEncoding::new(context.clone()).unwrap();
+        let mut encoding = context.create_command_buffer(None, None).unwrap();
         encoding.encode_copy(&source, 0..16 << 20, &destination, 0).unwrap();
         assert!(KernelFixture::complete(encoding).gpu_execution_time() > Duration::ZERO);
     }

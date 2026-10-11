@@ -4,6 +4,10 @@ use crate::{
     encodable_block::mixer::attention::KVCacheView,
 };
 
+mod single_pass_attention;
+
+pub use single_pass_attention::SinglePassAttention;
+
 pub trait AttentionKernel: Sized + Send + Sync {
     type Backend: Backend<Kernels: Kernels<AttentionKernel = Self>>;
 

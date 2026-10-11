@@ -54,6 +54,7 @@ impl<T> BumpAllocator<T> {
         })
     }
 
+    #[cfg(any(backend = "cpu", backend = "metal"))]
     pub fn is_done(&self) -> bool {
         self.pages.iter().all(|page| Arc::strong_count(&page.page) == 1)
     }

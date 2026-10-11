@@ -267,7 +267,7 @@ fn quant_gather_case(
     let ids: Vec<u32> = (0..m * ids_per_row).map(|i| ((i * 37 + 11) % vocab) as u32).collect();
     // K_SPLIT == 1 keeps dense and gathered accumulation order identical.
     check_gather!(m, vocab, ids, ids_per_row, eps, |B| {
-        let context = <B as Backend>::Context::new().expect("context");
+        let context = <<B as Backend>::Context as Context>::new().expect("context");
         let buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
         let ids_alloc = create_buffer_with_data::<B, u32>(&context, &ids);
         let b = || buffers.matmul_b(&input);

@@ -1,14 +1,17 @@
-use std::{mem::take, ops::Range, sync::Arc};
+use std::{ffi::CString, mem::take, ops::Range, sync::Arc};
 
 use ash::vk;
 use bytemuck::NoUninit;
 use rangemap::RangeSet;
 
 use super::{
-    Error, VkBuffer, VkCommandBufferExecutable, VkCommandBufferResources, VkComputePipeline, VkContext,
-    VkTimestampQueryPool,
+    Error, VkBuffer, VkCommandBuffer, VkCommandBufferExecutable, VkCommandBufferResources, VkComputePipeline,
+    VkContext, VkTimestampQueryPool, Vulkan,
 };
-use crate::backends::common::allocator::bump::BumpAllocator;
+use crate::backends::common::{
+    Backend, BufferMut, BufferRef, CommandBufferEncoding,
+    allocator::{bump::BumpAllocator, pool::PoolAllocator},
+};
 
 /// Smallest buffer that holds uploads, so small uploads of one command buffer share it.
 const UPLOAD_PAGE_SIZE: usize = 4096;
@@ -22,11 +25,17 @@ pub struct VkCommandBufferEncoding {
     retained: Vec<Arc<dyn Send + Sync>>,
     reads: RangeSet<u64>,
     writes: RangeSet<u64>,
+    /// Uploads and constants: host-written memory of this command buffer, whose pages dispatches retain.
     uploads: BumpAllocator<Arc<VkBuffer>>,
+    /// Scratch pages; a dispatch retains the pages it uses until the command buffer completes.
+    allocation_pool: Arc<PoolAllocator<Arc<VkBuffer>>>,
 }
 
 impl VkCommandBufferEncoding {
-    pub fn new(context: Arc<VkContext>) -> Result<Self, Error> {
+    pub fn new(
+        context: Arc<VkContext>,
+        allocation_pool: Arc<PoolAllocator<Arc<VkBuffer>>>,
+    ) -> Result<Self, Error> {
         let mut encoding = Self {
             resources: Some(context.acquire_command_buffer_resources()?),
             context: context.clone(),
@@ -35,6 +44,7 @@ impl VkCommandBufferEncoding {
             reads: RangeSet::new(),
             writes: RangeSet::new(),
             uploads: BumpAllocator::new(UPLOAD_PAGE_SIZE),
+            allocation_pool,
         };
         let mut timestamps = VkTimestampQueryPool::new(context, 2)?;
         let command_buffer = encoding.command_buffer();
@@ -74,7 +84,7 @@ impl VkCommandBufferEncoding {
         let destination_end = destination_offset.checked_add(size).ok_or(Error::BufferRange {
             start: destination_offset,
             end: u64::MAX,
-            size: destination.size(),
+            size: destination.as_ref().size(),
         })?;
         let destination_range = destination_offset..destination_end;
         let source_addresses = device_addresses(source, &source_range)?;
@@ -202,11 +212,11 @@ impl VkCommandBufferEncoding {
             });
         }
         for (buffer, range) in buffers.clone() {
-            if range.start > range.end || range.end > buffer.size() {
+            if range.start > range.end || range.end > buffer.as_ref().size() {
                 return Err(Error::BufferRange {
                     start: range.start,
                     end: range.end,
-                    size: buffer.size(),
+                    size: buffer.as_ref().size(),
                 });
             }
         }
@@ -314,6 +324,82 @@ impl Drop for VkCommandBufferEncoding {
             // Never submitted, so the GPU cannot be using it; the pool reset on reuse discards the recording.
             unsafe { self.context.recycle_command_buffer_resources(resources) };
         }
+    }
+}
+
+impl CommandBufferEncoding for VkCommandBufferEncoding {
+    type CommandBuffer = VkCommandBuffer;
+
+    fn context(&self) -> &VkContext {
+        &self.context
+    }
+
+    fn allocate_constant(
+        &mut self,
+        size: usize,
+    ) -> Result<<Vulkan as Backend>::ConstantBuffer, Error> {
+        let context = self.context.clone();
+        self.uploads.allocate(size, |size| Ok(Arc::new(VkBuffer::new(context, size as u64)?)))
+    }
+
+    fn allocate_scratch(
+        &mut self,
+        size: usize,
+    ) -> Result<<Vulkan as Backend>::ScratchBuffer, Error> {
+        let context = self.context.clone();
+        self.allocation_pool.allocate(size, |size| Ok(Arc::new(VkBuffer::new(context, size as u64)?)))
+    }
+
+    fn encode_copy(
+        &mut self,
+        src: impl BufferRef<Backend = Vulkan>,
+        dst: impl BufferMut<Backend = Vulkan>,
+    ) {
+        let (source, source_range) = src.parts();
+        let (destination, destination_range) = dst.parts();
+        assert_eq!(source_range.iter().len(), destination_range.iter().len(), "copy ranges differ in size");
+        if source_range.iter().len() == 0 {
+            return;
+        }
+        let (source, source_range) = VkBuffer::resolve(source, source_range);
+        let (destination, destination_range) = VkBuffer::resolve(destination, destination_range);
+        VkCommandBufferEncoding::encode_copy(self, source, source_range, destination, destination_range.start)
+            .expect("Vulkan copy");
+    }
+
+    fn encode_fill(
+        &mut self,
+        dst: impl BufferMut<Backend = Vulkan>,
+        value: u8,
+    ) {
+        let (destination, range) = dst.parts();
+        if range.iter().len() == 0 {
+            return;
+        }
+        let (destination, range) = VkBuffer::resolve(destination, range);
+        VkCommandBufferEncoding::encode_fill(self, destination, range, value).expect("Vulkan fill");
+    }
+
+    /// Labels need `VK_EXT_debug_utils`, which the context enables with validation; otherwise there is nothing to mark.
+    fn push_debug_group(
+        &mut self,
+        name: &str,
+    ) {
+        if let Some(debug_utils) = self.context.debug_utils() {
+            let name = CString::new(name).expect("debug group name contains NUL");
+            let label = vk::DebugUtilsLabelEXT::default().label_name(&name);
+            unsafe { debug_utils.cmd_begin_debug_utils_label(self.command_buffer(), &label) };
+        }
+    }
+
+    fn pop_debug_group(&mut self) {
+        if let Some(debug_utils) = self.context.debug_utils() {
+            unsafe { debug_utils.cmd_end_debug_utils_label(self.command_buffer()) };
+        }
+    }
+
+    fn end_encoding(self) -> VkCommandBufferExecutable {
+        VkCommandBufferEncoding::end_encoding(self).expect("Vulkan command buffer recording")
     }
 }
 

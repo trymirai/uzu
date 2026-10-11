@@ -23,7 +23,7 @@ fn main() -> anyhow::Result<ExitCode> {
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH")?;
     let target_os = env::var("CARGO_CFG_TARGET_OS")?;
 
-    println!("cargo::rustc-check-cfg=cfg(backend, values(\"cpu\", \"metal\"))");
+    println!("cargo::rustc-check-cfg=cfg(backend, values(\"cpu\", \"metal\", \"vulkan\"))");
 
     let backend_cpu = cfg!(feature = "cpu");
     if backend_cpu {
@@ -33,6 +33,11 @@ fn main() -> anyhow::Result<ExitCode> {
     let backend_metal = cfg!(feature = "metal") && matches!(target_os.as_ref(), "macos" | "ios" | "tvos" | "visionos");
     if backend_metal {
         println!("cargo::rustc-cfg=backend=\"metal\"");
+    }
+
+    let backend_vulkan = cfg!(feature = "vulkan");
+    if backend_vulkan {
+        println!("cargo::rustc-cfg=backend=\"vulkan\"");
     }
 
     let grammar = cfg!(feature = "grammar") && target_arch != "wasm32";
@@ -59,7 +64,7 @@ fn main() -> anyhow::Result<ExitCode> {
 
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
 
-    if backend_cpu {
+    if backend_cpu || backend_vulkan {
         compilers.push(Box::new(cpu::CpuCompiler::new()?));
     }
 
@@ -68,14 +73,13 @@ fn main() -> anyhow::Result<ExitCode> {
         compilers.push(Box::new(metal::MetalCompiler::new()?));
     }
 
+    #[cfg(feature = "vulkan")]
+    compilers.push(Box::new(slang::SlangCompiler::new()?));
+
     if compilers.is_empty() {
         println!("cargo::error=uzu requires at least one backend to be compiled in!");
         return Ok(ExitCode::FAILURE);
     }
-
-    // Descriptor-only until the Vulkan backend exists: checked against the backends above, never one by itself.
-    #[cfg(feature = "vulkan")]
-    compilers.push(Box::new(slang::SlangCompiler::new()?));
 
     let backends_kernels =
         compilers.iter().map(|c| c.build(&gpu_types, &enum_paths)).collect::<anyhow::Result<Vec<_>>>()?;

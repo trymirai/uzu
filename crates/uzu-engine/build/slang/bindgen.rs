@@ -29,10 +29,11 @@ pub fn binding_file(
     output_base.with_file_name(binding_module(kernel_name).to_string()).with_extension("rs")
 }
 
-/// Module declarations and re-exports of every generated binding from `(file, kernel name, test)`; bindings of
-/// `[[Test]]` kernels exist only in test builds.
-pub fn bindgen_umbrella(bindings: &[(String, String, bool)]) -> TokenStream {
-    let modules = bindings.iter().map(|(file, kernel_name, test)| {
+/// Module declarations and re-exports of every generated binding from `(file, kernel name, test, public)`; bindings of
+/// `[[Test]]` kernels exist only in test builds. `autogen_kernels!` names the binding of every public kernel as its
+/// `Kernels` associated type.
+pub fn bindgen_umbrella(bindings: &[(String, String, bool, bool)]) -> TokenStream {
+    let modules = bindings.iter().map(|(file, kernel_name, test, _)| {
         let test = test.then(|| quote! { #[cfg(test)] });
         let module = binding_module(kernel_name);
         let ty = format_ident!("{kernel_name}VulkanKernel");
@@ -44,7 +45,20 @@ pub fn bindgen_umbrella(bindings: &[(String, String, bool)]) -> TokenStream {
             pub use #module::#ty;
         }
     });
-    quote! { #(#modules)* }
+    let kernel_types = bindings.iter().filter(|(.., public)| *public).map(|(_, kernel_name, ..)| {
+        let kernel_trait = format_ident!("{kernel_name}Kernel");
+        let ty = format_ident!("{kernel_name}VulkanKernel");
+        quote! { type #kernel_trait = crate::backends::vulkan::#ty; }
+    });
+    quote! {
+        #(#modules)*
+
+        macro_rules! autogen_kernels {
+            () => {
+                #(#kernel_types)*
+            }
+        }
+    }
 }
 
 /// Raw typed binding of a kernel. Its constructor and `encode` follow the common `Kernel`
@@ -597,6 +611,78 @@ pub fn bindgen(
         Vec::new()
     };
 
+    // A public kernel implements its common trait through the raw binding: buffers resolve to their `VkBuffer` and
+    // byte range, every other argument passes through.
+    let trait_impl = if info.is_public() {
+        let kernel_trait = format_ident!("{kernel_name}Kernel");
+        let new_parameters = kernel
+            .parameters
+            .iter()
+            .map(|parameter| {
+                let name = format_ident!("{}", parameter.name.as_ref());
+                Ok(match &parameter.ty {
+                    KernelParameterType::Type => quote! { #name: crate::data_type::DataType },
+                    KernelParameterType::Value(text) => {
+                        let ty: Type = syn::parse_str(text)?;
+                        quote! { #name: #ty }
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let (mut trait_arguments, mut conversions, mut call_arguments) = (Vec::new(), Vec::new(), Vec::new());
+        for argument in &kernel.arguments {
+            let name = format_ident!("{}", argument.name.as_ref());
+            let ty = match &argument.ty {
+                KernelArgumentType::Buffer(access) => {
+                    let reference = match access {
+                        KernelBufferAccess::Read => quote! { crate::backends::common::BufferRef },
+                        KernelBufferAccess::ReadWrite => quote! { crate::backends::common::BufferMut },
+                    };
+                    let resolve = quote! {{
+                        let (buffer, range) = #reference::parts(#name);
+                        VkBuffer::resolve(buffer, range)
+                    }};
+                    conversions.push(if argument.conditional {
+                        quote! { let #name = #name.map(|#name| #resolve); }
+                    } else {
+                        quote! { let #name = #resolve; }
+                    });
+                    quote! { impl #reference<Backend = crate::backends::vulkan::Vulkan> }
+                },
+                KernelArgumentType::Constant(text) => {
+                    let ty: Type = syn::parse_str(text)?;
+                    quote! { #ty }
+                },
+            };
+            trait_arguments.push(if argument.conditional {
+                quote! { #name: Option<#ty> }
+            } else {
+                quote! { #name: #ty }
+            });
+            call_arguments.push(name);
+        }
+        quote! {
+            #[allow(clippy::style, clippy::complexity, clippy::perf)]
+            impl crate::backends::common::kernel::#kernel_trait for #struct_name {
+                type Backend = crate::backends::vulkan::Vulkan;
+
+                #[allow(non_snake_case)]
+                fn new(context: &VkContext #(, #new_parameters)*) -> Result<Self, Error> {
+                    #struct_name::new(&context.arc() #(, #type_parameters)* #(, #specialization_names)*)
+                }
+
+                fn encode(&self, #(#trait_arguments,)* command_buffer: &mut VkCommandBufferEncoding) {
+                    #(#conversions)*
+                    // SAFETY: as for the CPU kernels, the common contract makes callers pass ranges that cover every
+                    // element the kernel indexes, aliasing only where the kernel defines it.
+                    unsafe { #struct_name::encode(self, #(#call_arguments,)* command_buffer) }
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
         use ash::vk;
 
@@ -676,6 +762,8 @@ pub fn bindgen(
                 .expect(#dispatch_message);
             }
         }
+
+        #trait_impl
     })
 }
 

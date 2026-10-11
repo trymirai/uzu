@@ -15,5 +15,8 @@ pub mod util;
 
 #[path = "../bench_cold_pool_test.rs"]
 mod bench_cold_pool_test;
+#[cfg(backend = "vulkan")]
+#[path = "../engine/language_model/inference_test.rs"]
+mod inference_test;
 #[path = "../session/model_loading_bench.rs"]
 mod model_loading_bench;

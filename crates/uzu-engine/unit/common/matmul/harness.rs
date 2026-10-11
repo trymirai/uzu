@@ -124,7 +124,7 @@ pub fn deterministic_input<T: ArrayElement + Float>(case: Case) -> Input<T> {
     }
 }
 
-fn run<B: Backend, T: ArrayElement + Float>(
+pub fn run<B: Backend, T: ArrayElement + Float>(
     context: &B::Context,
     kernel: &mut <B::Kernels as Kernels>::MatmulKernel,
     input: &Input<T>,

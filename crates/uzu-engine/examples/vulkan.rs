@@ -1,9 +1,12 @@
 use std::{ffi::CStr, sync::Arc, time::Instant};
 
 use ash::vk;
-use uzu_engine::backends::vulkan::{
-    Error, VkBuffer, VkBufferError, VkCommandBufferCompleted, VkCommandBufferEncoding, VkComputePipeline, VkContext,
-    VkContextCreateInfo, VkShader,
+use uzu_engine::backends::{
+    common::{CommandBufferCompleted, CommandBufferExecutable, CommandBufferPending, Context},
+    vulkan::{
+        Error, VkBuffer, VkBufferError, VkCommandBufferCompleted, VkComputePipeline, VkContext, VkContextCreateInfo,
+        VkShader,
+    },
 };
 
 const WARMUP: usize = 3;
@@ -13,7 +16,7 @@ const DISPATCH_ELEMENTS: u32 = 1 << 20;
 const DISPATCH_COUNTS: [u32; 2] = [1, 64];
 
 fn main() -> Result<(), Error> {
-    let context = Arc::new(VkContext::new(VkContextCreateInfo::default())?);
+    let context = VkContext::new(VkContextCreateInfo::default())?;
     let properties = &context.physical_device().properties;
     let name = unsafe { CStr::from_ptr(properties.device_name.as_ptr()) };
     let run_kind = if properties.device_type == vk::PhysicalDeviceType::CPU {
@@ -37,7 +40,7 @@ fn main() -> Result<(), Error> {
                 let context = context.clone();
                 scope.spawn(move || -> Result<(), Error> {
                     for _ in 0..32 {
-                        drop(VkCommandBufferEncoding::new(context.clone())?);
+                        drop(context.create_command_buffer(None, None)?);
                     }
                     Ok(())
                 })
@@ -79,7 +82,7 @@ fn main() -> Result<(), Error> {
         Arc::get_mut(&mut buffers[2])
             .expect("no pending command buffer retains the output")
             .fill(bytemuck::cast_slice(&vec![-1234f32; lanes as usize]))?;
-        let mut encoding = VkCommandBufferEncoding::new(context.clone())?;
+        let mut encoding = context.create_command_buffer(None, None)?;
         // SAFETY: test_kernel_axis_float reads input_0/input_1 and writes output at indices < size,
         // which the push constants pass as the three declared buffers' addresses followed by size.
         unsafe {
@@ -116,7 +119,7 @@ fn main() -> Result<(), Error> {
         let source = Arc::new(VkBuffer::new(context.clone(), copy_bytes)?);
         let destination = Arc::new(VkBuffer::new(context.clone(), copy_bytes)?);
         let (gpu, wall) = measure(|| {
-            let mut encoding = VkCommandBufferEncoding::new(context.clone())?;
+            let mut encoding = context.create_command_buffer(None, None)?;
             encoding.encode_copy(&source, 0..copy_bytes, &destination, 0)?;
             encoding.end_encoding()?.submit().wait_until_completed()
         })?;
@@ -150,7 +153,7 @@ fn main() -> Result<(), Error> {
     let mut dispatch_times = Vec::new();
     for dispatches in DISPATCH_COUNTS {
         let (gpu, wall) = measure(|| {
-            let mut encoding = VkCommandBufferEncoding::new(context.clone())?;
+            let mut encoding = context.create_command_buffer(None, None)?;
             // Dispatch d writes ping (even d) or pong (odd d) from the previous output, so each one
             // depends on the last through a declared read-after-write or write-after-read hazard.
             for dispatch in 0..dispatches {

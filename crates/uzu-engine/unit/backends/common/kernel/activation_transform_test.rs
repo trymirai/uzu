@@ -48,7 +48,7 @@ fn run<T: ArrayElement + Float + Debug, B: Backend>(
     } else {
         kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut command_buffer);
     }
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    CommandBufferEncoding::end_encoding(command_buffer).submit().wait_until_completed().unwrap();
     if !in_place {
         assert_eq!(buffer_to_vec::<B, T>(&input), data);
     }
@@ -111,7 +111,7 @@ fn input_and_output_rht_bf16() {
 #[uzu_test]
 fn output_rht_fused_bias_matches_separate_mixed_dtype() {
     for_each_backend!(|B| {
-        let context = <B as Backend>::Context::new().expect("context");
+        let context = <<B as Backend>::Context as Context>::new().expect("context");
         let channels = 2 * BLOCK_SIZE as usize;
         let data: Vec<bf16> = (0..2 * channels).map(|i| bf16::from_f32((i as f32 * 0.17).sin() * 2.0)).collect();
         let bias_data: Vec<f32> = (0..channels).map(|i| (i as f32 * 0.31).cos() * 0.03).collect();
@@ -137,7 +137,7 @@ fn output_rht_fused_bias_matches_separate_mixed_dtype() {
         ActivationTransform::<B>::output_rht(context.as_ref(), bf16::data_type(), Some(f32::data_type()), true)
             .expect("fused transform")
             .encode_fp_in_place(&mut fused, &factors, Some(&bias), 2, channels as u32, &mut command_buffer);
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        CommandBufferEncoding::end_encoding(command_buffer).submit().wait_until_completed().unwrap();
         assert_eq!(buffer_to_vec::<B, bf16>(&fused), expected);
     });
 }
@@ -202,7 +202,7 @@ mod quantize {
             columns,
             &mut command_buffer,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        CommandBufferEncoding::end_encoding(command_buffer).submit().wait_until_completed().unwrap();
 
         (buffer_to_vec(&values), buffer_to_vec(&scales), group_sums.as_ref().map(buffer_to_vec))
     }

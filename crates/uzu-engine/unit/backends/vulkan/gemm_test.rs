@@ -11,6 +11,129 @@ use crate::{
     data_type::DataType,
 };
 
+#[uzu_test]
+fn typed_dispatch_matches_cpu() {
+    use crate::{
+        backends::{
+            common::{Backend, Kernels, kernel::matmul::MatmulKernel},
+            vulkan::Vulkan,
+        },
+        tests::matmul::{Case, Shape, cpu_reference, deterministic_input, harness::run},
+    };
+
+    let fixture = KernelFixture::new();
+    let context = fixture.context.as_ref();
+    let mut f32_kernel = <<Vulkan as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        context,
+        DataType::F32,
+        DataType::F32,
+        DataType::F32,
+    )
+    .unwrap();
+    let mut bf16_kernel = <<Vulkan as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        context,
+        DataType::BF16,
+        DataType::BF16,
+        DataType::BF16,
+    )
+    .unwrap();
+    for shape in [Shape::new(1, 33, 11), Shape::new(7, 33, 65), Shape::new(65, 129, 32)] {
+        for transpose in [false, true] {
+            for (scale, accumulate, rht, bias) in
+                [(1.0, false, false, false), (0.5, true, false, true), (0.5, false, true, true)]
+            {
+                if rht && shape.n % 32 != 0 {
+                    continue;
+                }
+                let case = Case {
+                    b_transpose: transpose,
+                    ..Case::new(shape).with_ab_scale(scale).with_accumulate(accumulate).with_rht(rht).with_bias(bias)
+                };
+                let input = deterministic_input::<f32>(case);
+                let expected = cpu_reference(&input);
+                let actual = run::<Vulkan, f32>(context, &mut f32_kernel, &input, |kernel, args, encoding| {
+                    kernel.encode(args, encoding).unwrap();
+                });
+                for (e, a) in expected.iter().zip(actual) {
+                    assert!((e - a).abs() <= 1e-4 * e.abs().max(1.0), "F32 {case:?}: {e} != {a}");
+                }
+                let input = deterministic_input::<half::bf16>(case);
+                let expected = cpu_reference(&input);
+                let actual = run::<Vulkan, half::bf16>(context, &mut bf16_kernel, &input, |kernel, args, encoding| {
+                    kernel.encode(args, encoding).unwrap();
+                });
+                for (e, a) in expected.iter().zip(actual) {
+                    let (e, a) = (e.to_f32(), a.to_f32());
+                    assert!((e - a).abs() <= 0.02 * e.abs().max(1.0), "BF16 {case:?}: {e} != {a}");
+                }
+            }
+        }
+    }
+    fixture.assert_clean();
+}
+
+#[uzu_test]
+fn typed_quantized_dispatch_matches_cpu() {
+    use crate::{
+        backends::{
+            common::{
+                Backend, Context, Kernels,
+                gpu_types::{QuantizationMethod, QuantizationMode},
+                kernel::matmul::MatmulKernel,
+            },
+            vulkan::Vulkan,
+        },
+        tests::{
+            helpers::{buffer_to_vec, submit_command_buffer},
+            matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu},
+        },
+    };
+
+    let fixture = KernelFixture::new();
+    let context = fixture.context.as_ref();
+    let mut kernel = <<Vulkan as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        context,
+        DataType::BF16,
+        DataType::BF16,
+        DataType::BF16,
+    )
+    .unwrap();
+    for (m, k, group, prepared) in [(1, 143, 32, false), (8, 143, 32, false), (1, 256, 128, true), (8, 256, 128, true)]
+    {
+        for bits in [4, 8] {
+            for method in
+                [QuantizationMethod::ScaleBias, QuantizationMethod::ScaleZeroPoint, QuantizationMethod::ScaleSymmetric]
+            {
+                let mut input = QuantInput::<half::bf16>::new(m, k, 13, group, bits, method, 42)
+                    .with_group_output()
+                    .with_signed_weight_codes();
+                if bits == 8 {
+                    input.mode = QuantizationMode::I8;
+                }
+                let input = if prepared {
+                    input.with_prepared_a(128, Some(group))
+                } else {
+                    input
+                };
+                let expected = run_quant_cpu(&input);
+                let mut buffers = QuantBuffers::<Vulkan, half::bf16>::allocate(context, &input);
+                let mut encoding = context.create_command_buffer(None, None).unwrap();
+                kernel.encode(quant_arguments(&mut buffers, &input), &mut encoding).unwrap();
+                submit_command_buffer(encoding);
+                let actual = buffer_to_vec::<Vulkan, half::bf16>(&buffers.y);
+                for (e, a) in expected.iter().zip(actual) {
+                    let (e, a) = (e.to_f32(), a.to_f32());
+                    assert!(
+                        (e - a).abs() <= 0.02 * e.abs().max(1.0),
+                        "m {m} k {k} bits {bits} {method:?} prepared {prepared}: {e} != {a}"
+                    );
+                }
+            }
+        }
+    }
+    fixture.assert_clean();
+}
+
 /// The case's `check` through Gemm; without a soft cap, Vulkan also stores the CPU's bits, as its K fold is the
 /// CPU's order.
 fn check(

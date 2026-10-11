@@ -683,6 +683,22 @@ fn special_rows_all_types() {
     special_rows::<bf16>();
 }
 
+/// F32 output exposes small squares lost beside a unit outlier; 16-bit rounding masks the statistics error.
+#[uzu_test]
+fn rms_preserves_small_energy_near_outlier() {
+    let fixture = KernelFixture::new();
+    let kernel = kernel::<f32, f32, f32>(&fixture, &NormalizationCase::new(1, 4096, 0));
+    let mut errors = Vec::new();
+    for index in [0, 2048] {
+        let mut case = NormalizationCase::<f32, f32>::new(1, 4096, 0);
+        case.input.fill(2f32.powi(-12));
+        case.input[index] = 1.0;
+        errors.extend(check::<f32, f32, f32>(&fixture, &kernel, &case).0);
+    }
+    KernelFixture::report("Normalization", errors);
+    fixture.assert_clean();
+}
+
 #[uzu_test]
 fn zero_rows_record_nothing() {
     let fixture = KernelFixture::new();

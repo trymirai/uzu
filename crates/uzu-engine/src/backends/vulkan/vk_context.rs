@@ -1,12 +1,21 @@
-use std::ffi::{CStr, c_char, c_void};
+use std::{
+    ffi::{CStr, c_char, c_void},
+    path::Path,
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use ash::{ext, khr, vk};
 use parking_lot::{Mutex, MutexGuard};
+use vk_mem::Alloc;
 
 use super::{
-    Error, VkCommandBufferResources, VkContextCreateInfo, VkContextError, VkLogger, VkPhysicalDevice,
-    VkPhysicalDeviceFeatures,
+    Error, VkBuffer, VkBufferError, VkCommandBufferEncoding, VkCommandBufferResources, VkContextCreateInfo,
+    VkContextError, VkLogger, VkPhysicalDevice, VkPhysicalDeviceFeatures, VkSparseBuffer, Vulkan,
 };
+use crate::backends::common::{Backend, Context, DeviceCapabilities, allocator::pool::PoolAllocator};
 
 const VK_LAYER_KHRONOS_VALIDATION: &CStr = c"VK_LAYER_KHRONOS_validation";
 const HOST_COHERENT_MEMORY: vk::MemoryPropertyFlags = vk::MemoryPropertyFlags::from_raw(
@@ -14,6 +23,7 @@ const HOST_COHERENT_MEMORY: vk::MemoryPropertyFlags = vk::MemoryPropertyFlags::f
 );
 /// https://docs.vulkan.org/refpages/latest/refpages/index.html
 pub struct VkContext {
+    weak_self: Weak<VkContext>,
     _entry: ash::Entry,
     instance: ash::Instance,
     create_info: Box<VkContextCreateInfo>,
@@ -21,14 +31,19 @@ pub struct VkContext {
     command_buffer_resources: Mutex<Vec<VkCommandBufferResources>>,
     debug_utils: ext::debug_utils::Instance,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
+    /// Command-buffer labels, available when the instance enables `VK_EXT_debug_utils` (with validation).
+    debug_utils_device: Option<ext::debug_utils::Device>,
     timestamp_valid_bits: u32,
     device: ash::Device,
     memory_allocator: Option<vk_mem::Allocator>,
+    /// Serializes VMA buffer allocation and free, so every committed-bytes high point is sampled before a free.
+    buffer_lifecycle: Mutex<()>,
+    peak_buffer_bytes: AtomicUsize,
     queue: Mutex<vk::Queue>,
     queue_family_index: u32,
 }
 impl VkContext {
-    pub fn new(create_info: VkContextCreateInfo) -> Result<Self, VkContextError> {
+    pub fn new(create_info: VkContextCreateInfo) -> Result<Arc<Self>, VkContextError> {
         let create_info = Box::new(create_info);
         let api_version = vk::API_VERSION_1_3;
         let required_extensions = vec![
@@ -80,8 +95,10 @@ impl VkContext {
                 device.destroy_device(None);
                 dispose_instance();
             })?;
+        let debug_utils_device = create_info.with_validation.then(|| ext::debug_utils::Device::new(&instance, &device));
 
-        Ok(Self {
+        Ok(Arc::new_cyclic(|weak_self| Self {
+            weak_self: weak_self.clone(),
             _entry: entry,
             instance,
             create_info,
@@ -89,12 +106,24 @@ impl VkContext {
             command_buffer_resources: Mutex::new(Vec::new()),
             debug_utils,
             debug_messenger,
+            debug_utils_device,
             timestamp_valid_bits,
             device,
             memory_allocator: Some(memory_allocator),
+            buffer_lifecycle: Mutex::new(()),
+            peak_buffer_bytes: AtomicUsize::new(0),
             queue: Mutex::new(queue),
             queue_family_index,
-        })
+        }))
+    }
+
+    /// The `Arc` that `new` created and that owns this context; it is alive while `&self` is.
+    pub fn arc(&self) -> Arc<Self> {
+        self.weak_self.upgrade().expect("a VkContext is always owned by the Arc that created it")
+    }
+
+    pub fn debug_utils(&self) -> Option<&ext::debug_utils::Device> {
+        self.debug_utils_device.as_ref()
     }
 
     /// Returns reset command resources: a cached set when one is idle, otherwise a new set.
@@ -122,8 +151,54 @@ impl VkContext {
         &self.device
     }
 
-    pub fn memory_allocator(&self) -> &vk_mem::Allocator {
+    fn memory_allocator(&self) -> &vk_mem::Allocator {
         self.memory_allocator.as_ref().unwrap()
+    }
+
+    /// Creates and binds a VMA buffer, then raises the peak to the bytes VMA has committed in device-memory blocks
+    /// before any other allocation or free can run.
+    pub fn allocate_buffer(
+        &self,
+        size: vk::DeviceSize,
+    ) -> Result<(vk::Buffer, vk_mem::Allocation, vk_mem::AllocationInfo), Error> {
+        if size == 0 {
+            return Err(Error::EmptyBuffer);
+        }
+        let buffer_info = vk::BufferCreateInfo::default().size(size).usage(
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+        );
+        let allocation_info = vk_mem::AllocationCreateInfo {
+            usage: vk_mem::MemoryUsage::AutoPreferDevice,
+            flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_RANDOM,
+            required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            ..Default::default()
+        };
+        let allocator = self.memory_allocator();
+        let _lifecycle = self.buffer_lifecycle.lock();
+        let (buffer, mut allocation) =
+            unsafe { allocator.create_buffer(&buffer_info, &allocation_info) }.map_err(VkBufferError::Allocation)?;
+        let budgets = allocator
+            .get_heap_budgets()
+            .inspect_err(|_| unsafe { allocator.destroy_buffer(buffer, &mut allocation) })
+            .map_err(VkBufferError::Allocation)?;
+        let committed = budgets.iter().map(|budget| budget.statistics.blockBytes as usize).sum();
+        self.peak_buffer_bytes.fetch_max(committed, Ordering::Relaxed);
+        Ok((buffer, allocation, allocator.get_allocation_info(&allocation)))
+    }
+
+    /// # Safety
+    /// `buffer` and `allocation` must come from one `allocate_buffer` call on this context, must not be freed again,
+    /// and no pending GPU work or host pointer may still use them.
+    pub unsafe fn free_buffer(
+        &self,
+        buffer: vk::Buffer,
+        allocation: &mut vk_mem::Allocation,
+    ) {
+        let _lifecycle = self.buffer_lifecycle.lock();
+        unsafe { self.memory_allocator().destroy_buffer(buffer, allocation) };
     }
 
     /// Hold the guard only for queue submission: Vulkan requires external queue synchronization.
@@ -160,6 +235,79 @@ impl Drop for VkContext {
             }
             self.instance.destroy_instance(None);
         }
+    }
+}
+impl Context for VkContext {
+    type Backend = Vulkan;
+
+    fn new() -> Result<Arc<Self>, Error> {
+        let context = VkContext::new(VkContextCreateInfo {
+            with_validation: cfg!(test),
+            ..Default::default()
+        })?;
+        #[cfg(test)]
+        eprintln!(
+            "Vulkan test device: {} ({:?}, subgroup size {})",
+            Context::device_name(&*context).unwrap_or("unknown"),
+            context.physical_device.properties.device_type,
+            context.physical_device.subgroup_properties.size,
+        );
+        Ok(context)
+    }
+
+    fn device_name(&self) -> Option<&str> {
+        self.physical_device.properties.device_name_as_c_str().ok()?.to_str().ok()
+    }
+
+    fn create_command_buffer(
+        &self,
+        _name: Option<&str>,
+        allocation_pool: Option<Arc<<Vulkan as Backend>::AllocationPool>>,
+    ) -> Result<VkCommandBufferEncoding, Error> {
+        let allocation_pool = allocation_pool.unwrap_or_else(|| self.create_allocation_pool());
+        VkCommandBufferEncoding::new(self.arc(), allocation_pool)
+    }
+
+    fn create_buffer(
+        &self,
+        size: usize,
+    ) -> Result<Arc<VkBuffer>, Error> {
+        Ok(Arc::new(VkBuffer::new(self.arc(), size as u64)?))
+    }
+
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<VkSparseBuffer, Error> {
+        VkSparseBuffer::new(self.arc(), capacity)
+    }
+
+    fn create_allocation_pool(&self) -> Arc<<Vulkan as Backend>::AllocationPool> {
+        PoolAllocator::new()
+    }
+
+    /// Peak VMA-committed buffer block bytes; driver-owned memory (pipelines, command pools, descriptors) is excluded.
+    fn peak_memory_usage(&self) -> Option<usize> {
+        Some(self.peak_buffer_bytes.load(Ordering::Relaxed))
+    }
+
+    /// Vulkan has no in-process capture to arm; `start_capture` reports it as unsupported.
+    fn enable_capture() {}
+
+    fn start_capture(
+        &self,
+        _trace_path: &Path,
+    ) -> Result<(), Error> {
+        Err(Error::CaptureUnsupported)
+    }
+
+    fn stop_capture(&self) -> Result<(), Error> {
+        Err(Error::CaptureUnsupported)
+    }
+
+    /// `VkSparseBuffer` commits its whole capacity up front, so lazily mapped buffers are not advertised.
+    fn device_capabilities(&self) -> DeviceCapabilities {
+        DeviceCapabilities::empty()
     }
 }
 fn get_entry() -> Result<ash::Entry, VkContextError> {

@@ -114,8 +114,8 @@ void attention_ordered_tile<Keys: IAttentionKeys>(
 // through the exact helpers, which this device class would flush; score products with a subnormal operand are exact
 // too, so no flushed value weighs in a normal one. Values that are not finite or may overflow replay the whole sequence
 // in the CPU's per-key order, whose classes the tile order does not keep; finite values below the magnitude limit agree
-// with the CPU within rounding, exp approximation and reordering. Every invocation reaches every barrier; the last one
-// follows the output.
+// with the CPU within rounding, exp and division approximation and reordering. Every invocation reaches every barrier;
+// the last one follows the output.
 public void attention_single_query<T: IModelFloat, Keys: IAttentionKeys>(
   Keys source,
   uint head_dim,

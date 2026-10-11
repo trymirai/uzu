@@ -71,8 +71,7 @@ pub fn normalization<
             }
         };
 
-        // Residual add or copy to shortcut, and the sum of squares of the RMS path
-        let mut sum_sq = AccumT::zero();
+        // Residual add or copy to shortcut
         for i in 0..element_count {
             let input_val = unsafe { *input.add(batch_offset + i) };
             let mut val = input_val;
@@ -86,31 +85,22 @@ pub fn normalization<
                 }
                 unsafe { *skip_ptr = val };
             }
-            if !subtract_mean {
-                let accum_val = AccumT::from(val).unwrap();
-                sum_sq = sum_sq + accum_val * accum_val;
-            }
         }
         // Shifted two-pass variance around the first stored element: deltas are exact for near-constant rows, and
         // squared deviations from their mean avoid the cancellation of E[x²] - mean²
         let (pivot, mean_delta) = if subtract_mean && element_count > 0 {
             let pivot = stored(0);
-            let delta_sum = (0..element_count).fold(AccumT::zero(), |sum, i| sum + (stored(i) - pivot));
-            let mean_delta = delta_sum / element_count_accum;
-            sum_sq = (0..element_count).fold(AccumT::zero(), |sum, i| {
-                let deviation = (stored(i) - pivot) - mean_delta;
-                sum + deviation * deviation
-            });
-            (pivot, mean_delta)
+            (pivot, pairwise_sum(0..element_count, &|i| stored(i) - pivot) / element_count_accum)
         } else {
             (AccumT::zero(), AccumT::zero())
         };
-        let variance = sum_sq / element_count_accum;
+        let deviation = |i: usize| (stored(i) - pivot) - mean_delta;
+        let variance = pairwise_sum(0..element_count, &|i| deviation(i) * deviation(i)) / element_count_accum;
         let rms_inv = AccumT::from((variance + epsilon).to_f32().unwrap().sqrt().recip()).unwrap();
 
         // Normalization and scaling
         for i in 0..element_count {
-            let normalized: AccumT = ((stored(i) - pivot) - mean_delta) * rms_inv;
+            let normalized: AccumT = deviation(i) * rms_inv;
             let mut result: OutputT = if has_scales {
                 let scale_val = unsafe { AccumT::from(*scales.unwrap().add(i)).unwrap() };
                 if full_layer {
@@ -156,4 +146,16 @@ pub fn normalization<
             unsafe { *output.add(batch_offset + i) = result };
         }
     }
+}
+
+// Balanced halving with sequential leaves of at most 8 terms keeps the rounding depth logarithmic in the length
+fn pairwise_sum<T: Float>(
+    range: std::ops::Range<usize>,
+    term: &impl Fn(usize) -> T,
+) -> T {
+    if range.len() <= 8 {
+        return range.fold(T::zero(), |sum, i| sum + term(i));
+    }
+    let middle = range.start + range.len() / 2;
+    pairwise_sum(range.start..middle, term) + pairwise_sum(middle..range.end, term)
 }

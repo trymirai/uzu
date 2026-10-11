@@ -281,13 +281,14 @@ impl Compiler for SlangCompiler {
                 let (path, file_kernels, private) = self
                     .compile(&source, enum_paths, gpu_types)
                     .with_context(|| format!("cannot compile {}", source.display()))?;
-                let names = file_kernels.iter().map(|kernel| (&kernel.name, false));
-                for (name, test) in names.chain(private.iter().map(|(name, test)| (name, *test))) {
+                let names = file_kernels.iter().map(|kernel| (&kernel.name, false, true));
+                for (name, test, public) in names.chain(private.iter().map(|(name, test)| (name, *test, false))) {
                     let file = bindgen::binding_file(&self.out_dir.join(path.join("/")), name);
                     bindings.push((
                         file.to_str().context("binding path is not UTF-8")?.to_owned(),
                         name.to_string(),
                         test,
+                        public,
                     ));
                 }
                 kernels.insert(path, file_kernels);

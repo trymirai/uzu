@@ -12,8 +12,9 @@ use bytemuck::{AnyBitPattern, NoUninit};
 use num_traits::Float;
 
 use super::validation_logger::ValidationLogger;
-use crate::backends::vulkan::{
-    VkBuffer, VkCommandBufferCompleted, VkCommandBufferEncoding, VkContext, VkContextCreateInfo,
+use crate::backends::{
+    common::{CommandBufferCompleted, CommandBufferExecutable, CommandBufferPending, Context},
+    vulkan::{VkBuffer, VkCommandBufferCompleted, VkCommandBufferEncoding, VkContext, VkContextCreateInfo},
 };
 
 /// A validated Vulkan context with the buffer and submission helpers shared by the Vulkan tests.
@@ -42,7 +43,7 @@ impl KernelFixture {
             physical_device.subgroup_properties.size
         );
         Self {
-            context: Arc::new(context),
+            context,
             logger,
         }
     }
@@ -68,7 +69,7 @@ impl KernelFixture {
     }
 
     pub fn encoding(&self) -> VkCommandBufferEncoding {
-        VkCommandBufferEncoding::new(self.context.clone()).expect("command buffer")
+        self.context.create_command_buffer(None, None).expect("command buffer")
     }
 
     pub fn complete(encoding: VkCommandBufferEncoding) -> VkCommandBufferCompleted {

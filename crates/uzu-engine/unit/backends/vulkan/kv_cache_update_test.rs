@@ -346,3 +346,4 @@ fn throughput() {
     measure::<bf16>(&fixture);
     fixture.assert_clean();
 }
+use crate::backends::common::{CommandBufferExecutable, CommandBufferPending};

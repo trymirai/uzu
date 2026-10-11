@@ -814,3 +814,4 @@ fn throughput() {
     }
     fixture.assert_clean();
 }
+use crate::backends::common::CommandBufferCompleted;

@@ -15,7 +15,7 @@ groupshared uint activation_quantization_stages[2][ACTIVATION_QUANTIZATION_TILE]
 // its own final slot before that one writes only its own slot of stage 1, so the final barrier, which every invocation
 // passes before reading the scale, also publishes it; the next reduction writes stage 0 and passes a barrier before
 // writing stage 1 again, after every scale read.
-uint activation_quantization_reduce(uint value, uint tid, uint group, bool sum) {
+public uint activation_quantization_reduce(uint value, uint tid, uint group, bool sum) {
   activation_quantization_stages[0][tid] = value;
   GroupMemoryBarrierWithGroupSync();
   uint stage = 0;
@@ -69,7 +69,7 @@ float activation_quantization_scale(uint maximum) {
 // the nearest midpoint k + 1/2 (2.5 ULPs to the exact quotient plus half an ULP to its rounding, at most doubled across
 // a binade). There an exact integer comparison decides whether the exact quotient reaches the midpoint's lower rounding
 // boundary, halfway to its predecessor (an ULP below 0.5 is half the one above), the tie rounding to the even midpoint.
-int activation_quantization_code(float value, float scale) {
+public int activation_quantization_code(float value, float scale) {
   let value_bits = asuint(value) & 0x7fffffffu;
   let scale_bits = asuint(scale);
   var code = 0;

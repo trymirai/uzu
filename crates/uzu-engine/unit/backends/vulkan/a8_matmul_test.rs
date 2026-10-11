@@ -469,9 +469,9 @@ fn cpu_rejects(
     true
 }
 
-/// The CPU rejects A groups 0, 16, 48 and 256, B groups 16, 48 and 256, K not a multiple of the A group, I8 B codes and
-/// full-precision B, and admits the valid control. Vulkan construction rejects the same groups and I8 codes; `encode`
-/// rejects K not a multiple of the A group before recording, and the command buffer then completes with nothing written.
+/// The CPU rejects A groups 0, 16, 48 and 256, B groups 16, 48 and 256, K not a multiple of the A group and
+/// full-precision B, and admits I8 B codes and the valid U4 control. Vulkan construction rejects the same groups and I8
+/// codes; `encode` rejects such K before recording, and the command buffer then completes with nothing written.
 #[uzu_test]
 fn rejects_invalid_contracts() {
     for a_group in [0, 16, 48, 256] {
@@ -481,7 +481,7 @@ fn rejects_invalid_contracts() {
         assert!(cpu_rejects(32, 96, Some((U8, b_group))), "CPU B group {b_group}");
     }
     assert!(cpu_rejects(32, 104, Some((U4, 32))), "CPU K 104");
-    assert!(cpu_rejects(32, 96, Some((I8, 32))), "CPU I8");
+    assert!(!cpu_rejects(32, 96, Some((I8, 32))), "CPU I8 control");
     assert!(cpu_rejects(32, 96, None), "CPU full-precision B");
     assert!(!cpu_rejects(32, 96, Some((U4, 32))), "CPU control");
     let fixture = KernelFixture::new();

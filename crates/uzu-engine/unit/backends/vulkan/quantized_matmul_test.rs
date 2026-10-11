@@ -538,8 +538,8 @@ fn rejects_invalid_configurations() {
 }
 
 /// Quantized against full-precision Matmul on the same A and D, dense B F32 holding the same decoded weights:
-/// 0.8b_qkv (k 1024, n 3072) and 2b_up (k 2048, n 12288) at rows `ms`, BF16 metadata, A and D, U4 group 64 biases in
-/// GroupOutput and U8 group 128 zero points in OutputGroup, hashed data and no flags; with `extras` an irregular 77 x
+/// 0.8b_qkv (k 1024, n 3072) and 2b_up (k 2048, n 12288) at rows `ms`, BF16 metadata, A and D, U4 and U8 group 64 zero
+/// points in GroupOutput, the current model formats, hashed data and no flags; with `extras` an irregular 77 x
 /// 3001 x 1001 tail and 0.8b_qkv at m 64 mixing careful outputs (A row 0 scaled by 2^-110) and replayed ones (a NaN
 /// scale of row 5). Each case is first checked, quantized and dense, against the CPU and its bounds (and CPU bits
 /// through Gemm), then timed in 4 interleaved quantized, dense pairs, each the median GPU and wall time of 10
@@ -555,7 +555,7 @@ fn throughput(
     a8: bool,
 ) {
     let fixture = KernelFixture::new();
-    let configurations = [(4, 64, ScaleBias, GroupOutput, false), (8, 128, ScaleZeroPoint, OutputGroup, false)];
+    let configurations = [(4, 64, ScaleZeroPoint, GroupOutput, false), (8, 64, ScaleZeroPoint, GroupOutput, false)];
     let types = if a8 {
         [DataType::BF16, DataType::F32, DataType::BF16]
     } else {
@@ -741,13 +741,13 @@ fn throughput(
 #[uzu_test]
 #[ignore]
 fn throughput_decode() {
-    throughput(false, &[1, 2, 8], false, false);
+    throughput(false, &[1, 2, 4, 8], false, false);
 }
 
 #[uzu_test]
 #[ignore]
 fn throughput_m16() {
-    throughput(true, &[16], false, false);
+    throughput(true, &[2, 4, 8, 16], false, false);
 }
 
 #[uzu_test]
@@ -765,13 +765,13 @@ fn throughput_m128() {
 #[uzu_test]
 #[ignore]
 fn throughput_a8_decode() {
-    throughput(false, &[1, 2, 8], false, true);
+    throughput(false, &[1, 2, 4, 8], false, true);
 }
 
 #[uzu_test]
 #[ignore]
 fn throughput_a8_m16() {
-    throughput(true, &[16], false, true);
+    throughput(true, &[2, 4, 8, 16], false, true);
 }
 
 #[uzu_test]
