@@ -20,7 +20,7 @@ mod gumbel;
 mod prng;
 
 #[cfg(backend = "cpu")]
-pub use gumbel::{gumbel_float, revidx};
+pub use gumbel::{gumbel_float, gumbel_float_full_word, revidx};
 pub use prng::PRng;
 
 pub struct Sampling<B: Backend> {

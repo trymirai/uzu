@@ -3,7 +3,7 @@ use uzu_engine_macros::kernel;
 
 use crate::{
     backends::common::gpu_types::weaver::{CANDIDATES_MAX, MetadataIdx},
-    encodable_block::sampling::{gumbel_float, revidx},
+    encodable_block::sampling::{gumbel_float, gumbel_float_full_word, revidx},
 };
 
 #[kernel(WeaverTopChildren)]
@@ -40,7 +40,7 @@ pub fn weaver_top_children(
         let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let log_sum = logits.iter().map(|value| (value - max).exp()).sum::<f32>().ln() + max;
         let perturbed = (0..candidates)
-            .map(|index| logits[index] + gumbel_float(seed, revidx(token(index), vocab_size)))
+            .map(|index| logits[index] + gumbel_float_full_word(seed, revidx(token(index), vocab_size)))
             .collect::<Vec<_>>();
         // Final pruning weighs each edge by the pool softmax of logits plus the target's noise scaled by 1 / sigma.
         let prune = has_prune_noise.then(|| {

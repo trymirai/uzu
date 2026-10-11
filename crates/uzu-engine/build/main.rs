@@ -7,6 +7,9 @@ use common::{compiler::Compiler, enum_paths::EnumPaths, envs, gpu_types::GpuType
 
 mod cpu;
 
+#[cfg(feature = "vulkan")]
+mod slang;
+
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
 
@@ -69,6 +72,10 @@ fn main() -> anyhow::Result<ExitCode> {
         println!("cargo::error=uzu requires at least one backend to be compiled in!");
         return Ok(ExitCode::FAILURE);
     }
+
+    // Descriptor-only until the Vulkan backend exists: checked against the backends above, never one by itself.
+    #[cfg(feature = "vulkan")]
+    compilers.push(Box::new(slang::SlangCompiler::new()?));
 
     let backends_kernels =
         compilers.iter().map(|c| c.build(&gpu_types, &enum_paths)).collect::<anyhow::Result<Vec<_>>>()?;

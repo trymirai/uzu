@@ -31,10 +31,10 @@ fn philox4x32_bumpkey(key: &mut [u32; 2]) {
     key[1] = key[1].wrapping_add(PHILOX_W32_1);
 }
 
-fn uniform_float(
+fn philox_word(
     key: u64,
     (offset, word): (u32, u32),
-) -> f32 {
+) -> u32 {
     let mut ctr = [offset, 0, 0, 0];
 
     let mut key = [key as u32, (key >> 32) as u32];
@@ -46,7 +46,7 @@ fn uniform_float(
         philox4x32_round(&mut ctr, &key);
     }
 
-    unit_interval(ctr[word as usize])
+    ctr[word as usize]
 }
 
 /// Uniform in [2^-24, 1-2^-24]; mirrors Metal `uniform_float` in kernel/rng.h. -ln(-ln u)
@@ -60,7 +60,16 @@ pub fn gumbel_float(
     key: u64,
     (offset, word): (u32, u32),
 ) -> f32 {
-    -f32::ln(-f32::ln(uniform_float(key, (offset, word))))
+    -f32::ln(-f32::ln(unit_interval(philox_word(key, (offset, word)))))
+}
+
+/// Weaver child selection uses the full-word draw, including its rounded endpoints; pruning uses `gumbel_float`.
+pub fn gumbel_float_full_word(
+    key: u64,
+    index: (u32, u32),
+) -> f32 {
+    let uniform = philox_word(key, index) as f32 * (1.0 / 4294967296.0);
+    -f32::ln(-f32::ln(uniform))
 }
 
 const THREADGROUP_SIZE: u32 = 1024;
