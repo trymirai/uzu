@@ -251,7 +251,6 @@ fn load_trellis<B: Backend>(
     } else {
         spec.restart_columns
     };
-    // Restart blocks sit back to back; only the row pads to a byte.
     let code_row_bytes =
         (input_dim / block_columns * (16 + (block_columns / spec.vector_width - 1) * spec.transition_bits)).div_ceil(8);
     let codes = tree.leaf("codes")?.validate(&[output_dim, code_row_bytes], DataType::U8)?.read_buffer()?;
