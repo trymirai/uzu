@@ -8,7 +8,7 @@ use metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandBufferExt,
     MTL4CommandEncoder, MTL4CommandEncoderExt, MTL4CommandQueue, MTL4CommandQueueExt, MTL4CommitFeedback,
     MTL4CommitFeedbackExt, MTL4CommitFeedbackHandler, MTL4CommitOptions, MTL4ComputeCommandEncoder,
-    MTL4ComputeCommandEncoderExt, MTL4VisibilityOptions, MTLDeviceExt, MTLStages,
+    MTL4VisibilityOptions, MTLDeviceExt, MTLStages,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeSet;
@@ -18,7 +18,12 @@ use crate::backends::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
         CommandBufferExecutable, CommandBufferPending, Context, allocator::bump::BumpAllocator,
     },
-    metal::{Metal, MetalContext, buffer::MetalBufferExt, error::MetalError},
+    metal::{
+        Metal, MetalContext,
+        buffer::MetalBufferExt,
+        error::MetalError,
+        kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
+    },
 };
 
 pub struct MetalCommandBuffer;
@@ -70,8 +75,8 @@ impl MetalCommandBufferEncoding {
         ProtocolObject::<dyn MTL4CommandEncoder>::set_label(compute_encoder.as_ref(), name);
 
         compute_encoder.barrier_after_queue_stages_before_stages_visibility_options(
-            MTLStages::Dispatch | MTLStages::Blit | MTLStages::ResourceState,
-            MTLStages::Dispatch | MTLStages::Blit,
+            MTLStages::Dispatch | MTLStages::ResourceState,
+            MTLStages::Dispatch,
             MTL4VisibilityOptions::Device,
         );
 
@@ -110,8 +115,8 @@ impl MetalCommandBufferEncoding {
             self.writes.overlaps(&access.range.into()) || (access.write && self.reads.overlaps(&access.range.into()))
         }) {
             self.compute_encoder.barrier_after_encoder_stages_before_encoder_stages_visibility_options(
-                MTLStages::Dispatch | MTLStages::Blit,
-                MTLStages::Dispatch | MTLStages::Blit,
+                MTLStages::Dispatch,
+                MTLStages::Dispatch,
                 MTL4VisibilityOptions::Device,
             );
             self.reads.clear();
@@ -154,30 +159,25 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         src: impl BufferRef<Backend = Metal>,
         dst: impl BufferMut<Backend = Metal>,
     ) {
-        let (src, src_range) = src.parts();
-        let (dst, dst_range) = dst.parts();
-        assert_eq!(src_range.iter().len(), dst_range.iter().len());
-
-        self.access(&[
-            Access {
-                range: src.gpu_address_subrange(src_range),
-                write: false,
-            },
-            Access {
-                range: dst.gpu_address_subrange(dst_range),
-                write: true,
-            },
-        ]);
-
-        let (src_buffer, src_offset) = src.downcast();
-        let (dst_buffer, dst_offset) = dst.downcast();
-        self.compute_encoder.copy_from_buffer_source_offset_to_buffer_destination_offset_size(
-            src_buffer,
-            src_offset + src_range.start,
-            dst_buffer,
-            dst_offset + dst_range.start,
-            src_range.iter().len(),
-        );
+        let size = src.size();
+        assert_eq!(size, dst.size());
+        if size == 0 {
+            return;
+        }
+        let (src_buffer, src_range) = src.parts();
+        let (dst_buffer, dst_range) = dst.as_ref().parts();
+        let alignment = ((src_buffer.gpu_address() + src_range.start as u64)
+            | (dst_buffer.gpu_address() + dst_range.start as u64))
+            & 15;
+        let (variant, alignment) = match alignment {
+            0 => (0, 0),
+            4 | 8 | 12 => (1, 4),
+            _ => (2, 1),
+        };
+        let context = self.context.clone();
+        let kernel = context.blit_copy[variant]
+            .get_or_init(|| BlitCopyMetalKernel::new(&context, alignment).expect("Failed to create blit copy kernel"));
+        kernel.encode(src, dst, size as u64, self);
     }
 
     fn encode_fill(
@@ -185,17 +185,14 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         dst: impl BufferMut<Backend = Metal>,
         value: u8,
     ) {
-        let (dst, range) = dst.parts();
+        let (buffer, range) = dst.as_ref().parts();
         assert!(range.end > range.start);
         assert!(range.start.is_multiple_of(4) && range.end.is_multiple_of(4));
-
-        self.access(&[Access {
-            range: dst.gpu_address_subrange(range),
-            write: true,
-        }]);
-
-        let (buffer, offset) = dst.downcast();
-        self.compute_encoder.fill_buffer_range_value(buffer, offset + range.start..offset + range.end, value);
+        let aligned = (buffer.gpu_address() + range.start as u64).is_multiple_of(16);
+        let context = self.context.clone();
+        let kernel = context.blit_fill[usize::from(aligned)]
+            .get_or_init(|| BlitFillMetalKernel::new(&context, aligned).expect("Failed to create blit fill kernel"));
+        kernel.encode(dst, (range.end - range.start) as u64, u32::from(value) * 0x0101_0101, self);
     }
 
     // TODO: maybe port previous debug command_buffer labels
@@ -234,8 +231,8 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 impl Drop for MetalCommandBufferEncoding {
     fn drop(&mut self) {
         self.compute_encoder.barrier_after_stages_before_queue_stages_visibility_options(
-            MTLStages::Dispatch | MTLStages::Blit,
-            MTLStages::Dispatch | MTLStages::Blit | MTLStages::ResourceState,
+            MTLStages::Dispatch,
+            MTLStages::Dispatch | MTLStages::ResourceState,
             MTL4VisibilityOptions::Device,
         );
         self.compute_encoder.end_encoding();
