@@ -43,7 +43,7 @@ fn do_sampling_backend<B: Backend, T: DataTypeRepr + Float>(
     method: &SamplingMethod,
     batch_size: u32,
 ) -> Result<SamplingTestResults, TestCaseError> {
-    let sampling = Sampling::<B>::new(vocab_size as u32, T::data_type());
+    let sampling = Sampling::<B>::new(String::from("test/sampling"), vocab_size as u32, T::data_type());
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let logits_buffer = command_buffer.allocate_constant_from_slice(logits).unwrap();

@@ -15,6 +15,7 @@ use crate::{
 };
 
 pub struct DenseMlp<B: Backend> {
+    name: String,
     up: Box<dyn Linear<B>>,
     gate: MlpGateActMulEncodable<B>,
     down: Box<dyn Linear<B>>,
@@ -30,6 +31,7 @@ pub enum DenseMlpNewError<B: Backend> {
 
 impl<B: Backend> DenseMlp<B> {
     pub fn new(
+        name: String,
         model_dimension: u32,
         hidden_dimension: u32,
         data_type: DataType,
@@ -38,6 +40,7 @@ impl<B: Backend> DenseMlp<B> {
         context: &B::Context,
     ) -> Result<(Self, Option<B::GlobalBuffer>), DenseMlpNewError<B>> {
         let (up, up_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
+            format!("{name}/up projection"),
             model_dimension,
             2 * hidden_dimension,
             data_type,
@@ -47,6 +50,7 @@ impl<B: Backend> DenseMlp<B> {
         )?;
 
         let (down, down_input_preparation) = <dyn Linear<B>>::new_for_fused_input(
+            format!("{name}/down projection"),
             hidden_dimension,
             model_dimension,
             data_type,
@@ -56,6 +60,7 @@ impl<B: Backend> DenseMlp<B> {
         )?;
 
         let gate = MlpGateActMulEncodable::new(
+            format!("{name}/gate act mul"),
             hidden_dimension,
             data_type,
             config.activation.clone(),
@@ -68,6 +73,7 @@ impl<B: Backend> DenseMlp<B> {
 
         Ok((
             Self {
+                name,
                 up,
                 gate,
                 down,
@@ -84,7 +90,8 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
+        let command_buffer = &mut *command_buffer.debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let fused_up = self.up.encode(input, batch_dim, command_buffer)?;
         let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
@@ -94,6 +101,7 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
             .map_err(MlpEncodeError::Backend)?;
         let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
 
+        command_buffer.sample_end_timestamp();
         Ok(output)
     }
 }

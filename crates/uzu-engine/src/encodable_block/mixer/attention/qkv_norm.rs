@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, CommandBuffer,
+        Backend, BufferMut, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, QKVNormKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
@@ -26,6 +26,7 @@ struct Head<B: Backend> {
 }
 
 pub struct QKVNorm<B: Backend> {
+    name: String,
     query: Option<Head<B>>,
     key: Option<Head<B>>,
     value: Option<Head<B>>,
@@ -37,6 +38,7 @@ pub struct QKVNorm<B: Backend> {
 
 impl<B: Backend> QKVNorm<B> {
     pub fn new(
+        name: String,
         num_q_heads: u32,
         num_kv_heads: Option<u32>,
         projection_row_stride: u32,
@@ -79,6 +81,7 @@ impl<B: Backend> QKVNorm<B> {
         };
 
         Ok(Self {
+            name,
             query: build_head(query_config, Some("query_norm"))?,
             key: build_head(key_config, Some("key_norm"))?,
             value: build_head(value_config, None)?,
@@ -123,6 +126,7 @@ impl<B: Backend> QKVNorm<B> {
             "QKV norm input row stride ({input_row_stride}) is smaller than its packed row width ({packed_row_width})"
         );
 
+        command_buffer.sample_start_timestamp(&self.name);
         let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
         for (head, head_offset, head_count) in heads {
             let Some(head) = head else {
@@ -146,6 +150,8 @@ impl<B: Backend> QKVNorm<B> {
                 command_buffer,
             );
         }
+
+        command_buffer.sample_end_timestamp();
     }
 }
 

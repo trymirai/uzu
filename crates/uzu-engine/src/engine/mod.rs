@@ -3,6 +3,8 @@ use std::{fs::File, io::BufReader, path::Path, sync::Arc};
 use derive_more::Debug;
 use thiserror::Error;
 
+#[cfg(backend = "metal")]
+use crate::backends::metal::Metal;
 use crate::{
     backends::common::{
         Backend, Context,
@@ -30,7 +32,10 @@ pub enum EngineNewError<B: Backend> {
 
 impl<B: Backend> Engine<B> {
     pub fn new() -> Result<Arc<Self>, EngineNewError<B>> {
-        let context = <B::Context as Context>::new().map_err(EngineNewError::Backend)?;
+        Self::from_context(<B::Context as Context>::new().map_err(EngineNewError::Backend)?)
+    }
+
+    fn from_context(context: Arc<B::Context>) -> Result<Arc<Self>, EngineNewError<B>> {
         let capture_span = CAPTURE_MATCHER.capture::<B>(&context, "")?;
 
         Ok(Arc::new(Self {
@@ -41,6 +46,13 @@ impl<B: Backend> Engine<B> {
 
     pub fn peak_memory_usage(&self) -> Option<usize> {
         self.context.peak_memory_usage()
+    }
+}
+
+#[cfg(backend = "metal")]
+impl Engine<Metal> {
+    pub fn new_with_timestamps() -> Result<Arc<Self>, EngineNewError<Metal>> {
+        Self::from_context(<Metal as Backend>::Context::new_with_timestamps().map_err(EngineNewError::Backend)?)
     }
 }
 

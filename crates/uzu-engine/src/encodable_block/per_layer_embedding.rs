@@ -34,6 +34,7 @@ pub enum PerLayerEmbeddingError<B: Backend> {
 }
 
 pub struct PerLayerEmbedding<B: Backend> {
+    name: String,
     token_embedding: EmbeddingTable<B>,
     model_projection: Box<dyn Linear<B>>,
     projection_norm: Normalization<B>,
@@ -47,6 +48,7 @@ pub struct PerLayerEmbedding<B: Backend> {
 
 impl<B: Backend> PerLayerEmbedding<B> {
     pub fn new(
+        name: String,
         model_dim: u32,
         data_type: DataType,
         config: &PLEModelConfig,
@@ -56,6 +58,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let total_ple_dim = config.num_layers * config.ple_dim;
 
         let token_embedding = EmbeddingTable::load(
+            format!("{name}/token lookup"),
             config.ple_vocab_size,
             total_ple_dim,
             data_type,
@@ -64,6 +67,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         )?;
 
         let model_projection = <dyn Linear<B>>::new(
+            format!("{name}/model projection"),
             model_dim,
             total_ple_dim,
             data_type,
@@ -79,6 +83,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             adjusted
         };
         let projection_norm = Normalization::new(
+            format!("{name}/projection norm"),
             config.ple_dim,
             data_type,
             None,
@@ -93,6 +98,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             .map_err(PerLayerEmbeddingError::BackendError)?;
 
         Ok(Self {
+            name,
             token_embedding,
             model_projection,
             projection_norm,
@@ -112,7 +118,8 @@ impl<B: Backend> PerLayerEmbedding<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, PerLayerEmbeddingError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("per layer embedding");
+        let command_buffer = &mut *command_buffer.debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let total_ple_dim = self.num_layers * self.ple_dim;
         let total_rows = batch_dim * self.num_layers;
@@ -153,11 +160,13 @@ impl<B: Backend> PerLayerEmbedding<B> {
             command_buffer,
         );
 
+        command_buffer.sample_end_timestamp();
         Ok(per_layer_inputs)
     }
 }
 
 pub struct PerLayerEmbeddingProjection<B: Backend> {
+    name: String,
     gate: Box<dyn Linear<B>>,
     projection: Box<dyn Linear<B>>,
     norm: Normalization<B>,
@@ -174,6 +183,7 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
 
 impl<B: Backend> PerLayerEmbeddingProjection<B> {
     pub fn new(
+        name: String,
         model_dim: u32,
         num_layers: u32,
         data_type: DataType,
@@ -183,6 +193,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         context: &B::Context,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
         let gate = <dyn Linear<B>>::new(
+            format!("{name}/gate"),
             model_dim,
             config.ple_dim,
             data_type,
@@ -191,6 +202,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             context,
         )?;
         let projection = <dyn Linear<B>>::new(
+            format!("{name}/projection"),
             config.ple_dim,
             model_dim,
             data_type,
@@ -199,6 +211,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             context,
         )?;
         let norm = Normalization::new(
+            format!("{name}/norm"),
             model_dim,
             data_type,
             None,
@@ -222,6 +235,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             .map_err(PerLayerEmbeddingError::BackendError)?;
 
         Ok(Self {
+            name,
             gate,
             projection,
             norm,
@@ -246,7 +260,8 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), PerLayerEmbeddingError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("per layer embedding projection");
+        let command_buffer = &mut *command_buffer.debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let length = batch_dim * self.model_dim;
 
@@ -297,6 +312,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             command_buffer,
         );
 
+        command_buffer.sample_end_timestamp();
         Ok(())
     }
 }

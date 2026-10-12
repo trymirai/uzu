@@ -5,10 +5,11 @@ use thiserror::Error;
 use tokenizers::Tokenizer;
 
 use crate::{
-    backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
+    backends::common::{Backend, Context, DeviceCapabilities},
     config::{model::language_model::LanguageModelConfig, token_codec::AnyTokenCodecConfig},
     data_type::DataType,
     encodable_block::{
+        context_ring_update::ContextRingUpdate,
         decoder::{Decoder, DecoderError},
         sampling::{Sampling, SamplingMethod},
     },
@@ -29,7 +30,7 @@ pub struct LanguageModel<B: Backend> {
     decoder: Decoder<B>,
     speculator: Option<DFlashTfmSpeculator<B>>,
     sampling: Sampling<B>,
-    context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
+    context_ring_update: ContextRingUpdate<B>,
     generation_config: GenerationConfig,
     end_of_thinking_tag: Option<String>,
     tokenizer: Arc<Tokenizer>,
@@ -75,6 +76,7 @@ impl<B: Backend> Engine<B> {
         let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
+            String::from("decoder"),
             data_type,
             &config.decoder_config,
             &weight_loader.tree().subtree("decoder"),
@@ -92,10 +94,11 @@ impl<B: Backend> Engine<B> {
             .transpose()?
             .flatten();
 
-        let sampling = Sampling::new(config.decoder_config.vocab_size, data_type);
+        let sampling = Sampling::new(String::from("sampling"), config.decoder_config.vocab_size, data_type);
 
-        let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
-            .map_err(EngineLoadLanguageModelError::Backend)?;
+        let context_ring_update =
+            ContextRingUpdate::new(String::from("update repetition penalty ring"), self.context.as_ref())
+                .map_err(EngineLoadLanguageModelError::Backend)?;
 
         weight_loader.assert_all_tensors_read()?;
 

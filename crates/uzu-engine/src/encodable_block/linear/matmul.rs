@@ -39,6 +39,7 @@ pub enum LinearMatmulError<B: Backend> {
 }
 
 pub struct LinearMatmul<B: Backend> {
+    name: String,
     kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     matrix: WeightMatrix<B>,
     biases: Option<B::GlobalBuffer>,
@@ -66,6 +67,7 @@ impl<B: Backend> LinearMatmul<B> {
     /// Loads a linear over any parsed spec — full precision, MLX or Int. Hybrid
     /// compositions live in the wrappers, not here.
     pub fn load(
+        name: String,
         input_dim: u32,
         output_dim: u32,
         weights_data_type: DataType,
@@ -98,6 +100,7 @@ impl<B: Backend> LinearMatmul<B> {
                 .map_err(LinearMatmulError::Matmul)?;
 
         Ok(Self {
+            name,
             kernel: Mutex::new(kernel),
             matrix,
             biases,
@@ -134,6 +137,7 @@ impl<B: Backend> LinearMatmul<B> {
         gather: Option<Gather<impl BufferRef<Backend = B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        command_buffer.sample_start_timestamp(&self.name);
         let (output_dim, gather_indices) =
             gather.map_or((self.output_dim, None), |gather| (gather.output_dim, Some(gather.indices)));
         let mut output = command_buffer
@@ -157,6 +161,7 @@ impl<B: Backend> LinearMatmul<B> {
             )
             .map_err(LinearEncodeError::Matmul)?;
 
+        command_buffer.sample_end_timestamp();
         Ok(output)
     }
 

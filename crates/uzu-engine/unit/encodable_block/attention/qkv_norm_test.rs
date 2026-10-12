@@ -45,6 +45,7 @@ fn run_key_value_row_stride_test<B: Backend>() {
         config,
     };
     let norm = QKVNorm {
+        name: String::from("test/qkv norm"),
         query: None,
         key: Some(key),
         value: None,

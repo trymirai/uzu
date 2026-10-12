@@ -2,7 +2,7 @@ use std::{
     iter::{once, repeat_n},
     mem::replace,
     range::Range,
-    sync::Arc,
+    sync::{Arc, mpsc::Sender},
 };
 
 use shoji::traits::backend::chat_token::TokenStreamMetrics;
@@ -11,11 +11,10 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferPending, Context,
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context,
+        TimestampSpan,
         capture_matcher::{CAPTURE_MATCHER, CaptureMatcherSpan},
         gpu_types::trie::TrieNode as GpuTrieNode,
-        kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
     encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
@@ -25,7 +24,7 @@ use crate::{
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
     trie::TrieNode,
-    utils::size_for_shape::size_for_shape,
+    utils::{size_for_shape::size_for_shape, timestamps::wait},
 };
 
 enum ForwardPassChaining<B: Backend> {
@@ -40,6 +39,7 @@ impl<B: Backend> ForwardPassChaining<B> {
     fn resolve<'a>(
         &'a mut self,
         tokens: &mut Vec<u64>,
+        timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
     ) -> Result<(u64, Option<&'a B::ScratchBuffer>), LanguageModelStreamError<B>> {
         match self {
@@ -50,7 +50,7 @@ impl<B: Backend> ForwardPassChaining<B> {
             Self::InFlight(in_flight) => {
                 assert!(in_flight.full_accept);
                 for pending in replace(&mut in_flight.pending, Box::new([])) {
-                    pending.wait_until_completed().map_err(LanguageModelStreamError::Backend)?;
+                    wait(pending, timestamps).map_err(LanguageModelStreamError::Backend)?;
                 }
                 let output_tokens = in_flight.output_tokens.as_slice::<u32>();
                 assert_eq!(output_tokens.len(), 1);
@@ -145,6 +145,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         model_state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
+        assert!(
+            options.timestamps.is_none() || model.engine.context.records_timestamps(),
+            "timestamps requested from an engine that does not record them"
+        );
         #[cfg(grammar)]
         let mut options = options;
         if model_state.tokens.is_empty() && input.is_empty() {
@@ -399,7 +403,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     (ForwardPassChaining::InFlight(forward_pass_pending), None)
                 } else {
                     for pending in forward_pass_pending.pending {
-                        pending.wait_until_completed().map_err(LanguageModelStreamError::Backend)?;
+                        wait(pending, self.options.timestamps.as_ref()).map_err(LanguageModelStreamError::Backend)?;
                     }
                     let sampled_tokens = forward_pass_pending
                         .output_tokens
@@ -522,6 +526,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 prev_output
                     .resolve(
                         &mut self.model_state.tokens,
+                        self.options.timestamps.as_ref(),
                         #[cfg(grammar)]
                         self.options.grammar.as_mut(),
                     )?
@@ -544,6 +549,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             )
             && let (root_token, Some(output_norm)) = prev_output.resolve(
                 &mut self.model_state.tokens,
+                self.options.timestamps.as_ref(),
                 #[cfg(grammar)]
                 self.options.grammar.as_mut(),
             )? {
@@ -558,6 +564,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 &self.model_state.prng,
                 self.allocation_pool.clone(),
                 Some(&format!("decode {} (speculate)", self.metrics.num_decode_forward_passes)),
+                self.options.timestamps.as_ref(),
             )?;
             prev_output.drop_output_norm();
             (trie, None, false)
@@ -654,7 +661,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     )
                     .map_err(LanguageModelStreamError::Backend)?;
 
-                prev_output.resolve(&mut self.model_state.tokens, Some(grammar))?;
+                prev_output.resolve(&mut self.model_state.tokens, self.options.timestamps.as_ref(), Some(grammar))?;
                 if grammar.next_bitmask(bitmask.as_slice_mut()) {
                     (Some(bitmask), command_buffer)
                 } else {
@@ -770,6 +777,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             prev_output
                 .resolve(
                     &mut self.model_state.tokens,
+                    self.options.timestamps.as_ref(),
                     #[cfg(grammar)]
                     self.options.grammar.as_mut(),
                 )?
@@ -798,7 +806,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
             } => Some(seed_token),
             DecodingState::ForwardPassPending(in_flight) => {
                 for pending in in_flight.pending {
-                    pending.wait_until_completed().unwrap();
+                    wait(pending, self.options.timestamps.as_ref()).unwrap();
                 }
 
                 if !in_flight.full_accept {
@@ -822,7 +830,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                             )
                             .unwrap();
                     }
-                    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+                    wait(command_buffer.end_encoding().submit(), self.options.timestamps.as_ref()).unwrap();
                 }
 
                 Some(in_flight.output_tokens.as_slice::<u32>()[0] as u64)
@@ -861,7 +869,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
                         )
                         .unwrap();
                 }
-                command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+                wait(command_buffer.end_encoding().submit(), self.options.timestamps.as_ref()).unwrap();
 
                 drop(capture_span);
 

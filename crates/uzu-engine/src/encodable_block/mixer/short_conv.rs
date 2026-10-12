@@ -74,6 +74,10 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
 }
 
 pub struct ShortConv<B: Backend> {
+    name: String,
+    decode_conv_name: String,
+    prefill_conv_name: String,
+    trie_conv_name: String,
     hidden_dim: u32,
     data_type: DataType,
     kernel_size: u32,
@@ -101,6 +105,7 @@ pub enum ShortConvNewError<B: Backend> {
 
 impl<B: Backend> ShortConv<B> {
     pub fn new(
+        name: String,
         hidden_dim: u32,
         data_type: DataType,
         config: &ShortConvConfig,
@@ -116,6 +121,7 @@ impl<B: Backend> ShortConv<B> {
         }
 
         let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
+            format!("{name}/in projection"),
             hidden_dim,
             hidden_dim * 3,
             data_type,
@@ -125,6 +131,7 @@ impl<B: Backend> ShortConv<B> {
         )?;
 
         let out_projection = <dyn Linear<B>>::new(
+            format!("{name}/out projection"),
             hidden_dim,
             hidden_dim,
             data_type,
@@ -159,6 +166,10 @@ impl<B: Backend> ShortConv<B> {
 
         Ok((
             Self {
+                decode_conv_name: format!("{name}/decode conv"),
+                prefill_conv_name: format!("{name}/prefill conv"),
+                trie_conv_name: format!("{name}/trie conv"),
+                name,
                 hidden_dim,
                 data_type,
                 kernel_size,
@@ -181,6 +192,7 @@ impl<B: Backend> ShortConv<B> {
         state: &mut ShortConvState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        command_buffer.sample_start_timestamp(&self.decode_conv_name);
         let mut conv_output = command_buffer.allocate_scratch_for_shape(&[self.hidden_dim], self.data_type)?;
         self.short_conv_decode.encode(
             in_projected,
@@ -196,6 +208,7 @@ impl<B: Backend> ShortConv<B> {
             self.hidden_dim,
             command_buffer,
         );
+        command_buffer.sample_end_timestamp();
         Ok(conv_output)
     }
 
@@ -206,6 +219,7 @@ impl<B: Backend> ShortConv<B> {
         state: &mut ShortConvState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        command_buffer.sample_start_timestamp(&self.prefill_conv_name);
         let state_stride = self.kernel_size - 1;
         let padded_rows = state_stride + batch_dim;
 
@@ -237,6 +251,7 @@ impl<B: Backend> ShortConv<B> {
             self.hidden_dim,
             command_buffer,
         );
+        command_buffer.sample_end_timestamp();
         Ok(conv_output)
     }
 
@@ -248,6 +263,7 @@ impl<B: Backend> ShortConv<B> {
         state: &mut ShortConvState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
+        command_buffer.sample_start_timestamp(&self.trie_conv_name);
         let mut conv_output =
             command_buffer.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
         let mut conv_states = command_buffer
@@ -267,6 +283,7 @@ impl<B: Backend> ShortConv<B> {
             self.hidden_dim,
             command_buffer,
         );
+        command_buffer.sample_end_timestamp();
         Ok((conv_output, conv_states))
     }
 }
@@ -306,7 +323,8 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("short conv");
+        let command_buffer = &mut *command_buffer.debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         assert!(precalculated_rope.is_none(), "unexpected rope for short conv mixer");
 
@@ -345,6 +363,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
 
         let output = self.out_projection.encode(conv_output, batch_dim.size(), command_buffer)?;
 
+        command_buffer.sample_end_timestamp();
         Ok(output)
     }
 }

@@ -3,7 +3,7 @@ use std::{mem::size_of_val, time::Duration};
 use bytemuck::{AnyBitPattern, NoUninit};
 
 use crate::{
-    backends::common::{Backend, BufferMut, BufferRef},
+    backends::common::{Backend, BufferMut, BufferRef, TimestampSpan},
     data_type::DataType,
     utils::size_for_shape::size_for_shape,
 };
@@ -84,6 +84,13 @@ pub trait CommandBufferEncoding {
         name: &str,
     );
 
+    fn sample_start_timestamp(
+        &mut self,
+        name: &str,
+    );
+
+    fn sample_end_timestamp(&mut self);
+
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
 
@@ -108,4 +115,6 @@ pub trait CommandBufferCompleted: Send {
     type CommandBuffer: CommandBuffer<Completed = Self>;
 
     fn gpu_execution_time(&self) -> Duration;
+
+    fn timestamps(&self) -> &[TimestampSpan];
 }
