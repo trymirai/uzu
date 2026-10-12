@@ -17,6 +17,7 @@ fn default_attention_config<T: ArrayElement>(
         num_groups: num_groups as u32,
         num_q_heads: num_q_heads as u32,
         has_sinks: false,
+        gate_row_stride: None,
         is_kv_cache_ring: false,
         is_causal,
         sliding_window_size: None,
