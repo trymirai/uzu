@@ -42,6 +42,11 @@ const V2_T4: TrellisFormat = TrellisFormat {
     transition_bits: 4,
     restart_columns: 0,
 };
+const V4_T6: TrellisFormat = TrellisFormat {
+    vector_width: 4,
+    transition_bits: 6,
+    restart_columns: 64,
+};
 const V4_T7: TrellisFormat = TrellisFormat {
     vector_width: 4,
     transition_bits: 7,
@@ -75,27 +80,32 @@ fn decode_state(
 ) -> u16 {
     let width = format.vector_width as usize;
     let restart_columns = format.restart_columns as usize;
-    let (block, local, block_bytes) = match column.checked_div(restart_columns) {
-        Some(block) => (block, column % restart_columns, row_bytes(format, restart_columns)),
-        None => (0, column, 0),
+    let (block_start_bit, local) = match column.checked_div(restart_columns) {
+        Some(block) => (block * block_bits(format, restart_columns), column % restart_columns),
+        None => (0, column),
     };
-    let start_bit = block * block_bytes * 8 + local / width * format.transition_bits as usize;
+    let start_bit = block_start_bit + local / width * format.transition_bits as usize;
     (start_bit..start_bit + 16).fold(0u32, |state, bit| (state << 1) | u32::from(row[bit / 8] >> (7 - bit % 8) & 1))
         as u16
 }
 
+fn block_bits(
+    format: TrellisFormat,
+    block_columns: usize,
+) -> usize {
+    16 + (block_columns / format.vector_width as usize - 1) * format.transition_bits as usize
+}
+
+// Restart blocks sit back to back and the row pads to 16 bytes; a connected tape pads to a byte.
 fn row_bytes(
     format: TrellisFormat,
     columns: usize,
 ) -> usize {
-    let block_columns = if format.restart_columns == 0 {
-        columns
-    } else {
-        format.restart_columns as usize
-    };
-    let transitions = block_columns / format.vector_width as usize - 1;
-    let bytes_per_block = (16 + transitions * format.transition_bits as usize).div_ceil(8);
-    columns.div_ceil(block_columns) * bytes_per_block
+    if format.restart_columns == 0 {
+        return block_bits(format, columns).div_ceil(8);
+    }
+    let restart_columns = format.restart_columns as usize;
+    (columns.div_ceil(restart_columns) * block_bits(format, restart_columns)).div_ceil(8).next_multiple_of(16)
 }
 
 fn decode_level(
@@ -215,6 +225,7 @@ fn run_projection(
 #[case::v2_t8(V2_T8)]
 #[case::v2_t4(V2_T4)]
 #[case::v4_t8_no_restart(V4_T8_NO_RESTART)]
+#[case::v4_t6(V4_T6)]
 #[case::v4_t7(V4_T7)]
 #[case::v4_t6_r128(V4_T6_R128)]
 #[case::v4_t7_r128(V4_T7_R128)]
@@ -228,4 +239,20 @@ fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
     for (m, n, k) in CASES.into_iter().filter(|&(_, _, k)| k.is_multiple_of(format.restart_columns.max(1) as usize)) {
         run_projection(&context, format, (m, n, k));
     }
+}
+
+// The XS rows: restart rows pad to 16 bytes (T8 r64 rows already end there), connected tapes to a byte.
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::v4_t6_k5120(V4_T6, 5120, 1072)]
+#[case::v4_t7_k17408(V4_T7, 17408, 4128)]
+#[case::v4_t8_k5120(V4_T8, 5120, 1360)]
+#[case::v4_t8_r128_k5120(V4_T8_R128, 5120, 1328)]
+#[case::v2_t6_k5120(V2_T6, 5120, 1922)]
+fn code_row_bytes(
+    #[case] format: TrellisFormat,
+    #[case] columns: usize,
+    #[case] bytes: usize,
+) {
+    assert_eq!(row_bytes(format, columns), bytes);
 }

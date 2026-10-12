@@ -246,13 +246,12 @@ fn load_trellis<B: Backend>(
         transition_bits: spec.transition_bits,
         restart_columns: spec.restart_columns,
     };
-    let block_columns = if spec.restart_columns == 0 {
-        input_dim
+    let code_row_bytes = if spec.restart_columns == 0 {
+        (16 + (input_dim / spec.vector_width - 1) * spec.transition_bits).div_ceil(8)
     } else {
-        spec.restart_columns
+        let block_bits = 16 + (spec.restart_columns / spec.vector_width - 1) * spec.transition_bits;
+        (input_dim / spec.restart_columns * block_bits).div_ceil(8).next_multiple_of(16)
     };
-    let code_row_bytes =
-        input_dim / block_columns * (16 + (block_columns / spec.vector_width - 1) * spec.transition_bits).div_ceil(8);
     let codes = tree.leaf("codes")?.validate(&[output_dim, code_row_bytes], DataType::U8)?.read_buffer()?;
     let row_scales = tree.leaf("scales")?.validate(&[output_dim], DataType::F32)?.read_buffer()?;
     let codebook: [f32; 5] = tree
