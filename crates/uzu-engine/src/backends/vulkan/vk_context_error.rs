@@ -2,6 +2,9 @@ use ash::vk;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VkContextError {
+    #[error("Asahi GPU topology query failed: {0}")]
+    AsahiTopology(#[from] std::io::Error),
+
     #[error("Command pool creation error: {0}")]
     CommandPoolCreate(#[source] vk::Result),
 

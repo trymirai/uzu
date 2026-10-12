@@ -8,6 +8,7 @@ pub struct VkComputePipeline {
     context: Arc<VkContext>,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
+    push_constant_size: u32,
 }
 impl VkComputePipeline {
     pub fn new(
@@ -18,6 +19,13 @@ impl VkComputePipeline {
         entry_point: &str,
         specialization_info: &SpecializationInfo<'_>,
     ) -> Result<Self, Error> {
+        let limit = ctx.physical_device().properties.limits.max_push_constants_size;
+        if !push_constant_size.is_multiple_of(4) || push_constant_size > limit {
+            return Err(Error::PushConstants {
+                size: push_constant_size,
+                limit,
+            });
+        }
         let entry_cstring = CString::new(entry_point)?;
         let pipeline_layout = {
             let ranges = (push_constant_size != 0)
@@ -56,7 +64,16 @@ impl VkComputePipeline {
             context: ctx,
             pipeline,
             pipeline_layout,
+            push_constant_size,
         })
+    }
+
+    pub fn context(&self) -> &Arc<VkContext> {
+        &self.context
+    }
+
+    pub fn push_constant_size(&self) -> u32 {
+        self.push_constant_size
     }
 
     pub fn pipeline(&self) -> vk::Pipeline {

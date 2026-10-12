@@ -20,6 +20,8 @@ use crate::{
     },
     tests::proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
 };
+#[cfg(feature = "cpu")]
+use crate::{backends::cpu::Cpu, tests::helpers::create_context};
 
 struct SamplingTestResults(Vec<u32>);
 
@@ -179,4 +181,76 @@ fn test_sampling_prop() {
             .compare_results()?
         });
     });
+}
+
+#[cfg(feature = "cpu")]
+#[uzu_test]
+#[ignore]
+fn cpu_sampling_model_profile_witness() {
+    // (V, temperature, top_k, top_p, min_p, repetition_penalty, suffix_repetition_length) from the model census; the
+    // repetition penalty is a separate kernel, so it is recorded here but not passed to UnifiedSampling.
+    let profiles = [
+        (65536, 0.1, 50, 0.1, None, None, None),
+        (128000, 0.1, 50, 0.1, None, None, None),
+        (202048, 1.0, 64, 0.95, None, None, None),
+        (248320, 0.6, 20, 0.95, None, Some(1.1), Some(1024)),
+        (248320, 0.6, 20, 0.95, None, Some(1.05), Some(1024)),
+        (248320, 0.6, 20, 0.95, None, None, None),
+        (248320, 1.0, 20, 0.95, None, None, None),
+    ];
+    let context = create_context::<Cpu>();
+    let mut cases = 0;
+    let mut calls = 0;
+    for (profile, parameters) in profiles.into_iter().enumerate() {
+        let (vocab_size, temperature, top_k, top_p, min_p, repetition_penalty, suffix_repetition_length) = parameters;
+        let method = SamplingMethod::Stochastic {
+            temperature: Some(temperature),
+            top_k: Some(top_k),
+            top_p: Some(top_p),
+            min_p,
+            repetition_penalty: None,
+            suffix_repetition_length: None,
+        };
+        for seed in [0, 1, u64::MAX] {
+            for data_type in [DataType::F32, DataType::BF16] {
+                let (sampling_seed, runs) = dispatch_dtype!(|(T: data_type)| {
+                    let (logits, seeds, bitmask) = get_data::<T>(seed, 1, vocab_size, false, true);
+                    assert!(logits.iter().all(|logit| logit.is_finite()));
+                    let (seeds, bitmask) = (seeds.as_deref(), bitmask.as_deref());
+                    let runs = [0, 1].map(|_| {
+                        calls += 1;
+                        do_sampling_backend::<Cpu, T>(&context, &logits, seeds, bitmask, vocab_size, &method, 1)
+                            .unwrap()
+                            .0
+                    });
+                    (seeds.unwrap()[0], runs)
+                });
+                cases += 1;
+                assert_eq!(runs[0], runs[1], "profile {profile} seed {seed} {data_type:?}");
+                assert!(runs[0].len() == 1 && runs[0][0] < vocab_size as u32);
+                println!(
+                    "UZU_SAMPLING_FINITE_RESULT {}",
+                    serde_json::json!({
+                        "profile": profile,
+                        "vocab_size": vocab_size,
+                        "temperature": temperature,
+                        "top_k": top_k,
+                        "top_p": top_p,
+                        "min_p": min_p,
+                        "repetition_penalty": repetition_penalty,
+                        "suffix_repetition_length": suffix_repetition_length,
+                        "dtype": format!("{data_type:?}"),
+                        "seed": format!("{seed:#018x}"),
+                        "sampling_seed": format!("{sampling_seed:#018x}"),
+                        "runs": runs,
+                    })
+                );
+            }
+        }
+    }
+    println!(
+        "UZU_SAMPLING_FINITE_END {}",
+        serde_json::json!({ "profiles": profiles.len(), "seeds": 3, "dtypes": 2, "cases": cases, "calls": calls })
+    );
+    assert_eq!((profiles.len(), cases, calls), (7, 42, 84));
 }

@@ -1,28 +1,50 @@
-use std::ffi::{CStr, c_char, c_void};
+use std::{
+    convert::Infallible,
+    ffi::{CStr, c_char, c_void},
+    path::Path,
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use ash::{ext, khr, vk};
 use parking_lot::{Mutex, MutexGuard};
+use vk_mem::Alloc;
 
-use super::{VkContextCreateInfo, VkContextError, VkPhysicalDevice, VkPhysicalDeviceFeatures};
+use super::{
+    Error, VkBuffer, VkBufferError, VkCommandBufferEncoding, VkCommandBufferResources, VkContextCreateInfo,
+    VkContextError, VkLogger, VkPhysicalDevice, VkPhysicalDeviceFeatures, VkSparseBuffer, Vulkan,
+};
+use crate::backends::common::{Backend, Context, DeviceCapabilities, allocator::pool::PoolAllocator};
 
 const VK_LAYER_KHRONOS_VALIDATION: &CStr = c"VK_LAYER_KHRONOS_validation";
+const HOST_COHERENT_MEMORY: vk::MemoryPropertyFlags = vk::MemoryPropertyFlags::from_raw(
+    vk::MemoryPropertyFlags::HOST_VISIBLE.as_raw() | vk::MemoryPropertyFlags::HOST_COHERENT.as_raw(),
+);
 /// https://docs.vulkan.org/refpages/latest/refpages/index.html
 pub struct VkContext {
+    weak_self: Weak<VkContext>,
     _entry: ash::Entry,
     instance: ash::Instance,
-    _create_info: Box<VkContextCreateInfo>,
+    create_info: Box<VkContextCreateInfo>,
     physical_device: VkPhysicalDevice,
-    command_pool: Mutex<vk::CommandPool>,
+    command_buffer_resources: Mutex<Vec<VkCommandBufferResources>>,
     debug_utils: ext::debug_utils::Instance,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
+    /// Command-buffer labels, available when the instance enables `VK_EXT_debug_utils` (with validation).
+    debug_utils_device: Option<ext::debug_utils::Device>,
     timestamp_valid_bits: u32,
     device: ash::Device,
     memory_allocator: Option<vk_mem::Allocator>,
-    queue: vk::Queue,
+    /// Serializes VMA buffer allocation and free, so every committed-bytes high point is sampled before a free.
+    buffer_lifecycle: Mutex<()>,
+    peak_buffer_bytes: AtomicUsize,
+    queue: Mutex<vk::Queue>,
     queue_family_index: u32,
 }
 impl VkContext {
-    pub fn new(create_info: VkContextCreateInfo) -> Result<Self, VkContextError> {
+    pub fn new(create_info: VkContextCreateInfo) -> Result<Arc<Self>, VkContextError> {
         let create_info = Box::new(create_info);
         let api_version = vk::API_VERSION_1_3;
         let required_extensions = vec![
@@ -32,6 +54,10 @@ impl VkContext {
         ];
         let required_features = VkPhysicalDeviceFeatures {
             shader_int16: true,
+            shader_int8: true,
+            storage_buffer8_bit_access: true,
+            // Slang declares StoragePushConstant8 for modules with byte pointers, as StoragePushConstant16 for 16-bit.
+            storage_push_constant8: true,
             shader_float16: true,
             shader_subgroup_extended_types: true,
             storage_buffer16_bit_access: true,
@@ -65,48 +91,120 @@ impl VkContext {
             get_logical_device(&instance, &physical_device, &required_extensions, &required_features)
                 .inspect_err(|_| dispose_instance())?;
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
-        let command_pool = create_command_pool(&device, queue_family_index).inspect_err(|_| unsafe {
-            device.destroy_device(None);
-            dispose_instance();
-        })?;
         let memory_allocator =
             create_memory_allocator(&instance, &device, physical_device.device).inspect_err(|_| unsafe {
-                device.destroy_command_pool(command_pool, None);
                 device.destroy_device(None);
                 dispose_instance();
             })?;
+        let debug_utils_device = create_info.with_validation.then(|| ext::debug_utils::Device::new(&instance, &device));
 
-        Ok(Self {
+        Ok(Arc::new_cyclic(|weak_self| Self {
+            weak_self: weak_self.clone(),
             _entry: entry,
             instance,
-            _create_info: create_info,
+            create_info,
             physical_device,
-            command_pool: Mutex::new(command_pool),
+            command_buffer_resources: Mutex::new(Vec::new()),
             debug_utils,
             debug_messenger,
+            debug_utils_device,
             timestamp_valid_bits,
             device,
             memory_allocator: Some(memory_allocator),
-            queue,
+            buffer_lifecycle: Mutex::new(()),
+            peak_buffer_bytes: AtomicUsize::new(0),
+            queue: Mutex::new(queue),
             queue_family_index,
-        })
+        }))
     }
 
-    /// Do not hold this lock while allocating or dropping `VkCommandBuffers` on this thread.
-    pub fn command_pool(&self) -> MutexGuard<'_, vk::CommandPool> {
-        self.command_pool.lock()
+    /// The `Arc` that `new` created and that owns this context; it is alive while `&self` is.
+    pub fn arc(&self) -> Arc<Self> {
+        self.weak_self.upgrade().expect("a VkContext is always owned by the Arc that created it")
+    }
+
+    pub fn debug_utils(&self) -> Option<&ext::debug_utils::Device> {
+        self.debug_utils_device.as_ref()
+    }
+
+    /// Returns reset command resources: a cached set when one is idle, otherwise a new set.
+    pub fn acquire_command_buffer_resources(&self) -> Result<VkCommandBufferResources, Error> {
+        let Some(resources) = self.command_buffer_resources.lock().pop() else {
+            return VkCommandBufferResources::new(&self.device, self.queue_family_index);
+        };
+        if let Err(error) = resources.reset(&self.device) {
+            unsafe { resources.destroy(&self.device) };
+            return Err(error);
+        }
+        Ok(resources)
+    }
+
+    /// # Safety
+    /// The resources must come from this context and must not be pending on the GPU.
+    pub unsafe fn recycle_command_buffer_resources(
+        &self,
+        resources: VkCommandBufferResources,
+    ) {
+        self.command_buffer_resources.lock().push(resources);
     }
 
     pub fn device(&self) -> &ash::Device {
         &self.device
     }
 
-    pub fn memory_allocator(&self) -> &vk_mem::Allocator {
+    fn memory_allocator(&self) -> &vk_mem::Allocator {
         self.memory_allocator.as_ref().unwrap()
     }
 
-    pub fn queue(&self) -> vk::Queue {
-        self.queue
+    /// Creates and binds a VMA buffer, then raises the peak to the bytes VMA has committed in device-memory blocks
+    /// before any other allocation or free can run.
+    pub fn allocate_buffer(
+        &self,
+        size: vk::DeviceSize,
+    ) -> Result<(vk::Buffer, vk_mem::Allocation, vk_mem::AllocationInfo), Error> {
+        if size == 0 {
+            return Err(Error::EmptyBuffer);
+        }
+        let buffer_info = vk::BufferCreateInfo::default().size(size).usage(
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+        );
+        let allocation_info = vk_mem::AllocationCreateInfo {
+            usage: vk_mem::MemoryUsage::AutoPreferDevice,
+            flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_RANDOM,
+            required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            ..Default::default()
+        };
+        let allocator = self.memory_allocator();
+        let _lifecycle = self.buffer_lifecycle.lock();
+        let (buffer, mut allocation) =
+            unsafe { allocator.create_buffer(&buffer_info, &allocation_info) }.map_err(VkBufferError::Allocation)?;
+        let budgets = allocator
+            .get_heap_budgets()
+            .inspect_err(|_| unsafe { allocator.destroy_buffer(buffer, &mut allocation) })
+            .map_err(VkBufferError::Allocation)?;
+        let committed = budgets.iter().map(|budget| budget.statistics.blockBytes as usize).sum();
+        self.peak_buffer_bytes.fetch_max(committed, Ordering::Relaxed);
+        Ok((buffer, allocation, allocator.get_allocation_info(&allocation)))
+    }
+
+    /// # Safety
+    /// `buffer` and `allocation` must come from one `allocate_buffer` call on this context, must not be freed again,
+    /// and no pending GPU work or host pointer may still use them.
+    pub unsafe fn free_buffer(
+        &self,
+        buffer: vk::Buffer,
+        allocation: &mut vk_mem::Allocation,
+    ) {
+        let _lifecycle = self.buffer_lifecycle.lock();
+        unsafe { self.memory_allocator().destroy_buffer(buffer, allocation) };
+    }
+
+    /// Hold the guard only for queue submission: Vulkan requires external queue synchronization.
+    pub fn queue(&self) -> MutexGuard<'_, vk::Queue> {
+        self.queue.lock()
     }
 
     pub fn queue_family_index(&self) -> u32 {
@@ -120,18 +218,91 @@ impl VkContext {
     pub fn physical_device(&self) -> &VkPhysicalDevice {
         &self.physical_device
     }
+
+    pub fn logger(&self) -> &dyn VkLogger {
+        self.create_info.logger.as_ref()
+    }
 }
 impl Drop for VkContext {
     fn drop(&mut self) {
         unsafe {
+            for resources in self.command_buffer_resources.get_mut().drain(..) {
+                resources.destroy(&self.device);
+            }
             self.memory_allocator = None;
-            self.device.destroy_command_pool(*self.command_pool.get_mut(), None);
             self.device.destroy_device(None);
             if let Some(messenger) = self.debug_messenger {
                 self.debug_utils.destroy_debug_utils_messenger(messenger, None);
             }
             self.instance.destroy_instance(None);
         }
+    }
+}
+impl Context for VkContext {
+    type Backend = Vulkan;
+
+    fn new() -> Result<Arc<Self>, Error> {
+        let context = VkContext::new(VkContextCreateInfo {
+            with_validation: cfg!(test),
+            ..Default::default()
+        })?;
+        #[cfg(test)]
+        eprintln!(
+            "Vulkan test device: {} ({:?}, subgroup size {})",
+            Context::device_name(&*context).unwrap_or("unknown"),
+            context.physical_device.properties.device_type,
+            context.physical_device.subgroup_properties.size,
+        );
+        Ok(context)
+    }
+
+    fn device_name(&self) -> Option<&str> {
+        self.physical_device.properties.device_name_as_c_str().ok()?.to_str().ok()
+    }
+
+    fn create_command_buffer(
+        &self,
+        _name: Option<&str>,
+        allocation_pool: Option<Arc<<Vulkan as Backend>::AllocationPool>>,
+    ) -> Result<VkCommandBufferEncoding, Error> {
+        let allocation_pool = allocation_pool.unwrap_or_else(|| self.create_allocation_pool());
+        VkCommandBufferEncoding::new(self.arc(), allocation_pool)
+    }
+
+    fn create_buffer(
+        &self,
+        size: usize,
+    ) -> Result<Arc<VkBuffer>, Error> {
+        Ok(Arc::new(VkBuffer::new(self.arc(), size as u64)?))
+    }
+
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<VkSparseBuffer, Error> {
+        VkSparseBuffer::new(self.arc(), capacity)
+    }
+
+    fn create_allocation_pool(&self) -> Arc<<Vulkan as Backend>::AllocationPool> {
+        PoolAllocator::new()
+    }
+
+    /// Peak VMA-committed buffer block bytes; driver-owned memory (pipelines, command pools, descriptors) is excluded.
+    fn peak_memory_usage(&self) -> Option<usize> {
+        Some(self.peak_buffer_bytes.load(Ordering::Relaxed))
+    }
+
+    /// Vulkan has no in-process capture.
+    fn start_capture(
+        &self,
+        _output_path: &Path,
+    ) -> Result<Infallible, Error> {
+        Err(Error::CaptureUnsupported)
+    }
+
+    /// `VkSparseBuffer` commits its whole capacity up front, so lazily mapped buffers are not advertised.
+    fn device_capabilities(&self) -> DeviceCapabilities {
+        DeviceCapabilities::empty()
     }
 }
 fn get_entry() -> Result<ash::Entry, VkContextError> {
@@ -145,18 +316,6 @@ fn get_entry() -> Result<ash::Entry, VkContextError> {
     match entry_result {
         Ok(entry) => Ok(entry),
         Err(err) => Err(VkContextError::EntryLoadingError(err)),
-    }
-}
-fn create_command_pool(
-    device: &ash::Device,
-    queue_family_index: u32,
-) -> Result<vk::CommandPool, VkContextError> {
-    let info = vk::CommandPoolCreateInfo::default()
-        .queue_family_index(queue_family_index)
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-    match unsafe { device.create_command_pool(&info, None) } {
-        Ok(pool) => Ok(pool),
-        Err(result) => Err(VkContextError::CommandPoolCreate(result)),
     }
 }
 fn create_instance(
@@ -231,11 +390,24 @@ fn get_physical_device(
         .filter(|physical_device| {
             physical_device.properties.api_version >= vk::API_VERSION_1_3
                 && physical_device.features.contains(required_features)
-                && physical_device
-                    .subgroup_properties
-                    .supported_operations
-                    .contains(vk::SubgroupFeatureFlags::ARITHMETIC)
+                && physical_device.subgroup_properties.supported_operations.contains(
+                    vk::SubgroupFeatureFlags::BASIC
+                        | vk::SubgroupFeatureFlags::ARITHMETIC
+                        | vk::SubgroupFeatureFlags::VOTE
+                        | vk::SubgroupFeatureFlags::BALLOT
+                        | vk::SubgroupFeatureFlags::SHUFFLE,
+                )
                 && physical_device.subgroup_properties.supported_stages.contains(vk::ShaderStageFlags::COMPUTE)
+                && physical_device.shader_rounding_mode_rte_float16
+                && physical_device.shader_rounding_mode_rte_float32
+                && physical_device.shader_signed_zero_inf_nan_preserve_float16
+                && physical_device.shader_signed_zero_inf_nan_preserve_float32
+                && physical_device.rounding_mode_independence == vk::ShaderFloatControlsIndependence::ALL
+                && physical_device
+                    .memory_properties
+                    .memory_types_as_slice()
+                    .iter()
+                    .any(|memory_type| memory_type.property_flags.contains(HOST_COHERENT_MEMORY))
                 && required_extensions
                     .iter()
                     .all(|&req_ext| physical_device.supported_extensions.contains(&req_ext.to_string()))
@@ -290,6 +462,9 @@ fn get_logical_device(
         .storage_buffer16_bit_access(required_features.storage_buffer16_bit_access)
         .storage_push_constant16(required_features.storage_push_constant16);
     let mut vk12_features = vk::PhysicalDeviceVulkan12Features::default()
+        .shader_int8(required_features.shader_int8)
+        .storage_buffer8_bit_access(required_features.storage_buffer8_bit_access)
+        .storage_push_constant8(required_features.storage_push_constant8)
         .shader_float16(required_features.shader_float16)
         .shader_subgroup_extended_types(required_features.shader_subgroup_extended_types)
         .buffer_device_address(required_features.buffer_device_address)

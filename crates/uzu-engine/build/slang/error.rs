@@ -1,1 +1,1 @@
-pub type Error = anyhow::Error;
+pub use crate::common::Error;

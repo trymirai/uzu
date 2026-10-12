@@ -19,6 +19,8 @@ use crate::{
 mod gumbel;
 mod prng;
 
+#[cfg(all(test, backend = "cpu"))]
+pub use gumbel::gumbel_float_full_word;
 #[cfg(backend = "cpu")]
 pub use gumbel::{gumbel_float, revidx};
 pub use prng::PRng;

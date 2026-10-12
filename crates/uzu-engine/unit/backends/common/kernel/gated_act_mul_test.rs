@@ -75,7 +75,7 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
         input.act_type,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    CommandBufferEncoding::end_encoding(command_buffer).submit().wait_until_completed().unwrap();
 
     buffer_to_vec::<B, T>(&output)
 }
@@ -142,7 +142,7 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
         input.act_type,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    CommandBufferEncoding::end_encoding(command_buffer).submit().wait_until_completed().unwrap();
     (buffer_to_vec(&values), buffer_to_vec(&scales))
 }
 
@@ -240,7 +240,7 @@ fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -
         input.act_type,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    CommandBufferEncoding::end_encoding(command_buffer).submit().wait_until_completed().unwrap();
 
     buffer_to_vec::<B, T>(&output)
 }
@@ -297,7 +297,7 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
     };
 
     for_each_backend!(|B| {
-        let context = <B as Backend>::Context::new().expect("create context");
+        let context = <<B as Backend>::Context as Context>::new().expect("create context");
         let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), true, false, settings)
             .expect("create transformed GatedActMul");
         let fused_up = create_buffer_with_data::<B, T>(&context, &fused_up);
@@ -315,7 +315,7 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
             ActivationType::SILU,
             &mut command_buffer,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        CommandBufferEncoding::end_encoding(command_buffer).submit().wait_until_completed().unwrap();
 
         let output = buffer_to_vec::<B, T>(&output);
         assert_eq_float(

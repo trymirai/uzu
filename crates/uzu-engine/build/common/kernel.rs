@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+pub use super::KernelParameterType;
 use super::identifiers::{ArgumentName, KernelName};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -19,12 +20,6 @@ pub struct KernelArgument {
     pub name: ArgumentName,
     pub conditional: bool,
     pub ty: KernelArgumentType,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub enum KernelParameterType {
-    Type,
-    Value(Box<str>),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]

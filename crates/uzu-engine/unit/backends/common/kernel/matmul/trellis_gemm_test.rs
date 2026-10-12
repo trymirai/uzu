@@ -1,26 +1,21 @@
-#![cfg(backend = "metal")]
+#![cfg(any(backend = "metal", backend = "vulkan"))]
 
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
+#[cfg(backend = "metal")]
 use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    backends::{
-        common::{
-            Backend, Context, Kernels,
-            kernel::matmul::{
-                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, TrellisFormat,
-            },
-        },
-        metal::{Metal, MetalContext},
+    backends::common::{
+        Backend, Context, Kernels,
+        kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, TrellisFormat},
     },
     data_type::DataType,
-    tests::{
-        helpers::{buffer_to_vec, create_buffer_with_data, submit_command_buffer},
-        util::shared_metal_context,
-    },
+    tests::helpers::{buffer_to_vec, create_buffer_with_data, submit_command_buffer},
 };
+#[cfg(backend = "metal")]
+use crate::{backends::metal::Metal, tests::util::shared_metal_context};
 
 const V4_T8: TrellisFormat = TrellisFormat {
     vector_width: 4,
@@ -75,9 +70,6 @@ fn decode_level(
     (8 * field_sum + ((3 * (hash_byte & 15)) & 15)) as i32 - 54
 }
 
-type MetalBuffer = <Metal as Backend>::GlobalBuffer;
-type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
-
 const CODEBOOK: [f32; 5] = [0.0123, 0.3, -0.25, 0.125, -0.0625];
 const PADDING: usize = 24;
 const SENTINEL: u16 = 0x7F7F;
@@ -86,8 +78,8 @@ const RELATIVE_TOLERANCE: f32 = 1e-2;
 const CASES: [(usize, usize, usize); 7] =
     [(1, 80, 5120), (17, 80, 5120), (512, 80, 5120), (16, 128, 64), (32, 128, 64), (1, 6, 64), (2048, 2048, 128)];
 
-fn run_projection(
-    context: &MetalContext,
+fn run_projection<B: Backend>(
+    context: &B::Context,
     format: TrellisFormat,
     dimensions: (usize, usize, usize),
 ) {
@@ -107,13 +99,13 @@ fn run_projection(
         })
         .collect();
     let activation_scales_host: Vec<f32> = (0..m).map(|_| rng.random_range(0.001..0.01)).collect();
-    let activations = create_buffer_with_data::<Metal, i8>(context, &values);
-    let group_sums = create_buffer_with_data::<Metal, f32>(context, &group_sums_host);
-    let activation_scales = create_buffer_with_data::<Metal, f32>(context, &activation_scales_host);
-    let codes = create_buffer_with_data::<Metal, u8>(context, &stored);
-    let row_scales_buffer = create_buffer_with_data::<Metal, f32>(context, &row_scales);
-    let codebook = create_buffer_with_data::<Metal, f32>(context, &CODEBOOK);
-    let mut output = create_buffer_with_data::<Metal, u16>(context, &vec![SENTINEL; m * (n + PADDING)]);
+    let activations = create_buffer_with_data::<B, i8>(context, &values);
+    let group_sums = create_buffer_with_data::<B, f32>(context, &group_sums_host);
+    let activation_scales = create_buffer_with_data::<B, f32>(context, &activation_scales_host);
+    let codes = create_buffer_with_data::<B, u8>(context, &stored);
+    let row_scales_buffer = create_buffer_with_data::<B, f32>(context, &row_scales);
+    let codebook = create_buffer_with_data::<B, f32>(context, &CODEBOOK);
+    let mut output = create_buffer_with_data::<B, u16>(context, &vec![SENTINEL; m * (n + PADDING)]);
     let arguments = MatmulArguments {
         a: MatmulA::Trellis {
             values: &activations,
@@ -133,13 +125,18 @@ fn run_projection(
             row_stride: Some((n + PADDING) as u32),
             ops: MatmulDOps::none(),
         },
-        gather_indices: None::<&MetalBuffer>,
+        gather_indices: None::<&B::GlobalBuffer>,
         m: m as u32,
         n: n as u32,
         k: k as u32,
     };
-    let mut matmul =
-        <MetalMatmul as MatmulKernel>::new(context, DataType::BF16, DataType::BF16, DataType::BF16).unwrap();
+    let mut matmul = <<<B as Backend>::Kernels as Kernels>::MatmulKernel as MatmulKernel>::new(
+        context,
+        DataType::BF16,
+        DataType::BF16,
+        DataType::BF16,
+    )
+    .unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     matmul.encode(arguments, &mut command_buffer).unwrap();
     submit_command_buffer(command_buffer);
@@ -147,7 +144,7 @@ fn run_projection(
         .chunks_exact(row_bytes(format, k))
         .flat_map(|codes| (0..k).map(|column| decode_level(format, codes, column)))
         .collect();
-    let actual = buffer_to_vec::<Metal, u16>(&output);
+    let actual = buffer_to_vec::<B, u16>(&output);
     let stride = n + PADDING;
     for (index, &got) in actual.iter().enumerate() {
         let token = index / stride;
@@ -173,6 +170,7 @@ fn run_projection(
     }
 }
 
+#[cfg(backend = "metal")]
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::v4_t8(V4_T8)]
@@ -184,6 +182,18 @@ fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
         return;
     }
     for (m, n, k) in CASES {
-        run_projection(&context, format, (m, n, k));
+        run_projection::<Metal>(&context, format, (m, n, k));
+    }
+}
+
+#[cfg(backend = "vulkan")]
+#[uzu_test]
+fn trellis_projection_vulkan_matches_cpu_reference() {
+    use crate::{backends::vulkan::Vulkan, tests::helpers::create_context};
+    let context = create_context::<Vulkan>();
+    for format in [V4_T8, V2_T6, V2_T4] {
+        for dimensions in CASES {
+            run_projection::<Vulkan>(&context, format, dimensions);
+        }
     }
 }
