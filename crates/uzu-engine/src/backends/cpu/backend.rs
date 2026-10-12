@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 use crate::backends::{
     common::{
         Backend,
@@ -26,6 +28,7 @@ impl Backend for Cpu {
     type ScratchBuffer = PoolAllocation<Self::GlobalBuffer>;
     type SparseBuffer = CpuSparseBuffer;
     type AllocationPool = PoolAllocator<Self::GlobalBuffer>;
+    type CaptureSpan = Infallible;
     type Kernels = CpuKernels;
     type Error = CpuError;
 

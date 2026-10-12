@@ -118,6 +118,12 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn pop_debug_group(&mut self) {}
 
+    fn add_debug_point(
+        &mut self,
+        _name: &str,
+    ) {
+    }
+
     fn end_encoding(self) -> CpuCommandBufferExecutable {
         assert!(self.constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
         CpuCommandBufferExecutable {

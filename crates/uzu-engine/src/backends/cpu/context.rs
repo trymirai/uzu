@@ -1,4 +1,5 @@
 use std::{
+    convert::Infallible,
     path::Path,
     sync::{Arc, Weak, mpsc},
     thread,
@@ -71,16 +72,10 @@ impl Context for CpuContext {
         None
     }
 
-    fn enable_capture() {}
-
     fn start_capture(
         &self,
-        _trace_path: &Path,
-    ) -> Result<(), CpuError> {
-        Err(CpuError::NotSupported)
-    }
-
-    fn stop_capture(&self) -> Result<(), CpuError> {
+        _output_path: &Path,
+    ) -> Result<Infallible, CpuError> {
         Err(CpuError::NotSupported)
     }
 
