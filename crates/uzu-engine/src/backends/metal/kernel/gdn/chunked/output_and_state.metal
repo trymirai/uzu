@@ -109,6 +109,10 @@ KERNEL(DeltaNetChunkedOutputAndState)(
     const uint token_base = chunk_idx * OUTPUT_STATE_CHUNK;
     const uint valid_tokens = token_base < suffix_len ? min(uint(OUTPUT_STATE_CHUNK), suffix_len - token_base) : 0u;
     const uint chunk_head_base = (chunk_idx * num_v_heads + hv_idx);
+    const bool full_chunk = valid_tokens == OUTPUT_STATE_CHUNK;
+    auto chunk_source = [&](auto source, const short rows, const short cols) {
+      return full_chunk ? source : source.bounded(rows, cols);
+    };
 
     TokenValueFragment output_acc;
     // -- R phase: R = beta (.) (V - e^g (.) (K . S^T)) into residual_new_value_tile ----------
@@ -126,10 +130,17 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         TokenKeyFragment key_frag;
         TokenKeyFragment query_frag;
         KeyValueFragment state_frag;
-        key_frag.load_from(lane, fragment_source(k_tile + key_block_start, int(key_dim)).bounded(valid_token_rows, FR));
+        key_frag.load_from(
+            lane,
+            chunk_source(fragment_source(k_tile + key_block_start, int(key_dim)), valid_token_rows, FR)
+        );
         query_frag.load_from(
             lane,
-            fragment_source(q_norm + query_tile_base + key_block_start, int(key_dim)).bounded(valid_token_rows, FR)
+            chunk_source(
+                fragment_source(q_norm + query_tile_base + key_block_start, int(key_dim)),
+                valid_token_rows,
+                FR
+            )
         );
         state_frag.load_from(lane, fragment_source(transposed_state_tile + key_block_start * VT, int(VT), 1));
         fragment_mma(residual_acc, key_frag, state_frag);
@@ -170,8 +181,11 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         ScratchKeyValueFragment residual_frag;
         causal_inv_frag.load_from(
             lane,
-            fragment_source(causal_inv_rows + source_token_block_start, int(OUTPUT_STATE_CHUNK))
-                .bounded(valid_token_rows, FR)
+            chunk_source(
+                fragment_source(causal_inv_rows + source_token_block_start, int(OUTPUT_STATE_CHUNK)),
+                valid_token_rows,
+                FR
+            )
         );
         residual_frag.load_from(
             lane,
@@ -215,8 +229,11 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         ScratchKeyValueFragment new_value_frag;
         qk_frag.load_from(
             lane,
-            fragment_source(qk_scaled + qk_tile_base + source_token_block_start, int(OUTPUT_STATE_CHUNK))
-                .bounded(valid_token_rows, valid_source_tokens)
+            chunk_source(
+                fragment_source(qk_scaled + qk_tile_base + source_token_block_start, int(OUTPUT_STATE_CHUNK)),
+                valid_token_rows,
+                valid_source_tokens
+            )
         );
         new_value_frag.load_from(
             lane,
@@ -226,7 +243,13 @@ KERNEL(DeltaNetChunkedOutputAndState)(
       }
 
       const uint output_tile_base = (token_base + token_tile_base) * value_dim + hv_idx * head_v_dim + value_base;
-      output_acc.store_safe(lane, out + output_tile_base, int(value_dim), short2(short(VT), short(valid_token_rows)));
+      output_acc.store_maybe_bounded(
+          lane,
+          out + output_tile_base,
+          int(value_dim),
+          full_chunk,
+          short2(short(VT), short(valid_token_rows))
+      );
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -247,14 +270,21 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         TokenKeyTileFragment key_frag;
         new_value_frag.load_from(
             lane,
-            fragment_source(residual_new_value_tile + source_token_block_start * VT, 1, int(VT))
-                .bounded(short(VT), short(valid_source_tokens))
+            chunk_source(
+                fragment_source(residual_new_value_tile + source_token_block_start * VT, 1, int(VT)),
+                short(VT),
+                short(valid_source_tokens)
+            )
         );
         const device float* k_tile =
             k_norm + (token_base + source_token_block_start) * key_dim + hk_idx * HEAD_K_DIM + key_tile_base;
         key_frag.load_from(
             lane,
-            fragment_source(k_tile, int(key_dim)).bounded(short(valid_source_tokens), short(OUTPUT_STATE_KEY_TILE))
+            chunk_source(
+                fragment_source(k_tile, int(key_dim)),
+                short(valid_source_tokens),
+                short(OUTPUT_STATE_KEY_TILE)
+            )
         );
         key_frag.map_coords(lane, [&](short row, short, float value) {
           if (uint(row) >= valid_source_tokens) {
