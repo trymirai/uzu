@@ -10,7 +10,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    encodable_block::sampling::{gumbel_float, revidx},
+    encodable_block::sampling::{gumbel_float, gumbel_float_full_word, revidx},
     tests::helpers::{buffer_to_vec, create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
 
@@ -24,7 +24,9 @@ const TREE_SLOT_COUNT: usize = ROWS + 1;
 const FRONTIER_CAPACITY: usize = TREE_SLOT_COUNT * CHILDREN;
 const PRUNE_NOISE_SCALE: f32 = 1.0 / 1.5;
 
-fn inputs() -> (Vec<bf16>, Vec<f32>, Vec<u32>) {
+type Inputs = (Vec<bf16>, Vec<f32>, Vec<u32>);
+
+fn inputs() -> Inputs {
     let residual = (0..ROWS * CANDIDATES)
         .map(|index| bf16::from_f32(((index as f32 * 0.017).cos() * 4.0).round() * 0.125))
         .collect::<Vec<_>>();
@@ -45,16 +47,17 @@ fn score_key(bits: u32) -> u32 {
 }
 
 fn run_top_children<B: Backend>(
+    (residual, candidate_logits, ids): &Inputs,
+    seeds: &[u64],
     prune_noise_scale: Option<f32>,
     node_valid: &[u32; ROWS],
     tree_values: &[u32; TreeIdx::COUNT * TREE_SLOT_COUNT],
 ) -> Vec<u32> {
-    let (residual, candidate_logits, ids) = inputs();
     let context = create_context::<B>();
-    let residual = create_buffer_with_data::<B, bf16>(&context, &residual);
-    let candidate_logits = create_buffer_with_data::<B, f32>(&context, &candidate_logits);
-    let ids = create_buffer_with_data::<B, u32>(&context, &ids);
-    let depth_seeds = create_buffer_with_data::<B, u64>(&context, &DEPTH_SEEDS);
+    let residual = create_buffer_with_data::<B, bf16>(&context, residual);
+    let candidate_logits = create_buffer_with_data::<B, f32>(&context, candidate_logits);
+    let ids = create_buffer_with_data::<B, u32>(&context, ids);
+    let depth_seeds = create_buffer_with_data::<B, u64>(&context, seeds);
     let mut metadata_values = vec![0u32; ROWS * MetadataIdx::COUNT];
     for row in 0..ROWS {
         metadata_values[MetadataIdx::Depth as usize * ROWS + row] = DEPTHS[row];
@@ -88,8 +91,13 @@ fn run_top_children<B: Backend>(
     buffer_to_vec(&frontier)
 }
 
-fn top_children<B: Backend>(prune_noise_scale: Option<f32>) -> (Vec<u32>, Vec<f32>, Option<Vec<f32>>) {
-    let frontier = run_top_children::<B>(prune_noise_scale, &[1; ROWS], &[0; TreeIdx::COUNT * TREE_SLOT_COUNT]);
+fn top_children<B: Backend>(
+    inputs: &Inputs,
+    seeds: &[u64],
+    prune_noise_scale: Option<f32>,
+) -> (Vec<u32>, Vec<f32>, Option<Vec<f32>>) {
+    let frontier =
+        run_top_children::<B>(inputs, seeds, prune_noise_scale, &[1; ROWS], &[0; TreeIdx::COUNT * TREE_SLOT_COUNT]);
     let field = |field: FrontierIdx| {
         frontier[field as usize * FRONTIER_CAPACITY + CHILDREN..(field as usize + 1) * FRONTIER_CAPACITY].to_vec()
     };
@@ -108,9 +116,9 @@ fn weaver_top_children_matches_cpu() {
         tree[TreeIdx::Depth as usize * TREE_SLOT_COUNT + slot] = slot as u32 * 2;
     }
     for prune_noise_scale in [None, Some(PRUNE_NOISE_SCALE)] {
-        let (tokens, model, prune) = top_children::<Cpu>(prune_noise_scale);
+        let (tokens, model, prune) = top_children::<Cpu>(&inputs(), &DEPTH_SEEDS, prune_noise_scale);
         for valid in [[1, 1, 1], [1, 0, 1]] {
-            let expected = run_top_children::<Cpu>(prune_noise_scale, &valid, &tree);
+            let expected = run_top_children::<Cpu>(&inputs(), &DEPTH_SEEDS, prune_noise_scale, &valid, &tree);
             let field = |field: FrontierIdx, slot: usize| expected[field as usize * FRONTIER_CAPACITY + slot];
             for slot in 0..FRONTIER_CAPACITY {
                 if slot < CHILDREN || valid[slot / CHILDREN - 1] == 0 {
@@ -133,7 +141,7 @@ fn weaver_top_children_matches_cpu() {
                 assert_eq!(field(FrontierIdx::Active, slot), 1);
             }
             for_each_non_cpu_backend!(|B| {
-                let actual = run_top_children::<B>(prune_noise_scale, &valid, &tree);
+                let actual = run_top_children::<B>(&inputs(), &DEPTH_SEEDS, prune_noise_scale, &valid, &tree);
                 for offset in 0..expected.len() {
                     let field_index = offset / FRONTIER_CAPACITY;
                     let slot = offset % FRONTIER_CAPACITY;
@@ -167,8 +175,8 @@ fn weaver_top_children_matches_cpu() {
 #[uzu_test]
 fn weaver_top_children_prune_logprobs_match_reference() {
     let (residual, candidate_logits, ids) = inputs();
-    let (tokens, model, none) = top_children::<Cpu>(None);
-    let (prune_tokens, prune_model, prune) = top_children::<Cpu>(Some(PRUNE_NOISE_SCALE));
+    let (tokens, model, none) = top_children::<Cpu>(&inputs(), &DEPTH_SEEDS, None);
+    let (prune_tokens, prune_model, prune) = top_children::<Cpu>(&inputs(), &DEPTH_SEEDS, Some(PRUNE_NOISE_SCALE));
     assert!(none.is_none());
     let prune = prune.unwrap();
     assert_eq!(prune_tokens, tokens);
@@ -199,4 +207,41 @@ fn weaver_top_children_prune_logprobs_match_reference() {
         }
     }
     assert!(prune.iter().zip(&model).any(|(prune, model)| (prune - model).abs() > 0.1));
+}
+
+#[uzu_test]
+fn weaver_top_children_keeps_selection_and_pruning_distinct() {
+    // Seed 2871038, offset 0, word 2 is 0xffffffa1: a full32 uniform rounds to 1.0.
+    let seeds = [2_871_038; ROWS];
+    assert!(gumbel_float(seeds[0], revidx(2048, VOCAB_SIZE)).is_finite());
+    assert_eq!(gumbel_float_full_word(seeds[0], revidx(2048, VOCAB_SIZE)), f32::INFINITY);
+    let mut logits = (0..CANDIDATES).map(|index| -1000.0 - index as f32 * 32.0).collect::<Vec<_>>();
+    logits[0] = 0.0;
+    logits[1] = 100.0;
+    let mut ids = (0..CANDIDATES as u32).collect::<Vec<_>>();
+    ids[0] = 2048;
+    let inputs = (vec![bf16::ZERO; ROWS * CANDIDATES], logits.repeat(ROWS), ids.repeat(ROWS));
+    for scale in [None, Some(PRUNE_NOISE_SCALE)] {
+        // The CPU kernel selects with gumbel_float, finite here, so the larger logit leads.
+        let (tokens, model, prune) = top_children::<Cpu>(&inputs, &seeds, scale);
+        assert_eq!(tokens, [1, 2048, 2, 3, 4, 5, 6, 7].repeat(ROWS));
+        // Model and prune logprobs do not depend on selection noise: the CPU's, looked up by row and token.
+        let index = |slot: usize, token: u32| {
+            let row = slot / CHILDREN * CHILDREN;
+            row + tokens[row..row + CHILDREN].iter().position(|&cpu| cpu == token).unwrap()
+        };
+        for_each_non_cpu_backend!(|B| {
+            let actual = top_children::<B>(&inputs, &seeds, scale);
+            // Metal selects with the full-word noise, +inf for token 2048, which leads.
+            assert_eq!(actual.0, [2048, 1, 2, 3, 4, 5, 6, 7].repeat(ROWS));
+            for (slot, &token) in actual.0.iter().enumerate() {
+                let expected = model[index(slot, token)];
+                assert!(actual.1[slot].is_finite() && (actual.1[slot] - expected).abs() < 1e-5);
+                if let (Some(actual), Some(prune)) = (&actual.2, &prune) {
+                    let expected = prune[index(slot, token)];
+                    assert!(actual[slot].is_finite() && (actual[slot] - expected).abs() < 1e-3);
+                }
+            }
+        });
+    }
 }

@@ -8,6 +8,9 @@ pub struct VkPhysicalDeviceFeatures {
     pub storage_push_constant16: bool,
 
     // Version 1.2
+    pub shader_int8: bool,
+    pub storage_buffer8_bit_access: bool,
+    pub storage_push_constant8: bool,
     pub shader_float16: bool,
     pub shader_subgroup_extended_types: bool,
     pub buffer_device_address: bool,
@@ -25,6 +28,9 @@ impl VkPhysicalDeviceFeatures {
         (self.shader_int16 || !other.shader_int16)
             && (self.storage_buffer16_bit_access || !other.storage_buffer16_bit_access)
             && (self.storage_push_constant16 || !other.storage_push_constant16)
+            && (self.shader_int8 || !other.shader_int8)
+            && (self.storage_buffer8_bit_access || !other.storage_buffer8_bit_access)
+            && (self.storage_push_constant8 || !other.storage_push_constant8)
             && (self.shader_float16 || !other.shader_float16)
             && (self.shader_subgroup_extended_types || !other.shader_subgroup_extended_types)
             && (self.buffer_device_address || !other.buffer_device_address)

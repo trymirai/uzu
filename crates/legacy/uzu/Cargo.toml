@@ -15,9 +15,10 @@ keywords.workspace = true
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
-default = ["backend-cpu", "backend-metal", "capability-grammar"]
+default = ["backend-metal", "capability-grammar"]
 backend-cpu = ["uzu-engine/cpu"]
 backend-metal = ["uzu-engine/metal"]
+backend-vulkan = ["uzu-engine/vulkan"]
 capability-grammar = ["uzu-engine/grammar"]
 bindings = [
     "bindings-uniffi",
@@ -113,6 +114,9 @@ fancy-regex.workspace = true
 confy.workspace = true
 keyring-core.workspace = true
 chrono.workspace = true
+
+[target.'cfg(all(not(target_vendor = "apple"), not(target_family = "wasm")))'.dependencies]
+uzu-engine = { workspace = true, features = ["vulkan"] }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true

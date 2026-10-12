@@ -1,4 +1,6 @@
-use super::{MatmulDOps, MatmulError};
+use super::MatmulDOps;
+#[cfg(any(backend = "cpu", backend = "metal"))]
+use super::MatmulError;
 use crate::backends::common::{Backend, BufferMut};
 
 pub struct MatmulOutput<'d, B: Backend, T: BufferMut<Backend = B>> {
@@ -20,7 +22,8 @@ impl<'d, B: Backend, T: BufferMut<Backend = B>> MatmulOutput<'d, B, T> {
         }
     }
 
-    pub(crate) fn into_contiguous(
+    #[cfg(any(backend = "cpu", backend = "metal"))]
+    pub fn into_contiguous(
         self,
         columns: u32,
         path: &'static str,

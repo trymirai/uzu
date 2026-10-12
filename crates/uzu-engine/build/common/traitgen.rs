@@ -7,9 +7,10 @@ use quote::{format_ident, quote};
 use syn::Type;
 
 use crate::common::{
+    KernelParameterType,
     codegen::write_tokens,
     identifiers::KernelPath,
-    kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
+    kernel::{Kernel, KernelArgumentType, KernelBufferAccess},
 };
 
 pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
@@ -80,16 +81,19 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 pub fn traitgen_all(backends_kernels: Vec<HashMap<KernelPath, Box<[Kernel]>>>) -> anyhow::Result<()> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
 
-    let mut kernels: HashMap<KernelPath, Box<[Kernel]>> = HashMap::new();
+    let mut kernels: HashMap<KernelPath, Vec<Kernel>> = HashMap::new();
 
     for backend_kernels in backends_kernels {
         for (file_path, file_kernels) in backend_kernels {
-            if let Some(cached_kernels) = kernels.get(&file_path) {
-                if cached_kernels != &file_kernels {
-                    bail!("{cached_kernels:?} != {file_kernels:?}");
+            let merged = kernels.entry(file_path).or_default();
+            for kernel in file_kernels.into_vec() {
+                if let Some(cached) = merged.iter().find(|cached| cached.name == kernel.name) {
+                    if cached != &kernel {
+                        bail!("{cached:?} != {kernel:?}");
+                    }
+                } else {
+                    merged.push(kernel);
                 }
-            } else {
-                kernels.insert(file_path, file_kernels);
             }
         }
     }

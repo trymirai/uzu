@@ -85,7 +85,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    (buffer_to_vec(&out), buffer_to_vec(&suffix_state))
+    let mut suffix_state = buffer_to_vec(&suffix_state);
+    suffix_state.truncate(suffix_state_size);
+    (buffer_to_vec(&out), suffix_state)
 }
 
 /// Linear chain: node 0 has parent -1 (root), node i has parent i-1.
