@@ -15,6 +15,7 @@ pub trait CompilerPipelineExtensions {
         library: &ProtocolObject<dyn MTLLibrary>,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
+        label: Option<&str>,
     ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError>;
 }
 
@@ -24,12 +25,14 @@ impl CompilerPipelineExtensions for ProtocolObject<dyn MTL4Compiler> {
         library: &ProtocolObject<dyn MTLLibrary>,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
+        label: Option<&str>,
     ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         let library_function = MTL4LibraryFunctionDescriptor::new();
         library_function.set_library(Some(library));
         library_function.set_name(Some(function_name));
 
         let pipeline_descriptor = MTL4ComputePipelineDescriptor::new();
+        pipeline_descriptor.set_label(label);
         match constants {
             Some(constants) => {
                 let specialized_function = MTL4SpecializedFunctionDescriptor::new();

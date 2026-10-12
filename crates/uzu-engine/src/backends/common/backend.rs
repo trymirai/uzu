@@ -10,6 +10,7 @@ pub trait Backend: Clone + Send + Sync + 'static {
     type ScratchBuffer: ScratchBuffer<Backend = Self>;
     type SparseBuffer: SparseBuffer<Backend = Self>;
     type AllocationPool: Send + Sync;
+    type CaptureSpan: Send + Sync;
     type Kernels: Kernels<Backend = Self>;
     type Error: Error;
 

@@ -9,6 +9,7 @@ use crate::backends::{
     },
     metal::{
         buffer::{dense::MetalDenseBuffer, sparse::MetalSparseBuffer},
+        capture::MetalCaptureSpan,
         command_buffer::MetalCommandBuffer,
         context::MetalContext,
         error::MetalError,
@@ -27,6 +28,7 @@ impl Backend for Metal {
     type ScratchBuffer = PoolAllocation<Self::GlobalBuffer>;
     type SparseBuffer = MetalSparseBuffer;
     type AllocationPool = PoolAllocator<Self::GlobalBuffer>;
+    type CaptureSpan = MetalCaptureSpan;
     type Kernels = MetalKernels;
     type Error = MetalError;
 

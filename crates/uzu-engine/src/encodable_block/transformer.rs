@@ -74,6 +74,8 @@ impl<B: Backend> TransformerState<B> {
 
         command_buffer.pop_debug_group();
 
+        command_buffer.add_debug_point(&format!("accepted {} tokens", accepted_indices.len()));
+
         Ok(())
     }
 }
