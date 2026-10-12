@@ -1,5 +1,6 @@
 mod backend;
 mod buffer;
+mod capture;
 mod command_buffer;
 mod context;
 mod decompression;

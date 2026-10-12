@@ -80,6 +80,11 @@ pub trait CommandBufferEncoding {
 
     fn pop_debug_group(&mut self);
 
+    fn add_debug_point(
+        &mut self,
+        name: &str,
+    );
+
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
 

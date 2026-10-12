@@ -168,11 +168,9 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                 )
                 .expect("BuildTreeGramKernel");
                 let scale = (HEAD_K_DIM as f32).sqrt().recip();
-                let benchmark_path =
-                    format!("Metal/Kernel/GDNTreeVerify/BuildTreeGram/{kernel_path}/B{batch_size}_T{tree_size}");
-                let benchmark_id = BenchmarkId::from_parameter(format!(
-                    "B{batch_size}_T{tree_size}_Hg{K_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}"
-                ));
+                let parameter = format!("B{batch_size}_T{tree_size}_Hg{K_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}");
+                let benchmark_path = format!("Metal/Kernel/GDNTreeVerify/BuildTreeGram/{kernel_path}/{parameter}");
+                let benchmark_id = BenchmarkId::from_parameter(parameter);
 
                 let mut buffers = ColdPool::new(buffers_bytes(batch_size, tree_size), || {
                     make_buffers(&context, batch_size, tree_size).0
