@@ -377,144 +377,148 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let (mut prev_output, acceptance): (
             ForwardPassChaining<B>,
             Option<(<B::CommandBuffer as CommandBuffer>::Encoding, Option<CaptureMatcherSpan>)>,
-        ) = match replace(&mut self.decoding_state, DecodingState::Invalid) {
-            DecodingState::Seeded {
-                seed_token,
-            } => {
-                self.model_state.tokens.push(seed_token);
-                #[cfg(grammar)]
-                if let Some(grammar) = self.options.grammar.as_mut() {
-                    let _ = grammar.accept_token(seed_token); // TODO: this should not be ignored
-                }
-                self.metrics.num_tokens_returned += 1;
-                (
-                    ForwardPassChaining::Constant {
-                        token: seed_token,
-                        output_norm: None,
-                    },
-                    None,
-                )
-            },
-            DecodingState::ForwardPassPending(forward_pass_pending) => {
-                if forward_pass_pending.full_accept {
+        ) = loop {
+            break match replace(&mut self.decoding_state, DecodingState::Invalid) {
+                DecodingState::Seeded {
+                    seed_token,
+                } => {
+                    self.model_state.tokens.push(seed_token);
+                    #[cfg(grammar)]
+                    if let Some(grammar) = self.options.grammar.as_mut() {
+                        let _ = grammar.accept_token(seed_token); // TODO: this should not be ignored
+                    }
                     self.metrics.num_tokens_returned += 1;
-                    (ForwardPassChaining::InFlight(forward_pass_pending), None)
-                } else {
-                    for pending in forward_pass_pending.pending {
-                        pending.wait_until_completed().await.map_err(LanguageModelStreamError::Backend)?;
-                    }
-                    let sampled_tokens = forward_pass_pending
-                        .output_tokens
-                        .as_slice::<u32>()
-                        .iter()
-                        .map(|x| *x as u64)
-                        .collect::<Box<[u64]>>();
-                    let flat_trie = forward_pass_pending.input_trie.linearize();
-                    let full = flat_trie.accept(
-                        &sampled_tokens,
-                        #[cfg(grammar)]
-                        self.options.grammar.as_mut(),
-                    )?;
-                    let output_norm = forward_pass_pending.output_norm.map(|norm| {
-                        let row_bytes = norm.size() / flat_trie.len();
-                        (norm, row_bytes)
-                    });
-                    self.metrics.num_tokens_accepted += full.len();
-                    self.decoding_state = DecodingState::Accepting {
-                        full,
-                        num_accepted: 0,
-                        hidden_features: forward_pass_pending.hidden_features,
-                        output_norm,
-                        capture_span: forward_pass_pending.capture_span,
-                    };
-                    return Box::pin(self.generate()).await;
-                }
-            },
-            DecodingState::Accepting {
-                full,
-                num_accepted,
-                hidden_features,
-                output_norm,
-                capture_span,
-            } => {
-                let output_token_id = full[num_accepted].2;
-
-                self.metrics.num_tokens_returned += 1;
-
-                if num_accepted < full.len() - 1 {
-                    self.decoding_state = DecodingState::Accepting {
-                        full,
-                        num_accepted: num_accepted + 1,
-                        hidden_features,
-                        output_norm,
-                        capture_span,
-                    };
-                    return Ok(Some(output_token_id));
-                } else {
-                    let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
-                    let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
-                    let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
-                    let mut command_buffer = self
-                        .model
-                        .engine
-                        .context
-                        .create_command_buffer(
-                            Some(&format!("decode {} (accept)", self.metrics.num_decode_forward_passes - 1)),
-                            Some(self.allocation_pool.clone()),
-                        )
-                        .map_err(LanguageModelStreamError::Backend)?;
-                    self.model_state
-                        .transformer_state
-                        .encode_accept(&accepted_token_indicies, &mut command_buffer)
-                        .map_err(LanguageModelStreamError::Backend)?;
-                    if let Some(speculator) = self.model.speculator.as_ref() {
-                        speculator.encode_accept(
-                            self.model_state.speculator_state.as_mut().unwrap(),
-                            hidden_features.as_ref().unwrap().iter(),
-                            &accepted_token_indicies,
-                            &mut command_buffer,
-                        )?;
-                    }
-                    let output_norm = if let Some((final_hidden, row_bytes)) = output_norm {
-                        let row = full.last().unwrap().0;
-                        let mut norm =
-                            command_buffer.allocate_scratch(row_bytes).map_err(LanguageModelStreamError::Backend)?;
-                        command_buffer
-                            .encode_copy(final_hidden.subrange(row * row_bytes..(row + 1) * row_bytes), &mut norm);
-                        Some(norm)
-                    } else {
-                        None
-                    };
-                    if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
-                        let accepted_input_token_ids_const = command_buffer
-                            .allocate_constant_from_slice(
-                                &accepted_input_token_ids
-                                    .iter()
-                                    .map(|token_id| *token_id as u32)
-                                    .collect::<Box<[u32]>>(),
-                            )
-                            .map_err(LanguageModelStreamError::Backend)?;
-                        self.model.context_ring_update.encode(
-                            &accepted_input_token_ids_const,
-                            self.context_ring.as_mut().unwrap(),
-                            suffix_repetition_length,
-                            full.len() as u32,
-                            &mut command_buffer,
-                        );
-                    }
-                    self.model_state.tokens.extend(accepted_output_token_ids);
                     (
                         ForwardPassChaining::Constant {
-                            token: output_token_id,
-                            output_norm,
+                            token: seed_token,
+                            output_norm: None,
                         },
-                        Some((command_buffer, capture_span)),
+                        None,
                     )
-                }
-            },
-            DecodingState::Halted => return Ok(None),
-            DecodingState::Invalid => unreachable!(),
-            DecodingState::Closed => return Ok(None),
+                },
+                DecodingState::ForwardPassPending(forward_pass_pending) => {
+                    if forward_pass_pending.full_accept {
+                        self.metrics.num_tokens_returned += 1;
+                        (ForwardPassChaining::InFlight(forward_pass_pending), None)
+                    } else {
+                        for pending in forward_pass_pending.pending {
+                            pending.wait_until_completed().await.map_err(LanguageModelStreamError::Backend)?;
+                        }
+                        let sampled_tokens = forward_pass_pending
+                            .output_tokens
+                            .as_slice::<u32>()
+                            .iter()
+                            .map(|x| *x as u64)
+                            .collect::<Box<[u64]>>();
+                        let flat_trie = forward_pass_pending.input_trie.linearize();
+                        let full = flat_trie.accept(
+                            &sampled_tokens,
+                            #[cfg(grammar)]
+                            self.options.grammar.as_mut(),
+                        )?;
+                        let output_norm = forward_pass_pending.output_norm.map(|norm| {
+                            let row_bytes = norm.size() / flat_trie.len();
+                            (norm, row_bytes)
+                        });
+                        self.metrics.num_tokens_accepted += full.len();
+                        self.decoding_state = DecodingState::Accepting {
+                            full,
+                            num_accepted: 0,
+                            hidden_features: forward_pass_pending.hidden_features,
+                            output_norm,
+                            capture_span: forward_pass_pending.capture_span,
+                        };
+                        continue;
+                    }
+                },
+                DecodingState::Accepting {
+                    full,
+                    num_accepted,
+                    hidden_features,
+                    output_norm,
+                    capture_span,
+                } => {
+                    let output_token_id = full[num_accepted].2;
+
+                    self.metrics.num_tokens_returned += 1;
+
+                    if num_accepted < full.len() - 1 {
+                        self.decoding_state = DecodingState::Accepting {
+                            full,
+                            num_accepted: num_accepted + 1,
+                            hidden_features,
+                            output_norm,
+                            capture_span,
+                        };
+                        return Ok(Some(output_token_id));
+                    } else {
+                        let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
+                        let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
+                        let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
+                        let mut command_buffer = self
+                            .model
+                            .engine
+                            .context
+                            .create_command_buffer(
+                                Some(&format!("decode {} (accept)", self.metrics.num_decode_forward_passes - 1)),
+                                Some(self.allocation_pool.clone()),
+                            )
+                            .map_err(LanguageModelStreamError::Backend)?;
+                        self.model_state
+                            .transformer_state
+                            .encode_accept(&accepted_token_indicies, &mut command_buffer)
+                            .map_err(LanguageModelStreamError::Backend)?;
+                        if let Some(speculator) = self.model.speculator.as_ref() {
+                            speculator.encode_accept(
+                                self.model_state.speculator_state.as_mut().unwrap(),
+                                hidden_features.as_ref().unwrap().iter(),
+                                &accepted_token_indicies,
+                                &mut command_buffer,
+                            )?;
+                        }
+                        let output_norm = if let Some((final_hidden, row_bytes)) = output_norm {
+                            let row = full.last().unwrap().0;
+                            let mut norm = command_buffer
+                                .allocate_scratch(row_bytes)
+                                .map_err(LanguageModelStreamError::Backend)?;
+                            command_buffer
+                                .encode_copy(final_hidden.subrange(row * row_bytes..(row + 1) * row_bytes), &mut norm);
+                            Some(norm)
+                        } else {
+                            None
+                        };
+                        if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length()
+                        {
+                            let accepted_input_token_ids_const = command_buffer
+                                .allocate_constant_from_slice(
+                                    &accepted_input_token_ids
+                                        .iter()
+                                        .map(|token_id| *token_id as u32)
+                                        .collect::<Box<[u32]>>(),
+                                )
+                                .map_err(LanguageModelStreamError::Backend)?;
+                            self.model.context_ring_update.encode(
+                                &accepted_input_token_ids_const,
+                                self.context_ring.as_mut().unwrap(),
+                                suffix_repetition_length,
+                                full.len() as u32,
+                                &mut command_buffer,
+                            );
+                        }
+                        self.model_state.tokens.extend(accepted_output_token_ids);
+                        (
+                            ForwardPassChaining::Constant {
+                                token: output_token_id,
+                                output_norm,
+                            },
+                            Some((command_buffer, capture_span)),
+                        )
+                    }
+                },
+                DecodingState::Halted => return Ok(None),
+                DecodingState::Invalid => unreachable!(),
+                DecodingState::Closed => return Ok(None),
+            };
         };
 
         let context_length = self.model_state.transformer_state.context_length();
@@ -541,46 +545,51 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let mut capture_span = CAPTURE_MATCHER
             .capture::<B>(&self.model.engine.context, &format!("decode:{}", self.metrics.num_decode_forward_passes))?;
 
-        let (input_trie, chain_copy, full_accept) = if let Some(speculator) = &self.model.speculator
+        let speculation = if let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
                 &self.options.sampling_method,
-            )
-            && let (root_token, Some(output_norm)) = prev_output
+            ) {
+            let output = prev_output
                 .resolve(
                     &mut self.model_state.tokens,
                     #[cfg(grammar)]
                     self.options.grammar.as_mut(),
                 )
-                .await?
-        {
-            let trie = speculator
-                .propose_tree(
-                    self.model_state.speculator_state.as_mut().unwrap(),
-                    output_norm,
-                    root_token as u32,
-                    self.model.decoder.embedding(),
-                    shape,
-                    #[cfg(grammar)]
-                    self.options.grammar.as_mut(),
-                    &self.model_state.prng,
-                    self.allocation_pool.clone(),
-                    Some(&format!("decode {} (speculate)", self.metrics.num_decode_forward_passes)),
-                )
                 .await?;
-            prev_output.drop_output_norm();
-            (trie, None, false)
+            Some((speculator, shape, output))
         } else {
-            prev_output.drop_output_norm();
-            let (token, chain_copy) = match &prev_output {
-                ForwardPassChaining::Constant {
-                    token,
-                    ..
-                } => (*token, None),
-                ForwardPassChaining::InFlight(pending) => (0, Some(pending.output_tokens.clone())),
-            };
-            (TrieNode::new(token, self.model_state.prng.derive(context_length as u64), 0.0), chain_copy, true)
+            None
         };
+        let (input_trie, chain_copy, full_accept) =
+            if let Some((speculator, shape, (root_token, Some(output_norm)))) = speculation {
+                let trie = speculator
+                    .propose_tree(
+                        self.model_state.speculator_state.as_mut().unwrap(),
+                        output_norm,
+                        root_token as u32,
+                        self.model.decoder.embedding(),
+                        shape,
+                        #[cfg(grammar)]
+                        self.options.grammar.as_mut(),
+                        &self.model_state.prng,
+                        self.allocation_pool.clone(),
+                        Some(&format!("decode {} (speculate)", self.metrics.num_decode_forward_passes)),
+                    )
+                    .await?;
+                prev_output.drop_output_norm();
+                (trie, None, false)
+            } else {
+                prev_output.drop_output_norm();
+                let (token, chain_copy) = match &prev_output {
+                    ForwardPassChaining::Constant {
+                        token,
+                        ..
+                    } => (*token, None),
+                    ForwardPassChaining::InFlight(pending) => (0, Some(pending.output_tokens.clone())),
+                };
+                (TrieNode::new(token, self.model_state.prng.derive(context_length as u64), 0.0), chain_copy, true)
+            };
         let input_flat_trie = input_trie.linearize();
 
         self.allocation_pool = self.model.engine.context.create_allocation_pool();
@@ -899,6 +908,8 @@ impl<'a, B: Backend> Iterator for LanguageModelStream<'a, B> {
 
 impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
     fn drop(&mut self) {
-        block_on(self.close()).unwrap();
+        if !matches!(self.decoding_state, DecodingState::Closed) {
+            let _ = block_on(self.close());
+        }
     }
 }

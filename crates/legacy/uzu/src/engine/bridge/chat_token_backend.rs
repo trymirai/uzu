@@ -43,6 +43,7 @@ use crate::engine::bridge::{
     helpers::{error_stream, get_max_context_length, get_sampling_method},
 };
 
+#[derive(Clone)]
 pub struct UzuChatTokenBackendInstance<B: Backend> {
     engine: Arc<Engine<B>>,
     model: Arc<LanguageModel<B>>,
@@ -98,7 +99,6 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
     fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn State>, BackendError>> + Send + '_>> {
         Box::pin(async move {
-            let max_context_length = get_max_context_length(&self.model, self.config.context_length.clone());
             let sampling_seed = match &self.config.sampling_seed {
                 SamplingSeed::Default {} => rand::random(),
                 SamplingSeed::Custom {
@@ -106,7 +106,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                 } => *seed as u64,
             };
             self.model
-                .create_empty_state(max_context_length, sampling_seed)
+                .create_empty_state(self.max_context_length, sampling_seed)
                 .map_err(|err| BackendError::from(err.to_string()))
                 .map(|state| Box::new(UzuChatTokenBackendInstanceState::new(state)) as Box<dyn State>)
         })
@@ -175,11 +175,30 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             },
         };
 
-        Box::pin(UzuChatTokenStream::<B> {
+        let stream = UzuChatTokenStreamState {
             cancel_token: cancel_token.child_token(),
             stream: unsafe { std::mem::transmute::<LanguageModelStream<'_, B>, LanguageModelStream<'a, B>>(stream) },
+            finished: false,
             tokens_generated: 0,
             token_limit,
+        };
+        let metrics = Some(stream.stream.metrics().clone());
+        let stream = futures::stream::unfold(stream, |mut state| async move {
+            let output = match state.next().await {
+                Ok(Some(output)) => Ok(output),
+                Ok(None) => return None,
+                Err(error) => {
+                    state.cancel_token.cancel();
+                    Err(error)
+                },
+            };
+            let metrics = Some(state.stream.metrics().clone());
+            Some(((output, metrics), state))
+        });
+
+        Box::pin(UzuChatTokenStream::<B> {
+            stream: Box::pin(stream),
+            metrics,
             _state_guard: unsafe {
                 std::mem::transmute::<
                     Pin<Box<MutexGuard<'_, LanguageModelState<B>>>>,
@@ -197,6 +216,17 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 }
 
 impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
+    fn with_config(
+        &self,
+        config: ChatConfig,
+    ) -> Box<dyn ChatTokenBackendInstance> {
+        Box::new(Self {
+            max_context_length: get_max_context_length(&self.model, config.context_length.clone()),
+            config,
+            ..self.clone()
+        })
+    }
+
     fn tokenizer(&self) -> Arc<Tokenizer> {
         self.model.tokenizer().clone()
     }
@@ -217,37 +247,55 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
 // Horrible code
 
 struct UzuChatTokenStream<'a, B: Backend> {
-    cancel_token: CancellationToken,
-    stream: LanguageModelStream<'a, B>,
-    tokens_generated: usize,
-    token_limit: Option<usize>,
+    stream: Pin<Box<dyn Stream<Item = (Result<TokenStreamOutput, BackendError>, ChatTokenStreamMetrics)> + Send + 'a>>,
+    metrics: ChatTokenStreamMetrics,
     _state_guard: Pin<Box<MutexGuard<'a, LanguageModelState<B>>>>,
     _state: Arc<Mutex<LanguageModelState<B>>>,
     _model: Arc<LanguageModel<B>>,
 }
 
-impl<'a, B: Backend> UzuChatTokenStream<'a, B> {
-    fn next(&mut self) -> Result<Option<TokenStreamOutput>, BackendError> {
-        if self.cancel_token.is_cancelled() {
+struct UzuChatTokenStreamState<'a, B: Backend> {
+    cancel_token: CancellationToken,
+    stream: LanguageModelStream<'a, B>,
+    finished: bool,
+    tokens_generated: usize,
+    token_limit: Option<usize>,
+}
+
+impl<'a, B: Backend> UzuChatTokenStreamState<'a, B> {
+    async fn finish(&mut self) -> Result<(), BackendError> {
+        self.finished = true;
+        self.stream.close().await.map_err(|error| BackendError::from(error.to_string()))
+    }
+
+    async fn next(&mut self) -> Result<Option<TokenStreamOutput>, BackendError> {
+        if self.finished {
             return Ok(None);
         }
-
+        if self.cancel_token.is_cancelled() {
+            self.finish().await?;
+            return Ok(None);
+        }
         if self.token_limit.is_some_and(|token_limit| self.tokens_generated >= token_limit) {
-            self.cancel_token.cancel();
+            self.finish().await?;
             return Ok(Some(TokenStreamOutput::LimitReached));
         }
 
-        let token = self
-            .stream
-            .next()
-            .transpose()
-            .map_err(|err| Box::<dyn std::error::Error + Send + Sync>::from(err.to_string()))?;
-
-        if token.is_some() {
-            self.tokens_generated += 1;
+        let token = self.stream.generate().await.map_err(|error| BackendError::from(error.to_string()));
+        match token {
+            Ok(Some(token)) => {
+                self.tokens_generated += 1;
+                Ok(Some(TokenStreamOutput::Token(token)))
+            },
+            Err(error) => {
+                let _ = self.finish().await;
+                Err(error)
+            },
+            Ok(None) => {
+                self.finish().await?;
+                Ok(None)
+            },
         }
-
-        Ok(token.map(TokenStreamOutput::Token))
     }
 }
 
@@ -256,14 +304,17 @@ impl<'a, B: Backend> Stream for UzuChatTokenStream<'a, B> {
 
     fn poll_next(
         self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
     ) -> Poll<Option<Result<TokenStreamOutput, BackendError>>> {
         let self_mut = self.get_mut();
-        let result = self_mut.next();
-        if result.is_err() {
-            self_mut.cancel_token.cancel();
+        match self_mut.stream.as_mut().poll_next(cx) {
+            Poll::Ready(Some((output, metrics))) => {
+                self_mut.metrics = metrics;
+                Poll::Ready(Some(output))
+            },
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
-        Poll::Ready(result.transpose())
     }
 }
 
@@ -271,6 +322,6 @@ impl<'a, B: Backend> InstanceStream for UzuChatTokenStream<'a, B> {
     type Metrics = ChatTokenStreamMetrics;
 
     fn metrics(&self) -> Self::Metrics {
-        Some(self.stream.metrics().clone())
+        self.metrics.clone()
     }
 }

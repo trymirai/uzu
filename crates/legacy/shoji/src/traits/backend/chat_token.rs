@@ -45,6 +45,11 @@ pub trait Instance:
         StreamMetrics = StreamMetrics,
     >
 {
+    fn with_config(
+        &self,
+        config: ChatConfig,
+    ) -> Box<dyn Instance>;
+
     fn tokenizer(&self) -> Arc<Tokenizer>;
 
     fn max_context_length(&self) -> Option<usize>;

@@ -75,6 +75,17 @@ impl BackendInstance for FunctionGemma {
 }
 
 impl TokenInstance for FunctionGemma {
+    fn with_config(
+        &self,
+        _config: ChatConfig,
+    ) -> Box<dyn TokenInstance> {
+        Box::new(Self {
+            tokenizer: self.tokenizer.clone(),
+            cached_tokens: StdMutex::new(Vec::new()),
+            prompts: StdMutex::new(Vec::new()),
+        })
+    }
+
     fn tokenizer(&self) -> Arc<Tokenizer> {
         self.tokenizer.clone()
     }
