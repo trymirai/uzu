@@ -15,7 +15,7 @@ using namespace uzu::trie;
 
 #define ROW_TILE 16u
 #define COL_TILE 32u
-#define NUM_SIMDGROUPS 2u
+#define NUM_SIMDGROUPS 4u
 #define INVALID_ROW 0xffffffffu
 
 // kh0 = k @ h0[batch]^T for one row-tile, walking head_v_dim in COL_TILE
