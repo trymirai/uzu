@@ -29,14 +29,10 @@ pub trait Context: Sized + Send + Sync {
 
     fn peak_memory_usage(&self) -> Option<usize>;
 
-    fn enable_capture();
-
     fn start_capture(
         &self,
-        trace_path: &Path,
-    ) -> Result<(), <Self::Backend as Backend>::Error>;
-
-    fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error>;
+        output_path: &Path,
+    ) -> Result<<Self::Backend as Backend>::CaptureSpan, <Self::Backend as Backend>::Error>;
 
     fn device_capabilities(&self) -> DeviceCapabilities;
 }

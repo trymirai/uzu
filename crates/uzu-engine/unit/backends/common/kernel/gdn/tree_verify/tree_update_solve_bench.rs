@@ -181,10 +181,9 @@ fn bench_tree_update_solve(c: &mut Criterion) {
         group.sample_size(20).warm_up_time(Duration::from_millis(500)).measurement_time(Duration::from_secs(2));
 
         for &(batch_size, tree_size) in BENCH_SHAPES {
-            let benchmark_path =
-                format!("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/Simdgroup/BV{bv}/B{batch_size}_T{tree_size}");
-            let benchmark_id =
-                BenchmarkId::from_parameter(format!("B{batch_size}_T{tree_size}_HV{NUM_V_HEADS}_V{HEAD_V_DIM}_BV{bv}"));
+            let parameter = format!("B{batch_size}_T{tree_size}_HV{NUM_V_HEADS}_V{HEAD_V_DIM}_BV{bv}");
+            let benchmark_path = format!("Metal/Kernel/GDNTreeVerify/TreeUpdateSolve/Simdgroup/BV{bv}/{parameter}");
+            let benchmark_id = BenchmarkId::from_parameter(parameter);
             let mut buffers =
                 ColdPool::new(buffers_bytes(batch_size, tree_size), || make_buffers(&context, batch_size, tree_size));
 

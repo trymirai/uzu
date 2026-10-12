@@ -4,39 +4,38 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Context},
+    backends::common::{
+        Backend, Context,
+        capture_matcher::{CAPTURE_MATCHER, CaptureError, CaptureMatcherSpan},
+    },
     config::model::AnyModelConfig,
     encodable_block::sampling::SamplingMethod,
-    engine::capture::CaptureManager,
 };
 
 pub mod classifier_model;
 pub mod language_model;
 
-mod capture;
-
 pub struct Engine<B: Backend> {
+    _capture_span: Option<CaptureMatcherSpan>,
     context: Arc<B::Context>,
-    capture_manager: Option<CaptureManager<B>>,
 }
 
 #[derive(Debug, Error)]
 pub enum EngineNewError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error("Capture error: {0}")]
+    Capture(#[from] CaptureError<B>),
 }
 
 impl<B: Backend> Engine<B> {
     pub fn new() -> Result<Arc<Self>, EngineNewError<B>> {
-        let capture_enabled = CaptureManager::<B>::pre_load_enable();
-
         let context = <B::Context as Context>::new().map_err(EngineNewError::Backend)?;
-
-        let capture_manager = capture_enabled.then(|| CaptureManager::new(context.clone()));
+        let capture_span = CAPTURE_MATCHER.capture::<B>(&context, "")?;
 
         Ok(Arc::new(Self {
+            _capture_span: capture_span,
             context,
-            capture_manager,
         }))
     }
 

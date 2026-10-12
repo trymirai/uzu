@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use metal::{
     MTL4CommandQueue, MTL4CommandQueueExt, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt,
-    MTLResidencySet, MTLResourceOptions, MTLSharedEventExt, MTLSharedEventListener, MTLSharedEventNotificationBlock,
-    MTLSparseTextureMappingMode,
+    MTLEventExt, MTLResidencySet, MTLResourceOptions, MTLSharedEventExt, MTLSharedEventListener,
+    MTLSharedEventNotificationBlock, MTLSparseTextureMappingMode,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -118,6 +118,7 @@ impl Drop for MetalSparseBuffer {
             );
             sparse_state.did_ops = true;
             let event = self.context.sparse_queue.device().new_shared_event().unwrap();
+            event.set_label(Some("sparse unmap event"));
             let retain = (self.buffer.clone(), std::mem::take(&mut self.pages), event.clone());
             event.notify_listener_at_value(
                 &MTLSharedEventListener::shared_listener(),
