@@ -45,6 +45,7 @@ def get_tokenized_prompt(request: BenchRequest, tokenizer: Any) -> list[int]:
         prompt = tokenizer.apply_chat_template(
             messages,
             tokenize=True,
+            return_dict=False,
             add_generation_prompt=True,
             **request.model_dump(mode="json", include={"tools", "tool_choice"}),
         )

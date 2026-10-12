@@ -30,6 +30,17 @@ std::FILE* redirect_stdout_to_stderr() {
     return output;
 }
 
+memory_counters_t collect_memory_counters() {
+    memory_counters_t memory_counters{};
+    const kern_return_t result = get_memory_counters(&memory_counters, false);
+    if (result != KERN_SUCCESS) {
+        throw std::runtime_error(
+            std::string{"Failed to collect memory counters: "} + memory_counters_error_string(result)
+        );
+    }
+    return memory_counters;
+}
+
 static BenchRequest get_request_from_json(const std::string& json_text) {
     BenchRequest request;
     if (const auto error = glz::read<glz::opts_validate{}>(request, json_text)) {
