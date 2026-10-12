@@ -15,10 +15,16 @@ using namespace uzu::gemm;
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
+#define GEMM_K_PARTIAL_ELEMENTS                                                                                        \
+  (gemm_tiling_simdgroups_per_k(GEMM_TILING) == 1                                                                      \
+       ? 1                                                                                                             \
+       : (gemm_tiling_simdgroups_per_k(GEMM_TILING) - 1) * gemm_tiling_block_m(GEMM_TILING) *                          \
+             gemm_tiling_block_n(GEMM_TILING) * uint(sizeof(float) / sizeof(BT)))
 // The A8 MXU route reads its scales into registers, so it asks for no
 // threadgroup B memory.
 #define GEMM_TGB_ELEMENTS                                                                                              \
-  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)    \
+  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT))))         \
+                               : GEMM_K_PARTIAL_ELEMENTS)                                                              \
              : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
 template <
@@ -45,6 +51,7 @@ VARIANTS(
     GemmTiling::Tile64x64x32_Simdgroups2x2,
     GemmTiling::Tile32x32x32_Simdgroups2x2,
     GemmTiling::Tile16x32x256_Simdgroups1x1,
+    GemmTiling::Tile16x32x256_Simdgroups1x1x4,
     GemmTiling::Tile16x128x256_Simdgroups1x4,
     GemmTiling::Tile32x64x256_Simdgroups2x2,
     GemmTiling::Tile64x32x256_Simdgroups4x1,
@@ -68,6 +75,7 @@ VARIANTS(A_GROUP_SIZE, 0, 128)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
+     GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1x4 ||
      GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4 ||
      GEMM_TILING == GemmTiling::Tile32x64x256_Simdgroups2x2 ||
      GEMM_TILING == GemmTiling::Tile64x32x256_Simdgroups4x1 ||
@@ -93,6 +101,9 @@ CONSTRAINT(
     (TRANSPOSE_B &&
      (B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
       A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)))
+CONSTRAINT(
+    GEMM_TILING != GemmTiling::Tile16x32x256_Simdgroups1x1x4 ||
+    A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
 CONSTRAINT(
     GEMM_TILING != GemmTiling::Tile16x128x256_Simdgroups1x4 ||
     (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
@@ -133,7 +144,7 @@ KERNEL(Gemm)(
     const uint group_z GROUPS(group_count_z),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
     const uint thread_y THREADS(gemm_tiling_simdgroups_per_column(GEMM_TILING)),
-    const uint thread_z THREADS(gemm_tiling_simdgroups_per_row(GEMM_TILING)),
+    const uint thread_z THREADS(gemm_tiling_simdgroups_per_row(GEMM_TILING) * gemm_tiling_simdgroups_per_k(GEMM_TILING)),
     const ThreadContext thread_context
 ) {
   (void)group_x;

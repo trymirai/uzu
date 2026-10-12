@@ -67,7 +67,12 @@ impl MatmulMetalKernel {
             },
             _ => {},
         }
-        matches!(plan.tiling, GemmTiling::Tile16x32x256_Simdgroups1x1 | GemmTiling::Tile16x128x256_Simdgroups1x4)
+        matches!(
+            plan.tiling,
+            GemmTiling::Tile16x32x256_Simdgroups1x1
+                | GemmTiling::Tile16x32x256_Simdgroups1x1x4
+                | GemmTiling::Tile16x128x256_Simdgroups1x4
+        )
     }
 
     pub fn choose_dispatch(

@@ -357,7 +357,7 @@ struct IntegerSchedule {
     constexpr int CHUNKS_PER_K_GROUP = chunks_per_k_group<Core>();
     constexpr bool PREFETCH_INT4_CHUNKS = prefetches_int4_chunks<Core>();
     constexpr bool IS_ALIGNED_M_INT4_TILE16X32 =
-        PREFETCH_INT4_CHUNKS && ALIGNED_M && Core::TILING == GemmTiling::Tile16x32x256_Simdgroups1x1;
+        PREFETCH_INT4_CHUNKS && ALIGNED_M && Core::THREADGROUP_BLOCK_M == 16 && Core::THREADGROUP_BLOCK_N == 32;
     constexpr int K_GROUPS_PER_FETCH = IS_ALIGNED_M_INT4_TILE16X32 ? 4 : 1;
     constexpr int MIN_K_GROUPS_PER_THREADGROUP_FOR_BATCHED_FETCH = 16;
     using PackedRightChunk = typename decltype(right_codes)::PackedChunk;

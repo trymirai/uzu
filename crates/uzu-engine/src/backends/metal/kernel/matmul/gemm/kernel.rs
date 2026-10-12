@@ -458,7 +458,7 @@ impl GemmKernel {
         let slice_bytes = elem * partial_data_type.size_in_bytes();
         let mut temp = command_buffer.allocate_scratch(split_k as usize * slice_bytes)?;
         let mut params = gemm_params(shape, plan, 1.0, scale_strides, zero_point_strides);
-        params.aligned_inner_iterations = kp / k_step;
+        params.aligned_inner_iterations = kp / k_step / tiling.simdgroups_k();
         let part_kernel = self.get_or_create(command_buffer.context(), part_spec, partial_data_type)?;
         part_kernel.encode(
             a_full_precision,
@@ -564,7 +564,8 @@ fn gemm_params(
         leading_dimension_d: n,
         threadgroups_per_row: n.div_ceil(tiling.block_n()),
         threadgroups_per_column: m.div_ceil(tiling.block_m()),
-        aligned_inner_iterations: outer_block_k(shape, plan.engine, plan.tiling).map_or(0, |step| k / step),
+        aligned_inner_iterations: outer_block_k(shape, plan.engine, plan.tiling)
+            .map_or(0, |step| k / step / tiling.simdgroups_k()),
         use_morton: false,
         ab_scale,
         scale_output_stride: scale_strides.output_stride,
