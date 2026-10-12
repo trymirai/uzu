@@ -64,7 +64,12 @@ impl AttentionTwoPass {
     ) -> Result<MappedMutexGuard<'_, AttentionTwoPass2MetalKernel>, MetalError> {
         let mut second = self.second.lock();
         if second.is_none() {
-            *second = Some(AttentionTwoPass2MetalKernel::new(context, self.config.data_type, self.config.head_dim)?);
+            *second = Some(AttentionTwoPass2MetalKernel::new(
+                context,
+                self.config.data_type,
+                self.config.head_dim,
+                self.config.gate_row_stride.is_some(),
+            )?);
         }
         Ok(MutexGuard::map(second, |second| second.as_mut().expect("pass was just initialized")))
     }
@@ -74,6 +79,7 @@ impl AttentionTwoPass {
         arguments: AttentionArguments<
             '_,
             Metal,
+            impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
@@ -127,8 +133,10 @@ impl AttentionTwoPass {
             &sums,
             &maxs,
             &mut output,
+            arguments.gate,
             config.num_q_heads,
             arguments.suffix_length,
+            config.gate_row_stride,
             command_buffer,
         );
         Ok(output)
