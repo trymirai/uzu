@@ -987,17 +987,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codespan-reporting"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
-dependencies = [
- "serde",
- "termcolor",
- "unicode-width 0.2.2",
-]
-
-[[package]]
 name = "color_quant"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1373,72 +1362,6 @@ name = "ctor"
 version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb22e947478ccf9dc44d8922042c677a63fbb88f2cb468521d1145816e5087cb"
-
-[[package]]
-name = "cxx"
-version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
-dependencies = [
- "cxx-build",
- "cxx-cc",
- "cxxbridge-cmd",
- "cxxbridge-macro",
- "foldhash",
- "link-cplusplus",
-]
-
-[[package]]
-name = "cxx-build"
-version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
-dependencies = [
- "cc",
- "codespan-reporting",
- "cxx-cc",
- "indexmap 2.14.0",
- "proc-macro2",
- "quote",
- "scratch",
- "syn 2.0.118",
-]
-
-[[package]]
-name = "cxx-cc"
-version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
-dependencies = [
- "cc",
- "cxxbridge-flags",
-]
-
-[[package]]
-name = "cxxbridge-cmd"
-version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
-dependencies = [
- "clap",
- "codespan-reporting",
- "indexmap 2.14.0",
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
-name = "cxxbridge-flags"
-version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
-
-[[package]]
-name = "cxxbridge-macro"
-version = "1.0.194"
-source = "git+https://github.com/trymirai/cxx.git?branch=master#aefe85bdd845e391c68e5400e19bdb437502859d"
-dependencies = [
- "indexmap 2.14.0",
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
 
 [[package]]
 name = "darling"
@@ -3335,15 +3258,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f50e8f47623268b5407192d26876c4d7f89d686ca130fdc53bced4814cd29f8"
 dependencies = [
  "bitflags 2.13.0",
-]
-
-[[package]]
-name = "link-cplusplus"
-version = "1.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f78c730aaa7d0b9336a299029ea49f9ee53b0ed06e9202e8cb7db9bae7b8c82"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -5866,12 +5780,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "scratch"
-version = "1.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d68f2ec51b097e4c1a75b681a8bec621909b5e91f15bb7b840c4f2f7b01148b2"
-
-[[package]]
 name = "scroll"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6222,6 +6130,9 @@ name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "smartstring"
@@ -6537,15 +6448,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "termcolor"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
-dependencies = [
- "winapi-util",
 ]
 
 [[package]]
@@ -8386,16 +8288,18 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xgrammar-rs"
-version = "0.2.3"
-source = "git+https://github.com/trymirai/xgrammar-rs.git?branch=main#04995a307d58f3b2cd015cd5bfd4d7bbeab98f3e"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1bc58f5791add99e3a2038ca5ca0f7ea6938521c58c678cf326a71340a10668"
 dependencies = [
- "cc",
- "cmake",
- "cxx",
- "cxx-build",
+ "ahash",
+ "getrandom 0.3.4",
+ "rayon",
+ "serde",
  "serde_json",
+ "smallvec",
+ "thiserror 2.0.18",
  "tokenizers",
- "walkdir",
 ]
 
 [[package]]
