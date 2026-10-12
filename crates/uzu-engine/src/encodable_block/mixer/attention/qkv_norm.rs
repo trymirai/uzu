@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferMut, CommandBuffer,
         kernel::{Kernels, QKVNormKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
@@ -152,8 +152,6 @@ impl<B: Backend> QKVNorm<B> {
             "QKV norm input row stride ({input_row_stride}) is smaller than its packed row width ({packed_row_width})"
         );
 
-        command_buffer.push_debug_group("qkv norm");
-
         let kv = self.num_kv_heads;
         let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
         for (head, head_offset, head_count) in heads {
@@ -178,8 +176,6 @@ impl<B: Backend> QKVNorm<B> {
                 command_buffer,
             );
         }
-
-        command_buffer.pop_debug_group();
 
         Ok(())
     }

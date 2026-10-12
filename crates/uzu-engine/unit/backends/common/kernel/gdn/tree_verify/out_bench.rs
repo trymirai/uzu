@@ -99,12 +99,11 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
         for &batch_size in BATCH_SIZES {
             for &tree_size in TREE_SIZES {
                 let mut buffers = make_buffers::<T>(context, batch_size, tree_size);
-                let benchmark_path = format!(
-                    "Metal/Kernel/GDNTreeVerify/BuildTreeOut/{data_type_name}/{path}/{tile_name}/B{batch_size}_T{tree_size}"
-                );
-                let benchmark_id = BenchmarkId::from_parameter(format!(
-                    "B{batch_size}_T{tree_size}_QK{QK_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}_V{HEAD_V_DIM}"
-                ));
+                let parameter =
+                    format!("B{batch_size}_T{tree_size}_QK{QK_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}_V{HEAD_V_DIM}");
+                let benchmark_path =
+                    format!("Metal/Kernel/GDNTreeVerify/BuildTreeOut/{data_type_name}/{path}/{tile_name}/{parameter}");
+                let benchmark_id = BenchmarkId::from_parameter(parameter);
 
                 let kernel = <<Metal as Backend>::Kernels as Kernels>::BuildTreeOutKernel::new(
                     context,

@@ -190,9 +190,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("matmul");
-
-        let output = self.encode_with_a(
+        self.encode_with_a(
             MatmulA::FullPrecision {
                 values: &input,
                 offset: 0,
@@ -200,11 +198,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             batch_dim,
             None::<Gather<&B::ScratchBuffer>>,
             command_buffer,
-        )?;
-
-        command_buffer.pop_debug_group();
-
-        Ok(output)
+        )
     }
 
     fn encode_input(

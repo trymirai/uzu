@@ -58,9 +58,9 @@ CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
   --save-baseline matmul_baseline_m2_max
 ```
 
-Set `UZU_CAPTURE_BENCH=1` to capture the first matching benchmark command buffer as a Metal `.gputrace`.
-`UZU_CAPTURE_BENCH_FILTER` is an optional benchmark path substring; `UZU_CAPTURE_BENCH_DIR` defaults to the current
-directory.
+Set `UZU_CAPTURE='<benchmark path>'` to capture the first matching batch; named helpers use exact Criterion paths.
+Append `@path.gputrace` to choose the output (default `/tmp/uzu.gputrace` for one capture).
+Streams also expose `prefill` and zero-based `decode:N` per stream; ranges use `start..end`, e.g. `prefill..decode:2`.
 
 ## Running on iPhone (via `cargo-dinghy`)
 
