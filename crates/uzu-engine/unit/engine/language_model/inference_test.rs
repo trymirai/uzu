@@ -31,6 +31,26 @@ const MAX_GENERATED_TOKENS: usize = 4;
 // Bounds the model test KV allocation.
 const CONTEXT_LENGTH: u32 = 16384;
 
+#[uzu_test]
+#[ignore]
+fn test_full_model_without_matching_speculator_shape() {
+    let model_path = get_test_model_path();
+    let shapes: serde_json::Value =
+        serde_json::from_reader(File::open(model_path.join("speculator/shapes.json")).unwrap()).unwrap();
+    assert!(shapes.get("default").is_none());
+    for device in
+        [create_context::<Cpu>().device_name(), create_context::<Vulkan>().device_name()].into_iter().flatten()
+    {
+        assert!(shapes.get(device).is_none());
+    }
+    let cpu = Engine::<Cpu>::new().unwrap().load_language_model(&model_path).unwrap();
+    assert!(!cpu.speculation_supported());
+    cpu.create_empty_state(cpu.recommended_context_length(), 0).unwrap();
+    drop(cpu);
+    let vulkan = Engine::<Vulkan>::new().unwrap().load_language_model(&model_path).unwrap();
+    vulkan.create_empty_state(vulkan.recommended_context_length(), 0).unwrap();
+}
+
 fn load_config(model_path: &Path) -> LanguageModelConfig {
     serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json")).unwrap())).unwrap()
 }

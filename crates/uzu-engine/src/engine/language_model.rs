@@ -1,7 +1,5 @@
-use std::{fs::File, io, io::BufReader, path::Path, sync::Arc};
+use std::{fs::File, io::BufReader, path::Path, sync::Arc};
 
-use derive_more::Debug;
-use thiserror::Error;
 use tokenizers::Tokenizer;
 
 use crate::{
@@ -12,13 +10,16 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        decoder::{Decoder, DecoderError},
+        decoder::Decoder,
         sampling::{Sampling, SamplingMethod},
     },
     engine::Engine,
-    parameters::{ParameterLoader, ParameterLoaderError},
-    speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
+    parameters::ParameterLoader,
+    speculators::dflash_tfm::DFlashTfmSpeculator,
 };
+
+mod error;
+pub use error::EngineLoadLanguageModelError;
 
 pub mod state;
 pub mod stream;
@@ -39,24 +40,6 @@ pub struct LanguageModel<B: Backend> {
     vocab_size: usize,
 }
 
-#[derive(Debug, Error)]
-pub enum EngineLoadLanguageModelError<B: Backend> {
-    #[error("I/O error: {0}")]
-    IO(#[from] io::Error),
-    #[error("Serde error: {0}")]
-    Serde(#[from] serde_json::Error),
-    #[error("ParameterLoader error: {0}")]
-    ParameterLoader(#[from] ParameterLoaderError<B>),
-    #[error("Backend error: {0}")]
-    Backend(#[source] B::Error),
-    #[error("Decoder error: {0}")]
-    Decoder(#[from] DecoderError<B>),
-    #[error("Speculator error: {0}")]
-    Speculator(#[from] DFlashSpeculatorLoadError<B>),
-    #[error("Tokenizer error: {0}")]
-    Tokenizer(#[from] tokenizers::Error),
-}
-
 impl<B: Backend> Engine<B> {
     pub fn load_language_model(
         self: &Arc<Self>,
@@ -68,7 +51,6 @@ impl<B: Backend> Engine<B> {
         let weights_file = File::open(model_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, &*self.context)?;
 
-        // TODO
         let speculator_path = model_path.join("speculator");
         let speculator_path = speculator_path.exists().then_some(speculator_path);
 
@@ -83,16 +65,15 @@ impl<B: Backend> Engine<B> {
             data_type,
         )?;
 
-        assert!(
-            speculator_path.is_none() || decoder.speculation_supported(),
-            "attempted to load speculator for a model that doesn't support one"
-        );
-
         let speculator = speculator_path
             .as_deref()
             .map(|speculator_path| DFlashTfmSpeculator::new(speculator_path, self.context.clone()))
             .transpose()?
             .flatten();
+
+        if speculator.is_some() && !decoder.speculation_supported() {
+            return Err(EngineLoadLanguageModelError::UnsupportedSpeculator);
+        }
 
         let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
 
