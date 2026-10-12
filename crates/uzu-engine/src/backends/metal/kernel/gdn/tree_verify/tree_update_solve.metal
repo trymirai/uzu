@@ -18,7 +18,6 @@ using namespace uzu::matmul;
 //   A      [B*HV, NB, ceil(NB/2), 16, 32] f32 packed pair tiles from BuildTreeGram
 //          (block (i,j) at pair j/2, column (j%2)*16)
 //   Ainv   [B*HV, NB, 16, 16] f32 diagonal-block inverses from BuildTreeGram
-//   h0_idx [B] i32, negative = zero initial state (absent when !use_h0)
 //   U      [B*HV, T, head_v_dim] f32 (output)
 //
 // Grid: one simdgroup per (batch, value head, BV value-dim tile); the history is
@@ -36,7 +35,6 @@ PUBLIC KERNEL(TreeUpdateSolve)(
     const device float* beta,
     const device float* a_packed,
     const device float* a_inv,
-    const device int* h0_idx OPTIONAL(use_h0),
     device float* u,
     constant const uint& batch_size,
     constant const uint& tree_size,
@@ -66,7 +64,6 @@ PUBLIC KERNEL(TreeUpdateSolve)(
   const uint value_dim_base = value_tile_idx * BV;
   const uint tile_value_cols = min(BV, head_v_dim - value_dim_base);
   const uint num_blocks = div_ceil(tree_size, BT);
-  const int h0_slot = use_h0 ? h0_idx[batch_idx] : -1;
 
   const uint value_token_stride = value_heads * head_v_dim;
   const uint scalar_token_stride = value_heads;
@@ -88,7 +85,7 @@ PUBLIC KERNEL(TreeUpdateSolve)(
 
     TileFragment acc;
 
-    if (h0_slot >= 0) {
+    if (use_h0) {
       const device float* kh0_block = kh0_head_tile + row_base * value_token_stride;
       acc.load_maybe_bounded(
           lane_idx,

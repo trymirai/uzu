@@ -99,8 +99,6 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let layout = Layout::new(arguments.tree_size, &self.arguments);
-        let h0_indices = command_buffer.allocate_constant_from_slice(&[0i32])?;
-
         let mut prefix =
             command_buffer.allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads], INNER_DATA_TYPE)?;
         let mut a_packed = command_buffer.allocate_scratch_for_shape(&layout.a_packed_shape(), INNER_DATA_TYPE)?;
@@ -132,7 +130,6 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             &prefix,
             arguments.beta,
             Some(arguments.h0),
-            Some(&h0_indices),
             &mut a_packed,
             &mut qkd,
             &mut a_inverse,
@@ -153,7 +150,6 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             arguments.beta,
             &a_packed,
             &a_inverse,
-            Some(&h0_indices),
             &mut u,
             1,
             arguments.tree_size,
@@ -167,7 +163,6 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             &qkd,
             &u,
             Some(arguments.h0),
-            Some(&h0_indices),
             &mut output,
             1.0,
             1,
