@@ -405,6 +405,50 @@ fn assistant_reasoning_content_round_trips_in_session_block_order() {
 }
 
 #[test]
+fn prefix_match_preserves_tool_calls_with_empty_assistant_content() {
+    let tool_call = uzu::types::basic::ToolCall {
+        identifier: Some("c1".to_string()),
+        name: "f".to_string(),
+        arguments: uzu::types::basic::Value {
+            json: "{}".to_string(),
+        },
+    };
+    for reasoning in ["", "thoughts"] {
+        let mut assistant = ChatMessage::assistant();
+        if !reasoning.is_empty() {
+            assistant = assistant.with_reasoning(reasoning.to_string());
+        }
+        let current =
+            vec![ChatMessage::user().with_text("hi".to_string()), assistant.with_tool_call(tool_call.clone())];
+        for content in [None, Some("null"), Some("\"\""), Some("[]"), Some(r#"[{"type":"text","text":""}]"#)] {
+            let mut body = serde_json::json!({"messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "reasoning_content": reasoning, "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+                ]},
+                {"role": "tool", "tool_call_id": "c1", "content": "result"}
+            ]});
+            if let Some(content) = content {
+                body["messages"][1]["content"] = serde_json::from_str(content).unwrap();
+            }
+            let request: ChatCompletionRequest = serde_json::from_value(body).unwrap();
+            let messages = to_chat_messages(&request.messages);
+            assert!(messages.len() > current.len());
+            assert!(messages_have_prefix(&messages, &current), "content: {content:?}, reasoning: {reasoning:?}");
+        }
+    }
+}
+
+#[test]
+fn empty_tool_result_content_is_preserved() {
+    let request = request(r#"{"messages":[{"role":"tool","tool_call_id":"c1","content":""}]}"#);
+    assert_eq!(
+        to_chat_messages(&request.messages),
+        vec![ChatMessage::tool().with_block(tool_call_result_block("c1", String::new()))]
+    );
+}
+
+#[test]
 fn prefix_match_ignores_tool_call_identifiers() {
     let assistant_call = |identifier: &str| {
         ChatMessage::assistant().with_tool_call(uzu::types::basic::ToolCall {
