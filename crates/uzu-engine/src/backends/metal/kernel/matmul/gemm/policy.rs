@@ -55,6 +55,16 @@ pub(super) fn mxu_mn_tile(
     }
 }
 
+pub(super) fn mxu_int8_gemm_tile(
+    m: u32,
+    n: u32,
+) -> GemmTiling {
+    match mxu_mn_tile(true, m, n) {
+        GemmTiling::Tile128x128x256_Simdgroups4x4 => MXU_DEFAULT_TILE,
+        tiling => tiling,
+    }
+}
+
 pub(super) fn mxu_fp_tile(
     m: u32,
     n: u32,

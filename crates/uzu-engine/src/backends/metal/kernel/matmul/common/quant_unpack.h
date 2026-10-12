@@ -29,6 +29,7 @@ METAL_FUNC uint decode_zero_point(const device uint8_t* zero_points_row, uint gr
 
 UZU_CONST ushort W4_BITS = 4;
 UZU_CONST uint W4_SIGN_MASK = symmetric_zero_point<W4_BITS>() * 0x11111111u;
+UZU_CONST uint W8_SIGN_MASK = symmetric_zero_point<8>() * 0x01010101u;
 UZU_CONST uint W4_NIBBLE_MASK = 0x0F0F0F0Fu;
 
 template <typename U, int N, int bits>
