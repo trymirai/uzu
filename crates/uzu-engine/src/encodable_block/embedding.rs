@@ -185,7 +185,7 @@ impl<B: Backend> Embedding<B> {
         apply_logit_transform: bool,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
-        command_buffer.push_debug_group("embedding readout");
+        let command_buffer = &mut *command_buffer.debug_group("embedding readout");
 
         assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
         let mut output_buffer = match &self.tying {
@@ -235,8 +235,6 @@ impl<B: Backend> Embedding<B> {
                 command_buffer,
             );
         }
-
-        command_buffer.pop_debug_group();
 
         Ok(output_buffer)
     }

@@ -93,7 +93,7 @@ impl<B: Backend> PredictionHead<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("prediction head");
+        let command_buffer = &mut *command_buffer.debug_group("prediction head");
 
         let mut hidden = self.dense_projection.encode(input, batch_dim, command_buffer)?;
         self.activation_kernel.encode(
@@ -106,8 +106,6 @@ impl<B: Backend> PredictionHead<B> {
         let normalized =
             self.normalization.encode(&hidden, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)?;
         let logits = self.readout.encode(normalized, batch_dim, command_buffer)?;
-
-        command_buffer.pop_debug_group();
 
         Ok(logits)
     }

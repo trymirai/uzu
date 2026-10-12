@@ -122,13 +122,12 @@ pub fn bindgen(
                 #(#encode_argument_definitions),*
             ) {
                 #empty_dispatch_guards
-                command_buffer.push_debug_group(#kernel_name);
+                let command_buffer = &mut *command_buffer.debug_group(#kernel_name);
                 #(#encode_deconstructs)*
                 #encode_accesses_call
                 command_buffer.compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_set_calls)*
                 #dispatch_code
-                command_buffer.pop_debug_group();
             }
         }
     };

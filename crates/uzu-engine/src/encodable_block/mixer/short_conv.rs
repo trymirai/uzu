@@ -308,7 +308,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("short conv");
+        let command_buffer = &mut *command_buffer.debug_group("short conv");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for short conv mixer");
 
@@ -343,8 +343,6 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         };
 
         let output = self.out_projection.encode(conv_output, batch_dim.size(), command_buffer)?;
-
-        command_buffer.pop_debug_group();
 
         Ok(output)
     }

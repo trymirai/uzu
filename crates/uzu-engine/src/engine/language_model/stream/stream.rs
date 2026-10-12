@@ -211,7 +211,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 .create_command_buffer(Some("prefill"), Some(allocation_pool.clone()))
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            command_buffer.add_debug_point(&format!(
+            command_buffer.debug_point(&format!(
                 "prefill at context {}, suffix {} ({} batches)",
                 model_state.transformer_state.context_length(),
                 input.len(),
@@ -590,7 +590,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             )
             .map_err(LanguageModelStreamError::Backend)?;
 
-        command_buffer.add_debug_point(&format!(
+        command_buffer.debug_point(&format!(
             "decode round {} at context {} suffix {}",
             self.metrics.num_decode_forward_passes,
             context_length,

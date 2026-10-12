@@ -10,7 +10,7 @@ use crate::backends::{
     metal::{
         buffer::{dense::MetalDenseBuffer, sparse::MetalSparseBuffer},
         capture::MetalCaptureSpan,
-        command_buffer::MetalCommandBuffer,
+        command_buffer::{MetalCommandBuffer, MetalDebugGroupSpan},
         context::MetalContext,
         error::MetalError,
         kernel::MetalKernels,
@@ -23,6 +23,7 @@ pub struct Metal;
 impl Backend for Metal {
     type Context = MetalContext;
     type CommandBuffer = MetalCommandBuffer;
+    type DebugGroupSpan<'a> = MetalDebugGroupSpan<'a>;
     type GlobalBuffer = BlockAllocation<MetalDenseBuffer>;
     type ConstantBuffer = BumpAllocation<Self::GlobalBuffer>;
     type ScratchBuffer = PoolAllocation<Self::GlobalBuffer>;

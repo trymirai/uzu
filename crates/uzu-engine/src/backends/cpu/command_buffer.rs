@@ -110,15 +110,14 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         });
     }
 
-    fn push_debug_group(
+    fn debug_group(
         &mut self,
         _name: &str,
-    ) {
+    ) -> <Cpu as Backend>::DebugGroupSpan<'_> {
+        self
     }
 
-    fn pop_debug_group(&mut self) {}
-
-    fn add_debug_point(
+    fn debug_point(
         &mut self,
         _name: &str,
     ) {

@@ -1,4 +1,5 @@
 use std::{
+    ops::{Deref, DerefMut},
     range::Range,
     sync::{Arc, mpsc},
     time::Duration,
@@ -195,19 +196,17 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         kernel.encode(dst, (range.end - range.start) as u64, u32::from(value) * 0x0101_0101, self);
     }
 
-    // TODO: maybe port previous debug command_buffer labels
-    fn push_debug_group(
+    fn debug_group(
         &mut self,
         name: &str,
-    ) {
+    ) -> MetalDebugGroupSpan<'_> {
         ProtocolObject::<dyn MTL4CommandEncoder>::push_debug_group(self.compute_encoder.as_ref(), name);
+        MetalDebugGroupSpan {
+            command_buffer: self,
+        }
     }
 
-    fn pop_debug_group(&mut self) {
-        self.compute_encoder.pop_debug_group();
-    }
-
-    fn add_debug_point(
+    fn debug_point(
         &mut self,
         name: &str,
     ) {
@@ -237,6 +236,30 @@ impl Drop for MetalCommandBufferEncoding {
         );
         self.compute_encoder.end_encoding();
         self.command_buffer.end_command_buffer();
+    }
+}
+
+pub struct MetalDebugGroupSpan<'a> {
+    command_buffer: &'a mut MetalCommandBufferEncoding,
+}
+
+impl Deref for MetalDebugGroupSpan<'_> {
+    type Target = MetalCommandBufferEncoding;
+
+    fn deref(&self) -> &Self::Target {
+        self.command_buffer
+    }
+}
+
+impl DerefMut for MetalDebugGroupSpan<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.command_buffer
+    }
+}
+
+impl Drop for MetalDebugGroupSpan<'_> {
+    fn drop(&mut self) {
+        self.command_buffer.compute_encoder.pop_debug_group();
     }
 }
 

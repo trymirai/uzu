@@ -193,7 +193,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             LinearInput::FullPrecision(input) => input,
             input => return self.inner_linear.encode_input(input, batch_dim, command_buffer),
         };
-        command_buffer.push_debug_group("linear (rht)");
+        let command_buffer = &mut *command_buffer.debug_group("linear (rht)");
 
         let format = self.inner_linear.select_activation_format(batch_dim, command_buffer.context());
         let input = self.input_rht.prepare_in_place(input, batch_dim, format, command_buffer)?;
@@ -204,7 +204,6 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             command_buffer,
         )?;
 
-        command_buffer.pop_debug_group();
         Ok(output)
     }
 }

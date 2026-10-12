@@ -243,7 +243,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("mamba2");
+        let command_buffer = &mut *command_buffer.debug_group("mamba2");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for mamba2 mixer");
 
@@ -420,8 +420,6 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         state.suffix_length = Some(batch_dim.size());
 
         let output = self.out_projection.encode(ssd_output, batch_dim.size(), command_buffer)?;
-
-        command_buffer.pop_debug_group();
 
         Ok(output)
     }

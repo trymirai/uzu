@@ -64,28 +64,29 @@ impl AttentionKernel for AttentionCpuKernel {
             arguments.trie.is_some(),
             config.sliding_window_size.is_some(),
         )?;
-        command_buffer.push_debug_group("attention core");
-        single_pass.encode(
-            arguments.queries,
-            arguments.keys,
-            arguments.values,
-            &mut output,
-            config.num_q_heads / config.num_groups,
-            arguments.cache.prefix_len() + arguments.suffix_length,
-            config.head_dim,
-            config.num_groups * config.head_dim,
-            config.head_dim,
-            config.num_groups * config.head_dim,
-            arguments.cache.ring_params(),
-            config.scale.unwrap_or(1.0 / (config.head_dim as f32).sqrt()),
-            arguments.trie,
-            config.sliding_window_size,
-            arguments.sinks,
-            config.num_q_heads,
-            arguments.suffix_length,
-            command_buffer,
-        );
-        command_buffer.pop_debug_group();
+        {
+            let command_buffer = &mut *command_buffer.debug_group("attention core");
+            single_pass.encode(
+                arguments.queries,
+                arguments.keys,
+                arguments.values,
+                &mut output,
+                config.num_q_heads / config.num_groups,
+                arguments.cache.prefix_len() + arguments.suffix_length,
+                config.head_dim,
+                config.num_groups * config.head_dim,
+                config.head_dim,
+                config.num_groups * config.head_dim,
+                arguments.cache.ring_params(),
+                config.scale.unwrap_or(1.0 / (config.head_dim as f32).sqrt()),
+                arguments.trie,
+                config.sliding_window_size,
+                arguments.sinks,
+                config.num_q_heads,
+                arguments.suffix_length,
+                command_buffer,
+            );
+        }
         if let (Some(gate), Some(gate_row_stride)) = (arguments.gate, config.gate_row_stride) {
             <sigmoid_gate::SigmoidGateCpuKernel as SigmoidGateKernel>::new(command_buffer.context(), config.data_type)?
                 .encode(
