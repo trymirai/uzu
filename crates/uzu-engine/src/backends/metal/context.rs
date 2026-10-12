@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     path::Path,
     sync::{
-        Arc, Weak,
+        Arc, OnceLock, Weak,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -29,6 +29,7 @@ use crate::backends::{
         decompression,
         error::MetalError,
         heaps::MetalHeaps,
+        kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
         metal_extensions::{DeviceExt, LibraryPipelineExtensions},
     },
 };
@@ -57,6 +58,8 @@ pub struct MetalContext {
     pub(super) command_allocator_cache: Mutex<Vec<Retained<ProtocolObject<dyn MTL4CommandAllocator>>>>,
     library_cache: Mutex<HashMap<usize, Retained<ProtocolObject<dyn MTLLibrary>>>>,
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
+    pub(super) blit_copy: [OnceLock<BlitCopyMetalKernel>; 3],
+    pub(super) blit_fill: [OnceLock<BlitFillMetalKernel>; 2],
     weak_self: Weak<MetalContext>,
 }
 
@@ -176,6 +179,8 @@ impl Context for MetalContext {
             command_allocator_cache: Mutex::new(Vec::with_capacity(32)),
             library_cache: Mutex::new(HashMap::new()),
             pipeline_cache: Mutex::new(HashMap::new()),
+            blit_copy: std::array::from_fn(|_| OnceLock::new()),
+            blit_fill: std::array::from_fn(|_| OnceLock::new()),
             weak_self: weak_self.clone(),
         }))
     }
