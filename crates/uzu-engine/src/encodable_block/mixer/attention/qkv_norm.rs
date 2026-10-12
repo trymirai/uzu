@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, CommandBuffer,
+        Backend, BufferMut, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, QKVNormKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
@@ -26,6 +26,7 @@ struct Head<B: Backend> {
 }
 
 pub struct QKVNorm<B: Backend> {
+    name: String,
     query: Option<Head<B>>,
     key: Option<Head<B>>,
     value: Option<Head<B>>,
@@ -37,6 +38,7 @@ pub struct QKVNorm<B: Backend> {
 
 impl<B: Backend> QKVNorm<B> {
     pub fn new(
+        name: String,
         context: &B::Context,
         intermediate_data_type: DataType,
         query_config: Option<NormalizationConfig>,
@@ -75,6 +77,7 @@ impl<B: Backend> QKVNorm<B> {
             .transpose()?;
 
         Ok(Self {
+            name,
             query,
             key,
             value,
@@ -152,6 +155,7 @@ impl<B: Backend> QKVNorm<B> {
             "QKV norm input row stride ({input_row_stride}) is smaller than its packed row width ({packed_row_width})"
         );
 
+        command_buffer.sample_start_timestamp(&self.name);
         let kv = self.num_kv_heads;
         let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
         for (head, head_offset, head_count) in heads {
@@ -177,6 +181,7 @@ impl<B: Backend> QKVNorm<B> {
             );
         }
 
+        command_buffer.sample_end_timestamp();
         Ok(())
     }
 }
