@@ -1,5 +1,8 @@
 pub(crate) mod common;
 
+#[cfg(feature = "vulkan")]
+pub mod vulkan;
+
 #[cfg(backend = "cpu")]
 pub(crate) mod cpu;
 #[cfg(backend = "metal")]

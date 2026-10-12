@@ -7,6 +7,9 @@ use common::{compiler::Compiler, envs, gpu_type_paths::GpuTypePaths, gpu_types::
 
 mod cpu;
 
+#[cfg(feature = "vulkan")]
+mod slang;
+
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
 
@@ -51,6 +54,9 @@ fn main() -> anyhow::Result<ExitCode> {
 
     let gpu_types = GpuTypes::scan("common").context("Failed to scan gpu types")?;
     debug_log!("gpu_types scan done");
+
+    #[cfg(feature = "vulkan")]
+    slang::SlangCompiler::new()?.build()?;
 
     let gpu_type_paths = GpuTypePaths::from_gpu_types(&gpu_types).context("Failed to build GPU type path map")?;
 
