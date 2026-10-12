@@ -98,6 +98,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         trie: None::<&B::GlobalBuffer>,
         sinks: None,
         cache: KVCacheView::full(segment_prefix_length as u32),
+        gate: None::<&B::GlobalBuffer>,
     };
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
@@ -132,6 +133,7 @@ fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
                 trie: None::<&<Metal as Backend>::GlobalBuffer>,
                 sinks: None,
                 cache,
+                gate: None::<&<Metal as Backend>::GlobalBuffer>,
             },
             &mut command_buffer,
         )

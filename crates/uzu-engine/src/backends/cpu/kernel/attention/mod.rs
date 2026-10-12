@@ -12,7 +12,9 @@ mod mask;
 use crate::backends::{
     common::{
         BufferRef, CommandBufferEncoding,
-        kernel::{AttentionArguments, AttentionKernel, AttentionKernelConfig, AttentionSinglePassKernel},
+        kernel::{
+            AttentionArguments, AttentionKernel, AttentionKernelConfig, AttentionSinglePassKernel, SigmoidGateKernel,
+        },
     },
     cpu::{Cpu, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError},
 };
@@ -38,6 +40,7 @@ impl AttentionKernel for AttentionCpuKernel {
         arguments: AttentionArguments<
             '_,
             Cpu,
+            impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,
@@ -83,6 +86,17 @@ impl AttentionKernel for AttentionCpuKernel {
             command_buffer,
         );
         command_buffer.pop_debug_group();
+        if let (Some(gate), Some(gate_row_stride)) = (arguments.gate, config.gate_row_stride) {
+            <sigmoid_gate::SigmoidGateCpuKernel as SigmoidGateKernel>::new(command_buffer.context(), config.data_type)?
+                .encode(
+                    gate,
+                    &mut output,
+                    config.num_q_heads * config.head_dim,
+                    arguments.suffix_length,
+                    gate_row_stride,
+                    command_buffer,
+                );
+        }
         Ok(output)
     }
 }
