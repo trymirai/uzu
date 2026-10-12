@@ -8,9 +8,9 @@ use std::{
 };
 
 use metal::{
-    MTL4CommandAllocator, MTL4CommandQueue, MTL4CommandQueueDescriptor, MTL4Compiler, MTL4CompilerDescriptor,
-    MTLCaptureTarget, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLEventExt,
-    MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
+    MTL4CommandAllocator, MTL4CommandQueue, MTL4CommandQueueDescriptor, MTLCaptureTarget, MTLComputePipelineState,
+    MTLDevice, MTLDeviceExt, MTLEvent, MTLEventExt, MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary,
+    MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
@@ -29,7 +29,7 @@ use crate::backends::{
         decompression,
         error::MetalError,
         heaps::MetalHeaps,
-        metal_extensions::{CompilerPipelineExtensions, DeviceExt},
+        metal_extensions::{DeviceExt, LibraryPipelineExtensions},
     },
 };
 
@@ -51,7 +51,6 @@ pub struct MetalContext {
     pub(super) sparse_queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     pub(super) sparse_event: Retained<ProtocolObject<dyn MTLEvent>>,
     pub(super) sparse_state: Mutex<SparseState>,
-    compiler: Retained<ProtocolObject<dyn MTL4Compiler>>,
     pub(super) block_allocator: Arc<BlockAllocator<MetalDenseBuffer>>,
     pub(super) heaps: Arc<MetalHeaps>,
     pub(super) peak_memory_usage: Arc<AtomicUsize>,
@@ -103,7 +102,7 @@ impl MetalContext {
         }
 
         let library = self.library(library_data, library_compressed)?;
-        let pipeline = self.compiler.compute_pipeline_state(&library, function_name, constants, Some(cache_key))?;
+        let pipeline = library.compute_pipeline_state(function_name, constants, Some(cache_key))?;
         self.pipeline_cache.lock().insert(cache_key.to_string(), pipeline.clone());
 
         Ok(pipeline)
@@ -156,10 +155,6 @@ impl Context for MetalContext {
             event_value: 0,
         };
 
-        let compiler = device
-            .new_compiler_with_descriptor(&MTL4CompilerDescriptor::new())
-            .map_err(|error| MetalError::CannotCreateCompiler(error.to_string()))?;
-
         let block_allocator = BlockAllocator::new(16 * 1024);
 
         let heaps = MetalHeaps::new(device.clone(), peak_memory_usage.clone(), MTLSparsePageSize::KB256, 256);
@@ -175,7 +170,6 @@ impl Context for MetalContext {
             sparse_queue,
             sparse_event,
             sparse_state: Mutex::new(sparse_state),
-            compiler,
             block_allocator,
             heaps,
             peak_memory_usage,

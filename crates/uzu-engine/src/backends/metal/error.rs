@@ -17,8 +17,6 @@ pub enum MetalError {
     CannotStartGpuCapture(String),
     #[error("Cannot create library: {0}")]
     CannotCreateLibrary(String),
-    #[error("Cannot create compiler: {0}")]
-    CannotCreateCompiler(String),
     #[error("Cannot create command queue")]
     CannotCreateCommandQueue,
     #[error("Cannot create event")]
@@ -35,6 +33,8 @@ pub enum MetalError {
     CommandBufferWait(RecvError),
     #[error("Command buffer execution failed: {0}")]
     CommandBufferExecution(String),
+    #[error("Cannot create function: {0}")]
+    CannotCreateFunction(String),
     #[error("Cannot create pipeline state for {function_name}: {error}")]
     CannotCreatePipelineState {
         function_name: String,
