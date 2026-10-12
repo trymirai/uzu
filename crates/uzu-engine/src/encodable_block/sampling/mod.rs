@@ -92,7 +92,7 @@ impl<B: Backend> Sampling<B> {
         sampling_range: Range<u32>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::GlobalBuffer, B::Error> {
-        command_buffer.push_debug_group("sampling");
+        let command_buffer = &mut *command_buffer.debug_group("sampling");
 
         let sampling_length = sampling_range.end - sampling_range.start;
 
@@ -193,8 +193,6 @@ impl<B: Backend> Sampling<B> {
             sampling_length,
             command_buffer,
         );
-
-        command_buffer.pop_debug_group();
 
         Ok(output)
     }

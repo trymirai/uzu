@@ -101,9 +101,9 @@ impl AttentionKernel for AttentionMetalKernel {
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
-        command_buffer.push_debug_group("attention core");
+        let command_buffer = &mut *command_buffer.debug_group("attention core");
         let (gate, suffix_length) = (arguments.gate, arguments.suffix_length);
-        let result = self.encode_impl(arguments, command_buffer).map(|(mut output, gate_applied)| {
+        self.encode_impl(arguments, command_buffer).map(|(mut output, gate_applied)| {
             if let (Some(gate), Some((kernel, stride)), false) = (gate, &self.gate, gate_applied) {
                 kernel.encode(
                     gate,
@@ -115,9 +115,7 @@ impl AttentionKernel for AttentionMetalKernel {
                 );
             }
             output
-        });
-        command_buffer.pop_debug_group();
-        result
+        })
     }
 }
 

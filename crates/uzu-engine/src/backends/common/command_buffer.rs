@@ -73,14 +73,13 @@ pub trait CommandBufferEncoding {
         value: u8,
     );
 
-    fn push_debug_group(
+    #[must_use]
+    fn debug_group(
         &mut self,
         name: &str,
-    );
+    ) -> <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DebugGroupSpan<'_>;
 
-    fn pop_debug_group(&mut self);
-
-    fn add_debug_point(
+    fn debug_point(
         &mut self,
         name: &str,
     );

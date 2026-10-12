@@ -470,7 +470,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("delta net");
+        let command_buffer = &mut *command_buffer.debug_group("delta net");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for delta net mixer");
 
@@ -486,8 +486,6 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
 
         if !batch_dim.full_accept() {
             let output = self.encode_tree_verify(&in_projected, batch_dim, state, command_buffer)?;
-
-            command_buffer.pop_debug_group();
 
             return Ok(output);
         }
@@ -630,8 +628,6 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         });
 
         let output = self.out_projection.encode(delta_output, batch_dim.size(), command_buffer)?;
-
-        command_buffer.pop_debug_group();
 
         Ok(output)
     }
