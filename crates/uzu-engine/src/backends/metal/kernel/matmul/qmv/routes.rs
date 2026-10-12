@@ -1,4 +1,4 @@
-// Qwen3.6-27B W4/ZP and W8/Symmetric, G64.
+// Qwen3.6-27B W4/ZP and W8/Symmetric, G64, plus Weaver linears on M5 Max.
 // Tuned on M1, M2, M2 Pro, M3 Max, M4, M4 Pro, M5 Max.
 use metal::MTLGPUFamily;
 
@@ -20,6 +20,7 @@ const GATE_UP: u8 = 1 << 2;
 const PROJECTION_IN: u8 = 1 << 3;
 const PROJECTION_OUT: u8 = 1 << 4;
 const READOUT: u8 = 1 << 5;
+const WEAVER: u8 = 1 << 6;
 
 #[derive(Clone, Copy)]
 struct RouteRow {
@@ -43,6 +44,7 @@ const fn shape(
         (16480, 5120) => PROJECTION_IN,
         (5120, 6144) => PROJECTION_OUT,
         (248320, 5120) => READOUT,
+        (5120 | 6144, 2048) => WEAVER,
         _ => 0,
     }
 }
@@ -158,7 +160,7 @@ const ROWS: &[RouteRow] = &[
     row!(M4Pro, w8_sym_g64, 7, DOWN | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(7, 16, 8, 1, 2)),
     row!(M5Max, w4_zp_g64, 2, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(2, 16, 8, 1, 2)),
     row!(M5Max, w4_zp_g64, 3, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(3, 16, 8, 1, 2)),
-    row!(M5Max, w4_zp_g64, 4, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(4, 16, 8, 1, 2)),
+    row!(M5Max, w4_zp_g64, 4, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT | WEAVER, tuned!(4, 16, 8, 1, 2)),
     row!(M5Max, w4_zp_g64, 5, DOWN | GATE | GATE_UP | PROJECTION_IN | PROJECTION_OUT | READOUT, tuned!(5, 16, 8, 1, 2)),
     row!(M5Max, w4_zp_g64, 6, GATE_UP | PROJECTION_IN | READOUT, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 1)),
     row!(M5Max, w4_zp_g64, 6, DOWN, main_gemm!(Mxu, Tile32x64x256_Simdgroups2x2, 4)),
