@@ -40,9 +40,10 @@ use crate::engine::bridge::{
     helpers::{error_stream, get_max_context_length, get_sampling_method},
 };
 
+#[derive(Clone)]
 pub struct UzuChatTokenBackendInstance<B: Backend> {
     engine: Arc<Engine<B>>,
-    model: LanguageModel<B>,
+    model: Arc<LanguageModel<B>>,
     config: ChatConfig,
     stop_token_ids: Vec<i32>,
     max_context_length: Option<u32>,
@@ -76,7 +77,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
 
         Ok(Self {
             engine,
-            model,
+            model: Arc::new(model),
             config,
             stop_token_ids,
             max_context_length,
@@ -95,7 +96,6 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
     fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn State>, BackendError>> + Send + '_>> {
         Box::pin(async move {
-            let max_context_length = get_max_context_length(&self.model, self.config.context_length.clone());
             let sampling_seed = match &self.config.sampling_seed {
                 SamplingSeed::Default {} => rand::random(),
                 SamplingSeed::Custom {
@@ -103,7 +103,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                 } => *seed as u64,
             };
             self.model
-                .create_empty_state(max_context_length, sampling_seed)
+                .create_empty_state(self.max_context_length, sampling_seed)
                 .map_err(|err| BackendError::from(err.to_string()))
                 .map(|state| Box::new(UzuChatTokenBackendInstanceState::new(state)) as Box<dyn State>)
         })
@@ -170,30 +170,41 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         let metrics = stream.metrics().clone();
         let inner = stream::unfold(
-            (stream, 0, cancel_token.child_token()),
-            move |(mut stream, mut tokens_generated, cancel_token)| async move {
-                if cancel_token.is_cancelled() {
+            (stream, 0, cancel_token.child_token(), false),
+            move |(mut stream, mut tokens_generated, cancel_token, finished)| async move {
+                if finished {
                     return None;
                 }
 
-                let output = if token_limit.is_some_and(|token_limit| tokens_generated >= token_limit) {
-                    cancel_token.cancel();
-                    Ok(TokenStreamOutput::LimitReached)
+                let cancelled = cancel_token.is_cancelled();
+                let output = if cancelled || token_limit.is_some_and(|token_limit| tokens_generated >= token_limit) {
+                    match stream.close().await {
+                        Ok(()) if cancelled => return None,
+                        Ok(()) => Ok(TokenStreamOutput::LimitReached),
+                        Err(error) => Err(BackendError::from(error.to_string())),
+                    }
                 } else {
-                    match stream.generate().await {
+                    match stream.generate().await.map_err(|error| BackendError::from(error.to_string())) {
                         Ok(Some(token)) => {
                             tokens_generated += 1;
                             Ok(TokenStreamOutput::Token(token))
                         },
-                        Ok(None) => return None,
+                        Ok(None) => match stream.close().await {
+                            Ok(()) => return None,
+                            Err(error) => Err(BackendError::from(error.to_string())),
+                        },
                         Err(error) => {
-                            cancel_token.cancel();
-                            Err(BackendError::from(error.to_string()))
+                            let _ = stream.close().await;
+                            Err(error)
                         },
                     }
                 };
+                let finished = !matches!(&output, Ok(TokenStreamOutput::Token(_)));
+                if output.is_err() {
+                    cancel_token.cancel();
+                }
                 let metrics = stream.metrics().clone();
-                Some(((output, metrics), (stream, tokens_generated, cancel_token)))
+                Some(((output, metrics), (stream, tokens_generated, cancel_token, finished)))
             },
         );
 
@@ -209,6 +220,17 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 }
 
 impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
+    fn with_config(
+        &self,
+        config: ChatConfig,
+    ) -> Box<dyn ChatTokenBackendInstance> {
+        Box::new(Self {
+            max_context_length: get_max_context_length(&self.model, config.context_length.clone()),
+            config,
+            ..self.clone()
+        })
+    }
+
     fn tokenizer(&self) -> Arc<Tokenizer> {
         self.model.tokenizer().clone()
     }
