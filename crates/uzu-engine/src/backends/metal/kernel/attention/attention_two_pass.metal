@@ -5,6 +5,7 @@
 #include "../common/thread_context.h"
 #include "../generated/ring.h"
 #include "../generated/trie.h"
+#include "attention_gate.h"
 #include "mask.h"
 
 #define TOTAL_BLOCKS_COUNT 32
@@ -146,8 +147,11 @@ KERNEL(AttentionTwoPass2)(
     const device float* sums,
     const device float* maxs,
     device T* out,
+    const device T* gate OPTIONAL(has_gate),
     const constant uint& num_heads,
     const constant uint& suffix_length,
+    const constant uint& gate_row_stride OPTIONAL(has_gate),
+    const bool has_gate SPECIALIZE,
     const ThreadContext thread_context,
     const uint head_idx GROUPS(num_heads),
     const uint q_seq_idx GROUPS(suffix_length),
@@ -197,7 +201,12 @@ KERNEL(AttentionTwoPass2)(
   if (thread_context.simd_lane_id == 0) {
     out += o_offset * HEAD_DIM + thread_context.simdgroup_index * elements_per_thread;
     for (uint i = 0; i < elements_per_thread; i++) {
-      out[i] = static_cast<T>(o[i] / sum_exp_score);
+      T result = static_cast<T>(o[i] / sum_exp_score);
+      if (has_gate) {
+        const uint channel = thread_context.simdgroup_index * elements_per_thread + i;
+        result = attention_apply_gate(result, gate[q_seq_idx * gate_row_stride + head_idx * HEAD_DIM + channel]);
+      }
+      out[i] = result;
     }
   }
 }

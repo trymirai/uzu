@@ -343,6 +343,7 @@ impl<B: Backend> Weaver<B> {
                         trie: None::<&B::ConstantBuffer>,
                         sinks: None,
                         cache,
+                        gate: None::<&B::ConstantBuffer>,
                     },
                     command_buffer,
                 )

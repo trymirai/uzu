@@ -3,11 +3,12 @@ use ndarray::{Array4, s};
 use uzu_engine_macros::uzu_test;
 
 use crate::{
+    array::ArrayElement,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
             gpu_types::trie::TrieNode as GpuTrieNode,
-            kernel::{AttentionArguments, AttentionKernel},
+            kernel::{AttentionArguments, AttentionKernel, SigmoidGateKernel},
         },
         cpu::Cpu,
         metal::Metal,
@@ -237,6 +238,7 @@ fn run_single_pass_attention(
             trie: None::<&<Metal as Backend>::GlobalBuffer>,
             sinks: sinks_buffer.as_ref(),
             cache: KVCacheView::full(0),
+            gate: None::<&<Metal as Backend>::GlobalBuffer>,
         },
         &mut command_buffer,
     )?;
@@ -306,6 +308,7 @@ fn run_gemm_attention(
         trie: None::<&<Metal as Backend>::GlobalBuffer>,
         sinks: sinks_buffer.as_ref(),
         cache: KVCacheView::full(0),
+        gate: None::<&<Metal as Backend>::GlobalBuffer>,
     };
 
     let pooled_output = kernel.encode(args, &mut command_buffer)?;
@@ -489,6 +492,7 @@ fn run_two_pass_attention(
             trie: None::<&<Metal as Backend>::GlobalBuffer>,
             sinks: sinks_buffer.as_ref(),
             cache: KVCacheView::full(0),
+            gate: None::<&<Metal as Backend>::GlobalBuffer>,
         },
         &mut command_buffer,
     )?;
@@ -612,6 +616,7 @@ fn run_attention_with_kernel<B: Backend>(
         trie: trie.as_ref(),
         sinks: None,
         cache,
+        gate: None::<&B::GlobalBuffer>,
     };
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let pooled = kernel.encode(arguments, &mut command_buffer).expect("encode");
@@ -743,4 +748,74 @@ fn attention_kernel_ring_matches_full_on_wrap() {
         None,
     );
     assert_eq_float::<bf16>(&full, &ring, 1e-2, "wrapped ring attention");
+}
+
+fn check_attention_gate<B: Backend>(
+    context: &B::Context,
+    suffix_length: usize,
+    prefix_length: usize,
+) {
+    const HEAD_DIM: usize = 256;
+    const Q_HEADS: usize = 24;
+    const KV_HEADS: usize = 4;
+    const GATE_DIM: usize = Q_HEADS * HEAD_DIM;
+    const PROJECTION_DIM: usize = 2 * (Q_HEADS + KV_HEADS) * HEAD_DIM;
+    let mut config = super::default_attention_config::<bf16>(HEAD_DIM, Q_HEADS, KV_HEADS, true);
+    let plain = <B::Kernels as Kernels>::AttentionKernel::new(context, config).expect("attention kernel");
+    config.gate_row_stride = Some(PROJECTION_DIM as u32);
+    let gated = <B::Kernels as Kernels>::AttentionKernel::new(context, config).expect("gated attention kernel");
+    let sigmoid_gate =
+        <B::Kernels as Kernels>::SigmoidGateKernel::new(context, bf16::data_type()).expect("sigmoid gate kernel");
+    let shape = (HEAD_DIM, Q_HEADS, KV_HEADS, suffix_length, prefix_length, true);
+    let (keys, values) = attention_data(shape);
+    let queries = create_buffer_with_data::<B, bf16>(context, &fill_attention(Q_HEADS * suffix_length * HEAD_DIM, 0.5));
+    let keys = create_buffer_with_data::<B, bf16>(context, &keys);
+    let values = create_buffer_with_data::<B, bf16>(context, &values);
+    let qkvg = create_buffer_with_data::<B, bf16>(context, &fill_attention(suffix_length * PROJECTION_DIM, 3.0));
+    let arguments = |gate| AttentionArguments {
+        queries: &queries,
+        keys: &keys,
+        values: &values,
+        suffix_length: suffix_length as u32,
+        trie: None::<&B::GlobalBuffer>,
+        sinks: None,
+        cache: KVCacheView::full(prefix_length as u32),
+        gate,
+    };
+    let gate_segment = qkvg.subrange((PROJECTION_DIM - GATE_DIM) * size_of::<bf16>()..);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut expected = plain.encode(arguments(None), &mut command_buffer).expect("plain attention");
+    sigmoid_gate.encode(
+        gate_segment,
+        &mut expected,
+        GATE_DIM as u32,
+        suffix_length as u32,
+        PROJECTION_DIM as u32,
+        &mut command_buffer,
+    );
+    let fused = gated.encode(arguments(Some(gate_segment)), &mut command_buffer).expect("gated attention");
+    let mut expected_out = create_buffer::<B, bf16>(context, suffix_length * GATE_DIM);
+    let mut fused_out = create_buffer::<B, bf16>(context, suffix_length * GATE_DIM);
+    command_buffer.encode_copy(&expected, &mut expected_out);
+    command_buffer.encode_copy(&fused, &mut fused_out);
+    submit_command_buffer(command_buffer);
+    let expected = buffer_to_vec::<B, bf16>(&expected_out);
+    let fused = buffer_to_vec::<B, bf16>(&fused_out);
+    assert_eq!(expected, fused, "gated attention differs at S{suffix_length} L{prefix_length}");
+}
+
+#[uzu_test]
+fn attention_gate_matches_standalone_gate_on_cpu() {
+    let context = <Cpu as Backend>::Context::new().expect("CPU attention context");
+    check_attention_gate::<Cpu>(context.as_ref(), 3, 29);
+}
+
+#[uzu_test]
+fn attention_gate_matches_standalone_gate_on_metal() {
+    let context = <Metal as Backend>::Context::new().expect("Metal attention context");
+    for (suffix_length, prefix_length) in
+        [(1, 100), (1, 2000), (200, 800), (2, 1022), (16, 16368), (65, 959), (65, 16319), (1024, 0)]
+    {
+        check_attention_gate::<Metal>(context.as_ref(), suffix_length, prefix_length);
+    }
 }
