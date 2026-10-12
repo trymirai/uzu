@@ -59,7 +59,6 @@ struct TreeUpdateSolveBuffers {
     beta: <Metal as Backend>::GlobalBuffer,
     a: <Metal as Backend>::GlobalBuffer,
     a_inv: <Metal as Backend>::GlobalBuffer,
-    h0_idx: <Metal as Backend>::GlobalBuffer,
     u: <Metal as Backend>::GlobalBuffer,
 }
 
@@ -139,8 +138,6 @@ fn make_buffers(
             inverse_value(batch_head_matrix_idx, block, row, col, tree_size)
         })
         .collect::<Vec<_>>();
-    let h0_idx = (0..batch_size).map(|i| i as i32).collect::<Vec<_>>();
-
     TreeUpdateSolveBuffers {
         kh0: create_buffer_with_data::<Metal, f32>(context, &kh0),
         v: create_buffer_with_data::<Metal, bf16>(context, &v),
@@ -148,7 +145,6 @@ fn make_buffers(
         beta: create_buffer_with_data::<Metal, f32>(context, &beta),
         a,
         a_inv: create_buffer_with_data::<Metal, f32>(context, &a_inv),
-        h0_idx: create_buffer_with_data::<Metal, i32>(context, &h0_idx),
         u: create_buffer::<Metal, f32>(context, u_len),
     }
 }
@@ -164,9 +160,7 @@ fn buffers_bytes(
     let u_len = batch_size * NUM_V_HEADS * tree_size * HEAD_V_DIM;
 
     let inv_len = batch_size * NUM_V_HEADS * num_blocks * BT * BT;
-    v_len * size_of::<bf16>()
-        + (scalar_len * 2 + a_len + inv_len + u_len + v_len) * size_of::<f32>()
-        + batch_size * size_of::<i32>()
+    v_len * size_of::<bf16>() + (scalar_len * 2 + a_len + inv_len + u_len + v_len) * size_of::<f32>()
 }
 
 #[uzu_bench]
@@ -220,7 +214,6 @@ fn encode(
         &buffers.beta,
         &buffers.a,
         &buffers.a_inv,
-        Some(&buffers.h0_idx),
         &mut buffers.u,
         batch_size as u32,
         tree_size as u32,

@@ -33,7 +33,6 @@ struct TreeGramBuffers {
     prefix: <Metal as Backend>::GlobalBuffer,
     beta: <Metal as Backend>::GlobalBuffer,
     h0: <Metal as Backend>::GlobalBuffer,
-    h0_idx: <Metal as Backend>::GlobalBuffer,
     a_packed: <Metal as Backend>::GlobalBuffer,
     qkd: <Metal as Backend>::GlobalBuffer,
     a_inv: <Metal as Backend>::GlobalBuffer,
@@ -105,7 +104,6 @@ fn make_buffers(
         .collect::<Vec<_>>();
     let beta = (0..scalar_len).map(|i| 0.25 + ((i as f32 * 0.013).sin() + 1.0) * 0.2).collect::<Vec<_>>();
     let h0 = (0..h0_len).map(|i| ((i as f32 * 0.007).sin() * 0.05) - 0.01).collect::<Vec<_>>();
-    let h0_idx = (0..batch_size).map(|i| i as i32).collect::<Vec<_>>();
     let scale = (HEAD_K_DIM as f32).sqrt().recip();
     (
         TreeGramBuffers {
@@ -115,7 +113,6 @@ fn make_buffers(
             prefix: create_buffer_with_data::<Metal, f32>(context, &prefix),
             beta: create_buffer_with_data::<Metal, f32>(context, &beta),
             h0: create_buffer_with_data::<Metal, f32>(context, &h0),
-            h0_idx: create_buffer_with_data::<Metal, i32>(context, &h0_idx),
             a_packed: create_buffer::<Metal, f32>(context, a_len),
             qkd: create_buffer::<Metal, f32>(context, out_len),
             a_inv: create_buffer::<Metal, f32>(context, a_inv_len),
@@ -142,7 +139,6 @@ fn buffers_bytes(
         + batch_size * tree_size * 3 * size_of::<u32>()
         + scalar_len * size_of::<f32>() * 2
         + (out_len + a_len + a_inv_len + kh0_len) * size_of::<f32>()
-        + batch_size * size_of::<i32>()
 }
 
 #[uzu_bench]
@@ -185,7 +181,6 @@ fn bench_build_tree_gram(c: &mut Criterion) {
                             &buffers.prefix,
                             &buffers.beta,
                             Some(&buffers.h0),
-                            Some(&buffers.h0_idx),
                             &mut buffers.a_packed,
                             &mut buffers.qkd,
                             &mut buffers.a_inv,
