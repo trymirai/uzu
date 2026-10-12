@@ -7,6 +7,9 @@ use common::{compiler::Compiler, enum_paths::EnumPaths, envs, gpu_types::GpuType
 
 mod cpu;
 
+#[cfg(feature = "vulkan")]
+mod slang;
+
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
 
@@ -51,6 +54,9 @@ fn main() -> anyhow::Result<ExitCode> {
 
     let gpu_types = GpuTypes::scan().context("Failed to scan gpu types")?;
     debug_log!("gpu_types scan done");
+
+    #[cfg(feature = "vulkan")]
+    slang::SlangCompiler::new()?.build()?;
 
     let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
 
