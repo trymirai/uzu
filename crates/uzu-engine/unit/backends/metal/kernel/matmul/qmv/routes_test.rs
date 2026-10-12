@@ -126,6 +126,18 @@ fn table_is_complete_and_fingerprint_is_stable() {
 }
 
 #[uzu_test]
+fn weaver_linears_select_the_tuned_tile() {
+    for n in [5120, 6144] {
+        let mut p = problem(4, n, 2048, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
+        p.params_layout = Some(QuantParamsLayout::GroupOutput);
+        p.d_transform = GemmDTransform::RHT;
+        let tile = GemvTile::quantized_output_tile(2, 16, 4, 8, 1);
+        assert_eq!(route("Apple M5 Max", MTLGPUFamily::Apple10, true, &p, true), Some(QmvRoute::Tuned(tile)));
+        assert!(GemvSpecialization::select_tile(&p, DataType::BF16, DataType::BF16, DataType::BF16, tile).is_some());
+    }
+}
+
+#[uzu_test]
 fn exact_lookup_rejects_non_matrix_inputs() {
     let p = problem(2, 5120, 17408, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
     assert!(route("Apple M1", MTLGPUFamily::Apple7, false, &p, true).is_some());
