@@ -20,7 +20,7 @@ struct GemmTrellisFormat {
 };
 
 UZU_CONST uint K_STEP = 64, WEIGHT_BIAS = 54;
-UZU_CONST uint STATE_BITS = 16, BYTE_BITS = 8, V4_VECTOR_WIDTH = 4, V2T6_TRANSITION_BITS = 6;
+UZU_CONST uint STATE_BITS = 16, BYTE_BITS = 8, V4_VECTOR_WIDTH = 4, V2T6_TRANSITION_BITS = 6, ROW_ALIGNMENT = 16;
 
 UZU_CONST uint HASH_MULTIPLIER = 0xCFCCB83Fu, HASH_INCREMENT = 0x584B4AA3u;
 UZU_CONST uint HASH_AVALANCHE_MULTIPLIER = 0x85EBCA6Bu, HASH_FOLD_BITS = 16;
@@ -29,7 +29,8 @@ UZU_CONST uint TWO_BIT_FIELD_SHIFT = 2, NIBBLE_SHIFT = 4, FIELD_SUM_SHIFT = 3;
 UZU_CONST uint TWO_BIT_FIELDS_MASK = 0x33333333u, BYTE_NIBBLES_MASK = 0x0F0F0F0Fu;
 UZU_CONST uint FIELD_PAIR_SUM_MULTIPLIER = 3, DITHER_MULTIPLIER = 3;
 
-// Row layout: restart blocks sit back to back; only the row pads to a byte.
+// Row layout: restart blocks sit back to back and the row pads to 16 bytes (an unaligned row start costs up to 16%
+// at M <= 8); a connected tape pads to a byte.
 static METAL_FUNC uint block_bits(const GemmTrellisFormat format, const uint block_columns) {
   const uint state_count = block_columns / format.vector_width;
   const uint transition_count = state_count - 1;
@@ -37,8 +38,12 @@ static METAL_FUNC uint block_bits(const GemmTrellisFormat format, const uint blo
 }
 
 static METAL_FUNC uint row_bytes(const GemmTrellisFormat format, const uint code_columns) {
-  const uint block_columns = format.restart_columns == 0 ? code_columns : format.restart_columns;
-  return (code_columns / block_columns * block_bits(format, block_columns) + BYTE_BITS - 1) / BYTE_BITS;
+  if (format.restart_columns == 0) {
+    return (block_bits(format, code_columns) + BYTE_BITS - 1) / BYTE_BITS;
+  }
+  const uint stream_bits = code_columns / format.restart_columns * block_bits(format, format.restart_columns);
+  const uint stream_bytes = (stream_bits + BYTE_BITS - 1) / BYTE_BITS;
+  return (stream_bytes + ROW_ALIGNMENT - 1) / ROW_ALIGNMENT * ROW_ALIGNMENT;
 }
 
 // MSB-first codes. code_column must be a multiple of 4.
