@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
-        kernel::{AttentionArguments, AttentionKernel, AttentionPrepareKernel, SigmoidGateKernel},
+        kernel::{AttentionArguments, AttentionKernel, AttentionPrepareKernel},
     },
     encodable_block::{
         batch_topology::BatchTopology,
@@ -44,8 +44,13 @@ impl<B: Backend> Attention<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
         let qkvg = self.projection.project(hidden, batch_dim.size(), command_buffer)?;
+        let gate = self.has_gate.then(|| {
+            qkvg.subrange(
+                (self.projection_dim - self.num_q_heads * self.head_dim) as usize * self.data_type.size_in_bytes()..,
+            )
+        });
 
-        let mut attention_output = match state {
+        let attention_output = match state {
             Some(MaybeMut::Mut(state)) => {
                 let prefix_len = state.view().prefix_len();
                 let queries = self.prepare_kv_and_queries(
@@ -58,12 +63,12 @@ impl<B: Backend> Attention<B> {
                     batch_dim.size(),
                     command_buffer,
                 )?;
-                self.run_core(&queries, batch_dim, state, command_buffer)?
+                self.run_core(&queries, gate, batch_dim, state, command_buffer)?
             },
             Some(MaybeMut::Const(state)) => {
                 // KV sharing: QKVG contains queries and an optional gate only.
                 let queries = self.prepare_queries(&qkvg, precalculated_rope, batch_dim.size(), command_buffer)?;
-                self.run_core(&queries, batch_dim, state, command_buffer)?
+                self.run_core(&queries, gate, batch_dim, state, command_buffer)?
             },
             None => {
                 let Some(num_kv_heads) = self.num_kv_heads else {
@@ -98,24 +103,13 @@ impl<B: Backend> Attention<B> {
                         trie: None::<&B::ConstantBuffer>,
                         sinks: self.sinks.as_ref(),
                         cache,
+                        gate,
                     },
                     command_buffer,
                 )?
             },
         };
 
-        if let Some(gate_kernel) = &self.gate_kernel {
-            let gate_dim = self.num_q_heads * self.head_dim;
-            let gate_offset = self.projection_dim - gate_dim;
-            gate_kernel.encode(
-                qkvg.subrange(gate_offset as usize * self.data_type.size_in_bytes()..),
-                &mut attention_output,
-                gate_dim,
-                batch_dim.size(),
-                self.projection_dim,
-                command_buffer,
-            );
-        }
         self.out_projection.encode(attention_output, batch_dim.size(), command_buffer)
     }
 
@@ -148,6 +142,7 @@ impl<B: Backend> Attention<B> {
     fn run_core(
         &self,
         queries: impl BufferRef<Backend = B>,
+        gate: Option<impl BufferRef<Backend = B>>,
         batch_dim: &BatchTopology,
         state: &AttentionState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -167,6 +162,7 @@ impl<B: Backend> Attention<B> {
                 trie: trie.as_ref(),
                 sinks: self.sinks.as_ref(),
                 cache: state.view(),
+                gate,
             },
             command_buffer,
         )

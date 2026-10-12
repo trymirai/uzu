@@ -36,6 +36,7 @@ struct AttentionGemmGroupedMetal {
     num_groups: u32,
     num_q_heads: u32,
     scale: Option<f32>,
+    gate_row_stride: Option<u32>,
     block_rows: u32,
     mask: MaskKind,
 }
@@ -47,6 +48,7 @@ impl AttentionGemmGroupedMetal {
         num_groups: u32,
         num_q_heads: u32,
         scale: Option<f32>,
+        gate_row_stride: Option<u32>,
         mask: MaskKind,
     ) -> Result<Self, MetalError> {
         assert!(matches!(head_dim, 128 | 256), "head_dim must be 128 or 256");
@@ -65,7 +67,8 @@ impl AttentionGemmGroupedMetal {
                 mask.is_trie(),
             )
         };
-        let combine = AttentionGemmGroupedCombineMetalKernel::new(context, DataType::BF16, head_dim)?;
+        let combine =
+            AttentionGemmGroupedCombineMetalKernel::new(context, DataType::BF16, head_dim, gate_row_stride.is_some())?;
         Ok(Self {
             kernel: new_kernel(false)?,
             split_kernel: new_kernel(true)?,
@@ -74,6 +77,7 @@ impl AttentionGemmGroupedMetal {
             num_groups,
             num_q_heads,
             scale,
+            gate_row_stride,
             block_rows,
             mask,
         })
@@ -86,12 +90,13 @@ impl AttentionGemmGroupedMetal {
         values: impl BufferRef<Backend = Metal>,
         output: impl BufferMut<Backend = Metal>,
         trie: Option<impl BufferRef<Backend = Metal>>,
+        gate: Option<impl BufferRef<Backend = Metal>>,
         suffix_length: u32,
         kv_length: u32,
         q_replicas: u32,
         num_splits: u32,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<(), MetalError> {
+    ) -> Result<bool, MetalError> {
         let params = self.params(suffix_length, kv_length);
         let grouped_rows = self.num_q_heads / self.num_groups * suffix_length;
         let m_tiles = grouped_rows.div_ceil(self.block_rows);
@@ -116,7 +121,7 @@ impl AttentionGemmGroupedMetal {
                 1,
                 command_buffer,
             );
-            return Ok(());
+            return Ok(false);
         }
 
         let partial_rows = q_replicas * self.num_groups * m_tiles * num_splits * self.block_rows;
@@ -146,6 +151,7 @@ impl AttentionGemmGroupedMetal {
             &partial_maxs,
             &partial_sums,
             output,
+            gate,
             params,
             grouped_rows,
             self.block_rows,
@@ -153,9 +159,10 @@ impl AttentionGemmGroupedMetal {
             self.num_groups,
             q_replicas,
             num_splits,
+            self.gate_row_stride,
             command_buffer,
         );
-        Ok(())
+        Ok(gate.is_some())
     }
 
     fn params(
@@ -194,6 +201,7 @@ pub struct AttentionGemmGrouped {
     num_groups: u32,
     num_q_heads: u32,
     scale: Option<f32>,
+    gate_row_stride: Option<u32>,
 }
 
 impl AttentionGemmGrouped {
@@ -215,6 +223,7 @@ impl AttentionGemmGrouped {
                 self.num_groups,
                 self.num_q_heads,
                 self.scale,
+                self.gate_row_stride,
                 mask,
             )?);
         }
@@ -236,6 +245,7 @@ impl AttentionGemmGrouped {
             num_groups: config.num_groups,
             num_q_heads: config.num_q_heads,
             scale: config.scale,
+            gate_row_stride: config.gate_row_stride,
         }
     }
 
@@ -258,9 +268,10 @@ impl AttentionGemmGrouped {
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
+    ) -> Result<(<Metal as Backend>::ScratchBuffer, bool), MetalError> {
         let suffix_length = arguments.suffix_length;
         assert!(arguments.cache.ring_params().is_none(), "ring KV cache is unsupported");
         assert!(arguments.sinks.is_none(), "attention sinks are unsupported");
@@ -282,18 +293,19 @@ impl AttentionGemmGrouped {
             kv_length,
             gpu_core_count,
         );
-        core.encode(
+        let gate_applied = core.encode(
             arguments.queries,
             arguments.keys,
             arguments.values,
             &mut output,
             arguments.trie,
+            arguments.gate,
             suffix_length,
             kv_length,
             1,
             num_splits,
             command_buffer,
         )?;
-        Ok(output)
+        Ok((output, gate_applied))
     }
 }
