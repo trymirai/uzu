@@ -131,12 +131,8 @@ METAL_FUNC static void fragment_matmul(
   for (ushort row = 0; row < rows; row += output_row_step) {
     METAL_PRAGMA_UNROLL
     for (ushort col = 0; col < output_col_count; col += output_col_step) {
-      if constexpr (OUTPUT_MODE == MatmulMode::multiply) {
-        matmul_paired_outputs(row, col, 0, uzu::integral_constant<MatmulMode, MatmulMode::multiply>{});
-      }
       METAL_PRAGMA_UNROLL
-      for (ushort depth_index = OUTPUT_MODE == MatmulMode::multiply_accumulate ? 0 : 1; depth_index < depth;
-           ++depth_index) {
+      for (ushort depth_index = 0; depth_index < depth; ++depth_index) {
         matmul_paired_outputs(
             row,
             col,
@@ -155,14 +151,4 @@ METAL_FUNC static void fragment_mma(
     thread RightFragment& right
 ) {
   fragment_matmul<MatmulMode::multiply_accumulate, transpose_left, transpose_right>(output, left, right);
-}
-
-template <bool transpose_left, bool transpose_right, class OutputFragment, class LeftFragment, class RightFragment>
-METAL_FUNC static void fragment_mm(
-    thread OutputFragment& output,
-    thread LeftFragment& left,
-    thread RightFragment& right
-) {
-  // MXU relaxed multiply is slightly faster than multiply_accumulate for pure matmul.
-  fragment_matmul<MatmulMode::multiply, transpose_left, transpose_right>(output, left, right);
 }

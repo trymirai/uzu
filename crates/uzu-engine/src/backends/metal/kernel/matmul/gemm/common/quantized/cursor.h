@@ -68,6 +68,8 @@ struct Int8Cursor {
   using Ops = typename Fragment::FragmentOpsType;
   UZU_CONST short BLOCK_K = short(Fragment::COL_FRAGMENTS * Ops::FRAGMENT_ROWS);
 
+  struct PackedChunk {};
+
   const device int8_t* origin;
   const device int8_t* address;
   int row_stride;

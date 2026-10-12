@@ -110,6 +110,8 @@
           [
             nil
             uv
+            nodejs
+            pnpm_10
             wasmtime
             evcxr
             cargo-deny

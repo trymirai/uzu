@@ -108,7 +108,8 @@ impl FileDownloadWorker {
             | DownloadPhase::Error {
                 ..
             } => self.start().await,
-            DownloadPhase::Downloading {}
+            DownloadPhase::Initializing {}
+            | DownloadPhase::Downloading {}
             | DownloadPhase::Downloaded {}
             | DownloadPhase::Locked {
                 ..
@@ -208,7 +209,7 @@ impl FileDownloadWorker {
     }
 
     async fn complete(&mut self) {
-        match self.backend.verify(&self.config).await {
+        match self.backend.completed_size(&self.config).await {
             Ok(total_bytes) => {
                 let _ = fs::asyn::remove_file(&self.config.resume_artifact_path).await;
                 self.set(DownloadPhase::Downloaded {}, total_bytes, Some(total_bytes));

@@ -19,7 +19,7 @@ const MIXING_ENTRY_BOUND: f32 = 0.6;
 const INPUT_BASE_BOUND: f32 = 3.0;
 const INPUT_OUTLIER_EXPONENT: i32 = 3;
 const ALL_ZERO_TOKEN: usize = 1;
-const BATCHES: [u32; 4] = [1, 3, 17, 65];
+const BATCHES: [u32; 5] = [1, 8, 16, 32, 1024];
 
 fn random_transform_data(
     rng: &mut SmallRng,
@@ -75,7 +75,7 @@ fn run<B: Backend>(
 
 #[rstest]
 #[test_attr(uzu_test)]
-fn transform_matches_cpu(#[values(5120, 6144, 17408)] columns: u32) {
+fn transform_matches_cpu(#[values(4096, 5120, 6144, 6656, 17408, 19968)] columns: u32) {
     let mut rng = SmallRng::seed_from_u64(u64::from(columns));
     for batch in BATCHES {
         let (rht_factors, mixing, mut input) = random_transform_data(&mut rng, columns, batch);

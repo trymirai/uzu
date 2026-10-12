@@ -17,7 +17,7 @@ export type SegmentedControlProps = {
 };
 
 const CONTAINER_CLASSES =
-  "inline-flex w-fit h-7 items-center rounded-lg overflow-hidden border border-border-default bg-transparent";
+  "inline-flex w-fit h-7 items-center rounded-lg overflow-clip border border-border-default bg-transparent";
 
 export function SegmentedControl({ value, onChange, options, ariaLabel }: SegmentedControlProps) {
   const handleSelect = (option: SegmentedControlOption) => {

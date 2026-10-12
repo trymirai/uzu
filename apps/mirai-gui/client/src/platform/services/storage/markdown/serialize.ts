@@ -1,8 +1,14 @@
 import { format } from "date-fns";
 import type { Message, MessageVersion as StoreMessageVersion, PerfStats } from "@/types/message";
 import type { ChatData } from "..";
+import type { TranscriptItem } from "@/types/llm-stream";
 
 const sanitize = (text: string): string => text.replace(/\uFFFD/g, "");
+
+const formatTranscript = (items?: TranscriptItem[]): string[] =>
+  items === undefined
+    ? []
+    : [`<!-- TRANSCRIPT: ${JSON.stringify(items).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")} -->`];
 
 const formatPerfToMarkdown = (perf?: PerfStats): string[] => {
   if (!perf) return [];
@@ -30,6 +36,7 @@ const formatVersionToMarkdown = (version: StoreMessageVersion, index: number, is
     ...formatPerfToMarkdown(version.perf),
     ...(version.attachmentIds?.length ? [`**Attachments:** ${version.attachmentIds.join(",")}`] : []),
     ...errorLines,
+    ...formatTranscript(version.output?.transcript),
     ...(cot ? ["<!-- START_COT -->", sanitize(cot), "<!-- END_COT -->"] : []),
     "",
     "<!-- START_CONTENT -->",
@@ -67,6 +74,7 @@ const formatMessageToMarkdown = (message: Message): string => {
       ...formatPerfToMarkdown(message.perf),
       ...(message.attachmentIds?.length ? [`**Attachments:** ${message.attachmentIds.join(",")}`] : []),
       ...errorLines,
+      ...formatTranscript(message.output?.transcript),
       ...(cot ? ["<!-- START_COT -->", sanitize(cot), "<!-- END_COT -->"] : []),
       "<!-- START_CONTENT -->",
       sanitize(response || ""),

@@ -161,7 +161,7 @@ async fn download_in_order(children: &[Arc<DownloadTask>]) {
         let mut progress = child.progress();
         match child.state().phase {
             DownloadPhase::Downloaded {} => continue,
-            DownloadPhase::Downloading {} => {},
+            DownloadPhase::Initializing {} | DownloadPhase::Downloading {} => {},
             _ => {
                 if child.download().await.is_err() {
                     return;

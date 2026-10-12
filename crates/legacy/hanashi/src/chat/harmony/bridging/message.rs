@@ -22,11 +22,20 @@ const RECIPIENT_ASSISTANT: &str = ROLE_ASSISTANT;
 const BUILTIN_BROWSER: &str = "browser";
 const BUILTIN_PYTHON: &str = "python";
 
-pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<ExternalMessage>, Error> {
+pub fn bridge_messages_to_harmony(
+    messages: &[ChatMessage],
+    is_initial: bool,
+) -> Result<Vec<ExternalMessage>, Error> {
     let mut result = Vec::new();
     // Plain system text becomes developer `# Instructions`, matching the reference gpt-oss chat template.
     // The harmony system message always carries the meta preamble (identity, reasoning effort, valid channels) the model was trained to expect.
     let mut pending_instructions: Vec<String> = Vec::new();
+
+    // Unset reasoning still uses the native system defaults. Only add this at
+    // the beginning: incremental encodes must not repeat the system preamble.
+    if is_initial && !messages.iter().any(|message| message.role == ChatRole::System {}) {
+        result.push(system_message(ExternalSystemContent::default()));
+    }
 
     for message in messages {
         if !pending_instructions.is_empty() && !matches!(message.role, ChatRole::System {} | ChatRole::Developer {}) {
@@ -92,18 +101,7 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                     }
                 }
 
-                // the reference gpt-oss chat template always includes the current date, so default it here the same way it does (strftime_now("%Y-%m-%d"))
-                if system_content.conversation_start_date.is_none() {
-                    system_content.conversation_start_date = Some(strftime_now("%Y-%m-%d".to_string()));
-                }
-
-                result.push(ExternalMessage {
-                    author: ExternalAuthor::from(ExternalRole::System),
-                    recipient: None,
-                    content: vec![ExternalContent::SystemContent(system_content)],
-                    channel: None,
-                    content_type: None,
-                });
+                result.push(system_message(system_content));
             },
             ChatRole::Developer {} => {
                 let mut developer_content = ExternalDeveloperContent::default();
@@ -297,6 +295,20 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
     }
 
     Ok(result)
+}
+
+fn system_message(mut content: ExternalSystemContent) -> ExternalMessage {
+    // Match the reference template's current-date fallback.
+    if content.conversation_start_date.is_none() {
+        content.conversation_start_date = Some(strftime_now("%Y-%m-%d".to_string()));
+    }
+    ExternalMessage {
+        author: ExternalAuthor::from(ExternalRole::System),
+        recipient: None,
+        content: vec![ExternalContent::SystemContent(content)],
+        channel: None,
+        content_type: None,
+    }
 }
 
 fn developer_message(instructions: String) -> ExternalMessage {
@@ -540,4 +552,78 @@ fn extract_text_content(content: &[ExternalContent]) -> String {
 
 fn strip_namespace_prefix(qualified_name: &str) -> &str {
     qualified_name.strip_prefix(FUNCTIONS_NAMESPACE).and_then(|rest| rest.strip_prefix('.')).unwrap_or(qualified_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absent_system_instructions_use_the_same_native_defaults_as_medium() {
+        let user = ChatMessage::user().with_text("Hello".to_string());
+        let implicit = bridge_messages_to_harmony(std::slice::from_ref(&user), true).unwrap();
+        let explicit = bridge_messages_to_harmony(
+            &[ChatMessage::system().with_reasoning_effort(ReasoningEffort::Medium), user],
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(implicit, explicit);
+        assert_eq!(implicit[0].author.role, ExternalRole::System);
+        let ExternalContent::SystemContent(content) = &implicit[0].content[0] else {
+            panic!("expected a native system preamble");
+        };
+        assert_eq!(content.reasoning_effort, Some(openai_harmony::chat::ReasoningEffort::Medium));
+        assert!(content.model_identity.is_some());
+        assert!(content.conversation_start_date.is_some());
+        assert!(content.channel_config.is_some());
+    }
+
+    #[test]
+    fn explicit_reasoning_and_instructions_are_preserved_without_a_second_system_message() {
+        let messages = bridge_messages_to_harmony(
+            &[
+                ChatMessage::system()
+                    .with_reasoning_effort(ReasoningEffort::Low)
+                    .with_text("Keep answers brief".to_string()),
+                ChatMessage::user().with_text("Hello".to_string()),
+            ],
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(messages.iter().filter(|message| message.author.role == ExternalRole::System).count(), 1);
+        let ExternalContent::SystemContent(content) = &messages[0].content[0] else {
+            panic!("expected a native system preamble");
+        };
+        assert_eq!(content.reasoning_effort, Some(openai_harmony::chat::ReasoningEffort::Low));
+        let ExternalContent::DeveloperContent(instructions) = &messages[1].content[0] else {
+            panic!("expected the user's instructions");
+        };
+        assert_eq!(instructions.instructions.as_deref(), Some("Keep answers brief"));
+    }
+
+    #[test]
+    fn later_turns_preserve_one_preamble_on_replay_and_do_not_repeat_it_on_append() {
+        let history = [
+            ChatMessage::user().with_text("Hello".to_string()),
+            ChatMessage::assistant().with_text("Hi".to_string()),
+            ChatMessage::user().with_text("Tell me more".to_string()),
+        ];
+
+        // The token session resets and re-encodes the full Harmony history.
+        let replay = bridge_messages_to_harmony(&history, true).unwrap();
+        let explicit_history: Vec<_> =
+            std::iter::once(ChatMessage::system().with_reasoning_effort(ReasoningEffort::Medium))
+                .chain(history.iter().cloned())
+                .collect();
+        assert_eq!(replay, bridge_messages_to_harmony(&explicit_history, true).unwrap());
+        assert_eq!(replay.iter().filter(|message| message.author.role == ExternalRole::System).count(), 1);
+
+        // Encoding also supports direct appends without resetting its state.
+        let appended = bridge_messages_to_harmony(&history[2..], false).unwrap();
+        assert_eq!(appended.len(), 1);
+        assert_eq!(appended[0].author.role, ExternalRole::User);
+        assert_eq!(appended[0], replay[3]);
+    }
 }

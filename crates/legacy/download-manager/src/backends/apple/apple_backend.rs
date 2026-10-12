@@ -2,6 +2,7 @@ use std::{
     path::Path,
     ptr::NonNull,
     sync::{Arc, Mutex, PoisonError},
+    time::{Duration, Instant},
 };
 
 use block2::RcBlock;
@@ -29,6 +30,7 @@ use crate::{
 const CALLER_SECURITY_SESSION: u32 = u32::MAX;
 #[cfg(target_os = "macos")]
 const SESSION_IS_ROOT: u32 = 0x0001;
+const TASK_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(target_os = "macos")]
 #[link(name = "Security", kind = "framework")]
@@ -46,6 +48,7 @@ pub struct AppleBackend {
     event_registry: AppleEventRegistry,
     runtime_handle: RuntimeHandle,
     pending_tasks: TokioOnceCell<Mutex<Vec<Retained<NSURLSessionDownloadTask>>>>,
+    pending_task_error: Mutex<Option<(Instant, String)>>,
 }
 
 unsafe impl Send for AppleBackend {}
@@ -81,6 +84,7 @@ impl AppleBackend {
             event_registry,
             runtime_handle,
             pending_tasks: TokioOnceCell::new(),
+            pending_task_error: Mutex::new(None),
         }
     }
 
@@ -99,6 +103,14 @@ impl AppleBackend {
     async fn pending_tasks(&self) -> Result<&Mutex<Vec<Retained<NSURLSessionDownloadTask>>>, BackendError> {
         self.pending_tasks
             .get_or_try_init(|| async {
+                // A failed lookup is shared briefly by concurrent initializers.
+                // Otherwise each queued file waits through its own timeout.
+                if let Some((when, error)) =
+                    self.pending_task_error.lock().unwrap_or_else(PoisonError::into_inner).as_ref()
+                    && when.elapsed() < TASK_DISCOVERY_TIMEOUT
+                {
+                    return Err(AppleBackendError::TaskDiscovery(error.clone()).into());
+                }
                 let (tasks_sender, tasks_receiver) = tokio_oneshot_channel();
                 {
                     let tasks_sender = Mutex::new(Some(tasks_sender));
@@ -115,7 +127,19 @@ impl AppleBackend {
                         self.session.getTasksWithCompletionHandler(&handler);
                     }
                 }
-                let tasks = tasks_receiver.await.map_err(AppleBackendError::CallbackDropped)?;
+                let result = tokio::time::timeout(TASK_DISCOVERY_TIMEOUT, tasks_receiver)
+                    .await
+                    .map_err(|_| "URLSession did not reply within 5 seconds".to_string())
+                    .and_then(|tasks| tasks.map_err(|error| error.to_string()));
+                let tasks = match result {
+                    Ok(tasks) => tasks,
+                    Err(message) => {
+                        *self.pending_task_error.lock().unwrap_or_else(PoisonError::into_inner) =
+                            Some((Instant::now(), message.clone()));
+                        // Leave native tasks and their destination markers alone.
+                        return Err(AppleBackendError::TaskDiscovery(message).into());
+                    },
+                };
                 Ok(Mutex::new(tasks))
             })
             .await
@@ -228,9 +252,7 @@ impl Backend for AppleBackend {
             if attached.is_none()
                 && Self::is_live(&task)
                 && AppleTaskDescription::of(&task).is_some_and(|description| {
-                    description.download_id == config.download_id
-                        && description.source_url == config.source_url
-                        && description.checksum == config.expected_checksum
+                    description.download_id == config.download_id && description.source_url == config.source_url
                 })
             {
                 attached = Some(self.activate(task, &config, generation, events.clone()));

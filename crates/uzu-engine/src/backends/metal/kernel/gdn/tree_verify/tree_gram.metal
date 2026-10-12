@@ -18,13 +18,12 @@ using namespace uzu::trie;
 #define NUM_SIMDGROUPS 2u
 #define INVALID_ROW 0xffffffffu
 
-// kh0 = k @ h0[h0_idx[batch]]^T for one row-tile, walking head_v_dim in COL_TILE
-// chunks from dv_start by dv_stride. No-op for a zero initial state.
+// kh0 = k @ h0[batch]^T for one row-tile, walking head_v_dim in COL_TILE
+// chunks from dv_start by dv_stride.
 template <typename T, typename Ops, typename AccFragment, typename LeftFragment, typename RightFragment>
 METAL_FUNC void tree_kh0(
     const device T* k_rows,
     const device float* h0,
-    const device int* h0_idx,
     device float* kh0,
     const uint batch_idx,
     const uint value_head_idx,
@@ -40,11 +39,7 @@ METAL_FUNC void tree_kh0(
     const uint dv_stride,
     const ushort lane
 ) {
-  const int h0_slot = h0_idx[batch_idx];
-  if (h0_slot < 0) {
-    return;
-  }
-  const device float* h0_head = h0 + (uint(h0_slot) * value_heads + value_head_idx) * head_v_dim * head_k_dim;
+  const device float* h0_head = h0 + (batch_idx * value_heads + value_head_idx) * head_v_dim * head_k_dim;
   device float* kh0_rows =
       kh0 + (batch_idx * tree_size + row_base) * value_heads * head_v_dim + value_head_idx * head_v_dim;
   const uint kh0_row_stride = value_heads * head_v_dim;
@@ -85,8 +80,7 @@ METAL_FUNC void tree_kh0(
 // qkd:      scale * exp(prefix[row] - prefix[col]) * dot(q[row], k[col]) for
 //           ancestor-or-self, dense [B*HV, T, T] f32
 // a_inv:    (I + A)^-1 per diagonal block, compact [B*HV, NB, 16, 16]
-// kh0:      k @ h0[h0_idx[batch]]^T, [B, T, HV, head_v_dim] f32; skipped when
-//           h0_idx[batch] < 0
+// kh0:      k @ h0[batch]^T, [B, T, HV, head_v_dim] f32
 template <typename T, bool USE_MXU>
 VARIANTS(T, float, bfloat)
 VARIANTS(USE_MXU, false, true)
@@ -97,7 +91,6 @@ PUBLIC KERNEL(BuildTreeGram)(
     const device float* prefix,
     const device float* beta,
     const device float* h0 OPTIONAL(use_h0),
-    const device int* h0_idx OPTIONAL(use_h0),
     device float* a_packed,
     device float* qkd,
     device float* a_inv,
@@ -279,7 +272,6 @@ PUBLIC KERNEL(BuildTreeGram)(
     tree_kh0<T, Ops, AccFragment, LeftFragment, RightFragment>(
         k_rows,
         h0,
-        h0_idx,
         kh0,
         batch_idx,
         value_head_idx,

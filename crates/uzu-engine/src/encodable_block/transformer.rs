@@ -60,19 +60,21 @@ impl<B: Backend> TransformerState<B> {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        command_buffer.push_debug_group("transformer accept");
+        {
+            let command_buffer = &mut *command_buffer.debug_group("transformer accept");
 
-        for layer_state in &mut self.layer_states {
-            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
-                continue;
-            };
+            for layer_state in &mut self.layer_states {
+                let TransformerLayerStateType::Owned(layer_state) = layer_state else {
+                    continue;
+                };
 
-            layer_state.encode_accept(accepted_indices, command_buffer)?;
+                layer_state.encode_accept(accepted_indices, command_buffer)?;
+            }
+
+            self.context_length += accepted_indices.len() as u32;
         }
 
-        self.context_length += accepted_indices.len() as u32;
-
-        command_buffer.pop_debug_group();
+        command_buffer.debug_point(&format!("accepted {} tokens", accepted_indices.len()));
 
         Ok(())
     }

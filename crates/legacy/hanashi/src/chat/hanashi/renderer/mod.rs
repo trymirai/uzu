@@ -177,6 +177,74 @@ mod tests {
         ChatMessage::system().with_reasoning_effort(effort)
     }
 
+    fn tool_result_messages(value: serde_json::Value) -> Vec<ChatMessage> {
+        vec![
+            user_message(),
+            ChatMessage::assistant().with_tool_call(ToolCall {
+                identifier: Some("call_1".to_string()),
+                name: "echo".to_string(),
+                arguments: Value::from(serde_json::json!({})),
+            }),
+            ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+                identifier: Some("call_1".to_string()),
+                name: Some("echo".to_string()),
+                value: Value::from(value),
+            }),
+        ]
+    }
+
+    #[test]
+    fn qwen_tool_result_fields_render_json_as_text() {
+        for config in [
+            HanashiConfig::Qwen3,
+            HanashiConfig::Qwen3Instruct,
+            HanashiConfig::Qwen3Thinking,
+            HanashiConfig::Qwen35,
+            HanashiConfig::Qwen36,
+            HanashiConfig::Qwen38,
+        ] {
+            let renderer = renderer(config);
+            for result in [
+                serde_json::json!({"datasets": [{"label": "Revenue", "data": [12.5, 15]}]}),
+                serde_json::json!([1, "two", null]),
+                serde_json::json!(42),
+                serde_json::json!(true),
+                serde_json::json!(null),
+                serde_json::json!("ready"),
+            ] {
+                let prompt = render(&renderer, tool_result_messages(result.clone()));
+                let response =
+                    prompt.split_once("<tool_response>\n").unwrap().1.split_once("\n</tool_response>").unwrap().0;
+                let expected = result.as_str().map(str::to_owned).unwrap_or_else(|| result.to_string());
+                assert_eq!(response, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn gpt_oss_template_serializes_tool_results_once() {
+        // Its template calls tojson itself, so the adapter must keep JSON values.
+        let renderer = renderer(HanashiConfig::GptOss);
+        for result in [
+            serde_json::json!({"datasets": [{"label": "Revenue", "data": [12.5, 15]}]}),
+            serde_json::json!([1, "two", null]),
+            serde_json::json!(42),
+            serde_json::json!(true),
+            serde_json::json!(null),
+            serde_json::json!("ready"),
+        ] {
+            let prompt = render(&renderer, tool_result_messages(result.clone()));
+            let response = prompt
+                .split_once("<|start|>functions.echo to=assistant<|channel|>commentary<|message|>")
+                .unwrap()
+                .1
+                .split_once("<|end|>")
+                .unwrap()
+                .0;
+            assert_eq!(serde_json::from_str::<serde_json::Value>(response).unwrap(), result);
+        }
+    }
+
     #[test]
     fn absent_reasoning_effort_renders_like_default() {
         let renderer = renderer(HanashiConfig::Qwen35);
@@ -215,6 +283,47 @@ mod tests {
             render(&renderer, vec![system_message_with_effort(ReasoningEffort::Default), user_message()]);
 
         assert_eq!(without_block, with_default_block);
+        let declared_effort = HanashiConfig::GptOss.default_reasoning_effort().unwrap().unwrap();
+        assert_eq!(declared_effort, ReasoningEffort::Medium);
+        let with_declared_effort = render(&renderer, vec![system_message_with_effort(declared_effort), user_message()]);
+        assert_eq!(without_block, with_declared_effort);
+    }
+
+    #[test]
+    fn muse_glimmer_levels_and_default_match_rendered_instructions() {
+        let capabilities = HanashiConfig::MuseGlimmer.capabilities().unwrap();
+        assert!(!capabilities.supports_disable_reasoning);
+        assert!(!capabilities.reasoning_efforts.contains(&ReasoningEffort::Disabled));
+
+        let renderer = renderer(HanashiConfig::MuseGlimmer);
+        let render_effort = |effort: Option<ReasoningEffort>| {
+            let mut messages = Vec::new();
+            if let Some(effort) = effort {
+                messages.push(system_message_with_effort(effort));
+            }
+            messages.push(user_message());
+            renderer.render(
+                &messages,
+                true,
+                Some(Token {
+                    id: 0,
+                    value: "<|begin_of_text|>".to_string(),
+                    is_special: true,
+                }),
+                None,
+                None,
+            )
+        };
+        let high = render_effort(Some(ReasoningEffort::High)).unwrap();
+        assert_eq!(render_effort(None).unwrap(), high);
+        assert_eq!(render_effort(Some(ReasoningEffort::Default)).unwrap(), high);
+
+        for effort in [ReasoningEffort::Low, ReasoningEffort::Medium, ReasoningEffort::High, ReasoningEffort::XHigh] {
+            assert!(capabilities.reasoning_efforts.contains(&effort));
+            assert!(render_effort(Some(effort)).unwrap().contains(&format!("Reasoning strength: {effort}.")));
+        }
+        assert!(matches!(render_effort(Some(ReasoningEffort::Disabled)),
+            Err(Error::Message(crate::chat::hanashi::messages::Error::UnmappedValue { value, .. })) if value == "disabled"));
     }
 
     #[test]

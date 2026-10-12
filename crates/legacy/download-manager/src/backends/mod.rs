@@ -8,7 +8,6 @@ mod backend_event_sender;
 mod backend_progress;
 mod download_generation;
 mod universal;
-mod verify_error;
 
 pub use active_task::ActiveTask;
 #[cfg(target_vendor = "apple")]
@@ -20,4 +19,3 @@ pub use backend_event_sender::BackendEventSender;
 pub use backend_progress::BackendProgress;
 pub use download_generation::DownloadGeneration;
 pub use universal::UniversalBackend;
-pub use verify_error::VerifyError;

@@ -189,16 +189,12 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("linear (rht)");
-
         let input = match input {
             LinearInput::FullPrecision(input) => input,
-            input => {
-                let output = self.inner_linear.encode_input(input, batch_dim, command_buffer);
-                command_buffer.pop_debug_group();
-                return output;
-            },
+            input => return self.inner_linear.encode_input(input, batch_dim, command_buffer),
         };
+        let command_buffer = &mut *command_buffer.debug_group("linear (rht)");
+
         let format = self.inner_linear.select_activation_format(batch_dim, command_buffer.context());
         let input = self.input_rht.prepare_in_place(input, batch_dim, format, command_buffer)?;
         let output = self.inner_linear.encode_with_a(
@@ -208,7 +204,6 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             command_buffer,
         )?;
 
-        command_buffer.pop_debug_group();
         Ok(output)
     }
 }

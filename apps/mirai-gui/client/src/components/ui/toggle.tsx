@@ -1,4 +1,5 @@
 import React from "react";
+import { Button as HeadlessButton } from "@headlessui/react";
 import { twMerge } from "tailwind-merge";
 
 type ToggleProps = {
@@ -12,7 +13,7 @@ type ToggleProps = {
 
 export const Toggle: React.FC<ToggleProps> = ({ label, checked, onChange, disabled = false, className }) => {
   return (
-    <button
+    <HeadlessButton
       type="button"
       role="switch"
       aria-label={label}
@@ -20,7 +21,7 @@ export const Toggle: React.FC<ToggleProps> = ({ label, checked, onChange, disabl
       disabled={disabled}
       onClick={() => !disabled && onChange(!checked)}
       className={twMerge(
-        "relative inline-flex min-h-6 min-w-11 items-center rounded-full transition-colors outline-hidden focus-visible:shadow-focus",
+        "relative inline-flex min-h-6 min-w-11 items-center rounded-full transition-colors outline-hidden data-[focus]:shadow-focus",
         checked ? "bg-label-title" : "bg-button-border",
         disabled && "opacity-50 cursor-not-allowed",
         !disabled && "cursor-pointer",
@@ -33,6 +34,6 @@ export const Toggle: React.FC<ToggleProps> = ({ label, checked, onChange, disabl
           checked ? "translate-x-[22px]" : "translate-x-[2px]",
         )}
       />
-    </button>
+    </HeadlessButton>
   );
 };

@@ -81,6 +81,7 @@ impl<B: Backend> WeaverLayer<B> {
                 num_groups: num_heads,
                 num_q_heads: num_heads,
                 has_sinks: false,
+                gate_row_stride: None,
                 is_kv_cache_ring: false,
                 is_causal: true,
                 sliding_window_size: None,

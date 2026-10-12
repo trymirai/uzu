@@ -10,6 +10,7 @@ use uzu::{
     types::{
         basic::{Image, ImageFormat, ImageTheme, ReasoningEffort},
         model::{Model, ModelVendor},
+        session::chat::ChatModelCapabilities,
     },
 };
 
@@ -19,14 +20,18 @@ use crate::{
 };
 
 #[derive(Serialize, Clone, Debug, PartialEq, Default)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ReasoningSupport {
     #[default]
     Unsupported,
     AlwaysOn,
-    Toggle,
+    Toggle {
+        default_effort: ReasoningEffort,
+    },
     Levels {
         efforts: Vec<ReasoningEffort>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        default_effort: Option<ReasoningEffort>,
     },
 }
 
@@ -37,36 +42,36 @@ impl ReasoningSupport {
     ) -> Option<ReasoningEffort> {
         match self {
             ReasoningSupport::Unsupported | ReasoningSupport::AlwaysOn => None,
-            ReasoningSupport::Toggle => Some(if requested == Some(ReasoningEffort::Disabled) {
-                ReasoningEffort::Disabled
-            } else {
-                ReasoningEffort::Default
-            }),
+            ReasoningSupport::Toggle {
+                ..
+            } => requested.filter(|effort| *effort == ReasoningEffort::Disabled),
             ReasoningSupport::Levels {
                 efforts,
+                ..
             } => requested
-                .filter(|effort| efforts.contains(effort))
-                .or_else(|| efforts.contains(&ReasoningEffort::Default).then_some(ReasoningEffort::Default))
-                // hanashi rejects an effort missing from the mapping, so never invent one.
-                .or_else(|| efforts.iter().copied().find(|effort| *effort != ReasoningEffort::Disabled)),
+                // Leave default selection to the template, including mappings
+                // whose default is not named as an explicit effort level.
+                .filter(|effort| *effort != ReasoningEffort::Default && efforts.contains(effort)),
         }
     }
 
     pub fn cheapest(&self) -> Option<ReasoningEffort> {
         match self {
             ReasoningSupport::Unsupported | ReasoningSupport::AlwaysOn => None,
-            ReasoningSupport::Toggle => Some(ReasoningEffort::Disabled),
+            ReasoningSupport::Toggle {
+                ..
+            } => Some(ReasoningEffort::Disabled),
             ReasoningSupport::Levels {
                 efforts,
+                ..
             } => efforts.iter().copied().find(|e| *e != ReasoningEffort::Default),
         }
     }
 }
 
 // uzu lists efforts in template-mapping order, which differs per model.
-const EFFORT_ORDER: [ReasoningEffort; 6] = [
+const EFFORT_ORDER: [ReasoningEffort; 5] = [
     ReasoningEffort::Disabled,
-    ReasoningEffort::Default,
     ReasoningEffort::Low,
     ReasoningEffort::Medium,
     ReasoningEffort::High,
@@ -74,23 +79,29 @@ const EFFORT_ORDER: [ReasoningEffort; 6] = [
 ];
 
 // Resolving an encoding parses four bundled configs; models share a handful of variants.
-static ENCODING_SUPPORT: OnceLock<Mutex<HashMap<String, Option<ReasoningSupport>>>> = OnceLock::new();
+#[derive(Clone)]
+struct EncodingSupport {
+    reasoning: ReasoningSupport,
+    tools: bool,
+}
 
-fn reasoning_support_from_encoding(model: &Model) -> Option<ReasoningSupport> {
+static ENCODING_SUPPORT: OnceLock<Mutex<HashMap<String, Option<EncodingSupport>>>> = OnceLock::new();
+
+fn encoding_support(model: &Model) -> Option<EncodingSupport> {
     let encoding = model.encoding.as_ref()?;
     let cache = ENCODING_SUPPORT.get_or_init(Default::default);
     if let Some(cached) = cache.lock().expect("encoding cache poisoned").get(&encoding.json) {
         return cached.clone();
     }
-    let support = parse_reasoning_support(model, &encoding.json);
+    let support = parse_encoding_support(model, &encoding.json);
     cache.lock().expect("encoding cache poisoned").insert(encoding.json.clone(), support.clone());
     support
 }
 
-fn parse_reasoning_support(
+fn parse_encoding_support(
     model: &Model,
     encoding_json: &str,
-) -> Option<ReasoningSupport> {
+) -> Option<EncodingSupport> {
     let config = match serde_json::from_str::<EncodingConfig>(encoding_json) {
         Ok(config) => config,
         Err(error) => {
@@ -111,35 +122,58 @@ fn parse_reasoning_support(
             return None;
         },
     };
-    if !capabilities.supports_reasoning {
-        return Some(ReasoningSupport::Unsupported);
-    }
+    Some(EncodingSupport {
+        reasoning: classify_reasoning_support(&capabilities, config.default_reasoning_effort().ok().flatten()),
+        tools: capabilities.supports_tools,
+    })
+}
+
+fn classify_reasoning_support(
+    capabilities: &ChatModelCapabilities,
+    default_effort: Option<ReasoningEffort>,
+) -> ReasoningSupport {
     let has_levels = capabilities.reasoning_efforts.iter().any(|effort| {
         matches!(
             effort,
             ReasoningEffort::Low | ReasoningEffort::Medium | ReasoningEffort::High | ReasoningEffort::XHigh
         )
     });
-    if has_levels {
-        let efforts =
+    if !capabilities.supports_reasoning {
+        ReasoningSupport::Unsupported
+    } else if has_levels {
+        let efforts: Vec<_> =
             EFFORT_ORDER.into_iter().filter(|effort| capabilities.reasoning_efforts.contains(effort)).collect();
-        Some(ReasoningSupport::Levels {
+        ReasoningSupport::Levels {
+            default_effort: default_effort.filter(|effort| efforts.contains(effort)),
             efforts,
-        })
+        }
     } else if capabilities.supports_disable_reasoning {
-        Some(ReasoningSupport::Toggle)
+        if default_effort != Some(ReasoningEffort::Default)
+            || !capabilities.reasoning_efforts.contains(&ReasoningEffort::Default)
+        {
+            // Identical or unresolved modes do not prove an enabled choice.
+            ReasoningSupport::Levels {
+                efforts: vec![ReasoningEffort::Disabled],
+                default_effort: default_effort.filter(|effort| *effort == ReasoningEffort::Disabled),
+            }
+        } else {
+            ReasoningSupport::Toggle {
+                default_effort: ReasoningEffort::Default,
+            }
+        }
     } else {
-        Some(ReasoningSupport::AlwaysOn)
+        ReasoningSupport::AlwaysOn
     }
 }
 
 pub fn reasoning_support(model: &Model) -> ReasoningSupport {
-    reasoning_support_from_encoding(model).unwrap_or_default()
+    encoding_support(model).map(|support| support.reasoning).unwrap_or_default()
 }
 
 // Serialized by variant name; the client matches on these strings.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PhaseKind {
+    Initializing,
     NotDownloaded,
     Downloading,
     Paused,
@@ -151,6 +185,7 @@ pub enum PhaseKind {
 impl From<&DownloadPhase> for PhaseKind {
     fn from(phase: &DownloadPhase) -> Self {
         match phase {
+            DownloadPhase::Initializing {} => PhaseKind::Initializing,
             DownloadPhase::NotDownloaded {} => PhaseKind::NotDownloaded,
             DownloadPhase::Downloading {} => PhaseKind::Downloading,
             DownloadPhase::Paused {} => PhaseKind::Paused,
@@ -194,6 +229,7 @@ pub struct EngineModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub param_size: Option<i64>,
     pub reasoning: ReasoningSupport,
+    pub supports_tools: bool,
     pub quantization: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quantization_bits: Option<u32>,
@@ -227,7 +263,7 @@ pub fn map_download_state(
         return ModelDownloadState {
             total_kbytes: 0,
             downloaded_kbytes: 0,
-            phase: PhaseKind::NotDownloaded,
+            phase: PhaseKind::Initializing,
             error: None,
             seq,
         };
@@ -290,6 +326,7 @@ pub fn engine_model(
         family_name: model.family.as_ref().map(|f| f.name()),
         param_size: model.properties.as_ref().map(|p| p.size),
         reasoning,
+        supports_tools: encoding_support(model).is_some_and(|support| support.tools),
         quantization: model.quantization.as_ref().map(|q| q.method.clone()),
         quantization_bits: model.quantization.as_ref().map(|q| q.bits_per_weight),
         state,
@@ -351,21 +388,140 @@ pub async fn find_downloadable_model(key: &str) -> AppResult<Model> {
 pub async fn chat_models_get(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::downloads::DownloadsState>,
-) -> AppResult<Vec<EngineModel>> {
+) -> AppResult<ModelCatalog> {
     let engine = engine().await?;
-    let models = engine.models_for_chat().await?;
+    crate::downloads::ensure_watcher(app, &state);
+    let (models, complete) = engine.catalog_snapshot().await?;
     // Taken before the states: an event emitted while they are read then
     // carries a newer seq than this snapshot and wins on the client.
     let seq = state.event_seq();
     let states = engine.download_states().await;
-    let local: Vec<Model> = models.into_iter().filter(|m| m.is_on_device()).collect();
+    let local: Vec<Model> = models.into_iter().filter(|m| m.is_on_device() && m.is_chat_capable()).collect();
     state.remember_repo_ids(&local).await;
-    crate::downloads::ensure_watcher(app, &state);
     let mut result = Vec::with_capacity(local.len());
     for model in &local {
         let reasoning = reasoning_support(model);
         let state = model_download_state(model, states.get(&model.identifier), seq);
         result.push(engine_model(model, state, reasoning));
     }
-    Ok(result)
+    Ok(ModelCatalog {
+        models: result,
+        complete,
+        refreshing: engine.catalog_is_refreshing(),
+    })
+}
+
+#[tauri::command]
+pub async fn chat_models_refresh() -> AppResult<()> {
+    engine().await?.refresh_catalog().await?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct ModelCatalog {
+    pub models: Vec<EngineModel>,
+    pub complete: bool,
+    pub refreshing: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn support(json: &str) -> ReasoningSupport {
+        let config: EncodingConfig = serde_json::from_str(json).unwrap();
+        classify_reasoning_support(&config.capabilities().unwrap(), config.default_reasoning_effort().unwrap())
+    }
+
+    #[test]
+    fn model_level_metadata_exposes_only_real_choices_and_actual_default() {
+        assert_eq!(
+            serde_json::to_value(support(r#"{"type":"hanashi","name":"qwen3.8"}"#)).unwrap(),
+            serde_json::json!({"kind":"levels", "efforts":["disabled","low","medium","xhigh"], "defaultEffort":"xhigh"})
+        );
+        assert_eq!(
+            serde_json::to_value(support(r#"{"type":"hanashi","name":"muse-glimmer"}"#)).unwrap(),
+            serde_json::json!({"kind":"levels", "efforts":["low","medium","high","xhigh"], "defaultEffort":"high"})
+        );
+        for encoding in ["hanashi", "harmony"] {
+            assert_eq!(
+                serde_json::to_value(support(&format!(r#"{{"type":"{encoding}","name":"gpt-oss"}}"#))).unwrap(),
+                serde_json::json!({"kind":"levels", "efforts":["low","medium","high"], "defaultEffort":"medium"})
+            );
+        }
+    }
+
+    #[test]
+    fn model_toggle_metadata_uses_the_enabled_default() {
+        for name in ["qwen3", "qwen3.5", "qwen3.6", "gemma-4"] {
+            assert_eq!(
+                serde_json::to_value(support(&format!(r#"{{"type":"hanashi","name":"{name}"}}"#))).unwrap(),
+                serde_json::json!({"kind":"toggle", "defaultEffort":"default"})
+            );
+        }
+    }
+
+    #[test]
+    fn identical_toggle_modes_do_not_advertise_a_switch() {
+        let config: EncodingConfig = serde_json::from_str(r#"{"type":"hanashi","name":"qwen3.5"}"#).unwrap();
+        for default in [None, Some(ReasoningEffort::Disabled)] {
+            assert_eq!(
+                classify_reasoning_support(&config.capabilities().unwrap(), default),
+                ReasoningSupport::Levels {
+                    efforts: vec![ReasoningEffort::Disabled],
+                    default_effort: default
+                }
+            );
+        }
+        let mut capabilities = config.capabilities().unwrap();
+        capabilities.reasoning_efforts.retain(|effort| *effort != ReasoningEffort::Default);
+        assert_eq!(
+            classify_reasoning_support(&capabilities, Some(ReasoningEffort::Default)),
+            ReasoningSupport::Levels {
+                efforts: vec![ReasoningEffort::Disabled],
+                default_effort: None
+            }
+        );
+    }
+
+    #[test]
+    fn level_mapping_without_default_keeps_the_template_default_unset() {
+        let support = ReasoningSupport::Levels {
+            efforts: vec![ReasoningEffort::Low, ReasoningEffort::Medium, ReasoningEffort::High],
+            default_effort: None,
+        };
+        assert_eq!(support.effective(None), None);
+        assert_eq!(support.effective(Some(ReasoningEffort::Default)), None);
+        assert_eq!(support.effective(Some(ReasoningEffort::Medium)), Some(ReasoningEffort::Medium));
+        assert_eq!(support.effective(Some(ReasoningEffort::Disabled)), None);
+        assert_eq!(support.effective(Some(ReasoningEffort::XHigh)), None);
+    }
+
+    #[test]
+    fn explicit_levels_are_retained_but_default_is_not_an_override() {
+        let support = ReasoningSupport::Levels {
+            efforts: vec![ReasoningEffort::Disabled, ReasoningEffort::XHigh],
+            default_effort: Some(ReasoningEffort::XHigh),
+        };
+        assert_eq!(support.effective(None), None);
+        assert_eq!(support.effective(Some(ReasoningEffort::Default)), None);
+        assert_eq!(support.effective(Some(ReasoningEffort::Disabled)), Some(ReasoningEffort::Disabled));
+        assert_eq!(support.effective(Some(ReasoningEffort::XHigh)), Some(ReasoningEffort::XHigh));
+    }
+
+    #[test]
+    fn toggles_and_fixed_reasoning_modes_only_apply_supported_overrides() {
+        let toggle = ReasoningSupport::Toggle {
+            default_effort: ReasoningEffort::Default,
+        };
+        assert_eq!(toggle.effective(None), None);
+        assert_eq!(toggle.effective(Some(ReasoningEffort::Default)), None);
+        assert_eq!(toggle.effective(Some(ReasoningEffort::High)), None);
+        assert_eq!(toggle.effective(Some(ReasoningEffort::Disabled)), Some(ReasoningEffort::Disabled));
+        for fixed in [ReasoningSupport::Unsupported, ReasoningSupport::AlwaysOn] {
+            assert_eq!(fixed.effective(None), None);
+            assert_eq!(fixed.effective(Some(ReasoningEffort::Default)), None);
+            assert_eq!(fixed.effective(Some(ReasoningEffort::Disabled)), None);
+        }
+    }
 }

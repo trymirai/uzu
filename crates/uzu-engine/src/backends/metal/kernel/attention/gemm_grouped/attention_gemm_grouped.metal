@@ -7,6 +7,7 @@
 #include "../../matmul/common/mxu_fragment/ops.h"
 #include "../../generated/attention.h"
 #include "../../generated/trie.h"
+#include "../attention_gate.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -402,6 +403,7 @@ KERNEL(AttentionGemmGroupedCombine)(
     const device float* partial_maxs,
     const device float* partial_sums,
     device T* o,
+    const device T* gate OPTIONAL(has_gate),
     const constant AttnParams& params,
     const constant uint& grouped_rows,
     const constant uint& block_rows,
@@ -409,6 +411,8 @@ KERNEL(AttentionGemmGroupedCombine)(
     const constant uint& kv_heads,
     const constant uint& batch_count,
     const constant uint& num_splits,
+    const constant uint& gate_row_stride OPTIONAL(has_gate),
+    const bool has_gate SPECIALIZE,
     const uint grouped_row_idx GROUPS(grouped_rows),
     const uint kv_head_idx GROUPS(kv_heads),
     const uint batch_idx GROUPS(batch_count),
@@ -446,7 +450,14 @@ KERNEL(AttentionGemmGroupedCombine)(
   const uint head_in_group = grouped_row_idx / params.q_len;
   const uint query_position = grouped_row_idx - head_in_group * params.q_len;
   const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
+  T result = static_cast<T>(denominator > 0.0f ? numerator / denominator : 0.0f);
+  if (has_gate) {
+    result = attention_apply_gate(
+        result,
+        gate[(batch_idx * params.q_len + query_position) * gate_row_stride + q_head_idx * BD + column]
+    );
+  }
   o += size_t(batch_idx) * params.o_strides[0] + size_t(q_head_idx) * params.o_strides[1] +
        size_t(query_position) * params.o_strides[2] + column;
-  o[0] = static_cast<T>(denominator > 0.0f ? numerator / denominator : 0.0f);
+  o[0] = result;
 }

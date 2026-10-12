@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 use crate::backends::{
     common::{
         Backend,
@@ -8,7 +10,7 @@ use crate::backends::{
     },
     cpu::{
         buffer::{dense::CpuBuffer, sparse::CpuSparseBuffer},
-        command_buffer::CpuCommandBuffer,
+        command_buffer::{CpuCommandBuffer, CpuCommandBufferEncoding},
         context::CpuContext,
         error::CpuError,
         kernel::CpuKernels,
@@ -21,11 +23,13 @@ pub struct Cpu;
 impl Backend for Cpu {
     type Context = CpuContext;
     type CommandBuffer = CpuCommandBuffer;
+    type DebugGroupSpan<'a> = &'a mut CpuCommandBufferEncoding;
     type GlobalBuffer = CpuBuffer;
     type ConstantBuffer = BumpAllocation<Self::GlobalBuffer>;
     type ScratchBuffer = PoolAllocation<Self::GlobalBuffer>;
     type SparseBuffer = CpuSparseBuffer;
     type AllocationPool = PoolAllocator<Self::GlobalBuffer>;
+    type CaptureSpan = Infallible;
     type Kernels = CpuKernels;
     type Error = CpuError;
 

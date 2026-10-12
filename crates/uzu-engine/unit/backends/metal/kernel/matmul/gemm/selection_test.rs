@@ -71,18 +71,17 @@ fn policy_boundaries_are_preserved() {
         assert_eq!(policy::mxu_fp_tile(m, n, k), expected);
     }
 
-    for (m, n, group_size, family, expected) in [
-        (16, 4096, 31, MTLGPUFamily::Apple7, Tile64x64x16_Simdgroups2x2),
-        (16, 4096, 32, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
-        (8, 4096, 32, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
-        (9, 4096, 32, MTLGPUFamily::Apple8, Tile32x32x32_Simdgroups2x2),
-        (9, 4096, 32, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
-        (31, 4096, 32, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
-        (32, 4096, 32, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
-        (64, 6143, 32, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
-        (64, 6144, 32, MTLGPUFamily::Apple9, Tile64x64x32_Simdgroups2x2),
+    for (m, n, family, expected) in [
+        (16, 4096, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
+        (8, 4096, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
+        (9, 4096, MTLGPUFamily::Apple8, Tile32x32x32_Simdgroups2x2),
+        (9, 4096, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
+        (31, 4096, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
+        (32, 4096, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
+        (64, 6143, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
+        (64, 6144, MTLGPUFamily::Apple9, Tile64x64x32_Simdgroups2x2),
     ] {
-        assert_eq!(policy::simdgroup_quant_tile(m, n, group_size, family), expected);
+        assert_eq!(policy::simdgroup_quant_tile(m, n, family), expected);
     }
 }
 
@@ -117,11 +116,6 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     invalid_layout.a_full_precision = false;
     assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Mxu);
     assert_eq!(problem(quant(shape(64, 4096, 4095)), DataType::BF16).select_plan().engine, Simdgroup);
-
-    let mut large_group = quant(shape(512, 4096, 4096));
-    large_group.a_full_precision = false;
-    large_group.b_group_size = Some(128);
-    assert_eq!(problem(large_group, DataType::BF16).select_plan().tiling, Tile64x64x256_Simdgroups2x2);
 
     for (m, n, k, expected_tiling, expected_split_k) in [
         (16, 4096, 4096, Tile16x32x256_Simdgroups1x1, 8),

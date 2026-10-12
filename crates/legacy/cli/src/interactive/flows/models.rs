@@ -5,6 +5,7 @@ use shoji::types::{
     basic::SamplingParameters,
     model::{Model, ModelIdentifier},
 };
+use tokio_stream::StreamExt;
 use uzu::storage::DownloadState;
 
 use crate::{
@@ -60,22 +61,46 @@ fn Models(
         let registry_id = registry_id.clone();
         let family_id = family_id.clone();
         async move {
-            let models: Vec<Model> = engine
-                .models()
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|model| registry_id.as_ref().is_none_or(|id| &model.registry.identifier == id))
-                .filter(|model| {
-                    family_id
-                        .as_ref()
-                        .is_none_or(|id| model.family.as_ref().is_some_and(|family| &family.identifier == id))
-                })
-                .collect();
-            let download_statuses = engine.download_states().await;
-
-            models_state.set(Some(models));
-            model_download_statuses_state.set(Some(download_statuses));
+            let mut catalog_updates = engine.catalog_subscribe();
+            let mut storage_updates = engine.storage_subscribe();
+            loop {
+                let models: Vec<Model> = engine
+                    .models()
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|model| registry_id.as_ref().is_none_or(|id| &model.registry.identifier == id))
+                    .filter(|model| {
+                        family_id
+                            .as_ref()
+                            .is_none_or(|id| model.family.as_ref().is_some_and(|family| &family.identifier == id))
+                    })
+                    .collect();
+                let download_statuses = engine.download_states().await;
+                if !engine.catalog_is_refreshing() || !models.is_empty() {
+                    models_state.set(Some(models));
+                }
+                model_download_statuses_state.set(Some(download_statuses));
+                loop {
+                    tokio::select! {
+                        update = catalog_updates.next() => {
+                            if update.is_none() { return; }
+                            break;
+                        },
+                        update = storage_updates.next() => {
+                            match update {
+                                Some(Ok((identifier, download_state))) => {
+                                    if let Some(states) = model_download_statuses_state.write().as_mut() {
+                                        states.insert(identifier, download_state);
+                                    }
+                                },
+                                Some(Err(_)) => break,
+                                None => return,
+                            }
+                        },
+                    }
+                }
+            }
         }
     });
 

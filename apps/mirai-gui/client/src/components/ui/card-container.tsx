@@ -7,7 +7,7 @@ type CardContainerProps = {
 
 export function CardContainer({ children, className, ...props }: CardContainerProps) {
   return (
-    <div className={twMerge("bg-bg-modal border border-cell-border rounded-lg overflow-hidden", className)} {...props}>
+    <div className={twMerge("bg-bg-modal border border-cell-border rounded-lg overflow-clip", className)} {...props}>
       {children}
     </div>
   );

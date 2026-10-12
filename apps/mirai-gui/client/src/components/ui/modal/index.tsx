@@ -1,5 +1,12 @@
 import { X } from "lucide-react";
-import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
+import {
+  Button as HeadlessButton,
+  Dialog,
+  DialogPanel,
+  DialogTitle,
+  Transition,
+  TransitionChild,
+} from "@headlessui/react";
 import { Fragment } from "react";
 import { twMerge } from "tailwind-merge";
 import { Button } from "../button";
@@ -68,14 +75,14 @@ export function Modal(props: ModalProps) {
                     {title}
                   </Text>
                 </DialogTitle>
-                <button
+                <HeadlessButton
                   type="button"
                   aria-label="Close"
                   onClick={onClose}
-                  className="shrink-0 flex items-center justify-center size-7 rounded-md text-text-muted hover:text-text-primary hover:bg-tertiary-hover transition-colors duration-150 ease-out outline-hidden focus-visible:shadow-focus cursor-pointer"
+                  className="shrink-0 flex items-center justify-center size-7 rounded-md text-text-muted hover:text-text-primary hover:bg-tertiary-hover transition-colors duration-150 ease-out outline-hidden data-[focus]:shadow-focus cursor-pointer"
                 >
                   <X size={16} />
-                </button>
+                </HeadlessButton>
               </div>
               {description && (
                 <Text as="p" color="muted" opticalSize={20} className="mt-1.5 text-[15px] font-[450] leading-[1.6]">

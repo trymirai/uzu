@@ -1,12 +1,22 @@
 pub mod bridge;
 mod callback;
+#[cfg(test)]
+mod catalog_tests;
 pub mod config;
 mod downloader;
 mod downloader_stream;
 mod error;
+mod sampling;
 mod shorthand;
 
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
@@ -14,12 +24,12 @@ pub use config::EngineConfig;
 pub use downloader::Downloader;
 pub use downloader_stream::DownloaderStream;
 pub use error::EngineError;
+use futures_util::stream::FuturesUnordered;
 use indexmap::IndexSet;
 use kiban::rt::RuntimeHandle;
 use nagare::{
     chat::{ChatInstance, ChatSession},
     classification::ClassificationSession,
-    telemetry::{Telemetry, TelemetryContext, TelemetryDevice, TelemetryEvent},
     text_to_speech::TextToSpeechSession,
 };
 use shoji::{
@@ -30,6 +40,7 @@ use shoji::{
     },
 };
 use sysinfo::System;
+use tokio::sync::{broadcast, oneshot, watch};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
@@ -40,7 +51,7 @@ use crate::{
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
-        mirai::{Backend as MiraiBackend, HUGGING_FACE_URL, Registry as MiraiRegistry, TELEMETRY_URL},
+        mirai::{Backend as MiraiBackend, HUGGING_FACE_URL, Registry as MiraiRegistry},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
         unique_model,
     },
@@ -56,7 +67,10 @@ pub struct Engine {
     storage: Arc<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
     callback: SharedAccess<Option<Arc<EngineCallback>>>,
-    telemetry: SharedAccess<Telemetry>,
+    catalog_events: broadcast::Sender<()>,
+    catalog_refreshes: Arc<AtomicUsize>,
+    catalog_publish: Arc<tokio::sync::Mutex<()>>,
+    published_catalog: Arc<tokio::sync::Mutex<(Vec<Model>, bool)>>,
 }
 
 impl Engine {
@@ -76,20 +90,6 @@ impl Engine {
         }
 
         let device = Device::new()?;
-
-        let telemetry = SharedAccess::new({
-            let context = TelemetryContext::new(
-                Self::version(),
-                Self::toolchain_version(),
-                TelemetryDevice {
-                    os_name: device.os_name.clone(),
-                    cpu_name: device.cpu_name.clone(),
-                    memory_total: device.memory_total,
-                    is_environment_sandboxed: crate::device::is_environment_sandboxed(),
-                },
-            );
-            Telemetry::builder().base_url(TELEMETRY_URL).context(context).build()
-        });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
         let huggingface_api_key = config.huggingface_api_key.map(BearerToken::from);
@@ -111,9 +111,13 @@ impl Engine {
             registry,
             backends: SharedAccess::new(HashMap::new()),
             callback: SharedAccess::new(None),
-            telemetry,
+            catalog_events: broadcast::channel(64).0,
+            catalog_refreshes: Arc::new(AtomicUsize::new(0)),
+            catalog_publish: Arc::new(tokio::sync::Mutex::new(())),
+            published_catalog: Arc::new(tokio::sync::Mutex::new((Vec::new(), true))),
         };
-        engine.spawn_storage_listener().await;
+        engine.spawn_storage_listener();
+        let mut initializations = FuturesUnordered::new();
 
         {
             let uzu_backend = UzuLlmBackend::new();
@@ -134,7 +138,7 @@ impl Engine {
             );
 
             engine.add_backend(Arc::new(uzu_backend) as Arc<dyn Backend>).await;
-            engine.add_registry(mirai_registry).await?;
+            initializations.push(engine.start_registry(mirai_registry).await?);
 
             if let Some(local_path) = config.local_path {
                 let local_registry = LocalRegistry::new(LocalRegistryConfig::new(
@@ -142,7 +146,7 @@ impl Engine {
                     uzu_backend_version.clone(),
                     local_path,
                 ))?;
-                engine.add_registry(Box::new(local_registry)).await?;
+                initializations.push(engine.start_registry(Box::new(local_registry)).await?);
             }
         }
 
@@ -180,10 +184,27 @@ impl Engine {
         for config in openai_configs {
             let registry = OpenAIRegistry::new(config.clone())?;
             let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
-            engine.add_registry(Box::new(registry)).await?;
+            initializations.push(engine.start_registry(Box::new(registry)).await?);
             engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
         }
 
+        let mut last_error = None;
+        while engine.catalog_snapshot().await?.0.is_empty() {
+            let Some(result) = initializations.next().await else {
+                if let Some(error) = last_error {
+                    return Err(error);
+                }
+                break;
+            };
+            if let Err(error) = result
+                .map_err(|error| EngineError::TokioError {
+                    message: error.to_string(),
+                })
+                .and_then(|result| result)
+            {
+                last_error = Some(error);
+            }
+        }
         Ok(engine)
     }
 
@@ -221,9 +242,66 @@ impl Engine {
         &self,
         registry: Box<dyn Registry<Error = RegistryError>>,
     ) -> Result<(), EngineError> {
-        self.registry.lock().await.add(Box::new(CachedRegistry::new(registry)))?;
-        self.handle_registry_refresh().await?;
+        let first_update = self.start_registry(registry).await?;
+        if self.catalog_snapshot().await?.0.is_empty() {
+            first_update.await.map_err(|error| EngineError::TokioError {
+                message: error.to_string(),
+            })??;
+        }
         Ok(())
+    }
+
+    async fn start_registry(
+        &self,
+        registry: Box<dyn Registry<Error = RegistryError>>,
+    ) -> Result<oneshot::Receiver<Result<(), EngineError>>, EngineError> {
+        let registry: Arc<dyn Registry<Error = RegistryError>> = Arc::new(CachedRegistry::new(registry));
+        self.registry.lock().await.add(Arc::clone(&registry))?;
+        self.start_registry_refresh(registry).await
+    }
+
+    async fn start_registry_refresh(
+        &self,
+        registry: Arc<dyn Registry<Error = RegistryError>>,
+    ) -> Result<oneshot::Receiver<Result<(), EngineError>>, EngineError> {
+        self.catalog_refreshes.fetch_add(1, Ordering::SeqCst);
+        self.handle_registry_refresh(false).await?;
+        let (ready, first_update) = oneshot::channel();
+        let engine = self.clone();
+        kiban::rt::spawn(async move {
+            let (updates, mut updated) = watch::channel(());
+            let publisher = updates.clone();
+            let on_update: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                publisher.send_replace(());
+            });
+            let refresh = registry.refresh_listing(on_update);
+            tokio::pin!(refresh);
+            let mut ready = Some(ready);
+            loop {
+                tokio::select! {
+                    result = &mut refresh => {
+                        let published = engine.handle_registry_refresh(true).await;
+                        if let Err(error) = &result {
+                            tracing::warn!(%error, registry = %registry.identifier(), "catalog refresh failed");
+                        }
+                        if let Some(ready) = ready.take() {
+                            let _ = ready.send(result.map(|_| ()).map_err(EngineError::from).and(published));
+                        }
+                        break;
+                    },
+                    update = updated.changed() => {
+                        if update.is_err() { break; }
+                        if let Err(error) = engine.handle_registry_refresh(false).await {
+                            tracing::warn!(%error, "unable to publish catalog update");
+                        }
+                        if ready.is_some() && engine.catalog_snapshot().await.is_ok_and(|(models, _)| !models.is_empty()) {
+                            let _ = ready.take().unwrap().send(Ok(()));
+                        }
+                    },
+                }
+            }
+        });
+        Ok(first_update)
     }
 
     pub async fn add_backend(
@@ -242,7 +320,7 @@ impl Engine {
         registry_identifier: String,
     ) -> Result<(), EngineError> {
         self.registry.lock().await.remove(&registry_identifier)?;
-        self.handle_registry_refresh().await?;
+        self.handle_registry_refresh(false).await?;
         Ok(())
     }
 
@@ -259,7 +337,7 @@ impl Engine {
 impl Engine {
     #[bindings::export(Method(Getter))]
     pub async fn models(&self) -> Result<Vec<Model>, EngineError> {
-        self.registry.lock().await.models().await.map_err(EngineError::from)
+        Ok(self.catalog_snapshot().await?.0)
     }
 
     #[bindings::export(Method(Getter))]
@@ -370,6 +448,28 @@ impl Engine {
     }
 }
 
+impl Engine {
+    async fn find_catalog_model(
+        &self,
+        reference: &str,
+        matches: impl Fn(&Model) -> bool,
+    ) -> Result<Option<Model>, EngineError> {
+        let mut updates = self.catalog_subscribe();
+        loop {
+            // Observe completion before taking the snapshot so a refresh that
+            // finishes during the read cannot make a partial snapshot final.
+            let refreshing = self.catalog_is_refreshing();
+            let model = unique_model(reference, self.models().await?.into_iter().filter(&matches))?;
+            if model.is_some() || !refreshing {
+                return Ok(model);
+            }
+            if updates.next().await.is_none() {
+                return Ok(None);
+            }
+        }
+    }
+}
+
 #[bindings::export(Implementation)]
 impl Engine {
     #[bindings::export(Method)]
@@ -377,8 +477,14 @@ impl Engine {
         &self,
         identifier: String,
     ) -> Result<Option<Model>, EngineError> {
-        let registered = self.registry.lock().await.model(&identifier).await?;
-        if registered.is_some() && Path::new(&identifier).is_dir() {
+        let is_directory = Path::new(&identifier).is_dir();
+        let matches = |model: &Model| model.identifier == identifier || model.repo_ids().contains(&identifier);
+        let registered = if is_directory {
+            unique_model(&identifier, self.models().await?.into_iter().filter(matches))?
+        } else {
+            self.find_catalog_model(&identifier, matches).await?
+        };
+        if registered.is_some() && is_directory {
             return Err(RegistryError::UnableToGetModels {
                 message: format!(
                     "Ambiguous model reference `{identifier}`: matches both a registered model and a directory"
@@ -402,7 +508,7 @@ impl Engine {
         &self,
         identifier: ModelIdentifier,
     ) -> Result<Option<Model>, EngineError> {
-        self.registry.lock().await.model_by_identifier(&identifier).await.map_err(EngineError::from)
+        self.find_catalog_model(&identifier, |model| model.identifier == identifier).await
     }
 
     #[bindings::export(Method)]
@@ -410,7 +516,7 @@ impl Engine {
         &self,
         repo_id: String,
     ) -> Result<Option<Model>, EngineError> {
-        self.registry.lock().await.model_by_repo_id(&repo_id).await.map_err(EngineError::from)
+        self.find_catalog_model(&repo_id, |model| model.repo_ids().contains(&repo_id)).await
     }
 
     #[bindings::export(Method)]
@@ -421,6 +527,11 @@ impl Engine {
         let models = self.models().await?;
         let mut matches = Vec::new();
         for model in models {
+            let candidate =
+                model.filesystem_path().map(std::path::PathBuf::from).or_else(|| self.storage.cache_model_path(&model));
+            if candidate.as_deref() != Some(Path::new(&path)) {
+                continue;
+            }
             if self.model_path(&model).await.is_some_and(|model_path| model_path == path) {
                 matches.push(model);
             }
@@ -451,7 +562,7 @@ impl Engine {
         if let Some(filesystem_path) = model.filesystem_path() {
             return Some(filesystem_path);
         }
-        let state = self.storage.state(&model.identifier).await.ok()?;
+        let state = self.storage.ready_state(&model.identifier).await.ok()?;
         if !matches!(state.phase, DownloadPhase::Downloaded {}) {
             return None;
         }
@@ -528,7 +639,7 @@ impl Engine {
         &self,
         instance: &ChatInstance,
     ) -> Result<ChatSession, EngineError> {
-        let session = ChatSession::with_instance(instance, self.telemetry.lock().await.clone()).await?;
+        let session = ChatSession::with_instance(instance).await?;
         Ok(session)
     }
 
@@ -578,42 +689,71 @@ impl Engine {
         self.storage.subscribe()
     }
 
-    async fn handle_registry_refresh(&self) -> Result<(), EngineError> {
-        let (models, complete) = self.registry.lock().await.listing().await?;
-        self.storage.refresh(&models, complete).await?;
+    pub async fn ready_download_state(
+        &self,
+        model: &Model,
+    ) -> Result<DownloadState, EngineError> {
+        Ok(self.storage.ready_state(&model.identifier).await?)
+    }
+
+    pub fn catalog_is_refreshing(&self) -> bool {
+        self.catalog_refreshes.load(Ordering::SeqCst) != 0
+    }
+
+    pub async fn refresh_catalog(&self) -> Result<(), EngineError> {
+        if !self.catalog_is_refreshing() {
+            let registry = self.registry.lock().await.clone();
+            let _ready = self.start_registry_refresh(Arc::new(registry)).await?;
+        }
+        Ok(())
+    }
+
+    pub fn catalog_subscribe(&self) -> BroadcastStream<()> {
+        BroadcastStream::new(self.catalog_events.subscribe())
+    }
+
+    pub async fn catalog_snapshot(&self) -> Result<(Vec<Model>, bool), EngineError> {
+        let (models, complete) = self.published_catalog.lock().await.clone();
+        Ok((models, complete && self.catalog_refreshes.load(Ordering::SeqCst) == 0))
+    }
+
+    async fn handle_registry_refresh(
+        &self,
+        finished_refresh: bool,
+    ) -> Result<(), EngineError> {
+        let _publish = self.catalog_publish.lock().await;
+        let registry = self.registry.lock().await.clone();
+        let (models, complete) = registry.cached_listing().unwrap_or_default();
+        let complete = complete && self.catalog_refreshes.load(Ordering::SeqCst) == usize::from(finished_refresh);
+        // Register storage entries before exposing their descriptors. Individual
+        // download verification continues asynchronously after registration.
+        let result = self.storage.refresh(&models, complete).await;
+        let mut published = self.published_catalog.lock().await;
+        if result.is_ok() {
+            *published = (models, complete);
+        }
+        // Completion and its snapshot become visible together: a lookup that
+        // sees no active refresh must also read the final published snapshot.
+        if finished_refresh {
+            self.catalog_refreshes.fetch_sub(1, Ordering::SeqCst);
+        }
+        drop(published);
+        let _ = self.catalog_events.send(());
+        result?;
         if let Some(callback) = self.callback.lock().await.as_ref().cloned() {
             callback.on_event();
         };
         Ok(())
     }
 
-    async fn spawn_storage_listener(&self) {
+    fn spawn_storage_listener(&self) {
         let mut stream = self.storage_subscribe();
         let callback = self.callback.clone();
-        let telemetry = self.telemetry.lock().await.clone();
         kiban::rt::spawn(async move {
-            let mut last_phase: HashMap<ModelIdentifier, DownloadPhase> = HashMap::new();
             while let Some(update) = stream.next().await {
-                let Ok((id, state)) = update else {
+                let Ok(_) = update else {
                     continue;
                 };
-                let previous = last_phase.insert(id.clone(), state.phase.clone());
-                let event = match (&previous, &state.phase) {
-                    (prev, DownloadPhase::Downloading {}) if !matches!(prev, Some(DownloadPhase::Downloading {})) => {
-                        Some(TelemetryEvent::ModelDownloadStarted {
-                            model_id: id,
-                        })
-                    },
-                    (Some(DownloadPhase::Downloading {}), DownloadPhase::Downloaded {}) => {
-                        Some(TelemetryEvent::ModelDownloadFinished {
-                            model_id: id,
-                        })
-                    },
-                    _ => None,
-                };
-                if let Some(event) = event {
-                    telemetry.report(event);
-                }
                 if let Some(callback) = callback.lock().await.as_ref().cloned() {
                     callback.on_event();
                 };

@@ -1810,6 +1810,8 @@ public enum ChatSessionStreamChunk: Equatable, Hashable, Codable {
     )
     case error(error: ChatSessionError
     )
+    case toolResults(messages: [ChatMessage]
+    )
 
 
 
@@ -1837,6 +1839,9 @@ public struct FfiConverterTypeChatSessionStreamChunk: FfiConverterRustBuffer {
         case 2: return .error(error: try FfiConverterTypeChatSessionError.read(from: &buf)
         )
         
+        case 3: return .toolResults(messages: try FfiConverterSequenceTypeChatMessage.read(from: &buf)
+        )
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -1853,6 +1858,11 @@ public struct FfiConverterTypeChatSessionStreamChunk: FfiConverterRustBuffer {
         case let .error(error):
             writeInt(&buf, Int32(2))
             FfiConverterTypeChatSessionError.write(error, into: &buf)
+            
+        
+        case let .toolResults(messages):
+            writeInt(&buf, Int32(3))
+            FfiConverterSequenceTypeChatMessage.write(messages, into: &buf)
             
         }
     }

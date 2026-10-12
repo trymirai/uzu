@@ -120,8 +120,6 @@ impl<B: Backend> Normalization<B> {
         shortcut: Option<impl BufferMut<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("normalization");
-
         let row_size = size_for_shape(&[self.element_count], self.data_type);
         let row_offset_bytes = row_offset as usize * row_size;
         let shortcut = shortcut.map(|shortcut| shortcut.subrange_mut(row_offset_bytes..));
@@ -140,8 +138,6 @@ impl<B: Backend> Normalization<B> {
             self.post_layer_scalar_value,
             command_buffer,
         );
-
-        command_buffer.pop_debug_group();
 
         Ok(output)
     }

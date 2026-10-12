@@ -160,7 +160,7 @@ fn gemv_bf16(
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::w4_zero_point(4, QuantizationMethod::ScaleZeroPoint)]
-#[case::w8_bias(8, QuantizationMethod::ScaleBias)]
+#[case::w8_symmetric(8, QuantizationMethod::ScaleSymmetric)]
 fn group_major_gemv_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
@@ -293,8 +293,7 @@ fn gemv_gather() {
         (4, QuantizationMethod::ScaleBias, false),
         (4, QuantizationMethod::ScaleZeroPoint, false),
         (4, QuantizationMethod::ScaleZeroPoint, true),
-        (4, QuantizationMethod::ScaleSymmetric, false),
-        (8, QuantizationMethod::ScaleZeroPoint, false),
+        (8, QuantizationMethod::ScaleSymmetric, false),
     ] {
         let mut input = QuantInput::new(8, 128, 64, 32, bits, method, 0x5EED);
         if signed_codes {

@@ -15,6 +15,11 @@ export declare class DownloadPhaseError {
   constructor(message: string)
 }
 
+export declare class DownloadPhaseInitializing {
+
+  constructor()
+}
+
 export declare class DownloadPhaseLocked {
   managerId: string
   constructor(managerId: string)
@@ -48,7 +53,7 @@ export declare const enum DownloadManagerType {
 }
 
 export type DownloadPhase =
-  DownloadPhaseNotDownloaded | DownloadPhaseDownloading | DownloadPhasePaused | DownloadPhaseDownloaded | DownloadPhaseLocked | DownloadPhaseError
+  DownloadPhaseNotDownloaded | DownloadPhaseDownloading | DownloadPhasePaused | DownloadPhaseDownloaded | DownloadPhaseLocked | DownloadPhaseError | DownloadPhaseInitializing
 /**
  * A loaded chat backend instance (model weights, tokenizer, configuration).
  * Cloning is cheap and shares the underlying instance, so multiple [`ChatSession`]s
@@ -90,6 +95,11 @@ export declare class ChatSessionStreamChunkError {
 export declare class ChatSessionStreamChunkReplies {
   replies: Array<ChatReply>
   constructor(replies: Array<ChatReply>)
+}
+
+export declare class ChatSessionStreamChunkToolResults {
+  messages: Array<ChatMessage>
+  constructor(messages: Array<ChatMessage>)
 }
 
 export declare class ClassificationSession {
@@ -145,7 +155,7 @@ export declare const enum ChatSessionState {
 }
 
 export type ChatSessionStreamChunk =
-  ChatSessionStreamChunkReplies | ChatSessionStreamChunkError
+  ChatSessionStreamChunkReplies | ChatSessionStreamChunkError | ChatSessionStreamChunkToolResults
 
 export type ClassificationSessionError =
   | { type: 'Backend', message: string }
@@ -325,7 +335,7 @@ export declare class ChatReplyConfig {
   grammar?: Grammar
   /**
    * Maximum number of automatic tool-call turns per reply.
-   * `None` falls back to the session default.
+   * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
    */
   toolTurnLimit?: number
   constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, toolTurnLimit?: number)
@@ -1030,6 +1040,7 @@ export type EngineError =
   | { type: 'ClassificationSession', field0: ClassificationSessionError }
   | { type: 'TextToSpeechSession', field0: TextToSpeechSessionError }
   | { type: 'SettingsNotAvailable' }
+  | { type: 'ModelConfig', message: string }
 
 export type PlayerError =
   | { type: 'RodioError', message: string }
@@ -1051,6 +1062,5 @@ export type SettingsError =
 export type StorageError =
   | { type: 'UnableToCreateDirectory', path: string }
   | { type: 'DownloadManager', message: string }
-  | { type: 'HashNotFound', identifier: ModelIdentifier, name: string }
   | { type: 'ModelNotFound', identifier: ModelIdentifier }
   | { type: 'UnsupportedModel', identifier: ModelIdentifier }

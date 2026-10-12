@@ -58,7 +58,7 @@ export function LocalModelsHeader({
               <>
                 <MonitorSmartphone size={16} className="text-text-primary shrink-0" />
                 <span className={`${TEXT_14} text-text-primary truncate`} style={TEXT_14_STYLE}>
-                  Choose local model to chat
+                  Choose a model to chat
                 </span>
               </>
             )}

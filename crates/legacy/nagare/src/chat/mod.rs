@@ -6,6 +6,8 @@ mod chat_instance;
 mod error;
 pub mod message;
 pub mod token;
+#[cfg(test)]
+mod tool_cancellation_tests;
 
 use std::{panic::AssertUnwindSafe, sync::Arc};
 
@@ -35,12 +37,7 @@ use uuid::Uuid;
 
 #[cfg(feature = "bindings-uniffi")]
 use crate::tool::bindings_uniffi::ForeignTool;
-use crate::{
-    telemetry::{Telemetry, TelemetryEvent},
-    tool::{func_def::ToolDescriptor, registry::ToolRegistry},
-};
-
-const DEFAULT_TOOL_TURN_LIMIT: u32 = 10;
+use crate::tool::{func_def::ToolDescriptor, registry::ToolRegistry};
 
 #[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -51,12 +48,15 @@ pub enum ChatSessionStreamChunk {
     Error {
         error: ChatSessionError,
     },
+    ToolResults {
+        messages: Vec<ChatMessage>,
+    },
 }
 
 #[bindings::export(Class(Stream))]
 #[derive(Clone)]
 pub struct ChatSessionStream {
-    receiver: Arc<Mutex<mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>>>,
+    receiver: Arc<Mutex<mpsc::UnboundedReceiver<ChatSessionStreamChunk>>>,
     cancel_token: CancelToken,
 }
 
@@ -64,15 +64,7 @@ pub struct ChatSessionStream {
 impl ChatSessionStream {
     #[bindings::export(Method(StreamNext))]
     pub async fn next(&self) -> Option<ChatSessionStreamChunk> {
-        match self.receiver.lock().await.recv().await {
-            Some(Ok(replies)) => Some(ChatSessionStreamChunk::Replies {
-                replies,
-            }),
-            Some(Err(error)) => Some(ChatSessionStreamChunk::Error {
-                error,
-            }),
-            None => None,
-        }
+        self.receiver.lock().await.recv().await
     }
 
     #[bindings::export(Method(Getter))]
@@ -131,8 +123,6 @@ pub struct ChatSession {
     instance: Arc<Mutex<Instance>>,
     state: Arc<Mutex<ChatSessionState>>,
     messages: Arc<Mutex<Vec<ChatMessage>>>,
-    model_id: String,
-    telemetry: Telemetry,
     tool_registry: Option<Arc<Mutex<ToolRegistry>>>,
 }
 
@@ -142,18 +132,13 @@ impl ChatSession {
         config: ChatConfig,
         model: Model,
         path: Option<String>,
-        telemetry: Telemetry,
     ) -> Result<Self, ChatSessionError> {
         let instance = ChatInstance::new(backend, config, model, path).await?;
-        Self::with_instance(&instance, telemetry).await
+        Self::with_instance(&instance).await
     }
 
-    pub async fn with_instance(
-        instance: &ChatInstance,
-        telemetry: Telemetry,
-    ) -> Result<Self, ChatSessionError> {
+    pub async fn with_instance(instance: &ChatInstance) -> Result<Self, ChatSessionError> {
         let model = instance.model();
-        let model_id = model.identifier.clone();
 
         let instance = tokio::spawn({
             let instance = instance.clone();
@@ -178,8 +163,6 @@ impl ChatSession {
             instance: Arc::new(Mutex::new(instance)),
             state: Arc::new(Mutex::new(ChatSessionState::Idle)),
             messages: Arc::new(Mutex::new(Vec::new())),
-            model_id,
-            telemetry,
             tool_registry: supports_tool_calls.then(|| Arc::new(Mutex::new(ToolRegistry::new()))),
         })
     }
@@ -259,7 +242,7 @@ impl ChatSession {
     /// Returns the turn's replies, or `None` when the turn must not continue (the stream errored or the receiver was dropped).
     async fn send_input(
         &self,
-        sender: &UnboundedSender<Result<Vec<ChatReply>, ChatSessionError>>,
+        sender: &UnboundedSender<ChatSessionStreamChunk>,
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
@@ -281,12 +264,7 @@ impl ChatSession {
             messages_guard.clone()
         };
 
-        self.telemetry.report(TelemetryEvent::ModelInferenceStarted {
-            model_id: self.model_id.clone(),
-        });
-
         let mut outputs: IndexMap<u32, ChatReply> = IndexMap::new();
-        let mut error_value: Option<serde_json::Value> = None;
         let mut interrupted = false;
         let mut generated_tool_call_identifiers: Vec<Option<String>> = Vec::new();
         let mut latest_stats: Option<ChatReplyStats> = None;
@@ -320,7 +298,12 @@ impl ChatSession {
                     drop(messages_guard);
 
                     // send new output
-                    if sender.send(Ok(outputs.values().cloned().collect())).is_err() {
+                    if sender
+                        .send(ChatSessionStreamChunk::Replies {
+                            replies: outputs.values().cloned().collect(),
+                        })
+                        .is_err()
+                    {
                         interrupted = true;
                         break;
                     }
@@ -332,8 +315,9 @@ impl ChatSession {
                     }
                 },
                 Err(error) => {
-                    error_value = Some(serde_json::json!({ "message": error.to_string() }));
-                    let _ = sender.send(Err(error));
+                    let _ = sender.send(ChatSessionStreamChunk::Error {
+                        error,
+                    });
                     interrupted = true;
                     break;
                 },
@@ -341,18 +325,6 @@ impl ChatSession {
         }
         drop(stream);
         drop(instance);
-
-        // telemetry report result
-        if let Some(error) = error_value {
-            self.telemetry.report(TelemetryEvent::ModelInferenceFailed {
-                error,
-            });
-        } else if let Some(stats) = latest_stats.as_ref() {
-            self.telemetry.report(TelemetryEvent::ModelInferenceFinished {
-                model_id: self.model_id.clone(),
-                stats: stats.clone().into(),
-            });
-        }
 
         if !interrupted && let Some(stats) = latest_stats {
             completed_stats.push(stats);
@@ -363,18 +335,19 @@ impl ChatSession {
 
     async fn execute_turn(
         &self,
-        sender: UnboundedSender<Result<Vec<ChatReply>, ChatSessionError>>,
+        sender: UnboundedSender<ChatSessionStreamChunk>,
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) {
         // check state
         if !self.try_transition(ChatSessionState::Idle, ChatSessionState::Generation).await {
-            let _ = sender.send(Err(ChatSessionError::UnableToPerformOperationInCurrentState {}));
+            let _ = sender.send(ChatSessionStreamChunk::Error {
+                error: ChatSessionError::UnableToPerformOperationInCurrentState {},
+            });
             return;
         }
 
-        let tool_turn_limit = config.tool_turn_limit.unwrap_or(DEFAULT_TOOL_TURN_LIMIT);
         let mut tool_turns: u32 = 0;
         let mut next_input = input;
         let mut completed_stats = Vec::new();
@@ -417,13 +390,17 @@ impl ChatSession {
                     break;
                 }
 
-                if tool_turns >= tool_turn_limit {
-                    let _ = sender.send(Err(ChatSessionError::ToolTurnLimitExceeded {
-                        limit: tool_turn_limit,
-                    }));
-                    break;
+                if let Some(limit) = config.tool_turn_limit {
+                    if tool_turns >= limit {
+                        let _ = sender.send(ChatSessionStreamChunk::Error {
+                            error: ChatSessionError::ToolTurnLimitExceeded {
+                                limit,
+                            },
+                        });
+                        break;
+                    }
+                    tool_turns += 1;
                 }
-                tool_turns += 1;
 
                 if self.try_transition(ChatSessionState::Generation, ChatSessionState::ToolCalling).await {
                     let tool_messages = tokio::select! {
@@ -431,9 +408,25 @@ impl ChatSession {
                         _ = cancel_token.cancelled() => break,
                     };
                     if self.try_transition(ChatSessionState::ToolCalling, ChatSessionState::Generation).await {
-                        if !tool_messages.is_empty() && !cancel_token.is_cancelled() {
-                            next_input = tool_messages;
-                        } else {
+                        if tool_messages.is_empty() {
+                            break;
+                        }
+                        // Publish completed tools before the next prefill, and retain
+                        // their results even if cancellation arrives before it starts.
+                        self.messages.lock().await.extend(tool_messages.clone());
+                        if sender
+                            .send(ChatSessionStreamChunk::ToolResults {
+                                messages: tool_messages,
+                            })
+                            .is_err()
+                            || cancel_token.is_cancelled()
+                        {
+                            break;
+                        }
+                        // Native prefill can block the next poll. Let consumers
+                        // render the completed tool before starting that work.
+                        tokio::task::yield_now().await;
+                        if cancel_token.is_cancelled() || sender.is_closed() {
                             break;
                         }
                     } else {
@@ -624,6 +617,9 @@ impl ChatSession {
                 ChatSessionStreamChunk::Error {
                     error,
                 } => return Err(error),
+                ChatSessionStreamChunk::ToolResults {
+                    ..
+                } => {},
             }
         }
         outputs.ok_or(ChatSessionError::NoResponse {})
@@ -637,7 +633,7 @@ impl ChatSession {
     ) -> ChatSessionStream {
         let cancel_token_to_return = CancelToken::new();
         let cancel_token = cancel_token_to_return.inner().clone();
-        let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
+        let (sender, receiver) = mpsc::unbounded_channel();
         let session = self.clone();
         let turn = async move { session.execute_turn(sender, input, config, cancel_token).await }.in_current_span();
         #[cfg(feature = "bindings-pyo3")]
@@ -930,7 +926,219 @@ fn merge_tool_namespaces(
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        convert::Infallible,
+        pin::Pin,
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
+
+    use shoji::traits::backend::{Error, Instance as BackendInstance, InstanceStream, NoMetricsStream, State};
+    use tokio::sync::Notify;
+
     use super::*;
+
+    struct EmptyState;
+    impl State for EmptyState {}
+
+    struct ToolsThenAnswer {
+        rounds: usize,
+        continue_answer: Option<Arc<Notify>>,
+    }
+
+    impl BackendInstance for ToolsThenAnswer {
+        type StreamConfig = ChatReplyConfig;
+        type StreamInput = Vec<ChatMessage>;
+        type StreamOutput = BackendOutput;
+        type StreamMetrics = Option<Infallible>;
+
+        fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn State>, Error>> + Send + '_>> {
+            Box::pin(async { Ok(Box::new(EmptyState) as Box<dyn State>) })
+        }
+
+        fn stream<'a>(
+            &'a self,
+            input: &'a Self::StreamInput,
+            _state: &'a mut dyn State,
+            _config: Self::StreamConfig,
+            _cancel_token: CancellationToken,
+        ) -> Pin<Box<dyn InstanceStream<Item = Result<BackendOutput, Error>, Metrics = Self::StreamMetrics> + Send + 'a>>
+        {
+            Box::pin(NoMetricsStream::new(futures::stream::once(async move {
+                let completed_rounds = input.iter().map(|message| message.tool_call_results().len()).sum::<usize>();
+                if completed_rounds >= self.rounds {
+                    if let Some(continue_answer) = &self.continue_answer {
+                        continue_answer.notified().await;
+                    }
+                    Ok(BackendOutput {
+                        text: Some("Answer".to_string()),
+                        finish_reason: Some(ChatReplyFinishReason::Stop),
+                        ..Default::default()
+                    })
+                } else {
+                    Ok(BackendOutput {
+                        tool_calls: vec![ToolCallState::Finished(ToolCall {
+                            identifier: Some(format!("call-{}", completed_rounds + 1)),
+                            name: "clock".to_string(),
+                            arguments: serde_json::json!({}).into(),
+                        })],
+                        finish_reason: Some(ChatReplyFinishReason::ToolCalls),
+                        ..Default::default()
+                    })
+                }
+            })))
+        }
+
+        fn peak_memory_usage(&self) -> Option<usize> {
+            None
+        }
+    }
+
+    async fn tool_session(
+        rounds: usize,
+        continue_answer: Option<Arc<Notify>>,
+    ) -> ChatSession {
+        let instance = message::Session::with_instance(Arc::new(ToolsThenAnswer {
+            rounds,
+            continue_answer,
+        }))
+        .await
+        .unwrap();
+        let mut session = ChatSession {
+            instance: Arc::new(Mutex::new(Instance::Message(instance))),
+            state: Arc::new(Mutex::new(ChatSessionState::Idle)),
+            messages: Arc::new(Mutex::new(Vec::new())),
+            tool_registry: Some(Arc::new(Mutex::new(ToolRegistry::new()))),
+        };
+        session
+            .add_tool(ToolDescriptor::new(
+                "clock".to_string(),
+                "Return the time".to_string(),
+                None,
+                None,
+                Box::new(|_| Box::new(async { Ok(serde_json::json!("noon").into()) })),
+            ))
+            .await
+            .unwrap();
+        session
+    }
+
+    #[tokio::test]
+    async fn tool_results_arrive_before_the_next_answer_and_enter_history_once() {
+        let continue_answer = Arc::new(Notify::new());
+        let session = tool_session(1, Some(continue_answer.clone())).await;
+        let stream = session
+            .reply_with_stream(vec![ChatMessage::user().with_text("Time?".to_string())], ChatReplyConfig::default())
+            .await;
+        assert!(matches!(stream.next().await, Some(ChatSessionStreamChunk::Replies { .. })));
+        let event = tokio::time::timeout(Duration::from_secs(1), stream.next()).await.unwrap().unwrap();
+        let ChatSessionStreamChunk::ToolResults {
+            messages,
+        } = event
+        else {
+            panic!("Expected tool results before the paused answer");
+        };
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tool_call_results()[0].0.as_deref(), Some("call-1"));
+        let results_count =
+            |messages: Vec<ChatMessage>| messages.iter().map(|m| m.tool_call_results().len()).sum::<usize>();
+        assert_eq!(results_count(session.messages().await), 1);
+
+        continue_answer.notify_one();
+        assert!(
+            matches!(stream.next().await, Some(ChatSessionStreamChunk::Replies { replies }) if replies[0].message.text().as_deref() == Some("Answer"))
+        );
+        assert!(stream.next().await.is_none());
+        assert_eq!(results_count(session.messages().await), 1);
+    }
+
+    #[tokio::test]
+    async fn automatic_tool_turns_are_unlimited_by_default() {
+        let session = tool_session(12, None).await;
+        let replies = tokio::time::timeout(
+            Duration::from_secs(1),
+            session.reply(vec![ChatMessage::user().with_text("Time?".to_string())], ChatReplyConfig::default()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(replies[0].message.text().as_deref(), Some("Answer"));
+        assert_eq!(session.messages().await.iter().map(|message| message.tool_call_results().len()).sum::<usize>(), 12);
+        assert_eq!(session.state().await, ChatSessionState::Idle);
+    }
+
+    #[tokio::test]
+    async fn explicit_tool_turn_limits_stop_at_the_requested_round() {
+        for limit in [0, 3, 12] {
+            let session = tool_session(13, None).await;
+            let error = tokio::time::timeout(
+                Duration::from_secs(1),
+                session.reply(
+                    vec![ChatMessage::user().with_text("Time?".to_string())],
+                    ChatReplyConfig::default().with_tool_turn_limit(Some(limit)),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap_err();
+            assert!(matches!(error, ChatSessionError::ToolTurnLimitExceeded { limit: actual } if actual == limit));
+            assert_eq!(
+                session.messages().await.iter().map(|message| message.tool_call_results().len()).sum::<usize>(),
+                limit as usize
+            );
+            assert_eq!(session.state().await, ChatSessionState::Idle);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unlimited_tool_loop_can_be_cancelled_during_a_tool() {
+        let mut session = tool_session(usize::MAX, None).await;
+        let tool_started = Arc::new(Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        session
+            .add_tool(ToolDescriptor::new(
+                "clock".to_string(),
+                "Return the time".to_string(),
+                None,
+                None,
+                Box::new({
+                    let calls = calls.clone();
+                    let tool_started = tool_started.clone();
+                    move |_| {
+                        let calls = calls.clone();
+                        let tool_started = tool_started.clone();
+                        Box::new(async move {
+                            if calls.fetch_add(1, Ordering::SeqCst) == 12 {
+                                tool_started.notify_one();
+                                std::future::pending::<()>().await;
+                            }
+                            Ok(serde_json::json!("noon").into())
+                        })
+                    }
+                }),
+            ))
+            .await
+            .unwrap();
+        let stream = session
+            .reply_with_stream(vec![ChatMessage::user().with_text("Time?".to_string())], ChatReplyConfig::default())
+            .await;
+
+        tokio::time::timeout(Duration::from_secs(1), tool_started.notified()).await.unwrap();
+        stream.cancel_token().cancel();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while let Some(chunk) = stream.next().await {
+                assert!(!matches!(chunk, ChatSessionStreamChunk::Error { .. }));
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 13);
+        assert_eq!(session.state().await, ChatSessionState::Idle);
+        let messages = session.messages().await;
+        assert_eq!(messages.iter().map(|message| message.tool_call_results().len()).sum::<usize>(), 12);
+        assert_eq!(messages.last().unwrap().role, ChatRole::Tool {});
+    }
 
     #[test]
     fn normalize_tool_call_arguments_canonicalizes_and_unwraps_string_encoding() {

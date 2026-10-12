@@ -120,6 +120,7 @@ impl AttentionGemm {
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {

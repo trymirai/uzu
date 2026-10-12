@@ -110,7 +110,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("per layer embedding");
+        let command_buffer = &mut *command_buffer.debug_group("per layer embedding");
 
         let total_ple_dim = self.num_layers * self.ple_dim;
         let total_rows = batch_dim * self.num_layers;
@@ -149,8 +149,6 @@ impl<B: Backend> PerLayerEmbedding<B> {
             1.0,
             command_buffer,
         );
-
-        command_buffer.pop_debug_group();
 
         Ok(per_layer_inputs)
     }
@@ -245,7 +243,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        command_buffer.push_debug_group("per layer embedding projection");
+        let command_buffer = &mut *command_buffer.debug_group("per layer embedding projection");
 
         let length = batch_dim * self.model_dim;
 
@@ -288,8 +286,6 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             self.post_layer_scalar,
             command_buffer,
         );
-
-        command_buffer.pop_debug_group();
 
         Ok(())
     }

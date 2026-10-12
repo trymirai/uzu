@@ -1072,7 +1072,7 @@ public struct ChatReplyConfig: Equatable, Hashable, Codable {
     public var grammar: Grammar?
     /**
      * Maximum number of automatic tool-call turns per reply.
-     * `None` falls back to the session default.
+     * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
      */
     public var toolTurnLimit: UInt32?
 
@@ -1081,7 +1081,7 @@ public struct ChatReplyConfig: Equatable, Hashable, Codable {
     public init(tokenLimit: UInt32?, samplingPolicy: SamplingPolicy, grammar: Grammar?, 
         /**
          * Maximum number of automatic tool-call turns per reply.
-         * `None` falls back to the session default.
+         * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
          */toolTurnLimit: UInt32?) {
         self.tokenLimit = tokenLimit
         self.samplingPolicy = samplingPolicy

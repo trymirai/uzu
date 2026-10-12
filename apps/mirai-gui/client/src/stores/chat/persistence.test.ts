@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import type { ChatData, ChatMetadata } from "@/platform/services/storage";
+import { ChatNotFoundError, type ChatData, type ChatMetadata } from "@/platform/services/storage";
 import { serializeToMarkdown } from "@/platform/services/storage/markdown/serialize";
 import { extractMessageBlocks, parseMessage } from "@/platform/services/storage/markdown/parse";
 import { useChatStore } from "@/stores/use-chat-store";
@@ -47,6 +47,19 @@ beforeEach(() => {
   useChatStore.setState(chatDefaults, true);
   useChatStore.getState().createNewChat(CHAT_A);
   mocks.storage = inMemoryStorage();
+});
+
+it("keeps the known title when recovering a missing chat file", async () => {
+  const storage = mocks.storage as ReturnType<typeof inMemoryStorage>;
+  const title = "Chosen title";
+  useChatStore.setState({ savedChats: [{ ...metadata, title }] });
+  storage.appendMessage.mockRejectedValueOnce(new ChatNotFoundError(CHAT_A));
+  const id = useChatStore.getState().addMessageTo(CHAT_A, { sender: Roles.User, text: "Question" }).id;
+
+  await useChatStore.getState().persistMessage(CHAT_A, id);
+
+  expect(storage.chats.get(CHAT_A)?.metadata.title).toBe(title);
+  expect(useChatStore.getState().savedChats[0]?.title).toBe(title);
 });
 
 it("does not recreate an existing chat when reading it fails", async () => {

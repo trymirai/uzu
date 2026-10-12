@@ -63,6 +63,10 @@ pub enum HanashiConfig {
 }
 
 impl HanashiConfig {
+    pub fn default_reasoning_effort(&self) -> Result<Option<ReasoningEffort>, Error> {
+        Ok(self.resolve()?.rendering.default_reasoning_effort())
+    }
+
     pub fn capabilities(&self) -> Result<ChatModelCapabilities, Error> {
         let resolved = self.resolve()?;
         let rendering = &resolved.rendering;

@@ -1,7 +1,6 @@
 import { Modal } from "@/components/ui/modal";
 import { TextField } from "@/components/ui/text-field";
 import { useEffect, useRef, useState } from "react";
-import { CHAT_TITLE_MAX_LENGTH, CHAT_TITLE_MIN_LENGTH } from "@/constants/chat";
 
 type ChatRenameModalProps = {
   isOpen: boolean;
@@ -15,26 +14,20 @@ export const ChatRenameModal: React.FC<ChatRenameModalProps> = ({ isOpen, onClos
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const wasOpen = useRef(false);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !wasOpen.current) {
       setName(currentName);
       setError("");
     }
+    wasOpen.current = isOpen;
   }, [isOpen, currentName]);
 
   const submit = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
       setError("Name cannot be empty");
-      return;
-    }
-    if (trimmed.length < CHAT_TITLE_MIN_LENGTH) {
-      setError(`Name must be at least ${CHAT_TITLE_MIN_LENGTH} characters long`);
-      return;
-    }
-    if (trimmed.length > CHAT_TITLE_MAX_LENGTH) {
-      setError(`Name must be at most ${CHAT_TITLE_MAX_LENGTH} characters long`);
       return;
     }
     try {
@@ -75,12 +68,12 @@ export const ChatRenameModal: React.FC<ChatRenameModalProps> = ({ isOpen, onClos
           error={error || undefined}
           controlProps={{
             ref: inputRef,
+            "aria-label": "Chat name",
             value: name,
             onChange: (e) => setName(e.target.value),
             // The input mounts after open; select on the focus the dialog gives it.
             onFocus: (e) => e.currentTarget.select(),
             placeholder: "Enter chat name",
-            maxLength: CHAT_TITLE_MAX_LENGTH,
             disabled: isSubmitting,
             fullWidth: true,
           }}

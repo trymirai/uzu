@@ -43,12 +43,16 @@ impl DownloadState {
 
     #[bindings::export(Method(Getter))]
     pub fn can_delete(&self) -> bool {
-        !matches!(self.phase, DownloadPhase::NotDownloaded {} | DownloadPhase::Locked { .. })
+        !matches!(
+            self.phase,
+            DownloadPhase::Initializing {} | DownloadPhase::NotDownloaded {} | DownloadPhase::Locked { .. }
+        )
     }
 
     #[bindings::export(Method(Getter))]
     pub fn name(&self) -> String {
         match &self.phase {
+            DownloadPhase::Initializing {} => "Loading".to_string(),
             DownloadPhase::NotDownloaded {} => "Not Downloaded".to_string(),
             DownloadPhase::Downloading {} => "Downloading".to_string(),
             DownloadPhase::Paused {} => "Paused".to_string(),

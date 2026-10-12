@@ -294,9 +294,7 @@ mod quantize {
     }
 
     #[uzu_test]
-    fn quantize_scale_g32_and_g64_match_cpu() {
-        check_quantize(32, false, None, Int8CodeLayout::Sequential);
-        check_quantize(64, false, None, Int8CodeLayout::Sequential);
+    fn quantize_nibble_grouped_matches_cpu() {
         check_quantize(128, false, None, Int8CodeLayout::GroupedByNibble);
     }
 }

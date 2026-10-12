@@ -2290,6 +2290,8 @@ public enum EngineError: Swift.Error, Equatable, Hashable, Codable, Foundation.L
     case TextToSpeechSession(TextToSpeechSessionError
     )
     case SettingsNotAvailable
+    case ModelConfig(message: String
+    )
 
     
 
@@ -2346,6 +2348,9 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
             try FfiConverterTypeTextToSpeechSessionError.read(from: &buf)
             )
         case 11: return .SettingsNotAvailable
+        case 12: return .ModelConfig(
+            message: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -2409,6 +2414,11 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
         case .SettingsNotAvailable:
             writeInt(&buf, Int32(11))
         
+        
+        case let .ModelConfig(message):
+            writeInt(&buf, Int32(12))
+            FfiConverterString.write(message, into: &buf)
+            
         }
     }
 }
@@ -2756,8 +2766,6 @@ public enum StorageError: Swift.Error, Equatable, Hashable, Codable, Foundation.
     )
     case DownloadManager(message: String
     )
-    case HashNotFound(identifier: String, name: String
-    )
     case ModelNotFound(identifier: String
     )
     case UnsupportedModel(identifier: String
@@ -2797,14 +2805,10 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
         case 2: return .DownloadManager(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 3: return .HashNotFound(
-            identifier: try FfiConverterString.read(from: &buf), 
-            name: try FfiConverterString.read(from: &buf)
-            )
-        case 4: return .ModelNotFound(
+        case 3: return .ModelNotFound(
             identifier: try FfiConverterString.read(from: &buf)
             )
-        case 5: return .UnsupportedModel(
+        case 4: return .UnsupportedModel(
             identifier: try FfiConverterString.read(from: &buf)
             )
 
@@ -2829,19 +2833,13 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
             FfiConverterString.write(message, into: &buf)
             
         
-        case let .HashNotFound(identifier,name):
-            writeInt(&buf, Int32(3))
-            FfiConverterString.write(identifier, into: &buf)
-            FfiConverterString.write(name, into: &buf)
-            
-        
         case let .ModelNotFound(identifier):
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(3))
             FfiConverterString.write(identifier, into: &buf)
             
         
         case let .UnsupportedModel(identifier):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(4))
             FfiConverterString.write(identifier, into: &buf)
             
         }

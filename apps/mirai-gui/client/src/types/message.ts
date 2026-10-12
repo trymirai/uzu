@@ -1,4 +1,4 @@
-import type { SessionOutputStats } from "./llm-stream";
+import type { OutputShape, SessionOutputStats } from "./llm-stream";
 import type { NonSystemRole } from "./chat";
 
 export type ParsedOutput = {
@@ -22,7 +22,7 @@ export type MessageVersion = {
   perf?: PerfStats;
   stats?: SessionOutputStats;
   attachmentIds?: string[];
-  output?: { text?: { parsed?: ParsedOutput; raw?: string } };
+  output?: OutputShape;
   error?: string;
 };
 
@@ -38,6 +38,6 @@ export type Message = {
   perf?: PerfStats;
   stats?: SessionOutputStats;
   attachmentIds?: string[];
-  output?: { text?: { parsed?: ParsedOutput; raw?: string } };
+  output?: OutputShape;
   error?: string;
 };

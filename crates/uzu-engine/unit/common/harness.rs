@@ -1,8 +1,5 @@
 use libtest_mimic::{Arguments, Trial};
 
-const METAL_CAPTURE_ENABLED: &str = "METAL_CAPTURE_ENABLED";
-const UZU_CAPTURE_BENCH: &str = "UZU_CAPTURE_BENCH";
-
 pub enum UzuTest {
     Bench(&'static dyn Fn()),
     Test(&'static UzuTestCase),
@@ -30,7 +27,6 @@ pub fn uzu_harness(tests: &[&UzuTest]) {
     if benchmarks {
         #[cfg(target_os = "ios")]
         ios_set_current_dir();
-        enable_benchmark_gpu_capture_if_requested();
         let bench_tests: Vec<&dyn Fn()> = tests
             .iter()
             .filter_map(|test| match test {
@@ -55,16 +51,4 @@ pub fn uzu_harness(tests: &[&UzuTest]) {
             .collect();
         libtest_mimic::run(&Arguments::from_args(), trials).exit();
     }
-}
-
-fn enable_benchmark_gpu_capture_if_requested() {
-    if enabled(UZU_CAPTURE_BENCH) {
-        unsafe {
-            std::env::set_var(METAL_CAPTURE_ENABLED, "1");
-        }
-    }
-}
-
-fn enabled(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("yes") || v.eq_ignore_ascii_case("true"))
 }

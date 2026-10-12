@@ -1,5 +1,6 @@
 import { useRuntimeSessionStore } from "./use-runtime-session-store";
 import type { RuntimeSessionRef, RuntimeSessionEjectReason } from "@/types/session";
+import type { OutputShape } from "@/types/llm-stream";
 import { v4 as uuidv4 } from "uuid";
 import { create } from "zustand";
 import { getPlatform } from "@/platform/platform-singleton";
@@ -9,6 +10,10 @@ type SessionKey = RuntimeSessionRef;
 type ChatMessageRef = { chatId: string; messageId: string };
 
 type OperationState = "idle" | "running" | "stopping" | "ejecting";
+
+// Stopping may overlap a running effect. Keep cancellation owned by the
+// effect, independently of the operation currently displayed by the store.
+const chatOperations = new Map<string, { chatId: string; controller: AbortController }>();
 
 type SessionStoreState = {
   isGenerating: boolean;
@@ -26,6 +31,7 @@ type SessionStoreState = {
   activeGeneratingChatId: string | null;
   activeAssistantMessageId: string | null;
   activeAssistantMessageText: string | null;
+  activeAssistantMessageOutput: OutputShape | null;
   // The assistant placeholder from its creation until the reply settles; it
   // exists before the run does (title generation runs in between).
   loadingMessage: ChatMessageRef | null;
@@ -55,7 +61,11 @@ type SessionStoreState = {
   canStop: () => boolean;
   canEject: () => boolean;
 
-  withOperation: <T>(op: Exclude<OperationState, "idle">, effect: () => Promise<T>) => Promise<T | null>;
+  withOperation: <T>(
+    op: Exclude<OperationState, "idle">,
+    effect: (signal: AbortSignal) => Promise<T>,
+    chatId?: string,
+  ) => Promise<T | null>;
 };
 
 export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
@@ -73,6 +83,7 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
   activeGeneratingChatId: null,
   activeAssistantMessageId: null,
   activeAssistantMessageText: null,
+  activeAssistantMessageOutput: null,
   loadingMessage: null,
   canceledMessage: null,
 
@@ -114,12 +125,14 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
       activeGeneratingChatId: chatId,
       activeAssistantMessageId: assistantMessageId,
       activeAssistantMessageText: null,
+      activeAssistantMessageOutput: null,
     }),
   clearActiveGenerating: () =>
     set({
       activeGeneratingChatId: null,
       activeAssistantMessageId: null,
       activeAssistantMessageText: null,
+      activeAssistantMessageOutput: null,
       activeRunId: null,
     }),
   setActiveAssistantMessageText: (text) => set({ activeAssistantMessageText: text }),
@@ -127,6 +140,9 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
   activeRunId: null,
   setActiveRunId: (runId) => set({ activeRunId: runId }),
   cancelActiveRunForChat: async (chatId) => {
+    for (const operation of chatOperations.values()) {
+      if (operation.chatId === chatId) operation.controller.abort();
+    }
     const { titleGenChatId, cancelTitleGen, activeGeneratingChatId, activeRunId } = get();
     if (titleGenChatId === chatId) {
       set({ titleGenAbortChatId: chatId });
@@ -179,7 +195,7 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
     return hasResident && notLoading && notEjecting && notRunning && notStopping && notTitling;
   },
 
-  withOperation: async (op, effect) => {
+  withOperation: async (op, effect, chatId) => {
     const s = get();
     const st: OperationState = s.operationState;
 
@@ -199,11 +215,14 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
     if (isBlocked) return Promise.resolve(null);
 
     const id = uuidv4();
+    const controller = new AbortController();
+    if (chatId !== undefined) chatOperations.set(id, { chatId, controller });
     set({ operationState: op, operationId: id });
     try {
-      const result = await effect();
+      const result = await effect(controller.signal);
       return result;
     } finally {
+      chatOperations.delete(id);
       const cur = get();
       const same = cur.operationId === id && cur.operationState === op;
       if (same) set({ operationState: "idle", operationId: null });

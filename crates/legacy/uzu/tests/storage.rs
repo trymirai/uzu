@@ -16,7 +16,7 @@ use uzu::{
     registry::mirai::HUGGING_FACE_URL,
     storage::{DownloadManagerType, DownloadPhase, DownloadState, Storage},
     types::{
-        basic::{File, Hash, HashMethod, Repository},
+        basic::{File, Repository},
         model::{Model, ModelAccessibility, ModelIdentifier, ModelSource},
     },
 };
@@ -28,8 +28,6 @@ use wiremock::{
 use crate::common::TestStorage;
 
 const HELLO: &[u8] = b"hello\n";
-const HELLO_SHA256: &str = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
-const HELLO_GIT_BLOB_SHA1: &str = "ce013625030ba8dba906f756967f9e9ca394464a";
 const REVISION: &str = "f5dec40ceb1d8c4b15f049bf5e185dd7be2cc150";
 
 #[rstest]
@@ -66,7 +64,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     for served in registry.files.iter() {
         let destination = cache_path.join(&served.file.name);
         assert_eq!(tokio::fs::read(&destination).await?, served.bytes.to_vec());
-        assert!(artifact_path(&destination, "checksum").is_file());
+        assert!(!artifact_path(&destination, "checksum").exists());
     }
 
     storage.delete(&identifier).await?;
@@ -106,11 +104,11 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
         files.truncate(1);
     }
     storage.refresh(&[changed.clone()], false).await?;
-    assert_eq!(storage.state(&identifier).await?.total_bytes, served.file.size);
+    assert_eq!(storage.ready_state(&identifier).await?.total_bytes, served.file.size);
     storage.refresh(&[model.clone(), changed.clone()], false).await?;
-    assert_eq!(storage.state(&identifier).await?.total_bytes, total_bytes);
+    assert_eq!(storage.ready_state(&identifier).await?.total_bytes, total_bytes);
     storage.refresh(&[changed, model.clone()], false).await?;
-    assert_eq!(storage.state(&identifier).await?.total_bytes, served.file.size);
+    assert_eq!(storage.ready_state(&identifier).await?.total_bytes, served.file.size);
     Ok(())
 }
 
@@ -185,19 +183,13 @@ async fn hugging_face_model(#[case] kind: DownloadManagerType) -> Result<(), Box
             url: format!("{}/config.json", cdn.uri()),
             name: "config.json".to_string(),
             size: HELLO.len() as i64,
-            hashes: vec![Hash {
-                method: HashMethod::GitBlobSha1,
-                value: HELLO_GIT_BLOB_SHA1.to_string(),
-            }],
+            hashes: vec![],
         },
         File {
             url: format!("{}{route}", hugging_face.uri()),
             name: "model.safetensors".to_string(),
             size: HELLO.len() as i64,
-            hashes: vec![Hash {
-                method: HashMethod::Sha256,
-                value: HELLO_SHA256.to_string(),
-            }],
+            hashes: vec![],
         },
     ];
     let model = Model::external(
@@ -239,7 +231,7 @@ async fn hugging_face_model(#[case] kind: DownloadManagerType) -> Result<(), Box
     for name in ["config.json", "model.safetensors"] {
         let destination = cache_path.join(name);
         assert_eq!(tokio::fs::read(&destination).await?, HELLO);
-        assert!(artifact_path(&destination, "checksum").is_file());
+        assert!(!artifact_path(&destination, "checksum").exists());
     }
     Ok(())
 }
@@ -265,4 +257,188 @@ async fn wait_for(
     })
     .await
     .expect("timed out waiting for storage state")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn malformed_model_does_not_hide_a_cached_model() -> Result<(), Box<dyn std::error::Error>> {
+    let test_storage =
+        TestStorage::new(RuntimeHandle::current(), vec![], DownloadManagerType::Universal, HUGGING_FACE_URL, None)
+            .await?;
+    let storage = &test_storage.storage;
+    let healthy = catalog_model("healthy", &[("model.bin", HELLO.len() as i64)]);
+    let cache_path = storage.cache_model_path(&healthy).unwrap();
+    tokio::fs::create_dir_all(&cache_path).await?;
+    tokio::fs::write(cache_path.join("model.bin"), HELLO).await?;
+
+    // Two incompatible requests for the same file make only this model uninitializable.
+    let malformed = catalog_model("broken", &[("model.bin", 1), ("model.bin", 2)]);
+    timeout(Duration::from_secs(2), storage.refresh(&[malformed.clone(), healthy.clone()], true)).await??;
+    let healthy_state = timeout(Duration::from_secs(2), storage.ready_state(&healthy.identifier)).await??;
+    assert_eq!(healthy_state.phase, DownloadPhase::Downloaded {});
+    assert_eq!(healthy_state.downloaded_bytes, HELLO.len() as i64);
+    let error = timeout(Duration::from_secs(2), storage.ready_state(&malformed.identifier))
+        .await?
+        .expect_err("conflicting files must fail initialization");
+    assert!(error.to_string().contains("conflicting download config"), "unexpected error: {error}");
+    assert!(matches!(storage.state(&malformed.identifier).await?.phase, DownloadPhase::Error { .. }));
+    assert_eq!(storage.states().await.len(), 2);
+
+    let repaired = catalog_model("broken", &[("model.bin", 1)]);
+    storage.refresh(std::slice::from_ref(&repaired), false).await?;
+    let repaired_state = timeout(Duration::from_secs(2), storage.ready_state(&repaired.identifier)).await??;
+    assert_eq!(repaired_state.phase, DownloadPhase::NotDownloaded {});
+    assert_eq!(storage.state(&healthy.identifier).await?, healthy_state);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn partial_catalog_keeps_existing_models_and_complete_catalog_removes_obsolete_files()
+-> Result<(), Box<dyn std::error::Error>> {
+    let test_storage =
+        TestStorage::new(RuntimeHandle::current(), vec![], DownloadManagerType::Universal, HUGGING_FACE_URL, None)
+            .await?;
+    let storage = &test_storage.storage;
+    let cached = catalog_model("cached", &[("model.bin", HELLO.len() as i64)]);
+    let cache_path = storage.cache_model_path(&cached).unwrap();
+    let destination = cache_path.join("model.bin");
+    tokio::fs::create_dir_all(&cache_path).await?;
+    tokio::fs::write(&destination, HELLO).await?;
+    storage.refresh(std::slice::from_ref(&cached), true).await?;
+    let cached_state = timeout(Duration::from_secs(2), storage.ready_state(&cached.identifier)).await??;
+    assert_eq!(cached_state.phase, DownloadPhase::Downloaded {});
+
+    let added = catalog_model("added", &[("model.bin", 3)]);
+    storage.refresh(std::slice::from_ref(&added), false).await?;
+    assert_eq!(storage.state(&cached.identifier).await?, cached_state);
+    assert_eq!(storage.states().await.len(), 2);
+    let added_state = timeout(Duration::from_secs(2), storage.ready_state(&added.identifier)).await??;
+    assert_eq!(added_state.phase, DownloadPhase::NotDownloaded {});
+    storage.refresh(&[], false).await?;
+    assert_eq!(storage.state(&cached.identifier).await?, cached_state);
+    assert_eq!(storage.state(&added.identifier).await?, added_state);
+
+    storage.refresh(&[added], true).await?;
+    assert!(storage.state(&cached.identifier).await.is_err());
+    assert_eq!(storage.states().await.len(), 1);
+    assert!(!destination.exists(), "a complete catalog must clean obsolete model files");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn checkpoint_cleanup_waits_for_complete_catalog_and_skips_locked_downloads()
+-> Result<(), Box<dyn std::error::Error>> {
+    let test_storage =
+        TestStorage::new(RuntimeHandle::current(), vec![], DownloadManagerType::Universal, HUGGING_FACE_URL, None)
+            .await?;
+    let storage = &test_storage.storage;
+    let old = catalog_model("revised", &[("model.bin", HELLO.len() as i64)]);
+    let old_path = storage.cache_model_path(&old).unwrap();
+    tokio::fs::create_dir_all(&old_path).await?;
+    tokio::fs::write(old_path.join("model.bin"), HELLO).await?;
+    storage.refresh(std::slice::from_ref(&old), true).await?;
+    assert_eq!(storage.ready_state(&old.identifier).await?.phase, DownloadPhase::Downloaded {});
+
+    let mut current = old.clone();
+    if let ModelAccessibility::OnDevice {
+        source: ModelSource::Registry {
+            toolchain_version,
+            ..
+        },
+    } = &mut current.accessibility
+    {
+        *toolchain_version = "2".into();
+    }
+    let current_path = storage.cache_model_path(&current).unwrap();
+    tokio::fs::create_dir_all(&current_path).await?;
+    tokio::fs::write(current_path.join("model.bin"), HELLO).await?;
+    let lock = DestinationLock::acquire(
+        &old_path.join("model.bin"),
+        &LockOwner {
+            manager_id: "active-downloader".into(),
+            instance_id: Uuid::new_v4(),
+        },
+    )
+    .await?;
+
+    storage.refresh(std::slice::from_ref(&current), true).await?;
+    assert_eq!(tokio::fs::read(old_path.join("model.bin")).await?, HELLO);
+    assert_eq!(storage.ready_state(&current.identifier).await?.phase, DownloadPhase::Downloaded {});
+    drop(lock);
+    storage.refresh(std::slice::from_ref(&current), false).await?;
+    assert!(old_path.exists(), "partial discovery must not remove checkpoints");
+    storage.refresh(&[], true).await?;
+    assert!(old_path.exists(), "an empty catalog must not erase the cache");
+    #[cfg(unix)]
+    {
+        let link = old_path.join("linked-checkpoint");
+        std::os::unix::fs::symlink(&old_path, &link)?;
+        timeout(Duration::from_secs(2), storage.refresh(std::slice::from_ref(&current), true)).await??;
+        assert!(old_path.exists(), "cleanup must not traverse linked checkpoint contents");
+        tokio::fs::remove_file(link).await?;
+    }
+    storage.refresh(std::slice::from_ref(&current), true).await?;
+    assert!(!old_path.exists());
+    assert_eq!(tokio::fs::read(current_path.join("model.bin")).await?, HELLO);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn changed_file_list_replaces_live_task_without_conflicting_with_it() -> Result<(), Box<dyn std::error::Error>> {
+    let test_storage =
+        TestStorage::new(RuntimeHandle::current(), vec![], DownloadManagerType::Universal, HUGGING_FACE_URL, None)
+            .await?;
+    let storage = &test_storage.storage;
+    let full = catalog_model("changing", &[("model.bin", HELLO.len() as i64), ("config.json", 2)]);
+    let reduced = catalog_model("changing", &[("model.bin", HELLO.len() as i64)]);
+    let cache_path = storage.cache_model_path(&full).unwrap();
+    tokio::fs::create_dir_all(&cache_path).await?;
+    tokio::fs::write(cache_path.join("model.bin"), HELLO).await?;
+    tokio::fs::write(cache_path.join("config.json"), b"{}").await?;
+
+    for index in 0..20 {
+        let (model, expected_bytes) = if index % 2 == 0 {
+            (&full, HELLO.len() + 2)
+        } else {
+            (&reduced, HELLO.len())
+        };
+        storage.refresh(std::slice::from_ref(model), false).await?;
+        let state = timeout(Duration::from_secs(2), storage.ready_state(&model.identifier)).await??;
+        assert_eq!(state.phase, DownloadPhase::Downloaded {}, "replacement {index}");
+        assert_eq!(state.total_bytes, expected_bytes as i64);
+        assert_eq!(state.downloaded_bytes, expected_bytes as i64);
+    }
+    assert_eq!(tokio::fs::read(cache_path.join("config.json")).await?, b"{}");
+    Ok(())
+}
+
+fn catalog_model(
+    identifier: &str,
+    files: &[(&str, i64)],
+) -> Model {
+    Model::external(
+        identifier.to_string(),
+        "test".to_string(),
+        "Test".to_string(),
+        "uzu".to_string(),
+        "Uzu".to_string(),
+        "1".to_string(),
+        vec![],
+        ModelAccessibility::OnDevice {
+            source: ModelSource::Registry {
+                toolchain_version: "1".to_string(),
+                repository: None,
+                source_repository: None,
+                files: files
+                    .iter()
+                    .map(|(name, size)| File {
+                        url: format!("https://example.invalid/{identifier}/{name}"),
+                        name: (*name).to_string(),
+                        size: *size,
+                        hashes: vec![],
+                    })
+                    .collect(),
+            },
+        },
+        None,
+    )
 }

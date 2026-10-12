@@ -13,7 +13,6 @@ pub fn build_tree_out<QKT: ArrayElement + Float, OutputT: ArrayElement + Float>(
     qkd: *const f32,
     u: *const f32,
     #[optional(use_h0)] h0: Option<*const f32>,
-    #[optional(use_h0)] h0_indices: Option<*const i32>,
     o: *mut OutputT,
     scale: f32,
     batch_size: u32,
@@ -38,14 +37,8 @@ pub fn build_tree_out<QKT: ArrayElement + Float, OutputT: ArrayElement + Float>(
     let head_v_dim = head_v_dim as usize;
     let value_heads_per_qk_head = value_heads / qk_heads;
     let h0 = h0.unwrap_or(std::ptr::null());
-    let h0_indices = h0_indices.unwrap_or(std::ptr::null());
 
     for batch in 0..batch_size {
-        let h0_index = if use_h0 {
-            unsafe { *h0_indices.add(batch) }
-        } else {
-            -1
-        };
         for value_head in 0..value_heads {
             let qk_head = value_head / value_heads_per_qk_head;
             let q_head_base = (batch * tree_size * qk_heads + qk_head) * head_k_dim;
@@ -59,9 +52,8 @@ pub fn build_tree_out<QKT: ArrayElement + Float, OutputT: ArrayElement + Float>(
                 for value_col in 0..head_v_dim {
                     let mut acc = 0.0f32;
 
-                    if use_h0 && h0_index >= 0 {
-                        let h0_base =
-                            ((h0_index as usize * value_heads + value_head) * head_v_dim + value_col) * head_k_dim;
+                    if use_h0 {
+                        let h0_base = ((batch * value_heads + value_head) * head_v_dim + value_col) * head_k_dim;
                         let mut dot = 0.0f32;
                         for dim in 0..head_k_dim {
                             let qv = unsafe { (*q.add(q_row + dim)).to_f32().unwrap() };

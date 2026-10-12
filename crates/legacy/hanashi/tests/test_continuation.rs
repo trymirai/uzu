@@ -150,6 +150,64 @@ fn formatting_and_sampled_token_ids_survive_repeated_tool_continuations() {
 }
 
 #[test]
+fn structured_tool_results_render_as_json_without_changing_history() {
+    for result in [
+        serde_json::json!({
+            "type": "line",
+            "title": "Revenue < forecast: \"2026\"",
+            "labels": ["January", "February"],
+            "datasets": [{"label": "Revenue", "data": [12.5, 15.0]}],
+        }),
+        serde_json::json!({"error": "Invalid chart", "retryable": true, "details": null}),
+        serde_json::json!([{"x": 1, "y": 2}, null, "point"]),
+        serde_json::json!(12.5),
+        serde_json::json!(true),
+        serde_json::Value::Null,
+        serde_json::json!("done"),
+    ] {
+        let config = HanashiConfig::Qwen38;
+        let mut live = encoding(config.clone());
+        let mut history = history();
+        live.encode(history.clone()).unwrap();
+        let options = r#"{"a":1, "b": 2}"#;
+        decode(&mut live, &(tool_call(options) + "  <|im_end|>"));
+        let sampled = live.state().tokens.clone();
+        let sampled_text = live.state().text();
+        add_tool_result(&live, &mut history, options);
+        let result_index = history.len() - 1;
+        let ChatContentBlock::ToolCallResult {
+            value,
+            ..
+        } = &mut history[result_index].content[0]
+        else {
+            unreachable!();
+        };
+        *value = Value::from(result.clone());
+        let original_result = history[result_index].clone();
+        let text = result.as_str().map(str::to_owned).unwrap_or_else(|| result.to_string());
+        let response = format!("<tool_response>\n{text}\n</tool_response>");
+
+        live.try_append(&history).unwrap().expect("must continue after a structured tool result");
+
+        assert_eq!(&live.state().tokens[..sampled.len()], sampled);
+        assert_eq!(
+            &live.state().text()[sampled_text.len()..],
+            format!("\n<|im_start|>user\n{response}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n")
+        );
+        assert_eq!(live.state().messages[result_index], original_result);
+        assert_eq!(history[result_index], original_result);
+
+        decode(&mut live, "Done.<|im_end|>");
+        assert_eq!(live.state().messages[result_index], original_result);
+
+        let mut replay = encoding(config);
+        replay.encode(history).unwrap();
+        assert!(replay.state().text().contains(&response));
+        assert_eq!(replay.state().messages[result_index], original_result);
+    }
+}
+
+#[test]
 fn edited_history_and_render_context_are_rejected_without_mutation() {
     let mut encoding = encoding(HanashiConfig::Qwen38);
     let mut history = history();

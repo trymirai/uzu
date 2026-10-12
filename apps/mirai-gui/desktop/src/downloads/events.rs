@@ -7,6 +7,12 @@ use crate::models::PhaseKind;
 #[derive(Serialize, Clone, PartialEq, Eq, Debug)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub(super) enum DownloadEvent {
+    State {
+        phase: PhaseKind,
+        completed_bytes: i64,
+        total_bytes: i64,
+        error: Option<String>,
+    },
     Progress {
         completed_bytes: i64,
         total_bytes: Option<i64>,
@@ -36,7 +42,12 @@ pub(super) fn events_for(
     state: &DownloadState,
     previous: Option<PhaseKind>,
 ) -> Vec<DownloadEvent> {
+    // Initial inspection reports existing files without announcing a new download.
+    if previous.is_none() || previous == Some(PhaseKind::Initializing) {
+        return vec![snapshot(state)];
+    }
     match &state.phase {
+        DownloadPhase::Initializing {} => vec![snapshot(state)],
         DownloadPhase::Downloading {} => {
             let progress = DownloadEvent::Progress {
                 completed_bytes: state.downloaded_bytes,
@@ -79,6 +90,20 @@ pub(super) fn events_for(
     }
 }
 
+fn snapshot(state: &DownloadState) -> DownloadEvent {
+    DownloadEvent::State {
+        phase: PhaseKind::from(&state.phase),
+        completed_bytes: state.downloaded_bytes,
+        total_bytes: state.total_bytes,
+        error: match &state.phase {
+            DownloadPhase::Error {
+                message,
+            } => Some(message.clone()),
+            _ => None,
+        },
+    }
+}
+
 fn transition(
     previous: Option<PhaseKind>,
     entered: PhaseKind,
@@ -113,7 +138,10 @@ pub(super) fn announce(
             "download:state",
             Some(serde_json::json!({ "identifier": event.identifier, "kind": "locked", "lockedBy": locked_by })),
         ),
-        DownloadEvent::Progress {
+        DownloadEvent::State {
+            ..
+        }
+        | DownloadEvent::Progress {
             ..
         }
         | DownloadEvent::Paused
@@ -213,9 +241,10 @@ mod tests {
     }
 
     #[test]
-    fn settled_phases_are_events_only_as_transitions() {
+    fn initial_snapshots_are_quiet_and_later_transitions_are_announced() {
         let done = state(DownloadPhase::Downloaded {}, 100, 100);
-        assert_eq!(events_for(&done, None), vec![]);
+        assert_eq!(events_for(&done, None), vec![snapshot(&done)]);
+        assert_eq!(events_for(&done, Some(PhaseKind::Initializing)), vec![snapshot(&done)]);
         assert_eq!(events_for(&done, Some(PhaseKind::Downloaded)), vec![]);
         assert_eq!(events_for(&done, Some(PhaseKind::Downloading)), vec![DownloadEvent::Done]);
 
@@ -226,7 +255,7 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(events_for(&failed, None), vec![]);
+        assert_eq!(events_for(&failed, None), vec![snapshot(&failed)]);
         assert_eq!(
             events_for(&failed, Some(PhaseKind::Downloading)),
             vec![DownloadEvent::Error {
@@ -247,5 +276,13 @@ mod tests {
                 locked_by: "cli".into()
             }]
         );
+    }
+
+    #[test]
+    fn reinitialization_between_downloaded_states_always_updates_the_client() {
+        let initializing = state(DownloadPhase::Initializing {}, 0, 100);
+        let done = state(DownloadPhase::Downloaded {}, 100, 100);
+        assert_eq!(events_for(&initializing, Some(PhaseKind::Downloaded)), vec![snapshot(&initializing)]);
+        assert_eq!(events_for(&done, Some(PhaseKind::Initializing)), vec![snapshot(&done)]);
     }
 }

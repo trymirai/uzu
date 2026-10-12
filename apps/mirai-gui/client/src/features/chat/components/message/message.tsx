@@ -1,21 +1,68 @@
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { isOtherChatGenerating } from "@/features/runtime/runtime-busy";
 import { writeItemsWithFocus } from "@/utils/clipboard";
-import { Transition } from "@headlessui/react";
-import { ChevronDownIcon } from "lucide-react";
-import React, { useEffect, useRef, useState } from "react";
-import { twMerge } from "tailwind-merge";
+import { WrenchIcon } from "lucide-react";
+import React, { lazy, Suspense, useRef } from "react";
 import type { MessageVersion } from "@/types/message";
+import type { TranscriptItem } from "@/types/llm-stream";
 import { useChatStore } from "@/stores/use-chat-store";
-import { attachmentStorage } from "../../services/attachment-storage";
-import { ModelMenuIcon } from "@/components/icons/model-menu-icon";
-import { ThinkingBubbleIcon } from "@/components/icons/thinking-bubble";
-import { AttachedFilesDisplay } from "../composer/attached-files-display";
 import { CopyButton } from "@/components/ui/copy-button";
 import { MarkdownRenderer } from "./markdown-renderer";
+import { ThinkingBlock } from "./thinking-block";
 import { MessageVersionControls } from "./message-version-controls";
 import { ModelSelector } from "./model-selector";
 import { PerformanceDropdown } from "./performance-dropdown";
+import { UserMessage, type UserMessageProps } from "./user-message";
+
+const ChartMessage = lazy(() => import("./chart-message"));
+
+const toolLabels = new Map([
+  [
+    "show_chart",
+    {
+      running: "Drawing a chart...",
+      done: "Drew a chart",
+      failed: "Couldn't draw the chart",
+      stopped: "Stopped drawing the chart",
+    },
+  ],
+  [
+    "get_current_date_time",
+    {
+      running: "Checking the date and time...",
+      done: "Checked the date and time",
+      failed: "Couldn't check the date and time",
+      stopped: "Stopped checking the date and time",
+    },
+  ],
+  [
+    "set_chat_name",
+    {
+      running: "Renaming the chat...",
+      done: "Renamed the chat",
+      failed: "Couldn't rename the chat",
+      stopped: "Stopped renaming the chat",
+    },
+  ],
+]);
+
+function toolCallLabel(tool: Extract<TranscriptItem, { type: "toolCall" }>, isRunning: boolean): string {
+  const state = tool.failed ? "failed" : tool.called ? "done" : isRunning ? "running" : "stopped";
+  const labels = toolLabels.get(tool.name);
+  if (labels) return labels[state];
+
+  const name =
+    tool.name
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/[_-]+/g, " ")
+      .trim() || "tool";
+  return {
+    running: `Using ${name}...`,
+    done: `Used ${name}`,
+    failed: `Couldn't use ${name}`,
+    stopped: `Stopped using ${name}`,
+  }[state];
+}
 
 export type MessageType = {
   text: string;
@@ -36,20 +83,9 @@ type MessageProps = MessageType & {
   isUiStreaming?: boolean;
   isCanceled?: boolean;
   onModelSelect?: (messageId: string, modelId: string, modelName: string) => void;
+  canEdit?: boolean;
+  onEdit?: UserMessageProps["onEdit"];
 };
-
-const UserMessage: React.FC<Pick<MessageProps, "text" | "attachmentIds">> = ({ text, attachmentIds }) => (
-  <>
-    {attachmentIds && attachmentIds.length > 0 && (
-      <div className="mb-3 ml-auto w-fit">
-        <AttachedFilesDisplay files={attachmentStorage.getFiles(attachmentIds)} />
-      </div>
-    )}
-    <div className="font-[350] text-label-title relative w-fit max-w-full rounded-[5px] text-[15px] leading-[140%] px-2.5 py-[6px] bg-bg-hover ml-auto [&>div>*:first-child]:mt-0 [&>div>*:last-child]:mb-0">
-      <MarkdownRenderer content={text} />
-    </div>
-  </>
-);
 
 const AssistantMessage: React.FC<MessageProps> = ({
   text,
@@ -74,76 +110,26 @@ const AssistantMessage: React.FC<MessageProps> = ({
 
   const hasActiveVersions = Array.isArray(messageFromStore?.versions) && (messageFromStore?.versions?.length || 0) > 0;
   const parsed = hasActiveVersions ? currentMsgVersion?.output?.text?.parsed : messageFromStore?.output?.text?.parsed;
+  const transcript = hasActiveVersions ? currentMsgVersion?.output?.transcript : messageFromStore?.output?.transcript;
 
   const visibleChainOfThought = parsed?.chainOfThought;
   const visibleMessageText = hasActiveVersions ? (currentMsgVersion?.text ?? text) : text;
   const visibleResponseText = parsed?.response ?? visibleMessageText ?? "";
   const hasError = hasActiveVersions ? !!currentMsgVersion?.error : !!messageFromStore?.error;
   const errorText = hasActiveVersions ? currentMsgVersion?.error : messageFromStore?.error;
+  const isGeneratingThisMessage = useChatSessionStore(
+    (s) => s.isGenerating && s.activeGeneratingChatId === chatId && s.activeAssistantMessageId === id,
+  );
+  const isThinking =
+    isGeneratingThisMessage &&
+    !isCanceled &&
+    !hasError &&
+    (!hasActiveVersions || currentMsgVersion === messageFromStore?.versions?.at(-1));
 
   const streamInProgress = !!(isLast && (isLoading || isUiStreaming));
-
-  const [isReasoningVisible, setIsReasoningVisible] = useState(false);
-  const autoOpenedByStreamRef = useRef(false);
-  const userToggledRef = useRef(false);
+  const reasoningInProgress = isThinking && !visibleResponseText;
 
   const messageRef = useRef<HTMLDivElement>(null);
-  const reasoningScrollRef = useRef<HTMLDivElement>(null);
-
-  const reasoningPinnedRef = useRef(true);
-
-  const reasoningAutoScrollingRef = useRef(false);
-
-  const onReasoningScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    if (reasoningAutoScrollingRef.current) return;
-    const el = e.currentTarget;
-    reasoningPinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-  };
-
-  useEffect(() => {
-    setIsReasoningVisible(false);
-    autoOpenedByStreamRef.current = false;
-    userToggledRef.current = false;
-    reasoningPinnedRef.current = true;
-  }, [currentMsgVersion?.id]);
-
-  const stickReasoningToBottom = () => {
-    const el = reasoningScrollRef.current;
-    if (!el || !reasoningPinnedRef.current) return;
-    reasoningAutoScrollingRef.current = true;
-    el.scrollTop = el.scrollHeight;
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        reasoningAutoScrollingRef.current = false;
-      });
-    });
-  };
-
-  useEffect(() => {
-    if (isReasoningVisible) stickReasoningToBottom();
-  }, [visibleChainOfThought, isReasoningVisible]);
-
-  useEffect(() => {
-    const el = reasoningScrollRef.current;
-    if (!isReasoningVisible || !el || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => stickReasoningToBottom());
-    if (el.firstElementChild) observer.observe(el.firstElementChild);
-    return () => observer.disconnect();
-  }, [isReasoningVisible]);
-
-  useEffect(() => {
-    const shouldAutoOpen =
-      !!visibleChainOfThought &&
-      !visibleResponseText &&
-      !!isUiStreaming &&
-      !isReasoningVisible &&
-      !userToggledRef.current;
-    if (shouldAutoOpen) {
-      setIsReasoningVisible(true);
-      autoOpenedByStreamRef.current = true;
-    }
-  }, [visibleChainOfThought, visibleResponseText, isUiStreaming, isReasoningVisible]);
 
   const handleMessageCopy = async () => {
     if (!messageRef.current) {
@@ -152,13 +138,23 @@ const AssistantMessage: React.FC<MessageProps> = ({
 
     const messageClone = messageRef.current.cloneNode(true) as HTMLDivElement;
 
-    const buttons = messageClone.querySelectorAll('button, .copy-button, [class*="copy"]');
+    const buttons = messageClone.querySelectorAll('button, .copy-button, [class*="copy"], [data-tool-call]');
     buttons.forEach((button) => button.remove());
+    // A cloned canvas has no bitmap. Copy the chart's readable data instead.
+    messageClone.querySelectorAll("canvas").forEach((canvas) => {
+      const table = canvas.querySelector("table");
+      if (table) canvas.replaceWith(table);
+    });
+    const plainClone = messageClone.cloneNode(true) as HTMLDivElement;
+    plainClone.querySelectorAll("table").forEach((table) => {
+      const rows = Array.from(table.rows, (row) => Array.from(row.cells, (cell) => cell.textContent).join("\t"));
+      table.replaceWith(document.createTextNode(`\n${rows.join("\n")}\n`));
+    });
 
     await writeItemsWithFocus([
       new ClipboardItem({
         "text/html": new Blob([messageClone.innerHTML], { type: "text/html" }),
-        "text/plain": new Blob([messageClone.textContent || ""], {
+        "text/plain": new Blob([plainClone.textContent || ""], {
           type: "text/plain",
         }),
       }),
@@ -175,13 +171,6 @@ const AssistantMessage: React.FC<MessageProps> = ({
 
   const anyStreamInProgress = !!(isLoading || isUiStreaming);
   const isStreamFinished = !(isLast && isUiStreaming);
-  const modelMenuContent = (
-    <>
-      <ModelMenuIcon />
-      <span className="text-[13px]">Model</span>
-    </>
-  );
-
   const totalVersions = versions ? versions.length : 1;
   const hasVersions = totalVersions > 1;
   const effectivePerf = hasVersions ? versions?.[currentVersionIndex || 0]?.perf : messageFromStore?.perf;
@@ -202,94 +191,90 @@ const AssistantMessage: React.FC<MessageProps> = ({
     : messageFromStore?.modelName;
 
   return (
-    <div className="pb-3 text-label-title relative w-full rounded-[5px] text-[15px] leading-[140%]">
-      {visibleChainOfThought && (
-        <button
-          onClick={() => {
-            userToggledRef.current = true;
-            setIsReasoningVisible((v) => !v);
-          }}
-          className={twMerge(
-            "group mb-1 px-4 pt-4 border border-cell-border w-full rounded-[8px] transition-colors duration-150",
-            "hover:[background-color:rgba(0,0,0,0.01)] dark:hover:[background-color:rgba(255,255,255,0.01)]",
-          )}
-        >
-          <div className="flex pb-4 items-center justify-between p-0 group hover:bg-transparent text-label-title">
-            <span className="flex items-center gap-2">
-              <ThinkingBubbleIcon className="w-[14px] h-[14px]" />
-
-              <span className="text-[13px] font-[400] leading-[130%]">thinking...</span>
-            </span>
-            <ChevronDownIcon
-              className={twMerge(
-                "w-[12px] h-[12px] text-label-muted transition-transform transition-colors duration-150",
-                isReasoningVisible && "rotate-180",
-              )}
-            />
-          </div>
-          <Transition
-            show={isReasoningVisible}
-            appear
-            enter="transition-all duration-200 ease-out"
-            enterFrom="opacity-0 -translate-y-1"
-            enterTo="opacity-100 translate-y-0"
-            leave="transition-all duration-150 ease-in"
-            leaveFrom="opacity-100 translate-y-0"
-            leaveTo="opacity-0 -translate-y-1"
-          >
-            <div className="relative contain-layout">
-              <div
-                ref={reasoningScrollRef}
-                onScroll={onReasoningScroll}
-                className="pb-4 text-left max-h-[180px] overflow-y-auto thin-scrollbar"
-              >
-                <MarkdownRenderer
-                  content={visibleChainOfThought || ""}
-                  useOneFontSize={true}
-                  className="text-[12px] leading-[150%] font-mono text-label-muted [&_p]:mb-1 [&_p]:mt-1"
-                />
-              </div>
-              <div className="group-hover:pointer-events-none opacity-100 group-hover:opacity-0 transition-opacity duration-150 absolute bottom-0 left-0 right-0 h-[96px] z-10 [background:linear-gradient(180deg,rgba(255,255,255,0)_0%,#FFFFFF_100%)] dark:[background:linear-gradient(180deg,rgba(10,10,10,0)_0%,#0A0A0A_100%)]" />
-            </div>
-          </Transition>
-        </button>
-      )}
-      <div ref={messageRef}>
+    <div className="text-label-title relative w-full rounded-[5px] text-[15px] leading-[140%]">
+      <div
+        ref={messageRef}
+        className="[&>:last-child]:mb-0 [&>.markdown-body:last-child>div>:last-child]:mb-0 [&>[data-message-reasoning]:has(+.markdown-body>div>*)]:mb-[7px]"
+      >
+        {transcript !== undefined ? (
+          transcript.map((item, index) => {
+            const key = `${currentMsgVersion?.id ?? id}:${index}`;
+            switch (item.type) {
+              case "thinking":
+                return (
+                  <ThinkingBlock
+                    key={key}
+                    text={item.text}
+                    reasoningInProgress={isThinking && !item.completed && index === transcript.length - 1}
+                  />
+                );
+              case "text":
+                return (
+                  <MarkdownRenderer
+                    key={key}
+                    content={item.text}
+                    streaming={isThinking && index === transcript.length - 1}
+                  />
+                );
+              case "toolCall":
+                return (
+                  <div
+                    key={key}
+                    data-tool-call
+                    className="mt-1 mb-2 flex items-center gap-2 pl-1 text-[13px] text-label-muted"
+                  >
+                    <WrenchIcon className="size-3.5 shrink-0" />
+                    <span>{toolCallLabel(item, isThinking)}</span>
+                  </div>
+                );
+              case "chart":
+                return (
+                  <Suspense key={key} fallback={<div className="my-3 h-96 text-label-muted">Loading chart...</div>}>
+                    <ChartMessage chart={item.chart} />
+                  </Suspense>
+                );
+            }
+          })
+        ) : (
+          <>
+            {visibleChainOfThought && (
+              <ThinkingBlock
+                key={currentMsgVersion?.id ?? id}
+                text={visibleChainOfThought}
+                reasoningInProgress={reasoningInProgress}
+                isThinking={isThinking}
+              />
+            )}
+            <MarkdownRenderer content={visibleResponseText} streaming={streamInProgress} />
+          </>
+        )}
         {hasError && (
-          <div className="p-3 rounded-md border border-error/30 bg-error/10">
+          <div role="alert" className="mt-4 p-3 rounded-md border border-error/30 bg-error/10">
             <span className="text-[13px] leading-[150%] text-error">{errorText}</span>
           </div>
         )}
-        <MarkdownRenderer content={visibleResponseText} streaming={streamInProgress} />
       </div>
       {(hasVersions ||
         (!streamInProgress && (isStreamFinished || isCanceled || text.length === 0 || !!visibleChainOfThought))) && (
-        <div className="flex justify-between items-center mt-6 pr-6">
-          <div className="flex items-center gap-1">
-            {hasVersions && (
-              <MessageVersionControls
-                currentVersion={currentVersionIndex}
-                totalVersions={totalVersions}
-                onVersionChange={handleVersionChange}
-                disabledPrevious={anyStreamInProgress}
-                currentModelName={currentVersionModelName || effectiveModelName || ""}
-              />
-            )}
-            {(visibleResponseText.length !== 0 || hasError) && (
-              <CopyButton className="!min-w-6 !min-h-6" onCopy={handleMessageCopy} />
-            )}
-          </div>
-          <div className="flex items-center gap-4">
-            <ModelSelector
-              selectedModel={effectiveModelId || ""}
-              onModelSelect={handleModelSelect}
-              menuContent={modelMenuContent}
-              disabled={(anyStreamInProgress && hasVersions) || isEjecting || blockedByOtherChat}
+        <div className="flex flex-wrap items-center gap-1 mt-2">
+          {(visibleResponseText.length !== 0 || hasError || transcript?.some((item) => item.type === "chart")) && (
+            <CopyButton className="[&_svg]:size-4" onCopy={handleMessageCopy} />
+          )}
+          <ModelSelector
+            selectedModel={effectiveModelId || ""}
+            onModelSelect={handleModelSelect}
+            disabled={(anyStreamInProgress && hasVersions) || isEjecting || blockedByOtherChat}
+          />
+          {shouldShowPerf && <PerformanceDropdown perf={effectivePerf} disabled={anyStreamInProgress && hasVersions} />}
+          {hasVersions && (
+            <MessageVersionControls
+              currentVersion={currentVersionIndex}
+              totalVersions={totalVersions}
+              onVersionChange={handleVersionChange}
+              disabledPrevious={anyStreamInProgress}
+              currentModelName={currentVersionModelName || effectiveModelName || ""}
             />
-            {shouldShowPerf && (
-              <PerformanceDropdown perf={effectivePerf} disabled={anyStreamInProgress && hasVersions} />
-            )}
-          </div>
+          )}
         </div>
       )}
     </div>
@@ -298,7 +283,13 @@ const AssistantMessage: React.FC<MessageProps> = ({
 
 const MessageComponent: React.FC<MessageProps> = (props) =>
   props.sender === "user" ? (
-    <UserMessage text={props.text} attachmentIds={props.attachmentIds} />
+    <UserMessage
+      id={props.id}
+      text={props.text}
+      attachmentIds={props.attachmentIds}
+      canEdit={props.canEdit}
+      onEdit={props.onEdit}
+    />
   ) : (
     <AssistantMessage {...props} />
   );

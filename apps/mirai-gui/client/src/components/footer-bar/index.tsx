@@ -17,7 +17,7 @@ export const FooterBar = React.memo(({ className }: { className?: string }) => {
         className,
       )}
     >
-      <div className="flex items-center gap-2 overflow-hidden">
+      <div className="flex min-w-0 items-center gap-2 overflow-clip">
         {footerModel.visible && (
           <>
             {footerModel.status === "loading" || footerModel.status === "ejecting" ? (

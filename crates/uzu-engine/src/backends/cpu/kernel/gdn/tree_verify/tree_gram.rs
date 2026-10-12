@@ -16,7 +16,6 @@ pub fn build_tree_gram<T: ArrayElement + Float, const USE_MXU: bool>(
     prefix: *const f32,
     beta: *const f32,
     #[optional(use_h0)] h0: Option<*const f32>,
-    #[optional(use_h0)] h0_idx: Option<*const i32>,
     a_packed: *mut f32,
     qkd: *mut f32,
     a_inv: *mut f32,
@@ -135,27 +134,23 @@ pub fn build_tree_gram<T: ArrayElement + Float, const USE_MXU: bool>(
                 }
             }
 
-            // kh0[b, token, hv, dv] = dot(k[b, token, hk], h0[slot, hv, dv])
+            // kh0[b, token, hv, dv] = dot(k[b, token, hk], h0[b, hv, dv])
             if !use_h0 {
                 continue;
             }
             let h0 = h0.unwrap();
-            let h0_idx = h0_idx.unwrap();
             let kh0 = kh0.unwrap();
-            let h0_slot = unsafe { *h0_idx.add(batch) };
-            if h0_slot >= 0 {
-                let h0_head = ((h0_slot as usize) * value_heads + hv) * head_v_dim * head_k_dim;
-                for token in 0..tree_size {
-                    let k_off = ((batch * tree_size + token) * k_heads + hk) * head_k_dim;
-                    let kh0_off = ((batch * tree_size + token) * value_heads + hv) * head_v_dim;
-                    for dv in 0..head_v_dim {
-                        let mut sum = 0.0f32;
-                        for d in 0..head_k_dim {
-                            sum += unsafe { (*k.add(k_off + d)).to_f32().unwrap() }
-                                * unsafe { *h0.add(h0_head + dv * head_k_dim + d) };
-                        }
-                        unsafe { *kh0.add(kh0_off + dv) = sum };
+            let h0_head = (batch * value_heads + hv) * head_v_dim * head_k_dim;
+            for token in 0..tree_size {
+                let k_off = ((batch * tree_size + token) * k_heads + hk) * head_k_dim;
+                let kh0_off = ((batch * tree_size + token) * value_heads + hv) * head_v_dim;
+                for dv in 0..head_v_dim {
+                    let mut sum = 0.0f32;
+                    for d in 0..head_k_dim {
+                        sum += unsafe { (*k.add(k_off + d)).to_f32().unwrap() }
+                            * unsafe { *h0.add(h0_head + dv * head_k_dim + d) };
                     }
+                    unsafe { *kh0.add(kh0_off + dv) = sum };
                 }
             }
         }

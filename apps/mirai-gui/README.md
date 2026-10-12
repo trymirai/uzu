@@ -23,6 +23,22 @@ pnpm web:dev  # frontend in a browser without the engine: no models, no chats
 `pnpm check` runs typecheck, ESLint, client tests, clippy and Rust tests;
 `pnpm format` runs Prettier.
 
+## Signed builds without a release
+
+In GitHub Actions, open **Build / release mirai-gui**, choose **Run workflow**,
+and select the branch to build. GitHub requires repository write access to run
+it manually; the workflow must be on the default branch for the button to appear.
+
+Download the `mirai-macos-…` artifact from the completed run. It contains the
+Apple-signed app in a notarized DMG, plus the app archive and updater signature, and
+is retained for 14 days. The app and bundled CLI are built from the selected
+commit using its existing version. Manual runs do not create a release or tag,
+change versions, publish an updater manifest, or upload to the website bucket.
+
+These builds use the normal Mirai app identity, local data, and release update
+feed; installing one replaces the regular app. Published engine releases still
+use this workflow to build and publish the app automatically.
+
 ## Layout
 
 ```text

@@ -10,27 +10,15 @@ import { initPlatform } from "./platform/platform-singleton";
 import { TauriPlatformClient } from "./platform/tauri-platform-client";
 import { WebPlatformClient } from "./platform/web-platform-client";
 import { platformInfo } from "./platform/platform-info";
-import { APP_STORE_KEY } from "./stores/migrate-app-storage";
+import { useAppStore } from "./stores/use-app-store";
 
 RuntimeLoader.setWasmUrl(riveWasmUrl);
 
-type PersistedAppState = { isDarkMode?: unknown; skipWelcome?: unknown };
-
-const readPersistedAppState = (): PersistedAppState => {
-  try {
-    const stored = localStorage.getItem(APP_STORE_KEY);
-    return stored ? (JSON.parse(stored)?.state ?? {}) : {};
-  } catch {
-    return {};
-  }
-};
-
-const persistedAppState = readPersistedAppState();
-
-document.documentElement.classList.toggle("dark", persistedAppState.isDarkMode !== false);
+const appState = useAppStore.getState();
+document.documentElement.classList.toggle("dark", appState.isDarkMode);
 
 const getInitialPath = (): string => {
-  if (!persistedAppState.skipWelcome) return "/welcome";
+  if (!appState.skipWelcome) return "/welcome";
   return platformInfo.isTauri ? "/local-models" : "/chats";
 };
 

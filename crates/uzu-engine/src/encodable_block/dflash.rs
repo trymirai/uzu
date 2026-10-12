@@ -207,7 +207,7 @@ impl<B: Backend> DFlash<B> {
             return Ok(());
         }
 
-        command_buffer.push_debug_group("dflash accept");
+        let command_buffer = &mut *command_buffer.debug_group("dflash accept");
 
         let num_tokens = accepted_indices.len() as u32;
         let captured_layer_count = self.target_feature_input_dim / self.model_dim;
@@ -274,8 +274,6 @@ impl<B: Backend> DFlash<B> {
 
         state.context_length += num_tokens;
 
-        command_buffer.pop_debug_group();
-
         Ok(())
     }
 
@@ -287,7 +285,7 @@ impl<B: Backend> DFlash<B> {
         batch_size: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DFlashOutput<B>, DFlashEncodeError<B>> {
-        command_buffer.push_debug_group("dflash draft");
+        let command_buffer = &mut *command_buffer.debug_group("dflash draft");
 
         assert!(batch_size >= 2 && batch_size <= self.block_size, "batch size exceeds DFlash block size");
         assert!(
@@ -347,8 +345,6 @@ impl<B: Backend> DFlash<B> {
             false,
             command_buffer,
         )?;
-
-        command_buffer.pop_debug_group();
 
         Ok(DFlashOutput {
             draft_hidden,

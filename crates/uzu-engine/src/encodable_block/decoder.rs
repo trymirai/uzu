@@ -143,7 +143,7 @@ impl<B: Backend> Decoder<B> {
         state: &mut TransformerState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
-        command_buffer.push_debug_group("decoder");
+        let command_buffer = &mut *command_buffer.debug_group("decoder");
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
@@ -195,8 +195,6 @@ impl<B: Backend> Decoder<B> {
         } else {
             transformer_output.output
         };
-
-        command_buffer.pop_debug_group();
 
         Ok(DecoderEncodeOutput {
             logits,

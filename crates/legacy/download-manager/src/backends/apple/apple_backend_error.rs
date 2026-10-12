@@ -6,4 +6,6 @@ pub enum AppleBackendError {
     InvalidUrl(String),
     #[error("URLSession callback dropped: {0}")]
     CallbackDropped(#[from] RecvError),
+    #[error("unable to inspect background downloads: {0}")]
+    TaskDiscovery(String),
 }

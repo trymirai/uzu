@@ -1,10 +1,12 @@
 import { useInstalledPickerModels } from "../../hooks/use-picker-models";
 import { useChatStore } from "@/stores/use-chat-store";
-import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
+import { Button, Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
 import { ModelPicker } from "./chat-input/model-picker";
 import { X } from "lucide-react";
-import { Fragment } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ModelParamsControls } from "./model-params-controls";
+import { getPlatform } from "@/platform/platform-singleton";
+import type { SamplingDefaults } from "@/platform/services/chat";
 
 type ModelParamsDrawerProps = {
   open: boolean;
@@ -16,6 +18,26 @@ type ModelParamsDrawerProps = {
 export const ModelParamsDrawer = ({ open, chatId, repoId, onClose }: ModelParamsDrawerProps) => {
   const setChatModel = useChatStore((s) => s.setChatModel);
   const pickerModels = useInstalledPickerModels();
+  const [defaults, setDefaults] = useState<{ repoId: string; sampling: SamplingDefaults | null } | null>(null);
+  const samplingReady = defaults?.repoId === repoId && defaults.sampling !== null;
+
+  // This component stays mounted while the drawer is closed. Read defaults on
+  // model selection so its controls are ready before the opening transition.
+  useEffect(() => {
+    if (!repoId || samplingReady) return;
+    let alive = true;
+    void getPlatform()
+      .chat.getSamplingDefaults(repoId)
+      .then((sampling) => {
+        if (alive) setDefaults({ repoId, sampling });
+      })
+      .catch(() => {
+        if (alive) setDefaults({ repoId, sampling: null });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [repoId, open, samplingReady]);
 
   const onPickModel = (modelId: string) => {
     const model = pickerModels.find((m) => m.id === modelId);
@@ -52,13 +74,13 @@ export const ModelParamsDrawer = ({ open, chatId, repoId, onClose }: ModelParams
                 <DialogTitle as="h3" className="text-[17px] font-medium leading-[130%] text-label-title">
                   Edit parameters
                 </DialogTitle>
-                <button
+                <Button
                   onClick={onClose}
-                  className="text-label-muted transition-colors hover:text-label-title"
+                  className="text-label-muted transition-colors hover:text-label-title outline-hidden data-[focus]:shadow-focus"
                   aria-label="Close"
                 >
                   <X className="h-5 w-5" />
-                </button>
+                </Button>
               </div>
 
               <div className="mt-4">
@@ -71,8 +93,17 @@ export const ModelParamsDrawer = ({ open, chatId, repoId, onClose }: ModelParams
                 />
               </div>
 
-              <div className="mt-4 flex-1 overflow-y-auto">
-                {repoId ? <ModelParamsControls repoId={repoId} /> : null}
+              <div className="mt-4 flex-1 min-h-0 overflow-y-auto overscroll-y-contain">
+                {repoId &&
+                  (defaults?.repoId === repoId ? (
+                    <ModelParamsControls
+                      key={`${repoId}:${samplingReady}`}
+                      repoId={repoId}
+                      samplingDefaults={defaults.sampling}
+                    />
+                  ) : (
+                    <p className="text-[12px] text-label-muted">Loading model sampling settings…</p>
+                  ))}
               </div>
             </DialogPanel>
           </TransitionChild>

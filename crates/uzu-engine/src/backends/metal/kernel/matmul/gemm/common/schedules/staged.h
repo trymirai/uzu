@@ -5,7 +5,6 @@
 #include "../../../../common/thread_context.h"
 #include "../../../../generated/gemm.h"
 #include "../../../common/fragment.h"
-#include "../../../common/mxu_gemm_loop.h"
 #include "../gemm_alignment.h"
 #include "../operands.h"
 #include "../quant_scale_bias.h"

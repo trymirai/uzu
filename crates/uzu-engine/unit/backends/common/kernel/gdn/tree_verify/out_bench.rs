@@ -41,7 +41,6 @@ struct TreeOutBuffers {
     qkd: <Metal as Backend>::GlobalBuffer,
     u: <Metal as Backend>::GlobalBuffer,
     h0: <Metal as Backend>::GlobalBuffer,
-    h0_indices: <Metal as Backend>::GlobalBuffer,
     o: <Metal as Backend>::GlobalBuffer,
 }
 
@@ -62,7 +61,6 @@ fn make_buffers<T: ArrayElement + Float>(
     let qkd = (0..qkd_len).map(|i| ((i as f32 * 0.013).cos() * 0.03) - 0.01).collect::<Vec<_>>();
     let u = (0..uv_len).map(|i| (i as f32 * 0.011).sin() * 0.3 + 0.04).collect::<Vec<_>>();
     let h0 = (0..h0_len).map(|i| ((i as f32 * 0.019).cos() * 0.2) - 0.01).collect::<Vec<_>>();
-    let h0_indices = (0..batch_size as i32).collect::<Vec<_>>();
 
     TreeOutBuffers {
         q: create_buffer_with_data::<Metal, T>(context, &q),
@@ -70,7 +68,6 @@ fn make_buffers<T: ArrayElement + Float>(
         qkd: create_buffer_with_data::<Metal, f32>(context, &qkd),
         u: create_buffer_with_data::<Metal, f32>(context, &u),
         h0: create_buffer_with_data::<Metal, f32>(context, &h0),
-        h0_indices: create_buffer_with_data::<Metal, i32>(context, &h0_indices),
         o: create_buffer::<Metal, T>(context, uv_len),
     }
 }
@@ -99,12 +96,11 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
         for &batch_size in BATCH_SIZES {
             for &tree_size in TREE_SIZES {
                 let mut buffers = make_buffers::<T>(context, batch_size, tree_size);
-                let benchmark_path = format!(
-                    "Metal/Kernel/GDNTreeVerify/BuildTreeOut/{data_type_name}/{path}/{tile_name}/B{batch_size}_T{tree_size}"
-                );
-                let benchmark_id = BenchmarkId::from_parameter(format!(
-                    "B{batch_size}_T{tree_size}_QK{QK_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}_V{HEAD_V_DIM}"
-                ));
+                let parameter =
+                    format!("B{batch_size}_T{tree_size}_QK{QK_HEADS}_HV{VALUE_HEADS}_K{HEAD_K_DIM}_V{HEAD_V_DIM}");
+                let benchmark_path =
+                    format!("Metal/Kernel/GDNTreeVerify/BuildTreeOut/{data_type_name}/{path}/{tile_name}/{parameter}");
+                let benchmark_id = BenchmarkId::from_parameter(parameter);
 
                 let kernel = <<Metal as Backend>::Kernels as Kernels>::BuildTreeOutKernel::new(
                     context,
@@ -123,7 +119,6 @@ fn bench_build_tree_out_type<T: ArrayElement + Float>(
                             &buffers.qkd,
                             &buffers.u,
                             Some(&buffers.h0),
-                            Some(&buffers.h0_indices),
                             &mut buffers.o,
                             (HEAD_K_DIM as f32).sqrt().recip(),
                             batch_size as u32,

@@ -37,11 +37,11 @@
                 "reasoning_strength": {
                     "block": "reasoning_effort",
                     "mapping": {
-                        "disabled": null,
-                        "default": null,
+                        "default": "high",
                         "low": "low",
                         "medium": "medium",
-                        "high": "high"
+                        "high": "high",
+                        "xhigh": "xhigh"
                     }
                 }
             }

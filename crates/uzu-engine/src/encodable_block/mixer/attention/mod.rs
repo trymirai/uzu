@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, Kernels,
-        kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel, SigmoidGateKernel},
+        kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
     },
     config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
@@ -39,12 +39,12 @@ pub struct Attention<B: Backend> {
     ring_capacity: Option<u32>,
     max_rope_length: Option<u32>,
     data_type: DataType,
+    has_gate: bool,
     projection_dim: u32,
     projection: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     sinks: Option<B::GlobalBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
-    gate_kernel: Option<<B::Kernels as Kernels>::SigmoidGateKernel>,
     out_projection: Box<dyn Linear<B>>,
 }
 
@@ -148,6 +148,7 @@ impl<B: Backend> Attention<B> {
                 num_groups,
                 num_q_heads,
                 has_sinks: sinks.is_some(),
+                gate_row_stride: config.has_gate.then_some(projection_dim),
                 is_kv_cache_ring,
                 is_causal,
                 sliding_window_size,
@@ -156,12 +157,6 @@ impl<B: Backend> Attention<B> {
             },
         )
         .map_err(AttentionNewError::Backend)?;
-
-        let gate_kernel = config
-            .has_gate
-            .then(|| <B::Kernels as Kernels>::SigmoidGateKernel::new(context, data_type))
-            .transpose()
-            .map_err(AttentionNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new(
             q_dim,
@@ -180,6 +175,7 @@ impl<B: Backend> Attention<B> {
                 ring_capacity,
                 max_rope_length,
                 data_type,
+                has_gate: config.has_gate,
                 projection_dim,
                 projection: LinearProjection {
                     lin: projection,
@@ -188,7 +184,6 @@ impl<B: Backend> Attention<B> {
                 prepare,
                 sinks,
                 kernel,
-                gate_kernel,
                 out_projection,
             },
             in_projection_input_hadamard_factors,
@@ -221,15 +216,13 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("attention");
+        let command_buffer = &mut *command_buffer.debug_group("attention");
 
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
         let output = self.attend(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
-
-        command_buffer.pop_debug_group();
 
         Ok(output)
     }

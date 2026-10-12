@@ -1,3 +1,4 @@
+import { Button } from "@headlessui/react";
 import { Settings } from "lucide-react";
 import { useCallback, useRef } from "react";
 import { twMerge } from "tailwind-merge";
@@ -5,6 +6,7 @@ import { TextArea } from "@/components/ui/text-area";
 import { AttachMenu } from "./attach-menu";
 import { FileChip } from "./file-chip";
 import { ModelPicker } from "./model-picker";
+import { ReasoningSelector } from "./reasoning-selector";
 import { SendButton } from "./send-button";
 import { CHAT_INPUT_TEXTAREA_CLASSNAME, CHAT_INPUT_TEXTAREA_STYLE } from "./constants";
 import type { ChatInputProps } from "./types";
@@ -18,7 +20,7 @@ export function ChatInput({
   onBlockedSend,
   onAttach,
   attachAccept = ".txt,.md,.json,.csv,.yaml,.yml",
-  placeholder = "Send a message to the local model…",
+  placeholder = "Send a message to the model…",
   files,
   onRemoveFile,
   models,
@@ -83,7 +85,7 @@ export function ChatInput({
         style={{ ...CHAT_INPUT_TEXTAREA_STYLE, minHeight: 23, maxHeight: 320 }}
       />
 
-      <div className="flex items-center justify-between mt-4">
+      <div className="flex items-center justify-between gap-2 mt-4">
         <AttachMenu onSelectFile={handleFileSelect} />
 
         <div className="flex items-center gap-2 min-w-0">
@@ -94,17 +96,20 @@ export function ChatInput({
             moreModelsLink={moreModelsLink}
             disabled={modelPickerDisabled}
           />
+          {activeModelId ? (
+            <ReasoningSelector key={activeModelId} repoId={activeModelId} disabled={modelPickerDisabled} />
+          ) : null}
           {onModelSettingsClick ? (
             <span className="relative inline-flex shrink-0">
-              <button
+              <Button
                 type="button"
                 onClick={onModelSettingsClick}
                 disabled={settingsDisabled}
                 aria-label="Model settings"
-                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-tertiary text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-control-surface-hover hover:text-text-primary focus-visible:shadow-focus disabled:pointer-events-none disabled:opacity-50"
+                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-tertiary text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-control-surface-hover hover:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
               >
                 <Settings size={16} />
-              </button>
+              </Button>
               {settingsModified && (
                 <span className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 rounded-full bg-danger ring-1 ring-surface-elevated" />
               )}
