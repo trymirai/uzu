@@ -78,7 +78,7 @@ const CASES: &[SolveCase] = &[
         head_v_dim: 64,
     },
     SolveCase {
-        name: "batched_optional_h0",
+        name: "batched",
         batch_size: 2,
         tree_size: 16,
         num_v_heads: 2,
@@ -149,19 +149,12 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
             }
         })
         .collect::<Vec<_>>();
-    let h0_idx = if case.name == "batched_optional_h0" {
-        vec![0, -1]
-    } else {
-        (0..batch_size).map(|batch| batch as i32).collect::<Vec<_>>()
-    };
-
     let kh0 = create_buffer_with_data::<B, f32>(&context, &kh0);
     let v = create_buffer_with_data::<B, T>(&context, &v);
     let prefix = create_buffer_with_data::<B, f32>(&context, &prefix);
     let beta = create_buffer_with_data::<B, f32>(&context, &beta);
     let a = create_buffer_with_data::<B, f32>(&context, &a_f32);
     let a_inv = create_buffer_with_data::<B, f32>(&context, &a_inv);
-    let h0_idx = create_buffer_with_data::<B, i32>(&context, &h0_idx);
     let mut u = create_buffer::<B, f32>(&context, u_len);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
@@ -172,7 +165,6 @@ fn run_case<B: Backend, T: ArrayElement + Copy>(
         &beta,
         &a,
         &a_inv,
-        use_h0.then_some(&h0_idx),
         &mut u,
         case.batch_size,
         case.tree_size,
