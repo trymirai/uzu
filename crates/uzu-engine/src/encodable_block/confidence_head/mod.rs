@@ -312,11 +312,11 @@ impl<B: Backend> ConfidenceHead<B> {
     /// config first (`read_config`) and builds the head only if it applies (`with_config`).
     #[cfg(test)]
     pub fn new(
-        context: &B::Context,
         directory: &Path,
+        context: &B::Context,
     ) -> Result<Self, ConfidenceHeadError<B>> {
         let config = Self::read_config(directory)?;
-        Self::with_config(context, directory, config)
+        Self::with_config(config, directory, context)
     }
 
     /// `<directory>/config.json`, checked: what the loader can run, read without building the head.
@@ -329,9 +329,9 @@ impl<B: Backend> ConfidenceHead<B> {
 
     /// The head of `config` (from `read_config`) with the weights of `<directory>/model.safetensors`.
     pub fn with_config(
-        context: &B::Context,
-        directory: &Path,
         config: ConfidenceHeadConfig,
+        directory: &Path,
+        context: &B::Context,
     ) -> Result<Self, ConfidenceHeadError<B>> {
         let weights_file = File::open(directory.join(WEIGHTS_FILE))?;
         let loader = ParameterLoader::new(&weights_file, context)?;
@@ -375,7 +375,7 @@ impl<B: Backend> ConfidenceHead<B> {
         local_weights.copyin(&local);
 
         let tree_part =
-            config.tree.clone().map(|tree_config| Self::load_tree(context, &config, tree_config, &tree)).transpose()?;
+            config.tree.clone().map(|tree_config| Self::load_tree(&config, tree_config, &tree, context)).transpose()?;
         let head = Self {
             draft_norm_scales: read(&tree, "draft_norm.scales", &[width])?,
             draft_norm_biases: read(&tree, "draft_norm.biases", &[width])?,
@@ -494,10 +494,10 @@ impl<B: Backend> ConfidenceHead<B> {
     }
 
     fn load_tree(
-        context: &B::Context,
         config: &ConfidenceHeadConfig,
         tree_config: ConfidenceHeadTreeConfig,
         parameters: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Tree<B>, ConfidenceHeadError<B>> {
         let tree = parameters.subtree("tree");
         let width = tree_config.width;
@@ -584,8 +584,8 @@ impl<B: Backend> ConfidenceHead<B> {
     /// first call (one pass over the vocabulary) and kept.
     pub fn token_table(
         &self,
-        context: &B::Context,
         embedding: &Embedding<B>,
+        context: &B::Context,
     ) -> Result<&B::GlobalBuffer, ConfidenceHeadError<B>> {
         if let Some(table) = self.token_table.get() {
             return Ok(table);
@@ -698,7 +698,6 @@ impl<B: Backend> ConfidenceHead<B> {
     /// step state. The tree's expand width must be the head's children.
     pub fn encode_round(
         &self,
-        step: &mut ConfidenceHeadStep<B>,
         token_table: &B::GlobalBuffer,
         residual_logits: impl BufferRef<Backend = B>,
         candidate_logits: impl BufferRef<Backend = B>,
@@ -706,10 +705,11 @@ impl<B: Backend> ConfidenceHead<B> {
         node_metadata: impl BufferRef<Backend = B>,
         node_valid: impl BufferRef<Backend = B>,
         packed_tree: impl BufferRef<Backend = B>,
-        frontier: impl BufferMut<Backend = B>,
         rows: u32,
         frontier_capacity: u32,
         tree_slot_count: u32,
+        frontier: impl BufferMut<Backend = B>,
+        step: &mut ConfidenceHeadStep<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         self.round.encode(

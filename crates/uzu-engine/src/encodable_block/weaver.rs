@@ -522,7 +522,6 @@ impl<B: Backend> Weaver<B> {
         // it, and the head's full pass rewrites it before the final prune when it has tree attention.
         if let Some((head, token_table, step)) = head {
             head.encode_round(
-                step,
                 token_table,
                 &logit_residuals,
                 batch_candidate_logits,
@@ -530,10 +529,11 @@ impl<B: Backend> Weaver<B> {
                 node_metadata,
                 node_valid.as_ref(),
                 packed_tree.as_ref(),
-                frontier.reborrow(),
                 batch_node_count,
                 frontier_capacity,
                 tree_slot_count,
+                frontier.reborrow(),
+                step,
                 command_buffer,
             );
         }

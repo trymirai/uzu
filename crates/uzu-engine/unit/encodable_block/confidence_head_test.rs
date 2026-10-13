@@ -410,7 +410,7 @@ impl HeadDirectory {
         &self,
         context: &B::Context,
     ) -> ConfidenceHead<B> {
-        ConfidenceHead::<B>::new(context, &self.0).unwrap()
+        ConfidenceHead::<B>::new(&self.0, context).unwrap()
     }
 }
 
@@ -1039,7 +1039,6 @@ fn run<B: Backend>(
     for &(start, width) in &step.rounds {
         let buffers = round_inputs::<B>(&context, step, &(start..start + width).collect::<Vec<_>>(), None);
         head.encode_round(
-            &mut state,
             &table,
             &buffers.0,
             &buffers.1,
@@ -1047,10 +1046,11 @@ fn run<B: Backend>(
             &buffers.3,
             &buffers.4,
             &packed_tree_buffer,
-            &mut frontier_buffer,
             width as u32,
             entries as u32,
             slots as u32,
+            &mut frontier_buffer,
+            &mut state,
             &mut command_buffer,
         );
         let mut readback = create_buffer::<B, f32>(&context, width_max as usize * children);
@@ -1378,7 +1378,6 @@ fn check_frontier_paths<B: Backend>(
     for &(start, width) in &step.rounds {
         let buffers = round_inputs::<B>(&context, step, &(start..start + width).collect::<Vec<_>>(), None);
         head.encode_round(
-            &mut state,
             &table_buffer,
             &buffers.0,
             &buffers.1,
@@ -1386,10 +1385,11 @@ fn check_frontier_paths<B: Backend>(
             &buffers.3,
             &buffers.4,
             &packed_tree_buffer,
-            &mut frontier_buffer,
             width as u32,
             entries as u32,
             slots as u32,
+            &mut frontier_buffer,
+            &mut state,
             &mut command_buffer,
         );
         let mut readback = create_buffer::<B, f32>(&context, width_max as usize * children);
@@ -1506,7 +1506,6 @@ fn launch_independence<B: Backend>(
         .unwrap();
     command_buffer.encode_copy(&noise, &mut state.noise);
     head.encode_round(
-        &mut state,
         &table,
         &buffers.0,
         &buffers.1,
@@ -1514,10 +1513,11 @@ fn launch_independence<B: Backend>(
         &buffers.3,
         &buffers.4,
         &packed_tree,
-        &mut frontier,
         rows,
         (slots * children) as u32,
         slots as u32,
+        &mut frontier,
+        &mut state,
         &mut command_buffer,
     );
     let mut together = create_buffer::<B, f32>(&context, nodes.len() * children);
@@ -1750,7 +1750,6 @@ fn timing<B: Backend>(
         let mut warm = encode_step(&mut command_buffer);
         for (residual, logits, ids, metadata, valid, width) in &inputs {
             head.encode_round(
-                &mut warm,
                 &table,
                 residual,
                 logits,
@@ -1758,10 +1757,11 @@ fn timing<B: Backend>(
                 metadata,
                 valid,
                 &packed_tree,
-                &mut frontier,
                 *width,
                 slots * children,
                 slots,
+                &mut frontier,
+                &mut warm,
                 &mut command_buffer,
             );
         }
@@ -1774,7 +1774,6 @@ fn timing<B: Backend>(
     let rounds_time = measure(&mut |command_buffer| {
         for (residual, logits, ids, metadata, valid, width) in &inputs {
             head.encode_round(
-                &mut step,
                 &table,
                 residual,
                 logits,
@@ -1782,10 +1781,11 @@ fn timing<B: Backend>(
                 metadata,
                 valid,
                 &packed_tree,
-                &mut frontier,
                 *width,
                 slots * children,
                 slots,
+                &mut frontier,
+                &mut step,
                 command_buffer,
             );
         }
@@ -1805,7 +1805,6 @@ fn timing<B: Backend>(
     ),
                       frontier: &mut B::GlobalBuffer| {
         head.encode_round(
-            step,
             &table,
             residual,
             logits,
@@ -1813,10 +1812,11 @@ fn timing<B: Backend>(
             metadata,
             valid,
             &packed_tree,
-            frontier,
             *width,
             slots * children,
             slots,
+            frontier,
+            step,
             command_buffer,
         );
     };
@@ -2044,7 +2044,6 @@ fn timing<B: Backend>(
         let mut state = encode_step(command_buffer);
         for (residual, logits, ids, metadata, valid, width) in &inputs {
             head.encode_round(
-                &mut state,
                 &table,
                 residual,
                 logits,
@@ -2052,10 +2051,11 @@ fn timing<B: Backend>(
                 metadata,
                 valid,
                 &packed_tree,
-                &mut frontier,
                 *width,
                 slots * children,
                 slots,
+                &mut frontier,
+                &mut state,
                 command_buffer,
             );
         }
@@ -2068,7 +2068,6 @@ fn timing<B: Backend>(
             let mut state = encode_step(&mut command_buffer);
             for (residual, logits, ids, metadata, valid, width) in &inputs {
                 head.encode_round(
-                    &mut state,
                     &table,
                     residual,
                     logits,
@@ -2076,10 +2075,11 @@ fn timing<B: Backend>(
                     metadata,
                     valid,
                     &packed_tree,
-                    &mut frontier,
                     *width,
                     slots * children,
                     slots,
+                    &mut frontier,
+                    &mut state,
                     &mut command_buffer,
                 );
             }

@@ -155,7 +155,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 },
                 Some(weaver),
             ) => load_confidence_head(
-                &*context,
                 model_path,
                 HeadTree {
                     rounds: *rounds,
@@ -164,6 +163,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     max_depth: weaver.max_depth(),
                     pool: weaver.candidate_pool_size(),
                 },
+                &*context,
             ),
             _ => None,
         };
@@ -354,7 +354,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         if let Some(problem) = head_tree_mismatch(head.config(), tree) {
                             return Err(DFlashTreeError::InvalidTreeShape(problem));
                         }
-                        Some((head, head.token_table(&self.context, target_embedding)?))
+                        Some((head, head.token_table(target_embedding, &self.context)?))
                     },
                     _ => None,
                 };
@@ -508,9 +508,9 @@ fn head_tree_mismatch(
 /// none, with a warning. The checks on the config come first and the head is built last, so a head that is dropped
 /// costs at most the hash of the weights file, a fraction of a second.
 fn load_confidence_head<B: Backend>(
-    context: &B::Context,
     model_path: &Path,
     tree: HeadTree,
+    context: &B::Context,
 ) -> Option<ConfidenceHead<B>> {
     let directory = model_path.join(CONFIDENCE_HEAD_DIRECTORY);
     if !directory.is_dir() {
@@ -543,7 +543,7 @@ fn load_confidence_head<B: Backend>(
         },
     }
     tracing::debug!(sampling = ?config.sampling, "confidence head trained under this sampler");
-    ConfidenceHead::with_config(context, &directory, config)
+    ConfidenceHead::with_config(config, &directory, context)
         .inspect_err(|error| tracing::warn!(%error, "confidence head not loaded; the speculator runs without it"))
         .ok()
 }

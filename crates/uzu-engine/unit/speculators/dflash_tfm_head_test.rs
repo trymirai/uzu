@@ -54,7 +54,7 @@ fn loads(
     tree: HeadTree,
 ) -> bool {
     let context = create_context::<Cpu>();
-    let loaded = load_confidence_head::<Cpu>(&context, directory, tree).is_some();
+    let loaded = load_confidence_head::<Cpu>(directory, tree, &context).is_some();
     std::fs::remove_dir_all(directory).unwrap();
     loaded
 }
