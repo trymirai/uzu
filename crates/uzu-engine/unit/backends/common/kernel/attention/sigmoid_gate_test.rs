@@ -84,11 +84,7 @@ fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {
         })
         .collect::<Vec<_>>();
 
-    let rtol = if std::mem::size_of::<T>() <= 2 {
-        0.01
-    } else {
-        1e-5
-    };
+    let rtol = 0.01;
 
     let assert_output = |result: &[T], backend: &str| {
         for (i, (got, exp)) in result.iter().zip(expected.iter()).enumerate() {
@@ -118,28 +114,6 @@ fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {
 }
 
 #[uzu_test]
-fn test_sigmoid_gate_f32() {
-    run_test::<f32>(&Config {
-        num_heads: 8,
-        num_kv_heads: 2,
-        head_dim: 64,
-        suffix_length: 4,
-    });
-    run_test::<f32>(&Config {
-        num_heads: 16,
-        num_kv_heads: 4,
-        head_dim: 256,
-        suffix_length: 1,
-    });
-    run_test::<f32>(&Config {
-        num_heads: 2,
-        num_kv_heads: 1,
-        head_dim: 64,
-        suffix_length: 8,
-    });
-}
-
-#[uzu_test]
 fn test_sigmoid_gate_bf16() {
     run_test::<bf16>(&Config {
         num_heads: 8,
@@ -152,5 +126,11 @@ fn test_sigmoid_gate_bf16() {
         num_kv_heads: 4,
         head_dim: 256,
         suffix_length: 1,
+    });
+    run_test::<bf16>(&Config {
+        num_heads: 2,
+        num_kv_heads: 1,
+        head_dim: 64,
+        suffix_length: 8,
     });
 }

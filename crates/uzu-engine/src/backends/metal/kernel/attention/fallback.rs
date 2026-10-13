@@ -39,7 +39,7 @@ pub struct AttentionFallback {
 
 impl AttentionFallback {
     pub fn is_supported(config: &AttentionKernelConfig) -> bool {
-        config.head_dim == HEAD_DIM && matches!(config.data_type, DataType::BF16 | DataType::F32)
+        config.head_dim == HEAD_DIM && config.data_type == DataType::BF16
     }
 
     pub fn new(
