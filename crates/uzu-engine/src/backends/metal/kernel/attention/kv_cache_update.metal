@@ -7,7 +7,7 @@
 using namespace uzu::kv_layout;
 
 template <typename T>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(KVCacheUpdate) (
     device T* in_place_keys,
     device T* in_place_values,

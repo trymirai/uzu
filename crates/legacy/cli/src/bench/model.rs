@@ -1,11 +1,17 @@
 use anyhow::{Result, anyhow, ensure};
 use rocket::serde::{Deserialize, Serialize};
-use uzu::types::session::chat::{ChatMessage, ChatReplyEnergy};
+use uzu::types::{
+    basic::ReasoningEffort,
+    session::chat::{ChatMessage, ChatReply, ChatReplyEnergy, ChatRole},
+};
 use uzu_engine::data_type::DataType;
 
-use crate::server::{
-    chat_completions::{OaiMessage, to_chat_messages},
-    chat_tool_calls::{OaiTool, backfill_tool_result_names, choose_tools, insert_tools_message},
+use crate::{
+    common::thinking::ThinkingSupport,
+    server::{
+        chat_completions::{OaiMessage, to_chat_messages},
+        chat_tool_calls::{OaiTool, backfill_tool_result_names, choose_tools, insert_tools_message},
+    },
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +22,10 @@ pub struct BenchTask {
     pub tokens_limit: u64,
     pub messages: Vec<BenchMessage>,
     pub greedy: bool,
+    #[serde(default)]
+    pub include_replies: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -23,7 +33,10 @@ pub struct BenchTask {
 }
 
 impl BenchTask {
-    pub fn to_chat_messages(&self) -> Result<Vec<ChatMessage>> {
+    pub fn to_chat_messages(
+        &self,
+        thinking_support: ThinkingSupport,
+    ) -> Result<Vec<ChatMessage>> {
         let messages: Vec<OaiMessage> = serde_json::from_value(serde_json::to_value(&self.messages)?)
             .map_err(|_| anyhow!("Invalid benchmark messages"))?;
         let tools: Vec<OaiTool> =
@@ -39,6 +52,18 @@ impl BenchTask {
             );
         }
         let mut messages = to_chat_messages(&messages);
+        if let Some(effort) = self.reasoning_effort
+            && let Some(effort) = thinking_support
+                .fulfill_requested_effort(effort)
+                .map_err(|error| anyhow!("Invalid benchmark reasoning_effort: {error}"))?
+        {
+            match messages.first_mut() {
+                Some(first) if first.role == (ChatRole::System {}) => {
+                    *first = first.clone().with_reasoning_effort(effort);
+                },
+                _ => messages.insert(0, ChatMessage::system().with_reasoning_effort(effort)),
+            }
+        }
         backfill_tool_result_names(&mut messages);
         let tools = choose_tools(Some(&tools), self.tool_choice.as_ref())
             .map_err(|_| anyhow!("Invalid benchmark tool_choice"))?;
@@ -91,6 +116,8 @@ pub struct BenchResult {
     pub output_energy: Option<ChatReplyEnergy>,
     pub joules_per_token: Option<f64>,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replies: Option<Vec<ChatReply>>,
 }
 
 #[cfg(test)]

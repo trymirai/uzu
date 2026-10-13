@@ -674,40 +674,47 @@ fn json_values_equivalent(
     }
 }
 
-/// Tool call identifiers are assigned per turn and never rendered into tokens, so they are
-/// excluded from the comparison; everything else about the messages must match.
+/// Clients may omit assistant reasoning when echoing a previous turn, keep the session's reasoning in that case.
+/// Tool call identifiers are assigned per turn and never rendered into tokens, so they are excluded from the comparison.
+/// All other content must match.
 fn messages_have_prefix(
     messages: &[ChatMessage],
     prefix: &[ChatMessage],
 ) -> bool {
     prefix.len() <= messages.len()
         && prefix.iter().zip(messages).all(|(prefix_message, message)| {
+            let omitted_reasoning = matches!(message.role, ChatRole::Assistant {})
+                && !message.content.iter().any(|block| matches!(block, ChatContentBlock::Reasoning { .. }));
+            let prefix_content = prefix_message
+                .content
+                .iter()
+                .filter(|block| !omitted_reasoning || !matches!(block, ChatContentBlock::Reasoning { .. }));
             prefix_message.role == message.role
                 && prefix_message.metadata == message.metadata
-                && prefix_message.content.len() == message.content.len()
-                && prefix_message.content.iter().zip(&message.content).all(|(prefix_block, block)| {
-                    match (prefix_block, block) {
-                        (
-                            ChatContentBlock::ToolCall {
-                                value: prefix_call,
-                            },
-                            ChatContentBlock::ToolCall {
-                                value: call,
-                            },
-                        ) => {
-                            prefix_call.name == call.name
-                                && tool_call_arguments_equivalent(&prefix_call.arguments.json, &call.arguments.json)
+                && prefix_content.clone().count() == message.content.len()
+                && prefix_content.zip(&message.content).all(|(prefix_block, block)| match (prefix_block, block) {
+                    (
+                        ChatContentBlock::ToolCall {
+                            value: prefix_call,
                         },
-                        _ => prefix_block == block,
-                    }
+                        ChatContentBlock::ToolCall {
+                            value: call,
+                        },
+                    ) => {
+                        prefix_call.name == call.name
+                            && tool_call_arguments_equivalent(&prefix_call.arguments.json, &call.arguments.json)
+                    },
+                    _ => prefix_block == block,
                 })
         })
 }
 
 /// Returns only the messages the session has not seen yet when the request
 /// extends the session's current history; otherwise resets the session and
-/// returns the full list. Token-level reuse itself is decided inside the
-/// session, which falls back to a full prefill if the rendered tokens diverge.
+/// returns the full list. Retaining the session history also retains assistant
+/// reasoning omitted by the client. Token-level reuse itself is decided inside
+/// the session, which falls back to a full prefill for incompatible boundaries
+/// (including truncated replies) or divergent rendered tokens.
 async fn prepare_input(
     session: &ChatSession,
     mut messages: Vec<ChatMessage>,

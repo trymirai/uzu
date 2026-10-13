@@ -1,11 +1,11 @@
 use std::fmt::{Debug, Display};
 
 use half::bf16;
-#[cfg(backend = "metal")]
-use ndarray::{Array, Array3};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::metal::Metal;
 use crate::{
     array::ArrayElement,
     backends::{
@@ -21,8 +21,6 @@ use crate::{
         helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
-#[cfg(backend = "metal")]
-use crate::{backends::metal::Metal, data_type::DataType};
 
 struct Input<T: ArrayElement + Float> {
     keys: Box<[T]>,
@@ -109,6 +107,10 @@ fn get_test_data_multi_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec
         Copy {
             source: 0,
             destination: 5,
+        },
+        Copy {
+            source: 3,
+            destination: 6,
         },
     ];
 
@@ -218,21 +220,11 @@ fn test_large_internal<T: ArrayElement + Float + Debug + Display>() {
 
 // Single copy tests
 #[uzu_test]
-fn test_single_copy_f32() {
-    test_single_copy_internal::<f32>();
-}
-
-#[uzu_test]
 fn test_single_copy_bf16() {
     test_single_copy_internal::<bf16>();
 }
 
 // Multi copy tests
-#[uzu_test]
-fn test_multi_copy_f32() {
-    test_multi_copy_internal::<f32>();
-}
-
 #[uzu_test]
 fn test_multi_copy_bf16() {
     test_multi_copy_internal::<bf16>();
@@ -240,142 +232,14 @@ fn test_multi_copy_bf16() {
 
 // No copy tests
 #[uzu_test]
-fn test_no_copy_f32() {
-    test_no_copy_internal::<f32>();
-}
-
-#[uzu_test]
 fn test_no_copy_bf16() {
     test_no_copy_internal::<bf16>();
 }
 
 // Large dimension tests
 #[uzu_test]
-fn test_large_f32() {
-    test_large_internal::<f32>();
-}
-
-#[uzu_test]
 fn test_large_bf16() {
     test_large_internal::<bf16>();
-}
-
-#[cfg(backend = "metal")]
-fn apply_copies_3d<T: Clone>(
-    array: &mut Array3<T>,
-    copies: &[Copy],
-) {
-    let (_seq_len, num_heads, head_dim) = array.dim();
-    for head in 0..num_heads {
-        for channel in 0..head_dim {
-            for copy in copies {
-                let src = copy.source as usize;
-                let dst = copy.destination as usize;
-                array[(dst, head, channel)] = array[(src, head, channel)].clone();
-            }
-        }
-    }
-}
-
-#[cfg(backend = "metal")]
-#[uzu_test]
-fn test_random_pattern_f32() {
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(context) => context,
-        Err(error) => {
-            eprintln!("Failed to create Metal context: {error:?}. Skipping test.");
-            return;
-        },
-    };
-
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::KVCacheUpdateKernel::new(&context, DataType::F32)
-        .expect("Failed to create KVCacheUpdateKernel");
-
-    let num_heads = 3usize;
-    let seq_len = 15usize;
-    let head_dim = 7usize;
-    let element_dim = num_heads * head_dim;
-
-    let key_data = Array3::<f32>::from_shape_fn((seq_len, num_heads, head_dim), |(token, head, channel)| {
-        (token * 1_000_000 + head * 100 + channel * 10) as f32
-    });
-
-    let value_data = Array3::<f32>::from_shape_fn((seq_len, num_heads, head_dim), |(token, head, channel)| {
-        (token * 1_000_000 + head * 100 + channel * 10 + 1_000) as f32
-    });
-
-    let copies = vec![
-        Copy {
-            source: 0,
-            destination: 14,
-        },
-        Copy {
-            source: 3,
-            destination: 11,
-        },
-        Copy {
-            source: 6,
-            destination: 8,
-        },
-        Copy {
-            source: 9,
-            destination: 5,
-        },
-        Copy {
-            source: 12,
-            destination: 2,
-        },
-        Copy {
-            source: 2,
-            destination: 12,
-        },
-        Copy {
-            source: 5,
-            destination: 9,
-        },
-        Copy {
-            source: 8,
-            destination: 6,
-        },
-        Copy {
-            source: 11,
-            destination: 3,
-        },
-        Copy {
-            source: 14,
-            destination: 0,
-        },
-    ];
-
-    let mut expected_keys = key_data.clone();
-    let mut expected_values = value_data.clone();
-    apply_copies_3d(&mut expected_keys, &copies);
-    apply_copies_3d(&mut expected_values, &copies);
-
-    let mut key_buffer = create_buffer_with_data::<Metal, f32>(&context, key_data.as_slice().unwrap());
-    let mut value_buffer = create_buffer_with_data::<Metal, f32>(&context, value_data.as_slice().unwrap());
-
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    kernel.encode(
-        &mut key_buffer,
-        &mut value_buffer,
-        &copies,
-        copies.len() as u32,
-        element_dim as u32,
-        &mut command_buffer,
-    );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-
-    let key_values: Vec<f32> = buffer_to_vec(&key_buffer);
-    let key_result = Array::from_shape_vec((seq_len, num_heads, head_dim), key_values)
-        .expect("Failed to convert key result to ndarray");
-
-    let value_values: Vec<f32> = buffer_to_vec(&value_buffer);
-    let value_result = Array::from_shape_vec((seq_len, num_heads, head_dim), value_values)
-        .expect("Failed to convert value result to ndarray");
-
-    assert_eq!(key_result, expected_keys);
-    assert_eq!(value_result, expected_values);
 }
 
 #[uzu_test]
