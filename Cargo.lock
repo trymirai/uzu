@@ -954,6 +954,7 @@ dependencies = [
  "uuid",
  "uzu",
  "uzu-engine",
+ "walkdir",
 ]
 
 [[package]]

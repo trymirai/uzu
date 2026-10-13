@@ -1,4 +1,5 @@
 use std::{
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -12,6 +13,7 @@ use uzu::{
         session::chat::ChatConfig,
     },
 };
+use walkdir::WalkDir;
 
 use crate::common::thinking::ThinkingSupport;
 
@@ -38,18 +40,26 @@ impl ModelSlot {
 }
 
 /// Best-effort estimate of a model's in-memory footprint in bytes: the sum of
-/// its registry file sizes when known, otherwise parameters x bits / 8.
+/// its registry file sizes when known; for a local directory, the sum of the
+/// on-disk file sizes; otherwise parameters x bits / 8.
 pub fn footprint_bytes(model: &Model) -> u64 {
-    if let ModelAccessibility::OnDevice {
-        source: ModelSource::Registry {
-            files,
-            ..
+    match &model.accessibility {
+        ModelAccessibility::OnDevice {
+            source: ModelSource::Registry {
+                files,
+                ..
+            },
+        } if !files.is_empty() => {
+            return files.iter().fold(0_u64, |total, file| total.saturating_add(file.size.max(0) as u64));
         },
-        ..
-    } = &model.accessibility
-        && !files.is_empty()
-    {
-        return files.iter().fold(0_u64, |total, file| total.saturating_add(file.size.max(0) as u64));
+        ModelAccessibility::OnDevice {
+            source: ModelSource::Filesystem {
+                path,
+            },
+        } => {
+            return filesystem_bytes(path);
+        },
+        _ => {},
     }
     let Some(properties) = &model.properties else {
         return 0;
@@ -57,6 +67,24 @@ pub fn footprint_bytes(model: &Model) -> u64 {
     let parameters = properties.size.max(0) as u64;
     let bits = model.quantization.as_ref().map_or(16, |quantization| quantization.bits_per_weight as u64);
     parameters.saturating_mul(bits).div_ceil(8)
+}
+
+/// Sum of the sizes of every file under `path` (the model's on-disk weight
+/// files). A non-directory or unreadable path reports 0 — such a path is
+/// unlikely to be a loadable model, and the dynamic free-memory check in
+/// `memory_guard` still bounds what actually gets allocated.
+fn filesystem_bytes(path: &str) -> u64 {
+    let root = Path::new(path);
+    if !root.is_dir() {
+        return 0;
+    }
+    WalkDir::new(root)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_file())
+        .filter_map(|entry| entry.metadata().ok())
+        .map(|metadata| metadata.len())
+        .fold(0_u64, u64::saturating_add)
 }
 
 /// Memory in use right now, as reported by the OS.
@@ -141,7 +169,7 @@ impl std::fmt::Display for AcquireError {
 pub struct SessionManager {
     pub session: Arc<Mutex<Option<ChatSession>>>,
     resident: Arc<Mutex<Option<ModelSlot>>>,
-    last_used: Arc<Mutex<Instant>>,
+    last_used: Arc<std::sync::Mutex<Instant>>,
     engine: Arc<Engine>,
     slots: Vec<ModelSlot>,
     total_memory: u64,
@@ -156,7 +184,7 @@ impl SessionManager {
         Self {
             session: Arc::new(Mutex::new(None)),
             resident: Arc::new(Mutex::new(None)),
-            last_used: Arc::new(Mutex::new(Instant::now())),
+            last_used: Arc::new(std::sync::Mutex::new(Instant::now())),
             engine: Arc::new(engine),
             slots,
             total_memory,
@@ -205,7 +233,7 @@ impl SessionManager {
     ) -> Result<ChatSession, AcquireError> {
         // A turn has started: the idle timer must not fire for this turn's
         // duration (a turn can outlive the idle timeout itself).
-        *self.last_used.lock().await = Instant::now();
+        *self.last_used.lock().unwrap() = Instant::now();
 
         // Fast path: the requested model is already the resident one and a
         // live session is present — nothing to do.
@@ -259,7 +287,42 @@ impl SessionManager {
         &self,
         timeout: Duration,
     ) -> bool {
-        self.last_used.lock().await.elapsed() >= timeout
+        self.last_used.lock().unwrap().elapsed() >= timeout
+    }
+
+    /// Marks the session as used *now*, restarting the idle clock.
+    ///
+    /// Called by `TurnUsageGuard::drop` at the end of every turn. Without it,
+    /// only `load_into` (turn *start*) would advance the clock, and a turn
+    /// that runs for at least `timeout` would be unloaded the instant it
+    /// released the session lock — discarding the prefix cache and making the
+    /// next request cold-load.
+    pub fn mark_used(&self) {
+        *self.last_used.lock().unwrap() = Instant::now();
+    }
+}
+
+/// Stamps [`SessionManager::mark_used`] the moment a turn finishes, whatever
+/// its outcome (response, error, or client disconnect). Held by a request
+/// handler for the whole turn, so idle off-load starts counting from the end
+/// of the last turn, not from its start: a long generation that outlives the
+/// idle timeout keeps the session warm instead of being dropped mid-recovery
+/// of the prefix cache.
+pub struct TurnUsageGuard<'a> {
+    manager: &'a SessionManager,
+}
+
+impl<'a> TurnUsageGuard<'a> {
+    pub fn new(manager: &'a SessionManager) -> Self {
+        Self {
+            manager,
+        }
+    }
+}
+
+impl Drop for TurnUsageGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.mark_used();
     }
 }
 
@@ -283,7 +346,7 @@ async fn load_model(
         .map_err(|error| AcquireError::Engine(error.to_string()))?;
 
     *manager.resident.lock().await = Some(slot.clone());
-    *manager.last_used.lock().await = Instant::now();
+    *manager.last_used.lock().unwrap() = Instant::now();
     *session_slot = Some(session.clone());
     tracing::info!("model loaded: {}", slot.identifier());
     Ok(session)
@@ -292,4 +355,28 @@ async fn load_model(
 pub struct ServerState {
     pub session_manager: Arc<SessionManager>,
     pub prefix_cache: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filesystem_bytes_sums_nested_file_sizes() {
+        let root = std::env::temp_dir().join(format!("uzu-fs-bytes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::write(root.join("a.bin"), vec![0u8; 1024]).unwrap();
+        std::fs::write(root.join("nested/b.bin"), vec![0u8; 2048]).unwrap();
+        // A directory entry must not be counted as a file.
+        std::fs::create_dir(root.join("nested/empty")).unwrap();
+
+        assert_eq!(filesystem_bytes(root.to_str().unwrap()), 3072);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn filesystem_bytes_missing_path_is_zero() {
+        assert_eq!(filesystem_bytes("/definitely/not/a/real/path"), 0);
+    }
 }

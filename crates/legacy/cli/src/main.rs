@@ -49,7 +49,7 @@ enum Commands {
         /// comma-separated, or repeat the flag. The server loads whichever
         /// model a request asks for (default: the first), unloading any
         /// other resident model first.
-        #[arg(long = "model", action = clap::ArgAction::Append, value_name = "MODEL", required = true)]
+        #[arg(long = "model", action = clap::ArgAction::Append, value_delimiter = ',', value_name = "MODEL", required = true)]
         model: Vec<String>,
         #[arg(long, default_value_t = 8000)]
         port: u16,

@@ -29,7 +29,7 @@ use uzu::{
 use crate::{
     common::thinking::ThinkingSupport,
     server::{
-        AcquireError, ServerState, SessionManager,
+        AcquireError, ServerState, SessionManager, TurnUsageGuard,
         chat_tool_calls::{
             OaiTool, OaiToolCall, ToolCallStreamer, ToolParameterTypes, backfill_tool_result_names, choose_tools,
             coerce_tool_call, insert_tools_message, oai_tool_call, parse_parameter_text, reply_tool_calls,
@@ -768,6 +768,10 @@ async fn run_blocking(
     sender: mpsc::UnboundedSender<Vec<u8>>,
     log: RequestLog,
 ) {
+    // Restart the idle-unload clock when this turn finishes, whatever its
+    // outcome: idle off-load is measured from the end of the last turn.
+    let _usage = TurnUsageGuard::new(&manager);
+
     // A blocking response writes nothing until generation finishes, and Rocket
     // only discovers a vanished client through a failed socket write, which is
     // what makes it drop the body receiver that `sender.closed()` observes. A
@@ -926,6 +930,10 @@ async fn run_stream(
     sender: mpsc::UnboundedSender<Event>,
     log: RequestLog,
 ) {
+    // Restart the idle-unload clock when this turn finishes (mirrors
+    // `run_blocking`): idle off-load is measured from the end of the last turn.
+    let _usage = TurnUsageGuard::new(&manager);
+
     // Same as the blocking path: hold the session lock (which also guards the
     // model slot) for the whole turn, so the idle-unload watcher can't unload a
     // model mid-generation and model swaps can't interleave with this turn.
