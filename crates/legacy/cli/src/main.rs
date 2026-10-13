@@ -3,6 +3,8 @@ use clap::{Parser, Subcommand};
 use shoji::types::basic::ReasoningEffort;
 
 mod bench;
+#[cfg(target_vendor = "apple")]
+mod collect_gpu_timestamps;
 mod common;
 mod interactive;
 mod server;
@@ -37,6 +39,16 @@ enum Commands {
         model_path: String,
         task_path: String,
         output_path: String,
+    },
+    #[cfg(target_vendor = "apple")]
+    CollectGpuTimestamps {
+        /// Local model directory.
+        model_path: std::path::PathBuf,
+        /// Directory to write one CSV per prefix length to.
+        output_dir: std::path::PathBuf,
+        /// Distance between swept prefix lengths.
+        #[arg(long, default_value_t = 8192)]
+        prefix_step: usize,
     },
     ListCheckpoints {
         /// Model ID shown by `list-models`.
@@ -78,6 +90,12 @@ async fn main() -> Result<()> {
             task_path,
             output_path,
         }) => bench::run_bench(model_path, task_path, output_path).await?,
+        #[cfg(target_vendor = "apple")]
+        Some(Commands::CollectGpuTimestamps {
+            model_path,
+            output_dir,
+            prefix_step,
+        }) => collect_gpu_timestamps::run(model_path, output_dir, prefix_step)?,
         Some(Commands::ListCheckpoints {
             model_id,
         }) => interactive::run_list_checkpoints(model_id).await?,

@@ -66,6 +66,7 @@ impl<B: Backend> Engine<B> {
         let weight_loader = ParameterLoader::new(&weights_file, context.as_ref())?;
 
         let classifier = ClassifierEncodable::new(
+            String::from("classifier"),
             context.as_ref(),
             &config.classifier_config,
             &weight_loader.tree().subtree("classifier"),

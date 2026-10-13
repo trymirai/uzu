@@ -36,6 +36,10 @@ impl Context for CpuContext {
         }))
     }
 
+    fn records_timestamps(&self) -> bool {
+        false
+    }
+
     fn device_name(&self) -> Option<&str> {
         None
     }

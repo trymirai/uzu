@@ -3,7 +3,7 @@ use std::any::Any;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, CommandBuffer, Context, DeviceCapabilities, Kernels, SparseBuffer,
+        Backend, Buffer, CommandBuffer, CommandBufferEncoding, Context, DeviceCapabilities, Kernels, SparseBuffer,
         gpu_types::{Copy, ring::RingParams},
         kernel::KVCacheUpdateKernel,
     },
@@ -161,6 +161,7 @@ impl KVCacheState {
 }
 
 pub struct AttentionState<B: Backend> {
+    accept_name: String,
     pub element_dim: u32,
     pub data_type: DataType,
     cache: KVCacheState,
@@ -215,6 +216,7 @@ impl<B: Backend> AttentionState<B> {
         let kv_cache_update = <B::Kernels as Kernels>::KVCacheUpdateKernel::new(context, data_type)?;
 
         Ok(Self {
+            accept_name: format!("{}/accept", attention.name),
             element_dim,
             data_type,
             cache,
@@ -248,11 +250,25 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         Ok(())
     }
 
+    fn set_context_length(
+        &mut self,
+        context_length: u32,
+    ) {
+        assert!(
+            matches!(self.cache, KVCacheState::Full { .. }),
+            "sliding window attention state can't change its context length"
+        );
+        self.cache = KVCacheState::Full {
+            length: context_length,
+        };
+    }
+
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
+        command_buffer.sample_start_timestamp(&self.accept_name);
         let copies = self.cache.accept(accepted_indices);
 
         if !copies.is_empty() {
@@ -266,6 +282,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
             );
         }
 
+        command_buffer.sample_end_timestamp();
         Ok(())
     }
 }
