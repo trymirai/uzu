@@ -9,53 +9,13 @@
 #include "../../generated/trie.h"
 #include "../attention_gate.h"
 #include "../kv_layout.h"
+#include "util.h"
 #include "../../hadamard_transform/hadamard_transform.h"
 
 using namespace metal;
 using namespace uzu::matmul;
 using namespace uzu::attention;
 using namespace uzu::trie;
-
-#define ATTENTION_GQA_SIMDGROUPS 8
-
-template <typename T, uint BK, uint BD, uint D_SLICES>
-struct AttentionGemmGroupedLayout {
-  using Ops = MxuFragmentOps<>;
-
-  UZU_CONST int SIMDGROUPS = ATTENTION_GQA_SIMDGROUPS;
-  UZU_CONST int TILE_ROWS = Ops::FRAGMENT_ROWS;
-  UZU_CONST int SLICE_COLS = int(BD) / int(D_SLICES);
-  UZU_CONST int BANDS = SIMDGROUPS / int(D_SLICES);
-  UZU_CONST int BLOCK_ROWS = BANDS * TILE_ROWS;
-  UZU_CONST int SCORE_TILE_ELEMENTS = TILE_ROWS * int(BK);
-  UZU_CONST int SCORE_EXCHANGE_SIZE = SIMDGROUPS * SCORE_TILE_ELEMENTS;
-};
-
-template <class FragmentType, class Fn>
-METAL_FUNC void map_lane_rows(thread FragmentType& tile, const short2 position, Fn fn) {
-  using Ops = typename FragmentType::FragmentOpsType;
-  using Element = typename FragmentType::ElementType;
-  static_assert(FragmentType::ROW_FRAGMENTS == 1, "requires one row fragment");
-  static_assert(
-      Ops::THREAD_ELEMENT_ROWS * Ops::THREAD_ELEMENT_COLS == Ops::ELEMENTS_PER_THREAD,
-      "requires row-major thread elements"
-  );
-
-  thread Element* data = tile.elements();
-  METAL_PRAGMA_UNROLL
-  for (ushort fragment_col = 0; fragment_col < FragmentType::COL_FRAGMENTS; ++fragment_col) {
-    const ushort fragment_base = fragment_col * Ops::ELEMENTS_PER_THREAD;
-    const short col_base = position.x + short(fragment_col) * short(Ops::FRAGMENT_COLS);
-    METAL_PRAGMA_UNROLL
-    for (ushort row = 0; row < Ops::THREAD_ELEMENT_ROWS; ++row) {
-      METAL_PRAGMA_UNROLL
-      for (ushort col = 0; col < Ops::THREAD_ELEMENT_COLS; ++col) {
-        const ushort element = fragment_base + row * Ops::THREAD_ELEMENT_COLS + col;
-        data[element] = Element(fn(row, col_base + short(col), data[element]));
-      }
-    }
-  }
-}
 
 // TODO: support more BD and should tune more to replace AttentionGEMM
 template <typename T, uint BK, uint BD, uint D_SLICES>

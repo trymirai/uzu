@@ -11,15 +11,15 @@ use crate::{
 };
 
 pub enum KVStorage<B: Backend> {
-    /// K/V rows in the model's data type.
-    BF16 {
-        keys: Box<dyn Buffer<Backend = B>>,
-        values: Box<dyn Buffer<Backend = B>>,
-        update: <B::Kernels as Kernels>::KVCacheUpdateKernel,
-        element_dim: u32,
-        data_type: DataType,
-    },
+    BF16(BF16KV<B>, <B::Kernels as Kernels>::KVCacheUpdateKernel),
     Int8(Int8KV<B>, <B::Kernels as Kernels>::KVCacheUpdateInt8Kernel),
+}
+
+pub struct BF16KV<B: Backend> {
+    pub keys: Box<dyn Buffer<Backend = B>>,
+    pub values: Box<dyn Buffer<Backend = B>>,
+    pub element_dim: u32,
+    pub data_type: DataType,
 }
 
 /// K/V codes are sparse where supported; scales are dense and zeroed.
@@ -72,13 +72,13 @@ impl<B: Backend> KVStorage<B> {
             KVFormat::BF16 => {
                 let element_dim = num_kv_heads * head_dim;
                 let bytes = size_for_shape(&[max_elements, element_dim], data_type);
-                Self::BF16 {
+                let kv = BF16KV {
                     keys: create_kv_buffer(context, bytes)?,
                     values: create_kv_buffer(context, bytes)?,
-                    update: <B::Kernels as Kernels>::KVCacheUpdateKernel::new(context, data_type)?,
                     element_dim,
                     data_type,
-                }
+                };
+                Self::BF16(kv, <B::Kernels as Kernels>::KVCacheUpdateKernel::new(context, data_type)?)
             },
         })
     }
@@ -88,13 +88,9 @@ impl<B: Backend> KVStorage<B> {
         elements_required: u32,
     ) -> Result<(), B::Error> {
         let (buffers, bytes_required) = match self {
-            Self::BF16 {
-                keys,
-                values,
-                element_dim,
-                data_type,
-                ..
-            } => ([keys, values], size_for_shape(&[elements_required, *element_dim], *data_type)),
+            Self::BF16(kv, _) => {
+                ([&mut kv.keys, &mut kv.values], size_for_shape(&[elements_required, kv.element_dim], kv.data_type))
+            },
             Self::Int8(kv, _) => ([&mut kv.k_codes, &mut kv.v_codes], kv.layout.tile_bytes(elements_required)),
         };
         for buffer in buffers {
@@ -112,13 +108,9 @@ impl<B: Backend> KVStorage<B> {
     ) {
         let count = copies.len() as u32;
         match self {
-            Self::BF16 {
-                keys,
-                values,
-                update,
-                element_dim,
-                ..
-            } => update.encode(keys.as_mut(), values.as_mut(), copies, count, *element_dim, command_buffer),
+            Self::BF16(kv, update) => {
+                update.encode(kv.keys.as_mut(), kv.values.as_mut(), copies, count, kv.element_dim, command_buffer)
+            },
             Self::Int8(kv, update) => update.encode(
                 kv.k_codes.as_mut(),
                 kv.v_codes.as_mut(),
