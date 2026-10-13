@@ -35,6 +35,7 @@ pub struct HanashiEncodingImpl {
     tokenizer: Arc<Tokenizer>,
     parser: TokenStreamParser,
     framing_tokens: HashSet<String>,
+    pending_framing_tokens: Vec<Token>,
     renderer: Renderer,
     validator: Validator,
 
@@ -60,6 +61,7 @@ impl HanashiEncodingImpl {
             tokenizer,
             parser,
             framing_tokens,
+            pending_framing_tokens: Vec::new(),
             renderer,
             validator,
             state: State::default(),
@@ -83,6 +85,7 @@ impl EncodingTrait for HanashiEncodingImpl {
 
     fn reset(&mut self) -> Result<(), Self::Error> {
         self.parser.reset();
+        self.pending_framing_tokens.clear();
         self.validator.reset();
         self.state = State::default();
         self.tokenizer_decode_ids = vec![];
@@ -159,10 +162,11 @@ impl EncodingTrait for HanashiEncodingImpl {
     ) -> Result<(), Self::Error> {
         for token_id in &token_ids {
             let token = self.resolve_token(*token_id, true)?;
-            self.push_token_to_parser(&token, false)?;
+            self.push_decoded_token(&token)?;
             self.state.tokens.push(token);
         }
 
+        self.parser.flush_extraction();
         self.update_messages_from_parser_state()?;
         Ok(())
     }

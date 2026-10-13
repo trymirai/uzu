@@ -48,6 +48,13 @@ impl Encoding {
         }
     }
 
+    pub fn flush(&mut self) -> Result<bool, Error> {
+        match self {
+            Self::Hanashi(inner) => inner.flush().map_err(Into::into),
+            Self::Harmony(_) => Ok(false),
+        }
+    }
+
     pub fn tokenize(
         &self,
         text: &str,
