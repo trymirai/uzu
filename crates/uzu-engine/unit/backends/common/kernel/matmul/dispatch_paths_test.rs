@@ -73,15 +73,10 @@ fn run_matrix<T: ArrayElement + Float + Debug + Display>(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::base(1.0, false)]
-#[case::ab_scale(0.5, false)]
-#[case::accumulate(1.0, true)]
-#[case::scale_and_accumulate(0.5, true)]
-fn matches_cpu_reference_bf16(
-    #[case] ab_scale: f32,
-    #[case] accumulate: bool,
-) {
-    run_matrix::<bf16>(|shape| Case::new(shape).with_ab_scale(ab_scale).with_accumulate(accumulate), 1.0);
+#[case::base(1.0)]
+#[case::ab_scale(0.5)]
+fn matches_cpu_reference_bf16(#[case] ab_scale: f32) {
+    run_matrix::<bf16>(|shape| Case::new(shape).with_ab_scale(ab_scale), 1.0);
 }
 
 #[uzu_test]
@@ -176,14 +171,9 @@ fn gemv_fp_output_transforms_bf16() {
         bf16::data_type(),
     )
     .expect("MatmulKernel");
-    // Small m routes to GEMV; n % 32 == 0 keeps RHT/accumulate in the GEMV path.
+    // Small m routes to GEMV; n % 32 == 0 keeps RHT in the GEMV path.
     let shape = Shape::new(2, 256, 64);
-    let cases = [
-        Case::new(shape).with_bias(true).with_rht(true),
-        Case::new(shape).with_accumulate(true),
-        Case::new(shape).with_accumulate(true).with_bias(true),
-        Case::new(shape).with_ab_scale(2.0).with_rht(true),
-    ];
+    let cases = [Case::new(shape).with_bias(true).with_rht(true), Case::new(shape).with_ab_scale(2.0).with_rht(true)];
     for case in cases {
         check_case::<bf16>(&context, &mut kernel, None, case, 1.0);
     }

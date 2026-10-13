@@ -100,11 +100,11 @@ pub struct Transformer<B: Backend> {
 
 impl<B: Backend> Transformer<B> {
     pub fn new(
-        context: &B::Context,
-        output_norm_hadamard_factors: Option<B::GlobalBuffer>,
         data_type: DataType,
+        output_norm_hadamard_factors: Option<B::GlobalBuffer>,
         transformer_config: &TransformerConfig,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, TransformerNewError<B>> {
         let mut ropes: Vec<AnyRoPEConfig> = Vec::new();
 
@@ -124,14 +124,14 @@ impl<B: Backend> Transformer<B> {
                 });
 
                 let layer = TransformerLayer::new(
-                    context,
                     transformer_config.model_dim,
                     transformer_config.hidden_dim,
                     num_layers,
-                    layer_config,
                     layer_index,
-                    &layer_loader,
                     data_type,
+                    layer_config,
+                    &layer_loader,
+                    context,
                 )?;
 
                 Ok((layer, rope))
@@ -140,10 +140,10 @@ impl<B: Backend> Transformer<B> {
 
         let output_norm = Normalization::new(
             transformer_config.model_dim,
+            data_type,
             output_norm_hadamard_factors,
             ShortcutMode::Add,
             PostLayerScalar::None,
-            data_type,
             &transformer_config.output_norm_config,
             &parameter_tree.subtree("output_norm"),
             context,

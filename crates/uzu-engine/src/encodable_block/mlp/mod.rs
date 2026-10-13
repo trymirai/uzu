@@ -1,16 +1,14 @@
 mod dense;
 mod gate_act_mul;
 
-pub use dense::DenseMlp;
 use derive_more::Debug;
-use gate_act_mul::MlpGateActMulEncodable;
 use thiserror::Error;
 
 use crate::{
     backends::common::{Backend, CommandBuffer},
     config::mlp::AnyMLPConfig,
     data_type::DataType,
-    encodable_block::linear::{Linear, LinearBlockError},
+    encodable_block::mlp::dense::{DenseMlp, DenseMlpNewError},
     parameters::ParameterTree,
 };
 
@@ -24,58 +22,30 @@ pub trait Mlp<B: Backend>: Send + Sync {
 }
 
 #[derive(Debug, Error)]
-pub enum MlpBlockError<B: Backend> {
-    #[error("Backend error: {0}")]
-    BackendError(#[source] B::Error),
-    #[error("Linear block error: {0}")]
-    LinearBlockError(#[from] LinearBlockError<B>),
+pub enum MlpBlockNewError<B: Backend> {
+    #[error("Dense MLP error: {0}")]
+    Dense(#[from] DenseMlpNewError<B>),
     #[error("Mixture of experts is not supported")]
     UnsupportedMixtureOfExperts,
 }
 
 impl<B: Backend> dyn Mlp<B> {
     pub fn new(
-        config: &AnyMLPConfig,
         model_dimension: u32,
         hidden_dimension: u32,
-        context: &B::Context,
-        parameter_tree: &ParameterTree<B>,
         data_type: DataType,
-    ) -> Result<(Box<dyn Mlp<B>>, Option<B::GlobalBuffer>), MlpBlockError<B>> {
+        config: &AnyMLPConfig,
+        parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
+    ) -> Result<(Box<dyn Mlp<B>>, Option<B::GlobalBuffer>), MlpBlockNewError<B>> {
         match config {
-            AnyMLPConfig::DenseMLPConfig(dense_config) => {
-                let (up_projection, up_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
-                    model_dimension,
-                    [2 * hidden_dimension],
-                    dense_config.has_up_biases,
-                    context,
-                    data_type,
-                    &parameter_tree.subtree("up_projection"),
-                )?;
+            AnyMLPConfig::DenseMLPConfig(config) => {
+                let (dense, up_input_hadamard_factors) =
+                    DenseMlp::new(model_dimension, hidden_dimension, data_type, config, parameter_tree, context)?;
 
-                let (down_projection, down_input_preparation) = <dyn Linear<B>>::new_for_fused_input(
-                    hidden_dimension,
-                    [model_dimension],
-                    dense_config.has_down_biases,
-                    context,
-                    data_type,
-                    &parameter_tree.subtree("down_projection"),
-                )?;
-
-                let gate = MlpGateActMulEncodable::new(
-                    context,
-                    data_type,
-                    dense_config.activation.clone(),
-                    dense_config.gate_clipping,
-                    dense_config.up_clipping,
-                    hidden_dimension,
-                    down_input_preparation,
-                )
-                .map_err(MlpBlockError::BackendError)?;
-
-                Ok((Box::new(DenseMlp::new(up_projection, gate, down_projection)), up_input_hadamard_factors))
+                Ok((Box::new(dense), up_input_hadamard_factors))
             },
-            AnyMLPConfig::MixtureOfExpertsConfig(_) => Err(MlpBlockError::UnsupportedMixtureOfExperts),
+            AnyMLPConfig::MixtureOfExpertsConfig(_) => Err(MlpBlockNewError::UnsupportedMixtureOfExperts),
         }
     }
 }

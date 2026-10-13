@@ -66,16 +66,16 @@ impl<B: Backend> LinearMatmul<B> {
     /// Loads a linear over any parsed spec — full precision, MLX or Int. Hybrid
     /// compositions live in the wrappers, not here.
     pub fn load(
-        context: &B::Context,
-        spec: AnyWeightMatrixSpec,
         input_dim: u32,
         output_dim: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
+        spec: AnyWeightMatrixSpec,
+        output_hadamard_factors: Option<B::GlobalBuffer>,
         weights_tree: &ParameterTree<B>,
         bias_tree: Option<&ParameterTree<B>>,
-        output_hadamard_factors: Option<B::GlobalBuffer>,
+        context: &B::Context,
     ) -> Result<Self, LinearMatmulError<B>> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
             if !matches!(data_type, DataType::BF16 | DataType::F32) {
@@ -84,7 +84,7 @@ impl<B: Backend> LinearMatmul<B> {
         }
 
         let matrix =
-            WeightMatrix::load(weights_tree, spec, Layout::OutputInput, output_dim, input_dim, weights_data_type)?;
+            WeightMatrix::load(output_dim, input_dim, weights_data_type, spec, Layout::OutputInput, weights_tree)?;
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
             return Err(LinearMatmulError::UnsupportedConfiguration(
                 "fused output-hadamard factors require quantized weights".into(),
@@ -184,23 +184,6 @@ impl<B: Backend> LinearMatmul<B> {
 }
 
 impl<B: Backend> Linear<B> for LinearMatmul<B> {
-    fn encode(
-        &self,
-        input: B::ScratchBuffer,
-        batch_dim: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
-        self.encode_with_a(
-            MatmulA::FullPrecision {
-                values: &input,
-                offset: 0,
-            },
-            batch_dim,
-            None::<Gather<&B::ScratchBuffer>>,
-            command_buffer,
-        )
-    }
-
     fn encode_input(
         &self,
         input: LinearInput<B>,

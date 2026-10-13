@@ -95,12 +95,12 @@ pub struct WeightMatrix<B: Backend> {
 
 impl<B: Backend> WeightMatrix<B> {
     pub fn load(
-        tree: &ParameterTree<B>,
-        spec: AnyWeightMatrixSpec,
-        required_layout: Layout,
         output_dim: u32,
         input_dim: u32,
         data_type: DataType,
+        spec: AnyWeightMatrixSpec,
+        required_layout: Layout,
+        tree: &ParameterTree<B>,
     ) -> Result<Self, WeightMatrixError<B>> {
         let ParsedWeightSpec {
             layout,

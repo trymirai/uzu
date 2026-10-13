@@ -22,10 +22,9 @@ struct GemmDTransform {
   constexpr GemmDTransform() thread : raw_value(0) {}
   constexpr GemmDTransform(uint32_t __dsl_v) thread : raw_value(__dsl_v) {}
   static constant constexpr uint32_t SCALE = 1 << 0;
-  static constant constexpr uint32_t ACCUMULATE = 1 << 1;
-  static constant constexpr uint32_t BIAS = 1 << 2;
-  static constant constexpr uint32_t RHT = 1 << 3;
-  static constant constexpr uint32_t SOFT_CAP = 1 << 4;
+  static constant constexpr uint32_t BIAS = 1 << 1;
+  static constant constexpr uint32_t RHT = 1 << 2;
+  static constant constexpr uint32_t SOFT_CAP = 1 << 3;
   constexpr bool contains(uint32_t flag) const thread { return (raw_value & flag) != 0; }
   constexpr bool contains(uint32_t flag) const constant { return (raw_value & flag) != 0; }
   constexpr uint32_t bits() const thread { return raw_value; }

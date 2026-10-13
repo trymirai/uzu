@@ -66,10 +66,10 @@ impl<B: Backend> Engine<B> {
         let weight_loader = ParameterLoader::new(&weights_file, context.as_ref())?;
 
         let classifier = ClassifierEncodable::new(
-            context.as_ref(),
+            data_type,
             &config.classifier_config,
             &weight_loader.tree().subtree("classifier"),
-            data_type,
+            context.as_ref(),
         )?;
 
         let output_labels = if let Some(output_labels) = config.classifier_config.output_labels {

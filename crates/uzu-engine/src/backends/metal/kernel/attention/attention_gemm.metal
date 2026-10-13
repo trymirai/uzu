@@ -161,7 +161,7 @@ KERNEL(AttentionGemm)(
     } else {
       query_loader.load_unsafe();
     }
-    query_loader.apply_inplace_op(TransformScale<T>(static_cast<T>(params.scale * M_LOG2E_F)));
+    query_loader.apply_inplace_op(::TransformScale<T>(static_cast<T>(params.scale * M_LOG2E_F)));
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 

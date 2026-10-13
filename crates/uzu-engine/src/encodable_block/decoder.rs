@@ -50,18 +50,18 @@ impl<B: Backend> Decoder<B> {
     }
 
     pub fn new(
-        context: &B::Context,
+        data_type: DataType,
         config: &DecoderConfig,
         parameter_tree: &ParameterTree<B>,
-        data_type: DataType,
+        context: &B::Context,
     ) -> Result<Self, DecoderError<B>> {
         let (embedding, readout_input_hadamard_factors) = Embedding::new(
-            context,
             config.vocab_size,
             config.transformer_config.model_dim,
+            data_type,
             &config.embedding_config,
             &parameter_tree.subtree("embedding"),
-            data_type,
+            context,
         )?;
 
         let embedding_norm = config
@@ -70,10 +70,10 @@ impl<B: Backend> Decoder<B> {
             .map(|norm_config| {
                 Normalization::new(
                     config.transformer_config.model_dim,
+                    data_type,
                     None,
                     ShortcutMode::None,
                     PostLayerScalar::None,
-                    data_type,
                     norm_config,
                     &parameter_tree.subtree("embedding_norm"),
                     context,
@@ -88,22 +88,22 @@ impl<B: Backend> Decoder<B> {
                 "per-layer embedding num_layers must match transformer layer count"
             );
             Some(PerLayerEmbedding::new(
-                context,
-                ple_config,
                 config.transformer_config.model_dim,
                 data_type,
+                ple_config,
                 &parameter_tree.subtree("per_layer_embedding"),
+                context,
             )?)
         } else {
             None
         };
 
         let transformer = Transformer::new(
-            context,
-            readout_input_hadamard_factors,
             data_type,
+            readout_input_hadamard_factors,
             &config.transformer_config,
             &parameter_tree.subtree("transformer"),
+            context,
         )?;
 
         Ok(Self {
@@ -180,8 +180,8 @@ impl<B: Backend> Decoder<B> {
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
             Some(self.embedding.encode_readout(
-                output_range.end - output_range.start,
                 output,
+                output_range.end - output_range.start,
                 self.embedding.vocab_size(),
                 None::<&B::ScratchBuffer>,
                 true,

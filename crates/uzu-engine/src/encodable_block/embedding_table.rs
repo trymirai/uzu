@@ -90,11 +90,11 @@ pub struct EmbeddingTable<B: Backend> {
 
 impl<B: Backend> EmbeddingTable<B> {
     pub fn load(
-        context: &B::Context,
-        tree: &ParameterTree<B>,
         vocab_size: u32,
         embedding_dim: u32,
         data_type: DataType,
+        tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, EmbeddingTableError<B>> {
         if !matches!(data_type, DataType::F32 | DataType::BF16) {
             return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
@@ -102,7 +102,7 @@ impl<B: Backend> EmbeddingTable<B> {
             )));
         }
         let load_matrix = |tree: &ParameterTree<B>, spec| {
-            WeightMatrix::load(tree, spec, Layout::InputOutput, embedding_dim, vocab_size, data_type)
+            WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, tree)
         };
         let (storage, output_hadamard_factors) = match tree.metadata::<AnyWeightMatrixSpec>("spec")? {
             AnyWeightMatrixSpec::D4S4Spec(spec) => {
@@ -111,7 +111,6 @@ impl<B: Backend> EmbeddingTable<B> {
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
-                adapter_spec: None,
                 incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
                 incoherence_processing_mode: IncoherenceProcessingMode::Output,
                 ..

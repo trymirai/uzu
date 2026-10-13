@@ -44,7 +44,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     method: &SamplingMethod,
     batch_size: u32,
 ) -> Result<SamplingTestResults, TestCaseError> {
-    let sampling = Sampling::<B>::new(T::data_type(), vocab_size as u32);
+    let sampling = Sampling::<B>::new(vocab_size as u32, T::data_type());
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let logits_buffer = command_buffer.allocate_constant_from_slice(logits).unwrap();
@@ -67,9 +67,9 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
             bitmask_buffer.as_ref(),
             None::<&B::GlobalBuffer>,   // TODO
             None::<&B::ConstantBuffer>, // TODO
-            method,
             &batch_topology,
             (0..batch_size).into(),
+            method,
             &mut command_buffer,
         )
         .unwrap();

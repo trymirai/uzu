@@ -69,17 +69,17 @@ impl<B: Backend> Embedding<B> {
     }
 
     pub fn new(
-        context: &B::Context,
         vocab_size: u32,
         model_dim: u32,
+        data_type: DataType,
         config: &AnyEmbeddingConfig,
         parameter_tree: &ParameterTree<B>,
-        data_type: DataType,
+        context: &B::Context,
     ) -> Result<(Self, Option<B::GlobalBuffer>), EmbeddingError<B>> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
-                let table = EmbeddingTable::load(context, &embedding_tree, vocab_size, model_dim, data_type)?;
+                let table = EmbeddingTable::load(vocab_size, model_dim, data_type, &embedding_tree, context)?;
                 if table.as_matrix().is_none() {
                     return Err(EmbeddingError::UnsupportedConfiguration("tied embeddings need a matrix table".into()));
                 }
@@ -101,16 +101,16 @@ impl<B: Backend> Embedding<B> {
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
                 let input_embedding_tree = parameter_tree.subtree("input_embedding");
                 let input_table =
-                    EmbeddingTable::load(context, &input_embedding_tree, vocab_size, model_dim, data_type)?;
+                    EmbeddingTable::load(vocab_size, model_dim, data_type, &input_embedding_tree, context)?;
                 let output_embedding_tree = parameter_tree.subtree("output_embedding");
                 let output_embedding_spec = output_embedding_tree.metadata("spec")?;
                 let output = UntiedReadout::load(
-                    context,
-                    &output_embedding_tree,
-                    output_embedding_spec,
                     vocab_size,
                     model_dim,
                     data_type,
+                    output_embedding_spec,
+                    &output_embedding_tree,
+                    context,
                 )?;
                 (
                     EmbeddingTying::Untied {
@@ -178,8 +178,8 @@ impl<B: Backend> Embedding<B> {
 
     pub fn encode_readout(
         &self,
-        batch_dim: u32,
         input_buffer: impl BufferRef<Backend = B>,
+        batch_dim: u32,
         output_dim: u32,
         gather_indices: Option<impl BufferRef<Backend = B>>,
         apply_logit_transform: bool,

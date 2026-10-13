@@ -192,13 +192,13 @@ impl<B: Backend> DeltaNet<B> {
         let (in_projection, in_projection_input_hadamard_factors) =
             <dyn Linear<B>>::new_with_input_rht_mixed_precision(
                 hidden_dim,
-                [total_proj_dim],
+                total_proj_dim,
+                outer_data_type,
+                outer_data_type,
+                outer_data_type,
                 false,
-                context,
-                outer_data_type,
-                outer_data_type,
-                outer_data_type,
                 &parameter_tree.subtree("in_proj"),
+                context,
             )?;
 
         let conv_config = &config.conv_config;
@@ -282,13 +282,13 @@ impl<B: Backend> DeltaNet<B> {
 
         let out_projection = <dyn Linear<B>>::new_mixed_precision(
             value_dim,
-            [hidden_dim],
+            hidden_dim,
+            outer_data_type,
+            outer_data_type,
+            outer_data_type,
             false,
-            context,
-            outer_data_type,
-            outer_data_type,
-            outer_data_type,
             &parameter_tree.subtree("out_proj"),
+            context,
         )?;
 
         Ok((

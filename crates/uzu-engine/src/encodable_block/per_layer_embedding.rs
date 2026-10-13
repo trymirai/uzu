@@ -45,29 +45,29 @@ pub struct PerLayerEmbedding<B: Backend> {
 
 impl<B: Backend> PerLayerEmbedding<B> {
     pub fn new(
-        context: &B::Context,
-        config: &PLEModelConfig,
         model_dim: u32,
         data_type: DataType,
+        config: &PLEModelConfig,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
         let total_ple_dim = config.num_layers * config.ple_dim;
 
         let token_embedding = EmbeddingTable::load(
-            context,
-            &parameter_tree.subtree("token_embedding"),
             config.ple_vocab_size,
             total_ple_dim,
             data_type,
+            &parameter_tree.subtree("token_embedding"),
+            context,
         )?;
 
         let model_projection = <dyn Linear<B>>::new(
             model_dim,
-            [total_ple_dim],
-            false,
-            context,
+            total_ple_dim,
             data_type,
+            false,
             &parameter_tree.subtree("model_projection"),
+            context,
         )?;
 
         let scale_squared = config.model_projection_scale * config.model_projection_scale;
@@ -78,10 +78,10 @@ impl<B: Backend> PerLayerEmbedding<B> {
         };
         let projection_norm = Normalization::new(
             config.ple_dim,
+            data_type,
             None,
             ShortcutMode::None,
             PostLayerScalar::ScaleOutput(config.input_scale),
-            data_type,
             &projection_norm_config,
             &parameter_tree.subtree("projection_norm"),
             context,
@@ -171,36 +171,36 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
 
 impl<B: Backend> PerLayerEmbeddingProjection<B> {
     pub fn new(
-        context: &B::Context,
-        config: &PLELayerConfig,
         model_dim: u32,
         num_layers: u32,
-        post_layer_scalar: f32,
         data_type: DataType,
+        post_layer_scalar: f32,
+        config: &PLELayerConfig,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
         let gate = <dyn Linear<B>>::new(
             model_dim,
-            [config.ple_dim],
-            false,
-            context,
+            config.ple_dim,
             data_type,
+            false,
             &parameter_tree.subtree("gate"),
+            context,
         )?;
         let projection = <dyn Linear<B>>::new(
             config.ple_dim,
-            [model_dim],
-            false,
-            context,
+            model_dim,
             data_type,
+            false,
             &parameter_tree.subtree("projection"),
+            context,
         )?;
         let norm = Normalization::new(
             model_dim,
+            data_type,
             None,
             ShortcutMode::None,
             PostLayerScalar::None,
-            data_type,
             &config.norm_config,
             &parameter_tree.subtree("norm"),
             context,
@@ -236,10 +236,10 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
 
     pub fn encode(
         &self,
-        layer_index: u32,
         per_layer_input: impl BufferRef<Backend = B>,
         mut outputs: impl BufferMut<Backend = B>,
         hidden: impl BufferRef<Backend = B>,
+        layer_index: u32,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {

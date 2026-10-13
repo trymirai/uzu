@@ -69,7 +69,6 @@ struct OutputTile {
   uint local_row;
   uint row0;
   bool writer;
-  bool clamped;
 
   static METAL_FUNC OutputTile
   make(uint output_tile_idx, uint input_tile_idx, uint simd_group, uint simd_lane, uint out_vec_size) {
@@ -90,7 +89,6 @@ struct OutputTile {
     tile.local_row = local_row;
     tile.row0 = FULL_TILE ? unclamped : min(unclamped, last);
     tile.writer = Tile::K_SPLIT == 1 || k_slice == 0;
-    tile.clamped = !FULL_TILE && unclamped > last;
     return tile;
   }
 

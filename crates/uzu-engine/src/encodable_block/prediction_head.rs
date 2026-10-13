@@ -46,11 +46,11 @@ impl<B: Backend> PredictionHead<B> {
     ) -> Result<Self, PredictionHeadError<B>> {
         let dense_projection = <dyn Linear<B>>::new(
             hidden_dim,
-            [hidden_dim],
-            config.use_dense_bias,
-            context,
+            hidden_dim,
             data_type,
+            config.use_dense_bias,
             &parameter_tree.subtree("dense"),
+            context,
         )?;
 
         let activation = config.activation.act_type();
@@ -59,23 +59,17 @@ impl<B: Backend> PredictionHead<B> {
 
         let normalization = Normalization::new(
             hidden_dim,
+            data_type,
             None,
             ShortcutMode::None,
             PostLayerScalar::None,
-            data_type,
             &config.normalization_config,
             &parameter_tree.subtree("norm"),
             context,
         )?;
 
-        let readout = <dyn Linear<B>>::new(
-            hidden_dim,
-            [num_labels],
-            true,
-            context,
-            data_type,
-            &parameter_tree.subtree("readout"),
-        )?;
+        let readout =
+            <dyn Linear<B>>::new(hidden_dim, num_labels, data_type, true, &parameter_tree.subtree("readout"), context)?;
 
         Ok(Self {
             hidden_dim,

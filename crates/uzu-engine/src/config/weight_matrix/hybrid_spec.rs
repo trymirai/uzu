@@ -1,6 +1,6 @@
 use uzu_engine_macros::uzu_config;
 
-use crate::config::weight_matrix::AnyWeightMatrixSpec;
+use crate::{config::weight_matrix::AnyWeightMatrixSpec, utils::strict_serde::Unsupported};
 
 #[uzu_config]
 #[serde(rename_all = "snake_case")]
@@ -13,7 +13,7 @@ pub enum IncoherenceProcessingMode {
 #[uzu_config(super::WeightMatrixSpec)]
 pub struct HybridSpec {
     pub quantization_spec: Box<AnyWeightMatrixSpec>,
-    pub adapter_spec: Option<Box<AnyWeightMatrixSpec>>,
+    pub adapter_spec: Option<Unsupported>,
     pub incoherence_block_size: Option<u32>,
     pub incoherence_processing_mode: IncoherenceProcessingMode,
 }

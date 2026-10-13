@@ -118,20 +118,20 @@ impl<B: Backend> ShortConv<B> {
 
         let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             hidden_dim,
-            [hidden_dim * 3],
-            false,
-            context,
+            hidden_dim * 3,
             data_type,
+            false,
             &parameter_tree.subtree("in_projection"),
+            context,
         )?;
 
         let out_projection = <dyn Linear<B>>::new(
             hidden_dim,
-            [hidden_dim],
-            false,
-            context,
+            hidden_dim,
             data_type,
+            false,
             &parameter_tree.subtree("out_projection"),
+            context,
         )?;
 
         let conv_tree = parameter_tree.subtree("conv");
@@ -245,8 +245,8 @@ impl<B: Backend> ShortConv<B> {
     fn encode_trie_conv(
         &self,
         in_projected: impl BufferRef<Backend = B>,
-        batch_dim: u32,
         token_parents: impl BufferRef<Backend = B>,
+        batch_dim: u32,
         state: &mut ShortConvState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
@@ -335,7 +335,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         } else {
             let token_parents = command_buffer.allocate_constant_from_slice(batch_dim.parents())?;
             let (conv_output, conv_states) =
-                self.encode_trie_conv(&in_projected, batch_dim.size(), &token_parents, state, command_buffer)?;
+                self.encode_trie_conv(&in_projected, &token_parents, batch_dim.size(), state, command_buffer)?;
             state.suffix_state = Some(ShortConvStateSuffixStatus::Trie {
                 conv_states,
             });

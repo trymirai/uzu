@@ -42,10 +42,10 @@ pub struct WeaverLayer<B: Backend> {
 
 impl<B: Backend> WeaverLayer<B> {
     pub fn new(
-        context: &B::Context,
-        config: &WeaverConfig,
         add_to_residual: bool,
+        config: &WeaverConfig,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, WeaverNewError<B>> {
         let WeaverConfig {
             model_dim,
@@ -60,19 +60,19 @@ impl<B: Backend> WeaverLayer<B> {
         let attention_scale = 1.0 / (head_dim as f32).sqrt();
         let qkv_projection = <dyn Linear<B>>::new(
             model_dim,
-            [3 * model_dim],
-            false,
-            context,
+            3 * model_dim,
             DATA_TYPE,
+            false,
             &parameter_tree.subtree("qkv_projection"),
+            context,
         )?;
         let out_projection = <dyn Linear<B>>::new(
             model_dim,
-            [model_dim],
-            false,
-            context,
+            model_dim,
             DATA_TYPE,
+            false,
             &parameter_tree.subtree("out_projection"),
+            context,
         )?;
         let prefix_attention = <B::Kernels as Kernels>::AttentionKernel::new(
             context,
@@ -95,6 +95,7 @@ impl<B: Backend> WeaverLayer<B> {
                 .map_err(WeaverNewError::Backend)?;
         let pre_attention_norm = Normalization::new(
             model_dim,
+            DATA_TYPE,
             None,
             if add_to_residual {
                 ShortcutMode::Add
@@ -102,17 +103,16 @@ impl<B: Backend> WeaverLayer<B> {
                 ShortcutMode::Copy
             },
             PostLayerScalar::None,
-            DATA_TYPE,
             norm_config,
             &parameter_tree.subtree("pre_attention_norm"),
             context,
         )?;
         let pre_mlp_norm = Normalization::new(
             model_dim,
+            DATA_TYPE,
             None,
             ShortcutMode::Add,
             PostLayerScalar::None,
-            DATA_TYPE,
             norm_config,
             &parameter_tree.subtree("pre_mlp_norm"),
             context,
@@ -124,7 +124,7 @@ impl<B: Backend> WeaverLayer<B> {
             true,
         ));
         let (mlp, up_input_hadamard_factors) =
-            <dyn Mlp<B>>::new(&mlp_config, model_dim, hidden_dim, context, &parameter_tree.subtree("mlp"), DATA_TYPE)?;
+            <dyn Mlp<B>>::new(model_dim, hidden_dim, DATA_TYPE, &mlp_config, &parameter_tree.subtree("mlp"), context)?;
         assert!(up_input_hadamard_factors.is_none(), "Weaver MLP does not support input Hadamard factors");
         let ancestor_attention = <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim, num_heads)
             .map_err(WeaverNewError::Backend)?;

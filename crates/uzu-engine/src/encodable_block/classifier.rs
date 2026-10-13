@@ -46,37 +46,37 @@ pub struct Classifier<B: Backend> {
 
 impl<B: Backend> Classifier<B> {
     pub fn new(
-        context: &B::Context,
+        data_type: DataType,
         config: &ClassifierConfig,
         parameter_tree: &ParameterTree<B>,
-        data_type: DataType,
+        context: &B::Context,
     ) -> Result<Self, ClassifierError<B>> {
         let (embedding, _) = Embedding::new(
-            context,
             config.vocab_size,
             config.transformer_config.model_dim,
+            data_type,
             &config.embedding_config,
             &parameter_tree.subtree("embedding"),
-            data_type,
+            context,
         )?;
 
         let embedding_norm = Normalization::new(
             config.transformer_config.model_dim,
+            data_type,
             None,
             ShortcutMode::None,
             PostLayerScalar::None,
-            data_type,
             &config.embedding_norm_config,
             &parameter_tree.subtree("embedding_norm"),
             context,
         )?;
 
         let transformer = Transformer::new(
-            context,
-            None,
             data_type,
+            None,
             &config.transformer_config,
             &parameter_tree.subtree("transformer"),
+            context,
         )?;
 
         if config.classifier_pooling != PoolingType::Mean {

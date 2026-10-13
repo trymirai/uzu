@@ -81,7 +81,6 @@ impl MatmulKernel for MatmulCpuKernel {
         } = arguments;
         let (mut d, ops) = output.into_contiguous(n, "CpuMatmul")?;
         let output_scale = ops.ab_scale;
-        let accumulate = ops.accumulate;
         let bias_buffer = ops.bias;
         let post_rht = ops.rht_factors;
         let soft_cap = ops.soft_cap;
@@ -264,9 +263,6 @@ impl MatmulKernel for MatmulCpuKernel {
 
                         let output_index = row * n_u + col;
                         let mut value = output_scale * accumulator;
-                        if accumulate {
-                            value += read_f32(d_ptr.as_ptr(), output_data_type, output_index);
-                        }
                         if !bias_after_rht && let Some(bias) = bias_ptr {
                             value += read_f32(bias.as_ptr(), weights_data_type, col);
                         }
