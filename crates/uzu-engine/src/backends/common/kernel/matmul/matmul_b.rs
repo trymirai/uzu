@@ -35,6 +35,7 @@ pub struct QuantizedB<TB: BufferRef> {
     pub mode: QuantizationMode,
     pub group_size: u32,
     pub signed_codes: bool,
+    pub tiled_codes: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -125,6 +126,10 @@ impl<TB: BufferRef> MatmulB<TB> {
 
     pub fn signed_codes(&self) -> bool {
         self.quantized().is_some_and(|quantized| quantized.signed_codes)
+    }
+
+    pub fn tiled_codes(&self) -> bool {
+        self.quantized().is_some_and(|quantized| quantized.tiled_codes)
     }
 
     pub fn quant_params_layout(&self) -> Option<QuantParamsLayout> {

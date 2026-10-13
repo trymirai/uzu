@@ -90,8 +90,24 @@ struct Int8Cursor {
   int row_stride;
   short simdgroup_limit;
   ushort simd_lane_id;
+  bool tiled;
+  uint chunk_stride;
 
   METAL_FUNC Fragment load(const uint) const thread {
+    if (tiled) {
+      Fragment tile;
+      const uint4 low = *reinterpret_cast<const device uint4*>(address);
+      const uint4 high = *reinterpret_cast<const device uint4*>(address + sizeof(uint4));
+      const uint words[8] = {low.x, low.y, low.z, low.w, high.x, high.y, high.z, high.w};
+      for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short) {
+        METAL_PRAGMA_UNROLL
+        for (ushort fragment_column = 0; fragment_column < Fragment::COL_FRAGMENTS; ++fragment_column) {
+          reinterpret_cast<thread uint*>(&tile.fragment_at(fragment_row, fragment_column))[row_slot] =
+              words[(fragment_row * Ops::THREAD_ELEMENT_ROWS + row_slot) * Fragment::COL_FRAGMENTS + fragment_column];
+        }
+      });
+      return tile;
+    }
     return load_int8_tile<Fragment, ALIGNED, CODES_GROUPED_BY_NIBBLE>(
         address,
         row_stride,
@@ -100,7 +116,7 @@ struct Int8Cursor {
     );
   }
 
-  METAL_FUNC void advance() thread { address += BLOCK_K; }
+  METAL_FUNC void advance() thread { address += chunk_stride; }
 
   METAL_FUNC void begin_k_group(const uint) thread {}
 };
@@ -129,8 +145,14 @@ struct W4Cursor {
   bool signed_codes;
   const device uint8_t* zero_points;
   uint zero_point_group_stride_bytes;
+  bool tiled;
+  uint chunk_stride;
 
   METAL_FUNC PackedChunk fetch(const uint chunk_index) const thread {
+    if (tiled) {
+      const uint4 words = *reinterpret_cast<const device uint4*>(current + chunk_index * chunk_stride);
+      return {{words.x, words.y, words.z, words.w}};
+    }
     // Padding decodes to zero after the optional sign flip and code-origin adjustment.
     const uint padding_word = (Operand::CODE_ORIGIN == 0) == signed_codes ? W4_SIGN_MASK : 0u;
     const device uint8_t* base =
@@ -177,7 +199,7 @@ struct W4Cursor {
 
   METAL_FUNC Fragment load(const uint) const thread { return decode(fetch(0)); }
 
-  METAL_FUNC void advance() thread { current += CHUNK_BYTES; }
+  METAL_FUNC void advance() thread { current += chunk_stride; }
 
   METAL_FUNC void begin_k_group(const uint k_offset) thread {
     if constexpr (HAS_ZERO_POINTS) {
@@ -201,7 +223,9 @@ static METAL_FUNC auto make_left_cursor(
       origin,
       int(params->leading_dimension_a),
       tile.simdgroup_limit_m,
-      ushort(thread_context.simd_lane_id)
+      ushort(thread_context.simd_lane_id),
+      false,
+      uint(Int8Cursor<Fragment, ALIGNED, LeftOperand::GROUPED_BY_NIBBLE>::BLOCK_K)
   };
 }
 
@@ -219,6 +243,16 @@ static METAL_FUNC auto make_right_cursor(
   const device uint8_t* current =
       source.codes + size_t(tile.block_col + tile.tile_col_offset) * size_t(row_stride_bytes) +
       size_t(tile.k_offset) * size_t(get_bytes_per_pack<Operand::BITS>()) / size_t(get_pack_factor<Operand::BITS>());
+  static_assert(Core::SIMDGROUP_BLOCK_N == 2 * Ops::FRAGMENT_ROWS, "tiled codes hold 32-row blocks");
+  const uint tiled_lane_bytes = Operand::BITS == 4 ? 16 : 32;
+  const uint tiled_chunk_bytes = METAL_SIMD_SIZE * tiled_lane_bytes;
+  if (source.tiled_codes) {
+    const uint chunk_count = uint(params->K) / uint(Core::SIMDGROUP_BLOCK_K);
+    const uint row_block = uint(tile.block_col + tile.tile_col_offset) / uint(Core::SIMDGROUP_BLOCK_N);
+    current = source.codes +
+              (size_t(row_block) * chunk_count + tile.k_offset / uint(Core::SIMDGROUP_BLOCK_K)) * tiled_chunk_bytes +
+              thread_context.simd_lane_id * tiled_lane_bytes;
+  }
 
   if constexpr (Operand::BITS == 4) {
     static_assert(Core::TILES_K == get_pack_factor<Operand::BITS>(), "W4 requires two K fragments");
@@ -236,7 +270,9 @@ static METAL_FUNC auto make_right_cursor(
         Ops::get_position(thread_context.simd_lane_id),
         source.signed_codes,
         zero_points,
-        zero_point_group_stride_bytes
+        zero_point_group_stride_bytes,
+        source.tiled_codes,
+        source.tiled_codes ? tiled_chunk_bytes : Cursor::CHUNK_BYTES
     };
   } else {
     static_assert(Operand::BITS == 8, "integer tile cursors support 4-bit and 8-bit codes");
@@ -245,7 +281,9 @@ static METAL_FUNC auto make_right_cursor(
         origin_int8,
         row_stride_bytes,
         tile.simdgroup_limit_n,
-        ushort(thread_context.simd_lane_id)
+        ushort(thread_context.simd_lane_id),
+        source.tiled_codes,
+        source.tiled_codes ? tiled_chunk_bytes : uint(Int8Cursor<Fragment, ALIGNED, false>::BLOCK_K)
     };
   }
 }

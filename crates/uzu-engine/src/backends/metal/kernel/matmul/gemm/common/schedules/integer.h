@@ -365,8 +365,17 @@ struct IntegerSchedule {
       }
       GroupProducts<Core> group_product;
       if constexpr (multiplies_device_groups<Core, ALIGNED_M, ALIGNED_N>()) {
-        group_product =
-            multiply_device_group<Core>(left_storage, right_storage, params, tile, tile.k_offset + right_group_offset);
+        if (right_storage.tiled_codes) {
+          group_product = multiply_k_group<Core>(left_codes, right_codes, packed_right_chunks);
+        } else {
+          group_product = multiply_device_group<Core>(
+              left_storage,
+              right_storage,
+              params,
+              tile,
+              tile.k_offset + right_group_offset
+          );
+        }
       } else {
         group_product = multiply_k_group<Core>(left_codes, right_codes, packed_right_chunks);
       }

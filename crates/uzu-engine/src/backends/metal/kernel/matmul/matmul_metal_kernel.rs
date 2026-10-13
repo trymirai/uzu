@@ -11,7 +11,7 @@ use super::{
 use crate::{
     backends::{
         common::{
-            BufferMut, BufferRef, CommandBufferEncoding,
+            Backend, BufferMut, BufferRef, CommandBufferEncoding,
             gpu_types::gemm::GemmTiling,
             kernel::{
                 ActivationQuantization,
@@ -89,7 +89,7 @@ impl MatmulMetalKernel {
             && input_data_type == DataType::BF16
             && output_data_type == DataType::BF16;
         let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, apple_gpu_family);
-        if shape.b_is_trellis {
+        if shape.b_is_trellis || shape.tiled_codes {
             return MatmulDispatch::Gemm(problem.select_plan());
         }
         if let Some(route) = qmv::route(device_name, apple_gpu_family, supports_mxu, shape, all_bf16) {
@@ -201,8 +201,13 @@ impl MatmulKernel for MatmulMetalKernel {
         bf16_shape: &MatmulShape,
         context: &MetalContext,
     ) -> ActivationFormat {
+        if bf16_shape.tiled_codes {
+            return ActivationFormat::Int8;
+        }
         if bf16_shape.params_layout != Some(QuantParamsLayout::GroupOutput)
             || !supports_integer_right_operand(bf16_shape)
+            || !bf16_shape.n.is_multiple_of(32)
+            || !bf16_shape.k.is_multiple_of(32)
             || matches!(self.select_dispatch(bf16_shape, context), MatmulDispatch::Gemv(_))
         {
             return ActivationFormat::Bf16;
@@ -216,6 +221,15 @@ impl MatmulKernel for MatmulMetalKernel {
             MatmulDispatch::Gemm(plan) if plan.engine == gemm::GemmEngine::Mxu => ActivationFormat::Int8,
             _ => ActivationFormat::Bf16,
         }
+    }
+
+    fn tile_codes(
+        &self,
+        a8_shape: &MatmulShape,
+        codes: &mut <Metal as Backend>::GlobalBuffer,
+        context: &MetalContext,
+    ) -> Result<(), MetalError> {
+        GemmKernel::tile_codes(codes, a8_shape.n, a8_shape.k, a8_shape.b_bits.expect("quantized weights"), context)
     }
 
     fn encode(

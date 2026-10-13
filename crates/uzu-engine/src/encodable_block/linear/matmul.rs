@@ -118,6 +118,15 @@ impl<B: Backend> LinearMatmul<B> {
         self.matrix.try_prepare_a8_storage().then_some(quantization)
     }
 
+    pub fn tile_a8_codes(
+        &mut self,
+        context: &B::Context,
+    ) -> Result<(), B::Error> {
+        let shape = self.matmul_shape(1, false);
+        let kernel = self.kernel.lock();
+        self.matrix.tile_codes(|codes| kernel.tile_codes(&shape, codes, context))
+    }
+
     pub(super) fn encode_with_a(
         &self,
         a: MatmulA<impl BufferRef<Backend = B>>,
@@ -163,6 +172,7 @@ impl<B: Backend> LinearMatmul<B> {
             b_bits: b.bits_per_b(),
             b_group_size: b.group_size(),
             signed_codes: b.signed_codes(),
+            tiled_codes: b.tiled_codes(),
             a_full_precision,
             gathered: false,
             params_layout: b.quant_params_layout(),

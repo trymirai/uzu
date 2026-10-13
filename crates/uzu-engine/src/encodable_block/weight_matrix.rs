@@ -86,6 +86,7 @@ struct Quantized<B: Backend> {
     params: QuantParams,
     info: QuantizationInfo,
     signed_codes: bool,
+    tiled_codes: bool,
 }
 
 pub struct WeightMatrix<B: Backend> {
@@ -164,6 +165,7 @@ impl<B: Backend> WeightMatrix<B> {
                 params,
                 info,
                 signed_codes: false,
+                tiled_codes: false,
             }),
         })
     }
@@ -205,7 +207,20 @@ impl<B: Backend> WeightMatrix<B> {
             mode,
             group_size,
             signed_codes,
+            tiled_codes: quantized.tiled_codes,
         })
+    }
+
+    pub fn tile_codes<E>(
+        &mut self,
+        tile: impl FnOnce(&mut B::GlobalBuffer) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let Some(quantized) = self.quantized.as_mut().filter(|quantized| !quantized.tiled_codes) else {
+            return Ok(());
+        };
+        tile(&mut self.values)?;
+        quantized.tiled_codes = true;
+        Ok(())
     }
 
     pub fn try_prepare_a8_storage(&mut self) -> bool {

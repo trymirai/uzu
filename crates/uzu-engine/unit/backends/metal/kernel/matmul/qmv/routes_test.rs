@@ -57,6 +57,7 @@ fn problem(
         b_bits: Some(bits),
         b_group_size: Some(group),
         signed_codes: false,
+        tiled_codes: false,
         a_full_precision: true,
         gathered: false,
         params_layout: Some(QuantParamsLayout::OutputGroup),

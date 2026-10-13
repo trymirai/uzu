@@ -533,30 +533,45 @@ fn mxu_quant_parity_bf16(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::sym_w8_gs64(16u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
-#[case::bias_w4_gs32(16u32, 32u32, 4u32, QuantizationMethod::ScaleBias)]
-#[case::zp_w4_gs32(16u32, 32u32, 4u32, QuantizationMethod::ScaleZeroPoint)]
-#[case::m1_bias_w4_gs64(1u32, 64u32, 4u32, QuantizationMethod::ScaleBias)]
+#[case::sym_w8_gs64(16u32, 256u32, 128u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
+#[case::bias_w4_gs32(16u32, 256u32, 128u32, 32u32, 4u32, QuantizationMethod::ScaleBias)]
+#[case::zp_w4_gs32(16u32, 256u32, 128u32, 32u32, 4u32, QuantizationMethod::ScaleZeroPoint)]
+#[case::m1_bias_w4_gs64(1u32, 256u32, 128u32, 64u32, 4u32, QuantizationMethod::ScaleBias)]
+#[case::w8_m1(1u32, 256u32, 96u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
+#[case::w8_m16_split_k(16u32, 4096u32, 1024u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
+#[case::w8_m64(64u32, 512u32, 256u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
+#[case::w4_m1(1u32, 256u32, 96u32, 64u32, 4u32, QuantizationMethod::ScaleZeroPoint)]
+#[case::w4_m16_split_k(16u32, 4096u32, 1024u32, 64u32, 4u32, QuantizationMethod::ScaleZeroPoint)]
+#[case::w4_m24(24u32, 512u32, 96u32, 64u32, 4u32, QuantizationMethod::ScaleZeroPoint)]
+#[case::w4_m128_bias(128u32, 512u32, 256u32, 64u32, 4u32, QuantizationMethod::ScaleBias)]
+#[case::w4_m16_k17408(16u32, 17408u32, 64u32, 64u32, 4u32, QuantizationMethod::ScaleZeroPoint)]
+#[case::w8_m16_k17408(16u32, 17408u32, 64u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
 fn a8w_mxu_parity_bf16(
     #[case] m: u32,
+    #[case] k: u32,
+    #[case] n: u32,
     #[case] weight_gs: u32,
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
+    #[values(false, true)] tiled_codes: bool,
 ) {
     let context = MetalContext::new().expect("Metal context");
     if !context.supports_mxu {
         return;
     }
-    let (k, n) = (256u32, 128u32);
     let (input, reference_input) = QuantInput::<bf16>::new(m, k, n, weight_gs, bits, method, 0)
         .with_prepared_a_and_reference(
             ACTIVATION_SCALE_GROUP_SIZE,
             (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
         );
-    let actual = run_quant_metal(&context, &input.with_group_output(), Some(GemmEngine::Mxu));
+    let input = QuantInput {
+        tiled_codes,
+        ..input.with_group_output()
+    };
+    let actual = run_quant_metal(&context, &input, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&reference_input);
     assert_parity::<bf16>(
-        &format!("A8W{bits} MXU m={m} weight_gs={weight_gs} method={method:?}"),
+        &format!("A8W{bits} MXU m={m} k={k} n={n} weight_gs={weight_gs} method={method:?} tiled={tiled_codes}"),
         &reference,
         &actual,
         0.08,

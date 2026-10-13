@@ -18,7 +18,7 @@ use crate::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
                     Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
-                    QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection,
+                    MatmulShape, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection,
                 },
             },
         },
@@ -51,6 +51,7 @@ pub struct QuantInput<T: ArrayElement + Float> {
     pub mode: QuantizationMode,
     pub params_layout: QuantParamsLayout,
     pub signed_codes: bool,
+    pub tiled_codes: bool,
     pub prepared_a: Option<PreparedInt8A>,
 }
 
@@ -178,6 +179,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             mode: mode_for_bits(bits),
             params_layout: QuantParamsLayout::OutputGroup,
             signed_codes: false,
+            tiled_codes: false,
             prepared_a: None,
         }
     }
@@ -405,6 +407,7 @@ fn quant_b_variant<TB: BufferRef, T: ArrayElement + Float>(
         mode: input.mode,
         group_size: input.group_size,
         signed_codes: input.signed_codes,
+        tiled_codes: input.tiled_codes,
     })
 }
 
@@ -483,6 +486,10 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
         T::data_type(),
     )
     .expect("MatmulMetalKernel");
+    if input.tiled_codes {
+        let shape = MatmulShape::from_arguments(&quant_arguments(&mut buffers, input));
+        matmul.tile_codes(&shape, &mut buffers.w, context).expect("tile codes");
+    }
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let args = quant_arguments(&mut buffers, input);
     if let Some(engine) = dispatch {
