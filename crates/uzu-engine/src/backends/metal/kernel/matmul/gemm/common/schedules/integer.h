@@ -186,18 +186,6 @@ struct IntegerSchedule {
            ALIGNED_N;
   }
 
-  template <typename RightCodes, int K_GROUP_COUNT, int CHUNKS_PER_K_GROUP>
-  static METAL_FUNC void fetch_k_groups(
-      const thread RightCodes& right_codes,
-      thread typename RightCodes::PackedChunk (&packed_right_chunks)[K_GROUP_COUNT][CHUNKS_PER_K_GROUP]
-  ) {
-    for_each_static_index<K_GROUP_COUNT>([&](const ushort k_group) {
-      for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
-        packed_right_chunks[k_group][chunk] = right_codes.fetch(uint(k_group * CHUNKS_PER_K_GROUP + chunk));
-      });
-    });
-  }
-
   template <typename Core>
   static METAL_FUNC GroupProducts<Core> multiply_device_group(
       const typename Core::LeftStorage left,
@@ -356,14 +344,15 @@ struct IntegerSchedule {
     const int right_group_count = int(params->aligned_inner_iterations);
     constexpr int CHUNKS_PER_K_GROUP = chunks_per_k_group<Core>();
     constexpr bool PREFETCH_INT4_CHUNKS = prefetches_int4_chunks<Core>();
-    constexpr bool IS_ALIGNED_M_INT4_TILE16X32 =
-        PREFETCH_INT4_CHUNKS && ALIGNED_M && Core::THREADGROUP_BLOCK_M == 16 && Core::THREADGROUP_BLOCK_N == 32;
-    constexpr int K_GROUPS_PER_FETCH = IS_ALIGNED_M_INT4_TILE16X32 ? 4 : 1;
-    constexpr int MIN_K_GROUPS_PER_THREADGROUP_FOR_BATCHED_FETCH = 16;
-    using PackedRightChunk = typename decltype(right_codes)::PackedChunk;
 
-    auto multiply_group = [&](const int right_group_index,
-                              const thread PackedRightChunk(&packed_right_chunks)[CHUNKS_PER_K_GROUP]) {
+    METAL_PRAGMA_NO_UNROLL
+    for (int right_group_index = 0; right_group_index < right_group_count; ++right_group_index) {
+      typename decltype(right_codes)::PackedChunk packed_right_chunks[CHUNKS_PER_K_GROUP];
+      if constexpr (PREFETCH_INT4_CHUNKS) {
+        for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
+          packed_right_chunks[chunk] = right_codes.fetch(uint(chunk));
+        });
+      }
       const uint right_group_offset = uint(right_group_index) * RIGHT_GROUP_SIZE;
       left_codes.begin_k_group(right_group_offset);
       right_codes.begin_k_group(right_group_offset);
@@ -385,29 +374,6 @@ struct IntegerSchedule {
         load_metadata();
       }
       accumulate_group<Core, ALIGNED_M, ALIGNED_N>(accumulator, group_product, left_metadata, right_metadata);
-    };
-
-    int right_group_index = 0;
-    if constexpr (K_GROUPS_PER_FETCH > 1) {
-      const int batched_fetch_right_group_limit =
-          right_group_count >= MIN_K_GROUPS_PER_THREADGROUP_FOR_BATCHED_FETCH ? right_group_count : 0;
-      METAL_PRAGMA_NO_UNROLL
-      for (; right_group_index + K_GROUPS_PER_FETCH <= batched_fetch_right_group_limit;
-           right_group_index += K_GROUPS_PER_FETCH) {
-        PackedRightChunk packed_right_chunks[K_GROUPS_PER_FETCH][CHUNKS_PER_K_GROUP];
-        fetch_k_groups(right_codes, packed_right_chunks);
-        for_each_static_index<K_GROUPS_PER_FETCH>([&](const ushort k_group) {
-          multiply_group(right_group_index + int(k_group), packed_right_chunks[k_group]);
-        });
-      }
-    }
-    METAL_PRAGMA_NO_UNROLL
-    for (; right_group_index < right_group_count; ++right_group_index) {
-      PackedRightChunk packed_right_chunks[1][CHUNKS_PER_K_GROUP];
-      if constexpr (PREFETCH_INT4_CHUNKS) {
-        fetch_k_groups(right_codes, packed_right_chunks);
-      }
-      multiply_group(right_group_index, packed_right_chunks[0]);
     }
 
     return accumulator;

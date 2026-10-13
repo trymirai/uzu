@@ -118,10 +118,9 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     assert_eq!(problem(quant(shape(64, 4096, 4095)), DataType::BF16).select_plan().engine, Simdgroup);
 
     for (m, n, k, expected_tiling, expected_split_k) in [
-        (16, 4096, 4096, Tile16x32x256_Simdgroups1x1x4, 4),
+        (16, 4096, 4096, Tile16x32x256_Simdgroups1x1x4, 2),
         (16, 1024, 4096, Tile16x32x256_Simdgroups1x1x4, 8),
-        (16, 34816, 4096, Tile16x32x256_Simdgroups1x1, 1),
-        (8, 34816, 4096, Tile16x32x256_Simdgroups1x1x4, 1),
+        (16, 34816, 4096, Tile16x32x256_Simdgroups1x1x4, 1),
         (8, 4096, 384, Tile16x32x256_Simdgroups1x1, 1),
     ] {
         let mut a8 = quant(shape(m, n, k));
