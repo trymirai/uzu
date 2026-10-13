@@ -144,7 +144,7 @@ fn test_attention_prepare_int8() {
     const DIM: usize = 256;
     let layout = Int8KVLayout {
         head_dim: DIM as u32,
-        kv_heads: 1,
+        num_kv_heads: 1,
         padded_capacity: 64,
     };
     // One token's query, key and value rows into key slot 33.

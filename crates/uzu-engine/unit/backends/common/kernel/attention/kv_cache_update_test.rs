@@ -6,14 +6,13 @@ use ndarray::{Array, Array3};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
-#[cfg(backend = "metal")]
-use super::kv_layout::Int8KVLayout;
 use crate::{
     array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::Copy, kernel::KVCacheUpdateKernel,
+            gpu_types::Copy,
+            kernel::{KVCacheUpdateInt8Kernel, KVCacheUpdateKernel, kv_layout::Int8KVLayout},
         },
         cpu::Cpu,
     },
@@ -23,10 +22,7 @@ use crate::{
     },
 };
 #[cfg(backend = "metal")]
-use crate::{
-    backends::metal::{KVCacheUpdateInt8MetalKernel, Metal},
-    data_type::DataType,
-};
+use crate::{backends::metal::Metal, data_type::DataType};
 
 struct Input<T: ArrayElement + Float> {
     keys: Box<[T]>,
@@ -382,14 +378,15 @@ fn test_random_pattern_f32() {
     assert_eq!(value_result, expected_values);
 }
 
-#[cfg(backend = "metal")]
 #[uzu_test]
 fn test_int8_copy() {
-    let layout = Int8KVLayout {
-        head_dim: 256,
-        kv_heads: 2,
-        padded_capacity: 64,
-    };
+    test_int8_copy_for::<Cpu>();
+    #[cfg(backend = "metal")]
+    test_int8_copy_for::<Metal>();
+}
+
+fn test_int8_copy_for<B: Backend>() {
+    let layout = Int8KVLayout::new(256, 2, 64);
     let k_codes: Vec<i8> = (0..layout.code_bytes()).map(|i| ((i * 37) ^ (i >> 8)) as i8).collect();
     let v_codes: Vec<u8> = (0..layout.code_bytes()).map(|i| ((i * 19) ^ (i >> 7)) as u8).collect();
     let k_scales: Vec<bf16> = (0..layout.scale_count()).map(|i| bf16::from_f32(i as f32 + 1.0)).collect();
@@ -398,12 +395,13 @@ fn test_int8_copy() {
         source: 40,
         destination: 5,
     }];
-    let context = <Metal as Backend>::Context::new().unwrap();
-    let mut keys = create_buffer_with_data::<Metal, i8>(&context, &k_codes);
-    let mut values = create_buffer_with_data::<Metal, u8>(&context, &v_codes);
-    let mut key_scales = create_buffer_with_data::<Metal, bf16>(&context, &k_scales);
-    let mut value_scales = create_buffer_with_data::<Metal, bf16>(&context, &v_scales);
-    let kernel = KVCacheUpdateInt8MetalKernel::new(&context, layout.head_dim, layout.kv_heads).unwrap();
+    let context = B::Context::new().unwrap();
+    let mut keys = create_buffer_with_data::<B, i8>(&context, &k_codes);
+    let mut values = create_buffer_with_data::<B, u8>(&context, &v_codes);
+    let mut key_scales = create_buffer_with_data::<B, bf16>(&context, &k_scales);
+    let mut value_scales = create_buffer_with_data::<B, bf16>(&context, &v_scales);
+    let kernel =
+        <B::Kernels as Kernels>::KVCacheUpdateInt8Kernel::new(&context, layout.head_dim, layout.num_kv_heads).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &mut keys,
@@ -416,12 +414,12 @@ fn test_int8_copy() {
         &mut command_buffer,
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-    let (keys, values) = (buffer_to_vec::<Metal, i8>(&keys), buffer_to_vec::<Metal, u8>(&values));
+    let (keys, values) = (buffer_to_vec::<B, i8>(&keys), buffer_to_vec::<B, u8>(&values));
     for channel in 0..layout.head_dim {
         assert_eq!(keys[layout.k_code_index(5, 1, channel)], k_codes[layout.k_code_index(40, 1, channel)]);
         assert_eq!(values[layout.v_code_index(5, 1, channel)], v_codes[layout.v_code_index(40, 1, channel)]);
     }
     let (from, to) = ((layout.padded_capacity + 40) as usize, (layout.padded_capacity + 5) as usize);
-    assert_eq!(buffer_to_vec::<Metal, bf16>(&key_scales)[to], k_scales[from]);
-    assert_eq!(buffer_to_vec::<Metal, bf16>(&value_scales)[to], v_scales[from]);
+    assert_eq!(buffer_to_vec::<B, bf16>(&key_scales)[to], k_scales[from]);
+    assert_eq!(buffer_to_vec::<B, bf16>(&value_scales)[to], v_scales[from]);
 }

@@ -25,7 +25,7 @@ PUBLIC KERNEL(KVCacheUpdate) (
   }
 }
 
-KERNEL(KVCacheUpdateInt8)(
+PUBLIC KERNEL(KVCacheUpdateInt8)(
     device int8_t* in_place_k_codes,
     device uchar* in_place_v_codes,
     device bfloat* in_place_k_scales,
