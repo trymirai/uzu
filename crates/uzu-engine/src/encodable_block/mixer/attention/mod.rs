@@ -107,22 +107,18 @@ impl<B: Backend> Attention<B> {
         // TODO: Fix lalamo config, those two must be None if kv sharing.
         let key_norm_config = (!is_kv_sharing).then(|| config.key_norm_config.clone()).flatten();
         let value_norm_config = (!is_kv_sharing).then(|| config.value_norm_config()).flatten();
-        let qkv_norm = (query_norm_config.is_some() || key_norm_config.is_some() || value_norm_config.is_some())
-            .then(|| {
-                QKVNorm::new(
-                    config.num_heads,
-                    num_kv_heads.unwrap_or(0), // TODO: should take option
-                    projection_dim,
-                    config.head_dim,
-                    data_type,
-                    query_norm_config,
-                    key_norm_config,
-                    value_norm_config,
-                    parameter_tree,
-                    context,
-                )
-            })
-            .transpose()?;
+        let qkv_norm = QKVNorm::new(
+            num_q_heads,
+            num_kv_heads,
+            projection_dim,
+            head_dim,
+            data_type,
+            query_norm_config,
+            key_norm_config,
+            value_norm_config,
+            parameter_tree,
+            context,
+        )?;
 
         let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
             context,
