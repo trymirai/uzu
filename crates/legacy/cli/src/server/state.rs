@@ -1,5 +1,5 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -13,7 +13,6 @@ use uzu::{
         session::chat::ChatConfig,
     },
 };
-use walkdir::WalkDir;
 
 use crate::common::thinking::ThinkingSupport;
 
@@ -72,31 +71,58 @@ pub fn footprint_bytes(model: &Model) -> u64 {
 /// Sum of the sizes of every file under `path` (the model's on-disk weight
 /// files), deduplicated by resolved path so a weight that appears more than
 /// once (a symlink next to its target) counts its physical size only once —
-/// which is what unified memory actually maps. File symlinks resolve to
-/// their target, which may lie outside the directory (the engine opens
-/// weights with `File::open`, which follows links; symlinks are a common way
-/// to deduplicate weights). Directory symlinks are *not* followed: model
-/// layouts are plain trees, and never descending through links keeps the
-/// walk bounded even if a model directory contains a cycle. Broken or
-/// unreadable entries count as 0; the dynamic free-memory check in
+/// which is what unified memory actually maps. Symlinks are followed the way
+/// the engine does (`File::open` follows links; model layouts keep optional
+/// subdirectories like `speculator/` behind links to share them): file links
+/// count their target, directory links are descended into, guarded by a set
+/// of canonical directory paths so a link cycle can't loop the walk forever.
+/// Broken or unreadable entries count as 0; the dynamic free-memory check in
 /// `memory_guard` still bounds what actually gets allocated.
 fn filesystem_bytes(path: &str) -> u64 {
     let root = Path::new(path);
     if !root.is_dir() {
         return 0;
     }
-    let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
-    WalkDir::new(root)
-        .into_iter()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_file() || entry.file_type().is_symlink())
-        .filter_map(|entry| {
-            let resolved = std::fs::canonicalize(entry.path()).ok()?;
-            let metadata = std::fs::metadata(resolved.clone()).ok()?;
-            metadata.is_file().then_some((resolved, metadata.len()))
-        })
-        .filter_map(|(resolved, len)| seen.insert(resolved).then_some(len))
-        .fold(0_u64, u64::saturating_add)
+    let mut total = 0_u64;
+    let mut seen_files: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut seen_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let root_key = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    if !seen_dirs.insert(root_key) {
+        return 0;
+    }
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let full = entry.path();
+            let link_type = match entry.file_type() {
+                Ok(link_type) => link_type,
+                Err(_) => continue,
+            };
+            // A symlink's own type is reported; stat through it to see the
+            // target (this is what `File::open` does for weights).
+            let target = std::fs::metadata(&full).ok();
+            if link_type.is_dir() || (link_type.is_symlink() && target.as_ref().is_some_and(|target| target.is_dir())) {
+                // Descend (real or symlinked directory); the canonical path
+                // makes a link back to an ancestor a no-op.
+                let key = std::fs::canonicalize(&full).unwrap_or_else(|_| full.clone());
+                if seen_dirs.insert(key) {
+                    stack.push(full);
+                }
+            } else if let Some(target) = target.filter(|target| target.is_file()) {
+                // A regular file, or a link to one: count the physical file
+                // once, no matter how many links point at it.
+                let key = std::fs::canonicalize(&full).unwrap_or_else(|_| full.clone());
+                if seen_files.insert(key) {
+                    total = total.saturating_add(target.len());
+                }
+            }
+            // Broken or unreadable entries contribute nothing.
+        }
+    }
+    total
 }
 
 /// Memory in use right now, as reported by the OS.
@@ -224,7 +250,13 @@ impl SessionManager {
                 requested: identifier.to_string(),
                 available: self.model_ids(),
             })?;
-        self.slots.iter().find(|slot| slot.model.identifier == model.identifier).cloned().ok_or_else(|| {
+        // Local checkpoints are identified by directory name alone, so
+        // `resolve` can hand back a model that shares a name with a
+        // configured slot but lives at a different path (or is a registry
+        // model that shares a name with a local one). Only the configured
+        // source may be served; anything else is an unknown model, never a
+        // silent substitution.
+        self.slots.iter().find(|slot| matches_sources(&slot.model, &model)).cloned().ok_or_else(|| {
             AcquireError::UnknownModel {
                 requested: identifier.to_string(),
                 available: self.model_ids(),
@@ -341,6 +373,46 @@ impl Drop for TurnUsageGuard<'_> {
     }
 }
 
+/// Whether two models describe the same source. Local (filesystem) models
+/// are identified by directory name alone, so for those the on-disk path is
+/// the source of truth and two checkpoints that merely share a name do NOT
+/// match; everything else falls back to the (unique) registry identifier.
+/// Used to ensure `resolve` only serves a *configured* slot, never a
+/// same-named model that lives elsewhere.
+fn matches_sources(
+    a: &Model,
+    b: &Model,
+) -> bool {
+    match (&a.accessibility, &b.accessibility) {
+        (
+            ModelAccessibility::OnDevice {
+                source: ModelSource::Filesystem {
+                    path: a,
+                },
+            },
+            ModelAccessibility::OnDevice {
+                source: ModelSource::Filesystem {
+                    path: b,
+                },
+            },
+        ) => paths_equal(a, b),
+        _ => a.identifier == b.identifier,
+    }
+}
+
+/// Path comparison for filesystem models, tolerant of how a client spells the
+/// same location (symlinks like `/tmp` vs `/private/tmp`, `.`/`..` segments).
+fn paths_equal(
+    a: &str,
+    b: &str,
+) -> bool {
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    let resolved = |path: &str| std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    resolved(a) == resolved(b)
+}
+
 /// Downloads (if missing) and loads `slot` into memory, installing the
 /// session into `session_slot`. Called by `load_into` after the OOM guard
 /// passes, so callers are guaranteed it fits.
@@ -405,6 +477,38 @@ mod tests {
         std::os::unix::fs::symlink(root.join("does-not-exist"), weights_dir.join("broken")).unwrap();
 
         assert_eq!(filesystem_bytes(root.to_str().unwrap()), 4096);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn filesystem_bytes_counts_symlinked_speculator_dir() {
+        let root = std::env::temp_dir().join(format!("uzu-fs-speculator-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("model.safetensors"), vec![0u8; 1024]).unwrap();
+        // The optional speculator keeps its weights behind a symlinked
+        // directory; the walk must descend into it.
+        let speculator = root.join("real_speculator");
+        std::fs::create_dir_all(&speculator).unwrap();
+        std::fs::write(speculator.join("model.safetensors"), vec![0u8; 2048]).unwrap();
+        std::os::unix::fs::symlink(&speculator, root.join("speculator")).unwrap();
+
+        assert_eq!(filesystem_bytes(root.to_str().unwrap()), 1024 + 2048);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn filesystem_bytes_terminates_on_link_cycle() {
+        let root = std::env::temp_dir().join(format!("uzu-fs-cycle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("w.bin"), vec![0u8; 512]).unwrap();
+        // A directory link back to the root must not loop the walk.
+        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+
+        assert_eq!(filesystem_bytes(root.to_str().unwrap()), 512);
         let _ = std::fs::remove_dir_all(&root);
     }
 

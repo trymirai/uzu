@@ -52,7 +52,6 @@ unicode-segmentation.workspace = true
 unicode-width.workspace = true
 uuid.workspace = true
 uzu = { workspace = true, default-features = false }
-walkdir.workspace = true
 
 [lints]
 workspace = true

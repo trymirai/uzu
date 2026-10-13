@@ -252,8 +252,16 @@ pub(crate) fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
             if let Some(identifier) = &message.tool_call_id {
                 let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
                 chat_message = chat_message.with_block(result);
-            } else if let Some(content) = message.content.as_ref().filter(|content| !content.is_empty()) {
-                chat_message = chat_message.with_text(content.clone());
+            } else if let Some(content) = message.content.as_ref() {
+                // An empty string alongside tool calls is no text at all, which
+                // is also how the session stores a reply that produced none.
+                // Every other message keeps its text block even when empty:
+                // the chat template requires a text block for a user turn, and
+                // an intentionally empty turn is valid input.
+                let has_tool_calls = message.tool_calls.as_deref().is_some_and(|tool_calls| !tool_calls.is_empty());
+                if !content.is_empty() || !has_tool_calls {
+                    chat_message = chat_message.with_text(content.clone());
+                }
             }
             for tool_call in message.tool_calls.iter().flatten() {
                 chat_message = chat_message.with_tool_call(to_tool_call(tool_call));
