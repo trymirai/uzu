@@ -1,9 +1,3 @@
-//! Encodable blocks follow the argument order used by [`mixer`]:
-//! - Constructors: dimensions, data types, configuration and other construction inputs,
-//!   parameter trees, then the backend context.
-//! - Encode methods: operands, dimensions and operation options, explicit state,
-//!   then the command buffer. Method receivers always come first.
-
 pub mod batch_topology;
 pub mod classifier;
 pub mod convolution;
