@@ -16,7 +16,7 @@ use crate::{
 
 pub(super) struct LinearProjection<B: Backend> {
     pub(super) lin: Box<dyn Linear<B>>,
-    pub(super) norm: Option<QKVNorm<B>>,
+    pub(super) norm: QKVNorm<B>,
 }
 
 impl<B: Backend> LinearProjection<B> {
@@ -27,9 +27,7 @@ impl<B: Backend> LinearProjection<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
         let mut projected = self.lin.encode(hidden, batch_dim, command_buffer)?;
-        if let Some(norm) = &self.norm {
-            norm.encode(&mut projected, batch_dim, command_buffer)?;
-        }
+        self.norm.encode(&mut projected, batch_dim, command_buffer);
         Ok(projected)
     }
 }
@@ -121,9 +119,7 @@ impl<B: Backend> Attention<B> {
         state: &mut AttentionState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        if let Some(norm) = &self.projection.norm {
-            norm.encode_key_value(key_value.reborrow(), batch_dim, command_buffer)?;
-        }
+        self.projection.norm.encode_key_value(key_value.reborrow(), batch_dim, command_buffer);
         let prefix_len = state.view().prefix_len();
         self.prepare_kv_and_queries(
             key_value.as_ref(),
