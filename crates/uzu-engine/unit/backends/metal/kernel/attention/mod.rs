@@ -1,6 +1,6 @@
 #![cfg(backend = "metal")]
 
-use super::gemm;
+use super::{gemm, single_pass, two_pass};
 use crate::{array::ArrayElement, backends::common::kernel::AttentionKernelConfig};
 
 mod gemm_test;

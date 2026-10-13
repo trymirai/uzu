@@ -1,3 +1,5 @@
+use super::{gemm, single_pass, two_pass};
+
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
@@ -98,6 +100,72 @@ fn run_attention_with_kernel<B: Backend>(
     drop(pooled);
     drop(completed);
     buffer_to_vec::<B, bf16>(&output)
+}
+
+enum DirectKernel {
+    SinglePass,
+    TwoPass,
+    Gemm,
+}
+
+fn run_direct_metal(
+    context: &<Metal as Backend>::Context,
+    shape: AttentionShape,
+    sinks_data: Option<&[bf16]>,
+    route: DirectKernel,
+) -> Vec<bf16> {
+    let (head_dim, num_q_heads, num_groups, suffix_length, prefix_length, is_causal) = shape;
+    let mut config = super::default_attention_config::<bf16>(head_dim, num_q_heads, num_groups, is_causal);
+    config.has_sinks = sinks_data.is_some();
+    let (keys_data, values_data) = attention_data(shape);
+    let queries =
+        create_buffer_with_data::<Metal, bf16>(context, &fill_attention(num_q_heads * suffix_length * head_dim, 0.5));
+    let keys = create_buffer_with_data::<Metal, bf16>(context, &keys_data);
+    let values = create_buffer_with_data::<Metal, bf16>(context, &values_data);
+    let sinks = sinks_data.map(|data| create_buffer_with_data::<Metal, bf16>(context, data));
+    let arguments = AttentionArguments {
+        queries: &queries,
+        keys: &keys,
+        values: &values,
+        suffix_length: suffix_length as u32,
+        trie: None::<&<Metal as Backend>::GlobalBuffer>,
+        sinks: sinks.as_ref(),
+        cache: KVCacheView::full(prefix_length as u32),
+        gate: None::<&<Metal as Backend>::GlobalBuffer>,
+    };
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let pooled = match route {
+        DirectKernel::SinglePass => {
+            single_pass::AttentionSinglePass::new(&config).encode(arguments, &mut command_buffer)
+        },
+        DirectKernel::TwoPass => two_pass::AttentionTwoPass::new(&config).encode(arguments, &mut command_buffer),
+        DirectKernel::Gemm => gemm::AttentionGemm::new(&config).encode(arguments, &mut command_buffer),
+    }
+    .expect("direct attention");
+    let mut output = create_buffer::<Metal, bf16>(context, suffix_length * num_q_heads * head_dim);
+    command_buffer.encode_copy(&pooled, &mut output);
+    submit_command_buffer(command_buffer);
+    buffer_to_vec::<Metal, bf16>(&output)
+}
+
+#[uzu_test]
+fn direct_bf16_attention_matches_cpu() {
+    let cpu = <Cpu as Backend>::Context::new().expect("CPU context");
+    let metal = <Metal as Backend>::Context::new().expect("Metal context");
+    for (shape, route, has_sinks) in [
+        ((64, 4, 4, 8, 0, false), DirectKernel::SinglePass, false),
+        ((64, 4, 4, 64, 0, false), DirectKernel::SinglePass, true),
+        ((64, 8, 2, 8, 0, false), DirectKernel::SinglePass, false),
+        ((64, 8, 2, 256, 0, true), DirectKernel::SinglePass, false),
+        ((64, 8, 2, 256, 0, true), DirectKernel::Gemm, false),
+        ((64, 8, 8, 128, 0, false), DirectKernel::TwoPass, false),
+        ((64, 8, 2, 64, 1024, false), DirectKernel::TwoPass, false),
+    ] {
+        let sinks = has_sinks.then(|| vec![bf16::from_f32(1.0); shape.1]);
+        let expected = run_attention::<Cpu>(cpu.as_ref(), shape, None, sinks.as_deref());
+        let actual = run_direct_metal(metal.as_ref(), shape, sinks.as_deref(), route);
+        assert_eq_float::<bf16>(&expected, &actual, 1e-2, "direct BF16 attention");
+    }
 }
 
 #[uzu_test]
