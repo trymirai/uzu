@@ -10,22 +10,13 @@ use rocket::{
     response::Body,
     routes,
 };
-use tokio::{
-    io::{AsyncRead, ReadBuf},
-    sync::Mutex,
-};
-use uzu::{
-    engine::{Engine, EngineConfig},
-    types::session::chat::ChatConfig,
-};
+use tokio::io::{AsyncRead, ReadBuf};
+use uzu::engine::{Engine, EngineConfig};
 
-use crate::{
-    common::thinking::ThinkingSupport,
-    server::{
-        ServerState, handle_chat_completions, handle_models,
-        log::{self, FileLogger},
-        request_info::RequestInfo,
-    },
+use crate::server::{
+    ModelSlot, ServerState, SessionManager, handle_chat_completions, handle_models,
+    log::{self, FileLogger},
+    request_info::RequestInfo,
 };
 
 pub struct ResponseBodyLogger<'r> {
@@ -152,12 +143,14 @@ impl Fairing for RequestLoggingFairing {
 }
 
 pub async fn run_server(
-    model: String,
+    models: Vec<String>,
     host: String,
     port: u16,
     prefix_cache: bool,
     verbose_file_logs: bool,
+    idle_unload: Option<u64>,
 ) -> Result<()> {
+    let idle_timeout = idle_unload.filter(|seconds| *seconds > 0).map(Duration::from_secs);
     let file_logger = if verbose_file_logs {
         let cache_dir = std::env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
@@ -174,26 +167,34 @@ pub async fn run_server(
     let engine_config = EngineConfig::default().with_application_identifier("com.trymirai.cli".to_string());
     let engine = Engine::new(engine_config).await.context("Failed to create engine")?;
 
-    let resolved = engine.model(model.clone()).await?.with_context(|| format!("Model not found: {model}"))?;
-
     let spinner = ProgressBar::new_spinner();
     spinner.enable_steady_tick(Duration::from_millis(100));
     spinner.set_style(ProgressStyle::default_spinner().template("{spinner:.green} {msg}").unwrap());
-    spinner.set_message(format!("Preparing model: {}", resolved.identifier));
-    let downloader = engine.download(&resolved).await.context("Failed to start model download")?;
-    while let Some(update) = downloader.next().await {
-        spinner.set_message(format!("Downloading {}: {:.0}%", resolved.identifier, update.progress() * 100.0));
-    }
-    spinner.finish_with_message(format!("Loaded: {}", resolved.identifier));
 
-    let thinking_support = ThinkingSupport::for_model(&resolved);
-    let session =
-        engine.chat(resolved.clone(), ChatConfig::default()).await.context("Failed to create chat session")?;
-    let model_name = resolved.identifier.clone();
+    let mut slots = Vec::with_capacity(models.len());
+    for identifier in &models {
+        let resolved = engine
+            .model(identifier.clone())
+            .await
+            .with_context(|| format!("Failed to look up model: {identifier}"))?
+            .with_context(|| format!("Model not found: {identifier}"))?;
+
+        spinner.set_message(format!("Preparing model: {}", resolved.identifier));
+        let downloader = engine.download(&resolved).await.context("Failed to start model download")?;
+        while let Some(update) = downloader.next().await {
+            spinner.set_message(format!("Downloading {}: {:.0}%", resolved.identifier, update.progress() * 100.0));
+        }
+        slots.push(ModelSlot::new(resolved));
+    }
+    spinner.finish_with_message(format!("Ready: {} model(s)", slots.len()));
+
+    let total_memory = {
+        let mut system = sysinfo::System::new();
+        system.refresh_memory();
+        system.total_memory()
+    };
     let state = ServerState {
-        model_name: model_name.clone(),
-        session: Arc::new(Mutex::new(session)),
-        thinking_support,
+        session_manager: Arc::new(SessionManager::new(engine, slots, total_memory)),
         prefix_cache,
     };
 
@@ -210,24 +211,56 @@ pub async fn run_server(
     } else {
         "disabled"
     };
+    let model_ids = state.session_manager.model_ids();
+    let total_memory_gb = {
+        let mut system = sysinfo::System::new();
+        system.refresh_memory();
+        system.total_memory() as f64 / 1e9
+    };
     if let Some(ref file_logger) = file_logger {
         tracing::info!("🗃️  Logs will be written to file: {}", file_logger.file_path().display())
     }
     tracing::info!(
         concat!(
-            "🚀 OpenAI-compatible server v{version} for model: {model_name}\n",
+            "🚀 OpenAI-compatible server v{version}\n",
+            "🧠 Models ({count}): {models}\n",
             "🌐 Available at: http://{host}:{port}\n",
             "🗄️  Prefix cache: {prefix_cache_enabled}\n",
+            "🧹 Idle unload: {idle_unload}\n",
+            "🛡️  Memory guard: refuse loads exceeding free memory (2 GB margin) or 60% of {total:.1} GB\n",
             "📝 Endpoints:\n",
             "   POST /v1/chat/completions (or /chat/completions)\n",
             "   GET  /v1/models           (or /models)\n",
         ),
         version = Engine::version(),
-        model_name = model_name,
+        count = model_ids.len(),
+        models = model_ids.join(", "),
         host = host,
         port = port,
         prefix_cache_enabled = prefix_cache_enabled,
+        total = total_memory_gb,
+        idle_unload = match idle_timeout {
+            Some(timeout) => format!("after {}s idle", timeout.as_secs()),
+            None => "disabled (model stays resident)".to_string(),
+        },
     );
+
+    // When idle-unload is enabled, a background task drops the in-memory
+    // session (freeing the model's GPU memory) once no request has used it for
+    // the timeout. The next request transparently reloads the model.
+    if let Some(idle_timeout) = idle_timeout {
+        let manager = state.session_manager.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(idle_timeout / 4);
+            loop {
+                ticker.tick().await;
+                if manager.has_session().await && manager.is_idle(idle_timeout).await {
+                    tracing::info!("model idle for {idle_timeout:?} — unloading to free memory");
+                    manager.release().await;
+                }
+            }
+        });
+    }
 
     let rocket = rocket::custom(config)
         .manage(state)

@@ -11,4 +11,4 @@ pub mod state;
 pub use chat_completions::handle_chat_completions;
 pub use models::handle_models;
 pub use runner::run_server;
-pub use state::ServerState;
+pub use state::{AcquireError, ModelSlot, ServerState, SessionManager};

@@ -45,9 +45,12 @@ enum Commands {
     },
     ListModels,
     Server {
-        /// Model identifier, repository ID, or local model directory.
-        #[arg(long, value_name = "MODEL")]
-        model: String,
+        /// Model identifier(s), repository ID(s), or local model directory:
+        /// comma-separated, or repeat the flag. The server loads whichever
+        /// model a request asks for (default: the first), unloading any
+        /// other resident model first.
+        #[arg(long = "model", action = clap::ArgAction::Append, value_name = "MODEL", required = true)]
+        model: Vec<String>,
         #[arg(long, default_value_t = 8000)]
         port: u16,
         #[arg(long, default_value = "127.0.0.1")]
@@ -58,6 +61,11 @@ enum Commands {
         /// Reset the session on every request, disabling prefix cache reuse.
         #[arg(long = "no-prefix-cache", action = clap::ArgAction::SetTrue)]
         no_prefix_cache: bool,
+        /// Seconds of inactivity after which the model is unloaded from
+        /// memory; the next request loads it again. 0 keeps the model
+        /// resident.
+        #[arg(long, value_name = "SECONDS", default_value_t = 240)]
+        idle_unload: u64,
         /// Print verbose information into the file log
         #[arg(long)]
         verbose_file_log: bool,
@@ -88,8 +96,13 @@ async fn main() -> Result<()> {
             host,
             prefix_cache,
             no_prefix_cache,
+            idle_unload,
             verbose_file_log,
-        }) => server::run_server(model, host, port, prefix_cache || !no_prefix_cache, verbose_file_log).await?,
+        }) => {
+            let prefix = prefix_cache || !no_prefix_cache;
+            let idle = (idle_unload > 0).then_some(idle_unload);
+            server::run_server(model, host, port, prefix, verbose_file_log, idle).await?;
+        },
         Some(Commands::Storage {
             download_manager,
         }) => storage::run(download_manager).await?,

@@ -13,7 +13,7 @@ use rocket::{
     serde::json::Json,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::Instrument;
 use uzu::{
@@ -29,7 +29,7 @@ use uzu::{
 use crate::{
     common::thinking::ThinkingSupport,
     server::{
-        ServerState,
+        AcquireError, ServerState, SessionManager,
         chat_tool_calls::{
             OaiTool, OaiToolCall, ToolCallStreamer, ToolParameterTypes, backfill_tool_result_names, choose_tools,
             coerce_tool_call, insert_tools_message, oai_tool_call, parse_parameter_text, reply_tool_calls,
@@ -704,6 +704,17 @@ fn messages_have_prefix(
                         prefix_call.name == call.name
                             && tool_call_arguments_equivalent(&prefix_call.arguments.json, &call.arguments.json)
                     },
+                    // Clients commonly trim the reasoning they echo back (e.g. a
+                    // trailing newline). On a match the session keeps its stored
+                    // copy, so the cached tokens still describe what was generated.
+                    (
+                        ChatContentBlock::Reasoning {
+                            value: prefix_reasoning,
+                        },
+                        ChatContentBlock::Reasoning {
+                            value: reasoning,
+                        },
+                    ) => prefix_reasoning.trim() == reasoning.trim(),
                     _ => prefix_block == block,
                 })
         })
@@ -746,7 +757,7 @@ async fn cancel_and_drain(stream: &ChatSessionStream) {
 }
 
 async fn run_blocking(
-    session: Arc<Mutex<ChatSession>>,
+    manager: Arc<SessionManager>,
     messages: Vec<ChatMessage>,
     config: ChatReplyConfig,
     id: String,
@@ -764,12 +775,14 @@ async fn run_blocking(
     // keeps forcing that write while the request queues and generates.
     let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(3));
 
-    // Requests serialize on the single session, so a client can disconnect
-    // while still queued; generating for it would block everyone behind it.
-    let mut lock = std::pin::pin!(session.lock());
-    let session = loop {
+    // Requests serialize on the session lock, and that same lock guards the
+    // model slot: holding it for the whole turn is what stops the idle-unload
+    // watcher from unloading a model mid-generation and keeps model swaps from
+    // interleaving with in-flight turns.
+    let mut lock = std::pin::pin!(manager.session.lock());
+    let mut guard = loop {
         tokio::select! {
-            session = &mut lock => break session,
+            guard = &mut lock => break guard,
             () = sender.closed() => {
                 log.fail("client disconnected");
                 return;
@@ -779,7 +792,30 @@ async fn run_blocking(
             },
         }
     };
-    let input = match prepare_input(&session, messages, prefix_cache).await {
+
+    // Resolve which configured model this request targets, then make sure a
+    // live session for it is loaded into the shared slot (loading, or — if a
+    // different model is resident — swapping). The swap frees the old model's
+    // memory before the new one loads, and the OOM guard refuses an unsafe load.
+    let slot = match manager.resolve(&model).await {
+        Ok(slot) => slot,
+        Err(error) => {
+            log.fail(&error.to_string());
+            send_error_body(&sender, &oai_error_body(Status::InternalServerError, "backend_error", &error.to_string()));
+            return;
+        },
+    };
+    let model = slot.identifier().to_string();
+    // load_into writes the freshly loaded session straight into the shared
+    // slot, which we hold via `guard` (a MutexGuard that derefs to the slot).
+    if let Err(error) = manager.load_into(&slot, &mut guard).await {
+        log.fail(&error.to_string());
+        send_error_body(&sender, &oai_error_body(Status::InternalServerError, "backend_error", &error.to_string()));
+        return;
+    }
+    // load_into guarantees the slot now holds a live session for this model.
+    let session = guard.as_ref().expect("session loaded by load_into");
+    let input = match prepare_input(session, messages, prefix_cache).await {
         Ok(input) => input,
         Err(error) => {
             log.fail(&error.to_string());
@@ -879,7 +915,7 @@ async fn run_blocking(
 }
 
 async fn run_stream(
-    session: Arc<Mutex<ChatSession>>,
+    manager: Arc<SessionManager>,
     messages: Vec<ChatMessage>,
     config: ChatReplyConfig,
     id: String,
@@ -890,17 +926,40 @@ async fn run_stream(
     sender: mpsc::UnboundedSender<Event>,
     log: RequestLog,
 ) {
-    // Same as the blocking path: don't start generating for a client that
-    // disconnected while queued on the session.
-    let session = tokio::select! {
-        session = session.lock() => session,
+    // Same as the blocking path: hold the session lock (which also guards the
+    // model slot) for the whole turn, so the idle-unload watcher can't unload a
+    // model mid-generation and model swaps can't interleave with this turn.
+    let mut guard = tokio::select! {
+        guard = manager.session.lock() => guard,
         () = sender.closed() => {
             log.fail("client disconnected");
             return;
         },
     };
+
+    // Resolve the configured model and make sure a live session for it is in
+    // the shared slot (loading, or swapping away from a different model first).
+    let slot = match manager.resolve(&model).await {
+        Ok(slot) => slot,
+        Err(error) => {
+            log.fail(&error.to_string());
+            let body = oai_error_body(Status::InternalServerError, "backend_error", &error.to_string());
+            let _ = sender.send(Event::data(serde_json::to_string(&body).unwrap_or_default()));
+            let _ = sender.send(Event::data("[DONE]"));
+            return;
+        },
+    };
+    let model = slot.identifier().to_string();
+    if let Err(error) = manager.load_into(&slot, &mut guard).await {
+        log.fail(&error.to_string());
+        let body = oai_error_body(Status::InternalServerError, "backend_error", &error.to_string());
+        let _ = sender.send(Event::data(serde_json::to_string(&body).unwrap_or_default()));
+        let _ = sender.send(Event::data("[DONE]"));
+        return;
+    }
+    let session = guard.as_ref().expect("session loaded by load_into");
     let has_tools = messages.iter().any(|message| !message.tool_namespaces().is_empty());
-    let input = match prepare_input(&session, messages, prefix_cache).await {
+    let input = match prepare_input(session, messages, prefix_cache).await {
         Ok(input) => input,
         Err(error) => {
             log.fail(&error.to_string());
@@ -1190,7 +1249,34 @@ pub async fn handle_chat_completions(
         },
     };
 
-    let model = state.model_name.clone();
+    // Default to the first configured model when the request omits one, then
+    // resolve it to a configured slot. Unknown models get a 404 up front rather
+    // than after a turn has started.
+    let requested = request.model.clone().unwrap_or_else(|| state.session_manager.model_ids()[0].clone());
+    let slot = match state.session_manager.resolve(&requested).await {
+        Ok(slot) => slot,
+        Err(AcquireError::UnknownModel {
+            requested,
+            available,
+        }) => {
+            return ChatCompletionResult::Error(status::Custom(
+                Status::NotFound,
+                Json(OaiErrorResponse {
+                    error: OaiError {
+                        message: format!("unknown model `{requested}`; available: {}", available.join(", ")),
+                        kind: "invalid_request_error".to_string(),
+                        param: Some("model".to_string()),
+                        code: Some("model_not_found".to_string()),
+                    },
+                }),
+            ));
+        },
+        Err(error) => {
+            return invalid_request_response("model", "invalid_model", error.to_string());
+        },
+    };
+    let model = slot.identifier().to_string();
+    let thinking = slot.thinking;
     let created = request_info.created_at;
     let is_stream = request.stream.unwrap_or(false);
     let log = RequestLog::start(
@@ -1211,7 +1297,7 @@ pub async fn handle_chat_completions(
             return invalid_request_response("response_format", error.code(), error.message());
         },
     };
-    let messages = match build_messages(&request, state.thinking_support) {
+    let messages = match build_messages(&request, thinking) {
         Ok(messages) => messages,
         Err(error) => {
             let param = error.param();
@@ -1228,20 +1314,20 @@ pub async fn handle_chat_completions(
 
     let id = request_info.id.as_str().to_owned();
     if is_stream {
-        let session = Arc::clone(&state.session);
+        let manager = state.session_manager.clone();
         let (sender, receiver) = mpsc::unbounded_channel::<Event>();
         tokio::spawn(
-            run_stream(session, messages, config, id, model, created, state.prefix_cache, parameter_types, sender, log)
+            run_stream(manager, messages, config, id, model, created, state.prefix_cache, parameter_types, sender, log)
                 .in_current_span(),
         );
         let body: Pin<Box<dyn Stream<Item = Event> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
         ChatCompletionResult::Stream(EventStream::from(body))
     } else {
-        let session = Arc::clone(&state.session);
+        let manager = state.session_manager.clone();
         let (sender, receiver) = mpsc::unbounded_channel::<Vec<u8>>();
         tokio::spawn(
             run_blocking(
-                session,
+                manager,
                 messages,
                 config,
                 id,
