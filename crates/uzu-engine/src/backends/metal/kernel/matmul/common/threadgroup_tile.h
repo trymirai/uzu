@@ -128,27 +128,8 @@ struct ThreadgroupTile {
   }
 
   template <typename EpilogueOp>
-  METAL_FUNC void apply_epilogue(const device DT* C, const int ld_c, const int cstride_c, thread const EpilogueOp& op) {
-    const device DT* c_ptr = C + simdgroup_row_offset * ld_c + simdgroup_col_offset * cstride_c;
-    for_each_output([&](ushort row_offset, ushort col_offset, ushort k, thread AccumulatorType& v) {
-      v = op.apply(v, static_cast<AccumulatorType>(c_ptr[row_offset * ld_c + col_offset * cstride_c + k]));
-    });
-  }
-
-  template <typename EpilogueOp>
-  METAL_FUNC void apply_epilogue_safe(
-      const device DT* C,
-      const int ld_c,
-      const int cstride_c,
-      short2 tile_dimensions,
-      thread const EpilogueOp& op
-  ) {
-    const device DT* c_ptr = C + simdgroup_row_offset * ld_c + simdgroup_col_offset * cstride_c;
-    tile_dimensions -= short2(simdgroup_col_offset, simdgroup_row_offset);
-    for_each_output([&](ushort row_offset, ushort col_offset, ushort k, thread AccumulatorType& v) {
-      if (row_offset < tile_dimensions.y && col_offset + k < tile_dimensions.x)
-        v = op.apply(v, static_cast<AccumulatorType>(c_ptr[row_offset * ld_c + col_offset * cstride_c + k]));
-    });
+  METAL_FUNC void apply_epilogue(thread const EpilogueOp& op) {
+    c_fragment.map([&](AccumulatorType value) { return op.apply(value); });
   }
 
   METAL_FUNC void apply_bias(const device BT* bias) {

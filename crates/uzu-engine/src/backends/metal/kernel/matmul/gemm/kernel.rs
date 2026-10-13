@@ -166,16 +166,6 @@ impl GemmKernel {
             .validate_engine(plan.engine)
             .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))?;
 
-        if !matches!(arguments.b, MatmulB::FullPrecision { .. })
-            && arguments.output.ops.mask().contains(GemmDTransform::ACCUMULATE)
-        {
-            return Err(MatmulError::UnsupportedDOp {
-                bit: GemmDTransform::ACCUMULATE,
-                path: "QuantGemm",
-            }
-            .into());
-        }
-
         match arguments.b {
             MatmulB::FullPrecision {
                 b: weights,
@@ -481,8 +471,7 @@ impl GemmKernel {
 
         debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
         let group_count = ((elem as u32) / 4).div_ceil(256);
-        let reduce_transform =
-            output_transform.intersection(GemmDTransform::SCALE | GemmDTransform::ACCUMULATE | GemmDTransform::BIAS);
+        let reduce_transform = output_transform.intersection(GemmDTransform::SCALE | GemmDTransform::BIAS);
         let bias_arg = if reduce_transform.contains(GemmDTransform::BIAS) {
             output_bias
         } else {

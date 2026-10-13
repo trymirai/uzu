@@ -37,16 +37,16 @@ pub struct QKVNorm<B: Backend> {
 
 impl<B: Backend> QKVNorm<B> {
     pub fn new(
-        context: &B::Context,
+        num_q_heads: u32,
+        num_kv_heads: u32,
+        projection_row_stride: u32,
+        head_dim: u32,
         intermediate_data_type: DataType,
         query_config: Option<NormalizationConfig>,
         key_config: Option<NormalizationConfig>,
         value_config: Option<NormalizationConfig>,
         parameter_tree: &ParameterTree<B>,
-        num_q_heads: u32,
-        num_kv_heads: u32,
-        projection_row_stride: u32,
-        head_dim: u32,
+        context: &B::Context,
     ) -> Result<Self, QKVNormError<B>> {
         let query = query_config
             .map(|cfg| {

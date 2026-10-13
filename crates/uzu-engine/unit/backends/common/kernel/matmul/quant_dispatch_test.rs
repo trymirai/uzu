@@ -1,9 +1,6 @@
 #![cfg(backend = "metal")]
 
-use std::{
-    error::Error,
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use QuantParamsLayout::{GroupOutput, OutputGroup};
 use QuantizationMethod::{ScaleBias, ScaleZeroPoint};
@@ -17,14 +14,11 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
+            gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{
-                    MatmulDOps, MatmulError, MatmulKernel, MatmulOutput, QuantParams, QuantParamsLayout,
-                    QuantParamsStrides,
-                },
+                matmul::{MatmulDOps, MatmulKernel, MatmulOutput, QuantParams, QuantParamsLayout, QuantParamsStrides},
             },
         },
         cpu::Cpu,
@@ -408,44 +402,6 @@ fn cpu_group_major_quantized_gemm_matches_row_major() {
             assert_parity("CPU GroupOutput", &expected, &actual, 0.05, 0.5);
         }
     }
-}
-
-#[uzu_test]
-fn quant_gemm_accumulate_returns_unsupported_dop() {
-    let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
-    let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
-        &context,
-        bf16::data_type(),
-        bf16::data_type(),
-        bf16::data_type(),
-    )
-    .expect("MatmulMetalKernel");
-
-    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    let mut args = quant_arguments(&mut buffers, &input);
-    args.output.ops = MatmulDOps {
-        accumulate: true,
-        ..MatmulDOps::none()
-    };
-    let result = matmul.encode(args, &mut command_buffer);
-
-    let err = result.expect_err("expected error");
-    let matmul = err
-        .source()
-        .and_then(|source| source.downcast_ref::<MatmulError<Metal>>())
-        .expect("expected a MatmulError source");
-    assert!(
-        matches!(
-            matmul,
-            MatmulError::UnsupportedDOp {
-                bit: GemmDTransform::ACCUMULATE,
-                ..
-            }
-        ),
-        "got {matmul:?}"
-    );
 }
 
 #[rstest]

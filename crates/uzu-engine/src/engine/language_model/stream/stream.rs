@@ -299,9 +299,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                                 bitmask.as_ref(),
                                 context_ring.as_ref(),
                                 Some(&token_ids),
-                                &options.sampling_method,
                                 &batch_dim,
                                 (sampled_row..sampled_row + 1).into(),
+                                &options.sampling_method,
                                 &mut command_buffer,
                             )
                             .map_err(LanguageModelStreamError::Backend)?,
@@ -704,9 +704,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 bitmask.as_ref(),
                 self.context_ring.as_ref(),
                 Some(token_ids),
-                &self.options.sampling_method,
                 &batch_dim,
                 (0..batch_dim.size()).into(),
+                &self.options.sampling_method,
                 &mut command_buffer,
             )
             .map_err(LanguageModelStreamError::Backend)?;

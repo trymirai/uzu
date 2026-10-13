@@ -99,9 +99,6 @@ impl GemvSpecialization {
             return None;
         }
         let output_transform = output_transform_for_tile(shape, tile)?;
-        if shape.d_transform.contains(GemmDTransform::ACCUMULATE) && !shape.n.is_multiple_of(32) {
-            return None;
-        }
         let bits = shape.b_bits.unwrap_or(0);
         if !is_quant {
             let mixed_precision = weights_data_type == DataType::F32

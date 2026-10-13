@@ -85,7 +85,7 @@ impl<B: Backend> dyn Mixer<B> {
     pub fn new(
         hidden_dim: u32,
         data_type: DataType,
-        rope_config: Option<&AnyRoPEConfig>,
+        rope_config: Option<&AnyRoPEConfig>, // TODO: this shouldn't exist
         config: &AnyTokenMixerConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,

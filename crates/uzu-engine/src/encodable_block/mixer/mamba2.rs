@@ -115,13 +115,13 @@ impl<B: Backend> Mamba2<B> {
         let (in_projection, in_projection_input_hadamard_factors) =
             <dyn Linear<B>>::new_with_input_rht_mixed_precision(
                 hidden_dim,
-                [conv_dim, inner_dim, num_heads],
-                config.has_in_biases,
-                context,
+                conv_dim + inner_dim + num_heads,
                 outer_data_type,
                 outer_data_type,
                 INNER_DATA_TYPE,
+                config.has_in_biases,
                 &parameter_tree.subtree("in_projection"),
+                context,
             )?;
 
         let gate_bias = parameter_tree.leaf("gate_bias")?.validate(&[inner_dim], INNER_DATA_TYPE)?.read_buffer()?;
@@ -166,13 +166,13 @@ impl<B: Backend> Mamba2<B> {
 
         let out_projection = <dyn Linear<B>>::new_mixed_precision(
             inner_dim,
-            [hidden_dim],
-            config.has_out_biases,
-            context,
+            hidden_dim,
             outer_data_type,
             INNER_DATA_TYPE,
             outer_data_type,
+            config.has_out_biases,
             &parameter_tree.subtree("out_projection"),
+            context,
         )?;
 
         Ok((

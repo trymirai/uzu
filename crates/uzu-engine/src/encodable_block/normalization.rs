@@ -51,10 +51,10 @@ pub struct Normalization<B: Backend> {
 impl<B: Backend> Normalization<B> {
     pub fn new(
         element_count: u32,
+        data_type: DataType,
         hadamard_factors: Option<B::GlobalBuffer>,
         shortcut_mode: ShortcutMode,
         post_layer_scalar: PostLayerScalar,
-        data_type: DataType,
         config: &NormalizationConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,

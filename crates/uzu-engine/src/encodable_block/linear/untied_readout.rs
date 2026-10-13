@@ -22,16 +22,15 @@ pub struct UntiedReadout<B: Backend> {
 
 impl<B: Backend> UntiedReadout<B> {
     pub fn load(
-        context: &B::Context,
-        tree: &ParameterTree<B>,
-        spec: AnyWeightMatrixSpec,
         vocab_size: u32,
         model_dim: u32,
         data_type: DataType,
+        spec: AnyWeightMatrixSpec,
+        tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, LinearMatmulError<B>> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
-            adapter_spec: None,
             incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
             incoherence_processing_mode: IncoherenceProcessingMode::Input,
             ..
@@ -39,23 +38,23 @@ impl<B: Backend> UntiedReadout<B> {
         else {
             return Ok(Self {
                 linear: LinearMatmul::load(
-                    context, spec, model_dim, vocab_size, data_type, data_type, data_type, tree, None, None,
+                    model_dim, vocab_size, data_type, data_type, data_type, spec, None, tree, None, context,
                 )?,
                 input_rht: None,
             });
         };
 
         let mut linear = LinearMatmul::load(
-            context,
-            *quantization_spec,
             model_dim,
             vocab_size,
             data_type,
             data_type,
             data_type,
+            *quantization_spec,
+            None,
             &tree.subtree("quantized"),
             None,
-            None,
+            context,
         )?;
         let rht_signs = tree
             .subtree("incoherence_signs")
@@ -66,7 +65,7 @@ impl<B: Backend> UntiedReadout<B> {
             rht_signs,
             activation_quantization: linear.prepare_a8(context),
         };
-        let input_rht = InputRht::new(context, data_type, preparation, /* in_place */ false)
+        let input_rht = InputRht::new(data_type, preparation, /* in_place */ false, context)
             .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {

@@ -77,10 +77,10 @@ impl<B: Backend> Engine<B> {
         let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
-            self.context.as_ref(),
+            data_type,
             &config.decoder_config,
             &weight_loader.tree().subtree("decoder"),
-            data_type,
+            self.context.as_ref(),
         )?;
 
         assert!(
@@ -94,7 +94,7 @@ impl<B: Backend> Engine<B> {
             .transpose()?
             .flatten();
 
-        let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
+        let sampling = Sampling::new(config.decoder_config.vocab_size, data_type);
 
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;

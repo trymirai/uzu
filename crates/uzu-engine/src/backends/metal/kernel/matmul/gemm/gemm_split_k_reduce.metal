@@ -48,9 +48,6 @@ KERNEL(GemmSplitKReduce)(
   if (output_transform.contains(GemmDTransform::SCALE)) {
     accumulator *= output_scale;
   }
-  if (output_transform.contains(GemmDTransform::ACCUMULATE)) {
-    accumulator += float4(output_vectors[vector_index]);
-  }
   if (output_transform.contains(GemmDTransform::BIAS)) {
     const uint column = (vector_index * 4u) % column_count;
     accumulator += float4(*reinterpret_cast<const device vec<T, 4>*>(output_bias + column));

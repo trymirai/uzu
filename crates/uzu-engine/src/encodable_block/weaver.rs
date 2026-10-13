@@ -19,7 +19,7 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError},
         mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
-        mlp::MlpBlockError,
+        mlp::MlpBlockNewError,
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
     },
@@ -135,7 +135,7 @@ pub enum WeaverNewError<B: Backend> {
     #[error("linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
     #[error("mlp error: {0}")]
-    Mlp(#[from] MlpBlockError<B>),
+    Mlp(#[from] MlpBlockNewError<B>),
     #[error("normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
     #[error("backend error: {0}")]
@@ -170,10 +170,10 @@ pub enum WeaverEncodeError<B: Backend> {
 
 impl<B: Backend> Weaver<B> {
     pub fn new(
-        context: &B::Context,
-        config: &WeaverConfig,
         vocab_size: u32,
+        config: &WeaverConfig,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, WeaverNewError<B>> {
         if config.num_layers == 0 {
             return Err(WeaverNewError::InvalidLayerCount);
@@ -199,61 +199,61 @@ impl<B: Backend> Weaver<B> {
         }
         let token_embedding_norm = Normalization::new(
             config.target_embedding_dim,
+            DATA_TYPE,
             None,
             ShortcutMode::None,
             PostLayerScalar::None,
-            DATA_TYPE,
             &config.norm_config,
             &parameter_tree.subtree("embedding_norm"),
             context,
         )?;
         let hidden_state_norm = Normalization::new(
             config.target_model_dim,
+            DATA_TYPE,
             None,
             ShortcutMode::None,
             PostLayerScalar::None,
-            DATA_TYPE,
             &config.norm_config,
             &parameter_tree.subtree("hidden_state_norm"),
             context,
         )?;
         let token_embedding_projection = <dyn Linear<B>>::new(
             config.target_embedding_dim,
-            [config.model_dim],
-            true,
-            context,
+            config.model_dim,
             DATA_TYPE,
+            true,
             &parameter_tree.subtree("embedding_projection"),
+            context,
         )?;
         let layer_parameters = parameter_tree.subtree("blocks");
         let layers = (0..config.num_layers)
-            .map(|index| WeaverLayer::new(context, config, index > 0, &layer_parameters.subtree(&index.to_string())))
+            .map(|index| WeaverLayer::new(index > 0, config, &layer_parameters.subtree(&index.to_string()), context))
             .collect::<Result<Box<[_]>, WeaverNewError<B>>>()?;
         let readout_norm = Normalization::new(
             config.model_dim,
+            DATA_TYPE,
             None,
             ShortcutMode::Add,
             PostLayerScalar::None,
-            DATA_TYPE,
             &config.norm_config,
             &parameter_tree.subtree("output_norm"),
             context,
         )?;
         let hidden_state_projection = <dyn Linear<B>>::new(
             config.target_model_dim,
-            [config.model_dim],
-            true,
-            context,
+            config.model_dim,
             DATA_TYPE,
+            true,
             &parameter_tree.subtree("hidden_state_projection"),
+            context,
         )?;
         let readout_query_projection = <dyn Linear<B>>::new(
             config.model_dim,
-            [config.target_model_dim],
-            false,
-            context,
+            config.target_model_dim,
             DATA_TYPE,
+            false,
             &parameter_tree.subtree("query_projection"),
+            context,
         )?;
         let top_k =
             <B::Kernels as Kernels>::RadixTopKSmall::new(context, vocab_size).map_err(WeaverNewError::Backend)?;
@@ -478,8 +478,8 @@ impl<B: Backend> Weaver<B> {
             .encode(normalized_output, batch_node_count, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
         let logit_residuals = target_embedding.encode_readout(
-            batch_node_count,
             &query,
+            batch_node_count,
             self.candidate_pool_size,
             Some(batch_candidate_ids),
             false,

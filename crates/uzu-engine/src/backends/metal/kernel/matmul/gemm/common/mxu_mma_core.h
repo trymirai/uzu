@@ -125,7 +125,6 @@ struct MxuMmaCore {
     };
 
     const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
-    const bool apply_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
     const bool apply_rht = output_transform.contains(GemmDTransform::RHT);
 
@@ -175,18 +174,6 @@ struct MxuMmaCore {
                 if (apply_scale) {
                   const AccumulatorType scale = AccumulatorType(params->ab_scale);
                   accumulator_tile.map([&](auto value) { return value * scale; });
-                }
-
-                if (apply_accumulate) {
-                  uzu::matmul::Fragment<OutputElementType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>>
-                      existing_output;
-                  auto output_src = uzu::matmul::fragment_source(d_simdgroup, int(params->leading_dimension_d));
-                  if constexpr (!(aligned_m.value && aligned_n.value)) {
-                    output_src = output_src.bounded(simdgroup_limit_m, simdgroup_limit_n);
-                  }
-                  existing_output.load_from(thread_context.simd_lane_id, output_src);
-                  thread OutputElementType* existing_data = existing_output.elements();
-                  accumulator_tile.map([&](auto value) { return value + AccumulatorType(*(existing_data++)); });
                 }
 
                 if (apply_bias && !apply_rht) {

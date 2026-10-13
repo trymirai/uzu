@@ -96,11 +96,11 @@ impl<B: Backend> Attention<B> {
         };
         let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             hidden_dim,
-            [projection_dim],
-            config.has_qkvg_biases,
-            context,
+            projection_dim,
             data_type,
+            config.has_qkvg_biases,
             &projection_tree,
+            context,
         )?;
 
         let query_norm_config = config.query_norm_config.clone();
@@ -110,16 +110,16 @@ impl<B: Backend> Attention<B> {
         let qkv_norm = (query_norm_config.is_some() || key_norm_config.is_some() || value_norm_config.is_some())
             .then(|| {
                 QKVNorm::new(
-                    context,
+                    config.num_heads,
+                    num_kv_heads.unwrap_or(0), // TODO: should take option
+                    projection_dim,
+                    config.head_dim,
                     data_type,
                     query_norm_config,
                     key_norm_config,
                     value_norm_config,
                     parameter_tree,
-                    config.num_heads,
-                    num_kv_heads.unwrap_or(0), // TODO: should take option
-                    projection_dim,
-                    config.head_dim,
+                    context,
                 )
             })
             .transpose()?;
@@ -160,11 +160,11 @@ impl<B: Backend> Attention<B> {
 
         let out_projection = <dyn Linear<B>>::new(
             q_dim,
-            [hidden_dim],
-            config.has_out_biases,
-            context,
+            hidden_dim,
             data_type,
+            config.has_out_biases,
             &parameter_tree.subtree("out_projection"),
+            context,
         )?;
 
         Ok((

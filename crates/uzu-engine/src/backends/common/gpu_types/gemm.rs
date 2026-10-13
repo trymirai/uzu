@@ -22,10 +22,9 @@ bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct GemmDTransform: u32 {
         const SCALE      = 1 << 0;
-        const ACCUMULATE = 1 << 1;
-        const BIAS       = 1 << 2;
-        const RHT        = 1 << 3;
-        const SOFT_CAP   = 1 << 4;
+        const BIAS       = 1 << 1;
+        const RHT        = 1 << 2;
+        const SOFT_CAP   = 1 << 3;
     }
 }
 
