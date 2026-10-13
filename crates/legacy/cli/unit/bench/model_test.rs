@@ -1,10 +1,11 @@
 use serde_json::json;
 use uzu::types::{
-    basic::ToolDescription,
+    basic::{ReasoningEffort, ToolDescription},
     session::chat::{ChatContentBlock, ChatRole},
 };
 
 use super::*;
+use crate::common::thinking::ReasoningEffortSet;
 
 fn task(messages: serde_json::Value) -> serde_json::Value {
     json!({
@@ -17,10 +18,40 @@ fn task(messages: serde_json::Value) -> serde_json::Value {
 fn legacy_task_still_converts_without_tools() {
     let input = task(json!([{"role": "user", "content": "Hello"}]));
     let task: BenchTask = serde_json::from_value(input).unwrap();
-    let messages = task.to_chat_messages().unwrap();
+    let messages = task.to_chat_messages(ThinkingSupport::Unsupported).unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, ChatRole::User {});
     assert_eq!(messages[0].text().as_deref(), Some("Hello"));
+}
+
+#[test]
+fn reasoning_effort_is_applied_and_preserved_in_echo() {
+    for (context, system_text) in [
+        (json!([{"role": "user", "content": "Hello"}]), None),
+        (
+            json!([{"role": "system", "content": "Be helpful"}, {"role": "user", "content": "Hello"}]),
+            Some("Be helpful"),
+        ),
+    ] {
+        let mut input = task(context);
+        input["reasoning_effort"] = json!("low");
+        let task: BenchTask = serde_json::from_value(input).unwrap();
+        let messages = task
+            .to_chat_messages(ThinkingSupport::Levels {
+                effort: ReasoningEffort::Default,
+                supported: ReasoningEffortSet::ALL,
+            })
+            .unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, ChatRole::System {});
+        assert_eq!(messages[0].reasoning_effort(), Some(ReasoningEffort::Low));
+        assert_eq!(messages[0].text().as_deref(), system_text);
+        assert_eq!(messages[1].text().as_deref(), Some("Hello"));
+        assert_eq!(serde_json::to_value(&task).unwrap()["reasoning_effort"], "low");
+        assert!(
+            task.to_chat_messages(ThinkingSupport::Unsupported).unwrap_err().to_string().contains("reasoning_effort")
+        );
+    }
 }
 
 #[test]
@@ -32,7 +63,7 @@ fn assistant_tool_call_accepts_null_content() {
     let echoed = serde_json::to_value(&task).unwrap();
     assert_eq!(echoed["messages"][0]["content"], serde_json::Value::Null);
     assert_eq!(echoed["messages"][0]["tool_calls"], input["messages"][0]["tool_calls"]);
-    let messages = task.to_chat_messages().unwrap();
+    let messages = task.to_chat_messages(ThinkingSupport::Unsupported).unwrap();
     assert_eq!(messages[0].role, ChatRole::Assistant {});
     assert_eq!(messages[0].text(), None);
     assert_eq!(messages[0].tool_calls()[0].identifier.as_deref(), Some("call_clock"));
@@ -55,7 +86,7 @@ fn tool_replay_preserves_wire_input_and_builds_complete_context() {
     assert_eq!(echoed["tools"], input["tools"]);
     assert_eq!(echoed["messages"][2]["tool_calls"], input["messages"][2]["tool_calls"]);
     assert_eq!(echoed["messages"][3]["tool_call_id"], "call_clock");
-    let messages = task.to_chat_messages().unwrap();
+    let messages = task.to_chat_messages(ThinkingSupport::Unsupported).unwrap();
     assert_eq!(messages.len(), 6);
     assert_eq!(messages[0].role, ChatRole::System {});
     assert_eq!(messages[1].role, ChatRole::Developer {});
@@ -91,7 +122,7 @@ fn tool_choice_selects_benchmark_tools_and_is_preserved_in_echo() {
         ]);
         input["tool_choice"] = choice.clone();
         let task: BenchTask = serde_json::from_value(input).unwrap();
-        let messages = task.to_chat_messages().unwrap();
+        let messages = task.to_chat_messages(ThinkingSupport::Unsupported).unwrap();
         let names: Vec<_> = messages
             .iter()
             .flat_map(|message| message.tool_namespaces())
@@ -112,7 +143,7 @@ fn invalid_tool_choice_is_rejected_without_exposing_private_values() {
     let mut input = task(json!([{"role": "user", "content": "Hello"}]));
     input["tool_choice"] = json!("PRIVATE_SENTINEL");
     let task: BenchTask = serde_json::from_value(input).unwrap();
-    let error = task.to_chat_messages().unwrap_err();
+    let error = task.to_chat_messages(ThinkingSupport::Unsupported).unwrap_err();
     assert!(error.to_string().contains("tool_choice"));
     assert!(!format!("{error:?}").contains("PRIVATE_SENTINEL"));
 }
@@ -122,7 +153,7 @@ fn malformed_tool_definition_returns_contextual_error() {
     let mut input = task(json!([{"role": "user", "content": "Hello"}]));
     input["tools"] = json!([{"type": "function", "function": {"parameters": {}}}]);
     let task: BenchTask = serde_json::from_value(input).unwrap();
-    assert!(task.to_chat_messages().unwrap_err().to_string().contains("benchmark tools"));
+    assert!(task.to_chat_messages(ThinkingSupport::Unsupported).unwrap_err().to_string().contains("benchmark tools"));
 }
 
 #[test]
@@ -131,7 +162,9 @@ fn malformed_tool_call_returns_contextual_error() {
         {"id": "call_clock", "type": "function", "function": {"name": "clock", "arguments": {}}}
     ]}]));
     let task: BenchTask = serde_json::from_value(input).unwrap();
-    assert!(task.to_chat_messages().unwrap_err().to_string().contains("benchmark messages"));
+    assert!(
+        task.to_chat_messages(ThinkingSupport::Unsupported).unwrap_err().to_string().contains("benchmark messages")
+    );
 }
 
 #[test]
@@ -141,7 +174,9 @@ fn invalid_tool_arguments_are_rejected_without_rewriting_history() {
             {"id": "call_clock", "type": "function", "function": {"name": "clock", "arguments": arguments}}
         ]}]));
         let task: BenchTask = serde_json::from_value(input).unwrap();
-        assert!(task.to_chat_messages().unwrap_err().to_string().contains("tool arguments"));
+        assert!(
+            task.to_chat_messages(ThinkingSupport::Unsupported).unwrap_err().to_string().contains("tool arguments")
+        );
     }
 }
 
@@ -152,7 +187,7 @@ fn nested_object_tool_arguments_are_preserved() {
         {"id": "call_clock", "type": "function", "function": {"name": "clock", "arguments": arguments.to_string()}}
     ]}]));
     let task: BenchTask = serde_json::from_value(input).unwrap();
-    let messages = task.to_chat_messages().unwrap();
+    let messages = task.to_chat_messages(ThinkingSupport::Unsupported).unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&messages[0].tool_calls()[0].arguments.json).unwrap(),
         arguments
@@ -166,7 +201,7 @@ fn conversion_errors_do_not_include_private_values_in_debug_chain() {
     let calls_input = task(json!([{"role": "assistant", "content": "", "tool_calls": ["PRIVATE_SENTINEL"]}]));
     for input in [tools_input, calls_input] {
         let task: BenchTask = serde_json::from_value(input).unwrap();
-        let error = task.to_chat_messages().unwrap_err();
+        let error = task.to_chat_messages(ThinkingSupport::Unsupported).unwrap_err();
         assert!(!format!("{error:?}").contains("PRIVATE_SENTINEL"));
     }
 }
