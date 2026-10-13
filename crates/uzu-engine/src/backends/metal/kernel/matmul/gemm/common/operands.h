@@ -42,7 +42,7 @@ struct RightOperand {
   UZU_CONST ushort BITS = QUANTIZED ? BITS_ : 0;
   UZU_CONST ushort GROUP_SIZE = QUANTIZED ? GROUP_SIZE_ : 0;
   UZU_CONST GemmBPrologueKind SCHEME = PROLOGUE;
-  UZU_CONST bool NEEDS_CORRECTION = QUANTIZED && PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant;
+  UZU_CONST bool NEEDS_CORRECTION = PROLOGUE == GemmBPrologueKind::ScaleBiasDequant;
 
   UZU_CONST ushort CODE_ORIGIN = (!QUANTIZED || (BITS_ == 4 && PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant))
                                      ? 0
