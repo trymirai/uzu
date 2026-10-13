@@ -35,11 +35,9 @@ KERNEL(KVCacheUpdateInt8)(
     const constant uint& padded_capacity,
     const uint head_dim SPECIALIZE,
     const uint num_kv_heads SPECIALIZE,
-    const uint tile_keys SPECIALIZE,
-    const uint tile_dims SPECIALIZE,
     const uint element AXIS(num_kv_heads* head_dim, 256)
 ) {
-  const Int8KvShape shape{head_dim, num_kv_heads, tile_keys, tile_dims};
+  const Int8KVShape shape{head_dim, num_kv_heads};
   const uint kv_head = element / head_dim;
   const uint channel = element % head_dim;
   for (uint i = 0; i < copy_count; ++i) {
