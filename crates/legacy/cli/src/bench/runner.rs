@@ -16,9 +16,12 @@ use uzu::{
 };
 use uzu_engine::{VERSION, data_type::DataType};
 
-use crate::bench::{
-    model::{BenchDevice, BenchResult, BenchTask},
-    stat::mean,
+use crate::{
+    bench::{
+        model::{BenchDevice, BenchResult, BenchTask},
+        stat::mean,
+    },
+    common::thinking::ThinkingSupport,
 };
 
 pub struct BenchRunner {
@@ -41,7 +44,6 @@ impl BenchRunner {
         &self,
         mut progress: Option<F>,
     ) -> Result<Vec<BenchResult>> {
-        let messages = self.task.to_chat_messages()?;
         let model_path = Path::new(&self.model_path)
             .canonicalize()
             .with_context(|| format!("Can not open model path: {}", self.model_path))?;
@@ -61,6 +63,7 @@ impl BenchRunner {
             model.family = Some(model_family);
         }
 
+        let messages = self.task.to_chat_messages(ThinkingSupport::for_model(&model))?;
         let device = self.get_device_info();
 
         let session_config = ChatConfig::default();
@@ -129,6 +132,7 @@ impl BenchRunner {
                 output_energy,
                 joules_per_token,
                 text: text.unwrap_or("".to_string()),
+                replies: self.task.include_replies.then_some(replies),
             };
             results.push(result);
 

@@ -55,7 +55,7 @@ fn retile_params(
 
 impl AttentionGemm {
     pub fn is_supported(config: &AttentionKernelConfig) -> bool {
-        matches!(config.head_dim, 64 | 128 | 256) && matches!(config.data_type, DataType::BF16 | DataType::F32)
+        matches!(config.head_dim, 64 | 128 | 256) && config.data_type == DataType::BF16
     }
 
     pub fn new(config: &AttentionKernelConfig) -> Self {
@@ -127,10 +127,8 @@ impl AttentionGemm {
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[arguments.suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
 
-        let use_mxu = arguments.suffix_length >= 64
-            && matches!(self.data_type, DataType::BF16)
-            && matches!(self.head_dim, 64 | 128)
-            && command_buffer.context().supports_mxu;
+        let use_mxu =
+            arguments.suffix_length >= 64 && matches!(self.head_dim, 64 | 128) && command_buffer.context().supports_mxu;
         let (bq, bk) = if use_mxu {
             (64, 32)
         } else {
