@@ -1,5 +1,3 @@
-#![cfg(backend = "metal")]
-
 use std::fmt::{Debug, Display};
 
 use half::bf16;
@@ -14,16 +12,31 @@ use crate::{
             Backend, Context,
             kernel::{Kernels, matmul::MatmulKernel},
         },
-        metal::{GemmEngine, Metal, MetalContext},
+        metal::{Metal, context::MetalContext, kernel::matmul::gemm::GemmEngine},
     },
     tests::{
         assert::assert_eq_float,
         matmul::{
             Case, Shape, all_correctness_shapes, cpu_reference, deterministic_input,
-            harness::{TestDispatch, run_metal},
+            harness::{Input, run},
         },
     },
 };
+
+fn run_metal<T: ArrayElement + Float>(
+    context: &MetalContext,
+    kernel: &mut <<Metal as Backend>::Kernels as Kernels>::MatmulKernel,
+    input: &Input<T>,
+    dispatch: Option<GemmEngine>,
+) -> Vec<T> {
+    run::<Metal, T>(context, kernel, input, |kernel, args, command_buffer| {
+        if let Some(engine) = dispatch {
+            kernel.encode_with_gemm_engine(args, engine, command_buffer).expect("forced GEMM engine encode failed");
+        } else {
+            kernel.encode(args, command_buffer).expect("matmul encode failed");
+        }
+    })
+}
 
 fn gemm_engines_for_hw(context: &MetalContext) -> Vec<GemmEngine> {
     let mut engines = vec![GemmEngine::Simdgroup];
@@ -36,7 +49,7 @@ fn gemm_engines_for_hw(context: &MetalContext) -> Vec<GemmEngine> {
 fn check_case<T: ArrayElement + Float + Debug + Display>(
     context: &MetalContext,
     kernel: &mut <<Metal as Backend>::Kernels as Kernels>::MatmulKernel,
-    dispatch: TestDispatch,
+    dispatch: Option<GemmEngine>,
     case: Case,
     tolerance: f32,
 ) {

@@ -1,5 +1,3 @@
-#![cfg(backend = "metal")]
-
 use std::fmt::{Debug, Display};
 
 use QuantParamsLayout::{GroupOutput, OutputGroup};
@@ -22,18 +20,37 @@ use crate::{
             },
         },
         cpu::Cpu,
-        metal::{GemmEngine, Metal, MetalContext},
+        metal::{Metal, context::MetalContext, kernel::matmul::gemm::GemmEngine},
     },
     tests::{
         helpers::buffer_to_vec,
-        matmul::{
-            QuantBuffers, QuantInput,
-            harness::TestDispatch,
-            quant::{run_quant_cpu, run_quant_metal},
-            quant_arguments,
-        },
+        matmul::{QuantBuffers, QuantInput, quant::run_quant_cpu, quant_arguments},
     },
 };
+
+fn run_quant_metal<T: ArrayElement + Float>(
+    context: &MetalContext,
+    input: &QuantInput<T>,
+    dispatch: Option<GemmEngine>,
+) -> Vec<T> {
+    let mut buffers = QuantBuffers::<Metal, T>::allocate(context, input);
+    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
+    .expect("MatmulMetalKernel");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let args = quant_arguments(&mut buffers, input);
+    if let Some(engine) = dispatch {
+        matmul.encode_with_gemm_engine(args, engine, &mut command_buffer).expect("forced GEMM engine encode failed");
+    } else {
+        matmul.encode(args, &mut command_buffer).expect("matmul encode failed");
+    }
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    buffer_to_vec::<Metal, T>(&buffers.y)
+}
 
 fn check_tolerance(
     expected: f32,
@@ -94,7 +111,7 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
     group_size: u32,
     bits: u32,
     quant_method: QuantizationMethod,
-    dispatch: TestDispatch,
+    dispatch: Option<GemmEngine>,
     label: &str,
     rel_tol: f64,
     abs_tol: f64,

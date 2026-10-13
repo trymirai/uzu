@@ -1,5 +1,3 @@
-#![cfg(backend = "metal")]
-
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -20,7 +18,7 @@ use crate::{
                 },
             },
         },
-        metal::{GemmEngine, Metal, MetalContext},
+        metal::{Metal, context::MetalContext, kernel::matmul::gemm::GemmEngine},
     },
     data_type::DataType,
     tests::{

@@ -1,5 +1,3 @@
-#![cfg(backend = "metal")]
-
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rstest::rstest;
@@ -13,7 +11,7 @@ use crate::{
                 MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, TrellisFormat,
             },
         },
-        metal::{Metal, MetalContext},
+        metal::{Metal, context::MetalContext},
     },
     data_type::DataType,
     tests::{
