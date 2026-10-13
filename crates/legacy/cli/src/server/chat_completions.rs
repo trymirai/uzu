@@ -252,7 +252,7 @@ pub(crate) fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
             if let Some(identifier) = &message.tool_call_id {
                 let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
                 chat_message = chat_message.with_block(result);
-            } else if let Some(content) = &message.content {
+            } else if let Some(content) = message.content.as_ref().filter(|content| !content.is_empty()) {
                 chat_message = chat_message.with_text(content.clone());
             }
             for tool_call in message.tool_calls.iter().flatten() {
