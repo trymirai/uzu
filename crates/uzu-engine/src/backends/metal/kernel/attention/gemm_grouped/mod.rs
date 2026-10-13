@@ -18,7 +18,7 @@ use crate::{
     data_type::DataType,
 };
 
-mod policy;
+pub(super) mod policy;
 use policy::{MAX_TRIE_SUFFIX, SplitGeometry, choose_splits};
 
 use super::MaskKind;

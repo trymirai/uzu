@@ -1,4 +1,5 @@
 pub const TILE_KEYS: u32 = 32;
+pub const QUERY_TILE_ROWS: u32 = 16;
 pub const TILE_DIMS: u32 = 16;
 pub const FRAGMENT_BYTES: u32 = TILE_KEYS * TILE_DIMS;
 pub const SLICE_DIMS: u32 = 64;

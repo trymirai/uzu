@@ -495,7 +495,7 @@ KERNEL(AttentionGemmGroupedCombine)(
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     const uint channel = value_index * METAL_SIMD_SIZE + column;
-    T result = static_cast<T>(rotated[value_index] * uzu::kv_layout::kv_rotation_sign(channel));
+    T result = static_cast<T>(rotated[value_index] * uzu::kv_layout::rotation_sign(channel));
     if (has_gate) {
       result = attention_apply_gate(
           result,

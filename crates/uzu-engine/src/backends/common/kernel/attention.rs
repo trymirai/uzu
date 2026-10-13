@@ -3,8 +3,14 @@ use std::error::Error;
 use crate::{
     backends::common::{Backend, BufferRef, CommandBuffer, Kernels},
     data_type::DataType,
-    encodable_block::mixer::attention::KVCacheView,
+    encodable_block::mixer::attention::{KVCacheView, kv_storage::Int8KV},
 };
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum KVFormat {
+    BF16,
+    Int8,
+}
 
 pub trait AttentionKernel: Sized + Send + Sync {
     type Backend: Backend<Kernels: Kernels<AttentionKernel = Self>>;
@@ -14,6 +20,10 @@ pub trait AttentionKernel: Sized + Send + Sync {
         context: &<Self::Backend as Backend>::Context,
         config: AttentionKernelConfig,
     ) -> Result<Self, Self::Error>;
+
+    fn supports_int8_kv(&self) -> bool {
+        false
+    }
 
     fn encode(
         &self,
@@ -28,6 +38,21 @@ pub trait AttentionKernel: Sized + Send + Sync {
         >,
         command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<<Self::Backend as Backend>::ScratchBuffer, Self::Error>;
+
+    fn encode_int8(
+        &self,
+        _arguments: Int8AttentionArguments<
+            '_,
+            Self::Backend,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+        >,
+        _command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<<Self::Backend as Backend>::ScratchBuffer, Self::Error> {
+        unreachable!("no INT8 KV path")
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -59,6 +84,23 @@ pub struct AttentionArguments<
     pub suffix_length: u32,
     pub trie: Option<TT>,
     pub sinks: Option<&'a B::GlobalBuffer>,
+    pub cache: KVCacheView,
+    pub gate: Option<GT>,
+}
+
+pub struct Int8AttentionArguments<
+    'a,
+    B: Backend,
+    QT: BufferRef<Backend = B>,
+    ST: BufferRef<Backend = B>,
+    TT: BufferRef<Backend = B>,
+    GT: BufferRef<Backend = B>,
+> {
+    pub query_codes: QT,
+    pub query_scales: ST,
+    pub kv: &'a Int8KV<B>,
+    pub suffix_length: u32,
+    pub trie: Option<TT>,
     pub cache: KVCacheView,
     pub gate: Option<GT>,
 }

@@ -8,7 +8,6 @@ pub mod attention;
 pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod gated_act_mul;
-#[cfg(any(backend = "cpu", test))]
 pub mod kv_layout;
 pub mod matmul;
 pub mod radix_top_k_small;
@@ -16,7 +15,7 @@ pub mod radix_top_k_small;
 mod trellis;
 
 pub use activation_transform::{ActivationQuantization, ActivationTransform};
-pub use attention::{AttentionArguments, AttentionKernel, AttentionKernelConfig};
+pub use attention::{AttentionArguments, AttentionKernel, AttentionKernelConfig, Int8AttentionArguments, KVFormat};
 pub use gated_act_mul::{GatedActMul, GatedActMulSettings};
 
 #[cfg(any(backend = "cpu", test))]

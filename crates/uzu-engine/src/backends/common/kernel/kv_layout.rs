@@ -26,6 +26,14 @@ impl Int8KVLayout {
             as usize
     }
 
+    pub fn tile_bytes(
+        &self,
+        keys: u32,
+    ) -> usize {
+        keys.min(self.padded_capacity).next_multiple_of(kv_layout::TILE_KEYS) as usize
+            * (self.num_kv_heads * self.head_dim) as usize
+    }
+
     pub fn k_code_index(
         &self,
         key: u32,

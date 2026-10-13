@@ -1,6 +1,9 @@
 use super::MaskKind;
 use crate::{
-    backends::{common::kernel::AttentionKernelConfig, metal::context::MetalContext},
+    backends::{
+        common::{gpu_types::kv_layout, kernel::AttentionKernelConfig},
+        metal::context::MetalContext,
+    },
     data_type::DataType,
 };
 
@@ -141,6 +144,26 @@ pub fn choose_splits(
     let splits = match measured_splits {
         Some(splits) => splits,
         None => splits_for_ratio(TENTHS_PER_RATIO * TG_PER_CORE_FALLBACK, gpu_core_count, threadgroups_per_kv_split),
+    };
+    splits.clamp(1, max_splits)
+}
+
+pub fn int8_splits(
+    split_rows: u32,
+    head_dim: u32,
+    suffix_length: u32,
+    kv_length: u32,
+) -> u32 {
+    let max_splits = kv_length.div_ceil(kv_layout::TILE_KEYS).max(1);
+    let splits = if suffix_length <= GEMM_GROUPED_DECODE_SUFFIX_MAX {
+        (kv_length as f32 / suffix_length.max(1) as f32).sqrt().round() as u32
+    } else if kv_length >= PREFILL_SPLIT_MIN_KV {
+        // One partial row: `head_dim` BF16 means, one F32 max, one F32 sum.
+        let single_split_bytes = split_rows as u64 * (head_dim as u64 * 2 + 8);
+        let scratch_splits = (PREFILL_SPLIT_SCRATCH_BYTES / single_split_bytes) as u32;
+        ((kv_length + PREFILL_SPLIT_KEYS / 2) / PREFILL_SPLIT_KEYS).min(scratch_splits)
+    } else {
+        1
     };
     splits.clamp(1, max_splits)
 }
