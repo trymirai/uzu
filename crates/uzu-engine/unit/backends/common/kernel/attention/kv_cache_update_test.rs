@@ -11,13 +11,15 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::Copy, kernel::KVCacheUpdateKernel,
+            gpu_types::Copy,
+            kernel::{KVCacheUpdateInt8Kernel, KVCacheUpdateKernel},
         },
         cpu::Cpu,
     },
+    encodable_block::mixer::attention::kv_layout::{Int8KvShape, Int8Layout},
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer_with_data, for_each_backend, for_each_non_cpu_backend},
     },
 };
 #[cfg(backend = "metal")]
@@ -375,4 +377,56 @@ fn test_random_pattern_f32() {
 
     assert_eq!(key_result, expected_keys);
     assert_eq!(value_result, expected_values);
+}
+
+#[uzu_test]
+fn test_int8_copy() {
+    let layout = Int8Layout::new(Int8KvShape::new(256, 2), 50);
+    let k_codes: Vec<i8> = (0..layout.code_bytes()).map(|i| ((i * 37) ^ (i >> 8)) as i8).collect();
+    let v_codes: Vec<u8> = (0..layout.code_bytes()).map(|i| ((i * 19) ^ (i >> 7)) as u8).collect();
+    let k_scales: Vec<bf16> = (0..layout.scale_count()).map(|i| bf16::from_f32(i as f32 + 1.0)).collect();
+    let v_scales: Vec<bf16> = (0..layout.scale_count()).map(|i| bf16::from_f32(i as f32 + 129.0)).collect();
+    let copies = [(40, 3), (3, 5)].map(|(source, destination)| Copy {
+        source,
+        destination,
+    });
+    let shape = layout.shape;
+    let (from, to) = (layout.per_token_index(40, 1), layout.per_token_index(5, 1));
+    for_each_backend!(|B| {
+        let context = <B as Backend>::Context::new().unwrap();
+        let mut keys = create_buffer_with_data::<B, i8>(&context, &k_codes);
+        let mut values = create_buffer_with_data::<B, u8>(&context, &v_codes);
+        let mut key_scales = create_buffer_with_data::<B, bf16>(&context, &k_scales);
+        let mut value_scales = create_buffer_with_data::<B, bf16>(&context, &v_scales);
+        let kernel = <<B as Backend>::Kernels as Kernels>::KVCacheUpdateInt8Kernel::new(
+            &context,
+            shape.head_dim,
+            shape.num_kv_heads,
+            shape.tile_keys,
+            shape.tile_dims,
+        )
+        .unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+        kernel.encode(
+            &mut keys,
+            &mut values,
+            &mut key_scales,
+            &mut value_scales,
+            &copies,
+            copies.len() as u32,
+            layout.padded_capacity(),
+            &mut command_buffer,
+        );
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        let keys = buffer_to_vec::<B, i8>(&keys);
+        let values = buffer_to_vec::<B, u8>(&values);
+        let key_scales = buffer_to_vec::<B, bf16>(&key_scales);
+        let value_scales = buffer_to_vec::<B, bf16>(&value_scales);
+        for channel in 0..shape.head_dim {
+            assert_eq!(keys[layout.k_code_index(5, 1, channel)], k_codes[layout.k_code_index(40, 1, channel)]);
+            assert_eq!(values[layout.v_code_index(5, 1, channel)], v_codes[layout.v_code_index(40, 1, channel)]);
+        }
+        assert_eq!(key_scales[to], k_scales[from]);
+        assert_eq!(value_scales[to], v_scales[from]);
+    });
 }

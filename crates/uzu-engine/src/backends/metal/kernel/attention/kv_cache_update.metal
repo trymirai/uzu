@@ -25,30 +25,35 @@ PUBLIC KERNEL(KVCacheUpdate) (
   }
 }
 
-KERNEL(KVCacheUpdateInt8)(
+PUBLIC KERNEL(KVCacheUpdateInt8)(
     device int8_t* in_place_k_codes,
     device uchar* in_place_v_codes,
     device bfloat* in_place_k_scales,
     device bfloat* in_place_v_scales,
     const constant uzu::kv_cache_update::Copy* copies,
     const constant uint& copy_count,
-    const constant uint& num_kv_heads,
     const constant uint& padded_capacity,
-    const uint kv_head GROUPS(num_kv_heads),
-    const uint channel THREADS(KV_HEAD_DIM)
+    const uint head_dim SPECIALIZE,
+    const uint num_kv_heads SPECIALIZE,
+    const uint tile_keys SPECIALIZE,
+    const uint tile_dims SPECIALIZE,
+    const uint element AXIS(num_kv_heads* head_dim, 256)
 ) {
+  const Int8KvShape shape{head_dim, num_kv_heads, tile_keys, tile_dims};
+  const uint kv_head = element / head_dim;
+  const uint channel = element % head_dim;
   for (uint i = 0; i < copy_count; ++i) {
     const uint source = copies[i].source;
     const uint destination = copies[i].destination;
-    in_place_k_codes[k_code_index(destination, kv_head, num_kv_heads, channel)] =
-        in_place_k_codes[k_code_index(source, kv_head, num_kv_heads, channel)];
-    in_place_v_codes[v_code_index(destination, kv_head, num_kv_heads, channel)] =
-        in_place_v_codes[v_code_index(source, kv_head, num_kv_heads, channel)];
+    in_place_k_codes[shape.k_code_index(destination, kv_head, channel)] =
+        in_place_k_codes[shape.k_code_index(source, kv_head, channel)];
+    in_place_v_codes[shape.v_code_index(destination, kv_head, channel)] =
+        in_place_v_codes[shape.v_code_index(source, kv_head, channel)];
     if (channel == 0) {
-      const size_t sourceIdx = per_token_index(kv_head, source, padded_capacity);
-      const size_t destIdx = per_token_index(kv_head, destination, padded_capacity);
-      in_place_k_scales[destIdx] = in_place_k_scales[sourceIdx];
-      in_place_v_scales[destIdx] = in_place_v_scales[sourceIdx];
+      const size_t source_token = per_token_index(source, kv_head, padded_capacity);
+      const size_t destination_token = per_token_index(destination, kv_head, padded_capacity);
+      in_place_k_scales[destination_token] = in_place_k_scales[source_token];
+      in_place_v_scales[destination_token] = in_place_v_scales[source_token];
     }
   }
 }
