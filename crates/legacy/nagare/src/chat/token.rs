@@ -144,6 +144,7 @@ impl Session {
             }
         }
         let time_prefill_start = Instant::now();
+        let cancel_token = cancel_token.child_token();
         let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
         let output_tokens_start = self.encoding.state().tokens.len();
 
@@ -176,22 +177,25 @@ impl Session {
                     return None;
                 }
 
-                match inner.next().await {
-                    Some(event) => {
-                        state.metrics = inner.metrics();
-                        state.memory_usage = instance.peak_memory_usage();
-                        let output = Self::build_output(event, &mut state);
-                        let terminated = terminated || matches!(&output, Ok(out) if out.finish_reason.is_some());
-                        Some((output, (inner, state, terminated, false)))
-                    },
-                    None => {
-                        if !terminated && state.cancel_token.is_cancelled() {
-                            let output = Self::render_output(&mut state, Some(ChatReplyFinishReason::Cancelled));
-                            Some((output, (inner, state, true, true)))
-                        } else {
-                            None
-                        }
-                    },
+                while let Some(event) = inner.next().await {
+                    if terminated && event.is_ok() {
+                        continue;
+                    }
+                    state.metrics = inner.metrics();
+                    state.memory_usage = instance.peak_memory_usage();
+                    let output = Self::build_output(event, &mut state);
+                    let terminated = terminated || matches!(&output, Ok(out) if out.finish_reason.is_some());
+                    if terminated {
+                        state.cancel_token.cancel();
+                    }
+                    return Some((output, (inner, state, terminated, false)));
+                }
+
+                if !terminated && state.cancel_token.is_cancelled() {
+                    let output = Self::render_output(&mut state, Some(ChatReplyFinishReason::Cancelled));
+                    Some((output, (inner, state, true, true)))
+                } else {
+                    None
                 }
             },
         )
