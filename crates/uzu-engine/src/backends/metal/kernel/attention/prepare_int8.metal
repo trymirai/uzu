@@ -35,10 +35,10 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
     device ElementT* queries OPTIONAL(!quantize_queries),
     device int8_t* q_codes OPTIONAL(quantize_queries),
     device ElementT* q_scales OPTIONAL(quantize_queries),
-    device int8_t* k_codes,
-    device ElementT* k_scales,
-    device uchar* v_codes,
-    device ElementT* v_scales,
+    device int8_t* k_codes OPTIONAL(append_kv),
+    device ElementT* k_scales OPTIONAL(append_kv),
+    device uchar* v_codes OPTIONAL(append_kv),
+    device ElementT* v_scales OPTIONAL(append_kv),
     const device RopeT* cosines OPTIONAL(has_rope),
     const device RopeT* sines OPTIONAL(has_rope),
     const constant uint32_t& num_q_heads,
@@ -50,6 +50,7 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
     const bool has_rope SPECIALIZE,
     const bool quantize_queries SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
+    const bool append_kv SPECIALIZE,
     const uint32_t token_idx GROUPS(padded_suffix),
     const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
     const uint32_t lane THREADS(METAL_SIMD_SIZE)
@@ -58,6 +59,9 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
   const kv_layout::Int8KVShape shape{HEAD_DIM, num_kv_heads};
   const ushort lane_index = ushort(lane);
   const bool is_query = head_idx < num_q_heads;
+  if (!append_kv && !is_query) {
+    return;
+  }
   const bool is_key = !is_query && head_idx < num_q_heads + num_kv_heads;
   const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
 

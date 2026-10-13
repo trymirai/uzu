@@ -159,6 +159,7 @@ fn run_int8<B: Backend>() -> Int8Output {
         false,
         true,
         1,
+        true,
     )
     .unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
@@ -167,10 +168,10 @@ fn run_int8<B: Backend>() -> Int8Output {
         None::<&mut B::GlobalBuffer>,
         Some(&mut q_codes),
         Some(&mut q_scales),
-        &mut k_codes,
-        &mut k_scales,
-        &mut v_codes,
-        &mut v_scales,
+        Some(&mut k_codes),
+        Some(&mut k_scales),
+        Some(&mut v_codes),
+        Some(&mut v_scales),
         None::<&B::GlobalBuffer>,
         None::<&B::GlobalBuffer>,
         1,
