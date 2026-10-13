@@ -1,8 +1,7 @@
-use super::{gemm, single_pass, two_pass};
-
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
+use super::{gemm, single_pass, two_pass};
 use crate::{
     array::ArrayElement,
     backends::{
