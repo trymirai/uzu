@@ -51,6 +51,14 @@ struct Int8KVShape {
   }
 };
 
+/// One sign bit per channel (head_dim <= 256) of the random Hadamard rotation applied to K, V and quantized queries.
+UZU_CONST uint KV_ROTATION_SIGN_BITS[8] =
+    {0x9e3779b9u, 0x85ebca6bu, 0xc2b2ae35u, 0x27d4eb2fu, 0x165667b1u, 0xbf58476du, 0x94d049bbu, 0xd6e8feb8u};
+
+METAL_FUNC float kv_rotation_sign(const uint channel) {
+  return (KV_ROTATION_SIGN_BITS[channel / 32] >> (channel % 32)) & 1u ? -1.0f : 1.0f;
+}
+
 METAL_FUNC size_t per_token_index(const uint key, const uint kv_head, const uint padded_capacity) {
   return size_t(kv_head) * padded_capacity + key;
 }

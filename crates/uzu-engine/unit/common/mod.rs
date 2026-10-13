@@ -5,7 +5,6 @@ pub mod assert;
 pub mod cold_pool;
 pub mod harness;
 pub mod helpers;
-pub mod kv_layout;
 pub mod matmul;
 pub mod metrics;
 pub mod path;

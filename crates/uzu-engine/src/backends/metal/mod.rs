@@ -13,3 +13,5 @@ pub use backend::Metal;
 pub use context::MetalContext; // TODO: This should be removed
 #[cfg(test)]
 pub use kernel::matmul::gemm::GemmEngine;
+#[cfg(test)]
+pub use kernel::{AttentionPrepareInt8MetalKernel, KVCacheUpdateInt8MetalKernel};

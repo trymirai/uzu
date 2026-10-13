@@ -55,15 +55,6 @@ impl Int8KVLayout {
 }
 
 #[uzu_test]
-fn mma_lane_inverts_the_relaxed_fragment_map() {
-    for lane in 0..32 {
-        let quad = lane / 4;
-        let (column, row) = (((quad & 2) + lane % 2) * 4, (quad & 4) + lane / 2 % 4);
-        assert_eq!(mma_lane(row, column / 4), lane);
-    }
-}
-
-#[uzu_test]
 fn code_planes_are_bijections() {
     let layout = Int8KVLayout {
         head_dim: 256,

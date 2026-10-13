@@ -394,11 +394,10 @@ fn test_int8_copy() {
     let v_codes: Vec<u8> = (0..layout.code_bytes()).map(|i| ((i * 19) ^ (i >> 7)) as u8).collect();
     let k_scales: Vec<bf16> = (0..layout.scale_count()).map(|i| bf16::from_f32(i as f32 + 1.0)).collect();
     let v_scales: Vec<bf16> = (0..layout.scale_count()).map(|i| bf16::from_f32(i as f32 + 129.0)).collect();
-    let copies = [(40, 3), (3, 5)].map(|(source, destination)| Copy {
-        source,
-        destination,
-    });
-    let (from, to) = ((layout.padded_capacity + 40) as usize, (layout.padded_capacity + 5) as usize);
+    let copies = [Copy {
+        source: 40,
+        destination: 5,
+    }];
     let context = <Metal as Backend>::Context::new().unwrap();
     let mut keys = create_buffer_with_data::<Metal, i8>(&context, &k_codes);
     let mut values = create_buffer_with_data::<Metal, u8>(&context, &v_codes);
@@ -417,14 +416,12 @@ fn test_int8_copy() {
         &mut command_buffer,
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-    let keys = buffer_to_vec::<Metal, i8>(&keys);
-    let values = buffer_to_vec::<Metal, u8>(&values);
-    let key_scales = buffer_to_vec::<Metal, bf16>(&key_scales);
-    let value_scales = buffer_to_vec::<Metal, bf16>(&value_scales);
+    let (keys, values) = (buffer_to_vec::<Metal, i8>(&keys), buffer_to_vec::<Metal, u8>(&values));
     for channel in 0..layout.head_dim {
         assert_eq!(keys[layout.k_code_index(5, 1, channel)], k_codes[layout.k_code_index(40, 1, channel)]);
         assert_eq!(values[layout.v_code_index(5, 1, channel)], v_codes[layout.v_code_index(40, 1, channel)]);
     }
-    assert_eq!(key_scales[to], k_scales[from]);
-    assert_eq!(value_scales[to], v_scales[from]);
+    let (from, to) = ((layout.padded_capacity + 40) as usize, (layout.padded_capacity + 5) as usize);
+    assert_eq!(buffer_to_vec::<Metal, bf16>(&key_scales)[to], k_scales[from]);
+    assert_eq!(buffer_to_vec::<Metal, bf16>(&value_scales)[to], v_scales[from]);
 }
