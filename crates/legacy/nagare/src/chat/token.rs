@@ -191,11 +191,20 @@ impl Session {
                     return Some((output, (inner, state, terminated, false)));
                 }
 
-                if !terminated && state.cancel_token.is_cancelled() {
-                    let output = Self::render_output(&mut state, Some(ChatReplyFinishReason::Cancelled));
-                    Some((output, (inner, state, true, true)))
-                } else {
-                    None
+                match state.encoding.flush() {
+                    Err(error) => Some((
+                        Err(ChatSessionError::Backend {
+                            message: error.to_string(),
+                        }),
+                        (inner, state, true, true),
+                    )),
+                    Ok(flushed) if !terminated && (flushed || state.cancel_token.is_cancelled()) => {
+                        let finish_reason =
+                            state.cancel_token.is_cancelled().then_some(ChatReplyFinishReason::Cancelled);
+                        let output = Self::render_output(&mut state, finish_reason);
+                        Some((output, (inner, state, true, true)))
+                    },
+                    _ => None,
                 }
             },
         )
@@ -302,6 +311,11 @@ impl Session {
         finish_reason: Option<ChatReplyFinishReason>,
     ) -> Result<Output, ChatSessionError> {
         let have_finish_reason = finish_reason.is_some();
+        if have_finish_reason {
+            state.encoding.flush().map_err(|error| ChatSessionError::Backend {
+                message: error.to_string(),
+            })?;
+        }
         let stats = state.get_stats(have_finish_reason)?;
         let Some(message) = state.encoding.state().messages.last() else {
             return Ok(Output {
