@@ -5,7 +5,7 @@
 
 using namespace metal;
 
-template <typename T, typename BiasT>
+template <typename T, typename BiasT, bool SINGLE_SIMDGROUP = false>
 static METAL_FUNC void apply_output_random_hadamard_transform(
     device T* output_block,
     const device int32_t* rht_factors_block,
@@ -20,7 +20,8 @@ static METAL_FUNC void apply_output_random_hadamard_transform(
   const ushort stripes_per_row = tile_block_cols / HADAMARD_TRANSFORM_BLOCK_SIZE;
   const ushort simd_lane = thread_context.simd_lane_id;
   const uint total_work = uint(tile_block_rows) * uint(stripes_per_row);
-  for (uint cell = thread_context.simdgroup_index; cell < total_work; cell += simdgroup_count) {
+  for (uint cell = SINGLE_SIMDGROUP ? 0 : thread_context.simdgroup_index; cell < total_work;
+       cell += SINGLE_SIMDGROUP ? 1 : simdgroup_count) {
     const ushort row_local = ushort(cell / stripes_per_row);
     const ushort stripe = ushort(cell % stripes_per_row);
     const ushort col_local = stripe * ushort(HADAMARD_TRANSFORM_BLOCK_SIZE) + simd_lane;

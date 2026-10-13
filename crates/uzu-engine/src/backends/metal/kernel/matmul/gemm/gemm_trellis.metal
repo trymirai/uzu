@@ -108,7 +108,7 @@ KERNEL(GemmTrellis)(
   products.clear();
   uzu::dispatch_bool(alignment.contains(GemmAlignment::M) || token_end == Core::SIMDGROUP_BLOCK_M, [&](auto aligned_m) {
     uzu::dispatch_bool(alignment.contains(GemmAlignment::N) || row_end == Core::SIMDGROUP_BLOCK_N, [&](auto aligned_n) {
-      auto left = quantized::make_left_cursor<true, Core, LeftOperand, aligned_m.value>(
+      auto left = quantized::make_left_cursor<Core, LeftOperand, aligned_m.value>(
           left_storage,
           params,
           tile_context,

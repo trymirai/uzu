@@ -11,6 +11,7 @@ use crate::backends::common::gpu_types::gemm::GemmTiling;
 const MXU_DEFAULT_TILE: GemmTiling = GemmTiling::Tile64x64x256_Simdgroups2x2;
 
 const MXU_SKINNY_M_MAX: u32 = 16;
+const MXU_K_SPLIT_FULL_BLOCK_N_MAX: u32 = 16384;
 const SKINNY_SQUARE_K_MAX: u32 = 2560;
 const READOUT_N_TO_K_RATIO: u32 = 32;
 const WIDE_N_DEEP_K_MIN: u32 = 4096;
@@ -29,6 +30,7 @@ const SIMDGROUP_QUANT_WIDE_N_MIN: u32 = 6144;
 const SPLIT_K_TARGET_TILES_FP: u32 = 512;
 pub(super) const SPLIT_K_TARGET_TILES_A8: u32 = 256;
 pub(super) const SPLIT_K_TARGET_TILES_A8_TILE16X32: u32 = 4 * SPLIT_K_TARGET_TILES_A8;
+const SPLIT_K_TARGET_TILES_A8_TILE16X32_K_SPLIT: u32 = 2 * SPLIT_K_TARGET_TILES_A8;
 pub(super) const SPLIT_K_TARGET_TILES_A8_TILE32_W4: u32 = 512;
 const SPLIT_K_TARGET_TILES_A8_TILE32_W8: u32 = 1024;
 
@@ -52,6 +54,19 @@ pub(super) fn mxu_mn_tile(
         (true, 1, _) => GemmTiling::Tile32x64x256_Simdgroups2x2,
         (true, 4, _) => GemmTiling::Tile128x128x256_Simdgroups4x4,
         _ => MXU_DEFAULT_TILE,
+    }
+}
+
+pub(super) fn mxu_int8_gemm_tile(
+    m: u32,
+    n: u32,
+) -> GemmTiling {
+    match mxu_mn_tile(true, m, n) {
+        GemmTiling::Tile128x128x256_Simdgroups4x4 => MXU_DEFAULT_TILE,
+        GemmTiling::Tile16x32x256_Simdgroups1x1 if m < MXU_SKINNY_M_MAX || n <= MXU_K_SPLIT_FULL_BLOCK_N_MAX => {
+            GemmTiling::Tile16x32x256_Simdgroups1x1x4
+        },
+        tiling => tiling,
     }
 }
 
@@ -135,6 +150,7 @@ pub(super) fn split_k_target_tiles(
         (true, GemmTiling::Tile32x64x256_Simdgroups2x2, Some(4)) => SPLIT_K_TARGET_TILES_A8_TILE32_W4,
         (true, GemmTiling::Tile32x64x256_Simdgroups2x2, _) => SPLIT_K_TARGET_TILES_A8_TILE32_W8,
         (true, GemmTiling::Tile16x32x256_Simdgroups1x1, _) => SPLIT_K_TARGET_TILES_A8_TILE16X32,
+        (true, GemmTiling::Tile16x32x256_Simdgroups1x1x4, _) => SPLIT_K_TARGET_TILES_A8_TILE16X32_K_SPLIT,
         (true, _, _) => SPLIT_K_TARGET_TILES_A8,
         (false, _, _) => SPLIT_K_TARGET_TILES_FP,
     }
