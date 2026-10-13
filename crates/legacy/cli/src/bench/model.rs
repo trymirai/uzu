@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow, ensure};
 use rocket::serde::{Deserialize, Serialize};
 use uzu::types::{
     basic::ReasoningEffort,
-    session::chat::{ChatMessage, ChatReplyEnergy, ChatRole},
+    session::chat::{ChatMessage, ChatReply, ChatReplyEnergy, ChatRole},
 };
 use uzu_engine::data_type::DataType;
 
@@ -22,6 +22,8 @@ pub struct BenchTask {
     pub tokens_limit: u64,
     pub messages: Vec<BenchMessage>,
     pub greedy: bool,
+    #[serde(default)]
+    pub include_replies: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,6 +116,8 @@ pub struct BenchResult {
     pub output_energy: Option<ChatReplyEnergy>,
     pub joules_per_token: Option<f64>,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replies: Option<Vec<ChatReply>>,
 }
 
 #[cfg(test)]

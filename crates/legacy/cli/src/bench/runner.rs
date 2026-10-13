@@ -132,6 +132,7 @@ impl BenchRunner {
                 output_energy,
                 joules_per_token,
                 text: text.unwrap_or("".to_string()),
+                replies: self.task.include_replies.then_some(replies),
             };
             results.push(result);
 

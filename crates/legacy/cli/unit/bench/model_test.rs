@@ -1,7 +1,7 @@
 use serde_json::json;
 use uzu::types::{
-    basic::{ReasoningEffort, ToolDescription},
-    session::chat::{ChatContentBlock, ChatRole},
+    basic::{ReasoningEffort, ToolCall, ToolDescription},
+    session::chat::{ChatContentBlock, ChatReply, ChatReplyFinishReason, ChatRole},
 };
 
 use super::*;
@@ -22,6 +22,42 @@ fn legacy_task_still_converts_without_tools() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, ChatRole::User {});
     assert_eq!(messages[0].text().as_deref(), Some("Hello"));
+}
+
+#[test]
+fn benchmark_result_preserves_optional_structured_replies() {
+    let mut input = json!({
+        "task": task(json!([{"role": "user", "content": "Hello"}])),
+        "device": {"memory_total": 1024}, "engine_version": "test", "timestamp": 0,
+        "data_type": "bfloat16", "tokens_count_input": 1, "tokens_count_output": 2,
+        "time_to_first_token": 1.0, "prompt_tokens_per_second": 1.0, "text": "Done"
+    });
+    let legacy: BenchResult = serde_json::from_value(input.clone()).unwrap();
+    assert!(!legacy.task.include_replies);
+    assert!(serde_json::to_value(&legacy).unwrap().get("replies").is_none());
+
+    input["task"]["include_replies"] = json!(true);
+    input["replies"] = json!([
+        ChatReply {
+            message: ChatMessage::assistant().with_reasoning("Check the clock".to_string()).with_tool_call(ToolCall {
+                identifier: Some("call_clock".to_string()),
+                name: "clock".to_string(),
+                arguments: json!({"zone": "UTC"}).into(),
+            }),
+            stats: Default::default(),
+            finish_reason: Some(ChatReplyFinishReason::ToolCalls),
+        },
+        ChatReply {
+            message: ChatMessage::assistant().with_text("Done".to_string()),
+            stats: Default::default(),
+            finish_reason: Some(ChatReplyFinishReason::Stop),
+        },
+    ]);
+    let result: BenchResult = serde_json::from_value(input.clone()).unwrap();
+    let saved = serde_json::to_value(result).unwrap();
+    assert_eq!(saved["replies"], input["replies"]);
+    assert_eq!(saved["task"]["include_replies"], true);
+    assert_eq!(saved["text"], "Done");
 }
 
 #[test]
