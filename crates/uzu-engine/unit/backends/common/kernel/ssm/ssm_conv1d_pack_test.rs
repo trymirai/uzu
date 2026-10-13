@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,14 +12,14 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     state_in: Box<[T]>,
     x: Box<[T]>,
     state_stride: u32,
@@ -29,7 +28,7 @@ struct Input<T: ArrayElement + Float> {
     num_channels: u32,
 }
 
-fn get_input<T: ArrayElement + Float>(
+fn get_input<T: DataTypeRepr + Float>(
     state_stride: u32,
     row_stride: u32,
     suffix_len: u32,
@@ -51,7 +50,7 @@ fn get_input<T: ArrayElement + Float>(
     }
 }
 
-fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
+fn get_output<B: Backend, T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, T::data_type(), T::data_type())
         .expect("Failed to create Conv1dPackKernel");
@@ -79,7 +78,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     buffer_to_vec(&padded)
 }
 
-fn get_test_data<T: ArrayElement + Float>(
+fn get_test_data<T: DataTypeRepr + Float>(
     state_stride: u32,
     row_stride: u32,
     suffix_len: u32,
@@ -90,7 +89,7 @@ fn get_test_data<T: ArrayElement + Float>(
     (input, expected)
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
     input: &Input<T>,
     expected: &[T],
     label: &str,
@@ -108,31 +107,31 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-fn test_basic<T: ArrayElement + Float + Debug + Display>() {
+fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
     // 4 channels, state_stride=3 (kernel_size=4), 2 tokens
     let (input, expected) = get_test_data::<T>(3, 4, 2, 4);
     test_internal(&input, &expected, "basic");
 }
 
-fn test_single_token<T: ArrayElement + Float + Debug + Display>() {
+fn test_single_token<T: DataTypeRepr + Float + Debug + Display>() {
     // 8 channels, state_stride=1, 1 token
     let (input, expected) = get_test_data::<T>(1, 8, 1, 8);
     test_internal(&input, &expected, "single_token");
 }
 
-fn test_many_tokens<T: ArrayElement + Float + Debug + Display>() {
+fn test_many_tokens<T: DataTypeRepr + Float + Debug + Display>() {
     // Minimal state (kernel_size=2), many tokens
     let (input, expected) = get_test_data::<T>(1, 4, 8, 4);
     test_internal(&input, &expected, "many_tokens");
 }
 
-fn test_large<T: ArrayElement + Float + Debug + Display>() {
+fn test_large<T: DataTypeRepr + Float + Debug + Display>() {
     // Larger dimensions closer to real usage
     let (input, expected) = get_test_data::<T>(3, 128, 16, 128);
     test_internal(&input, &expected, "large");
 }
 
-fn test_channels_lt_row_stride<T: ArrayElement + Float + Debug + Display>() {
+fn test_channels_lt_row_stride<T: DataTypeRepr + Float + Debug + Display>() {
     // num_channels < row_stride (padded channels that kernel doesn't write)
     let (input, expected) = get_test_data::<T>(2, 8, 3, 6);
     test_internal(&input, &expected, "channels_lt_row_stride");

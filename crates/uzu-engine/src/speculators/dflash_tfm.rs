@@ -27,7 +27,7 @@ use crate::{
         sampling::{PRng, Sampling, SamplingMethod},
         weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
-    parameters::{ParameterLoader, ParameterLoaderError},
+    safetensors::{ParameterLoader, ParameterLoaderError},
     trie::TrieNode,
 };
 
@@ -136,7 +136,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             })
             .transpose()?;
 
-        weight_loader.tree().assert_all_tensors_validated()?;
+        weight_loader.assert_all_tensors_read()?;
 
         let sampling = Sampling::new(config.draft_config.vocab_size, data_type);
 

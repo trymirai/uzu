@@ -4,7 +4,6 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, gpu_types::trie::TrieNode,
     },
@@ -24,8 +23,8 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
-    parameters::ParameterTree,
-    utils::maybe_mut::MaybeMut,
+    safetensors::ParameterTree,
+    utils::{maybe_mut::MaybeMut, size_for_shape::size_for_shape},
 };
 
 pub struct DFlashState<B: Backend> {

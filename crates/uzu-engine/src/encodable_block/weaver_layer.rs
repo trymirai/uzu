@@ -1,5 +1,4 @@
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{AncestorAttentionKernel, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
@@ -16,7 +15,8 @@ use crate::{
         normalization::{Normalization, PostLayerScalar, ShortcutMode},
         weaver::{DATA_TYPE, ROPE_DATA_TYPE, WeaverEncodeError, WeaverNewError},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
+    utils::size_for_shape::size_for_shape,
 };
 
 pub struct PreparedPrefixAttention<B: Backend> {

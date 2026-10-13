@@ -8,7 +8,7 @@ use crate::{
     },
     config::normalization::{NormalizationConfig, UpcastMode},
     data_type::DataType,
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -52,16 +52,15 @@ impl<B: Backend> QKVNorm<B> {
             let Some(config) = config else {
                 return Ok::<_, QKVNormError<B>>(None);
             };
-            let scales = config
-                .has_scale
-                .then(|| {
-                    parameter_tree
-                        .subtree(parameter_name.expect("scaled norm requires parameter tree"))
-                        .leaf("scales")?
-                        .validate(&[head_dim], DataType::F32)?
-                        .read_buffer()
-                })
-                .transpose()?;
+            let scales =
+                config
+                    .has_scale
+                    .then(|| {
+                        parameter_tree
+                            .subtree(parameter_name.expect("scaled norm requires parameter tree"))
+                            .read_buffer("scales", &[head_dim], DataType::F32)
+                    })
+                    .transpose()?;
             let kernel = <B::Kernels as Kernels>::QKVNormKernel::new(
                 context,
                 intermediate_data_type,

@@ -12,7 +12,7 @@ use crate::{
     encodable_block::linear::{
         Gather, Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
 };
 
 pub struct UntiedReadout<B: Backend> {
@@ -56,11 +56,7 @@ impl<B: Backend> UntiedReadout<B> {
             None,
             context,
         )?;
-        let rht_signs = tree
-            .subtree("incoherence_signs")
-            .leaf("input_signs")?
-            .validate(&[model_dim], DataType::I32)?
-            .read_buffer()?;
+        let rht_signs = tree.subtree("incoherence_signs").read_buffer("input_signs", &[model_dim], DataType::I32)?;
         let preparation = LinearInputPreparation {
             rht_signs,
             activation_quantization: linear.prepare_a8(context),

@@ -14,7 +14,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 type LookupKernel<B> = <<B as Backend>::Kernels as Kernels>::InputEmbeddingLookupKernel;
@@ -207,7 +207,7 @@ fn load_d4s4<B: Backend>(
             "{spec:?} with {data_type:?} and embedding dim {embedding_dim}"
         )));
     }
-    let read = |name: &str, shape: &[u32], data_type| tree.leaf(name)?.validate(shape, data_type)?.read_buffer();
+    let read = |name: &str, shape: &[u32], data_type| tree.read_buffer(name, shape, data_type);
     let table = D4S4Table {
         codes: read("codes", &[vocab_size, embedding_dim / d4s4::VALUES_PER_CODE], DataType::U8)?,
         row_scales: read("row_scales", &[vocab_size], data_type)?,
@@ -228,5 +228,5 @@ pub(super) fn read_output_signs<B: Backend>(
     embedding_dim: u32,
 ) -> Result<B::GlobalBuffer, EmbeddingTableError<B>> {
     let signs = tree.subtree("incoherence_signs");
-    Ok(signs.leaf("output_signs")?.validate(&[embedding_dim], DataType::I32)?.read_buffer()?)
+    Ok(signs.read_buffer("output_signs", &[embedding_dim], DataType::I32)?)
 }

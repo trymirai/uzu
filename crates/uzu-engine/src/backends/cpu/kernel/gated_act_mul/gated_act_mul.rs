@@ -3,7 +3,6 @@ use num_traits::Float;
 use uzu_engine_macros::kernel;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             gpu_types::{
@@ -15,11 +14,12 @@ use crate::{
         },
         cpu::kernel::activation_transform::{hadamard_transform, quantize_transformed_row},
     },
+    data_type::DataTypeRepr,
 };
 
 #[kernel(GatedActMul)]
 #[variants(T, f32, bf16)]
-pub fn gated_act_mul<T: ArrayElement + Float>(
+pub fn gated_act_mul<T: DataTypeRepr + Float>(
     act_operand: *const T,
     #[optional(!interleaved)] value_operand: Option<*const T>,
     #[optional(ops == GatedActMulOp::FullPrecision)] fp_out: Option<*mut T>,

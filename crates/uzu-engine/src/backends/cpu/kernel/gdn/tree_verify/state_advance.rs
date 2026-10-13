@@ -2,12 +2,12 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(StateAdvance)]
 #[variants(T, f32, bf16)]
 #[variants(HEAD_K_DIM, 128)]
-pub fn state_advance<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
+pub fn state_advance<T: DataTypeRepr + Float, const HEAD_K_DIM: u32>(
     k_norm: *const T,
     v: *const T,
     log_decay_buf: *const f32,

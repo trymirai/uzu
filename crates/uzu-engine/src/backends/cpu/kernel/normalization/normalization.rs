@@ -3,11 +3,11 @@ use num_traits::Float;
 use uzu_engine_macros::kernel;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         cpu::kernel::activation_transform::hadamard_transform,
     },
+    data_type::DataTypeRepr,
 };
 
 #[kernel(Normalization)]
@@ -16,10 +16,10 @@ use crate::{
 #[variants(OutputT, f32, f16, bf16)]
 #[variants(AccumT, f32)]
 pub fn normalization<
-    InputT: ArrayElement + Float,
-    AffineT: ArrayElement + Float,
-    OutputT: ArrayElement + Float,
-    AccumT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    AffineT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float,
+    AccumT: DataTypeRepr + Float,
 >(
     #[optional(!in_place)] input: Option<*const InputT>,
     #[optional(has_scales)] scales: Option<*const AffineT>,

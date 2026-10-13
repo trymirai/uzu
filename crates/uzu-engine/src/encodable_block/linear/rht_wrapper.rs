@@ -14,7 +14,7 @@ use crate::{
         Gather, Linear, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError,
         input_rht::InputRht,
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -136,14 +136,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
         let weights_tree = parameter_tree.subtree("weights");
         let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        let rht_signs = weights_tree
-            .leaf("incoherence_signs.input_signs")?
-            .validate(&[input_dimension], DataType::I32)?
-            .read_buffer()?;
-        let output_factors = weights_tree
-            .leaf("incoherence_signs.output_signs")?
-            .validate(&[output_dimension], DataType::I32)?
-            .read_buffer()?;
+        let rht_signs = weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32)?;
+        let output_factors =
+            weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32)?;
         let inner_linear = LinearMatmul::load(
             input_dimension,
             output_dimension,

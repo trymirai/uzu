@@ -8,7 +8,6 @@ use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
@@ -22,13 +21,14 @@ use crate::{
         cpu::Cpu,
         metal::{Metal, context::MetalContext, kernel::matmul::gemm::GemmEngine},
     },
+    data_type::DataTypeRepr,
     tests::{
         helpers::buffer_to_vec,
         matmul::{QuantBuffers, QuantInput, quant::run_quant_cpu, quant_arguments},
     },
 };
 
-fn run_quant_metal<T: ArrayElement + Float>(
+fn run_quant_metal<T: DataTypeRepr + Float>(
     context: &MetalContext,
     input: &QuantInput<T>,
     dispatch: Option<GemmEngine>,
@@ -82,7 +82,7 @@ fn quant_params_layout_table() {
     }
 }
 
-fn assert_parity<T: ArrayElement + Float + Debug + Display>(
+fn assert_parity<T: DataTypeRepr + Float + Debug + Display>(
     label: &str,
     reference: &[T],
     actual: &[T],
@@ -104,7 +104,7 @@ fn assert_parity<T: ArrayElement + Float + Debug + Display>(
     assert_eq!(errors, 0, "{label}: {errors} mismatches");
 }
 
-fn run_parity<T: ArrayElement + Float + Debug + Display>(
+fn run_parity<T: DataTypeRepr + Float + Debug + Display>(
     m: u32,
     k: u32,
     n: u32,

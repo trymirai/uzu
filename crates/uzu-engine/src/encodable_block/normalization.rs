@@ -2,14 +2,14 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, NormalizationKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
     data_type::DataType,
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
+    utils::size_for_shape::size_for_shape,
 };
 
 // TODO: clean up
@@ -67,11 +67,11 @@ impl<B: Backend> Normalization<B> {
 
         let scales = config
             .has_scale
-            .then(|| parameter_tree.leaf("scales")?.validate(&[element_count], DataType::F32)?.read_buffer())
+            .then(|| parameter_tree.read_buffer("scales", &[element_count], DataType::F32))
             .transpose()?;
         let biases = config
             .has_biases
-            .then(|| parameter_tree.leaf("biases")?.validate(&[element_count], DataType::F32)?.read_buffer())
+            .then(|| parameter_tree.read_buffer("biases", &[element_count], DataType::F32))
             .transpose()?;
 
         let (scale_residual_sum, scale_output, post_layer_scalar_value) = match post_layer_scalar {

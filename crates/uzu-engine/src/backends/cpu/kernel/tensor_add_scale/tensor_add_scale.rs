@@ -2,11 +2,11 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(TensorAddScale)]
 #[variants(T, f32, f16, bf16)]
-pub fn tensor_add_scale<T: ArrayElement + Float>(
+pub fn tensor_add_scale<T: DataTypeRepr + Float>(
     #[optional(!in_place)] input: Option<*const T>,
     bias: *const T,
     output: *mut T,

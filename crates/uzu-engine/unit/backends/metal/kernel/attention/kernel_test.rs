@@ -3,7 +3,6 @@ use uzu_engine_macros::uzu_test;
 
 use super::{gemm, single_pass, two_pass};
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,6 +12,7 @@ use crate::{
         cpu::Cpu,
         metal::Metal,
     },
+    data_type::DataTypeRepr,
     encodable_block::{mixer::attention::KVCacheView, sampling::PRng},
     tests::{
         assert::assert_eq_float,

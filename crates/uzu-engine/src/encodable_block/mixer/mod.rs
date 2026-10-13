@@ -17,7 +17,7 @@ use crate::{
             short_conv::{ShortConv, ShortConvNewError},
         },
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
     utils::maybe_mut::MaybeMut,
 };
 

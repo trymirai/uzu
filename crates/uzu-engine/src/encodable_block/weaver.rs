@@ -2,7 +2,6 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         gpu_types::weaver::{
@@ -23,7 +22,8 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
+    utils::size_for_shape::size_for_shape,
 };
 
 pub const DATA_TYPE: DataType = DataType::BF16;

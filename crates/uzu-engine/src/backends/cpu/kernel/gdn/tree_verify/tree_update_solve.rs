@@ -2,14 +2,14 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 /// Solves chunked GDN update coefficients: `(I + A) U = beta * (v - exp(prefix) * kh0)`.
 /// `kh0 = k @ h0^T` is precomputed by BuildTreeGram.
 #[kernel(TreeUpdateSolve)]
 #[variants(T, f32, bf16)]
 #[variants(BV, 16, 32)]
-pub fn tree_update_solve<T: ArrayElement + Float, const BV: u32>(
+pub fn tree_update_solve<T: DataTypeRepr + Float, const BV: u32>(
     #[optional(use_h0)] kh0: Option<*const f32>,
     v: *const T,
     prefix: *const f32,

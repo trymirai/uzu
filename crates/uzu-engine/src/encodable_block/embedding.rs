@@ -16,7 +16,7 @@ use crate::{
         embedding_table::{EmbeddingTable, EmbeddingTableError, read_output_signs},
         linear::{Gather, LinearEncodeError, LinearMatmulError, UntiedReadout},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]

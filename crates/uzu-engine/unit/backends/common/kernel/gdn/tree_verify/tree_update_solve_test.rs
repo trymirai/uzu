@@ -4,7 +4,6 @@ use half::bf16;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -12,7 +11,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
@@ -86,7 +85,7 @@ const CASES: &[SolveCase] = &[
     },
 ];
 
-fn run_case<B: Backend, T: ArrayElement + Copy>(
+fn run_case<B: Backend, T: DataTypeRepr + Copy>(
     case: SolveCase,
     bv: u32,
     use_h0: bool,

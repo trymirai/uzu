@@ -2,12 +2,12 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(TensorAddBias)]
 #[variants(T, f32, f16, bf16)]
 #[variants(BiasT, f32, f16, bf16)]
-pub fn tensor_add_bias<T: ArrayElement + Float, BiasT: ArrayElement + Float>(
+pub fn tensor_add_bias<T: DataTypeRepr + Float, BiasT: DataTypeRepr + Float>(
     #[optional(!in_place)] input: Option<*const T>,
     bias: *const BiasT,
     output: *mut T,

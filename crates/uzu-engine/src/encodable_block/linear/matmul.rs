@@ -19,7 +19,7 @@ use crate::{
         linear::{Gather, Linear, LinearEncodeError, LinearInput},
         weight_matrix::{WeightMatrix, WeightMatrixError},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -59,9 +59,7 @@ fn load_biases<B: Backend>(
             "mixed precision linear with biases is not supported: weights={weights_data_type:?}, output={output_data_type:?}",
         )));
     }
-    Ok(parameter_tree
-        .map(|tree| tree.leaf("biases")?.validate(&[output_dim], weights_data_type)?.read_buffer())
-        .transpose()?)
+    Ok(parameter_tree.map(|tree| tree.read_buffer("biases", &[output_dim], weights_data_type)).transpose()?)
 }
 
 impl<B: Backend> LinearMatmul<B> {

@@ -20,7 +20,7 @@ use crate::{
             },
         },
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
 };
 
@@ -140,10 +140,8 @@ impl<B: Backend> Attention<B> {
             rope_config.is_some(),
         )
         .map_err(AttentionNewError::Backend)?;
-        let sinks = config
-            .has_sinks
-            .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_buffer())
-            .transpose()?;
+        let sinks =
+            config.has_sinks.then(|| parameter_tree.read_buffer("sinks", &[num_q_heads], data_type)).transpose()?;
 
         assert!(sliding_window_size.is_none_or(|size| size > 0), "zero sliding window size");
         let ring_capacity = sliding_window_size;

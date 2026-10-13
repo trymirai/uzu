@@ -6,7 +6,6 @@ use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, Context,
@@ -14,6 +13,7 @@ use crate::{
         },
         metal::{Metal, context::MetalContext, kernel::matmul::gemm::GemmEngine},
     },
+    data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
         matmul::{
@@ -23,7 +23,7 @@ use crate::{
     },
 };
 
-fn run_metal<T: ArrayElement + Float>(
+fn run_metal<T: DataTypeRepr + Float>(
     context: &MetalContext,
     kernel: &mut <<Metal as Backend>::Kernels as Kernels>::MatmulKernel,
     input: &Input<T>,
@@ -46,7 +46,7 @@ fn gemm_engines_for_hw(context: &MetalContext) -> Vec<GemmEngine> {
     engines
 }
 
-fn check_case<T: ArrayElement + Float + Debug + Display>(
+fn check_case<T: DataTypeRepr + Float + Debug + Display>(
     context: &MetalContext,
     kernel: &mut <<Metal as Backend>::Kernels as Kernels>::MatmulKernel,
     dispatch: Option<GemmEngine>,
@@ -64,7 +64,7 @@ fn check_case<T: ArrayElement + Float + Debug + Display>(
     );
 }
 
-fn run_matrix<T: ArrayElement + Float + Debug + Display>(
+fn run_matrix<T: DataTypeRepr + Float + Debug + Display>(
     case_for_shape: impl Fn(crate::tests::matmul::Shape) -> Case,
     tolerance: f32,
 ) {

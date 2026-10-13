@@ -2,11 +2,11 @@ use half::{bf16, f16};
 use num_traits::{Float, ToPrimitive};
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(ShortConvPack)]
 #[variants(T, f32, f16, bf16)]
-pub fn short_conv_pack<T: ArrayElement + Float>(
+pub fn short_conv_pack<T: DataTypeRepr + Float>(
     state_in: *const T,
     in_proj: *const T,
     padded: *mut T,
@@ -44,7 +44,7 @@ pub fn short_conv_pack<T: ArrayElement + Float>(
 #[kernel(ShortConvPrefill)]
 #[variants(T, f32, f16, bf16)]
 #[variants(WeightT, f32)]
-pub fn short_conv_prefill<T: ArrayElement + Float, WeightT: ArrayElement + Float>(
+pub fn short_conv_prefill<T: DataTypeRepr + Float, WeightT: DataTypeRepr + Float>(
     padded: *const T,
     in_proj: *const T,
     w: *const WeightT,
@@ -114,7 +114,7 @@ pub fn short_conv_prefill<T: ArrayElement + Float, WeightT: ArrayElement + Float
 #[kernel(ShortConvDecode)]
 #[variants(T, f32, f16, bf16)]
 #[variants(WeightT, f32)]
-pub fn short_conv_decode<T: ArrayElement + Float, WeightT: ArrayElement + Float>(
+pub fn short_conv_decode<T: DataTypeRepr + Float, WeightT: DataTypeRepr + Float>(
     in_proj: *const T,
     w: *const WeightT,
     #[optional(has_bias)] b: Option<*const WeightT>,
@@ -185,7 +185,7 @@ pub fn short_conv_decode<T: ArrayElement + Float, WeightT: ArrayElement + Float>
 #[kernel(ShortConvTrie)]
 #[variants(T, f32, f16, bf16)]
 #[variants(WeightT, f32)]
-pub fn short_conv_trie<T: ArrayElement + Float, WeightT: ArrayElement + Float>(
+pub fn short_conv_trie<T: DataTypeRepr + Float, WeightT: DataTypeRepr + Float>(
     in_proj: *const T,
     w: *const WeightT,
     #[optional(has_bias)] b: Option<*const WeightT>,

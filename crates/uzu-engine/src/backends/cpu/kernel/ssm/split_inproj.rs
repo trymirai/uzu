@@ -2,11 +2,11 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(SplitInProj)]
 #[variants(T, f32, f16, bf16)]
-pub fn split_in_proj<T: ArrayElement + Float>(
+pub fn split_in_proj<T: DataTypeRepr + Float>(
     input: *const T,
     conv_out: *mut T,
     z_out: *mut T,

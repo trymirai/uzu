@@ -5,19 +5,18 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::common::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         gpu_types::activation_type::ActivationType, kernel::SSDPrefillKernel,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     x: Box<[T]>,
     dt: Box<[T]>,
     b: Box<[T]>,
@@ -36,12 +35,12 @@ struct Input<T: ArrayElement + Float> {
     state_strides: [usize; 3],
 }
 
-struct Output<T: ArrayElement + Float> {
+struct Output<T: DataTypeRepr + Float> {
     y: Vec<T>,
     state: Vec<T>,
 }
 
-fn get_input<T: ArrayElement + Float>(
+fn get_input<T: DataTypeRepr + Float>(
     suffix_len: usize,
     num_heads: usize,
     head_dim: usize,
@@ -88,7 +87,7 @@ fn get_input<T: ArrayElement + Float>(
     }
 }
 
-fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T> {
+fn get_output<B: Backend, T: DataTypeRepr + Float>(input: &Input<T>) -> Output<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
     let total_x = input.suffix_len * input.num_heads * input.head_dim;
@@ -138,7 +137,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     }
 }
 
-fn reference_output<T: ArrayElement + Float>(input: &Input<T>) -> Output<T> {
+fn reference_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Output<T> {
     let safe_group = input.group_size.max(1) as usize;
     let mut state = input.state.to_vec();
     let mut y = vec![T::zero(); input.suffix_len * input.num_heads * input.head_dim];
@@ -177,7 +176,7 @@ fn reference_output<T: ArrayElement + Float>(input: &Input<T>) -> Output<T> {
     }
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
     input: &Input<T>,
     expected: &Output<T>,
     label: &str,
@@ -218,7 +217,7 @@ fn test_shape(
     group_size: u32,
     label: &str,
 ) {
-    fn run<T: ArrayElement + Float + Debug + Display>(
+    fn run<T: DataTypeRepr + Float + Debug + Display>(
         suffix_len: usize,
         num_heads: usize,
         head_dim: usize,

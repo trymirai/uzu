@@ -4,12 +4,12 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_bench;
 
 use crate::{
-    array::ArrayElement,
     backends::common::{
         Backend, Context,
         gpu_types::quantization_method::QuantizationMethod,
         kernel::{Kernels, matmul::MatmulKernel},
     },
+    data_type::DataTypeRepr,
     tests::{
         cold_pool::ColdPool,
         helpers::for_each_backend,
@@ -18,7 +18,7 @@ use crate::{
     },
 };
 
-fn bench_gemv_typed<B: Backend, T: ArrayElement + Float>(
+fn bench_gemv_typed<B: Backend, T: DataTypeRepr + Float>(
     c: &mut Criterion,
     context: &B::Context,
     label: &str,
