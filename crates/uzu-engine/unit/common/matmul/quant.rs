@@ -6,7 +6,10 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 #[cfg(backend = "metal")]
 use super::harness::TestDispatch;
 #[cfg(backend = "metal")]
-use crate::backends::metal::{Metal, MetalContext};
+use crate::backends::{
+    common::kernel::matmul::MatmulShape,
+    metal::{Metal, MetalContext},
+};
 use crate::{
     array::ArrayElement,
     backends::{
@@ -18,7 +21,7 @@ use crate::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
                     Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
-                    MatmulShape, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection,
+                    QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection,
                 },
             },
         },
