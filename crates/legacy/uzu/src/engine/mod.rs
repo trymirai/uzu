@@ -712,6 +712,13 @@ impl Engine {
         Ok(self.storage.ready_state(&model.identifier).await?)
     }
 
+    pub async fn refresh_download_state(
+        &self,
+        model: &Model,
+    ) -> Result<DownloadState, EngineError> {
+        Ok(self.storage.refresh_state(&model.identifier).await?)
+    }
+
     pub fn catalog_is_refreshing(&self) -> bool {
         self.catalog_refreshes.load(Ordering::SeqCst) != 0
     }
