@@ -1,8 +1,6 @@
 use num_traits::Float;
 
 use super::Shape;
-#[cfg(backend = "metal")]
-use crate::backends::metal::{GemmEngine, Metal, MetalContext};
 use crate::{
     array::ArrayElement,
     backends::{
@@ -17,12 +15,6 @@ use crate::{
     },
     tests::helpers::{buffer_to_vec, create_buffer_with_data},
 };
-
-#[cfg(backend = "metal")]
-pub type MetalMatmulKernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
-
-#[cfg(backend = "metal")]
-pub type TestDispatch = Option<GemmEngine>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Case {
@@ -109,7 +101,7 @@ pub fn deterministic_input<T: ArrayElement + Float>(case: Case) -> Input<T> {
     }
 }
 
-fn run<B: Backend, T: ArrayElement + Float>(
+pub fn run<B: Backend, T: ArrayElement + Float>(
     context: &B::Context,
     kernel: &mut <B::Kernels as Kernels>::MatmulKernel,
     input: &Input<T>,
@@ -174,21 +166,5 @@ pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     .expect("CPU MatmulKernel");
     run::<Cpu, T>(&context, &mut kernel, input, |kernel, args, command_buffer| {
         kernel.encode(args, command_buffer).expect("encode failed");
-    })
-}
-
-#[cfg(backend = "metal")]
-pub fn run_metal<T: ArrayElement + Float>(
-    context: &MetalContext,
-    kernel: &mut MetalMatmulKernel,
-    input: &Input<T>,
-    dispatch: TestDispatch,
-) -> Vec<T> {
-    run::<Metal, T>(context, kernel, input, |kernel, args, command_buffer| {
-        if let Some(engine) = dispatch {
-            kernel.encode_with_gemm_engine(args, engine, command_buffer).expect("forced GEMM engine encode failed");
-        } else {
-            kernel.encode(args, command_buffer).expect("matmul encode failed");
-        }
     })
 }

@@ -10,8 +10,11 @@ use crate::{
             },
         },
         metal::{
-            Metal, MetalContext, command_buffer::MetalCommandBufferEncoding, context::LARGE_MIN_GPU_CORES,
-            error::MetalError, kernel::MetalKernels,
+            Metal,
+            command_buffer::MetalCommandBufferEncoding,
+            context::{LARGE_MIN_GPU_CORES, MetalContext},
+            error::MetalError,
+            kernel::MetalKernels,
         },
     },
     data_type::DataType,

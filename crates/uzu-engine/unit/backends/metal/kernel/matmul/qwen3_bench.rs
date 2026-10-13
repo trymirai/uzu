@@ -1,5 +1,3 @@
-#![cfg(backend = "metal")]
-
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;
 use num_traits::Float;
@@ -13,7 +11,7 @@ use crate::{
             gpu_types::QuantizationMethod,
             kernel::{Kernels, matmul::MatmulKernel},
         },
-        metal::{Metal, MetalContext},
+        metal::{Metal, context::MetalContext},
     },
     tests::{
         cold_pool::ColdPool,

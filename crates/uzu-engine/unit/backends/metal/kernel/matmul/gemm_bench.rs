@@ -1,5 +1,3 @@
-#![cfg(backend = "metal")]
-
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;
 use uzu_engine_macros::uzu_bench;
@@ -14,7 +12,7 @@ use crate::{
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
             },
         },
-        metal::{GemmEngine, Metal},
+        metal::{Metal, kernel::matmul::gemm::GemmEngine},
     },
     tests::{
         helpers::create_buffer,

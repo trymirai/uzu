@@ -25,10 +25,7 @@ use crate::{
     },
 };
 #[cfg(backend = "metal")]
-use crate::{
-    backends::metal::{Metal, MetalContext},
-    tests::matmul::run_quant_cpu,
-};
+use crate::{backends::metal::Metal, tests::matmul::run_quant_cpu};
 
 struct Input<T: ArrayElement + Float> {
     a: Box<[T]>,
@@ -165,7 +162,7 @@ fn group_major_gemv_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    let context = MetalContext::new().expect("Metal context");
+    let context = <Metal as Backend>::Context::new().expect("Metal context");
     let input = QuantInput::<bf16>::new(1, 256, 72, 32, bits, method, 0).with_group_output();
     let reference = run_quant_cpu::<bf16>(&input);
 
