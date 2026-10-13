@@ -6,7 +6,7 @@
 
 use metal::MTLGPUFamily;
 
-use crate::backends::common::gpu_types::gemm::GemmTiling;
+use crate::backends::metal::gpu_types::gemm::GemmTiling;
 
 const MXU_DEFAULT_TILE: GemmTiling = GemmTiling::Tile64x64x256_Simdgroups2x2;
 

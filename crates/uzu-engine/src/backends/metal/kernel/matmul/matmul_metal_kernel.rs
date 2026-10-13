@@ -1,28 +1,31 @@
 use metal::MTLGPUFamily;
 
-use super::{
-    GemmKernel,
-    gemm::{self, GemmPlan, GemmProblem},
-    gemv::{GemvKernel, GemvSpecialization},
-    matmul_dispatch::MatmulDispatch,
-    matmul_output_work::MatmulOutputWork,
-    qmv::{self, QmvRoute},
-};
 use crate::{
     backends::{
         common::{
             BufferMut, BufferRef, CommandBufferEncoding,
-            gpu_types::gemm::GemmTiling,
             kernel::{
                 ActivationQuantization,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
-                    ActivationFormat, Int8CodeLayout, MatmulArguments, MatmulError, MatmulKernel, MatmulShape,
-                    QuantParamsLayout,
+                    ActivationFormat, Int8CodeLayout, MatmulArguments, MatmulKernel, MatmulShape, QuantParamsLayout,
                 },
             },
         },
-        metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError},
+        metal::{
+            Metal,
+            command_buffer::MetalCommandBufferEncoding,
+            context::MetalContext,
+            gpu_types::gemm::GemmTiling,
+            kernel::matmul::{
+                GemmKernel, MatmulMetalError,
+                gemm::{self, GemmPlan, GemmProblem},
+                gemv::{GemvKernel, GemvSpecialization},
+                matmul_dispatch::MatmulDispatch,
+                matmul_output_work::MatmulOutputWork,
+                qmv::{self, QmvRoute},
+            },
+        },
     },
     data_type::DataType,
 };
@@ -141,16 +144,17 @@ impl MatmulMetalKernel {
 
 impl MatmulKernel for MatmulMetalKernel {
     type Backend = Metal;
+    type Error = MatmulMetalError;
 
     fn new(
         context: &MetalContext,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<Self, Self::Error> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
             if !matches!(data_type, DataType::BF16 | DataType::F32) {
-                return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
+                return Err(MatmulMetalError::UnsupportedDataType(data_type));
             }
         }
 
@@ -229,25 +233,15 @@ impl MatmulKernel for MatmulMetalKernel {
             impl BufferRef<Backend = Metal>,
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<(), MetalError> {
+    ) -> Result<(), Self::Error> {
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = match self.select_dispatch(&shape, command_buffer.context()) {
             MatmulDispatch::Gemv(gemv) => {
-                return self.gemv.encode(arguments, gemv, &self.output_work, command_buffer).map_err(MetalError::from);
+                return self.gemv.encode(arguments, gemv, &self.output_work, command_buffer);
             },
             MatmulDispatch::Gemm(plan) => plan,
         };
 
-        // TODO: remove after GatherGEMM is supported
-        if arguments.gather_indices.is_some() {
-            return Err(MetalError::KernelDispatchFailed(
-                format!(
-                    "gathered readout requires the GEMV path, but shape (m={}, n={}) routes to GEMM",
-                    arguments.m, arguments.n
-                )
-                .into(),
-            ));
-        }
         self.gemm.encode_plan(arguments, plan, &self.output_work, command_buffer)
     }
 }
@@ -266,7 +260,7 @@ impl MatmulMetalKernel {
         >,
         engine: gemm::GemmEngine,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<(), MetalError> {
+    ) -> Result<(), MatmulMetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = self.gemm.select_plan_for_engine(&shape, engine, command_buffer.context())?;
         self.gemm.encode_plan(arguments, plan, &self.output_work, command_buffer)

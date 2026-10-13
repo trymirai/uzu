@@ -6,7 +6,11 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::{
-            gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE, activation_silu_alpha},
+            gpu_types::{
+                activation_type::{ActivationType, activation_silu_alpha},
+                gated_act_mul::GatedActMulOp,
+                hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            },
             kernel::matmul::Int8CodeLayout,
         },
         cpu::kernel::activation_transform::{hadamard_transform, quantize_transformed_row},

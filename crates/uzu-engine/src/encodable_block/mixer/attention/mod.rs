@@ -10,9 +10,9 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{Linear, LinearBlockError},
+        linear::{Linear, LinearBlockError, LinearEncodeError},
         mixer::{
-            Mixer, MixerState,
+            Mixer, MixerEncodeError, MixerState,
             attention::{
                 mode::LinearProjection,
                 qkv_norm::{QKVNorm, QKVNormError},
@@ -50,6 +50,8 @@ pub struct Attention<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum AttentionNewError<B: Backend> {
+    #[error("Attention kernel error: {0}")]
+    Kernel(#[source] <<B::Kernels as Kernels>::AttentionKernel as AttentionKernel>::Error),
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
@@ -58,6 +60,16 @@ pub enum AttentionNewError<B: Backend> {
     Linear(#[from] LinearBlockError<B>),
     #[error("QKVNorm error: {0}")]
     QKVNorm(#[from] QKVNormError<B>),
+}
+
+#[derive(Debug, Error)]
+pub enum AttentionEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Linear error: {0}")]
+    Linear(#[from] LinearEncodeError<B>),
+    #[error("Attention kernel error: {0}")]
+    Kernel(#[source] <<B::Kernels as Kernels>::AttentionKernel as AttentionKernel>::Error),
 }
 
 impl<B: Backend> Attention<B> {
@@ -152,7 +164,7 @@ impl<B: Backend> Attention<B> {
                 data_type,
             },
         )
-        .map_err(AttentionNewError::Backend)?;
+        .map_err(AttentionNewError::Kernel)?;
 
         let out_projection = <dyn Linear<B>>::new(
             q_dim,
@@ -211,7 +223,7 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("attention");
 
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");

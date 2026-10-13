@@ -5,7 +5,8 @@ use uzu_engine_macros::kernel;
 use crate::{
     array::ArrayElement,
     backends::{
-        common::gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE, cpu::kernel::activation_transform::hadamard_transform,
+        common::gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        cpu::kernel::activation_transform::hadamard_transform,
     },
 };
 

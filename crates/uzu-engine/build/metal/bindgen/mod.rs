@@ -10,7 +10,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use crate::{
-    common::{enum_paths::EnumPaths, kernel::Kernel, mangling::dynamic_mangle},
+    common::{gpu_type_paths::GpuTypePaths, kernel::Kernel, mangling::dynamic_mangle},
     metal::{
         ast::MetalKernelInfo, bindgen::host_expression_rewriter::HostExpressionRewriter, wrapper::SpecializeBaseIndices,
     },
@@ -19,7 +19,7 @@ use crate::{
 pub fn bindgen(
     kernel: &MetalKernelInfo,
     specialize_indices: &SpecializeBaseIndices,
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
     library_const: &proc_macro2::Ident,
     num_shards: usize,
     library_compressed: bool,
@@ -28,12 +28,12 @@ pub fn bindgen(
     let trait_name = format_ident!("{}Kernel", kernel_name);
     let struct_name = format_ident!("{}MetalKernel", kernel_name);
 
-    let variant_binds = variants::parse(kernel)?;
+    let variant_binds = variants::parse(kernel, gpu_type_paths)?;
     let specialize_emission =
-        specialize::parse(kernel, specialize_indices.get(&kernel.name).copied(), kernel_name, enum_paths)?;
+        specialize::parse(kernel, specialize_indices.get(&kernel.name).copied(), kernel_name, gpu_type_paths)?;
     let mut host_expression_rewriter =
-        HostExpressionRewriter::new(&variant_binds, enum_paths, specialize_emission.argument_names(), kernel_name);
-    let argument_emissions = arguments::parse(kernel, enum_paths, &mut host_expression_rewriter)?;
+        HostExpressionRewriter::new(&variant_binds, gpu_type_paths, specialize_emission.argument_names(), kernel_name);
+    let argument_emissions = arguments::parse(kernel, gpu_type_paths, &mut host_expression_rewriter)?;
     let trait_wiring = trait_wiring::build(kernel, &trait_name, &struct_name);
 
     let dispatch_emission = dispatch::parse(kernel, &mut host_expression_rewriter)?;

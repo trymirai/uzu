@@ -6,10 +6,7 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
-    config::{
-        model::{generation::GenerationConfig, language_model::LanguageModelConfig},
-        token_codec::AnyTokenCodecConfig,
-    },
+    config::{model::language_model::LanguageModelConfig, token_codec::AnyTokenCodecConfig},
     data_type::DataType,
     encodable_block::{
         decoder::{Decoder, DecoderError},
@@ -19,6 +16,7 @@ use crate::{
     parameters::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
 };
+pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde::Unsupported};
 
 pub mod state;
 pub mod stream;

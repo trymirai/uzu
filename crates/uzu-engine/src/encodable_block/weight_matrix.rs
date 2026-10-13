@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferCpuAccessible, BufferMut,
-        gpu_types::{QuantizationMethod, QuantizationMode},
+        gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
         kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},

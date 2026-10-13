@@ -6,13 +6,13 @@ use quote::{format_ident, quote};
 use syn::Expr;
 
 use crate::{
-    common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with},
+    common::{expr_rewrite::rewrite_paths_with, gpu_type_paths::GpuTypePaths},
     metal::{bindgen::variants::VariantBind, enum_path_rewrite::qualify_enum_path},
 };
 
 pub struct HostExpressionRewriter<'context> {
     variants: &'context [VariantBind],
-    enum_paths: &'context EnumPaths,
+    gpu_type_paths: &'context GpuTypePaths,
     specialization_names: Vec<String>,
     referenced_parameter_names: BTreeSet<String>,
     kernel_name: &'context str,
@@ -21,13 +21,13 @@ pub struct HostExpressionRewriter<'context> {
 impl<'context> HostExpressionRewriter<'context> {
     pub fn new(
         variants: &'context [VariantBind],
-        enum_paths: &'context EnumPaths,
+        gpu_type_paths: &'context GpuTypePaths,
         specialization_names: Vec<String>,
         kernel_name: &'context str,
     ) -> Self {
         Self {
             variants,
-            enum_paths,
+            gpu_type_paths,
             specialization_names,
             referenced_parameter_names: BTreeSet::new(),
             kernel_name,
@@ -43,11 +43,11 @@ impl<'context> HostExpressionRewriter<'context> {
         })?;
 
         let variants = self.variants;
-        let enum_paths = self.enum_paths;
+        let gpu_type_paths = self.gpu_type_paths;
         let specialization_names = &self.specialization_names;
         let referenced_parameter_names = &mut self.referenced_parameter_names;
         rewrite_paths_with(&mut expression, |path| {
-            if let Some(qualified) = qualify_enum_path(path, enum_paths) {
+            if let Some(qualified) = qualify_enum_path(path, gpu_type_paths) {
                 return Some(qualified);
             }
 

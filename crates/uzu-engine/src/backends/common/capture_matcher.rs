@@ -77,6 +77,7 @@ impl CaptureMatcher {
         }
     }
 
+    #[cfg(backend = "metal")]
     pub fn enabled(&self) -> bool {
         self.enabled
     }

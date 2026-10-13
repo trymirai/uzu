@@ -13,7 +13,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
-        mixer::{Mixer, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PrecalculatedRoPE},
     },
     parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -307,7 +307,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("short conv");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for short conv mixer");
@@ -324,18 +324,21 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
 
         let conv_output = if batch_dim.full_accept() {
             let conv_output = if batch_dim.size() == 1 {
-                self.encode_decode_conv(&in_projected, state, command_buffer)?
+                self.encode_decode_conv(&in_projected, state, command_buffer).map_err(MixerEncodeError::Backend)?
             } else {
-                self.encode_prefill_conv(&in_projected, batch_dim.size(), state, command_buffer)?
+                self.encode_prefill_conv(&in_projected, batch_dim.size(), state, command_buffer)
+                    .map_err(MixerEncodeError::Backend)?
             };
             state.suffix_state = Some(ShortConvStateSuffixStatus::Flat {
                 suffix_length: batch_dim.size(),
             });
             conv_output
         } else {
-            let token_parents = command_buffer.allocate_constant_from_slice(batch_dim.parents())?;
-            let (conv_output, conv_states) =
-                self.encode_trie_conv(&in_projected, &token_parents, batch_dim.size(), state, command_buffer)?;
+            let token_parents =
+                command_buffer.allocate_constant_from_slice(batch_dim.parents()).map_err(MixerEncodeError::Backend)?;
+            let (conv_output, conv_states) = self
+                .encode_trie_conv(&in_projected, &token_parents, batch_dim.size(), state, command_buffer)
+                .map_err(MixerEncodeError::Backend)?;
             state.suffix_state = Some(ShortConvStateSuffixStatus::Trie {
                 conv_states,
             });

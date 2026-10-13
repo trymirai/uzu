@@ -12,11 +12,11 @@ pub use untied_readout::UntiedReadout;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer,
-        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        Backend, BufferRef, CommandBuffer, Kernels,
+        gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationQuantization,
-            matmul::{ActivationFormat, Int8CodeLayout, MatmulA},
+            matmul::{ActivationFormat, Int8CodeLayout, MatmulA, MatmulKernel},
         },
     },
     config::weight_matrix::{
@@ -27,13 +27,21 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
+#[derive(Debug, Error)]
+pub enum LinearEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Matmul error: {0}")]
+    Matmul(#[source] <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::Error),
+}
+
 pub trait Linear<B: Backend>: Send + Sync {
     fn encode(
         &self,
         input: B::ScratchBuffer,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         self.encode_input(LinearInput::FullPrecision(input), batch_dim, command_buffer)
     }
 
@@ -42,7 +50,7 @@ pub trait Linear<B: Backend>: Send + Sync {
         input: LinearInput<B>,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error>;
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>>;
 
     fn select_activation_format(
         &self,

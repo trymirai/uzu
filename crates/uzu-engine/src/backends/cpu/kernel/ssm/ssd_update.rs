@@ -2,7 +2,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{array::ArrayElement, backends::common::gpu_types::activation_type::ActivationType};
 
 #[kernel(SSDUpdate)]
 #[variants(T, f32, f16, bf16)]

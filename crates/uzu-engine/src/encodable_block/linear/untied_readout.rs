@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
-        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::matmul::{ActivationFormat, MatmulA},
     },
     config::weight_matrix::{
@@ -10,7 +10,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Gather, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
+        Gather, Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
     },
     parameters::ParameterTree,
 };
@@ -80,7 +80,7 @@ impl<B: Backend> UntiedReadout<B> {
         batch_dim: u32,
         gather: Option<Gather<impl BufferRef<Backend = B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         let Some(input_rht) = &self.input_rht else {
             let a = MatmulA::FullPrecision {
                 values: input,
@@ -94,7 +94,7 @@ impl<B: Backend> UntiedReadout<B> {
         } else {
             self.linear.select_activation_format(batch_dim, command_buffer.context())
         };
-        let input = input_rht.prepare(input, batch_dim, format, command_buffer)?;
+        let input = input_rht.prepare(input, batch_dim, format, command_buffer).map_err(LinearEncodeError::Backend)?;
         self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, command_buffer)
     }
 }

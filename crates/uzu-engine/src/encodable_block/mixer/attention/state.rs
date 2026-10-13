@@ -4,7 +4,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Backend, Buffer, CommandBuffer, Context, DeviceCapabilities, Kernels, SparseBuffer,
-        gpu_types::{Copy, ring::RingParams},
+        gpu_types::{kv_cache_update::Copy, ring::RingParams},
         kernel::KVCacheUpdateKernel,
     },
     data_type::DataType,

@@ -1,20 +1,24 @@
 use std::collections::{HashMap, hash_map::Entry};
 
-use super::{GemmEngine, GemmPlan, selection::TRELLIS_K_STEP as K_STEP};
 use crate::backends::{
     common::{
         BufferMut, BufferRef, CommandBufferEncoding,
-        gpu_types::{
-            GemmParams,
-            gemm::{GemmAlignment, GemmTiling},
-        },
-        kernel::matmul::{MatmulA, MatmulArguments, MatmulB, MatmulError, TrellisFormat},
+        kernel::matmul::{MatmulA, MatmulArguments, MatmulB, TrellisFormat},
     },
     metal::{
         Metal,
         command_buffer::MetalCommandBufferEncoding,
-        error::MetalError,
-        kernel::{GemmTrellisMetalKernel, GemmTrellisReduceMetalKernel},
+        gpu_types::{
+            gemm::{GemmAlignment, GemmTiling},
+            matmul::GemmParams,
+        },
+        kernel::{
+            GemmTrellisMetalKernel, GemmTrellisReduceMetalKernel,
+            matmul::{
+                MatmulMetalError,
+                gemm::{GemmEngine, GemmPlan, selection::TRELLIS_K_STEP as K_STEP},
+            },
+        },
     },
 };
 
@@ -37,11 +41,9 @@ impl TrellisGemm {
         >,
         plan: GemmPlan,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<(), MetalError> {
-        let unsupported = || {
-            MetalError::from(MatmulError::UnsupportedLayout {
-                path: "GemmTrellis",
-            })
+    ) -> Result<(), MatmulMetalError> {
+        let unsupported = || MatmulMetalError::UnsupportedLayout {
+            path: "GemmTrellis",
         };
         let (
             MatmulA::Trellis {

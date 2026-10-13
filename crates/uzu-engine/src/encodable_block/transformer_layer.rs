@@ -10,11 +10,11 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         convolution::{ConvolutionNewError, SeparableCausalConv},
-        linear::{Linear, LinearBlockError},
-        mixer::{Mixer, MixerNewError, MixerState, attention::rope::PrecalculatedRoPE},
-        mlp::{Mlp, MlpBlockNewError},
+        linear::{Linear, LinearBlockError, LinearEncodeError},
+        mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState, attention::rope::PrecalculatedRoPE},
+        mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
-        per_layer_embedding::PerLayerEmbeddingProjection,
+        per_layer_embedding::{PerLayerEmbeddingError, PerLayerEmbeddingProjection},
     },
     parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -28,14 +28,22 @@ pub enum TransformerLayerError<B: Backend> {
     ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Mixer error: {0}")]
     Mixer(#[from] MixerNewError<B>),
+    #[error("Mixer encoding error: {0}")]
+    MixerEncode(#[from] MixerEncodeError<B>),
     #[error("MLP error: {0}")]
     MlpBlock(#[from] MlpBlockNewError<B>),
+    #[error("MLP encoding error: {0}")]
+    MlpEncode(#[from] MlpEncodeError<B>),
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Convolution error: {0}")]
     Convolution(#[from] ConvolutionNewError<B>),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
+    #[error("Linear encoding error: {0}")]
+    LinearEncode(#[from] LinearEncodeError<B>),
+    #[error("Per-layer embedding error: {0}")]
+    PerLayerEmbedding(#[from] PerLayerEmbeddingError<B>),
     #[error("Layer {layer_index} sets post_layer_scalar but has no post_mlp_norm")]
     PostLayerScalarWithoutPostMlpNorm {
         layer_index: u32,
@@ -128,18 +136,15 @@ impl<B: Backend> TransformerLayerConv<B> {
         input: impl BufferRef<Backend = B>,
         sequence_length: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
-        let mut projection_input = command_buffer.allocate_scratch(input.size())?;
+    ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), TransformerLayerError<B>> {
+        let mut projection_input =
+            command_buffer.allocate_scratch(input.size()).map_err(TransformerLayerError::Backend)?;
         command_buffer.encode_copy(input, &mut projection_input);
         let coefficients = self.kernel_projection.encode(projection_input, sequence_length, command_buffer)?;
-        let mut output = self.pre_conv.encode(
-            input,
-            &coefficients,
-            2 * self.coefficient_count,
-            0,
-            sequence_length,
-            command_buffer,
-        )?;
+        let mut output = self
+            .pre_conv
+            .encode(input, &coefficients, 2 * self.coefficient_count, 0, sequence_length, command_buffer)
+            .map_err(TransformerLayerError::Backend)?;
         if let Some((transform, factors)) = &self.input_rht {
             transform.encode_fp_in_place(&mut output, factors, None, sequence_length, self.model_dim, command_buffer);
         }
@@ -349,11 +354,13 @@ impl<B: Backend> TransformerLayer<B> {
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
         let command_buffer = &mut *command_buffer.debug_group(&format!("transformer layer {}", self.layer_index));
 
         let mut hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
-            pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)?
+            pre_mixer_norm
+                .encode(&input, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)
+                .map_err(TransformerLayerError::Backend)?
         } else {
             assert!(self.layer_index == 0);
             command_buffer.encode_copy(&input, shortcut.reborrow());
@@ -374,15 +381,21 @@ impl<B: Backend> TransformerLayer<B> {
 
         if let Some(coefficients) = mixer_coefficients {
             let convolution = self.mixer_conv.as_ref().expect("mixer convolution required");
-            hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), command_buffer)?;
+            hidden = convolution
+                .encode_post_convolution(&hidden, &coefficients, batch_dim.size(), command_buffer)
+                .map_err(TransformerLayerError::Backend)?;
         }
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
-            hidden =
-                post_mixer_norm.encode(&hidden, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)?;
+            hidden = post_mixer_norm
+                .encode(&hidden, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)
+                .map_err(TransformerLayerError::Backend)?;
         }
 
-        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)?;
+        hidden = self
+            .pre_mlp_norm
+            .encode(&hidden, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)
+            .map_err(TransformerLayerError::Backend)?;
 
         let mlp_coefficients = if let Some(convolution) = &self.mlp_conv {
             let (output, coefficients) =
@@ -397,12 +410,15 @@ impl<B: Backend> TransformerLayer<B> {
 
         if let Some(coefficients) = mlp_coefficients {
             let convolution = self.mlp_conv.as_ref().expect("mlp convolution required");
-            hidden = convolution.encode_post_convolution(&hidden, &coefficients, batch_dim.size(), command_buffer)?;
+            hidden = convolution
+                .encode_post_convolution(&hidden, &coefficients, batch_dim.size(), command_buffer)
+                .map_err(TransformerLayerError::Backend)?;
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            hidden =
-                post_mlp_norm.encode(&hidden, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)?;
+            hidden = post_mlp_norm
+                .encode(&hidden, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)
+                .map_err(TransformerLayerError::Backend)?;
         }
 
         if let Some(ple_projection) = &self.ple_projection {

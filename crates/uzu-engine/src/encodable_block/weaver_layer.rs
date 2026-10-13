@@ -14,7 +14,7 @@ use crate::{
         mixer::attention::rope::PrecalculatedRoPE,
         mlp::Mlp,
         normalization::{Normalization, PostLayerScalar, ShortcutMode},
-        weaver::{DATA_TYPE, ROPE_DATA_TYPE, WeaverNewError},
+        weaver::{DATA_TYPE, ROPE_DATA_TYPE, WeaverEncodeError, WeaverNewError},
     },
     parameters::ParameterTree,
 };
@@ -89,7 +89,7 @@ impl<B: Backend> WeaverLayer<B> {
                 data_type: DATA_TYPE,
             },
         )
-        .map_err(WeaverNewError::Backend)?;
+        .map_err(WeaverNewError::Attention)?;
         let attention_prepare =
             <B::Kernels as Kernels>::AttentionPrepareKernel::new(context, DATA_TYPE, ROPE_DATA_TYPE, true, true)
                 .map_err(WeaverNewError::Backend)?;
@@ -152,14 +152,19 @@ impl<B: Backend> WeaverLayer<B> {
         rope: &PrecalculatedRoPE<B>,
         token_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<PreparedPrefixAttention<B>, B::Error> {
-        let attention_input =
-            self.pre_attention_norm.encode(residual_input, 0, token_count, Some(residual_state), command_buffer)?;
+    ) -> Result<PreparedPrefixAttention<B>, WeaverEncodeError<B>> {
+        let attention_input = self
+            .pre_attention_norm
+            .encode(residual_input, 0, token_count, Some(residual_state), command_buffer)
+            .map_err(WeaverEncodeError::Backend)?;
         let qkv = self.qkv_projection.encode(attention_input, token_count, command_buffer)?;
-        let mut queries =
-            command_buffer.allocate_scratch_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE)?;
+        let mut queries = command_buffer
+            .allocate_scratch_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE)
+            .map_err(WeaverEncodeError::Backend)?;
         let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], DATA_TYPE);
-        let mut kv_cache = command_buffer.allocate_scratch_for_shape(&[2, token_count, self.model_dim], DATA_TYPE)?;
+        let mut kv_cache = command_buffer
+            .allocate_scratch_for_shape(&[2, token_count, self.model_dim], DATA_TYPE)
+            .map_err(WeaverEncodeError::Backend)?;
         let (keys, values) = kv_cache.split_at(kv_plane_bytes);
         self.attention_prepare.encode(
             &qkv,
@@ -189,10 +194,12 @@ impl<B: Backend> WeaverLayer<B> {
         residual_state: impl BufferMut<Backend = B>,
         token_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, WeaverEncodeError<B>> {
         let projected_attention = self.out_projection.encode(attention_output, token_count, command_buffer)?;
-        let mlp_input =
-            self.pre_mlp_norm.encode(&projected_attention, 0, token_count, Some(residual_state), command_buffer)?;
-        self.mlp.encode(mlp_input, token_count, command_buffer)
+        let mlp_input = self
+            .pre_mlp_norm
+            .encode(&projected_attention, 0, token_count, Some(residual_state), command_buffer)
+            .map_err(WeaverEncodeError::Backend)?;
+        self.mlp.encode(mlp_input, token_count, command_buffer).map_err(WeaverEncodeError::Mlp)
     }
 }

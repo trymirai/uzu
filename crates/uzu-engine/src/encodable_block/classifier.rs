@@ -13,7 +13,7 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         prediction_head::{PredictionHead, PredictionHeadError},
-        transformer::{Transformer, TransformerNewError},
+        transformer::{Transformer, TransformerEncodeError, TransformerNewError},
     },
     parameters::ParameterTree,
 };
@@ -28,6 +28,8 @@ pub enum ClassifierError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Transformer error: {0}")]
     Transformer(#[from] TransformerNewError<B>),
+    #[error("Transformer encoding error: {0}")]
+    TransformerEncode(#[from] TransformerEncodeError<B>),
     #[error("Transformer error: {0}")]
     PredictionHead(#[from] PredictionHeadError<B>),
     #[error("Unsupported configuration: {0}")]
@@ -144,8 +146,7 @@ impl<B: Backend> Classifier<B> {
                 None,
                 None,
                 command_buffer,
-            )
-            .map_err(ClassifierError::Backend)?
+            )?
             .output
             .unwrap();
 
@@ -154,7 +155,7 @@ impl<B: Backend> Classifier<B> {
             .map_err(ClassifierError::Backend)?;
         self.pooling.encode(&hidden, &mut pooled, batch_dim, self.hidden_dim, 1, command_buffer);
 
-        let logits = self.prediction_head.encode(pooled, 1, command_buffer).map_err(ClassifierError::Backend)?;
+        let logits = self.prediction_head.encode(pooled, 1, command_buffer)?;
 
         Ok(logits)
     }

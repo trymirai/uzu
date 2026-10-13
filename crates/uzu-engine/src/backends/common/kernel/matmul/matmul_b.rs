@@ -2,7 +2,7 @@ use super::{QuantParams, QuantParamsLayout};
 use crate::{
     backends::common::{
         BufferRef,
-        gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
+        gpu_types::{gemm::GemmBPrologueKind, quantization::QuantizationMode},
     },
     data_type::DataType,
 };

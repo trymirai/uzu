@@ -16,7 +16,7 @@ use crate::{
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     encodable_block::{
-        linear::{Gather, Linear, LinearInput},
+        linear::{Gather, Linear, LinearEncodeError, LinearInput},
         weight_matrix::{WeightMatrix, WeightMatrixError},
     },
     parameters::{ParameterLoaderError, ParameterTree},
@@ -26,6 +26,8 @@ use crate::{
 pub enum LinearMatmulError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
+    #[error("Matmul error: {0}")]
+    Matmul(#[source] <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Weight matrix error: {0}")]
@@ -95,7 +97,7 @@ impl<B: Backend> LinearMatmul<B> {
 
         let kernel =
             <B::Kernels as Kernels>::MatmulKernel::new(context, weights_data_type, input_data_type, output_data_type)
-                .map_err(LinearMatmulError::BackendError)?;
+                .map_err(LinearMatmulError::Matmul)?;
 
         Ok(Self {
             kernel: Mutex::new(kernel),
@@ -124,24 +126,29 @@ impl<B: Backend> LinearMatmul<B> {
         batch_dim: u32,
         gather: Option<Gather<impl BufferRef<Backend = B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         let (output_dim, gather_indices) =
             gather.map_or((self.output_dim, None), |gather| (gather.output_dim, Some(gather.indices)));
-        let mut output = command_buffer.allocate_scratch_for_shape(&[batch_dim, output_dim], self.output_data_type)?;
-        self.kernel.lock().encode(
-            MatmulArguments {
-                a,
-                b: self.matmul_b(),
-                b_leading_dimension: None,
-                b_transpose: true,
-                output: MatmulOutput::new(&mut output, self.d_ops()),
-                gather_indices,
-                m: batch_dim,
-                n: output_dim,
-                k: self.input_dim,
-            },
-            command_buffer,
-        )?;
+        let mut output = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim, output_dim], self.output_data_type)
+            .map_err(LinearEncodeError::Backend)?;
+        self.kernel
+            .lock()
+            .encode(
+                MatmulArguments {
+                    a,
+                    b: self.matmul_b(),
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    output: MatmulOutput::new(&mut output, self.d_ops()),
+                    gather_indices,
+                    m: batch_dim,
+                    n: output_dim,
+                    k: self.input_dim,
+                },
+                command_buffer,
+            )
+            .map_err(LinearEncodeError::Matmul)?;
 
         Ok(output)
     }
@@ -189,7 +196,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         input: LinearInput<B>,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         self.encode_with_a(input.as_matmul_a(), batch_dim, None::<Gather<&B::ScratchBuffer>>, command_buffer)
     }
 

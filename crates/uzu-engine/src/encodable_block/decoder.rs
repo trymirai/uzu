@@ -12,7 +12,7 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
-        transformer::{Transformer, TransformerNewError, TransformerState},
+        transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
     },
     parameters::ParameterTree,
 };
@@ -29,6 +29,8 @@ pub enum DecoderError<B: Backend> {
     PerLayerEmbedding(#[from] PerLayerEmbeddingError<B>),
     #[error("Transformer error: {0}")]
     Transformer(#[from] TransformerNewError<B>),
+    #[error("Transformer encoding error: {0}")]
+    TransformerEncode(#[from] TransformerEncodeError<B>),
 }
 
 pub struct Decoder<B: Backend> {
@@ -155,27 +157,20 @@ impl<B: Backend> Decoder<B> {
         };
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
-            Some(
-                per_layer_embedding
-                    .encode(token_ids, &embedded, batch_dim.size(), command_buffer)
-                    .map_err(DecoderError::Backend)?,
-            )
+            Some(per_layer_embedding.encode(token_ids, &embedded, batch_dim.size(), command_buffer)?)
         } else {
             None
         };
 
-        let transformer_output = self
-            .transformer
-            .encode(
-                embedded,
-                per_layer_inputs.as_ref(),
-                batch_dim,
-                output_range,
-                hidden_feature_layer_indices,
-                Some(state),
-                command_buffer,
-            )
-            .map_err(DecoderError::Backend)?;
+        let transformer_output = self.transformer.encode(
+            embedded,
+            per_layer_inputs.as_ref(),
+            batch_dim,
+            output_range,
+            hidden_feature_layer_indices,
+            Some(state),
+            command_buffer,
+        )?;
 
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");

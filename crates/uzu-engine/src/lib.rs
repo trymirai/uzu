@@ -4,6 +4,7 @@
 
 mod array;
 mod config;
+mod data_type;
 mod encodable_block;
 mod parameters;
 mod speculators;
@@ -11,7 +12,6 @@ mod trie;
 mod utils;
 
 pub mod backends;
-pub mod data_type;
 
 pub mod engine;
 

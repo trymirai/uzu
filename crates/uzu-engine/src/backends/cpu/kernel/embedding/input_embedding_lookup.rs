@@ -6,7 +6,8 @@ use crate::{
     array::ArrayElement,
     backends::{
         common::gpu_types::{
-            EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode, d4s4,
+            d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            quantization::QuantizationMode, quantization_method::QuantizationMethod,
         },
         cpu::kernel::activation_transform::hadamard_transform,
     },

@@ -13,13 +13,24 @@ use crate::{
         gpu_types::trie::TrieNode,
     },
     data_type::DataType,
-    dispatch_dtype,
     encodable_block::{
         batch_topology::BatchTopology,
         sampling::{Sampling, SamplingMethod},
     },
     tests::proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
 };
+
+macro_rules! dispatch_dtype {
+    (|()| $body:expr) => { $body };
+    (|($T:ident : $dt:expr $(, $rest_T:ident : $rest_dt:expr)*)| $body:expr) => {
+        match $dt {
+            $crate::data_type::DataType::F16 => { type $T = half::f16; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
+            $crate::data_type::DataType::BF16 => { type $T = half::bf16; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
+            $crate::data_type::DataType::F32 => { type $T = f32; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
+            other => panic!("unsupported dtype in test: {:?}", other),
+        }
+    };
+}
 
 struct SamplingTestResults(Vec<u32>);
 

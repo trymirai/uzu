@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{array::ArrayElement, backends::common::gpu_types::activation_type::ActivationType};
 
 // Multi-token causal conv1d with SiLU for DeltaNet.
 // Reads from conv_padded (Conv1dPack output), writes conv'd+SiLU'd values

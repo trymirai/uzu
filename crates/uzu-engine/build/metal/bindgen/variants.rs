@@ -6,6 +6,7 @@ use quote::{format_ident, quote};
 use syn::{Ident, Type};
 
 use super::super::ast::{MetalKernelInfo, MetalTemplateParameterType};
+use crate::common::gpu_type_paths::GpuTypePaths;
 
 pub struct VariantBind {
     pub parameter_name: Ident,
@@ -13,7 +14,10 @@ pub struct VariantBind {
     parsed_type: Option<Type>,
 }
 
-pub fn parse(kernel: &MetalKernelInfo) -> Result<Vec<VariantBind>> {
+pub fn parse(
+    kernel: &MetalKernelInfo,
+    gpu_type_paths: &GpuTypePaths,
+) -> Result<Vec<VariantBind>> {
     kernel
         .variants
         .as_deref()
@@ -24,7 +28,7 @@ pub fn parse(kernel: &MetalKernelInfo) -> Result<Vec<VariantBind>> {
             let field_name = format_ident!("{}", variant.name.as_ref().to_ascii_lowercase());
             let parsed_type = match &variant.ty {
                 MetalTemplateParameterType::Type => None,
-                MetalTemplateParameterType::Value(type_text) => Some(syn::parse_str::<Type>(type_text.as_ref())?),
+                MetalTemplateParameterType::Value(type_text) => Some(gpu_type_paths.resolve_type(type_text)?),
             };
             Ok(VariantBind {
                 parameter_name,

@@ -8,7 +8,10 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, CommandBuffer, CommandBufferEncoding,
-            gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode},
+            gpu_types::{
+                hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, quantization::QuantizationMode,
+                quantization_method::QuantizationMethod,
+            },
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,

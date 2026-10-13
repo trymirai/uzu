@@ -3,7 +3,7 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::common::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-        gpu_types::ActivationType,
+        gpu_types::activation_type::ActivationType,
         kernel::{Conv1dScanKernel, SSDPrefill64Kernel, SSDPrefillKernel},
     },
     data_type::DataType,

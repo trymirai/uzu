@@ -5,7 +5,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-        gpu_types::ActivationType,
+        gpu_types::activation_type::ActivationType,
         kernel::{
             Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDPrefill64Kernel, SSDPrefillKernel,
             SSDUpdateKernel, SplitInProjKernel,
@@ -16,7 +16,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
-        mixer::{Mixer, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PrecalculatedRoPE},
     },
     parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -242,7 +242,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("mamba2");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for mamba2 mixer");
@@ -261,12 +261,15 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
 
         let in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
 
-        let mut conv_inputs =
-            command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.conv_dim], INNER_DATA_TYPE)?;
+        let mut conv_inputs = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.conv_dim], INNER_DATA_TYPE)
+            .map_err(MixerEncodeError::Backend)?;
         let mut gate = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
-        let mut time_step =
-            command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)
+            .map_err(MixerEncodeError::Backend)?;
+        let mut time_step = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)
+            .map_err(MixerEncodeError::Backend)?;
         self.split_inproj.encode(
             &in_projected,
             &mut conv_inputs,
@@ -282,11 +285,14 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         );
 
         let mut conv_x = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads, self.head_dim], INNER_DATA_TYPE)
+            .map_err(MixerEncodeError::Backend)?;
         let mut state_b = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)
+            .map_err(MixerEncodeError::Backend)?;
         let mut state_c = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.num_groups, self.state_dim], INNER_DATA_TYPE)
+            .map_err(MixerEncodeError::Backend)?;
         let state_stride = self.kernel_size - 1;
         if batch_dim.size() == 1 {
             self.conv_decode.encode(
@@ -310,7 +316,8 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
             );
         } else {
             let mut padded = command_buffer
-                .allocate_scratch_for_shape(&[batch_dim.size() + state_stride, self.conv_dim], INNER_DATA_TYPE)?;
+                .allocate_scratch_for_shape(&[batch_dim.size() + state_stride, self.conv_dim], INNER_DATA_TYPE)
+                .map_err(MixerEncodeError::Backend)?;
             self.conv_pack.encode(
                 &state.conv_state,
                 &conv_inputs,
@@ -341,8 +348,9 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
             );
         }
 
-        let mut ssd_output =
-            command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.inner_dim], INNER_DATA_TYPE)?;
+        let mut ssd_output = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.inner_dim], INNER_DATA_TYPE)
+            .map_err(MixerEncodeError::Backend)?;
         let x_strides = [self.num_heads * self.head_dim, self.head_dim, 1];
         let dt_strides = [self.num_heads, 1];
         let cb_strides = [self.num_groups * self.state_dim, self.state_dim, 1];
