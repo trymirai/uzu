@@ -22,6 +22,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        confidence_head::{ConfidenceHead, ConfidenceHeadConfig, ConfidenceHeadError, file_sha256},
         dflash::{DFlash, DFlashEncodeError, DFlashNewError},
         embedding::Embedding,
         sampling::{PRng, Sampling, SamplingMethod},
@@ -39,6 +40,8 @@ pub enum DFlashTreeError<B: Backend> {
     DFlash(#[from] DFlashEncodeError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverEncodeError<B>),
+    #[error("confidence head error: {0}")]
+    ConfidenceHead(#[from] ConfidenceHeadError<B>),
     #[error("invalid tree shape: {0}")]
     InvalidTreeShape(String),
 }
@@ -90,6 +93,7 @@ pub struct DFlashTfmSpeculator<B: Backend> {
     context: Arc<B::Context>,
     dflash: DFlash<B>,
     weaver: Option<Weaver<B>>,
+    confidence_head: Option<ConfidenceHead<B>>,
     sampling: Sampling<B>,
     config: DFlashSpeculatorConfig,
     shape: DFlashTfmTreeShape,
@@ -138,12 +142,39 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         weight_loader.tree().assert_all_tensors_validated()?;
 
+        // A confidence head in `confidence_head/` next to the weights grows and prunes the Weaver tree in place of the
+        // path weights and prune_sigma. It is dropped, with a warning, when it cannot load, does not fit the tree or
+        // was trained with another speculator file: the speculator then runs as it would without it.
+        let confidence_head = match (&shape.construction_method, weaver.as_ref()) {
+            (
+                DFlashTfmTreeConstructionMethod::Weaver {
+                    rounds,
+                    expand_per_round,
+                    expand_width,
+                    ..
+                },
+                Some(weaver),
+            ) => load_confidence_head(
+                &*context,
+                model_path,
+                HeadTree {
+                    rounds: *rounds,
+                    expand_per_round: *expand_per_round,
+                    expand_width: *expand_width,
+                    max_depth: weaver.max_depth(),
+                    pool: weaver.candidate_pool_size(),
+                },
+            ),
+            _ => None,
+        };
+
         let sampling = Sampling::new(config.draft_config.vocab_size, data_type);
 
         Ok(Some(Self {
             context,
             dflash,
             weaver,
+            confidence_head,
             sampling,
             config,
             shape,
@@ -214,6 +245,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         target_output_token: u32,
         target_embedding: &Embedding<B>,
         shape: DFlashTfmTreeShape,
+        sampling_method: &SamplingMethod,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
         prng: &PRng,
         allocation_pool: Arc<B::AllocationPool>,
@@ -307,6 +339,25 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             } => {
                 let weaver =
                     self.weaver.as_ref().expect("weaver tree construction requires a speculator with weaver weights");
+                // With a confidence head the tree grows by the head's log r and is pruned by its edges, prune_sigma
+                // unused, unless the sampler is greedy in effect: the head predicts the target's sampled choice. The
+                // head was checked against the loaded shape; a request's shape only has fewer rounds.
+                let head = match self.confidence_head.as_ref() {
+                    Some(head) if ConfidenceHead::<B>::applies_to(sampling_method) => {
+                        let tree = HeadTree {
+                            rounds,
+                            expand_per_round,
+                            expand_width,
+                            max_depth: weaver.max_depth(),
+                            pool: weaver.candidate_pool_size(),
+                        };
+                        if let Some(problem) = head_tree_mismatch(head.config(), tree) {
+                            return Err(DFlashTreeError::InvalidTreeShape(problem));
+                        }
+                        Some((head, head.token_table(&self.context, target_embedding)?))
+                    },
+                    _ => None,
+                };
                 // `max_depth` counts the root; the weaver's `max_depth` counts edges.
                 if shape.max_tree_depth < 2 || shape.max_tree_depth > weaver.max_depth() + 1 {
                     return Err(DFlashTreeError::InvalidTreeShape(format!(
@@ -356,6 +407,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         expand_width,
                         prune_noise_scale: prune_sigma.map(f32::recip),
                     },
+                    head,
                     &mut command_buffer,
                 )?;
                 let completed =
@@ -421,6 +473,88 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
     }
 }
 
+/// The tree a confidence head runs on: the shape's rounds and expansions, the Weaver's depth and pool.
+#[derive(Debug, Clone, Copy)]
+struct HeadTree {
+    rounds: u32,
+    expand_per_round: u32,
+    expand_width: u32,
+    max_depth: u32,
+    pool: u32,
+}
+
+/// Why a head cannot run on a tree, if it cannot: other children per expansion, depth or pool than it was trained
+/// with, or more construction slots than its attention takes.
+fn head_tree_mismatch(
+    config: &ConfidenceHeadConfig,
+    tree: HeadTree,
+) -> Option<String> {
+    let slot_count = 1 + tree.rounds.saturating_sub(1) * tree.expand_per_round;
+    (config.children != tree.expand_width
+        || config.max_depth != tree.max_depth
+        || config.pool != tree.pool
+        || !config.fits(slot_count))
+    .then(|| {
+        format!(
+            "the confidence head was trained with {} children, depth {} and a pool of {}; the tree has {} children, \
+             depth {}, a pool of {} and {} slots",
+            config.children, config.max_depth, config.pool, tree.expand_width, tree.max_depth, tree.pool, slot_count
+        )
+    })
+}
+
+/// The confidence head in `<speculator>/confidence_head/`, if there is one that loads, fits the tree and was trained
+/// with this speculator's weights file (its sha256 against the head's `trained_with.speculator_sha256`). Otherwise
+/// none, with a warning. The checks on the config come first and the head is built last, so a head that is dropped
+/// costs at most the hash of the weights file, a fraction of a second.
+fn load_confidence_head<B: Backend>(
+    context: &B::Context,
+    model_path: &Path,
+    tree: HeadTree,
+) -> Option<ConfidenceHead<B>> {
+    let directory = model_path.join(CONFIDENCE_HEAD_DIRECTORY);
+    if !directory.is_dir() {
+        return None;
+    }
+    let config = match ConfidenceHead::<B>::read_config(&directory) {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!(%error, "confidence head not loaded; the speculator runs without it");
+            return None;
+        },
+    };
+    if let Some(problem) = head_tree_mismatch(&config, tree) {
+        tracing::warn!(problem, "confidence head does not fit the tree; the speculator runs without it");
+        return None;
+    }
+    match file_sha256(&model_path.join("model.safetensors")) {
+        Ok(sha256) if sha256 == config.speculator_sha256 => {},
+        Ok(sha256) => {
+            tracing::warn!(
+                trained_with = %config.speculator_sha256,
+                speculator = %sha256,
+                "confidence head was trained with another speculator; the speculator runs without it"
+            );
+            return None;
+        },
+        Err(error) => {
+            tracing::warn!(%error, "speculator weights not hashed; the speculator runs without the confidence head");
+            return None;
+        },
+    }
+    tracing::debug!(sampling = ?config.sampling, "confidence head trained under this sampler");
+    ConfidenceHead::with_config(context, &directory, config)
+        .inspect_err(|error| tracing::warn!(%error, "confidence head not loaded; the speculator runs without it"))
+        .ok()
+}
+
+/// The directory of a speculator's confidence head, next to its weights.
+pub const CONFIDENCE_HEAD_DIRECTORY: &str = "confidence_head";
+
 #[cfg(test)]
 #[path = "../../unit/speculators/dflash_tfm_test.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../unit/speculators/dflash_tfm_head_test.rs"]
+mod head_tests;

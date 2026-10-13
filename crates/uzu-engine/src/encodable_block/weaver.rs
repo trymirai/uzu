@@ -16,6 +16,7 @@ use crate::{
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
     data_type::DataType,
     encodable_block::{
+        confidence_head::{ConfidenceHead, ConfidenceHeadStep},
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError},
         mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
@@ -287,6 +288,10 @@ impl<B: Backend> Weaver<B> {
         self.max_depth
     }
 
+    pub fn candidate_pool_size(&self) -> u32 {
+        self.candidate_pool_size
+    }
+
     fn encode_prefix(
         &self,
         target_hidden: impl BufferRef<Backend = B>,
@@ -380,6 +385,7 @@ impl<B: Backend> Weaver<B> {
         shape: &WeaverTreeShape,
         batch_node_count: u32,
         batch_start_slot: u32,
+        head: Option<(&ConfidenceHead<B>, &B::GlobalBuffer, &mut ConfidenceHeadStep<B>)>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), WeaverEncodeError<B>> {
         let tree_slot_count = shape.slot_count();
@@ -485,7 +491,9 @@ impl<B: Backend> Weaver<B> {
             false,
             command_buffer,
         )?;
-        let top_children = if shape.prune_noise_scale.is_some() {
+        // A confidence head rewrites the children's edges below, so the prune noise would go unused.
+        let prune_noise_scale = shape.prune_noise_scale.filter(|_| head.is_none());
+        let top_children = if prune_noise_scale.is_some() {
             &self.top_children_with_prune_noise
         } else {
             &self.top_children
@@ -505,9 +513,30 @@ impl<B: Backend> Weaver<B> {
             target_embedding.vocab_size(),
             frontier_capacity,
             tree_slot_count,
-            shape.prune_noise_scale,
+            prune_noise_scale,
             command_buffer,
         );
+
+        // With a confidence head the children's edges are its min(log q, 0): the round rewrites their frontier entries,
+        // so the path is the parent's plus the edge (the head's log r) and the priority follows; the edge lane keeps
+        // it, and the head's full pass rewrites it before the final prune when it has tree attention.
+        if let Some((head, token_table, step)) = head {
+            head.encode_round(
+                step,
+                token_table,
+                &logit_residuals,
+                batch_candidate_logits,
+                batch_candidate_ids,
+                node_metadata,
+                node_valid.as_ref(),
+                packed_tree.as_ref(),
+                frontier.reborrow(),
+                batch_node_count,
+                frontier_capacity,
+                tree_slot_count,
+                command_buffer,
+            );
+        }
 
         Ok(())
     }
@@ -521,6 +550,7 @@ impl<B: Backend> Weaver<B> {
         depth_seeds: &[u64],
         root_token_id: u32,
         shape: WeaverTreeShape,
+        confidence_head: Option<(&ConfidenceHead<B>, &B::GlobalBuffer)>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<EncodedWeaverTree<B>, WeaverEncodeError<B>> {
         let (packed_tree, frontier) = {
@@ -642,6 +672,21 @@ impl<B: Backend> Weaver<B> {
                 .map_err(WeaverEncodeError::Backend)?;
             let depth_seeds_buffer =
                 command_buffer.allocate_constant_from_slice(depth_seeds).map_err(WeaverEncodeError::Backend)?;
+            let mut head_step = confidence_head
+                .map(|(head, _)| {
+                    head.encode_step(
+                        draft_hidden,
+                        &candidate_ids,
+                        &depth_seeds_buffer,
+                        pool_depth_count,
+                        tree_slot_count,
+                        shape.expand_per_round,
+                        vocab_size,
+                        command_buffer,
+                    )
+                })
+                .transpose()
+                .map_err(WeaverEncodeError::Backend)?;
 
             let mut batch_start_slot = 0;
             for round in 0..shape.rounds {
@@ -671,9 +716,16 @@ impl<B: Backend> Weaver<B> {
                     &shape,
                     batch_node_count,
                     batch_start_slot,
+                    confidence_head
+                        .zip(head_step.as_mut())
+                        .map(|((head, token_table), step)| (head, token_table, step)),
                     command_buffer,
                 )?;
                 batch_start_slot += batch_node_count;
+            }
+            if let (Some((head, _)), Some(step)) = (confidence_head, &head_step) {
+                head.encode_prune(step, &mut packed_tree, &mut frontier, command_buffer)
+                    .map_err(WeaverEncodeError::Backend)?;
             }
 
             (packed_tree, frontier)
