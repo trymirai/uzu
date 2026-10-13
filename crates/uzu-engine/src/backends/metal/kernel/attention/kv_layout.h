@@ -6,6 +6,7 @@
 
 // K: [block][head][fragment][lane][LANE_BYTES].
 // V: [block][head][slice][chunk group][lane][LANE_BYTES].
+// Unwritten slots have nonpositive scales.
 
 namespace uzu::kv_layout {
 

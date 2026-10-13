@@ -8,6 +8,8 @@
 #include "../../generated/attention.h"
 #include "../../generated/trie.h"
 #include "../attention_gate.h"
+#include "../kv_layout.h"
+#include "../../hadamard_transform/hadamard_transform.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -399,7 +401,7 @@ template <typename T, uint BD>
 VARIANTS(T, bfloat)
 VARIANTS(BD, 128, 256)
 KERNEL(AttentionGemmGroupedCombine)(
-    const device float* partials,
+    const device void* partials,
     const device float* partial_maxs,
     const device float* partial_sums,
     device T* o,
@@ -412,7 +414,10 @@ KERNEL(AttentionGemmGroupedCombine)(
     const constant uint& batch_count,
     const constant uint& num_splits,
     const constant uint& gate_row_stride OPTIONAL(has_gate),
+    const constant uint& real_rows OPTIONAL(quantized),
     const bool has_gate SPECIALIZE,
+    const bool quantized SPECIALIZE,
+    threadgroup float rotation[BD],
     const uint grouped_row_idx GROUPS(grouped_rows),
     const uint kv_head_idx GROUPS(kv_heads),
     const uint batch_idx GROUPS(batch_count),
@@ -421,10 +426,18 @@ KERNEL(AttentionGemmGroupedCombine)(
   const uint m_tile_idx = grouped_row_idx / block_rows;
   const uint row_in_tile = grouped_row_idx - m_tile_idx * block_rows;
   const uint tile_base = ((batch_idx * kv_heads + kv_head_idx) * m_tiles + m_tile_idx) * num_splits;
-
+  const uint head_in_group = grouped_row_idx / params.q_len;
+  const uint query_position = grouped_row_idx - head_in_group * params.q_len;
+  if (quantized && query_position >= real_rows) {
+    return;
+  }
+  const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
   const device float* row_maxs = partial_maxs + size_t(tile_base) * block_rows + row_in_tile;
   const device float* row_sums = partial_sums + size_t(tile_base) * block_rows + row_in_tile;
-  const device float* row_partials = partials + size_t(tile_base) * block_rows * BD + size_t(row_in_tile) * BD + column;
+  const device float* row_partials = static_cast<const device float*>(partials) + size_t(tile_base) * block_rows * BD +
+                                     size_t(row_in_tile) * BD + column;
+  const device bfloat* row_means = static_cast<const device bfloat*>(partials) + size_t(tile_base) * block_rows * BD +
+                                   size_t(row_in_tile) * BD + column;
 
   float global_max = -INFINITY;
   for (uint s = 0; s < num_splits; ++s) {
@@ -432,7 +445,6 @@ KERNEL(AttentionGemmGroupedCombine)(
       global_max = metal::max(global_max, row_maxs[s * block_rows]);
     }
   }
-
   float numerator = 0.0f;
   float denominator = 0.0f;
   if (global_max > -INFINITY) {
@@ -442,22 +454,54 @@ KERNEL(AttentionGemmGroupedCombine)(
         continue;
       }
       const float rescale = fast::exp2(row_maxs[s * block_rows] - global_max);
-      denominator += rescale * split_sum;
-      numerator += rescale * row_partials[size_t(s) * block_rows * BD];
+      const float weight = rescale * split_sum;
+      denominator += weight;
+      if (quantized) {
+        numerator += weight * float(row_means[size_t(s) * block_rows * BD]);
+      } else {
+        numerator += rescale * row_partials[size_t(s) * block_rows * BD];
+      }
     }
   }
-
-  const uint head_in_group = grouped_row_idx / params.q_len;
-  const uint query_position = grouped_row_idx - head_in_group * params.q_len;
-  const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
-  T result = static_cast<T>(denominator > 0.0f ? numerator / denominator : 0.0f);
-  if (has_gate) {
-    result = attention_apply_gate(
-        result,
-        gate[(batch_idx * params.q_len + query_position) * gate_row_stride + q_head_idx * BD + column]
-    );
+  const float mean = denominator > 0.0f ? numerator / denominator : 0.0f;
+  if (!quantized) {
+    T result = static_cast<T>(mean);
+    if (has_gate) {
+      result = attention_apply_gate(
+          result,
+          gate[(batch_idx * params.q_len + query_position) * gate_row_stride + q_head_idx * BD + column]
+      );
+    }
+    o += size_t(batch_idx) * params.o_strides[0] + size_t(q_head_idx) * params.o_strides[1] +
+         size_t(query_position) * params.o_strides[2] + column;
+    o[0] = result;
+    return;
   }
-  o += size_t(batch_idx) * params.o_strides[0] + size_t(q_head_idx) * params.o_strides[1] +
-       size_t(query_position) * params.o_strides[2] + column;
-  o[0] = result;
+
+  rotation[column] = mean;
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  if (column >= METAL_SIMD_SIZE) {
+    return;
+  }
+  constexpr ushort VALUES_PER_LANE = BD / METAL_SIMD_SIZE;
+  float rotated[VALUES_PER_LANE];
+  METAL_PRAGMA_UNROLL
+  for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
+    rotated[value_index] = rotation[value_index * METAL_SIMD_SIZE + column];
+  }
+  simdgroup_hadamard_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(ushort(column), rotated);
+  device T* output_row = o + size_t(batch_idx) * params.o_strides[0] + size_t(q_head_idx) * params.o_strides[1] +
+                         size_t(query_position) * params.o_strides[2];
+  METAL_PRAGMA_UNROLL
+  for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
+    const uint channel = value_index * METAL_SIMD_SIZE + column;
+    T result = static_cast<T>(rotated[value_index] * uzu::kv_layout::kv_rotation_sign(channel));
+    if (has_gate) {
+      result = attention_apply_gate(
+          result,
+          gate[(batch_idx * params.q_len + query_position) * gate_row_stride + q_head_idx * BD + channel]
+      );
+    }
+    output_row[channel] = result;
+  }
 }

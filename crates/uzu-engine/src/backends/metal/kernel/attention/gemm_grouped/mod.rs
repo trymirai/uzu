@@ -67,8 +67,13 @@ impl AttentionGemmGroupedMetal {
                 mask.is_trie(),
             )
         };
-        let combine =
-            AttentionGemmGroupedCombineMetalKernel::new(context, DataType::BF16, head_dim, gate_row_stride.is_some())?;
+        let combine = AttentionGemmGroupedCombineMetalKernel::new(
+            context,
+            DataType::BF16,
+            head_dim,
+            gate_row_stride.is_some(),
+            false,
+        )?;
         Ok(Self {
             kernel: new_kernel(false)?,
             split_kernel: new_kernel(true)?,
@@ -160,6 +165,7 @@ impl AttentionGemmGroupedMetal {
             q_replicas,
             num_splits,
             self.gate_row_stride,
+            None,
             command_buffer,
         );
         Ok(gate.is_some())
