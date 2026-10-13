@@ -70,20 +70,32 @@ pub fn footprint_bytes(model: &Model) -> u64 {
 }
 
 /// Sum of the sizes of every file under `path` (the model's on-disk weight
-/// files). A non-directory or unreadable path reports 0 — such a path is
-/// unlikely to be a loadable model, and the dynamic free-memory check in
+/// files), deduplicated by resolved path so a weight that appears more than
+/// once (a symlink next to its target) counts its physical size only once —
+/// which is what unified memory actually maps. File symlinks resolve to
+/// their target, which may lie outside the directory (the engine opens
+/// weights with `File::open`, which follows links; symlinks are a common way
+/// to deduplicate weights). Directory symlinks are *not* followed: model
+/// layouts are plain trees, and never descending through links keeps the
+/// walk bounded even if a model directory contains a cycle. Broken or
+/// unreadable entries count as 0; the dynamic free-memory check in
 /// `memory_guard` still bounds what actually gets allocated.
 fn filesystem_bytes(path: &str) -> u64 {
     let root = Path::new(path);
     if !root.is_dir() {
         return 0;
     }
+    let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     WalkDir::new(root)
         .into_iter()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_file())
-        .filter_map(|entry| entry.metadata().ok())
-        .map(|metadata| metadata.len())
+        .filter(|entry| entry.file_type().is_file() || entry.file_type().is_symlink())
+        .filter_map(|entry| {
+            let resolved = std::fs::canonicalize(entry.path()).ok()?;
+            let metadata = std::fs::metadata(resolved.clone()).ok()?;
+            metadata.is_file().then_some((resolved, metadata.len()))
+        })
+        .filter_map(|(resolved, len)| seen.insert(resolved).then_some(len))
         .fold(0_u64, u64::saturating_add)
 }
 
@@ -269,25 +281,28 @@ impl SessionManager {
         Err(AcquireError::MemoryGuard(guard_error))
     }
 
-    /// Unloads the resident model (idle off-load). Blocks on the session lock,
-    /// which is held for the whole duration of a turn, so it can only ever
-    /// unload a session that no turn is using.
-    pub async fn release(&self) {
-        *self.session.lock().await = None;
-        *self.resident.lock().await = None;
-        tracing::info!("model unloaded from memory");
-    }
-
-    pub async fn has_session(&self) -> bool {
-        self.session.lock().await.is_some()
-    }
-
-    /// True when no request has used the session within `timeout`.
-    pub async fn is_idle(
+    /// Unloads the resident model when the session has been idle for at least
+    /// `timeout`.
+    ///
+    /// The predicate and the clear both run under the session lock, and
+    /// `last_used` is re-read immediately before clearing — the two must stay
+    /// atomic. A separate check-then-release would let a request queued
+    /// behind this check acquire the session between them, finish its turn,
+    /// and have a just-used session cleared out from under it (cold-loading
+    /// again on the next request). By the time a turn releases the lock,
+    /// `TurnUsageGuard` has already stamped `last_used` (reverse drop order:
+    /// the guard drops before the session guard), so the re-validation sees a
+    /// fresh clock and a long, just-finished turn is never unloaded.
+    pub async fn try_unload_idle(
         &self,
         timeout: Duration,
-    ) -> bool {
-        self.last_used.lock().unwrap().elapsed() >= timeout
+    ) {
+        let mut slot = self.session.lock().await;
+        if slot.is_some() && self.last_used.lock().unwrap().elapsed() >= timeout {
+            *slot = None;
+            *self.resident.lock().await = None;
+            tracing::info!("model idle for {timeout:?} — unloading to free memory");
+        }
     }
 
     /// Marks the session as used *now*, restarting the idle clock.
@@ -372,6 +387,24 @@ mod tests {
         std::fs::create_dir(root.join("nested/empty")).unwrap();
 
         assert_eq!(filesystem_bytes(root.to_str().unwrap()), 3072);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn filesystem_bytes_counts_symlinked_weights() {
+        let root = std::env::temp_dir().join(format!("uzu-fs-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // A weight symlinked into the model dir must count its target's size.
+        std::fs::write(root.join("model.safetensors"), vec![0u8; 4096]).unwrap();
+        let weights_dir = root.join("weights");
+        std::fs::create_dir_all(&weights_dir).unwrap();
+        std::os::unix::fs::symlink(root.join("model.safetensors"), weights_dir.join("w.safetensors")).unwrap();
+        // A broken symlink counts as 0, not as a file.
+        std::os::unix::fs::symlink(root.join("does-not-exist"), weights_dir.join("broken")).unwrap();
+
+        assert_eq!(filesystem_bytes(root.to_str().unwrap()), 4096);
         let _ = std::fs::remove_dir_all(&root);
     }
 

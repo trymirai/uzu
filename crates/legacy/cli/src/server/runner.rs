@@ -172,12 +172,26 @@ pub async fn run_server(
     spinner.set_style(ProgressStyle::default_spinner().template("{spinner:.green} {msg}").unwrap());
 
     let mut slots = Vec::with_capacity(models.len());
+    let mut canonical_ids = std::collections::HashSet::new();
     for identifier in &models {
         let resolved = engine
             .model(identifier.clone())
             .await
             .with_context(|| format!("Failed to look up model: {identifier}"))?
             .with_context(|| format!("Model not found: {identifier}"))?;
+
+        // The local registry keys checkpoints by directory name, so two
+        // distinct local directories can resolve to the same canonical
+        // identifier. Such a pair would be indistinguishable at request time
+        // (both would run the first slot), so fail fast at startup instead of
+        // silently misrouting.
+        let canonical = resolved.identifier.to_lowercase();
+        if !canonical_ids.insert(canonical) {
+            bail!(
+                "duplicate model identifier `{}` (requested as `{identifier}`): local checkpoints are keyed by directory name; give each a distinct name or drop one",
+                resolved.identifier
+            );
+        }
 
         spinner.set_message(format!("Preparing model: {}", resolved.identifier));
         let downloader = engine.download(&resolved).await.context("Failed to start model download")?;
@@ -254,10 +268,11 @@ pub async fn run_server(
             let mut ticker = tokio::time::interval(idle_timeout / 4);
             loop {
                 ticker.tick().await;
-                if manager.has_session().await && manager.is_idle(idle_timeout).await {
-                    tracing::info!("model idle for {idle_timeout:?} — unloading to free memory");
-                    manager.release().await;
-                }
+                // The idle check and the unload are one atomic operation
+                // inside the session lock, so a request that queued behind
+                // the check cannot have a just-used session cleared out from
+                // under it.
+                manager.try_unload_idle(idle_timeout).await;
             }
         });
     }

@@ -768,10 +768,6 @@ async fn run_blocking(
     sender: mpsc::UnboundedSender<Vec<u8>>,
     log: RequestLog,
 ) {
-    // Restart the idle-unload clock when this turn finishes, whatever its
-    // outcome: idle off-load is measured from the end of the last turn.
-    let _usage = TurnUsageGuard::new(&manager);
-
     // A blocking response writes nothing until generation finishes, and Rocket
     // only discovers a vanished client through a failed socket write, which is
     // what makes it drop the body receiver that `sender.closed()` observes. A
@@ -796,6 +792,12 @@ async fn run_blocking(
             },
         }
     };
+    // Restart the idle-unload clock when this turn finishes, whatever its
+    // outcome. Declared *after* `guard` so reverse drop order stamps
+    // `last_used` before the session lock is released: the watcher is
+    // woken by that unlock and must see a fresh timestamp, not the stale
+    // turn-start one (a long turn can outlive the idle timeout).
+    let _usage = TurnUsageGuard::new(&manager);
 
     // Resolve which configured model this request targets, then make sure a
     // live session for it is loaded into the shared slot (loading, or — if a
@@ -930,10 +932,6 @@ async fn run_stream(
     sender: mpsc::UnboundedSender<Event>,
     log: RequestLog,
 ) {
-    // Restart the idle-unload clock when this turn finishes (mirrors
-    // `run_blocking`): idle off-load is measured from the end of the last turn.
-    let _usage = TurnUsageGuard::new(&manager);
-
     // Same as the blocking path: hold the session lock (which also guards the
     // model slot) for the whole turn, so the idle-unload watcher can't unload a
     // model mid-generation and model swaps can't interleave with this turn.
@@ -944,6 +942,10 @@ async fn run_stream(
             return;
         },
     };
+    // Restart the idle-unload clock when this turn finishes, whatever its
+    // outcome. Declared *after* `guard` so reverse drop order stamps
+    // `last_used` before the session lock is released (mirrors `run_blocking`).
+    let _usage = TurnUsageGuard::new(&manager);
 
     // Resolve the configured model and make sure a live session for it is in
     // the shared slot (loading, or swapping away from a different model first).
