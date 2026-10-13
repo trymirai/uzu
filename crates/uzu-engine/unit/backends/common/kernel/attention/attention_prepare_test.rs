@@ -4,7 +4,9 @@ use uzu_engine_macros::uzu_test;
 #[cfg(backend = "metal")]
 use super::kv_layout::Int8KVLayout;
 #[cfg(backend = "metal")]
-use crate::backends::metal::{AttentionPrepareInt8MetalKernel, Metal};
+use crate::backends::common::kernel::AttentionPrepareInt8Kernel;
+#[cfg(backend = "metal")]
+use crate::backends::metal::Metal;
 use crate::{
     backends::{
         common::{
@@ -137,40 +139,51 @@ fn test_attention_prepare_uses_query_gate_row_stride() {
 }
 
 #[cfg(backend = "metal")]
-#[uzu_test]
-fn test_attention_prepare_int8() {
-    const SIGN_BITS: [u32; 8] =
-        [0x9e3779b9, 0x85ebca6b, 0xc2b2ae35, 0x27d4eb2f, 0x165667b1, 0xbf58476d, 0x94d049bb, 0xd6e8feb8];
+#[derive(Debug, PartialEq)]
+struct Int8Output {
+    codes: [Vec<i16>; 3],
+    scales: [bf16; 3],
+}
+
+#[cfg(backend = "metal")]
+fn run_int8<B: Backend>() -> Int8Output {
     const DIM: usize = 256;
     let layout = Int8KVLayout {
         head_dim: DIM as u32,
         num_kv_heads: 1,
         padded_capacity: 64,
     };
-    // One token's query, key and value rows into key slot 33.
     let rows: Vec<bf16> = (0..3 * DIM).map(|i| bf16::from_f32((i as f32 * 0.37).sin())).collect();
-    let context = <Metal as Backend>::Context::new().unwrap();
-    let mut q_codes = create_buffer::<Metal, i8>(&context, DIM);
-    let mut q_scales = create_buffer::<Metal, bf16>(&context, 1);
-    let mut k_codes = create_buffer::<Metal, i8>(&context, layout.code_bytes());
-    let mut v_codes = create_buffer::<Metal, u8>(&context, layout.code_bytes());
-    let mut k_scales = create_buffer::<Metal, bf16>(&context, layout.scale_count());
-    let mut v_scales = create_buffer::<Metal, bf16>(&context, layout.scale_count());
-    let kernel =
-        AttentionPrepareInt8MetalKernel::new(&context, DataType::BF16, DataType::F32, DIM as u32, false, true, 1)
-            .unwrap();
+    let context = B::Context::new().unwrap();
+    let qkvg = create_buffer_with_data::<B, bf16>(&context, &rows);
+    let mut q_codes = create_buffer::<B, i8>(&context, DIM);
+    let mut q_scales = create_buffer::<B, bf16>(&context, 1);
+    let mut k_codes = create_buffer::<B, i8>(&context, layout.code_bytes());
+    let mut v_codes = create_buffer::<B, u8>(&context, layout.code_bytes());
+    let mut k_scales = create_buffer::<B, bf16>(&context, layout.scale_count());
+    let mut v_scales = create_buffer::<B, bf16>(&context, layout.scale_count());
+    let kernel = <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
+        &context,
+        DataType::BF16,
+        DataType::F32,
+        DIM as u32,
+        false,
+        true,
+        1,
+    )
+    .unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
-        &create_buffer_with_data::<Metal, bf16>(&context, &rows),
-        None::<&mut <Metal as Backend>::GlobalBuffer>,
+        &qkvg,
+        None::<&mut B::GlobalBuffer>,
         Some(&mut q_codes),
         Some(&mut q_scales),
         &mut k_codes,
         &mut k_scales,
         &mut v_codes,
         &mut v_scales,
-        None::<&<Metal as Backend>::GlobalBuffer>,
-        None::<&<Metal as Backend>::GlobalBuffer>,
+        None::<&B::GlobalBuffer>,
+        None::<&B::GlobalBuffer>,
         1,
         None,
         33,
@@ -182,12 +195,31 @@ fn test_attention_prepare_int8() {
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let (q_codes, k_codes) = (buffer_to_vec::<Metal, i8>(&q_codes), buffer_to_vec::<Metal, i8>(&k_codes));
-    let v_codes = buffer_to_vec::<Metal, u8>(&v_codes);
-    let scales = [(&q_scales, 0), (&k_scales, 33), (&v_scales, 33)]
-        .map(|(buffer, slot)| buffer_to_vec::<Metal, bf16>(buffer)[slot]);
+    let q_codes = buffer_to_vec::<B, i8>(&q_codes);
+    let k_codes = buffer_to_vec::<B, i8>(&k_codes);
+    let v_codes = buffer_to_vec::<B, u8>(&v_codes);
+    Int8Output {
+        codes: [
+            q_codes.into_iter().map(i16::from).collect(),
+            (0..DIM).map(|c| i16::from(k_codes[layout.k_code_index(33, 0, c as u32)])).collect(),
+            (0..DIM).map(|c| i16::from(v_codes[layout.v_code_index(33, 0, c as u32)]) - 128).collect(),
+        ],
+        scales: [(&q_scales, 0), (&k_scales, 33), (&v_scales, 33)]
+            .map(|(buffer, slot)| buffer_to_vec::<B, bf16>(buffer)[slot]),
+    }
+}
+
+#[cfg(backend = "metal")]
+#[uzu_test]
+fn test_attention_prepare_int8() {
+    const SIGN_BITS: [u32; 8] =
+        [0x9e3779b9, 0x85ebca6b, 0xc2b2ae35, 0x27d4eb2f, 0x165667b1, 0xbf58476d, 0x94d049bb, 0xd6e8feb8];
+    const DIM: usize = 256;
+    let cpu = run_int8::<Cpu>();
+    let metal = run_int8::<Metal>();
+    assert_eq!(cpu, metal);
+    let rows: Vec<bf16> = (0..3 * DIM).map(|i| bf16::from_f32((i as f32 * 0.37).sin())).collect();
     for (head, row) in rows.chunks(DIM).enumerate() {
-        // Random signs, then the orthonormal Walsh-Hadamard transform, then per-row absmax / 127 codes.
         let mut x: Vec<f64> =
             (0..DIM).map(|c| row[c].to_f64() * (1.0 - 2.0 * f64::from(SIGN_BITS[c / 32] >> (c % 32) & 1))).collect();
         for h in (0..8).map(|bit| 1 << bit) {
@@ -195,15 +227,14 @@ fn test_attention_prepare_int8() {
                 (x[i], x[i + h]) = ((x[i] + x[i + h]) / 2f64.sqrt(), (x[i] - x[i + h]) / 2f64.sqrt());
             }
         }
-        let scale = scales[head].to_f64();
+        let scale = cpu.scales[head].to_f64();
         assert!((scale * 127.0 / x.iter().fold(0.0, |m: f64, v| m.max(v.abs())) - 1.0).abs() < 1e-2);
-        for c in 0..DIM {
-            let code = match head {
-                0 => q_codes[c] as f64,
-                1 => k_codes[layout.k_code_index(33, 0, c as u32)] as f64,
-                _ => v_codes[layout.v_code_index(33, 0, c as u32)] as f64 - 128.0,
-            };
-            assert!((code - x[c] / scale).abs() <= 0.51, "head {head} channel {c}: {code} vs {}", x[c] / scale);
+        for (channel, &code) in cpu.codes[head].iter().enumerate() {
+            assert!(
+                ((code as f64) - x[channel] / scale).abs() <= 0.51,
+                "head {head} channel {channel}: {code} vs {}",
+                x[channel] / scale
+            );
         }
     }
 }

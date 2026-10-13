@@ -30,7 +30,7 @@ template <typename ElementT, typename RopeT, uint HEAD_DIM>
 VARIANTS(ElementT, bfloat)
 VARIANTS(RopeT, float)
 VARIANTS(HEAD_DIM, 256)
-KERNEL(AttentionPrepareInt8)(
+PUBLIC KERNEL(AttentionPrepareInt8)(
     const device ElementT* qkvg,
     device ElementT* queries OPTIONAL(!quantize_queries),
     device int8_t* q_codes OPTIONAL(quantize_queries),

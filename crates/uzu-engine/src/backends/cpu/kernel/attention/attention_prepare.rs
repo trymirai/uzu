@@ -4,7 +4,7 @@ use uzu_engine_macros::kernel;
 
 use crate::array::ArrayElement;
 
-fn apply_rope<ElementT: ArrayElement + Float>(
+pub(super) fn apply_rope<ElementT: ArrayElement + Float>(
     head: *const ElementT,
     cosines: *const (impl ArrayElement + Float),
     sines: *const (impl ArrayElement + Float),

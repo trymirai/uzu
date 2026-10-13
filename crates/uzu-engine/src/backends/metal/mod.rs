@@ -12,6 +12,4 @@ mod metal_extensions;
 pub use backend::Metal;
 pub use context::MetalContext; // TODO: This should be removed
 #[cfg(test)]
-pub use kernel::AttentionPrepareInt8MetalKernel;
-#[cfg(test)]
 pub use kernel::matmul::gemm::GemmEngine;

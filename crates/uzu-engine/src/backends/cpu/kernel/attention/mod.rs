@@ -4,6 +4,7 @@ pub mod ancestor_attention;
 pub mod attention_prepare;
 pub mod attention_single_pass;
 pub mod kv_cache_update;
+pub mod prepare_int8;
 pub mod qkv_norm;
 pub mod sigmoid_gate;
 
