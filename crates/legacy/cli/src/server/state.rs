@@ -301,6 +301,16 @@ pub struct SessionManager {
     pub session: Arc<Mutex<Option<ChatSession>>>,
     resident: Arc<Mutex<Option<ModelSlot>>>,
     last_used: Arc<std::sync::Mutex<Instant>>,
+    /// Serializes model *loads* across requests. The per-turn session lock
+    /// only protects the resident session; a request that disconnects mid
+    /// load releases that lock but must not be allowed to race a second
+    /// backend load against the still-in-flight first one (the engine's
+    /// backend creation runs in a detached `tokio::spawn` that dropping the
+    /// load future does not cancel). `load_model` therefore always runs the
+    /// download+load in a background task that holds this lock for the load's
+    /// full duration, so backend loads never overlap and two large models
+    /// can never be allocated at once.
+    load: Arc<Mutex<()>>,
     engine: Arc<Engine>,
     slots: Vec<ModelSlot>,
     total_memory: u64,
@@ -316,6 +326,7 @@ impl SessionManager {
             session: Arc::new(Mutex::new(None)),
             resident: Arc::new(Mutex::new(None)),
             last_used: Arc::new(std::sync::Mutex::new(Instant::now())),
+            load: Arc::new(Mutex::new(())),
             engine: Arc::new(engine),
             slots,
             total_memory,
@@ -556,10 +567,20 @@ fn paths_equal(
 /// passes, so callers are guaranteed it fits.
 ///
 /// The (potentially multi-second) download + load is raced against
-/// [`LoadLiveness`]: if the client goes away, the in-flight load is dropped
-/// (the engine keeps no per-model state, and downloads are resumable) and the
-/// session lock is released instead of being held until the load finishes and
-/// stalling every other model.
+/// [`LoadLiveness`]: if the client goes away, the session lock is released
+/// immediately instead of being held until the load finishes and stalling
+/// every other model.
+///
+/// Because the engine performs backend creation in a detached
+/// `tokio::spawn` that stopping the request does *not* cancel, the load
+/// always runs in a background task that owns `manager.load` for the load's
+/// full duration and reports the result over a channel. On disconnect the
+/// request just stops waiting (releasing the session lock); the background
+/// task keeps the load — and the load lock — running to completion, so a
+/// second request can acquire the (now-free) session lock but blocks on the
+/// load lock until the first model's allocation has actually ended. Backend
+/// loads therefore never overlap, and the single-resident guarantee (and the
+/// OOM it guards) hold across a mid-load disconnect.
 async fn load_model(
     manager: &SessionManager,
     slot: &ModelSlot,
@@ -567,26 +588,59 @@ async fn load_model(
     liveness: &mut impl LoadLiveness,
 ) -> Result<ChatSession, AcquireError> {
     tracing::info!("loading model into memory: {} (~{:.1} GB)", slot.identifier(), slot.footprint as f64 / 1e9);
-    // The load future captures only `manager` and `slot` — NOT
-    // `session_slot` or `liveness` — so it can be raced against liveness
-    // without a double borrow, and dropped on disconnect without leaving the
-    // session slot half-written.
-    let mut load = Box::pin(async move {
-        let downloader =
-            manager.engine.download(&slot.model).await.map_err(|error| AcquireError::Engine(error.to_string()))?;
-        while downloader.next().await.is_some() {}
-
-        manager
-            .engine
-            .chat(slot.model.clone(), ChatConfig::default())
-            .await
-            .map_err(|error| AcquireError::Engine(error.to_string()))
-    });
+    // The engine creates the backend in a detached `tokio::spawn` (see
+    // `ChatInstance::new`) that awaiting the load future does NOT cancel —
+    // if the client goes away mid-load, the backend task keeps allocating
+    // memory in the background. To keep backend loads globally serialized
+    // (so a second model can't start allocating behind an in-flight one), the
+    // load ALWAYS runs in a background task that owns the load lock for its
+    // full duration and hands the result back over a oneshot. The request
+    // races that oneshot against liveness: on disconnect it simply stops
+    // waiting (the session lock is released and this function returns), while
+    // the background task keeps holding the lock — and the in-flight model
+    // stays single-resident, evicted by a later request — until the load
+    // genuinely ends.
+    let (result_tx, mut result_rx) = tokio::sync::mpsc::channel::<Result<ChatSession, AcquireError>>(1);
+    {
+        let engine = Arc::clone(&manager.engine);
+        let model = slot.model.clone();
+        let model_id = slot.model.identifier.clone();
+        let load_locks = Arc::clone(&manager.load);
+        tokio::spawn(async move {
+            // Held for the entire backend load. A queued request acquires the
+            // session lock (released on disconnect) but blocks here until
+            // this load has actually finished — no second concurrent load.
+            let _load_lock = load_locks.lock().await;
+            let result = async move {
+                let downloader =
+                    engine.download(&model).await.map_err(|error| AcquireError::Engine(error.to_string()))?;
+                while downloader.next().await.is_some() {}
+                engine
+                    .chat(model.clone(), ChatConfig::default())
+                    .await
+                    .map_err(|error| AcquireError::Engine(error.to_string()))
+            }
+            .await;
+            if result.is_ok() {
+                tracing::info!("model loaded: {model_id}");
+            }
+            let _ = result_tx.send(result).await;
+        });
+    }
+    // Race the load against liveness: the session lock (held by the caller)
+    // is only held while the client is still connected.
     let session = loop {
         tokio::select! {
-            result = &mut load => break result?,
+            result = result_rx.recv() => {
+                // The background task always sends exactly once (even on
+                // error), so this is the load's final result.
+                break result.expect("load task always sends a result")?;
+            }
             alive = liveness.tick() => {
                 if !alive {
+                    // Client gone: release the session lock now; the background
+                    // task keeps the load (and the load lock) running to
+                    // completion in the background.
                     return Err(AcquireError::ClientDisconnected);
                 }
                 // Client is still connected; keep racing until the load
@@ -598,7 +652,6 @@ async fn load_model(
     *manager.resident.lock().await = Some(slot.clone());
     *manager.last_used.lock().unwrap() = Instant::now();
     *session_slot = Some(session.clone());
-    tracing::info!("model loaded: {}", slot.identifier());
     Ok(session)
 }
 
