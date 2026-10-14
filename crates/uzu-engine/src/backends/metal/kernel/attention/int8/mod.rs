@@ -1,4 +1,7 @@
-use super::gemm_grouped::policy::{MAX_TRIE_SUFFIX, int8_splits};
+use super::gemm_grouped::{
+    block_rows,
+    policy::{self, MAX_TRIE_SUFFIX, int8_splits},
+};
 use crate::{
     backends::{
         common::{
@@ -18,8 +21,6 @@ use crate::{
     data_type::DataType,
 };
 
-const QUERIES_PER_BLOCK: u32 = 2 * kv_layout::TILE_QUERIES;
-
 pub struct Int8Attention {
     config: AttentionKernelConfig,
     mask_free: AttentionGemmGroupedInt8MetalKernel,
@@ -33,12 +34,7 @@ impl Int8Attention {
         config: &AttentionKernelConfig,
         context: &MetalContext,
     ) -> bool {
-        context.supports_mxu
-            && config.head_dim == 256
-            && config.is_causal
-            && config.data_type == DataType::BF16
-            && !config.has_sinks
-            && config.sliding_window_size.is_none()
+        policy::is_supported(config, context) && config.is_causal
     }
 
     pub fn new(
@@ -94,8 +90,9 @@ impl Int8Attention {
 
         let gqa_factor = num_q_heads / num_groups;
         let grouped_rows = gqa_factor * suffix_length;
-        let query_tiles = grouped_rows.div_ceil(QUERIES_PER_BLOCK);
-        let split_rows = num_groups * query_tiles * QUERIES_PER_BLOCK;
+        let block_rows = block_rows(head_dim);
+        let query_tiles = grouped_rows.div_ceil(block_rows);
+        let split_rows = num_groups * query_tiles * block_rows;
         let num_splits = int8_splits(split_rows, head_dim, suffix_length, kv_length);
 
         let rows = split_rows * num_splits;
@@ -160,7 +157,7 @@ impl Int8Attention {
             gate,
             params,
             grouped_rows,
-            query_tiles * QUERIES_PER_BLOCK,
+            query_tiles * block_rows,
             num_groups,
             num_splits,
             config.gate_row_stride,

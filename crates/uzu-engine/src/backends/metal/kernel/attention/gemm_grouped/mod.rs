@@ -29,6 +29,10 @@ const SLICE_COLS: u32 = 64;
 const TILE_ROWS: u32 = 16;
 const BLOCK_K: u32 = 32;
 
+pub fn block_rows(head_dim: u32) -> u32 {
+    SIMDGROUPS_PER_THREADGROUP / (head_dim / SLICE_COLS) * TILE_ROWS
+}
+
 struct AttentionGemmGroupedMetal {
     kernel: AttentionGemmGroupedMetalKernel,
     split_kernel: AttentionGemmGroupedMetalKernel,
@@ -55,7 +59,6 @@ impl AttentionGemmGroupedMetal {
         assert!(matches!(head_dim, 128 | 256), "head_dim must be 128 or 256");
         assert_eq!(num_q_heads % num_groups, 0, "num_q_heads must be divisible by num_groups");
         let slices = head_dim / SLICE_COLS;
-        let block_rows = SIMDGROUPS_PER_THREADGROUP / slices * TILE_ROWS;
         let new_kernel = |split| {
             AttentionGemmGroupedMetalKernel::new(
                 context,
@@ -79,7 +82,7 @@ impl AttentionGemmGroupedMetal {
             num_q_heads,
             scale,
             gate_row_stride,
-            block_rows,
+            block_rows: block_rows(head_dim),
             mask,
         })
     }
