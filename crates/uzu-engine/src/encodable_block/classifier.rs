@@ -15,7 +15,7 @@ use crate::{
         prediction_head::{PredictionHead, PredictionHeadError},
         transformer::{Transformer, TransformerEncodeError, TransformerNewError},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
 };
 
 #[derive(Debug, Error)]

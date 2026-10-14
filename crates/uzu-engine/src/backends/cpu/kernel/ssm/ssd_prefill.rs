@@ -2,11 +2,11 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(SSDPrefill64)]
 #[variants(T, f32, f16, bf16)]
-pub fn ssd_prefill64<T: ArrayElement + Float>(
+pub fn ssd_prefill64<T: DataTypeRepr + Float>(
     #[allow(unused)] x: *const T,
     #[allow(unused)] dt_raw: *const T,
     #[allow(unused)] b: *const T,
@@ -30,7 +30,7 @@ pub fn ssd_prefill64<T: ArrayElement + Float>(
 
 #[kernel(SSDPrefill)]
 #[variants(T, f32, f16, bf16)]
-pub fn ssd_prefill<T: ArrayElement + Float>(
+pub fn ssd_prefill<T: DataTypeRepr + Float>(
     #[allow(unused)] x: *const T,
     #[allow(unused)] dt_raw: *const T,
     #[allow(unused)] b: *const T,

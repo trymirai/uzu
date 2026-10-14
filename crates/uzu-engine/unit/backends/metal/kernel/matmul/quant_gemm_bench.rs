@@ -4,7 +4,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_bench;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend,
@@ -13,13 +12,14 @@ use crate::{
         },
         metal::{Metal, context::MetalContext, kernel::matmul::gemm::GemmEngine},
     },
+    data_type::DataTypeRepr,
     tests::{
         matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
         util::type_short_name,
     },
 };
 
-fn bench_unified_quant_typed<T: ArrayElement + Float>(
+fn bench_unified_quant_typed<T: DataTypeRepr + Float>(
     c: &mut Criterion,
     context: &MetalContext,
     label: &str,

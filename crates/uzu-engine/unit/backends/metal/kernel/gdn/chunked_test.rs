@@ -4,7 +4,6 @@ use uzu_engine_macros::uzu_test;
 
 use super::*;
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, BufferMut, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -12,6 +11,7 @@ use crate::{
         },
         metal::Metal,
     },
+    data_type::DataTypeRepr,
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
 };
 
@@ -57,7 +57,7 @@ fn test_case(suffix_len: usize) -> TestCase {
     }
 }
 
-fn run_prefill<T: ArrayElement>(
+fn run_prefill<T: DataTypeRepr>(
     context: &MetalContext,
     case: &TestCase,
     mode: PrefillMode,
@@ -172,7 +172,7 @@ fn chunked_prefill_matches_recurrent_prefill() {
     let context = <Metal as Backend>::Context::new().expect("metal context");
     if <BackendKernels<Metal> as Kernels>::DeltaNetChunkedPrefill::new(
         &context,
-        <bf16 as ArrayElement>::data_type(),
+        <bf16 as DataTypeRepr>::data_type(),
         HEAD_K_DIM as u32,
     )
     .expect("chunked")

@@ -4,7 +4,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_bench;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend,
@@ -13,6 +12,7 @@ use crate::{
         },
         metal::{Metal, context::MetalContext},
     },
+    data_type::DataTypeRepr,
     tests::{
         cold_pool::ColdPool,
         matmul::{QuantBuffers, QuantInput, iter_encode_loop, quant_arguments, qwen3_layer_shapes},
@@ -20,7 +20,7 @@ use crate::{
     },
 };
 
-fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
+fn bench_qwen3_layers_typed<T: DataTypeRepr + Float>(
     c: &mut Criterion,
     context: &MetalContext,
     label: &str,

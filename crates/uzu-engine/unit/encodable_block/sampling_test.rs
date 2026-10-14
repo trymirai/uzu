@@ -7,30 +7,18 @@ use rand_distr::Normal;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::common::{
         Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
         gpu_types::trie::TrieNode,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     encodable_block::{
         batch_topology::BatchTopology,
         sampling::{Sampling, SamplingMethod},
     },
     tests::proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
+    utils::dispatch_dtype::dispatch_dtype,
 };
-
-macro_rules! dispatch_dtype {
-    (|()| $body:expr) => { $body };
-    (|($T:ident : $dt:expr $(, $rest_T:ident : $rest_dt:expr)*)| $body:expr) => {
-        match $dt {
-            $crate::data_type::DataType::F16 => { type $T = half::f16; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
-            $crate::data_type::DataType::BF16 => { type $T = half::bf16; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
-            $crate::data_type::DataType::F32 => { type $T = f32; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
-            other => panic!("unsupported dtype in test: {:?}", other),
-        }
-    };
-}
 
 struct SamplingTestResults(Vec<u32>);
 
@@ -46,7 +34,7 @@ impl ComparableTestResults for SamplingTestResults {
     }
 }
 
-fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
+fn do_sampling_backend<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
     logits: &[T],
     seeds: Option<&[u64]>,
@@ -94,7 +82,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     Ok(SamplingTestResults(sampled))
 }
 
-fn get_data<T: ArrayElement + Float>(
+fn get_data<T: DataTypeRepr + Float>(
     seed: u64,
     batch_size: usize,
     vocab_size: usize,

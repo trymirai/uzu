@@ -15,7 +15,7 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
     utils::maybe_mut::MaybeMut,
 };
 

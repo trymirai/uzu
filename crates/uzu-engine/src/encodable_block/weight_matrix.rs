@@ -9,7 +9,7 @@ use crate::{
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -114,7 +114,7 @@ impl<B: Backend> WeightMatrix<B> {
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
         let Some(info) = quantization_info else {
-            let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_buffer()?;
+            let values = tree.read_buffer("weights", &[rows, columns], data_type)?;
             return Ok(Self {
                 values,
                 quantized: None,
@@ -136,12 +136,11 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let groups = columns.div_ceil(group_size);
 
-        let values =
-            tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_buffer()?;
+        let values = tree.read_buffer("weights", &[rows, columns / packing_divisor], storage_data_type)?;
         let params = QuantParams::new(params_layout, rows, groups);
         let load_plane =
             |name: &str, shape: [u32; 2], storage_type: DataType| -> Result<B::GlobalBuffer, WeightMatrixError<B>> {
-                Ok(tree.leaf(name)?.validate(&shape, storage_type)?.read_buffer()?)
+                Ok(tree.read_buffer(name, &shape, storage_type)?)
             };
         let scales = load_plane("scales", params.scale_shape(), data_type)?;
         let correction = match info.method {

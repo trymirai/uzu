@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,14 +12,14 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     x: Box<[T]>,
     dt: Box<[T]>,
     b: Box<[T]>,
@@ -36,12 +35,12 @@ struct Input<T: ArrayElement + Float> {
     state_in_place: bool,
 }
 
-struct Output<T: ArrayElement + Float> {
+struct Output<T: DataTypeRepr + Float> {
     y: Vec<T>,
     next_state: Vec<T>,
 }
 
-fn get_input<T: ArrayElement + Float>(
+fn get_input<T: DataTypeRepr + Float>(
     bsz: u32,
     h: u32,
     dh: u32,
@@ -81,7 +80,7 @@ fn get_input<T: ArrayElement + Float>(
     }
 }
 
-fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T> {
+fn get_output<B: Backend, T: DataTypeRepr + Float>(input: &Input<T>) -> Output<T> {
     let context = B::Context::new().expect("Failed to create Context");
     let kernel =
         <<B as Backend>::Kernels as Kernels>::SSDUpdateKernel::new(&context, T::data_type(), input.state_in_place)
@@ -176,7 +175,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     }
 }
 
-fn get_test_data<T: ArrayElement + Float>(
+fn get_test_data<T: DataTypeRepr + Float>(
     bsz: u32,
     h: u32,
     dh: u32,
@@ -189,7 +188,7 @@ fn get_test_data<T: ArrayElement + Float>(
     (input, expected)
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
     input: &Input<T>,
     expected: &Output<T>,
     label: &str,
@@ -221,37 +220,37 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 // bsz=1, h=4, dh=3, g=2, n=8 (matches existing Metal test)
-fn test_basic<T: ArrayElement + Float + Debug + Display>() {
+fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(1, 4, 3, 2, 8, false);
     test_internal(&input, &expected, "basic");
 }
 
 // bsz=2 multi-batch
-fn test_multi_batch<T: ArrayElement + Float + Debug + Display>() {
+fn test_multi_batch<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(2, 4, 3, 2, 8, false);
     test_internal(&input, &expected, "multi_batch");
 }
 
 // state_in_place=true
-fn test_state_in_place<T: ArrayElement + Float + Debug + Display>() {
+fn test_state_in_place<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(1, 4, 3, 2, 8, true);
     test_internal(&input, &expected, "state_in_place");
 }
 
 // Larger dimensions closer to real usage
-fn test_large<T: ArrayElement + Float + Debug + Display>() {
+fn test_large<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(1, 8, 4, 4, 16, false);
     test_internal(&input, &expected, "large");
 }
 
 // Minimal: single head, single group, dh=1, n=1
-fn test_minimal<T: ArrayElement + Float + Debug + Display>() {
+fn test_minimal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(1, 1, 1, 1, 1, false);
     test_internal(&input, &expected, "minimal");
 }
 
 // g == h (each head is its own group)
-fn test_group_per_head<T: ArrayElement + Float + Debug + Display>() {
+fn test_group_per_head<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(1, 4, 2, 4, 8, false);
     test_internal(&input, &expected, "group_per_head");
 }

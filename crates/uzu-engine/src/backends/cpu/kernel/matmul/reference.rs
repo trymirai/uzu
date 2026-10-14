@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use num_traits::AsPrimitive;
 
 use crate::{
     backends::{
@@ -9,7 +9,7 @@ use crate::{
         cpu::{Cpu, buffer::CpuBufferExt, kernel::matmul::MatmulCpuError},
     },
     data_type::DataType,
-    utils::pointers::SendPtr,
+    utils::{dispatch_dtype::dispatch_dtype, pointers::SendPtr},
 };
 
 pub(super) enum WeightData {
@@ -82,14 +82,7 @@ pub(super) unsafe fn read_f32(
     data_type: DataType,
     index: usize,
 ) -> f32 {
-    unsafe {
-        match data_type {
-            DataType::F32 => *(base as *const f32).add(index),
-            DataType::F16 => (*(base as *const f16).add(index)).to_f32(),
-            DataType::BF16 => (*(base as *const bf16).add(index)).to_f32(),
-            _ => unreachable!(),
-        }
-    }
+    dispatch_dtype!(|(T: data_type)| unsafe { (*base.cast::<T>().add(index)).as_() })
 }
 
 #[inline]
@@ -99,12 +92,5 @@ pub(super) unsafe fn write_f32(
     index: usize,
     value: f32,
 ) {
-    unsafe {
-        match data_type {
-            DataType::F32 => *(base as *mut f32).add(index) = value,
-            DataType::F16 => *(base as *mut f16).add(index) = f16::from_f32(value),
-            DataType::BF16 => *(base as *mut bf16).add(index) = bf16::from_f32(value),
-            _ => unreachable!(),
-        }
-    }
+    dispatch_dtype!(|(T: data_type)| unsafe { *base.cast::<T>().add(index) = value.as_() })
 }

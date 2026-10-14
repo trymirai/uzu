@@ -2,11 +2,11 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(Softmax)]
 #[variants(T, f32, f16, bf16)]
-pub fn softmax<T: ArrayElement + Float>(
+pub fn softmax<T: DataTypeRepr + Float>(
     values: *mut T,
     #[optional(has_sinks)] sinks: Option<*const T>,
     row_length: u32,

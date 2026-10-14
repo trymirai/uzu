@@ -4,7 +4,6 @@ use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
@@ -20,7 +19,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
 };
 
@@ -33,7 +32,7 @@ pub struct PreparedInt8A {
 }
 
 #[derive(Clone)]
-pub struct QuantInput<T: ArrayElement + Float> {
+pub struct QuantInput<T: DataTypeRepr + Float> {
     pub w_packed: Vec<u32>,
     pub scales: Vec<T>,
     pub zero_points: Option<Vec<u8>>,
@@ -58,7 +57,7 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
     }
 }
 
-fn pad<T: ArrayElement>(
+fn pad<T: DataTypeRepr>(
     values: &[T],
     minimum_len: usize,
 ) -> Vec<T> {
@@ -121,7 +120,7 @@ pub fn transpose_metadata(
     }
 }
 
-impl<T: ArrayElement + Float> QuantInput<T> {
+impl<T: DataTypeRepr + Float> QuantInput<T> {
     pub fn new(
         m: u32,
         k: u32,
@@ -284,7 +283,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
     }
 }
 
-pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
+pub struct QuantBuffers<B: Backend, T: DataTypeRepr + Float> {
     pub w: B::GlobalBuffer,
     pub scales: B::GlobalBuffer,
     pub zp: Option<B::GlobalBuffer>,
@@ -297,7 +296,7 @@ pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
     _t: std::marker::PhantomData<T>,
 }
 
-impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
+impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
     pub fn allocate(
         context: &B::Context,
         input: &QuantInput<T>,
@@ -379,7 +378,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
     }
 }
 
-fn quant_b_variant<TB: BufferRef, T: ArrayElement + Float>(
+fn quant_b_variant<TB: BufferRef, T: DataTypeRepr + Float>(
     w: TB,
     scales: TB,
     zero_points: Option<TB>,
@@ -404,7 +403,7 @@ fn quant_b_variant<TB: BufferRef, T: ArrayElement + Float>(
     })
 }
 
-pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
+pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
     buffers: &'a mut QuantBuffers<B, T>,
     input: &QuantInput<T>,
 ) -> MatmulArguments<'a, B, &'a B::GlobalBuffer, &'a B::GlobalBuffer, &'a mut B::GlobalBuffer, &'a B::GlobalBuffer> {
@@ -449,7 +448,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     }
 }
 
-pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
+pub fn run_quant_cpu<T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
     let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(

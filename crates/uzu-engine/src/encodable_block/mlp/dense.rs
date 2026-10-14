@@ -11,7 +11,7 @@ use crate::{
         linear::{Linear, LinearBlockError},
         mlp::{Mlp, MlpEncodeError, gate_act_mul::MlpGateActMulEncodable},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
 };
 
 pub struct DenseMlp<B: Backend> {

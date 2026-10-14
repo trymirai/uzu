@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,6 +12,7 @@ use crate::{
         },
         cpu::Cpu,
     },
+    data_type::DataTypeRepr,
     tests::helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
 };
 
@@ -23,7 +23,7 @@ struct Config {
     suffix_length: u32,
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(
+fn get_output<T: DataTypeRepr + Float, B: Backend>(
     qkvg_data: &[T],
     output_data: &[T],
     config: &Config,
@@ -53,7 +53,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     buffer_to_vec(&output)
 }
 
-fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {
+fn run_test<T: DataTypeRepr + Float + Debug>(config: &Config) {
     let size = (config.suffix_length * config.num_heads * config.head_dim) as usize;
     let gate_dim = (config.num_heads * config.head_dim) as usize;
     let gate_offset = ((config.num_heads + 2 * config.num_kv_heads) * config.head_dim) as usize;

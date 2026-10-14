@@ -2,12 +2,12 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(Conv1dPack)]
 #[variants(StateT, f32, bf16)]
 #[variants(InputT, f32, bf16)]
-pub fn conv1d_pack<StateT: ArrayElement + Float, InputT: ArrayElement + Float>(
+pub fn conv1d_pack<StateT: DataTypeRepr + Float, InputT: DataTypeRepr + Float>(
     state_in: *const StateT,
     x: *const InputT,
     padded: *mut StateT,
@@ -40,7 +40,7 @@ pub fn conv1d_pack<StateT: ArrayElement + Float, InputT: ArrayElement + Float>(
 
 #[kernel(Conv1dDecode)]
 #[variants(T, f32, f16, bf16)]
-pub fn conv1d_decode<T: ArrayElement + Float>(
+pub fn conv1d_decode<T: DataTypeRepr + Float>(
     x: *const T,
     w: *const T,
     #[optional(has_bias)] b: Option<*const T>,
@@ -128,7 +128,7 @@ pub fn conv1d_decode<T: ArrayElement + Float>(
 
 #[kernel(Conv1dScan)]
 #[variants(T, f32, f16, bf16)]
-pub fn conv1d_scan<T: ArrayElement + Float>(
+pub fn conv1d_scan<T: DataTypeRepr + Float>(
     padded: *const T,
     w: *const T,
     #[optional(has_bias)] b: Option<*const T>,

@@ -24,7 +24,7 @@ use crate::{
     data_type::DataType,
     encodable_block::classifier::{Classifier as ClassifierEncodable, ClassifierError as ClassifierEncodableError},
     engine::Engine,
-    parameters::{ParameterLoader, ParameterLoaderError},
+    safetensors::{ParameterLoader, ParameterLoaderError},
 };
 
 pub struct ClassifierModel<B: Backend> {
@@ -79,7 +79,7 @@ impl<B: Backend> Engine<B> {
             (0..config.classifier_config.num_labels).map(|index| format!("class_{index}")).collect()
         };
 
-        weight_loader.tree().assert_all_tensors_validated()?;
+        weight_loader.assert_all_tensors_read()?;
 
         let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
         let token_codec_config = config.token_codec_config;

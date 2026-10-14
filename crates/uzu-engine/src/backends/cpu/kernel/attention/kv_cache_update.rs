@@ -2,11 +2,11 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(KVCacheUpdate)]
 #[variants(T, f32, bf16)]
-pub fn kv_cache_update<T: ArrayElement + Float>(
+pub fn kv_cache_update<T: DataTypeRepr + Float>(
     in_place_keys: *mut T,
     in_place_values: *mut T,
     copies: &[crate::backends::common::gpu_types::kv_cache_update::Copy],

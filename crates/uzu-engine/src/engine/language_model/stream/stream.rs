@@ -10,7 +10,6 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 #[cfg(grammar)]
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferPending, Context,
@@ -26,6 +25,7 @@ use crate::{
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
     trie::TrieNode,
+    utils::size_for_shape::size_for_shape,
 };
 
 enum ForwardPassChaining<B: Backend> {

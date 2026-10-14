@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,14 +12,14 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     input: Box<[T]>,
     z_bias: Box<[T]>,
     suffix_length: u32,
@@ -30,13 +29,13 @@ struct Input<T: ArrayElement + Float> {
     num_heads: u32,
 }
 
-struct Output<T: ArrayElement + Float> {
+struct Output<T: DataTypeRepr + Float> {
     conv_out: Vec<T>,
     z_out: Vec<T>,
     dt_out: Vec<T>,
 }
 
-fn get_input<T: ArrayElement + Float>(
+fn get_input<T: DataTypeRepr + Float>(
     suffix_length: u32,
     conv_dim: u32,
     inner_dim: u32,
@@ -59,7 +58,7 @@ fn get_input<T: ArrayElement + Float>(
     }
 }
 
-fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T> {
+fn get_output<B: Backend, T: DataTypeRepr + Float>(input: &Input<T>) -> Output<T> {
     let context = B::Context::new().expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::SplitInProjKernel::new(&context, T::data_type())
         .expect("Failed to create SplitInProjKernel");
@@ -98,7 +97,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     }
 }
 
-fn get_test_data<T: ArrayElement + Float>(
+fn get_test_data<T: DataTypeRepr + Float>(
     suffix_length: u32,
     conv_dim: u32,
     inner_dim: u32,
@@ -109,7 +108,7 @@ fn get_test_data<T: ArrayElement + Float>(
     (input, expected)
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
     input: &Input<T>,
     expected: &Output<T>,
     label: &str,
@@ -147,31 +146,31 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 // conv_dim=8, inner_dim=4, num_heads=2, suffix_length=2
-fn test_basic<T: ArrayElement + Float + Debug + Display>() {
+fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(2, 8, 4, 2);
     test_internal(&input, &expected, "basic");
 }
 
 // Single token
-fn test_single_token<T: ArrayElement + Float + Debug + Display>() {
+fn test_single_token<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(1, 8, 4, 2);
     test_internal(&input, &expected, "single_token");
 }
 
 // Many tokens
-fn test_many_tokens<T: ArrayElement + Float + Debug + Display>() {
+fn test_many_tokens<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(16, 8, 4, 2);
     test_internal(&input, &expected, "many_tokens");
 }
 
 // Larger dimensions closer to real usage
-fn test_large<T: ArrayElement + Float + Debug + Display>() {
+fn test_large<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(8, 128, 64, 32);
     test_internal(&input, &expected, "large");
 }
 
 // Minimal dimensions
-fn test_minimal<T: ArrayElement + Float + Debug + Display>() {
+fn test_minimal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(1, 1, 1, 1);
     test_internal(&input, &expected, "minimal");
 }

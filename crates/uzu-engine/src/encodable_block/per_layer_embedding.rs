@@ -16,7 +16,7 @@ use crate::{
         linear::{Linear, LinearBlockError, LinearEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
 };
 
 #[derive(Debug, Error)]

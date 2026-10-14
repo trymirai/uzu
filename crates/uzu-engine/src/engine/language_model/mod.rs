@@ -13,7 +13,7 @@ use crate::{
         sampling::{Sampling, SamplingMethod},
     },
     engine::Engine,
-    parameters::{ParameterLoader, ParameterLoaderError},
+    safetensors::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
 };
 pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde::Unsupported};
@@ -97,7 +97,7 @@ impl<B: Backend> Engine<B> {
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
-        weight_loader.tree().assert_all_tensors_validated()?;
+        weight_loader.assert_all_tensors_read()?;
 
         let generation_config = config.generation_config;
         let end_of_thinking_tag = match &config.token_codec_config {

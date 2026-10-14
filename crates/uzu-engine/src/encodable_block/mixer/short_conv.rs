@@ -2,7 +2,6 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferPending, Context, Kernels,
@@ -15,8 +14,8 @@ use crate::{
         linear::{Linear, LinearBlockError},
         mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PrecalculatedRoPE},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
-    utils::maybe_mut::MaybeMut,
+    safetensors::{ParameterLoaderError, ParameterTree},
+    utils::{maybe_mut::MaybeMut, size_for_shape::size_for_shape},
 };
 
 enum ShortConvStateSuffixStatus<B: Backend> {
@@ -137,12 +136,11 @@ impl<B: Backend> ShortConv<B> {
         let conv_tree = parameter_tree.subtree("conv");
 
         let conv_data_type = DataType::F32;
-        let conv_weight =
-            conv_tree.leaf("weights")?.validate(&[hidden_dim, kernel_size], conv_data_type)?.read_buffer()?;
+        let conv_weight = conv_tree.read_buffer("weights", &[hidden_dim, kernel_size], conv_data_type)?;
 
         let has_bias = config.conv_config.has_biases;
         let conv_bias = if has_bias {
-            Some(conv_tree.leaf("biases")?.validate(&[hidden_dim], conv_data_type)?.read_buffer()?)
+            Some(conv_tree.read_buffer("biases", &[hidden_dim], conv_data_type)?)
         } else {
             None
         };

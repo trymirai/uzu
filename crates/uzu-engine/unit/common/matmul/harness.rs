@@ -2,7 +2,6 @@ use num_traits::Float;
 
 use super::Shape;
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
@@ -13,6 +12,7 @@ use crate::{
         },
         cpu::Cpu,
     },
+    data_type::DataTypeRepr,
     tests::helpers::{buffer_to_vec, create_buffer_with_data},
 };
 
@@ -61,7 +61,7 @@ impl Case {
     }
 }
 
-pub struct Input<T: ArrayElement + Float> {
+pub struct Input<T: DataTypeRepr + Float> {
     pub a: Box<[T]>,
     pub b: Box<[T]>,
     pub rht_factors: Option<Box<[i32]>>,
@@ -69,7 +69,7 @@ pub struct Input<T: ArrayElement + Float> {
     pub case: Case,
 }
 
-pub fn deterministic_input<T: ArrayElement + Float>(case: Case) -> Input<T> {
+pub fn deterministic_input<T: DataTypeRepr + Float>(case: Case) -> Input<T> {
     let Shape {
         m,
         k,
@@ -101,7 +101,7 @@ pub fn deterministic_input<T: ArrayElement + Float>(case: Case) -> Input<T> {
     }
 }
 
-pub fn run<B: Backend, T: ArrayElement + Float>(
+pub fn run<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
     kernel: &mut <B::Kernels as Kernels>::MatmulKernel,
     input: &Input<T>,
@@ -155,7 +155,7 @@ pub fn run<B: Backend, T: ArrayElement + Float>(
     buffer_to_vec::<B, T>(&d_buffer)
 }
 
-pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
+pub fn cpu_reference<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("CPU context");
     let mut kernel = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,

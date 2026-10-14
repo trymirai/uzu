@@ -12,7 +12,7 @@ use crate::{
         linear::LinearEncodeError,
         mlp::dense::{DenseMlp, DenseMlpNewError},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
 };
 
 #[derive(Debug, Error)]

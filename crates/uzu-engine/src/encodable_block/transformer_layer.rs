@@ -1,4 +1,5 @@
 use derive_more::Debug;
+use num_traits::AsPrimitive;
 use thiserror::Error;
 
 use crate::{
@@ -16,8 +17,8 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::{PerLayerEmbeddingError, PerLayerEmbeddingProjection},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
-    utils::maybe_mut::MaybeMut,
+    safetensors::{ParameterLoaderError, ParameterTree},
+    utils::{dispatch_dtype::dispatch_dtype, maybe_mut::MaybeMut},
 };
 
 #[derive(Debug, Error)]
@@ -186,13 +187,8 @@ impl<B: Backend> TransformerLayer<B> {
                     layer_index,
                 });
             }
-            let leaf = parameter_tree.leaf("post_layer_scalar")?;
-            let scalar = match data_type {
-                DataType::F32 => leaf.validate(&[1], data_type)?.read_slice::<f32>()?[0],
-                DataType::F16 => leaf.validate(&[1], data_type)?.read_slice::<half::f16>()?[0].to_f32(),
-                DataType::BF16 => leaf.validate(&[1], data_type)?.read_slice::<half::bf16>()?[0].to_f32(),
-                _ => unreachable!(),
-            };
+            let scalar =
+                dispatch_dtype!(|(T: data_type)| parameter_tree.read_slice::<T>("post_layer_scalar", &[1])?[0].as_());
             Some(scalar)
         } else {
             None

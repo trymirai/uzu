@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,14 +12,14 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-fn get_output<T: ArrayElement + Float, B: Backend>(
+fn get_output<T: DataTypeRepr + Float, B: Backend>(
     logits: &[T],
     scale: f32,
     soft_cap: Option<f32>,
@@ -38,7 +37,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     buffer_to_vec::<B, T>(&logits_buffer)
 }
 
-fn test_logit_transform<T: ArrayElement + Float + Display>(
+fn test_logit_transform<T: DataTypeRepr + Float + Display>(
     scale: f32,
     soft_cap: Option<f32>,
 ) {

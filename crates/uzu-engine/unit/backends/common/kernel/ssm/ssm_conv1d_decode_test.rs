@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,14 +12,14 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     x: Box<[T]>,
     w: Box<[T]>,
     b: Option<Box<[T]>>,
@@ -36,14 +35,14 @@ struct Input<T: ArrayElement + Float> {
     state_in_place: bool,
 }
 
-struct Output<T: ArrayElement + Float> {
+struct Output<T: DataTypeRepr + Float> {
     x_out: Vec<T>,
     b_out: Vec<T>,
     c_out: Vec<T>,
     next_state: Vec<T>,
 }
 
-fn get_input<T: ArrayElement + Float>(
+fn get_input<T: DataTypeRepr + Float>(
     kernel_size: u32,
     num_channels: u32,
     inner_dim: u32,
@@ -90,7 +89,7 @@ fn get_input<T: ArrayElement + Float>(
     }
 }
 
-fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T> {
+fn get_output<B: Backend, T: DataTypeRepr + Float>(input: &Input<T>) -> Output<T> {
     let context = B::Context::new().expect("Failed to create Context");
     let has_bias = input.b.is_some();
     let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dDecodeKernel::new(
@@ -180,7 +179,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     }
 }
 
-fn get_test_data<T: ArrayElement + Float>(
+fn get_test_data<T: DataTypeRepr + Float>(
     kernel_size: u32,
     num_channels: u32,
     inner_dim: u32,
@@ -204,7 +203,7 @@ fn get_test_data<T: ArrayElement + Float>(
     (input, expected)
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
     input: &Input<T>,
     expected: &Output<T>,
     label: &str,
@@ -248,7 +247,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 // inner_dim=4, proj_dim=2 -> num_channels = 4 + 2*2 = 8, kernel_size=4
-fn test_basic<T: ArrayElement + Float + Debug + Display>() {
+fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
     for state_in_place in [true, false] {
         for has_bias in [true, false] {
             let label = format!("basic(bias={has_bias},in_place={state_in_place})");
@@ -259,23 +258,23 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // kernel_size=2 (state_stride=1, minimal state)
-fn test_small_kernel<T: ArrayElement + Float + Debug + Display>() {
+fn test_small_kernel<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(2, 6, 4, 1, 1, true, true, ActivationType::SILU);
     test_internal(&input, &expected, "small_kernel");
 }
 
 // Larger dimensions closer to real usage
-fn test_large<T: ArrayElement + Float + Debug + Display>() {
+fn test_large<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(4, 128, 64, 32, 1, true, true, ActivationType::SILU);
     test_internal(&input, &expected, "large");
 }
 
-fn test_identity_activation<T: ArrayElement + Float + Debug + Display>() {
+fn test_identity_activation<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(4, 8, 4, 2, 1, false, true, ActivationType::IDENTITY);
     test_internal(&input, &expected, "identity_activation");
 }
 
-fn test_gelu_activation<T: ArrayElement + Float + Debug + Display>() {
+fn test_gelu_activation<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(4, 8, 4, 2, 1, true, true, ActivationType::GELUApprox);
     test_internal(&input, &expected, "gelu_activation");
 }

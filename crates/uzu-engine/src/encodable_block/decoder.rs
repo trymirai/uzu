@@ -14,7 +14,7 @@ use crate::{
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
         transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
 };
 
 #[derive(Debug, Error)]

@@ -2,7 +2,6 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         gpu_types::activation_type::ActivationType,
@@ -18,8 +17,8 @@ use crate::{
         linear::{Linear, LinearBlockError},
         mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PrecalculatedRoPE},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
-    utils::maybe_mut::MaybeMut,
+    safetensors::{ParameterLoaderError, ParameterTree},
+    utils::{maybe_mut::MaybeMut, size_for_shape::size_for_shape},
 };
 
 const INNER_DATA_TYPE: DataType = DataType::F32;
@@ -124,17 +123,16 @@ impl<B: Backend> Mamba2<B> {
                 context,
             )?;
 
-        let gate_bias = parameter_tree.leaf("gate_bias")?.validate(&[inner_dim], INNER_DATA_TYPE)?.read_buffer()?;
+        let gate_bias = parameter_tree.read_buffer("gate_bias", &[inner_dim], INNER_DATA_TYPE)?;
         let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, INNER_DATA_TYPE)
             .map_err(Mamba2NewError::Backend)?;
 
         let conv_config = &config.conv_config;
         let conv_tree = parameter_tree.subtree("conv");
 
-        let conv_weight =
-            conv_tree.leaf("weights")?.validate(&[conv_dim, kernel_size], INNER_DATA_TYPE)?.read_buffer()?;
+        let conv_weight = conv_tree.read_buffer("weights", &[conv_dim, kernel_size], INNER_DATA_TYPE)?;
         let conv_bias = if conv_config.has_biases {
-            Some(conv_tree.leaf("biases")?.validate(&[conv_dim], INNER_DATA_TYPE)?.read_buffer()?)
+            Some(conv_tree.read_buffer("biases", &[conv_dim], INNER_DATA_TYPE)?)
         } else {
             None
         };
@@ -148,7 +146,7 @@ impl<B: Backend> Mamba2<B> {
                 .map_err(Mamba2NewError::Backend)?;
 
         let skip_connection_weight =
-            parameter_tree.leaf("skip_connection_weight")?.validate(&[num_heads], INNER_DATA_TYPE)?.read_buffer()?;
+            parameter_tree.read_buffer("skip_connection_weight", &[num_heads], INNER_DATA_TYPE)?;
         let ssd_update = <B::Kernels as Kernels>::SSDUpdateKernel::new(context, INNER_DATA_TYPE, true)
             .map_err(Mamba2NewError::Backend)?;
 

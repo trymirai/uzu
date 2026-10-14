@@ -3,7 +3,6 @@ use half::bf16;
 use uzu_engine_macros::uzu_bench;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend,
@@ -14,6 +13,7 @@ use crate::{
         },
         metal::{Metal, kernel::matmul::gemm::GemmEngine},
     },
+    data_type::DataTypeRepr,
     tests::{
         helpers::create_buffer,
         matmul::{bench_fp_gemm_shapes, iter_encode_loop},

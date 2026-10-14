@@ -2,11 +2,11 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::activation_type::ActivationType};
+use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
 
 #[kernel(SSDUpdate)]
 #[variants(T, f32, f16, bf16)]
-pub fn ssd_update<T: ArrayElement + Float>(
+pub fn ssd_update<T: DataTypeRepr + Float>(
     x: *const T,
     dt_raw: *const T,
     b: *const T,

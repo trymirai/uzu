@@ -6,7 +6,6 @@ use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, Context, Kernels,
@@ -20,6 +19,7 @@ use crate::{
         },
         cpu::Cpu,
     },
+    data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
         helpers::{
@@ -41,14 +41,14 @@ fn pattern(
     (0..len).map(|index| (index * seed + 9) as u8).collect()
 }
 
-fn floats<T: ArrayElement + Float>(
+fn floats<T: DataTypeRepr + Float>(
     len: u32,
     value: impl Fn(u32) -> f32,
 ) -> Vec<T> {
     (0..len).map(|index| T::from(value(index)).unwrap()).collect()
 }
 
-fn lookup<B: Backend, T: ArrayElement + Float>(
+fn lookup<B: Backend, T: DataTypeRepr + Float>(
     table_kind: EmbeddingTableKind,
     quantization: Option<Quantization>,
     use_hadamard: bool,
@@ -139,7 +139,7 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
     buffer_to_vec::<B, T>(&output)
 }
 
-fn check<T: ArrayElement + Float + Display>(
+fn check<T: DataTypeRepr + Float + Display>(
     table_kind: EmbeddingTableKind,
     quantization: Option<Quantization>,
     use_hadamard: bool,

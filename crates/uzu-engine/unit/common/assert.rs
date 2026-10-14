@@ -2,9 +2,9 @@ use std::fmt::Display;
 
 use num_traits::Float;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
-pub fn assert_eq_float<T: ArrayElement + Float + Display>(
+pub fn assert_eq_float<T: DataTypeRepr + Float + Display>(
     expected: &[T],
     actual: &[T],
     eps: f32,
