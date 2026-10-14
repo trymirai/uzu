@@ -137,7 +137,7 @@ impl<B: Backend> LanguageModel<B> {
             // Currenlty true for all mixers in uzu:
             // - full attention uses sparse if it's available to make max context free until it's actually used
             // - sliding window attention is bound, usually well below the recommended max context size on non-sparse (but can be made to use sparse if we care about it enough)
-            // - short conv/mamba2/delta net are constant state size
+            // - short conv/delta net are constant state size
             max_context_length
         } else if let Some(max_context_length) = max_context_length {
             // If sparse buffers aren't supported and model has finite maximum context length we assume that kv cache is expensive enough that we should probably clamp it to
