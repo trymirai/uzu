@@ -1,16 +1,22 @@
-use super::reference::{WeightData, read_f32, write_f32};
 use crate::{
     backends::{
         common::{
             Backend, BufferCpuAccessible, BufferMut, BufferRef, Kernels,
-            gpu_types::QuantizationMode,
+            gpu_types::quantization::QuantizationMode,
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{Int8CodeLayout, MatmulA, MatmulArguments, MatmulError, MatmulKernel},
+                matmul::{Int8CodeLayout, MatmulA, MatmulArguments, MatmulKernel},
             },
         },
         cpu::{
-            Cpu, buffer::CpuBufferExt, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError,
+            Cpu,
+            buffer::CpuBufferExt,
+            command_buffer::CpuCommandBufferEncoding,
+            context::CpuContext,
+            kernel::matmul::{
+                MatmulCpuError,
+                reference::{WeightData, read_f32, write_f32},
+            },
         },
     },
     data_type::DataType,
@@ -27,16 +33,17 @@ pub struct MatmulCpuKernel {
 
 impl MatmulKernel for MatmulCpuKernel {
     type Backend = Cpu;
+    type Error = MatmulCpuError;
 
     fn new(
         context: &CpuContext,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
-    ) -> Result<Self, CpuError> {
+    ) -> Result<Self, Self::Error> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
             if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-                return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
+                return Err(MatmulCpuError::UnsupportedDataType(data_type));
             }
         }
         let output_rht = ActivationTransform::output_rht(context, output_data_type, None, true)?;
@@ -66,7 +73,7 @@ impl MatmulKernel for MatmulCpuKernel {
             impl BufferRef<Backend = Cpu>,
         >,
         command_buffer: &mut CpuCommandBufferEncoding,
-    ) -> Result<(), CpuError> {
+    ) -> Result<(), Self::Error> {
         let MatmulArguments {
             a,
             b,
@@ -126,11 +133,10 @@ impl MatmulKernel for MatmulCpuKernel {
                     && b.quantized()
                         .is_some_and(|quantized| matches!(quantized.mode, QuantizationMode::U4 | QuantizationMode::U8));
                 if !compatible {
-                    return Err(MatmulError::IncompatibleA {
+                    return Err(MatmulCpuError::IncompatibleA {
                         path: "CpuMatmul",
                         reason: "symmetric int8 activations require a supported 32/64/128 activation and weight group",
-                    }
-                    .into());
+                    });
                 }
                 let (values, values_range) = values.parts();
                 let (scales, scales_range) = scales.parts();
@@ -148,10 +154,9 @@ impl MatmulKernel for MatmulCpuKernel {
             MatmulA::Trellis {
                 ..
             } => {
-                return Err(MatmulError::UnsupportedLayout {
+                return Err(MatmulCpuError::UnsupportedLayout {
                     path: "CpuMatmul",
-                }
-                .into());
+                });
             },
         };
         let bias_ptr = bias_buffer.map(|bias| SendPtr(bias.cpu_ptr().as_ptr().cast::<u8>().cast_const()));

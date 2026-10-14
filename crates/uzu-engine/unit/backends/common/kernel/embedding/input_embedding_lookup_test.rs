@@ -11,10 +11,10 @@ use crate::{
         common::{
             Backend, Context, Kernels,
             gpu_types::{
-                EmbeddingTableKind::{self, D4S4, Dense, Quantized},
-                QuantizationMethod::{self, ScaleBias, ScaleSymmetric, ScaleZeroPoint},
-                QuantizationMode::{self, I8, U4, U8},
                 d4s4,
+                embedding::EmbeddingTableKind::{self, D4S4, Dense, Quantized},
+                quantization::QuantizationMode::{self, I8, U4, U8},
+                quantization_method::QuantizationMethod::{self, ScaleBias, ScaleSymmetric, ScaleZeroPoint},
             },
             kernel::InputEmbeddingLookupKernel,
         },

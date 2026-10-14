@@ -6,7 +6,7 @@ use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8
 use crate::{
     array::ArrayElement,
     backends::common::{
-        gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+        gpu_types::{activation_transform::ActivationTransformOp, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::matmul::Int8CodeLayout,
     },
 };

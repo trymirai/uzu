@@ -8,9 +8,20 @@ use crate::{
     backends::common::{Backend, CommandBuffer},
     config::mlp::AnyMLPConfig,
     data_type::DataType,
-    encodable_block::mlp::dense::{DenseMlp, DenseMlpNewError},
+    encodable_block::{
+        linear::LinearEncodeError,
+        mlp::dense::{DenseMlp, DenseMlpNewError},
+    },
     parameters::ParameterTree,
 };
+
+#[derive(Debug, Error)]
+pub enum MlpEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Linear error: {0}")]
+    Linear(#[from] LinearEncodeError<B>),
+}
 
 pub trait Mlp<B: Backend>: Send + Sync {
     fn encode(
@@ -18,7 +29,7 @@ pub trait Mlp<B: Backend>: Send + Sync {
         input: B::ScratchBuffer,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error>;
+    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>>;
 }
 
 #[derive(Debug, Error)]

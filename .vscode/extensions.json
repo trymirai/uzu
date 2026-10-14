@@ -1,9 +1,0 @@
-{
-    "recommendations": [
-        "vadimcn.vscode-lldb",
-        "tamasfe.even-better-toml",
-        "rust-lang.rust-analyzer",
-        "eugenebokhan.metal-analyzer",
-        "augustocdias.tasks-shell-input"
-    ]
-}

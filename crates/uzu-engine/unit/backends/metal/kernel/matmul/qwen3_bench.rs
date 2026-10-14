@@ -8,7 +8,7 @@ use crate::{
     backends::{
         common::{
             Backend,
-            gpu_types::QuantizationMethod,
+            gpu_types::quantization_method::QuantizationMethod,
             kernel::{Kernels, matmul::MatmulKernel},
         },
         metal::{Metal, context::MetalContext},

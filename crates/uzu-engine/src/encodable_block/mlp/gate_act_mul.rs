@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
-        gpu_types::ActivationType,
+        gpu_types::activation_type::ActivationType,
         kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::ActivationFormat},
     },
     config::{activation::AnyActivation, clipping::ClippingBounds},

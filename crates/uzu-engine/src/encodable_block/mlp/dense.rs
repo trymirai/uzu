@@ -9,7 +9,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearBlockError},
-        mlp::{Mlp, gate_act_mul::MlpGateActMulEncodable},
+        mlp::{Mlp, MlpEncodeError, gate_act_mul::MlpGateActMulEncodable},
     },
     parameters::ParameterTree,
 };
@@ -83,12 +83,15 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         input: B::ScratchBuffer,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
 
         let fused_up = self.up.encode(input, batch_dim, command_buffer)?;
         let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
-        let down_input = self.gate.encode_for_linear(&fused_up, batch_dim, act_format, command_buffer)?;
+        let down_input = self
+            .gate
+            .encode_for_linear(&fused_up, batch_dim, act_format, command_buffer)
+            .map_err(MlpEncodeError::Backend)?;
         let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
 
         Ok(output)

@@ -20,7 +20,7 @@ use crate::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
         mixer::{
-            Mixer, MixerState,
+            Mixer, MixerEncodeError, MixerState,
             attention::rope::PrecalculatedRoPE,
             delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
         },
@@ -333,22 +333,35 @@ impl<B: Backend> DeltaNet<B> {
         batch_dim: &BatchTopology,
         state: &mut DeltaNetState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
-        let parents = command_buffer.allocate_constant_from_slice(batch_dim.parents())?;
-        let trie = command_buffer.allocate_constant_from_slice(batch_dim.nodes())?;
+        let parents =
+            command_buffer.allocate_constant_from_slice(batch_dim.parents()).map_err(MixerEncodeError::Backend)?;
+        let trie = command_buffer.allocate_constant_from_slice(batch_dim.nodes()).map_err(MixerEncodeError::Backend)?;
 
         let mut conv_states = command_buffer
-            .allocate_scratch_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)?;
-        let mut k = command_buffer.allocate_scratch_for_shape(&[tree_size, self.key_dim], self.outer_data_type)?;
-        let mut v = command_buffer.allocate_scratch_for_shape(&[tree_size, self.value_dim], self.outer_data_type)?;
-        let mut beta = command_buffer.allocate_scratch_for_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)?;
-        let mut log_decay = command_buffer.allocate_scratch_for_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)?;
+            .allocate_scratch_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)
+            .map_err(MixerEncodeError::Backend)?;
+        let mut k = command_buffer
+            .allocate_scratch_for_shape(&[tree_size, self.key_dim], self.outer_data_type)
+            .map_err(MixerEncodeError::Backend)?;
+        let mut v = command_buffer
+            .allocate_scratch_for_shape(&[tree_size, self.value_dim], self.outer_data_type)
+            .map_err(MixerEncodeError::Backend)?;
+        let mut beta = command_buffer
+            .allocate_scratch_for_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)
+            .map_err(MixerEncodeError::Backend)?;
+        let mut log_decay = command_buffer
+            .allocate_scratch_for_shape(&[tree_size, self.num_heads], INNER_DATA_TYPE)
+            .map_err(MixerEncodeError::Backend)?;
 
-        let mut tree_projected =
-            command_buffer.allocate_scratch_for_shape(&[tree_size, self.total_proj_dim], self.outer_data_type)?;
-        let mut q = command_buffer.allocate_scratch_for_shape(&[tree_size, self.key_dim], self.outer_data_type)?;
+        let mut tree_projected = command_buffer
+            .allocate_scratch_for_shape(&[tree_size, self.total_proj_dim], self.outer_data_type)
+            .map_err(MixerEncodeError::Backend)?;
+        let mut q = command_buffer
+            .allocate_scratch_for_shape(&[tree_size, self.key_dim], self.outer_data_type)
+            .map_err(MixerEncodeError::Backend)?;
 
         self.conv_tree_scan.encode(
             in_projected,
@@ -381,19 +394,21 @@ impl<B: Backend> DeltaNet<B> {
             command_buffer,
         );
 
-        let mut delta_output = tree_verify.encode(
-            TreeVerifyEncodeArguments {
-                q: &q,
-                k: &k,
-                v: &v,
-                trie: &trie,
-                log_decay: &log_decay,
-                beta: &beta,
-                h0: &state.ssm_state,
-                tree_size,
-            },
-            command_buffer,
-        )?;
+        let mut delta_output = tree_verify
+            .encode(
+                TreeVerifyEncodeArguments {
+                    q: &q,
+                    k: &k,
+                    v: &v,
+                    trie: &trie,
+                    log_decay: &log_decay,
+                    beta: &beta,
+                    h0: &state.ssm_state,
+                    tree_size,
+                },
+                command_buffer,
+            )
+            .map_err(MixerEncodeError::Backend)?;
         self.delta_net_norm_gate.encode(
             &mut delta_output,
             &tree_projected,
@@ -469,7 +484,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("delta net");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for delta net mixer");
@@ -490,8 +505,9 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             return Ok(output);
         }
 
-        let mut delta_output =
-            command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.value_dim], self.outer_data_type)?;
+        let mut delta_output = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim.size(), self.value_dim], self.outer_data_type)
+            .map_err(MixerEncodeError::Backend)?;
         if batch_dim.size() == 1 {
             self.conv_update.encode(
                 &self.conv_weight,
@@ -520,10 +536,12 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 command_buffer,
             );
         } else {
-            let mut padded = command_buffer.allocate_scratch_for_shape(
-                &[batch_dim.size() + self.kernel_size - 1, self.total_proj_dim],
-                INNER_DATA_TYPE,
-            )?;
+            let mut padded = command_buffer
+                .allocate_scratch_for_shape(
+                    &[batch_dim.size() + self.kernel_size - 1, self.total_proj_dim],
+                    INNER_DATA_TYPE,
+                )
+                .map_err(MixerEncodeError::Backend)?;
             self.conv_pack.encode(
                 &state.conv_state,
                 &in_projected,
@@ -549,31 +567,37 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
                 command_buffer,
             );
             if let Some(chunked) = self.chunked.as_ref().filter(|chunked| chunked.should_use(batch_dim.size())) {
-                chunked.encode(
-                    DeltaNetChunkedPrefillArgs {
-                        in_projected: &in_projected,
-                        a_log: &self.a_log,
-                        dt_bias: &self.dt_bias,
-                        ssm_state: &mut state.ssm_state,
-                        delta_output: &mut delta_output,
-                        num_heads: self.num_heads,
-                        num_groups: self.num_groups,
-                        value_head_dim: self.value_head_dim,
-                        key_dim: self.key_dim,
-                        value_dim: self.value_dim,
-                        suffix_len: batch_dim.size(),
-                    },
-                    command_buffer,
-                )?;
+                chunked
+                    .encode(
+                        DeltaNetChunkedPrefillArgs {
+                            in_projected: &in_projected,
+                            a_log: &self.a_log,
+                            dt_bias: &self.dt_bias,
+                            ssm_state: &mut state.ssm_state,
+                            delta_output: &mut delta_output,
+                            num_heads: self.num_heads,
+                            num_groups: self.num_groups,
+                            value_head_dim: self.value_head_dim,
+                            key_dim: self.key_dim,
+                            value_dim: self.value_dim,
+                            suffix_len: batch_dim.size(),
+                        },
+                        command_buffer,
+                    )
+                    .map_err(MixerEncodeError::Backend)?;
             } else {
-                let mut prep_q_norm =
-                    command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)?;
-                let mut prep_k_norm =
-                    command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)?;
-                let mut prep_beta =
-                    command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
-                let mut prep_decay =
-                    command_buffer.allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)?;
+                let mut prep_q_norm = command_buffer
+                    .allocate_scratch_for_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)
+                    .map_err(MixerEncodeError::Backend)?;
+                let mut prep_k_norm = command_buffer
+                    .allocate_scratch_for_shape(&[batch_dim.size(), self.key_dim], INNER_DATA_TYPE)
+                    .map_err(MixerEncodeError::Backend)?;
+                let mut prep_beta = command_buffer
+                    .allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)
+                    .map_err(MixerEncodeError::Backend)?;
+                let mut prep_decay = command_buffer
+                    .allocate_scratch_for_shape(&[batch_dim.size(), self.num_heads], INNER_DATA_TYPE)
+                    .map_err(MixerEncodeError::Backend)?;
                 self.delta_net_prefill_prep.encode(
                     &in_projected,
                     &self.a_log,

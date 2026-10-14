@@ -167,8 +167,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         target_features: impl ExactSizeIterator<Item = impl BufferRef<Backend = B>>,
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), B::Error> {
-        self.dflash.encode_accept(target_features, accepted_indices, state, command_buffer)
+    ) -> Result<(), DFlashTreeError<B>> {
+        self.dflash
+            .encode_accept(target_features, accepted_indices, state, command_buffer)
+            .map_err(DFlashTreeError::DFlash)
     }
 
     pub fn make_shape(

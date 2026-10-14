@@ -13,9 +13,9 @@ use crate::{
             Metal,
             command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
-            error::MetalError,
             kernel::{
                 AttentionFallbackScatterScoresMetalKernel, AttentionFallbackScatterValuesMetalKernel, MetalKernels,
+                attention::AttentionMetalError,
             },
         },
     },
@@ -45,7 +45,7 @@ impl AttentionFallback {
     pub fn new(
         config: &AttentionKernelConfig,
         context: &MetalContext,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<Self, AttentionMetalError> {
         let scatter_scores = AttentionFallbackScatterScoresMetalKernel::new(
             context,
             config.data_type,
@@ -92,7 +92,7 @@ impl AttentionFallback {
             impl BufferRef<Backend = Metal>,
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
+    ) -> Result<<Metal as Backend>::ScratchBuffer, AttentionMetalError> {
         assert!(arguments.trie.is_none(), "fallback does not support trie");
         let suffix_length = arguments.suffix_length;
         let sequence_length = arguments.cache.prefix_len() + suffix_length;

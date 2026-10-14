@@ -10,7 +10,7 @@ use crate::{
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::QuantizationMethod,
+            gpu_types::quantization_method::QuantizationMethod,
             kernel::{
                 Kernels,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},

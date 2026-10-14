@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{array::ArrayElement, backends::common::gpu_types::activation_type::ActivationType};
 
 // Single-token causal conv1d with SiLU, in-place.
 #[kernel(DeltaNetConvUpdate)]

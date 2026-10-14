@@ -1,13 +1,13 @@
 use crate::backends::{
-    common::{
-        Kernels,
+    common::{Kernels, gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
+    metal::{
+        Metal,
+        buffer::MetalBufferExt,
         gpu_types::{
-            HADAMARD_TRANSFORM_BLOCK_SIZE,
             gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_k, gemm_tiling_simdgroups_per_row},
             weaver::{FRONTIER_SELECT_THREADS, TOP_CHILDREN_THREADS},
         },
     },
-    metal::{Metal, buffer::MetalBufferExt},
 };
 
 const METAL_SIMD_SIZE: u32 = 32;

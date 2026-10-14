@@ -14,7 +14,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         embedding_table::{EmbeddingTable, EmbeddingTableError, read_output_signs},
-        linear::{Gather, LinearMatmulError, UntiedReadout},
+        linear::{Gather, LinearEncodeError, LinearMatmulError, UntiedReadout},
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -23,6 +23,8 @@ use crate::{
 pub enum EmbeddingError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
+    #[error("Matmul error: {0}")]
+    Matmul(#[source] <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported configuration: {0}")]
@@ -31,6 +33,8 @@ pub enum EmbeddingError<B: Backend> {
     EmbeddingTable(#[from] EmbeddingTableError<B>),
     #[error(transparent)]
     LinearMatmul(#[from] LinearMatmulError<B>),
+    #[error("Linear encoding error: {0}")]
+    LinearEncode(#[from] LinearEncodeError<B>),
 }
 
 enum EmbeddingTying<B: Backend> {
@@ -197,7 +201,7 @@ impl<B: Backend> Embedding<B> {
                     indices,
                     output_dim,
                 });
-                output.encode(input_buffer, batch_dim, gather, command_buffer).map_err(EmbeddingError::BackendError)?
+                output.encode(input_buffer, batch_dim, gather, command_buffer)?
             },
             EmbeddingTying::Tied {
                 table,
@@ -220,7 +224,7 @@ impl<B: Backend> Embedding<B> {
                     n: output_dim,
                     k: self.model_dim,
                 };
-                readout.lock().encode(arguments, command_buffer).map_err(EmbeddingError::BackendError)?;
+                readout.lock().encode(arguments, command_buffer).map_err(EmbeddingError::Matmul)?;
                 output
             },
         };
@@ -244,6 +248,6 @@ fn readout_kernel<B: Backend>(
     data_type: DataType,
 ) -> Result<Mutex<<B::Kernels as Kernels>::MatmulKernel>, EmbeddingError<B>> {
     let kernel = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
-        .map_err(EmbeddingError::BackendError)?;
+        .map_err(EmbeddingError::Matmul)?;
     Ok(Mutex::new(kernel))
 }

@@ -4,30 +4,39 @@ use anyhow::{Context, bail};
 use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::Type;
 
 use crate::common::{
     codegen::write_tokens,
+    gpu_type_paths::GpuTypePaths,
     identifiers::KernelPath,
     kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
 };
 
-pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
+pub fn traitgen(
+    kernel: &Kernel,
+    gpu_type_paths: &GpuTypePaths,
+) -> anyhow::Result<(TokenStream, TokenStream)> {
     let kernel_name = kernel.name.as_ref();
     let trait_name = format_ident!("{kernel_name}Kernel");
 
-    let params = kernel.parameters.iter().map(|p| {
-        let name = format_ident!("{}", p.name.as_ref());
-        let ty = match &p.ty {
-            KernelParameterType::Type => quote! { crate::data_type::DataType },
-            KernelParameterType::Value(ty) => {
-                let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
-                quote! { #ty }
-            },
-        };
+    let params = kernel
+        .parameters
+        .iter()
+        .map(|p| {
+            let name = format_ident!("{}", p.name.as_ref());
+            let ty = match &p.ty {
+                KernelParameterType::Type => quote! { crate::data_type::DataType },
+                KernelParameterType::Value(ty) => {
+                    let ty = gpu_type_paths
+                        .resolve_type(ty)
+                        .with_context(|| format!("invalid type for parameter `{}`", p.name))?;
+                    quote! { #ty }
+                },
+            };
 
-        quote! { #name: #ty }
-    });
+            Ok(quote! { #name: #ty })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let mut args = kernel
         .arguments
@@ -45,7 +54,9 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                     },
                 },
                 KernelArgumentType::Constant(ty) => {
-                    let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
+                    let ty = gpu_type_paths
+                        .resolve_type(ty)
+                        .with_context(|| format!("invalid type for argument `{}`", a.name))?;
                     quote! { #ty }
                 },
             };
@@ -54,9 +65,9 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                 ty = quote! { Option<#ty> };
             }
 
-            quote! { #name: #ty }
+            Ok(quote! { #name: #ty })
         })
-        .collect::<Vec<_>>();
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     args.push(quote! { command_buffer: &mut <<Self::Backend as crate::backends::common::Backend>::CommandBuffer as crate::backends::common::CommandBuffer>::Encoding });
 
@@ -74,10 +85,13 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 
     let kernel_type = quote! { type #trait_name: #trait_name<Backend = Self::Backend>; };
 
-    (kernel_trait, kernel_type)
+    Ok((kernel_trait, kernel_type))
 }
 
-pub fn traitgen_all(backends_kernels: Vec<HashMap<KernelPath, Box<[Kernel]>>>) -> anyhow::Result<()> {
+pub fn traitgen_all(
+    backends_kernels: Vec<HashMap<KernelPath, Box<[Kernel]>>>,
+    gpu_type_paths: &GpuTypePaths,
+) -> anyhow::Result<()> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
 
     let mut kernels: HashMap<KernelPath, Box<[Kernel]>> = HashMap::new();
@@ -97,8 +111,11 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<KernelPath, Box<[Kernel]>>>) -
     let mut kernel_traits = Vec::new();
     let mut kernel_types = Vec::new();
 
-    for (_file_path, file_kernels) in kernels.into_iter().sorted_by_key(|(p, _k)| p.join("::")) {
-        for (tr, ty) in file_kernels.iter().map(traitgen) {
+    for (file_path, file_kernels) in kernels.into_iter().sorted_by_key(|(p, _k)| p.join("::")) {
+        for kernel in &file_kernels {
+            let (tr, ty) = traitgen(kernel, gpu_type_paths).with_context(|| {
+                format!("cannot generate shared trait for kernel `{}` in `{}`", kernel.name, file_path.join("::"))
+            })?;
             kernel_traits.push(tr);
             kernel_types.push(ty);
         }

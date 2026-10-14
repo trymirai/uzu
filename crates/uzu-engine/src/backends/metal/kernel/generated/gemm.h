@@ -5,11 +5,6 @@
 using namespace metal;
 
 namespace uzu::gemm {
-enum class GemmAPrologueKind : uint32_t {
-  FullPrecision = 0,
-  Int8Symmetric = 1,
-};
-
 enum class GemmBPrologueKind : uint32_t {
   FullPrecision = 0,
   ScaleBiasDequant = 1,
@@ -29,6 +24,11 @@ struct GemmDTransform {
   constexpr bool contains(uint32_t flag) const constant { return (raw_value & flag) != 0; }
   constexpr uint32_t bits() const thread { return raw_value; }
   constexpr uint32_t bits() const constant { return raw_value; }
+};
+
+enum class GemmAPrologueKind : uint32_t {
+  FullPrecision = 0,
+  Int8Symmetric = 1,
 };
 
 enum class GemmTiling : uint32_t {

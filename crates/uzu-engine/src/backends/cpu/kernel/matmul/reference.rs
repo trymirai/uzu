@@ -4,9 +4,9 @@ use crate::{
     backends::{
         common::{
             BufferRef,
-            kernel::matmul::{MatmulB, MatmulError, QuantParamsStrides},
+            kernel::matmul::{MatmulB, QuantParamsStrides},
         },
-        cpu::{Cpu, buffer::CpuBufferExt},
+        cpu::{Cpu, buffer::CpuBufferExt, kernel::matmul::MatmulCpuError},
     },
     data_type::DataType,
     utils::pointers::SendPtr,
@@ -37,7 +37,7 @@ impl WeightData {
         b_transpose: bool,
         k: usize,
         n: usize,
-    ) -> Result<Self, MatmulError<Cpu>> {
+    ) -> Result<Self, MatmulCpuError> {
         fn buffer_ptr(view: impl BufferRef<Backend = Cpu>) -> SendPtr<u8> {
             let (buffer, range) = view.parts();
             SendPtr(buffer.cpu_address().as_ptr().cast::<u8>().cast_const().wrapping_byte_add(range.start))
@@ -59,7 +59,7 @@ impl WeightData {
             },
             MatmulB::Trellis {
                 ..
-            } => Err(MatmulError::UnsupportedLayout {
+            } => Err(MatmulCpuError::UnsupportedLayout {
                 path: "CpuMatmul",
             }),
             MatmulB::Quantized(quantized) => Ok(WeightData::Quantized {

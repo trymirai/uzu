@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::Copy, kernel::KVCacheUpdateKernel,
+            gpu_types::kv_cache_update::Copy, kernel::KVCacheUpdateKernel,
         },
         cpu::Cpu,
     },

@@ -1,23 +1,13 @@
 use std::collections::{HashMap, hash_map::Entry};
 
-use super::{
-    super::{MatmulOutputWork, supports_integer_right_operand},
-    GemmEngine, GemmPlan,
-    selection::{GemmProblem, outer_block_k},
-    specialization::GemmSpecialization,
-    trellis::TrellisGemm,
-};
 use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding,
-            gpu_types::{
-                GemmParams,
-                gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform},
-            },
+            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{
-                Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulError, MatmulOutput, MatmulShape,
-                QuantParamsLayout, QuantParamsStrides, QuantizedB,
+                Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulOutput, MatmulShape, QuantParamsLayout,
+                QuantParamsStrides, QuantizedB,
             },
         },
         metal::{
@@ -25,7 +15,23 @@ use crate::{
             command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
-            kernel::{GemmMetalKernel, GemmSplitKReduceMetalKernel},
+            gpu_types::{
+                gemm::{GemmAPrologueKind, GemmAlignment},
+                matmul::GemmParams,
+            },
+            kernel::{
+                GemmMetalKernel, GemmSplitKReduceMetalKernel,
+                matmul::{
+                    MatmulMetalError, MatmulOutputWork,
+                    gemm::{
+                        GemmEngine, GemmPlan,
+                        selection::{GemmProblem, outer_block_k},
+                        specialization::GemmSpecialization,
+                        trellis::TrellisGemm,
+                    },
+                    supports_integer_right_operand,
+                },
+            },
         },
     },
     data_type::DataType,
@@ -131,10 +137,8 @@ impl GemmKernel {
         shape: &MatmulShape,
         engine: GemmEngine,
         context: &MetalContext,
-    ) -> Result<GemmPlan, MetalError> {
-        self.problem(*shape, context)
-            .select_plan_for_engine(engine)
-            .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))
+    ) -> Result<GemmPlan, MatmulMetalError> {
+        self.problem(*shape, context).select_plan_for_engine(engine).map_err(MatmulMetalError::from)
     }
 
     pub fn encode_plan(
@@ -150,21 +154,16 @@ impl GemmKernel {
         plan: GemmPlan,
         output_work: &MatmulOutputWork,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<(), MetalError> {
+    ) -> Result<(), MatmulMetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
         // TODO: remove after GatherGEMM is supported
         if arguments.gather_indices.is_some() {
-            return Err(MetalError::KernelDispatchFailed(
-                format!(
-                    "gathered readout requires the GEMV path, but shape (m={}, n={}) routes to GEMM",
-                    arguments.m, arguments.n
-                )
-                .into(),
-            ));
+            return Err(MatmulMetalError::UnsupportedGather {
+                m: arguments.m,
+                n: arguments.n,
+            });
         }
-        self.problem(shape, command_buffer.context())
-            .validate_engine(plan.engine)
-            .map_err(|error| MetalError::KernelDispatchFailed(Box::new(error)))?;
+        self.problem(shape, command_buffer.context()).validate_engine(plan.engine)?;
 
         match arguments.b {
             MatmulB::FullPrecision {
@@ -193,7 +192,7 @@ impl GemmKernel {
                 ..
             } => {
                 if self.output_data_type != DataType::BF16 {
-                    return Err(MatmulError::UnsupportedDataType(self.output_data_type).into());
+                    return Err(MatmulMetalError::UnsupportedDataType(self.output_data_type));
                 }
                 self.trellis.encode_plan(arguments, plan, command_buffer)
             },
@@ -210,7 +209,7 @@ impl GemmKernel {
         plan: GemmPlan,
         output_work: &MatmulOutputWork,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<(), MetalError> {
+    ) -> Result<(), MatmulMetalError> {
         let (m, n, k) = (shape.m, shape.n, shape.k);
         let (mut d, d_transform) = output.into_contiguous(n, "Gemm")?;
         let ab_scale = d_transform.ab_scale;
@@ -228,11 +227,10 @@ impl GemmKernel {
 
         let is_quant = quantized.is_some();
         if !is_quant && !matches!(&a, MatmulA::FullPrecision { .. }) {
-            return Err(MatmulError::IncompatibleA {
+            return Err(MatmulMetalError::IncompatibleA {
                 path: "Gemm",
                 reason: "int8 activations require quantized weights",
-            }
-            .into());
+            });
         }
         let (scales, biases, zero_points, scale_strides, zero_point_strides) = match quantized.as_ref() {
             None => (None, None, None, Default::default(), Default::default()),
@@ -264,11 +262,10 @@ impl GemmKernel {
                     activation_group_sums.is_some(),
                 )?;
                 if output_transform.contains(GemmDTransform::SOFT_CAP) {
-                    return Err(MatmulError::UnsupportedDOp {
+                    return Err(MatmulMetalError::UnsupportedDOp {
                         bit: GemmDTransform::SOFT_CAP,
                         path: "Gemm int8 left operand",
-                    }
-                    .into());
+                    });
                 }
                 (
                     None,
@@ -282,10 +279,9 @@ impl GemmKernel {
             MatmulA::Trellis {
                 ..
             } => {
-                return Err(MatmulError::UnsupportedLayout {
+                return Err(MatmulMetalError::UnsupportedLayout {
                     path: "Gemm",
-                }
-                .into());
+                });
             },
         };
 
@@ -395,7 +391,7 @@ impl GemmKernel {
         output_transform: GemmDTransform,
         output_bias: Option<impl BufferRef<Backend = Metal>>,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<(), MetalError> {
+    ) -> Result<(), MatmulMetalError> {
         let (m, n, k) = (shape.m, shape.n, shape.k);
         let (a_full_precision, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match a {
             MatmulA::FullPrecision {
@@ -414,10 +410,9 @@ impl GemmKernel {
             MatmulA::Trellis {
                 ..
             } => {
-                return Err(MatmulError::UnsupportedLayout {
+                return Err(MatmulMetalError::UnsupportedLayout {
                     path: "Gemm",
-                }
-                .into());
+                });
             },
         };
         let a_group_sums = a_group_sums.filter(|_| Self::requires_activation_group_sums(&shape));
@@ -496,20 +491,18 @@ fn validate_int8_left_operand(
     a_group_size: u32,
     code_layout: Int8CodeLayout,
     has_group_sums: bool,
-) -> Result<(), MetalError> {
+) -> Result<(), MatmulMetalError> {
     if shape.b_bits.and_then(Int8CodeLayout::for_right_bits) != Some(code_layout) {
-        return Err(MatmulError::IncompatibleA {
+        return Err(MatmulMetalError::IncompatibleA {
             path: "Gemm",
             reason: "left code layout is incompatible with the right operand",
-        }
-        .into());
+        });
     }
     if GemmKernel::requires_activation_group_sums(&shape) && !has_group_sums {
-        return Err(MatmulError::IncompatibleA {
+        return Err(MatmulMetalError::IncompatibleA {
             path: "Gemm",
             reason: "quantized correction requires left group sums",
-        }
-        .into());
+        });
     }
     let compatible = use_mxu
         && supports_integer_right_operand(&shape)
@@ -526,11 +519,10 @@ fn validate_int8_left_operand(
             .b_group_size
             .is_some_and(|gs| matches!(gs, 32 | 64 | 128) && shape.k.is_multiple_of(gs) && a_group_size >= gs);
     if !compatible {
-        return Err(MatmulError::IncompatibleA {
+        return Err(MatmulMetalError::IncompatibleA {
             path: "Gemm",
             reason: "symmetric int8 left operands require group-major metadata and supported 32/64/128 groups",
-        }
-        .into());
+        });
     }
     Ok(())
 }

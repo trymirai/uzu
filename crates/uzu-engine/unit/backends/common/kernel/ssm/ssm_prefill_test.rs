@@ -8,7 +8,7 @@ use crate::{
     array::ArrayElement,
     backends::common::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-        gpu_types::ActivationType, kernel::SSDPrefillKernel,
+        gpu_types::activation_type::ActivationType, kernel::SSDPrefillKernel,
     },
     data_type::DataType,
     tests::{

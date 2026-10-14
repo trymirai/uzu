@@ -2,14 +2,17 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE},
+    backends::common::{
+        Backend, CommandBuffer, CommandBufferEncoding, gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+    },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::linear::{
-        Linear, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
+        Gather, Linear, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError,
+        input_rht::InputRht,
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -178,7 +181,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         input: LinearInput<B>,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         let input = match input {
             LinearInput::FullPrecision(input) => input,
             input => return self.inner_linear.encode_input(input, batch_dim, command_buffer),
@@ -186,11 +189,14 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         let command_buffer = &mut *command_buffer.debug_group("linear (rht)");
 
         let format = self.inner_linear.select_activation_format(batch_dim, command_buffer.context());
-        let input = self.input_rht.prepare_in_place(input, batch_dim, format, command_buffer)?;
+        let input = self
+            .input_rht
+            .prepare_in_place(input, batch_dim, format, command_buffer)
+            .map_err(LinearEncodeError::Backend)?;
         let output = self.inner_linear.encode_with_a(
             input.as_matmul_a(),
             batch_dim,
-            None::<super::Gather<&B::ScratchBuffer>>,
+            None::<Gather<&B::ScratchBuffer>>,
             command_buffer,
         )?;
 

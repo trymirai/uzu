@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE, kernel::ActivationTransform,
+            gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE, kernel::ActivationTransform,
         },
         cpu::Cpu,
     },

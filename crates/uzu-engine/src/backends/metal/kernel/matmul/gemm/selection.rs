@@ -1,11 +1,16 @@
 use metal::MTLGPUFamily;
 use thiserror::Error;
 
-use super::{GemmEngine, GemmPlan, policy};
 use crate::{
-    backends::common::{
-        gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
-        kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
+    backends::{
+        common::{
+            gpu_types::gemm::GemmBPrologueKind,
+            kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
+        },
+        metal::{
+            gpu_types::gemm::GemmTiling,
+            kernel::matmul::gemm::{GemmEngine, GemmPlan, policy},
+        },
     },
     data_type::DataType,
 };
@@ -22,7 +27,7 @@ pub struct GemmProblem {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
-pub(super) enum GemmPlanError {
+pub enum GemmPlanError {
     #[error("MXU engine is not available for this GEMM")]
     MxuUnavailable,
     #[error("GEMM input layout is unsupported: {0}")]

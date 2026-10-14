@@ -9,7 +9,7 @@ use crate::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
             Context,
-            gpu_types::{QuantizationMethod, QuantizationMode},
+            gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{

@@ -9,9 +9,9 @@ use super::{
     },
     QmvRoute,
 };
-use crate::backends::common::{
-    gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
-    kernel::matmul::MatmulShape,
+use crate::backends::{
+    common::{gpu_types::gemm::GemmBPrologueKind, kernel::matmul::MatmulShape},
+    metal::gpu_types::gemm::GemmTiling,
 };
 
 const DOWN: u8 = 1 << 0;

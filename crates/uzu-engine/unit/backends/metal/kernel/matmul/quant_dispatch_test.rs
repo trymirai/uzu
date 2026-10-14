@@ -12,7 +12,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::{QuantizationMethod, QuantizationMode},
+            gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
                 Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,

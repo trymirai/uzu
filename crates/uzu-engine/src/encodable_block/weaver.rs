@@ -17,9 +17,9 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         embedding::{Embedding, EmbeddingError},
-        linear::{Linear, LinearBlockError},
+        linear::{Linear, LinearBlockError, LinearEncodeError},
         mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
-        mlp::MlpBlockNewError,
+        mlp::{MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
     },
@@ -132,6 +132,8 @@ pub struct Weaver<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum WeaverNewError<B: Backend> {
+    #[error("Attention kernel error: {0}")]
+    Attention(#[source] <<B::Kernels as Kernels>::AttentionKernel as AttentionKernel>::Error),
     #[error("linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
     #[error("mlp error: {0}")]
@@ -162,6 +164,12 @@ pub enum WeaverNewError<B: Backend> {
 pub enum WeaverEncodeError<B: Backend> {
     #[error("backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error("Linear error: {0}")]
+    Linear(#[from] LinearEncodeError<B>),
+    #[error("MLP error: {0}")]
+    Mlp(#[from] MlpEncodeError<B>),
+    #[error("Attention kernel error: {0}")]
+    Attention(#[source] <<B::Kernels as Kernels>::AttentionKernel as AttentionKernel>::Error),
     #[error("embedding error: {0}")]
     Embedding(#[from] EmbeddingError<B>),
     #[error("invalid Weaver tree input")]
@@ -311,10 +319,7 @@ impl<B: Backend> Weaver<B> {
             .hidden_state_norm
             .encode(&prefix_hidden, 0, depth, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
-        let mut residual_input = self
-            .hidden_state_projection
-            .encode(normalized_prefix, depth, command_buffer)
-            .map_err(WeaverEncodeError::Backend)?;
+        let mut residual_input = self.hidden_state_projection.encode(normalized_prefix, depth, command_buffer)?;
         let (last_layer, preceding_layers) = self.layers.split_last().expect("Weaver must have at least one layer");
         let mut residual_state =
             command_buffer.allocate_scratch(residual_input.size()).map_err(WeaverEncodeError::Backend)?;
@@ -323,9 +328,7 @@ impl<B: Backend> Weaver<B> {
             let PreparedPrefixAttention {
                 queries,
                 kv_cache,
-            } = layer
-                .encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, command_buffer)
-                .map_err(WeaverEncodeError::Backend)?;
+            } = layer.encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, command_buffer)?;
             let cache = KVCacheView::full(0);
             let kv_plane_bytes = size_for_shape(&[depth, self.model_dim], DATA_TYPE);
             let attention_output = layer
@@ -343,16 +346,14 @@ impl<B: Backend> Weaver<B> {
                     },
                     command_buffer,
                 )
-                .map_err(WeaverEncodeError::Backend)?;
-            residual_input = layer
-                .encode_post_attention(attention_output, &mut residual_state, depth, command_buffer)
-                .map_err(WeaverEncodeError::Backend)?;
+                .map_err(WeaverEncodeError::Attention)?;
+            residual_input =
+                layer.encode_post_attention(attention_output, &mut residual_state, depth, command_buffer)?;
             prefix_kv_layers.push(kv_cache);
         }
         prefix_kv_layers.push(
             last_layer
-                .encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, command_buffer)
-                .map_err(WeaverEncodeError::Backend)?
+                .encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, command_buffer)?
                 .kv_cache,
         );
 
@@ -425,10 +426,8 @@ impl<B: Backend> Weaver<B> {
             .token_embedding_norm
             .encode(&token_embedding, 0, batch_node_count, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
-        let mut residual_input = self
-            .token_embedding_projection
-            .encode(normalized_embedding, batch_node_count, command_buffer)
-            .map_err(WeaverEncodeError::Backend)?;
+        let mut residual_input =
+            self.token_embedding_projection.encode(normalized_embedding, batch_node_count, command_buffer)?;
         let mut residual_state =
             command_buffer.allocate_scratch(residual_input.size()).map_err(WeaverEncodeError::Backend)?;
         let node_metadata = node_metadata.as_ref();
@@ -438,10 +437,7 @@ impl<B: Backend> Weaver<B> {
                 .pre_attention_norm
                 .encode(&residual_input, 0, batch_node_count, Some(&mut residual_state), command_buffer)
                 .map_err(WeaverEncodeError::Backend)?;
-            let current_qkv = layer
-                .qkv_projection
-                .encode(attention_input, batch_node_count, command_buffer)
-                .map_err(WeaverEncodeError::Backend)?;
+            let current_qkv = layer.qkv_projection.encode(attention_input, batch_node_count, command_buffer)?;
             let mut attention_output = command_buffer
                 .allocate_scratch_for_shape(&[batch_node_count, self.model_dim], DATA_TYPE)
                 .map_err(WeaverEncodeError::Backend)?;
@@ -464,19 +460,15 @@ impl<B: Backend> Weaver<B> {
                 layer.attention_scale,
                 command_buffer,
             );
-            residual_input = layer
-                .encode_post_attention(attention_output, &mut residual_state, batch_node_count, command_buffer)
-                .map_err(WeaverEncodeError::Backend)?;
+            residual_input =
+                layer.encode_post_attention(attention_output, &mut residual_state, batch_node_count, command_buffer)?;
         }
 
         let normalized_output = self
             .readout_norm
             .encode(&residual_input, 0, batch_node_count, Some(&mut residual_state), command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
-        let query = self
-            .readout_query_projection
-            .encode(normalized_output, batch_node_count, command_buffer)
-            .map_err(WeaverEncodeError::Backend)?;
+        let query = self.readout_query_projection.encode(normalized_output, batch_node_count, command_buffer)?;
         let logit_residuals = target_embedding.encode_readout(
             &query,
             batch_node_count,

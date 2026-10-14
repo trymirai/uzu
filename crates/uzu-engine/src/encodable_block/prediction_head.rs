@@ -4,13 +4,13 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding,
-        gpu_types::ActivationType,
+        gpu_types::activation_type::ActivationType,
         kernel::{ActivationKernel, Kernels},
     },
     config::classifier::PredictionHeadConfig,
     data_type::DataType,
     encodable_block::{
-        linear::{Linear, LinearBlockError},
+        linear::{Linear, LinearBlockError, LinearEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
     parameters::ParameterTree,
@@ -22,6 +22,8 @@ pub enum PredictionHeadError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
+    #[error("Linear encoding error: {0}")]
+    LinearEncode(#[from] LinearEncodeError<B>),
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
 }
@@ -86,7 +88,7 @@ impl<B: Backend> PredictionHead<B> {
         input: B::ScratchBuffer,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, PredictionHeadError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("prediction head");
 
         let mut hidden = self.dense_projection.encode(input, batch_dim, command_buffer)?;
@@ -97,8 +99,10 @@ impl<B: Backend> PredictionHead<B> {
             self.activation,
             command_buffer,
         );
-        let normalized =
-            self.normalization.encode(&hidden, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)?;
+        let normalized = self
+            .normalization
+            .encode(&hidden, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)
+            .map_err(PredictionHeadError::Backend)?;
         let logits = self.readout.encode(normalized, batch_dim, command_buffer)?;
 
         Ok(logits)

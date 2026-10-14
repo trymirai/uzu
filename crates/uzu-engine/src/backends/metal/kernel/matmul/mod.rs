@@ -1,3 +1,4 @@
+mod error;
 pub mod gemm;
 mod gemv;
 mod matmul_dispatch;
@@ -5,6 +6,7 @@ mod matmul_metal_kernel;
 mod matmul_output_work;
 mod qmv;
 
+pub use error::MatmulMetalError;
 pub use gemm::GemmKernel;
 #[cfg(test)]
 use matmul_dispatch::MatmulDispatch;
