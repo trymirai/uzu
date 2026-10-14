@@ -3,7 +3,10 @@ use uzu_engine_macros::uzu_test;
 
 use super::*;
 use crate::backends::{
-    common::{gpu_types::gemm::GemmDTransform, kernel::matmul::QuantParamsLayout},
+    common::{
+        gpu_types::gemm::{GemmBLayout, GemmDTransform},
+        kernel::matmul::QuantParamsLayout,
+    },
     metal::kernel::matmul::MatmulMetalKernel,
 };
 
@@ -23,6 +26,7 @@ fn shape(
         b_bits: None,
         b_group_size: None,
         signed_codes: false,
+        gemm_b_layout: GemmBLayout::RowMajor,
         a_full_precision: true,
         gathered: false,
         params_layout: Some(QuantParamsLayout::OutputGroup),

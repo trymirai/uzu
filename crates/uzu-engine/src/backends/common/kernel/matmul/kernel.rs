@@ -53,4 +53,13 @@ pub trait MatmulKernel: Sized + Send + Sync {
     ) -> ActivationFormat {
         ActivationFormat::Bf16
     }
+
+    fn prepare_gemm_b_layout(
+        &self,
+        _a8_shape: &MatmulShape,
+        _weights: &mut <Self::Backend as Backend>::GlobalBuffer,
+        _context: &<Self::Backend as Backend>::Context,
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
+        unreachable!("the GEMM B layout is prepared only after int8 activations were selected")
+    }
 }

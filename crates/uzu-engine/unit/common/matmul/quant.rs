@@ -8,7 +8,7 @@ use crate::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
             Context,
-            gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
+            gpu_types::{gemm::GemmBLayout, quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
@@ -46,6 +46,7 @@ pub struct QuantInput<T: DataTypeRepr + Float> {
     pub mode: QuantizationMode,
     pub params_layout: QuantParamsLayout,
     pub signed_codes: bool,
+    pub gemm_b_layout: GemmBLayout,
     pub prepared_a: Option<PreparedInt8A>,
 }
 
@@ -173,6 +174,7 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             mode: mode_for_bits(bits),
             params_layout: QuantParamsLayout::OutputGroup,
             signed_codes: false,
+            gemm_b_layout: GemmBLayout::RowMajor,
             prepared_a: None,
         }
     }
@@ -400,6 +402,7 @@ fn quant_b_variant<TB: BufferRef, T: DataTypeRepr + Float>(
         mode: input.mode,
         group_size: input.group_size,
         signed_codes: input.signed_codes,
+        gemm_b_layout: input.gemm_b_layout,
     })
 }
 

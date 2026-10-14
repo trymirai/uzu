@@ -6,7 +6,7 @@ use super::*;
 use crate::{
     backends::{
         common::{
-            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+            gpu_types::gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{MatmulShape, QuantParamsLayout},
         },
         metal::kernel::matmul::{MatmulDispatch, MatmulMetalKernel, gemv::GemvSpecialization},
@@ -57,6 +57,7 @@ fn problem(
         b_bits: Some(bits),
         b_group_size: Some(group),
         signed_codes: false,
+        gemm_b_layout: GemmBLayout::RowMajor,
         a_full_precision: true,
         gathered: false,
         params_layout: Some(QuantParamsLayout::OutputGroup),

@@ -12,6 +12,11 @@ enum class GemmBPrologueKind : uint32_t {
   ScaleSymmetricDequant = 3,
 };
 
+enum class GemmBLayout : uint32_t {
+  RowMajor = 0,
+  MxuTiled = 1,
+};
+
 struct GemmDTransform {
   uint32_t raw_value;
   constexpr GemmDTransform() thread : raw_value(0) {}

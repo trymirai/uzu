@@ -2,7 +2,7 @@ use super::{GemmEngine, GemmPlan, error::GemmSpecializationError};
 use crate::{
     backends::{
         common::{
-            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+            gpu_types::gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
             kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
         },
         metal::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmTiling},
@@ -23,6 +23,7 @@ pub(super) struct GemmSpecialization {
     pub(super) bits_per_b: Option<u32>,
     pub(super) b_group_size: Option<u32>,
     pub(super) signed_codes: bool,
+    pub(super) gemm_b_layout: GemmBLayout,
     pub(super) a_group_size: Option<u32>,
 }
 
@@ -48,6 +49,7 @@ impl GemmSpecialization {
             bits_per_b: shape.b_bits,
             b_group_size: shape.b_group_size,
             signed_codes: shape.signed_codes,
+            gemm_b_layout: shape.gemm_b_layout,
             a_group_size,
         };
         specialization.validate()?;

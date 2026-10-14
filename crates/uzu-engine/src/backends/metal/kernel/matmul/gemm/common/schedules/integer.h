@@ -230,32 +230,32 @@ struct IntegerSchedule {
     return product;
   }
 
-  template <typename Core, typename LeftCodes, typename RightCodes, int CHUNKS_PER_K_GROUP>
+  template <typename Core, typename LeftCursor, typename RightCursor, int CHUNKS_PER_K_GROUP>
   static METAL_FUNC GroupProducts<Core> multiply_k_group(
-      thread LeftCodes& left_codes,
-      thread RightCodes& right_codes,
-      const thread typename RightCodes::PackedChunk (&packed_right_chunks)[CHUNKS_PER_K_GROUP]
+      thread LeftCursor& left_cursor,
+      thread RightCursor& right_cursor,
+      const thread typename RightCursor::PackedChunk (&packed_right_chunks)[CHUNKS_PER_K_GROUP]
   ) {
     GroupProducts<Core> group_product;
     group_product.clear();
     if constexpr (prefetches_int4_chunks<Core>()) {
       for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
-        auto left_tile = left_codes.load(uint(chunk));
-        auto right_tile = right_codes.decode(packed_right_chunks[chunk]);
+        auto left_tile = left_cursor.load(uint(chunk));
+        auto right_tile = right_cursor.decode(packed_right_chunks[chunk]);
         uzu::matmul::fragment_mma(group_product, left_tile, right_tile);
-        left_codes.advance();
-        right_codes.advance();
+        left_cursor.advance();
+        right_cursor.advance();
       });
     } else {
-      decltype(right_codes.load(0u)) right_tiles[CHUNKS_PER_K_GROUP];
+      decltype(right_cursor.load(0u)) right_tiles[CHUNKS_PER_K_GROUP];
       for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
-        right_tiles[chunk] = right_codes.load(uint(chunk));
-        right_codes.advance();
+        right_tiles[chunk] = right_cursor.load(uint(chunk));
+        right_cursor.advance();
       });
       for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
-        auto left_tile = left_codes.load(uint(chunk));
+        auto left_tile = left_cursor.load(uint(chunk));
         uzu::matmul::fragment_mma(group_product, left_tile, right_tiles[chunk]);
-        left_codes.advance();
+        left_cursor.advance();
       });
     }
     return group_product;
@@ -319,9 +319,9 @@ struct IntegerSchedule {
       }
     }
 
-    auto left_codes =
+    auto left_cursor =
         quantized::make_left_cursor<Core, LeftOperand, ALIGNED_M>(left_storage, params, tile, thread_context);
-    auto right_codes =
+    auto right_cursor =
         quantized::make_right_cursor<Core, RightOperand, ALIGNED_N>(right_storage, params, tile, thread_context);
 
     const short2 position = Core::FragmentOps::get_position(thread_context.simd_lane_id);
@@ -347,15 +347,15 @@ struct IntegerSchedule {
 
     METAL_PRAGMA_NO_UNROLL
     for (int right_group_index = 0; right_group_index < right_group_count; ++right_group_index) {
-      typename decltype(right_codes)::PackedChunk packed_right_chunks[CHUNKS_PER_K_GROUP];
+      typename decltype(right_cursor)::PackedChunk packed_right_chunks[CHUNKS_PER_K_GROUP];
       if constexpr (PREFETCH_INT4_CHUNKS) {
         for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
-          packed_right_chunks[chunk] = right_codes.fetch(uint(chunk));
+          packed_right_chunks[chunk] = right_cursor.fetch(uint(chunk));
         });
       }
       const uint right_group_offset = uint(right_group_index) * RIGHT_GROUP_SIZE;
-      left_codes.begin_k_group(right_group_offset);
-      right_codes.begin_k_group(right_group_offset);
+      left_cursor.begin_k_group(right_group_offset);
+      right_cursor.begin_k_group(right_group_offset);
       auto load_metadata = [&]() {
         left_metadata.load(left_storage, metadata_context, tile.k_offset + right_group_offset);
         right_metadata.load(right_storage, metadata_context, first_right_group + uint(right_group_index));
@@ -365,10 +365,19 @@ struct IntegerSchedule {
       }
       GroupProducts<Core> group_product;
       if constexpr (multiplies_device_groups<Core, ALIGNED_M, ALIGNED_N>()) {
-        group_product =
-            multiply_device_group<Core>(left_storage, right_storage, params, tile, tile.k_offset + right_group_offset);
+        if (right_storage.gemm_b_layout == GemmBLayout::MxuTiled) {
+          group_product = multiply_k_group<Core>(left_cursor, right_cursor, packed_right_chunks);
+        } else {
+          group_product = multiply_device_group<Core>(
+              left_storage,
+              right_storage,
+              params,
+              tile,
+              tile.k_offset + right_group_offset
+          );
+        }
       } else {
-        group_product = multiply_k_group<Core>(left_codes, right_codes, packed_right_chunks);
+        group_product = multiply_k_group<Core>(left_cursor, right_cursor, packed_right_chunks);
       }
       if constexpr (PREFETCH_INT4_CHUNKS) {
         load_metadata();

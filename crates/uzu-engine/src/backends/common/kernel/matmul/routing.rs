@@ -1,7 +1,7 @@
 use super::{MatmulA, MatmulArguments, QuantParamsLayout};
 use crate::backends::common::{
     Backend, BufferMut, BufferRef,
-    gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+    gpu_types::gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +22,7 @@ pub struct MatmulShape {
     pub b_bits: Option<u32>,
     pub b_group_size: Option<u32>,
     pub signed_codes: bool,
+    pub gemm_b_layout: GemmBLayout,
     pub a_full_precision: bool,
     pub gathered: bool,
     pub params_layout: Option<QuantParamsLayout>,
@@ -50,6 +51,7 @@ impl MatmulShape {
             b_bits: arguments.b.bits_per_b(),
             b_group_size: arguments.b.group_size(),
             signed_codes: arguments.b.signed_codes(),
+            gemm_b_layout: arguments.b.gemm_b_layout(),
             a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
             gathered: arguments.gather_indices.is_some(),
             params_layout: arguments.b.quant_params_layout(),

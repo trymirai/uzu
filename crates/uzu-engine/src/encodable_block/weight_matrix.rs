@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferCpuAccessible, BufferMut,
-        gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
+        gpu_types::{gemm::GemmBLayout, quantization::QuantizationMode, quantization_method::QuantizationMethod},
         kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -86,6 +86,7 @@ struct Quantized<B: Backend> {
     params: QuantParams,
     info: QuantizationInfo,
     signed_codes: bool,
+    gemm_b_layout: GemmBLayout,
 }
 
 pub struct WeightMatrix<B: Backend> {
@@ -163,6 +164,7 @@ impl<B: Backend> WeightMatrix<B> {
                 params,
                 info,
                 signed_codes: false,
+                gemm_b_layout: GemmBLayout::RowMajor,
             }),
         })
     }
@@ -204,7 +206,22 @@ impl<B: Backend> WeightMatrix<B> {
             mode,
             group_size,
             signed_codes,
+            gemm_b_layout: quantized.gemm_b_layout,
         })
+    }
+
+    pub fn prepare_gemm_b_layout<E>(
+        &mut self,
+        prepare: impl FnOnce(&mut B::GlobalBuffer) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let Some(quantized) =
+            self.quantized.as_mut().filter(|quantized| quantized.gemm_b_layout == GemmBLayout::RowMajor)
+        else {
+            return Ok(());
+        };
+        prepare(&mut self.values)?;
+        quantized.gemm_b_layout = GemmBLayout::MxuTiled;
+        Ok(())
     }
 
     pub fn try_prepare_a8_storage(&mut self) -> bool {

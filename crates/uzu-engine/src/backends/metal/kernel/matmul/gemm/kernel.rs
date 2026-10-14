@@ -3,8 +3,9 @@ use std::collections::{HashMap, hash_map::Entry};
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, BufferRef, CommandBufferEncoding,
-            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+            Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
+            Context,
+            gpu_types::gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{
                 Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulOutput, MatmulShape, QuantParamsLayout,
                 QuantParamsStrides, QuantizedB,
@@ -20,7 +21,7 @@ use crate::{
                 matmul::GemmParams,
             },
             kernel::{
-                GemmMetalKernel, GemmSplitKReduceMetalKernel,
+                GemmMetalKernel, GemmPrepareBLayoutMetalKernel, GemmSplitKReduceMetalKernel,
                 matmul::{
                     MatmulMetalError, MatmulOutputWork,
                     gemm::{
@@ -91,10 +92,35 @@ impl GemmKernel {
                     specialization.output_transform,
                     specialization.alignment,
                     specialization.signed_codes,
+                    specialization.gemm_b_layout,
                 )?;
                 Ok(entry.insert(kernel))
             },
         }
+    }
+
+    pub fn prepare_gemm_b_layout(
+        weights: &mut <Metal as Backend>::GlobalBuffer,
+        rows: u32,
+        k: u32,
+        bits: u32,
+        context: &MetalContext,
+    ) -> Result<(), MetalError> {
+        let row_words = k * bits / 32;
+        let words_per_thread = row_words.div_ceil(32);
+        let variant = [32, 72, 160]
+            .into_iter()
+            .find(|&variant| variant >= words_per_thread)
+            .expect("a 32-row block must fit one threadgroup");
+        let mut command_buffer = context.create_command_buffer(Some("prepare GEMM B layout"), None)?;
+        GemmPrepareBLayoutMetalKernel::new(context, bits, variant)?.encode(
+            weights,
+            row_words,
+            rows / 32,
+            &mut command_buffer,
+        );
+        command_buffer.end_encoding().submit().wait_until_completed()?;
+        Ok(())
     }
 
     fn get_or_create_split_k_reduce(
@@ -224,6 +250,12 @@ impl GemmKernel {
             };
 
         let use_mxu = plan.engine == GemmEngine::Mxu;
+        if shape.gemm_b_layout == GemmBLayout::MxuTiled && (!use_mxu || shape.a_full_precision) {
+            return Err(MatmulMetalError::IncompatibleA {
+                path: "Gemm",
+                reason: "MxuTiled GEMM B layout requires int8 activations on the MXU",
+            });
+        }
 
         let is_quant = quantized.is_some();
         if !is_quant && !matches!(&a, MatmulA::FullPrecision { .. }) {

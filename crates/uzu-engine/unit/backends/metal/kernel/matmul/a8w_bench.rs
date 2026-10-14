@@ -9,7 +9,7 @@ use crate::{
         common::{
             Backend, BufferMut, CommandBuffer, CommandBufferEncoding,
             gpu_types::{
-                hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, quantization::QuantizationMode,
+                gemm::GemmBLayout, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, quantization::QuantizationMode,
                 quantization_method::QuantizationMethod,
             },
             kernel::{
@@ -146,6 +146,7 @@ impl BenchmarkData {
                 mode: self.mode,
                 group_size: self.group_size,
                 signed_codes: false,
+                gemm_b_layout: GemmBLayout::RowMajor,
             }),
             b_leading_dimension: None,
             b_transpose: true,
@@ -201,6 +202,7 @@ fn encode_step(
                         mode: data.mode,
                         group_size: data.group_size,
                         signed_codes: !matches!(data.mode, QuantizationMode::U4),
+                        gemm_b_layout: GemmBLayout::RowMajor,
                     }),
                     b_leading_dimension: None,
                     b_transpose: true,
