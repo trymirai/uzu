@@ -6,8 +6,8 @@
 // clang-format off
 //   k_codes  int8   [key block][kv head][fragment][lane][16 B]                     one fragment = 32 keys x 16 channels
 //   v_codes  uint8  [key block][kv head][channel slice][chunk group][lane][16 B]   (code + 128), the P x V operand
-//   k_scales bf16   [kv head][key]                                                 stride = padded capacity
-//   v_scales bf16   [kv head][key]                                                 stride = padded capacity
+//   k_scales bf16   [key block][kv head][key in block]                             a prefix of keys is a byte prefix
+//   v_scales bf16   [key block][kv head][key in block]
 // clang-format on
 
 namespace uzu::kv_layout {
@@ -30,6 +30,10 @@ struct Int8KVShape {
 
   METAL_FUNC size_t block_region(const uint block, const uint kv_head) const {
     return (size_t(block) * num_kv_heads + kv_head) * (TILE_KEYS * head_dim);
+  }
+
+  METAL_FUNC size_t scale_index(const uint key, const uint kv_head) const {
+    return (size_t(key / TILE_KEYS) * num_kv_heads + kv_head) * TILE_KEYS + key % TILE_KEYS;
   }
 
   METAL_FUNC size_t k_code_index(const uint key, const uint kv_head, const uint channel) const {
@@ -57,10 +61,6 @@ UZU_CONST uint KV_ROTATION_SIGN_BITS[8] =
 
 METAL_FUNC float kv_rotation_sign(const uint channel) {
   return (KV_ROTATION_SIGN_BITS[channel / 32] >> (channel % 32)) & 1u ? -1.0f : 1.0f;
-}
-
-METAL_FUNC size_t per_token_index(const uint key, const uint kv_head, const uint padded_capacity) {
-  return size_t(kv_head) * padded_capacity + key;
 }
 
 } // namespace uzu::kv_layout

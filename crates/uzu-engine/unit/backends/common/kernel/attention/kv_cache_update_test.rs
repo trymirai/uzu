@@ -274,7 +274,6 @@ fn test_int8_copy_for<B: Backend>() {
         &mut value_scales,
         &copies,
         copies.len() as u32,
-        layout.padded_capacity,
         &mut command_buffer,
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
@@ -283,7 +282,7 @@ fn test_int8_copy_for<B: Backend>() {
         assert_eq!(keys[layout.k_code_index(5, 1, channel)], k_codes[layout.k_code_index(40, 1, channel)]);
         assert_eq!(values[layout.v_code_index(5, 1, channel)], v_codes[layout.v_code_index(40, 1, channel)]);
     }
-    let (from, to) = ((layout.padded_capacity + 40) as usize, (layout.padded_capacity + 5) as usize);
+    let (from, to) = (layout.scale_index(40, 1), layout.scale_index(5, 1));
     assert_eq!(buffer_to_vec::<B, bf16>(&key_scales)[to], k_scales[from]);
     assert_eq!(buffer_to_vec::<B, bf16>(&value_scales)[to], v_scales[from]);
 }

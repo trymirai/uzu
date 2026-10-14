@@ -29,7 +29,6 @@ pub fn attention_prepare_int8<ElementT: ArrayElement + Float, RopeT: ArrayElemen
     num_q_heads: u32,
     #[optional(has_rope)] rope_dim: Option<u32>,
     kv_token_offset: u32,
-    padded_capacity: u32,
     input_row_stride: u32,
     suffix_length: u32,
     padded_suffix: u32,
@@ -38,11 +37,7 @@ pub fn attention_prepare_int8<ElementT: ArrayElement + Float, RopeT: ArrayElemen
     #[specialize] num_kv_heads: u32,
 ) {
     let head_dim = HEAD_DIM as usize;
-    let layout = Int8KVLayout {
-        head_dim: HEAD_DIM,
-        num_kv_heads,
-        padded_capacity,
-    };
+    let layout = Int8KVLayout::new(HEAD_DIM, num_kv_heads, 0);
     let mut values = vec![0.0f32; head_dim];
     for head in 0..num_q_heads + 2 * num_kv_heads {
         let is_query = head < num_q_heads;
@@ -104,7 +99,7 @@ pub fn attention_prepare_int8<ElementT: ArrayElement + Float, RopeT: ArrayElemen
             let scale_index = if is_query {
                 query_row
             } else {
-                (kv_head * padded_capacity + kv_token_offset + token) as usize
+                layout.scale_index(kv_token_offset + token, kv_head)
             };
             for (channel, &value) in values.iter().enumerate() {
                 let code = (value / scale.to_f32().unwrap()).round_ties_even().clamp(-127.0, 127.0) as i8;

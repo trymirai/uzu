@@ -31,6 +31,15 @@ impl Int8KVLayout {
         self.scale_count() * self.head_dim as usize
     }
 
+    /// Scales are `[key tile][kv head][TILE_KEYS keys]`, so a prefix of keys is a byte prefix.
+    pub fn scale_index(
+        &self,
+        key: u32,
+        head: u32,
+    ) -> usize {
+        ((key / TILE_KEYS * self.num_kv_heads + head) * TILE_KEYS + key % TILE_KEYS) as usize
+    }
+
     pub fn k_code_index(
         &self,
         key: u32,

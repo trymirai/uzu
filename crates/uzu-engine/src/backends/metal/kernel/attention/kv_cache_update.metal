@@ -32,7 +32,6 @@ PUBLIC KERNEL(KVCacheUpdateInt8)(
     device bfloat* in_place_v_scales,
     const constant uzu::kv_cache_update::Copy* copies,
     const constant uint& copy_count,
-    const constant uint& padded_capacity,
     const uint head_dim SPECIALIZE,
     const uint num_kv_heads SPECIALIZE,
     const uint element AXIS(num_kv_heads* head_dim, 256)
@@ -48,10 +47,10 @@ PUBLIC KERNEL(KVCacheUpdateInt8)(
     in_place_v_codes[shape.v_code_index(destination, kv_head, channel)] =
         in_place_v_codes[shape.v_code_index(source, kv_head, channel)];
     if (channel == 0) {
-      const size_t source_token = per_token_index(source, kv_head, padded_capacity);
-      const size_t destination_token = per_token_index(destination, kv_head, padded_capacity);
-      in_place_k_scales[destination_token] = in_place_k_scales[source_token];
-      in_place_v_scales[destination_token] = in_place_v_scales[source_token];
+      const size_t source_scale = shape.scale_index(source, kv_head);
+      const size_t destination_scale = shape.scale_index(destination, kv_head);
+      in_place_k_scales[destination_scale] = in_place_k_scales[source_scale];
+      in_place_v_scales[destination_scale] = in_place_v_scales[source_scale];
     }
   }
 }

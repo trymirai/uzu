@@ -187,7 +187,6 @@ fn run_int8<B: Backend>() -> Int8Output {
         1,
         None,
         33,
-        layout.padded_capacity,
         (3 * DIM) as u32,
         1,
         1,
@@ -204,7 +203,7 @@ fn run_int8<B: Backend>() -> Int8Output {
             (0..DIM).map(|c| i16::from(k_codes[layout.k_code_index(33, 0, c as u32)])).collect(),
             (0..DIM).map(|c| i16::from(v_codes[layout.v_code_index(33, 0, c as u32)]) - 128).collect(),
         ],
-        scales: [(&q_scales, 0), (&k_scales, 33), (&v_scales, 33)]
+        scales: [(&q_scales, 0), (&k_scales, layout.scale_index(33, 0)), (&v_scales, layout.scale_index(33, 0))]
             .map(|(buffer, slot)| buffer_to_vec::<B, bf16>(buffer)[slot]),
     }
 }

@@ -44,7 +44,6 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
     const constant uint32_t& num_q_heads,
     const constant uint32_t& rope_dim OPTIONAL(has_rope),
     const constant uint32_t& kv_token_offset,
-    const constant uint32_t& padded_capacity,
     const constant uint32_t& input_row_stride,
     const constant uint32_t& suffix_length,
     const constant uint32_t& padded_suffix,
@@ -107,8 +106,7 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
   const ElementT scale = kv_quantize_row<ElementT, VALUES_PER_LANE>(values, codes);
 
   const uint32_t key = kv_token_offset + token_idx;
-  const size_t scale_index =
-      is_query ? size_t(head_idx) * padded_suffix + token_idx : per_token_index(key, kv_head, padded_capacity);
+  const size_t scale_index = is_query ? size_t(head_idx) * padded_suffix + token_idx : shape.scale_index(key, kv_head);
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     const uint32_t channel = value_index * METAL_SIMD_SIZE + lane_index;

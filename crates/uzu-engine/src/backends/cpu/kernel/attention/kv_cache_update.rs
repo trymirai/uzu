@@ -35,15 +35,10 @@ pub fn kv_cache_update_int8(
     in_place_v_scales: *mut bf16,
     copies: &[crate::backends::common::gpu_types::kv_cache_update::Copy],
     copy_count: u32,
-    padded_capacity: u32,
     #[specialize] head_dim: u32,
     #[specialize] num_kv_heads: u32,
 ) {
-    let layout = Int8KVLayout {
-        head_dim,
-        num_kv_heads,
-        padded_capacity,
-    };
+    let layout = Int8KVLayout::new(head_dim, num_kv_heads, 0);
     for copy in copies.iter().take(copy_count as usize) {
         for head in 0..num_kv_heads {
             for channel in 0..head_dim {
@@ -56,8 +51,8 @@ pub fn kv_cache_update_int8(
                     *in_place_v_codes.add(destination_v) = *in_place_v_codes.add(source_v);
                 }
             }
-            let source = (head * padded_capacity + copy.source) as usize;
-            let destination = (head * padded_capacity + copy.destination) as usize;
+            let source = layout.scale_index(copy.source, head);
+            let destination = layout.scale_index(copy.destination, head);
             unsafe {
                 *in_place_k_scales.add(destination) = *in_place_k_scales.add(source);
                 *in_place_v_scales.add(destination) = *in_place_v_scales.add(source);
