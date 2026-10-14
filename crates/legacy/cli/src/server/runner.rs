@@ -11,7 +11,10 @@ use rocket::{
     routes,
 };
 use tokio::io::{AsyncRead, ReadBuf};
-use uzu::engine::{Engine, EngineConfig};
+use uzu::{
+    engine::{Engine, EngineConfig},
+    storage::DownloadPhase,
+};
 
 use crate::server::{
     ModelSlot, ServerState, SessionManager, handle_chat_completions, handle_models,
@@ -198,6 +201,33 @@ pub async fn run_server(
         while let Some(update) = downloader.next().await {
             spinner.set_message(format!("Downloading {}: {:.0}%", resolved.identifier, update.progress() * 100.0));
         }
+
+        // A registry model whose download ended in a terminal error/pause is
+        // not usable (`Engine::model_path` only accepts `Downloaded`), so
+        // refuse it at startup instead of advertising a model that can only
+        // ever fail on request.
+        if resolved.is_downloadable() {
+            match engine.download_state(&resolved).await {
+                Some(state) if matches!(state.phase, DownloadPhase::Downloaded {}) => {},
+                Some(state) => bail!(
+                    "model {} download ended in phase `{}`; fix the download and retry",
+                    resolved.identifier,
+                    state.name()
+                ),
+                None => bail!(
+                    "model {} download finished but no state was recorded; retry the download",
+                    resolved.identifier
+                ),
+            }
+        }
+
+        // The server is chat-only; a non-chat checkpoint would be advertised
+        // by `/models` but fail on every request (the session rejects models
+        // without the Chat specialization). Match the non-interactive CLI.
+        if !resolved.is_chat_capable() {
+            bail!("model {} is not a chat model; the server only serves chat models", resolved.identifier);
+        }
+
         slots.push(ModelSlot::new(resolved));
     }
     spinner.finish_with_message(format!("Ready: {} model(s)", slots.len()));

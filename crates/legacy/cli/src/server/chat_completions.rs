@@ -253,13 +253,18 @@ pub(crate) fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
                 let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
                 chat_message = chat_message.with_block(result);
             } else if let Some(content) = message.content.as_ref() {
-                // An empty string alongside tool calls is no text at all, which
-                // is also how the session stores a reply that produced none.
-                // Every other message keeps its text block even when empty:
-                // the chat template requires a text block for a user turn, and
-                // an intentionally empty turn is valid input.
+                // Block-free replies (reasoning-only, truncated, or
+                // tool-call-only assistant turns) are stored without a text
+                // block; echoing them back must not synthesize an empty one
+                // (which would reset the prefix cache and, for Harmony,
+                // re-render a final-channel message that was never
+                // generated). Every *other* message keeps its text block
+                // even when empty: the chat template requires a text block
+                // for a user turn, and an intentionally empty turn is valid
+                // input.
                 let has_tool_calls = message.tool_calls.as_deref().is_some_and(|tool_calls| !tool_calls.is_empty());
-                if !content.is_empty() || !has_tool_calls {
+                let is_empty_assistant = content.is_empty() && message.role == "assistant";
+                if !content.is_empty() || (!has_tool_calls && !is_empty_assistant) {
                     chat_message = chat_message.with_text(content.clone());
                 }
             }

@@ -616,3 +616,67 @@ fn backend_error_bodies_are_openai_errors_with_collapsed_prefixes() {
     assert_eq!(body["error"]["type"], "server_error");
     assert_eq!(body["error"]["message"], "No response generated");
 }
+
+fn message_block_kinds(message: &ChatMessage) -> Vec<&'static str> {
+    message
+        .content
+        .iter()
+        .map(|block| match block {
+            ChatContentBlock::Reasoning {
+                ..
+            } => "reasoning",
+            ChatContentBlock::Text {
+                ..
+            } => "text",
+            ChatContentBlock::ToolCall {
+                ..
+            } => "tool_call",
+            _ => "other",
+        })
+        .collect()
+}
+
+/// A block-free assistant reply (reasoning-only or truncated, `content: ""`)
+/// must stay block-free when echoed back — adding a `Text("")` would reset the
+/// prefix cache and, for Harmony models, re-render a final-channel message
+/// that was never generated.
+#[test]
+fn empty_assistant_content_stays_block_free() {
+    let messages = to_chat_messages(
+        &request(
+            r#"{
+            "messages": [
+                {"role":"user","content":"think"},
+                {"role":"assistant","reasoning_content":"thinking...","content":""}
+            ]
+        }"#,
+        )
+        .messages,
+    );
+    // Reasoning block is present, but no synthesized empty text block.
+    assert_eq!(message_block_kinds(&messages[1]), ["reasoning"]);
+}
+
+/// An empty assistant reply with tool calls is also block-free for its text
+/// (only the tool call block is present).
+#[test]
+fn empty_assistant_content_with_tool_calls_is_block_free() {
+    let messages = to_chat_messages(&request(
+        r#"{
+            "messages": [
+                {"role":"user","content":"use a tool"},
+                {"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{}"}}]}
+            ]
+        }"#,
+    )
+    .messages);
+    assert_eq!(message_block_kinds(&messages[1]), ["tool_call"]);
+}
+
+/// An intentionally empty *user* turn keeps its text block (the chat template
+/// requires a text block for a user turn) — the suppression is assistant-only.
+#[test]
+fn empty_user_content_keeps_its_text_block() {
+    let messages = to_chat_messages(&request(r#"{"messages":[{"role":"user","content":""}]}"#).messages);
+    assert_eq!(message_block_kinds(&messages[0]), ["text"]);
+}

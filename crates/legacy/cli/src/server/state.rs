@@ -133,6 +133,17 @@ fn available_memory() -> u64 {
     system.available_memory()
 }
 
+/// Static backstop: one model may not take a majority of unified memory,
+/// regardless of what is free right now. Shared by [`memory_guard`] (the full
+/// guard) and the pre-eviction check in `load_into`, which refuses an
+/// over-cap model *before* it evicts the resident model's prefix cache.
+fn static_cap_exceeded(
+    target_footprint: u64,
+    total_memory: u64,
+) -> bool {
+    total_memory > 0 && target_footprint as f64 > total_memory as f64 * 0.60
+}
+
 /// Deterministic OOM guard. `target_footprint` is what the model will
 /// allocate; `available_memory` is what the OS reports free *after* any
 /// previous model has already been dropped (a swap frees first, then loads,
@@ -148,7 +159,7 @@ pub fn memory_guard(
         return Ok(());
     }
     // Static backstop: one model may not take a majority of unified memory.
-    if target_footprint as f64 > total_memory as f64 * 0.60 {
+    if static_cap_exceeded(target_footprint, total_memory) {
         return Err(format!(
             "model {target} needs ~{:.1} GB, over 60% of the {:.1} GB unified memory; refusing to load",
             target_footprint as f64 / 1e9,
@@ -373,6 +384,22 @@ impl SessionManager {
 
         // A different model is resident: drop it first so its GPU memory is
         // freed before the new model allocates. They never coexist.
+        //
+        // But only if the new model can *ever* fit — a model that
+        // deterministically exceeds the 60% static cap will be refused by
+        // `memory_guard` regardless of what we free, so evicting the
+        // resident model first would just discard its prefix cache for a
+        // request that is going to fail anyway.
+        let static_cap_exceeded = static_cap_exceeded(slot.footprint, self.total_memory)
+            && !matches!(slot.model.accessibility, ModelAccessibility::Remote { .. });
+        if static_cap_exceeded {
+            return Err(AcquireError::MemoryGuard(format!(
+                "model {} needs ~{:.1} GB, over 60% of the {:.1} GB unified memory; refusing to load",
+                slot.identifier(),
+                slot.footprint as f64 / 1e9,
+                self.total_memory as f64 / 1e9,
+            )));
+        }
         if current.as_ref().is_some_and(|current| current.model.identifier != slot.identifier()) {
             tracing::info!("swapping model: {} -> {}", current.as_ref().unwrap().identifier(), slot.identifier());
             *session_slot = None;
@@ -653,6 +680,25 @@ mod tests {
     #[test]
     fn filesystem_bytes_missing_path_is_zero() {
         assert_eq!(filesystem_bytes("/definitely/not/a/real/path"), 0);
+    }
+
+    #[test]
+    fn static_cap_exceeded_refuses_a_majority_of_memory() {
+        // 40 GB footprint on a 64 GB machine is >60% (40 > 38.4).
+        assert!(static_cap_exceeded(40 * 1024 * 1024 * 1024, 64 * 1024 * 1024 * 1024));
+        // 30 GB on 64 GB is under the cap (30 < 38.4).
+        assert!(!static_cap_exceeded(30 * 1024 * 1024 * 1024, 64 * 1024 * 1024 * 1024));
+        // No total memory known: cannot reason, so do not refuse.
+        assert!(!static_cap_exceeded(40 * 1024 * 1024 * 1024, 0));
+    }
+
+    #[test]
+    fn memory_guard_static_cap_refuses_before_dynamic() {
+        // Even with plenty of free memory, a model over 60% of total is
+        // refused on the static cap alone.
+        let error = memory_guard("big", 40 * 1024 * 1024 * 1024, 60 * 1024 * 1024 * 1024, 64 * 1024 * 1024 * 1024)
+            .expect_err("over-cap model must be refused");
+        assert!(error.contains("over 60%"), "unexpected message: {error}");
     }
 
     /// A minimal `Model` carrying only the fields `matches_sources` reads.
