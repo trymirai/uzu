@@ -36,6 +36,7 @@ pub mod rope;
 pub struct Attention<B: Backend> {
     head_dim: u32,
     num_q_heads: u32,
+    num_groups: u32,
     num_kv_heads: Option<u32>,
     ring_capacity: Option<u32>,
     max_rope_length: Option<u32>,
@@ -195,6 +196,7 @@ impl<B: Backend> Attention<B> {
             Self {
                 head_dim,
                 num_q_heads,
+                num_groups,
                 num_kv_heads,
                 ring_capacity,
                 max_rope_length,

@@ -76,7 +76,8 @@ impl AttentionKernel for AttentionMetalKernel {
             .then(|| gemm_grouped::AttentionGemmGrouped::new(&config));
         let int8 = int8::Int8Attention::is_supported(&config, context)
             .then(|| int8::Int8Attention::new(context, &config))
-            .transpose()?;
+            .transpose()
+            .map_err(AttentionMetalError::Backend)?;
         let gemm = gemm::AttentionGemm::is_supported(&config).then(|| gemm::AttentionGemm::new(&config));
         let fallback = fallback::AttentionFallback::is_supported(&config)
             .then(|| fallback::AttentionFallback::new(&config, context))
@@ -112,9 +113,13 @@ impl AttentionKernel for AttentionMetalKernel {
             impl BufferRef<Backend = Metal>,
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
+    ) -> Result<<Metal as Backend>::ScratchBuffer, AttentionMetalError> {
         let command_buffer = &mut *command_buffer.debug_group("attention core");
-        self.int8.as_ref().expect("INT8 KV unsupported for this attention config").encode(arguments, command_buffer)
+        self.int8
+            .as_ref()
+            .expect("INT8 KV unsupported for this attention config")
+            .encode(arguments, command_buffer)
+            .map_err(AttentionMetalError::Backend)
     }
 
     fn encode(

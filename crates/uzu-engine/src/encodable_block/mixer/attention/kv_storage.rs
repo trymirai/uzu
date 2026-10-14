@@ -1,13 +1,13 @@
 use std::any::Any;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, Buffer, BufferMut, CommandBuffer, Context, DeviceCapabilities, Kernels, SparseBuffer,
-        gpu_types::Copy,
+        gpu_types::kv_cache_update::Copy,
         kernel::{KVCacheUpdateInt8Kernel, KVCacheUpdateKernel, KVFormat, kv_layout::Int8KVLayout},
     },
     data_type::DataType,
+    utils::size_for_shape::size_for_shape,
 };
 
 pub enum KVStorage<B: Backend> {
@@ -52,9 +52,9 @@ impl<B: Backend> KVStorage<B> {
     ) -> Result<Self, B::Error> {
         Ok(match format {
             KVFormat::Int8 => {
-                let layout = Int8KVLayout::new(head_dim, num_kv_heads, max_elements);
+                let layout = Int8KVLayout::new(head_dim, num_kv_heads);
                 let scales = || -> Result<Box<dyn Buffer<Backend = B>>, B::Error> {
-                    let bytes = layout.scale_tile_bytes(layout.padded_capacity);
+                    let bytes = layout.scale_tile_bytes(max_elements);
                     if context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
                         return create_kv_buffer(context, bytes);
                     }
@@ -63,8 +63,8 @@ impl<B: Backend> KVStorage<B> {
                     Ok(Box::new(buffer))
                 };
                 let kv = Int8KV {
-                    k_codes: create_kv_buffer(context, layout.code_bytes())?,
-                    v_codes: create_kv_buffer(context, layout.code_bytes())?,
+                    k_codes: create_kv_buffer(context, layout.tile_bytes(max_elements))?,
+                    v_codes: create_kv_buffer(context, layout.tile_bytes(max_elements))?,
                     k_scales: scales()?,
                     v_scales: scales()?,
                     layout,

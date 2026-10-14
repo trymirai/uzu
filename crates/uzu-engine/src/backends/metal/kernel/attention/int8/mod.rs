@@ -2,15 +2,16 @@ use super::gemm_grouped::policy::{MAX_TRIE_SUFFIX, int8_splits};
 use crate::{
     backends::{
         common::{
-            Backend, BufferRef, CommandBufferEncoding,
-            gpu_types::{AttnParams, kv_layout},
-            kernel::{AttentionKernelConfig, Int8AttentionArguments},
+            Backend, BufferMut, BufferRef, CommandBufferEncoding,
+            gpu_types::kv_layout,
+            kernel::{AttentionKernelConfig, Int8AttentionArguments, kv_layout::packed_query_rows},
         },
         metal::{
             Metal,
             command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
+            gpu_types::attention::AttnParams,
             kernel::{AttentionGemmGroupedCombineMetalKernel, AttentionGemmGroupedInt8MetalKernel},
         },
     },
@@ -97,10 +98,10 @@ impl Int8Attention {
         let prefix_len = cache.prefix_len();
         let kv_length = prefix_len + suffix_length;
 
-        let padded = suffix_length.next_multiple_of(kv_layout::QUERY_TILE_ROWS);
         let gqa_factor = num_q_heads / num_groups;
-        let grouped_rows = gqa_factor * padded;
-        let m_tiles = grouped_rows.div_ceil(BLOCK_ROWS);
+        let grouped_rows = gqa_factor * suffix_length;
+        let packed_rows = packed_query_rows(gqa_factor, suffix_length);
+        let m_tiles = packed_rows.div_ceil(BLOCK_ROWS);
         let split_rows = num_groups * m_tiles * BLOCK_ROWS;
         let num_splits = int8_splits(split_rows, head_dim, suffix_length, kv_length);
 
@@ -109,13 +110,13 @@ impl Int8Attention {
         let mut partial_maxs = command_buffer.allocate_scratch_for_shape(&[rows], DataType::F32)?;
         let mut partial_sums = command_buffer.allocate_scratch_for_shape(&[rows], DataType::F32)?;
         let params = AttnParams {
-            q_strides: [num_q_heads * padded * head_dim, padded * head_dim, head_dim],
+            q_strides: [num_groups * packed_rows * head_dim, packed_rows * head_dim, head_dim],
             k_strides: [0, head_dim, num_groups * head_dim],
             v_strides: [0, head_dim, num_groups * head_dim],
             o_strides: [suffix_length * num_q_heads * head_dim, head_dim, num_q_heads * head_dim],
             gqa_factor,
             scale: config.scale.unwrap_or(1.0 / (head_dim as f32).sqrt()),
-            q_len: padded,
+            q_len: suffix_length,
             k_len: kv_length,
             q_off: prefix_len,
             nk: kv_length.div_ceil(kv_layout::TILE_KEYS),
@@ -126,7 +127,12 @@ impl Int8Attention {
         let mask_free_splits = (0..num_splits)
             .take_while(|split| ((split + 1) * params.nk / num_splits) * kv_layout::TILE_KEYS <= params.q_off)
             .count() as u32;
-        let mut dispatch = |kernel: &AttentionGemmGroupedInt8MetalKernel, trie, split_base, split_count| {
+        let mut dispatch = |kernel: &AttentionGemmGroupedInt8MetalKernel, trie, split_base: u32, split_count: u32| {
+            // Partials are [split][row], so each dispatch writes its own subrange and needs no barrier.
+            let split_byte_range = |row_bytes: usize| {
+                let split_bytes = split_rows as usize * row_bytes;
+                split_base as usize * split_bytes..(split_base + split_count) as usize * split_bytes
+            };
             kernel.encode(
                 query_codes,
                 query_scales,
@@ -135,9 +141,9 @@ impl Int8Attention {
                 &*kv.v_codes,
                 &*kv.v_scales,
                 trie,
-                &mut partials,
-                &mut partial_maxs,
-                &mut partial_sums,
+                (&mut partials).subrange_mut(split_byte_range(head_dim as usize * DataType::BF16.size_in_bytes())),
+                (&mut partial_maxs).subrange_mut(split_byte_range(DataType::F32.size_in_bytes())),
+                (&mut partial_sums).subrange_mut(split_byte_range(DataType::F32.size_in_bytes())),
                 params,
                 m_tiles,
                 1,

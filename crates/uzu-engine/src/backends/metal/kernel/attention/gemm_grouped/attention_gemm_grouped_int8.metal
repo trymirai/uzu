@@ -37,6 +37,10 @@ struct AttentionGemmGroupedInt8Layout {
   UZU_CONST int CODE_FLOATS = Grouped::SIMDGROUPS * Grouped::SCORE_TILE_ELEMENTS / int(sizeof(float));
   UZU_CONST int STAT_FLOATS = Grouped::SIMDGROUPS * Grouped::TILE_ROWS * 2;
   UZU_CONST int SLOT_FLOATS = CODE_FLOATS + STAT_FLOATS + Grouped::SIMDGROUPS * Grouped::TILE_ROWS;
+
+  // Q stage: one uint4 per lane and fragment pair.
+  UZU_CONST int QUERY_FRAGMENT_PAIRS = int(HEAD_DIM) / (2 * Grouped::TILE_ROWS);
+  UZU_CONST int QUERY_STAGE_VECTORS = Grouped::BANDS * QUERY_FRAGMENT_PAIRS * METAL_SIMD_SIZE;
 };
 
 // Lane-local (column, row) index of the element at fragment coordinate (row, col); constant once unrolled.
@@ -75,6 +79,7 @@ KERNEL(AttentionGemmGroupedInt8)(
     const uint32_t num_kv_heads SPECIALIZE,
     threadgroup float p_exchange[2 * AttentionGemmGroupedInt8Layout<HEAD_DIM>::SLOT_FLOATS],
     threadgroup ulong trie_masks[32],
+    threadgroup uint4 query_stage[AttentionGemmGroupedInt8Layout<HEAD_DIM>::QUERY_STAGE_VECTORS],
     const ThreadContext thread_context,
     const uint tile_split_flat GROUPS(m_tiles * split_count),
     const uint kv_head_idx GROUPS(num_kv_heads),
@@ -94,8 +99,7 @@ KERNEL(AttentionGemmGroupedInt8)(
   constexpr int PANEL_COL_FRAGMENTS = 2;
   constexpr int PANELS = VALUE_COL_FRAGMENTS / PANEL_COL_FRAGMENTS;
   constexpr int ROWS_PER_LANE = Ops::THREAD_ELEMENT_ROWS;
-  constexpr int kv_layout::LANE_COLS = KEY_COL_FRAGMENTS * Ops::THREAD_ELEMENT_COLS;
-  constexpr uint kv_layout::LANE_BYTES = 16;
+  constexpr int LANE_COLS = KEY_COL_FRAGMENTS * Ops::THREAD_ELEMENT_COLS;
   constexpr uint STAT_ROWS = uint(Layout::TILE_ROWS / ROWS_PER_LANE);
 
   static_assert(KEY_COL_FRAGMENTS == 2 && VALUE_COL_FRAGMENTS == 4, "32 keys x 64 channels per simdgroup");
@@ -131,17 +135,14 @@ KERNEL(AttentionGemmGroupedInt8)(
 
   const uint grouped_rows = params.gqa_factor * params.q_len;
   const uint row_base = m_tile_idx * uint(Layout::BLOCK_ROWS) + uint(band) * uint(Layout::TILE_ROWS);
-  const uint head_in_group = row_base / params.q_len;
-  const uint query_base = row_base - head_in_group * params.q_len;
-  const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
 
   const uint query_row_stride = params.q_strides[2];
   const uint key_row_stride = params.k_strides[2];
   const uint value_row_stride = params.v_strides[2];
   const uint slice_offset = uint(slice) * uint(Layout::SLICE_COLS);
 
-  q_codes += size_t(batch_idx) * params.q_strides[0] + size_t(q_head_idx) * params.q_strides[1] +
-             size_t(query_base) * query_row_stride;
+  const size_t query_group_base = size_t(batch_idx) * params.q_strides[0] + size_t(kv_head_idx) * params.q_strides[1];
+  q_codes += query_group_base + size_t(row_base) * query_row_stride;
   k_codes +=
       size_t(batch_idx) * params.k_strides[0] + uint(kv_layout::TILE_KEYS) * size_t(kv_head_idx) * params.k_strides[1];
   k_codes += int(lane) * kv_layout::LANE_BYTES;
@@ -151,22 +152,20 @@ KERNEL(AttentionGemmGroupedInt8)(
        size_t(kv_layout::TILE_KEYS) * (size_t(kv_head_idx) * params.v_strides[1] + slice_offset)) +
       size_t(lane) * kv_layout::LANE_BYTES;
 
-  const uint valid_query_rows = row_base < grouped_rows ? grouped_rows - row_base : 0u;
-  // An empty band rewinds to the batch's first query row so the loads stay in bounds.
+  // Padding rows reread the last real row.
   int query_offset_row0 = 0;
   int query_offset_row1 = 0;
   {
     const short2 query_position = QueryCodeFragment::get_position(lane);
-    const uint last_valid_row = valid_query_rows > 0u ? min(valid_query_rows, uint(Layout::TILE_ROWS)) - 1u : 0u;
-    query_offset_row0 = int(min(uint(query_position.y), last_valid_row) * query_row_stride) + int(query_position.x);
-    query_offset_row1 =
-        int(min(uint(query_position.y) + uint(Ops::THREAD_ELEMENT_ROW_STRIDE), last_valid_row) * query_row_stride) +
+    const uint last_query_row = grouped_rows - 1u;
+    query_offset_row0 =
+        (int(min(row_base + uint(query_position.y), last_query_row)) - int(row_base)) * int(query_row_stride) +
         int(query_position.x);
-    if (valid_query_rows == 0u) {
-      const int rewind = -int(q_head_idx * params.q_strides[1] + query_base * query_row_stride);
-      query_offset_row0 = rewind + int(query_position.x);
-      query_offset_row1 = rewind + int(query_position.x);
-    }
+    query_offset_row1 =
+        (int(min(row_base + uint(query_position.y) + uint(Ops::THREAD_ELEMENT_ROW_STRIDE), last_query_row)) -
+         int(row_base)) *
+            int(query_row_stride) +
+        int(query_position.x);
   }
 
   OutputFragment output;
@@ -246,8 +245,8 @@ KERNEL(AttentionGemmGroupedInt8)(
   AccumType query_row_scale[ROWS_PER_LANE];
   METAL_PRAGMA_UNROLL
   for (int r = 0; r < ROWS_PER_LANE; ++r) {
-    const uint query = min(query_base + band_rows[r], params.q_len - 1u);
-    query_row_scale[r] = AccumType(q_scales[size_t(q_head_idx) * params.q_len + query]) * score_scale;
+    const uint query_row = min(row_base + band_rows[r], grouped_rows - 1u);
+    query_row_scale[r] = AccumType(q_scales[query_group_base / HEAD_DIM + query_row]) * score_scale;
   }
 
   threadgroup uchar* code_slot = reinterpret_cast<threadgroup uchar*>(p_exchange);
@@ -263,6 +262,32 @@ KERNEL(AttentionGemmGroupedInt8)(
       uint(band_first_simdgroup) * STAT_ROWS + uint(score_position.y);
   uint slot_offset = 0u;
   uint scale_offset = uint(slice) * scale_block_stride + uint(score_position.x);
+
+  // Each slice simdgroup stages its depth slice of the band's Q.
+  threadgroup uint4* const staged_query =
+      query_stage + uint(band) * uint(Int8Layout::QUERY_FRAGMENT_PAIRS * METAL_SIMD_SIZE) + uint(lane);
+  {
+    constexpr int SLICE_PAIRS = HEAD_DIM_FRAGMENTS_PER_SLICE / 2;
+    METAL_PRAGMA_UNROLL
+    for (int slice_pair = 0; slice_pair < SLICE_PAIRS; ++slice_pair) {
+      const int query_fragment = (int(slice) * SLICE_PAIRS + slice_pair) * 2;
+      uint4 query_pair;
+      query_pair.x = *reinterpret_cast<const device uint*>(
+          q_codes + (query_offset_row0 + query_fragment * int(Ops::FRAGMENT_ROWS))
+      );
+      query_pair.y = *reinterpret_cast<const device uint*>(
+          q_codes + (query_offset_row1 + query_fragment * int(Ops::FRAGMENT_ROWS))
+      );
+      query_pair.z = *reinterpret_cast<const device uint*>(
+          q_codes + (query_offset_row0 + (query_fragment + 1) * int(Ops::FRAGMENT_ROWS))
+      );
+      query_pair.w = *reinterpret_cast<const device uint*>(
+          q_codes + (query_offset_row1 + (query_fragment + 1) * int(Ops::FRAGMENT_ROWS))
+      );
+      staged_query[(int(slice) * SLICE_PAIRS + slice_pair) * METAL_SIMD_SIZE] = query_pair;
+    }
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // Per step, each slice simdgroup scores one key block and publishes P; then all accumulate P x V.
   uint kb = 0;
@@ -293,19 +318,10 @@ KERNEL(AttentionGemmGroupedInt8)(
           using QueryPairFragment = OperandFragment<int8_t, 1, 2, Ops>;
           using KeyPairFragment = OperandFragment<int8_t, 2, 2, Ops, ReadTranspose>;
           QueryPairFragment query_fragments;
+          const uint4 query_pair = staged_query[(depth_fragment / 2) * METAL_SIMD_SIZE];
+          query_fragments.fragment_data[0] = as_type<QueryVector>(query_pair.xy);
+          query_fragments.fragment_data[1] = as_type<QueryVector>(query_pair.zw);
           KeyPairFragment key_fragments;
-          METAL_PRAGMA_UNROLL
-          for (int pair_index = 0; pair_index < 2; ++pair_index) {
-            const int query_fragment = depth_fragment + pair_index;
-            query_fragments.fragment_data[pair_index] = as_type<QueryVector>(uint2(
-                *reinterpret_cast<const device uint*>(
-                    q_codes + (query_offset_row0 + query_fragment * int(Ops::FRAGMENT_ROWS))
-                ),
-                *reinterpret_cast<const device uint*>(
-                    q_codes + (query_offset_row1 + query_fragment * int(Ops::FRAGMENT_ROWS))
-                )
-            ));
-          }
           METAL_PRAGMA_UNROLL
           for (int pair_index = 0; pair_index < 2; ++pair_index) {
             const uint4 key_chunk = *reinterpret_cast<const device uint4*>(
@@ -320,9 +336,9 @@ KERNEL(AttentionGemmGroupedInt8)(
       }
 
       // Dequantize scores to log2 units.
-      AccumType key_scale[kv_layout::LANE_COLS];
-      AccumType log2_value_scale[kv_layout::LANE_COLS];
-      AccumType inverse_value_scale[kv_layout::LANE_COLS];
+      AccumType key_scale[LANE_COLS];
+      AccumType log2_value_scale[LANE_COLS];
+      AccumType inverse_value_scale[LANE_COLS];
       {
         const device T* key_scale_lane = key_scales_base + scale_offset;
         const device T* value_scale_lane = value_scales_base + scale_offset;
@@ -503,7 +519,8 @@ KERNEL(AttentionGemmGroupedInt8)(
   // Normalize and store the split partials.
   output.map_rows(output_bias, [](AccumType value, AccumType bias) UZU_ALWAYS_INLINE { return value - bias; });
 
-  const uint tile_index = ((batch_idx * num_kv_heads + kv_head_idx) * m_tiles + m_tile_idx) * num_splits + split_idx;
+  const uint tile_index =
+      (((split_idx - split_base) * batch_count + batch_idx) * num_kv_heads + kv_head_idx) * m_tiles + m_tile_idx;
   const size_t partial_offset =
       size_t(tile_index) * Layout::BLOCK_ROWS * HEAD_DIM + size_t(band) * Layout::TILE_ROWS * HEAD_DIM + slice_offset;
   AccumType inverse_split_sum[ROWS_PER_LANE];

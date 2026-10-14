@@ -9,7 +9,7 @@ use crate::{
             gpu_types::trie::TrieNode as GpuTrieNode,
             kernel::{
                 AttentionArguments, AttentionKernel, AttentionPrepareInt8Kernel, Int8AttentionArguments, KVFormat,
-                SigmoidGateKernel, kv_layout::QUERY_TILE_ROWS,
+                SigmoidGateKernel, kv_layout::packed_query_rows,
             },
         },
         cpu::Cpu,
@@ -395,6 +395,7 @@ fn int8_attention_matches_cpu() {
     const HUGE: u16 = 0x7F7F;
     for (q_heads, suffix, prefix, use_trie, reader, poison) in [
         (24, 1, 1024, false, false, NAN),
+        (24, 4, 1024, false, false, 0),
         (24, 16, 48, false, false, 0),
         (16, 16, 1024, false, false, DENORMAL),
         (24, 80, 16, false, false, HUGE),
@@ -437,10 +438,10 @@ fn int8_attention_matches_cpu() {
         submit_command_buffer(fill);
         let mut step = |rows: &[bf16], prefix: usize, trie: Option<&[GpuTrieNode]>, append_kv: bool| {
             let suffix = rows.len() / stride;
-            let padded = suffix.next_multiple_of(QUERY_TILE_ROWS as usize);
+            let packed_rows = packed_query_rows((q_heads / 4) as u32, suffix as u32) as usize;
             let prepare = Prepare::new(&metal, DataType::BF16, DataType::F32, 256, false, true, 4, append_kv).unwrap();
-            let mut query_codes = create_buffer::<Metal, i8>(&metal, q_heads * padded * 256);
-            let mut query_scales = create_buffer::<Metal, bf16>(&metal, q_heads * padded);
+            let mut query_codes = create_buffer::<Metal, i8>(&metal, 4 * packed_rows * 256);
+            let mut query_scales = create_buffer::<Metal, bf16>(&metal, 4 * packed_rows);
             let mut command_buffer = metal.create_command_buffer(None, None).unwrap();
             let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
             prepare.encode(
@@ -459,7 +460,7 @@ fn int8_attention_matches_cpu() {
                 prefix as u32,
                 stride as u32,
                 suffix as u32,
-                padded as u32,
+                packed_rows as u32,
                 &mut command_buffer,
             );
             let arguments = Int8AttentionArguments {

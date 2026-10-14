@@ -300,7 +300,7 @@ KERNEL(AttentionGemmGrouped)(
   }
 
   if (split_kv) {
-    const uint tile_index = ((batch_idx * kv_heads + kv_head_idx) * m_tiles + m_tile_idx) * num_splits + split_idx;
+    const uint tile_index = ((split_idx * batch_count + batch_idx) * kv_heads + kv_head_idx) * m_tiles + m_tile_idx;
     device float* partial_tile = partials + size_t(tile_index) * BLOCK_ROWS * BD + size_t(band) * TILE_ROWS * BD;
     output.store(lane, partial_tile + slice_offset, int(BD));
 
@@ -385,7 +385,8 @@ KERNEL(AttentionGemmGroupedCombine)(
 ) {
   const uint m_tile_idx = grouped_row_idx / block_rows;
   const uint row_in_tile = grouped_row_idx - m_tile_idx * block_rows;
-  const uint tile_base = ((batch_idx * kv_heads + kv_head_idx) * m_tiles + m_tile_idx) * num_splits;
+  const uint tile_base = (batch_idx * kv_heads + kv_head_idx) * m_tiles + m_tile_idx;
+  const uint split_rows = batch_count * kv_heads * m_tiles * block_rows;
   const uint head_in_group = grouped_row_idx / params.q_len;
   const uint query_position = grouped_row_idx - head_in_group * params.q_len;
   if (quantized && query_position >= real_rows) {
@@ -399,27 +400,61 @@ KERNEL(AttentionGemmGroupedCombine)(
   const device bfloat* row_means = static_cast<const device bfloat*>(partials) + size_t(tile_base) * block_rows * BD +
                                    size_t(row_in_tile) * BD + column;
 
-  float global_max = -INFINITY;
-  for (uint s = 0; s < num_splits; ++s) {
-    if (row_sums[s * block_rows] > 0.0f) {
-      global_max = metal::max(global_max, row_maxs[s * block_rows]);
-    }
-  }
   float numerator = 0.0f;
   float denominator = 0.0f;
-  if (global_max > -INFINITY) {
-    for (uint s = 0; s < num_splits; ++s) {
-      const float split_sum = row_sums[s * block_rows];
-      if (split_sum <= 0.0f) {
-        continue;
+  if (quantized) {
+    constexpr uint SIMDGROUPS = BD / METAL_SIMD_SIZE;
+    float global_max = -INFINITY;
+    for (uint s = column; s < num_splits; s += BD) {
+      if (row_sums[s * split_rows] > 0.0f) {
+        global_max = metal::max(global_max, row_maxs[s * split_rows]);
       }
-      const float rescale = fast::exp2(row_maxs[s * block_rows] - global_max);
-      const float weight = rescale * split_sum;
-      denominator += weight;
-      if (quantized) {
-        numerator += weight * float(row_means[size_t(s) * block_rows * BD]);
-      } else {
-        numerator += rescale * row_partials[size_t(s) * block_rows * BD];
+    }
+    global_max = simd_max(global_max);
+    if (column % METAL_SIMD_SIZE == 0) {
+      rotation[column / METAL_SIMD_SIZE] = global_max;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    global_max = rotation[0];
+    for (uint simdgroup = 1; simdgroup < SIMDGROUPS; ++simdgroup) {
+      global_max = metal::max(global_max, rotation[simdgroup]);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    threadgroup float* split_weights = rotation;
+    for (uint chunk_start = 0; chunk_start < num_splits; chunk_start += BD) {
+      const uint split = chunk_start + column;
+      float weight = 0.0f;
+      if (split < num_splits && row_sums[split * split_rows] > 0.0f) {
+        weight = fast::exp2(row_maxs[split * split_rows] - global_max) * row_sums[split * split_rows];
+      }
+      split_weights[column] = weight;
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      const uint chunk_size = metal::min(num_splits - chunk_start, uint(BD));
+      _Pragma("clang loop unroll_count(8)") for (uint i = 0; i < chunk_size; ++i) {
+        const float split_weight = split_weights[i];
+        denominator += split_weight;
+        numerator += split_weight * float(row_means[size_t(chunk_start + i) * split_rows * BD]);
+      }
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+  } else {
+    float global_max = -INFINITY;
+    for (uint s = 0; s < num_splits; ++s) {
+      if (row_sums[s * split_rows] > 0.0f) {
+        global_max = metal::max(global_max, row_maxs[s * split_rows]);
+      }
+    }
+    if (global_max > -INFINITY) {
+      for (uint s = 0; s < num_splits; ++s) {
+        const float split_sum = row_sums[s * split_rows];
+        if (split_sum <= 0.0f) {
+          continue;
+        }
+        const float rescale = fast::exp2(row_maxs[s * split_rows] - global_max);
+        const float weight = rescale * split_sum;
+        denominator += weight;
+        numerator += rescale * row_partials[size_t(s) * split_rows * BD];
       }
     }
   }
