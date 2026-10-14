@@ -4,10 +4,11 @@ use uzu_engine_macros::uzu_test;
 use super::*;
 use crate::backends::{
     common::{
+        Context,
         gpu_types::gemm::{GemmBLayout, GemmDTransform},
-        kernel::matmul::QuantParamsLayout,
+        kernel::matmul::{MatmulKernel, QuantParamsLayout},
     },
-    metal::kernel::matmul::MatmulMetalKernel,
+    metal::{context::MetalContext, kernel::matmul::MatmulMetalKernel},
 };
 
 fn shape(
@@ -199,4 +200,40 @@ fn gemv_gemm_route_boundaries_are_preserved() {
     gathered.gathered = true;
     let plan = problem(gathered, DataType::BF16).select_plan();
     assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16, DataType::BF16,));
+}
+
+#[uzu_test]
+fn int8_activations_require_mxu_tiled_weights() {
+    let context = MetalContext::new().expect("Metal context");
+    if !context.supports_mxu {
+        return;
+    }
+    let kernel =
+        MatmulMetalKernel::new(&context, DataType::BF16, DataType::BF16, DataType::BF16).expect("matmul kernel");
+    for (n, k, bits, expected) in [
+        (96, 256, 4, true),
+        (72, 256, 4, false),
+        (64, 40960, 4, true),
+        (64, 41088, 4, false),
+        (64, 20480, 8, true),
+        (64, 20608, 8, false),
+    ] {
+        let shape = MatmulShape {
+            b_prologue: if bits == 4 {
+                GemmBPrologueKind::ScaleZeroPointDequant
+            } else {
+                GemmBPrologueKind::ScaleSymmetricDequant
+            },
+            b_bits: Some(bits),
+            signed_codes: bits == 8,
+            a_full_precision: false,
+            params_layout: Some(QuantParamsLayout::GroupOutput),
+            ..quant(shape(16, n, k))
+        };
+        assert_eq!(
+            kernel.select_activation_quantization(&shape, &context).is_some(),
+            expected,
+            "n={n} k={k} bits={bits}"
+        );
+    }
 }

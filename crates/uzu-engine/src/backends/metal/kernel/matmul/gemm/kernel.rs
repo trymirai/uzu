@@ -99,6 +99,14 @@ impl GemmKernel {
         }
     }
 
+    pub fn mxu_tiled_words_per_thread(
+        k: u32,
+        bits: u32,
+    ) -> Option<u32> {
+        let words_per_thread = (k * bits / 32).div_ceil(32);
+        [32, 72, 160].into_iter().find(|&variant| variant >= words_per_thread)
+    }
+
     pub fn prepare_gemm_b_layout(
         weights: &mut <Metal as Backend>::GlobalBuffer,
         rows: u32,
@@ -107,11 +115,7 @@ impl GemmKernel {
         context: &MetalContext,
     ) -> Result<(), MetalError> {
         let row_words = k * bits / 32;
-        let words_per_thread = row_words.div_ceil(32);
-        let variant = [32, 72, 160]
-            .into_iter()
-            .find(|&variant| variant >= words_per_thread)
-            .expect("a 32-row block must fit one threadgroup");
+        let variant = Self::mxu_tiled_words_per_thread(k, bits).expect("int8 eligibility admits only tileable weights");
         let mut command_buffer = context.create_command_buffer(Some("prepare GEMM B layout"), None)?;
         GemmPrepareBLayoutMetalKernel::new(context, bits, variant)?.encode(
             weights,

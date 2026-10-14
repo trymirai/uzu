@@ -195,6 +195,8 @@ impl MatmulKernel for MatmulMetalKernel {
             || shape.b_leading_dimension.is_some()
             || !shape.k.is_multiple_of(ACTIVATION_SCALE_GROUP_SIZE)
             || !shape.k.is_multiple_of(weight_group_size)
+            || !shape.n.is_multiple_of(32)
+            || shape.b_bits.and_then(|bits| GemmKernel::mxu_tiled_words_per_thread(shape.k, bits)).is_none()
         {
             return None;
         }
