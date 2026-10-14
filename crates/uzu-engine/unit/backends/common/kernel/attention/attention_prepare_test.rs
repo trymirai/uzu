@@ -151,17 +151,18 @@ fn run_int8<B: Backend>() -> Int8Output {
     let layout = Int8KVLayout {
         head_dim: DIM as u32,
         num_kv_heads: 1,
-        padded_capacity: 64,
     };
+    let scale_count = 64 * layout.num_kv_heads as usize;
+    let code_bytes = scale_count * DIM;
     let rows: Vec<bf16> = (0..3 * DIM).map(|i| bf16::from_f32((i as f32 * 0.37).sin())).collect();
     let context = B::Context::new().unwrap();
     let qkvg = create_buffer_with_data::<B, bf16>(&context, &rows);
     let mut q_codes = create_buffer::<B, i8>(&context, DIM);
     let mut q_scales = create_buffer::<B, bf16>(&context, 1);
-    let mut k_codes = create_buffer::<B, i8>(&context, layout.code_bytes());
-    let mut v_codes = create_buffer::<B, u8>(&context, layout.code_bytes());
-    let mut k_scales = create_buffer::<B, bf16>(&context, layout.scale_count());
-    let mut v_scales = create_buffer::<B, bf16>(&context, layout.scale_count());
+    let mut k_codes = create_buffer::<B, i8>(&context, code_bytes);
+    let mut v_codes = create_buffer::<B, u8>(&context, code_bytes);
+    let mut k_scales = create_buffer::<B, bf16>(&context, scale_count);
+    let mut v_scales = create_buffer::<B, bf16>(&context, scale_count);
     let kernel = <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
         &context,
         DataType::BF16,

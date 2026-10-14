@@ -250,11 +250,13 @@ fn test_int8_copy() {
 }
 
 fn test_int8_copy_for<B: Backend>() {
-    let layout = Int8KVLayout::new(256, 2, 64);
-    let k_codes: Vec<i8> = (0..layout.code_bytes()).map(|i| ((i * 37) ^ (i >> 8)) as i8).collect();
-    let v_codes: Vec<u8> = (0..layout.code_bytes()).map(|i| ((i * 19) ^ (i >> 7)) as u8).collect();
-    let k_scales: Vec<bf16> = (0..layout.scale_count()).map(|i| bf16::from_f32(i as f32 + 1.0)).collect();
-    let v_scales: Vec<bf16> = (0..layout.scale_count()).map(|i| bf16::from_f32(i as f32 + 129.0)).collect();
+    let layout = Int8KVLayout::new(256, 2);
+    let scale_count = 64 * layout.num_kv_heads as usize;
+    let code_bytes = scale_count * layout.head_dim as usize;
+    let k_codes: Vec<i8> = (0..code_bytes).map(|i| ((i * 37) ^ (i >> 8)) as i8).collect();
+    let v_codes: Vec<u8> = (0..code_bytes).map(|i| ((i * 19) ^ (i >> 7)) as u8).collect();
+    let k_scales: Vec<bf16> = (0..scale_count).map(|i| bf16::from_f32(i as f32 + 1.0)).collect();
+    let v_scales: Vec<bf16> = (0..scale_count).map(|i| bf16::from_f32(i as f32 + 129.0)).collect();
     let copies = [Copy {
         source: 40,
         destination: 5,

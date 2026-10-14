@@ -7,28 +7,17 @@ const SLICE_DIMS: u32 = 64;
 pub struct Int8KVLayout {
     pub head_dim: u32,
     pub num_kv_heads: u32,
-    pub padded_capacity: u32,
 }
 
 impl Int8KVLayout {
     pub fn new(
         head_dim: u32,
         num_kv_heads: u32,
-        capacity: u32,
     ) -> Self {
         Self {
             head_dim,
             num_kv_heads,
-            padded_capacity: capacity.next_multiple_of(TILE_KEYS),
         }
-    }
-
-    pub fn scale_count(&self) -> usize {
-        (self.num_kv_heads * self.padded_capacity) as usize
-    }
-
-    pub fn code_bytes(&self) -> usize {
-        self.scale_count() * self.head_dim as usize
     }
 
     /// Scales are `[key tile][kv head][TILE_KEYS keys]`, so a prefix of keys is a byte prefix.

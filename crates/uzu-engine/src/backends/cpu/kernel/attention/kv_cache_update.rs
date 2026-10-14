@@ -38,7 +38,7 @@ pub fn kv_cache_update_int8(
     #[specialize] head_dim: u32,
     #[specialize] num_kv_heads: u32,
 ) {
-    let layout = Int8KVLayout::new(head_dim, num_kv_heads, 0);
+    let layout = Int8KVLayout::new(head_dim, num_kv_heads);
     for copy in copies.iter().take(copy_count as usize) {
         for head in 0..num_kv_heads {
             for channel in 0..head_dim {

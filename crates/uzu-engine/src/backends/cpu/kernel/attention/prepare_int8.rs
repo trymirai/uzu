@@ -37,7 +37,7 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
     #[specialize] num_kv_heads: u32,
 ) {
     let head_dim = HEAD_DIM as usize;
-    let layout = Int8KVLayout::new(HEAD_DIM, num_kv_heads, 0);
+    let layout = Int8KVLayout::new(HEAD_DIM, num_kv_heads);
     let mut values = vec![0.0f32; head_dim];
     for head in 0..num_q_heads + 2 * num_kv_heads {
         let is_query = head < num_q_heads;
