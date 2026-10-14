@@ -19,7 +19,7 @@ thiserror.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
 regex.workspace = true
-libc.workspace = true
+chrono.workspace = true
 indexmap.workspace = true
 tracing.workspace = true
 
