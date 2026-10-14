@@ -22,8 +22,6 @@ pub struct BF16KV<B: Backend> {
     pub data_type: DataType,
 }
 
-/// K/V codes and scales are sparse where supported. A fresh sparse page is not zeroed: the attention kernel reads a
-/// scale below `MIN_VALUE_SCALE` (zero, negative, NaN, denormal) as never written.
 pub struct Int8KV<B: Backend> {
     pub layout: Int8KVLayout,
     pub k_codes: Box<dyn Buffer<Backend = B>>,

@@ -238,7 +238,6 @@ KERNEL(AttentionGemmGroupedInt8)(
 
   const AccumType score_scale = AccumType(params.scale) * AccumType(M_LOG2E_F);
 
-  // Scales are [key block][kv head][32 keys]: one block's 32 scales are contiguous, blocks are num_kv_heads apart.
   const uint scale_block_stride = uint(kv_layout::TILE_KEYS) * num_kv_heads;
   const size_t split_scale_offset = kv_layout::Int8KVShape{HEAD_DIM, num_kv_heads}.scale_index(first_key, kv_head_idx);
   const device T* key_scales_base = k_scales + split_scale_offset;
@@ -334,8 +333,7 @@ KERNEL(AttentionGemmGroupedInt8)(
             const int lane_col = fragment_col * Ops::THREAD_ELEMENT_COLS + col;
             key_scale[lane_col] = AccumType(key_scale_lane[fragment_col * Ops::FRAGMENT_COLS + col]);
             const float v_scale = float(value_scale_lane[fragment_col * Ops::FRAGMENT_COLS + col]);
-            // A never-written slot holds garbage: below MIN_VALUE_SCALE (0, negative, NaN, denormal) gives (0, 0), so
-            // 1 / scale stays finite and masked keys contribute exactly 0.
+            // A never-written slot gives (0, 0), so masked keys stay finite.
             const bool written = v_scale >= kv_layout::MIN_VALUE_SCALE;
             log2_value_scale[lane_col] = written ? metal::precise::log2(v_scale) : 0.0f;
             inverse_value_scale[lane_col] = written ? metal::precise::divide(1.0f, v_scale) : 0.0f;

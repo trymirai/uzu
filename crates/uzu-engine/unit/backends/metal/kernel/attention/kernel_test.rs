@@ -387,8 +387,7 @@ fn int8_attention_matches_cpu() {
     let (metal, cpu) = (<Metal as Backend>::Context::new().unwrap(), <Cpu as Backend>::Context::new().unwrap());
     type Prepare = <<Metal as Backend>::Kernels as Kernels>::AttentionPrepareInt8Kernel;
     let trie: [GpuTrieNode; 3] = bytemuck::cast([0u32, 2, 0, 1, 1, 1, 2, 2, 1]); // (start, end, height) per token
-    // (q heads: GQA 6 or 4 over 4 KV heads, suffix, prefix, branching trie, KV-sharing reader, bf16 pattern that fills
-    // the scales before any write: the never-written tail of the last tile must not matter)
+    // (q heads: GQA 6 or 4 over 4 KV heads, suffix, prefix, branching trie, KV-sharing reader, unwritten scale pattern)
     const NAN: u16 = 0xFFFF;
     const DENORMAL: u16 = 0x0001; // 1 / scale overflows to inf
     const INFINITY: u16 = 0x7F80;
