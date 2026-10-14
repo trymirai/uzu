@@ -29,7 +29,7 @@ use uzu::{
 use crate::{
     common::thinking::ThinkingSupport,
     server::{
-        AcquireError, ServerState, SessionManager, TurnUsageGuard,
+        AcquireError, LivenessNewline, LivenessSseComment, ServerState, SessionManager, TurnUsageGuard,
         chat_tool_calls::{
             OaiTool, OaiToolCall, ToolCallStreamer, ToolParameterTypes, backfill_tool_result_names, choose_tools,
             coerce_tool_call, insert_tools_message, oai_tool_call, parse_parameter_text, reply_tool_calls,
@@ -822,7 +822,12 @@ async fn run_blocking(
     let model = slot.identifier().to_string();
     // load_into writes the freshly loaded session straight into the shared
     // slot, which we hold via `guard` (a MutexGuard that derefs to the slot).
-    if let Err(error) = manager.load_into(&slot, &mut guard).await {
+    // A cold load can take minutes (download + Metal warm-up) while this
+    // request holds the only session lock, so keep the connection alive and
+    // abort the load if the client disconnects — otherwise a dead task would
+    // hold the lock and stall every other model until the load finishes.
+    let mut load_liveness = LivenessNewline::new(sender.clone(), std::time::Duration::from_secs(3));
+    if let Err(error) = manager.load_into(&slot, &mut guard, &mut load_liveness).await {
         log.fail(&error.to_string());
         send_error_body(&sender, &oai_error_body(Status::InternalServerError, "backend_error", &error.to_string()));
         return;
@@ -968,7 +973,11 @@ async fn run_stream(
         },
     };
     let model = slot.identifier().to_string();
-    if let Err(error) = manager.load_into(&slot, &mut guard).await {
+    // Same rationale as `run_blocking`: race the cold load against
+    // connection liveness so a disconnected client releases the session lock
+    // instead of holding it until the (minutes-long) download finishes.
+    let mut load_liveness = LivenessSseComment::new(sender.clone(), std::time::Duration::from_secs(3));
+    if let Err(error) = manager.load_into(&slot, &mut guard, &mut load_liveness).await {
         log.fail(&error.to_string());
         let body = oai_error_body(Status::InternalServerError, "backend_error", &error.to_string());
         let _ = sender.send(Event::data(serde_json::to_string(&body).unwrap_or_default()));

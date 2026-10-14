@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use rocket::response::stream::Event;
 use tokio::sync::Mutex;
 use uzu::{
     engine::Engine,
@@ -179,6 +180,8 @@ pub enum AcquireError {
     MemoryGuard(String),
     /// The engine failed to download or load the model.
     Engine(String),
+    /// The client went away while the model was still loading.
+    ClientDisconnected,
 }
 
 impl std::fmt::Display for AcquireError {
@@ -195,6 +198,85 @@ impl std::fmt::Display for AcquireError {
             },
             AcquireError::MemoryGuard(message) => write!(f, "memory guard: {message}"),
             AcquireError::Engine(message) => write!(f, "engine error: {message}"),
+            AcquireError::ClientDisconnected => write!(f, "client disconnected while loading model"),
+        }
+    }
+}
+
+/// A connection that can be polled *while a model is loading* — emitting a
+/// keep-alive and reporting when the client disconnects. Lets
+/// [`SessionManager::load_into`] race a (potentially multi-second) load
+/// against liveness, so a client that goes away releases the session lock
+/// early instead of a dead task holding it until the load finishes and
+/// stalling every other model.
+pub trait LoadLiveness {
+    /// Wait for the next keep-alive tick, emit it, and report whether the
+    /// connection is still alive. Returns `false` once the client has gone
+    /// away (or the interval is exhausted).
+    fn tick(&mut self) -> impl std::future::Future<Output = bool>;
+}
+
+/// Newline keep-alive over the raw response stream.
+pub struct LivenessNewline {
+    keepalive: tokio::time::Interval,
+    sender: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+}
+
+impl LivenessNewline {
+    pub fn new(
+        sender: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+        interval: std::time::Duration,
+    ) -> Self {
+        Self {
+            keepalive: tokio::time::interval(interval),
+            sender,
+        }
+    }
+}
+
+impl LoadLiveness for LivenessNewline {
+    fn tick(&mut self) -> impl std::future::Future<Output = bool> {
+        let LivenessNewline {
+            keepalive,
+            sender,
+        } = self;
+        async move {
+            keepalive.tick().await;
+            sender.send(b"\n".to_vec()).is_ok()
+        }
+    }
+}
+
+/// SSE keep-alive over the chat-completions stream: a comment event (valid
+/// anywhere in an event stream, ignored by OpenAI-compatible clients) — the
+/// `text/event-stream` wire format does not accept the raw leading whitespace
+/// that `LivenessNewline` emits.
+pub struct LivenessSseComment {
+    keepalive: tokio::time::Interval,
+    sender: tokio::sync::mpsc::UnboundedSender<Event>,
+}
+
+impl LivenessSseComment {
+    pub fn new(
+        sender: tokio::sync::mpsc::UnboundedSender<Event>,
+        interval: std::time::Duration,
+    ) -> Self {
+        Self {
+            keepalive: tokio::time::interval(interval),
+            sender,
+        }
+    }
+}
+
+impl LoadLiveness for LivenessSseComment {
+    fn tick(&mut self) -> impl std::future::Future<Output = bool> {
+        let LivenessSseComment {
+            keepalive,
+            sender,
+        } = self;
+        async move {
+            keepalive.tick().await;
+            sender.send(Event::comment("keepalive")).is_ok()
         }
     }
 }
@@ -274,13 +356,14 @@ impl SessionManager {
         &self,
         slot: &ModelSlot,
         session_slot: &mut Option<ChatSession>,
+        liveness: &mut impl LoadLiveness,
     ) -> Result<ChatSession, AcquireError> {
         // A turn has started: the idle timer must not fire for this turn's
         // duration (a turn can outlive the idle timeout itself).
         *self.last_used.lock().unwrap() = Instant::now();
 
         // Fast path: the requested model is already the resident one and a
-        // live session is present — nothing to do.
+        // live session is present — nothing to load.
         let current = self.resident.lock().await.clone();
         if current.as_ref().is_some_and(|current| current.model.identifier == slot.identifier())
             && session_slot.is_some()
@@ -296,17 +379,28 @@ impl SessionManager {
             *self.resident.lock().await = None;
         }
 
+        // Remote models allocate no local checkpoint — the backend only opens
+        // an API client — so the local-memory OOM guard does not apply to
+        // them and is skipped outright (it would otherwise refuse on the
+        // fixed 2 GB margin even though nothing is loaded locally).
+        if matches!(slot.model.accessibility, ModelAccessibility::Remote { .. }) {
+            return load_model(self, slot, session_slot, liveness).await;
+        }
+
         // OOM guard using live available memory. After a swap the OS may need
-        // a moment to reclaim the just-freed pages, so retry briefly.
+        // a moment to reclaim the just-freed pages, so retry briefly. The wait
+        // is short (200 ms steps) relative to the keepalive interval, so no
+        // liveness race is needed here — the load itself is where the client
+        // can disconnect.
         let mut guard_error =
             match memory_guard(slot.identifier(), slot.footprint, available_memory(), self.total_memory) {
-                Ok(()) => return load_model(self, slot, session_slot).await,
+                Ok(()) => return load_model(self, slot, session_slot, liveness).await,
                 Err(error) => error,
             };
         for _ in 0..10 {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             match memory_guard(slot.identifier(), slot.footprint, available_memory(), self.total_memory) {
-                Ok(()) => return load_model(self, slot, session_slot).await,
+                Ok(()) => return load_model(self, slot, session_slot, liveness).await,
                 Err(error) => guard_error = error,
             }
         }
@@ -374,41 +468,58 @@ impl Drop for TurnUsageGuard<'_> {
 }
 
 /// Whether two models describe the same source. Local (filesystem) models
-/// are identified by directory name alone, so for those the on-disk path is
-/// the source of truth and two checkpoints that merely share a name do NOT
-/// match; everything else falls back to the (unique) registry identifier.
-/// Used to ensure `resolve` only serves a *configured* slot, never a
-/// same-named model that lives elsewhere.
+/// are identified by directory name alone, so two checkpoints merely sharing
+/// a name do NOT match, and a local checkpoint never matches a
+/// registry/remote model (or vice versa) that happens to share its name —
+/// only the on-disk path decides. Non-local models have identifiers that are
+/// unique within their registry, so an identifier match is sufficient (this
+/// also lets shorthand aliases like `llama:7b` resolve to a configured
+/// `meta:llama:7b`).
 fn matches_sources(
     a: &Model,
     b: &Model,
 ) -> bool {
-    match (&a.accessibility, &b.accessibility) {
-        (
+    let is_local = |model: &Model| {
+        matches!(
+            model.accessibility,
             ModelAccessibility::OnDevice {
-                source: ModelSource::Filesystem {
-                    path: a,
+                source: ModelSource::Filesystem { .. }
+            }
+        )
+    };
+    if is_local(a) || is_local(b) {
+        match (&a.accessibility, &b.accessibility) {
+            (
+                ModelAccessibility::OnDevice {
+                    source: ModelSource::Filesystem {
+                        path: a,
+                    },
                 },
-            },
-            ModelAccessibility::OnDevice {
-                source: ModelSource::Filesystem {
-                    path: b,
+                ModelAccessibility::OnDevice {
+                    source: ModelSource::Filesystem {
+                        path: b,
+                    },
                 },
-            },
-        ) => paths_equal(a, b),
-        _ => a.identifier == b.identifier,
+            ) => paths_equal(a, b),
+            // A local checkpoint and a registry/remote model that share a
+            // name are distinct models.
+            _ => false,
+        }
+    } else {
+        a.identifier == b.identifier
     }
 }
 
-/// Path comparison for filesystem models, tolerant of how a client spells the
-/// same location (symlinks like `/tmp` vs `/private/tmp`, `.`/`..` segments).
+/// Whether two filesystem model paths name the same location, following the
+/// platform's case semantics. A `canonicalize` round-trip resolves symlinks
+/// (`/tmp` vs `/private/tmp`) and `.`/`..` segments while preserving the
+/// on-disk case of the final component — so on a case-sensitive filesystem
+/// `/models/Foo` and `/models/foo` are distinct, while on a case-insensitive
+/// one (macOS APFS) they canonicalize to the same bytes and compare equal.
 fn paths_equal(
     a: &str,
     b: &str,
 ) -> bool {
-    if a.eq_ignore_ascii_case(b) {
-        return true;
-    }
     let resolved = |path: &str| std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
     resolved(a) == resolved(b)
 }
@@ -416,21 +527,46 @@ fn paths_equal(
 /// Downloads (if missing) and loads `slot` into memory, installing the
 /// session into `session_slot`. Called by `load_into` after the OOM guard
 /// passes, so callers are guaranteed it fits.
+///
+/// The (potentially multi-second) download + load is raced against
+/// [`LoadLiveness`]: if the client goes away, the in-flight load is dropped
+/// (the engine keeps no per-model state, and downloads are resumable) and the
+/// session lock is released instead of being held until the load finishes and
+/// stalling every other model.
 async fn load_model(
     manager: &SessionManager,
     slot: &ModelSlot,
     session_slot: &mut Option<ChatSession>,
+    liveness: &mut impl LoadLiveness,
 ) -> Result<ChatSession, AcquireError> {
     tracing::info!("loading model into memory: {} (~{:.1} GB)", slot.identifier(), slot.footprint as f64 / 1e9);
-    let downloader =
-        manager.engine.download(&slot.model).await.map_err(|error| AcquireError::Engine(error.to_string()))?;
-    while let Some(_update) = downloader.next().await {}
+    // The load future captures only `manager` and `slot` — NOT
+    // `session_slot` or `liveness` — so it can be raced against liveness
+    // without a double borrow, and dropped on disconnect without leaving the
+    // session slot half-written.
+    let mut load = Box::pin(async move {
+        let downloader =
+            manager.engine.download(&slot.model).await.map_err(|error| AcquireError::Engine(error.to_string()))?;
+        while downloader.next().await.is_some() {}
 
-    let session = manager
-        .engine
-        .chat(slot.model.clone(), ChatConfig::default())
-        .await
-        .map_err(|error| AcquireError::Engine(error.to_string()))?;
+        manager
+            .engine
+            .chat(slot.model.clone(), ChatConfig::default())
+            .await
+            .map_err(|error| AcquireError::Engine(error.to_string()))
+    });
+    let session = loop {
+        tokio::select! {
+            result = &mut load => break result?,
+            alive = liveness.tick() => {
+                if !alive {
+                    return Err(AcquireError::ClientDisconnected);
+                }
+                // Client is still connected; keep racing until the load
+                // finishes or the client goes away.
+            },
+        }
+    };
 
     *manager.resident.lock().await = Some(slot.clone());
     *manager.last_used.lock().unwrap() = Instant::now();
@@ -446,6 +582,8 @@ pub struct ServerState {
 
 #[cfg(test)]
 mod tests {
+    use shoji::types::{basic::Metadata, model::ModelRegistry};
+
     use super::*;
 
     #[test]
@@ -515,5 +653,129 @@ mod tests {
     #[test]
     fn filesystem_bytes_missing_path_is_zero() {
         assert_eq!(filesystem_bytes("/definitely/not/a/real/path"), 0);
+    }
+
+    /// A minimal `Model` carrying only the fields `matches_sources` reads.
+    fn test_model(
+        identifier: &str,
+        accessibility: ModelAccessibility,
+    ) -> Model {
+        let registry = ModelRegistry {
+            identifier: "mirai".to_string(),
+            metadata: Metadata {
+                identifier: "mirai".to_string(),
+                name: "Mirai".to_string(),
+                description: None,
+                icons: vec![],
+            },
+        };
+        Model {
+            identifier: identifier.to_string(),
+            registry,
+            backends: vec![],
+            family: None,
+            properties: None,
+            quantization: None,
+            specializations: vec![],
+            accessibility,
+            encoding: None,
+        }
+    }
+
+    fn fs_model(
+        identifier: &str,
+        path: &str,
+    ) -> Model {
+        test_model(
+            identifier,
+            ModelAccessibility::OnDevice {
+                source: ModelSource::Filesystem {
+                    path: path.to_string(),
+                },
+            },
+        )
+    }
+
+    fn registry_model(identifier: &str) -> Model {
+        test_model(
+            identifier,
+            ModelAccessibility::OnDevice {
+                source: ModelSource::Registry {
+                    toolchain_version: "test".to_string(),
+                    repository: None,
+                    source_repository: None,
+                    files: vec![],
+                },
+            },
+        )
+    }
+
+    fn remote_model(identifier: &str) -> Model {
+        test_model(
+            identifier,
+            ModelAccessibility::Remote {
+                repository: None,
+            },
+        )
+    }
+
+    /// A local checkpoint and a registry/remote model sharing its name are
+    /// distinct models. Only two filesystem slots pointing at the same on-disk
+    /// location ever match — an identifier alone never substitutes a
+    /// checkpoint for a registry/remote model that happens to share a name.
+    #[test]
+    fn matches_sources_rejects_mixed_sources() {
+        let fs = fs_model("llama:7b", "/tmp/a");
+        let reg = registry_model("llama:7b");
+        let rem = remote_model("llama:7b");
+
+        // filesystem vs registry: reject, even when the identifier matches
+        assert!(!matches_sources(&fs, &reg));
+        assert!(!matches_sources(&reg, &fs));
+        // filesystem vs remote: reject, even when the identifier matches
+        assert!(!matches_sources(&fs, &rem));
+        assert!(!matches_sources(&rem, &fs));
+    }
+
+    /// Two registry slots match on identifier alone (the local registry
+    /// resolves shorthands like `llama:7b` → `meta:llama:7b`, so an
+    /// identifier-only comparison is how shorthand resolution lands on the
+    /// configured slot).
+    #[test]
+    fn matches_sources_registry_by_identifier() {
+        assert!(matches_sources(&registry_model("a"), &registry_model("a")));
+        assert!(!matches_sources(&registry_model("a"), &registry_model("b")));
+    }
+
+    /// Two remote slots match on identifier alone (remote IDs are unique).
+    #[test]
+    fn matches_sources_remote_by_identifier() {
+        assert!(matches_sources(&remote_model("openai:gpt-4"), &remote_model("openai:gpt-4")));
+        assert!(!matches_sources(&remote_model("openai:gpt-4"), &remote_model("openai:gpt-5")));
+    }
+
+    /// Filesystem slots compare on the on-disk path, not the identifier —
+    /// so two checkpoints that merely share a name do NOT match.
+    #[test]
+    fn matches_sources_filesystem_by_path() {
+        assert!(matches_sources(&fs_model("llama", "/tmp/llama-a"), &fs_model("llama", "/tmp/llama-a")));
+        assert!(!matches_sources(&fs_model("llama", "/tmp/llama-a"), &fs_model("llama", "/tmp/llama-b")));
+    }
+
+    /// Symlinks to the same model directory must compare equal (e.g. `/tmp`
+    /// vs `/private/tmp` on macOS).
+    #[cfg(unix)]
+    #[test]
+    fn paths_equal_follows_symlinks() {
+        let real = std::env::temp_dir().join(format!("uzu-pe-real-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&real);
+        std::fs::create_dir_all(&real).unwrap();
+        let link = std::env::temp_dir().join(format!("uzu-pe-link-{}", std::process::id()));
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert!(paths_equal(real.to_str().unwrap(), link.to_str().unwrap()));
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_dir_all(&real);
     }
 }
