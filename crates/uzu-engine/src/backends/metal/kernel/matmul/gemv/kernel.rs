@@ -5,7 +5,7 @@ use crate::{
         common::{
             CommandBufferEncoding,
             gpu_types::{
-                gemm::{GemmBPrologueKind, GemmDTransform},
+                gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
                 hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             },
             kernel::matmul::{MatmulB, MatmulShape},
@@ -43,6 +43,7 @@ pub struct GemvSpecialization {
     group_lanes: u32,
     gathered: bool,
     signed_codes: bool,
+    gemm_b_layout: GemmBLayout,
     full_tile: bool,
 }
 
@@ -71,6 +72,12 @@ impl GemvSpecialization {
                 shape.k,
                 bf16_io,
             )
+            .map(|tile| match shape.gemm_b_layout {
+                GemmBLayout::MxuTiled if tile.output_row_tile() < 16 => {
+                    policy::GemvTile::quantized_output_tile(8, 16, 1, 32, tile.group_lanes)
+                },
+                _ => tile,
+            })
         } else {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
@@ -137,6 +144,7 @@ impl GemvSpecialization {
             group_lanes: tile.group_lanes,
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
+            gemm_b_layout: shape.gemm_b_layout,
             full_tile: full_tile(shape, tile),
         };
         Some(specialization)
@@ -175,6 +183,7 @@ impl GemvSpecialization {
             self.output_transform,
             self.gathered,
             self.signed_codes,
+            self.gemm_b_layout,
             self.full_tile,
         )
     }

@@ -35,7 +35,7 @@ struct QuantBSource {
     uint weight_row_indices[Tile::ROWS_PER_LANE];
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
-      const uint output_row = tile.row0 + R;
+      const uint output_row = params.output_row(tile.row0 + R);
       weight_row_indices[R] =
           params.gathered ? ops.gather_indices[tile.input_row * params.out_vec_size + output_row] : output_row;
     });
@@ -50,7 +50,7 @@ struct QuantBSource {
       Metadata metadata;
       metadata.load(position.group, weight_row_indices, ops, params);
       for (position.slice = 0; position.slice < Slice::SLICES_PER_LANE; position.slice++) {
-        current.load_weights(position, weights, weight_row_indices, row_stride, group_offset);
+        current.load_weights(position, weights, weight_row_indices, row_stride, group_offset, params);
         current.accumulate(result, position, ops, params, tile, group_offset, batch_remaining, metadata);
       }
       position.group += Tile::GROUPS_PER_STEP;

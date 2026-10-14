@@ -94,7 +94,7 @@ impl MatmulMetalKernel {
             && input_data_type == DataType::BF16
             && output_data_type == DataType::BF16;
         let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, apple_gpu_family);
-        if shape.b_is_trellis || shape.gemm_b_layout == GemmBLayout::MxuTiled {
+        if shape.b_is_trellis {
             return MatmulDispatch::Gemm(problem.select_plan());
         }
         if let Some(route) = qmv::route(device_name, apple_gpu_family, supports_mxu, shape, all_bf16) {
@@ -209,16 +209,14 @@ impl MatmulKernel for MatmulMetalKernel {
         bf16_shape: &MatmulShape,
         context: &MetalContext,
     ) -> ActivationFormat {
-        if bf16_shape.gemm_b_layout == GemmBLayout::MxuTiled {
-            return ActivationFormat::Int8;
-        }
         if bf16_shape.params_layout != Some(QuantParamsLayout::GroupOutput)
             || !supports_integer_right_operand(bf16_shape)
-            || !bf16_shape.n.is_multiple_of(32)
-            || !bf16_shape.k.is_multiple_of(32)
             || matches!(self.select_dispatch(bf16_shape, context), MatmulDispatch::Gemv(_))
         {
             return ActivationFormat::Bf16;
+        }
+        if bf16_shape.gemm_b_layout == GemmBLayout::MxuTiled {
+            return ActivationFormat::Int8;
         }
 
         let a8_shape = MatmulShape {
