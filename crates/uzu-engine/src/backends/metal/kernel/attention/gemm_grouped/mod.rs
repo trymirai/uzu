@@ -4,7 +4,6 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding,
-            gpu_types::AttnParams,
             kernel::{AttentionArguments, AttentionKernelConfig},
         },
         metal::{
@@ -12,6 +11,7 @@ use crate::{
             command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
+            gpu_types::attention::AttnParams,
             kernel::{AttentionGemmGroupedCombineMetalKernel, AttentionGemmGroupedMetalKernel},
         },
     },
@@ -291,7 +291,7 @@ impl AttentionGemmGrouped {
         let suffix_length = arguments.suffix_length;
         assert!(arguments.cache.ring_params().is_none(), "ring KV cache is unsupported");
         assert!(arguments.sinks.is_none(), "attention sinks are unsupported");
-        if let Some(rope) = arguments.rope {
+        if let Some(rope) = arguments.rope_cache {
             assert!(rope.dim > 0 && rope.dim.is_multiple_of(2) && rope.dim <= self.head_dim, "invalid RoPE dimension");
         }
 
@@ -299,7 +299,7 @@ impl AttentionGemmGrouped {
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], DataType::BF16)?;
         let gpu_core_count = command_buffer.context().gpu_core_count;
-        let core = self.get_or_create(command_buffer.context(), mask, arguments.rope.is_some())?;
+        let core = self.get_or_create(command_buffer.context(), mask, arguments.rope_cache.is_some())?;
         let num_splits = choose_splits(
             SplitGeometry {
                 head_dim: core.head_dim,
@@ -323,7 +323,7 @@ impl AttentionGemmGrouped {
             kv_length,
             1,
             num_splits,
-            arguments.rope,
+            arguments.rope_cache,
             arguments.cache.context_length(),
             command_buffer,
         )?;

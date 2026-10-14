@@ -20,8 +20,9 @@ use crate::backends::{
         CommandBufferExecutable, CommandBufferPending, Context, allocator::bump::BumpAllocator,
     },
     metal::{
-        Metal, MetalContext,
+        Metal,
         buffer::MetalBufferExt,
+        context::MetalContext,
         error::MetalError,
         kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
     },

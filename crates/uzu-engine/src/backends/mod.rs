@@ -1,11 +1,11 @@
-pub mod common;
+pub(crate) mod common;
 
 #[cfg(backend = "cpu")]
-pub mod cpu;
+pub(crate) mod cpu;
 #[cfg(backend = "metal")]
-pub mod metal;
+pub(crate) mod metal;
 
-use crate::backends::common::Backend;
+pub use common::Backend;
 
 pub trait BackendSelection {
     type Output;

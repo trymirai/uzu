@@ -1,13 +1,13 @@
 #![cfg(backend = "metal")]
 
 use super::{gemm, single_pass, two_pass};
-use crate::{array::ArrayElement, backends::common::kernel::AttentionKernelConfig};
+use crate::{backends::common::kernel::AttentionKernelConfig, data_type::DataTypeRepr};
 
 mod gemm_test;
 mod kernel_test;
 mod rope_test;
 
-fn default_attention_config<T: ArrayElement>(
+fn default_attention_config<T: DataTypeRepr>(
     head_dim: usize,
     num_q_heads: usize,
     num_groups: usize,

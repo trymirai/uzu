@@ -2,12 +2,12 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(BuildTreeOut)]
 #[variants(QKT, f32, bf16)]
 #[variants(OutputT, f32, bf16)]
-pub fn build_tree_out<QKT: ArrayElement + Float, OutputT: ArrayElement + Float>(
+pub fn build_tree_out<QKT: DataTypeRepr + Float, OutputT: DataTypeRepr + Float>(
     q: *const QKT,
     prefix: *const f32,
     qkd: *const f32,

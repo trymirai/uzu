@@ -2,11 +2,11 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
 
 #[kernel(ConvTreeScan)]
 #[variants(T, f32, bf16)]
-pub fn conv_tree_scan<T: ArrayElement + Float>(
+pub fn conv_tree_scan<T: DataTypeRepr + Float>(
     in_proj: *const T,
     conv_weight: *const f32,
     #[optional(has_bias)] bias: Option<*const f32>,

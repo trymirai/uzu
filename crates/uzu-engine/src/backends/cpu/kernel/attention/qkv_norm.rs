@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(QKVNorm)]
 #[variants(InputT, f32, bf16)]
@@ -10,10 +10,10 @@ use crate::array::ArrayElement;
 #[variants(OutputT, f32, bf16)]
 #[variants(AccumT, f32)]
 pub fn qkv_norm<
-    InputT: ArrayElement + Float,
-    ScaleT: ArrayElement + Float,
-    OutputT: ArrayElement + Float,
-    AccumT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    ScaleT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float,
+    AccumT: DataTypeRepr + Float,
 >(
     #[optional(!in_place)] qkvg_input: Option<*const InputT>,
     #[optional(has_scales)] scales: Option<*const ScaleT>,

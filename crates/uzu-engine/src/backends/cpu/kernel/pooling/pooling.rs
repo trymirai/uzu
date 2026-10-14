@@ -2,11 +2,11 @@ use half::{bf16, f16};
 use num_traits::{Float, ToPrimitive};
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(PoolingMean)]
 #[variants(T, f32, f16, bf16)]
-pub fn pooling_mean<T: ArrayElement + Float>(
+pub fn pooling_mean<T: DataTypeRepr + Float>(
     input: *const T,
     output: *mut T,
     seq_len: u32,

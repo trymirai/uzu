@@ -11,7 +11,7 @@ use crate::{
                 delta_net_chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
             },
         },
-        metal::{Metal, MetalContext, command_buffer::MetalCommandBufferEncoding},
+        metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext},
     },
     data_type::DataType,
 };

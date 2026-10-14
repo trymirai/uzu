@@ -166,7 +166,7 @@ KERNEL(AttentionGemm)(
     if (ragged_q) {
       q_src = q_src.bounded(params.q_rem - simdgroup_row_base, FRAGMENT_ROWS);
     }
-    
+
     const InputType query_scale = static_cast<InputType>(params.scale * M_LOG2E_F);
     METAL_PRAGMA_UNROLL
     for (short dd = 0; dd < HEAD_DIM_FRAGMENTS; dd++) {
@@ -190,7 +190,7 @@ KERNEL(AttentionGemm)(
               rope_dim
           );
         }
-        
+
         return v * query_scale;
       });
     }
@@ -224,7 +224,7 @@ KERNEL(AttentionGemm)(
       } else {
         query_loader.load_unsafe();
       }
-      query_loader.apply_inplace_op(TransformScale<T>(static_cast<T>(params.scale * M_LOG2E_F)));
+      query_loader.apply_inplace_op(::TransformScale<T>(static_cast<T>(params.scale * M_LOG2E_F)));
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }

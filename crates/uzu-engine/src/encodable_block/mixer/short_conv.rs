@@ -2,7 +2,6 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferPending, Context, Kernels,
@@ -14,12 +13,12 @@ use crate::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
         mixer::{
-            Mixer, MixerState,
+            Mixer, MixerEncodeError, MixerState,
             attention::rope::{PrecalculatedRoPE, RopeCache},
         },
     },
-    parameters::{ParameterLoaderError, ParameterTree},
-    utils::maybe_mut::MaybeMut,
+    safetensors::{ParameterLoaderError, ParameterTree},
+    utils::{maybe_mut::MaybeMut, size_for_shape::size_for_shape},
 };
 
 enum ShortConvStateSuffixStatus<B: Backend> {
@@ -121,31 +120,30 @@ impl<B: Backend> ShortConv<B> {
 
         let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             hidden_dim,
-            [hidden_dim * 3],
-            false,
-            context,
+            hidden_dim * 3,
             data_type,
+            false,
             &parameter_tree.subtree("in_projection"),
+            context,
         )?;
 
         let out_projection = <dyn Linear<B>>::new(
             hidden_dim,
-            [hidden_dim],
-            false,
-            context,
+            hidden_dim,
             data_type,
+            false,
             &parameter_tree.subtree("out_projection"),
+            context,
         )?;
 
         let conv_tree = parameter_tree.subtree("conv");
 
         let conv_data_type = DataType::F32;
-        let conv_weight =
-            conv_tree.leaf("weights")?.validate(&[hidden_dim, kernel_size], conv_data_type)?.read_buffer()?;
+        let conv_weight = conv_tree.read_buffer("weights", &[hidden_dim, kernel_size], conv_data_type)?;
 
         let has_bias = config.conv_config.has_biases;
         let conv_bias = if has_bias {
-            Some(conv_tree.leaf("biases")?.validate(&[hidden_dim], conv_data_type)?.read_buffer()?)
+            Some(conv_tree.read_buffer("biases", &[hidden_dim], conv_data_type)?)
         } else {
             None
         };
@@ -248,8 +246,8 @@ impl<B: Backend> ShortConv<B> {
     fn encode_trie_conv(
         &self,
         in_projected: impl BufferRef<Backend = B>,
-        batch_dim: u32,
         token_parents: impl BufferRef<Backend = B>,
+        batch_dim: u32,
         state: &mut ShortConvState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
@@ -311,7 +309,9 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
+        let command_buffer = &mut *command_buffer.debug_group("short conv");
+
         assert!(precalculated_rope.is_none(), "unexpected rope for short conv mixer");
         assert!(rope_cache.is_none(), "unexpected rope cache for short conv mixer");
 
@@ -329,18 +329,21 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
 
         let conv_output = if batch_dim.full_accept() {
             let conv_output = if batch_dim.size() == 1 {
-                self.encode_decode_conv(&in_projected, state, command_buffer)?
+                self.encode_decode_conv(&in_projected, state, command_buffer).map_err(MixerEncodeError::Backend)?
             } else {
-                self.encode_prefill_conv(&in_projected, batch_dim.size(), state, command_buffer)?
+                self.encode_prefill_conv(&in_projected, batch_dim.size(), state, command_buffer)
+                    .map_err(MixerEncodeError::Backend)?
             };
             state.suffix_state = Some(ShortConvStateSuffixStatus::Flat {
                 suffix_length: batch_dim.size(),
             });
             conv_output
         } else {
-            let token_parents = command_buffer.allocate_constant_from_slice(batch_dim.parents())?;
-            let (conv_output, conv_states) =
-                self.encode_trie_conv(&in_projected, batch_dim.size(), &token_parents, state, command_buffer)?;
+            let token_parents =
+                command_buffer.allocate_constant_from_slice(batch_dim.parents()).map_err(MixerEncodeError::Backend)?;
+            let (conv_output, conv_states) = self
+                .encode_trie_conv(&in_projected, &token_parents, batch_dim.size(), state, command_buffer)
+                .map_err(MixerEncodeError::Backend)?;
             state.suffix_state = Some(ShortConvStateSuffixStatus::Trie {
                 conv_states,
             });

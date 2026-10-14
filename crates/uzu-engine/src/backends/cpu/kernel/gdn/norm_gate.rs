@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
 
 // In-place RMSNorm + SiLU gate for DeltaNet prefill output.
 //
@@ -15,7 +15,7 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 // and z is at in_proj[token * total_proj_dim + conv_dim + hv * head_v_dim + i]
 #[kernel(DeltaNetNormGate)]
 #[variants(T, f32, bf16)]
-pub fn delta_net_norm_gate<T: ArrayElement + Float>(
+pub fn delta_net_norm_gate<T: DataTypeRepr + Float>(
     in_out: *mut T,
     in_proj: *const T,
     norm_weight: *const f32,

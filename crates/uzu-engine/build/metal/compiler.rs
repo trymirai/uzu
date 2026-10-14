@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
     common::{
-        caching, codegen::write_tokens, compiler::Compiler, enum_paths::EnumPaths, gpu_types::GpuTypes,
+        caching, codegen::write_tokens, compiler::Compiler, gpu_type_paths::GpuTypePaths, gpu_types::GpuTypes,
         identifiers::KernelPath, kernel::Kernel,
     },
     debug_log,
@@ -144,7 +144,8 @@ impl MetalCompiler {
     fn compile(
         &self,
         source_path: PathBuf,
-        enum_paths: &EnumPaths,
+        gpu_type_paths: &GpuTypePaths,
+        cache_key: &[u8; blake3::OUT_LEN],
     ) -> anyhow::Result<(KernelPath, Box<[Kernel]>, bool)> {
         let source_path_relative =
             source_path.strip_prefix(&self.source_directory).context("source is not in src_dir")?;
@@ -166,7 +167,7 @@ impl MetalCompiler {
 
         if let Ok(cached_contents) = fs::read(&cached_file)
             && let Ok(cached) = serde_json::from_slice::<Cached>(&cached_contents)
-            && cached.cache_key == self.cache_key
+            && cached.cache_key == *cache_key
             && cached.dependency_hashes.iter().all(|(path, hash)| {
                 fs::read(path.as_ref()).map(|contents| blake3::hash(&contents).as_bytes() == hash).unwrap_or(false)
             })
@@ -205,7 +206,7 @@ impl MetalCompiler {
         let mut num_shards = 0;
         if !kernel_infos.is_empty() {
             let (kernel_wrappers, specialize_indices) =
-                wrappers(&kernel_infos, enum_paths).context("cannot generate kernel wrappers")?;
+                wrappers(&kernel_infos, gpu_type_paths).context("cannot generate kernel wrappers")?;
 
             num_variants = kernel_wrappers.iter().map(|kernel| kernel.variants.len()).sum();
             let footers = shard_footers(&kernel_wrappers);
@@ -267,7 +268,7 @@ impl MetalCompiler {
                     super::bindgen::bindgen(
                         kernel,
                         &specialize_indices,
-                        enum_paths,
+                        gpu_type_paths,
                         &library_const,
                         num_shards,
                         self.metallib_compressed,
@@ -290,7 +291,7 @@ impl MetalCompiler {
         let has_kernels = !kernel_infos.is_empty();
 
         let cached = Cached {
-            cache_key: self.cache_key,
+            cache_key: *cache_key,
             dependency_hashes,
             public_kernels: public_kernels.clone(),
             has_kernels,
@@ -315,9 +316,23 @@ impl Compiler for MetalCompiler {
     fn build(
         &self,
         gpu_types: &GpuTypes,
-        enum_paths: &EnumPaths,
+        gpu_type_paths: &GpuTypePaths,
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
-        gpu_type_gen(&self.gpu_types_directory, gpu_types).context("cannot generate shared gpu types")?;
+        let private_gpu_types = GpuTypes::scan("metal").context("cannot scan Metal-private gpu types")?;
+        let mut gpu_type_paths = gpu_type_paths.clone();
+        gpu_type_paths.extend(&private_gpu_types).context("cannot extend Metal GPU type paths")?;
+        gpu_type_gen(&self.gpu_types_directory, &[gpu_types, &private_gpu_types])
+            .context("cannot generate gpu types")?;
+
+        let cache_key = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&self.cache_key);
+            for path in gpu_type_paths.full_paths().sorted_unstable() {
+                hasher.update(path.as_bytes());
+                hasher.update(&[0]);
+            }
+            hasher.finalize().into()
+        };
 
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.source_directory)
             .into_iter()
@@ -329,7 +344,8 @@ impl Compiler for MetalCompiler {
         let compiled: Vec<(KernelPath, Box<[Kernel]>, bool)> = metal_sources
             .into_par_iter()
             .map(|path| {
-                self.compile(path.clone(), enum_paths).with_context(|| format!("cannot compile {}", path.display()))
+                self.compile(path.clone(), &gpu_type_paths, &cache_key)
+                    .with_context(|| format!("cannot compile {}", path.display()))
             })
             .collect::<anyhow::Result<_>>()?;
 

@@ -18,7 +18,7 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
     utils::maybe_mut::MaybeMut,
 };
 
@@ -94,6 +94,14 @@ pub enum TransformerNewError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
 }
 
+#[derive(Debug, Error)]
+pub enum TransformerEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Layer error: {0}")]
+    Layer(#[from] TransformerLayerError<B>),
+}
+
 pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
@@ -104,11 +112,11 @@ pub struct Transformer<B: Backend> {
 
 impl<B: Backend> Transformer<B> {
     pub fn new(
-        context: &B::Context,
-        output_norm_hadamard_factors: Option<B::GlobalBuffer>,
         data_type: DataType,
+        output_norm_hadamard_factors: Option<B::GlobalBuffer>,
         transformer_config: &TransformerConfig,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, TransformerNewError<B>> {
         let mut ropes: Vec<AnyRoPEConfig> = Vec::new();
 
@@ -128,14 +136,14 @@ impl<B: Backend> Transformer<B> {
                 });
 
                 let layer = TransformerLayer::new(
-                    context,
                     transformer_config.model_dim,
                     transformer_config.hidden_dim,
                     num_layers,
-                    layer_config,
                     layer_index,
-                    &layer_loader,
                     data_type,
+                    layer_config,
+                    &layer_loader,
+                    context,
                 )?;
 
                 Ok((layer, rope_config_position))
@@ -144,10 +152,10 @@ impl<B: Backend> Transformer<B> {
 
         let output_norm = Normalization::new(
             transformer_config.model_dim,
+            data_type,
             output_norm_hadamard_factors,
             ShortcutMode::Add,
             PostLayerScalar::None,
-            data_type,
             &transformer_config.output_norm_config,
             &parameter_tree.subtree("output_norm"),
             context,
@@ -247,9 +255,8 @@ impl<B: Backend> Transformer<B> {
         hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<TransformerEncodeOutput<B>, B::Error> {
+    ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
         // TODO agolokoz: handle state with state == None
-
         let mut hidden = input;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
@@ -257,7 +264,7 @@ impl<B: Backend> Transformer<B> {
             self.layers.len()
         };
 
-        let mut shortcut = command_buffer.allocate_scratch(hidden.size())?;
+        let mut shortcut = command_buffer.allocate_scratch(hidden.size()).map_err(TransformerEncodeError::Backend)?;
         let mut hidden_features =
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
@@ -267,11 +274,15 @@ impl<B: Backend> Transformer<B> {
         let mut precalculated_ropes: Vec<PrecalculatedRoPE<B>> = Vec::new();
         for (i, config) in self.ropes.iter().enumerate() {
             let (cosines, sines) = rope_values(config, &token_positions);
-            let precalculated = PrecalculatedRoPE::new(&cosines, &sines, *config.head_dim(), command_buffer)?;
+
+            let precalculated = PrecalculatedRoPE::new(&cosines, &sines, *config.head_dim(), command_buffer)
+                .map_err(TransformerEncodeError::Backend)?;
             precalculated_ropes.push(precalculated);
 
             if let Some(state) = &mut state {
-                state.ropes_cache[i].fill(&token_positions, &cosines, &sines)?;
+                state.ropes_cache[i]
+                    .fill(&token_positions, &cosines, &sines)
+                    .map_err(TransformerEncodeError::Backend)?;
             }
         }
 
@@ -310,7 +321,9 @@ impl<B: Backend> Transformer<B> {
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
                     if layer_index == layer.layer_index {
-                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), command_buffer)?;
+                        let feature = self
+                            .capture_residual(&shortcut, &hidden, batch_dim.size(), command_buffer)
+                            .map_err(TransformerEncodeError::Backend)?;
                         hidden_features[feature_index] = Some(feature);
                     }
                 }
@@ -339,13 +352,16 @@ impl<B: Backend> Transformer<B> {
             });
         };
 
-        let output_normalized = self.output_norm.encode(
-            &hidden,
-            output_range.start,
-            output_range.end - output_range.start,
-            Some(&mut shortcut),
-            command_buffer,
-        )?;
+        let output_normalized = self
+            .output_norm
+            .encode(
+                &hidden,
+                output_range.start,
+                output_range.end - output_range.start,
+                Some(&mut shortcut),
+                command_buffer,
+            )
+            .map_err(TransformerEncodeError::Backend)?;
 
         Ok(TransformerEncodeOutput {
             output: Some(output_normalized),

@@ -13,10 +13,10 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         embedding_table::{EmbeddingTable, EmbeddingTableError},
-        linear::{Linear, LinearBlockError},
+        linear::{Linear, LinearBlockError, LinearEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
 };
 
 #[derive(Debug, Error)]
@@ -27,6 +27,8 @@ pub enum PerLayerEmbeddingError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Linear error: {0}")]
     LinearError(#[from] LinearBlockError<B>),
+    #[error("Linear encoding error: {0}")]
+    LinearEncode(#[from] LinearEncodeError<B>),
     #[error("Embedding table error: {0}")]
     EmbeddingTable(#[from] EmbeddingTableError<B>),
 }
@@ -45,29 +47,29 @@ pub struct PerLayerEmbedding<B: Backend> {
 
 impl<B: Backend> PerLayerEmbedding<B> {
     pub fn new(
-        context: &B::Context,
-        config: &PLEModelConfig,
         model_dim: u32,
         data_type: DataType,
+        config: &PLEModelConfig,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
         let total_ple_dim = config.num_layers * config.ple_dim;
 
         let token_embedding = EmbeddingTable::load(
-            context,
-            &parameter_tree.subtree("token_embedding"),
             config.ple_vocab_size,
             total_ple_dim,
             data_type,
+            &parameter_tree.subtree("token_embedding"),
+            context,
         )?;
 
         let model_projection = <dyn Linear<B>>::new(
             model_dim,
-            [total_ple_dim],
-            false,
-            context,
+            total_ple_dim,
             data_type,
+            false,
             &parameter_tree.subtree("model_projection"),
+            context,
         )?;
 
         let scale_squared = config.model_projection_scale * config.model_projection_scale;
@@ -78,10 +80,10 @@ impl<B: Backend> PerLayerEmbedding<B> {
         };
         let projection_norm = Normalization::new(
             config.ple_dim,
+            data_type,
             None,
             ShortcutMode::None,
             PostLayerScalar::ScaleOutput(config.input_scale),
-            data_type,
             &projection_norm_config,
             &parameter_tree.subtree("projection_norm"),
             context,
@@ -109,14 +111,16 @@ impl<B: Backend> PerLayerEmbedding<B> {
         inner_features: impl BufferRef<Backend = B>,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, PerLayerEmbeddingError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("per layer embedding");
 
         let total_ple_dim = self.num_layers * self.ple_dim;
         let total_rows = batch_dim * self.num_layers;
         let total_elements = batch_dim * total_ple_dim;
 
-        let mut token_ple = command_buffer.allocate_scratch_for_shape(&[batch_dim, total_ple_dim], self.data_type)?;
+        let mut token_ple = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim, total_ple_dim], self.data_type)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
         self.token_embedding.encode_lookup(
             token_ids,
             &mut token_ple,
@@ -125,21 +129,20 @@ impl<B: Backend> PerLayerEmbedding<B> {
             command_buffer,
         );
 
-        let mut model_projection_input =
-            command_buffer.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
+        let mut model_projection_input = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
         command_buffer.encode_copy(inner_features, &mut model_projection_input);
         let model_projected = self.model_projection.encode(model_projection_input, batch_dim, command_buffer)?;
 
-        let model_normed = self.projection_norm.encode(
-            &model_projected,
-            0,
-            total_rows,
-            None::<&mut B::ScratchBuffer>,
-            command_buffer,
-        )?;
+        let model_normed = self
+            .projection_norm
+            .encode(&model_projected, 0, total_rows, None::<&mut B::ScratchBuffer>, command_buffer)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
 
-        let mut per_layer_inputs =
-            command_buffer.allocate_scratch_for_shape(&[batch_dim, self.num_layers, self.ple_dim], self.data_type)?;
+        let mut per_layer_inputs = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim, self.num_layers, self.ple_dim], self.data_type)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
         self.add_scale.encode(
             Some(&token_ple),
             &model_normed,
@@ -171,36 +174,36 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
 
 impl<B: Backend> PerLayerEmbeddingProjection<B> {
     pub fn new(
-        context: &B::Context,
-        config: &PLELayerConfig,
         model_dim: u32,
         num_layers: u32,
-        post_layer_scalar: f32,
         data_type: DataType,
+        post_layer_scalar: f32,
+        config: &PLELayerConfig,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
         let gate = <dyn Linear<B>>::new(
             model_dim,
-            [config.ple_dim],
-            false,
-            context,
+            config.ple_dim,
             data_type,
+            false,
             &parameter_tree.subtree("gate"),
+            context,
         )?;
         let projection = <dyn Linear<B>>::new(
             config.ple_dim,
-            [model_dim],
-            false,
-            context,
+            model_dim,
             data_type,
+            false,
             &parameter_tree.subtree("projection"),
+            context,
         )?;
         let norm = Normalization::new(
             model_dim,
+            data_type,
             None,
             ShortcutMode::None,
             PostLayerScalar::None,
-            data_type,
             &config.norm_config,
             &parameter_tree.subtree("norm"),
             context,
@@ -236,13 +239,13 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
 
     pub fn encode(
         &self,
-        layer_index: u32,
         per_layer_input: impl BufferRef<Backend = B>,
         mut outputs: impl BufferMut<Backend = B>,
         hidden: impl BufferRef<Backend = B>,
+        layer_index: u32,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), PerLayerEmbeddingError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("per layer embedding projection");
 
         let length = batch_dim * self.model_dim;
@@ -256,11 +259,15 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             command_buffer,
         );
 
-        let mut gate_input = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)?;
+        let mut gate_input = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
         command_buffer.encode_copy(outputs.as_ref(), &mut gate_input);
         let gate_out = self.gate.encode(gate_input, batch_dim, command_buffer)?;
 
-        let mut activated = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.ple_dim], self.data_type)?;
+        let mut activated = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim, self.ple_dim], self.data_type)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
         self.gate_act_mul.encode_fp(
             &gate_out,
             Some(per_layer_input),
@@ -275,7 +282,10 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         );
 
         let projected = self.projection.encode(activated, batch_dim, command_buffer)?;
-        let normed = self.norm.encode(&projected, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)?;
+        let normed = self
+            .norm
+            .encode(&projected, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)
+            .map_err(PerLayerEmbeddingError::BackendError)?;
 
         self.residual_combine.encode(
             None::<&B::ScratchBuffer>,

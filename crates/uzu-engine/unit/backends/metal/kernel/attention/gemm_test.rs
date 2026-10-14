@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -14,6 +13,7 @@ use crate::{
         cpu::Cpu,
         metal::Metal,
     },
+    data_type::DataTypeRepr,
     encodable_block::mixer::attention::KVCacheView,
     tests::{
         assert::assert_eq_float,
@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     queries: Box<[T]>,
     keys: Box<[T]>,
     values: Box<[T]>,
@@ -33,11 +33,11 @@ struct Input<T: ArrayElement + Float> {
     do_causal: bool,
 }
 
-fn attention_config<T: ArrayElement + Float>(input: &Input<T>) -> AttentionKernelConfig {
+fn attention_config<T: DataTypeRepr + Float>(input: &Input<T>) -> AttentionKernelConfig {
     super::default_attention_config::<T>(input.head_dim, input.num_heads, input.num_kv_heads, input.do_causal)
 }
 
-fn get_test_data<T: ArrayElement + Float>(
+fn get_test_data<T: DataTypeRepr + Float>(
     num_heads: usize,
     num_kv_heads: usize,
     sequence_length: usize,
@@ -79,7 +79,7 @@ fn get_test_data<T: ArrayElement + Float>(
     (input, expected)
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
+fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
     let config = attention_config(input);
@@ -98,7 +98,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         sinks: None,
         cache: KVCacheView::full(segment_prefix_length as u32),
         gate: None::<&B::GlobalBuffer>,
-        rope: None,
+        rope_cache: None,
     };
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
@@ -115,7 +115,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     buffer_to_vec::<B, T>(&output_buffer)
 }
 
-fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
+fn get_gemm_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
     let context = <Metal as Backend>::Context::new().expect("Failed to create Metal context");
     let config = attention_config(input);
     let queries = create_buffer_with_data::<Metal, T>(context.as_ref(), &input.queries);
@@ -134,7 +134,7 @@ fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
                 sinks: None,
                 cache,
                 gate: None::<&<Metal as Backend>::GlobalBuffer>,
-                rope: None,
+                rope_cache: None,
             },
             &mut command_buffer,
         )
@@ -148,7 +148,7 @@ fn get_gemm_output<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     buffer_to_vec::<Metal, T>(&output)
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
     input: &Input<T>,
     expected: &[T],
 ) {
@@ -167,7 +167,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     assert_eq_float::<T>(expected, &output, eps, &msg);
 }
 
-fn test_basic<T: ArrayElement + Float + Debug + Display>() {
+fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(4, 4, 8, 1, 64, false);
     test_internal(&input, &expected);
 
@@ -175,7 +175,7 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input, &expected);
 }
 
-fn test_causal<T: ArrayElement + Float + Debug + Display>() {
+fn test_causal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(4, 4, 16, 1, 64, true);
     test_internal(&input, &expected);
 
@@ -183,7 +183,7 @@ fn test_causal<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input, &expected);
 }
 
-fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
+fn test_gqa<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(8, 2, 8, 1, 64, false);
     test_internal(&input, &expected);
 
@@ -191,12 +191,12 @@ fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input, &expected);
 }
 
-fn test_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: usize) {
+fn test_head_dim<T: DataTypeRepr + Float + Debug + Display>(head_dim: usize) {
     let (input, expected) = get_test_data::<T>(4, 4, 8, 2, head_dim, true);
     test_internal(&input, &expected);
 }
 
-fn test_unaligned<T: ArrayElement + Float + Debug + Display>() {
+fn test_unaligned<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected) = get_test_data::<T>(4, 4, 40, 7, 64, true);
     test_internal(&input, &expected);
 

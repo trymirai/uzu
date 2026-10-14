@@ -1,0 +1,78 @@
+use criterion::{BenchmarkId, Criterion, Throughput};
+use half::bf16;
+use uzu_engine_macros::uzu_bench;
+
+use crate::{
+    backends::{
+        common::{
+            Backend,
+            kernel::{
+                Kernels,
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
+            },
+        },
+        metal::{Metal, kernel::matmul::gemm::GemmEngine},
+    },
+    data_type::DataTypeRepr,
+    tests::{
+        helpers::create_buffer,
+        matmul::{bench_fp_gemm_shapes, iter_encode_loop},
+        util::type_short_name,
+    },
+};
+
+#[uzu_bench]
+fn bench_gemm(c: &mut Criterion) {
+    let context = crate::tests::util::shared_metal_context();
+    let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulKernel");
+
+    let engines: &[(&str, GemmEngine)] = if context.supports_mxu {
+        &[("GEMM", GemmEngine::Simdgroup), ("GEMM_MXU", GemmEngine::Mxu)]
+    } else {
+        &[("GEMM", GemmEngine::Simdgroup)]
+    };
+
+    for &(group_label, engine) in engines {
+        let mut group = c.benchmark_group(format!("{}/Kernel/Matmul/{}", type_short_name::<Metal>(), group_label));
+
+        for shape in bench_fp_gemm_shapes() {
+            let (m, k, n) = (shape.m, shape.k, shape.n);
+            let a = create_buffer::<Metal, bf16>(&context, m as usize * k as usize);
+            let b_weights = create_buffer::<Metal, bf16>(&context, n as usize * k as usize);
+            let mut d = create_buffer::<Metal, bf16>(&context, m as usize * n as usize);
+            group.throughput(Throughput::Elements(2 * u64::from(m) * u64::from(k) * u64::from(n)));
+            group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
+                iter_encode_loop::<Metal, _>(&context, b, |command_buffer| {
+                    kernel
+                        .encode_with_gemm_engine(
+                            MatmulArguments {
+                                a: MatmulA::FullPrecision {
+                                    values: &a,
+                                    offset: 0,
+                                },
+                                b: MatmulB::FullPrecision {
+                                    b: &b_weights,
+                                },
+                                b_leading_dimension: None,
+                                b_transpose: true,
+                                output: MatmulOutput::new(&mut d, MatmulDOps::none()),
+                                gather_indices: None::<&<Metal as Backend>::GlobalBuffer>,
+                                m,
+                                n,
+                                k,
+                            },
+                            engine,
+                            command_buffer,
+                        )
+                        .expect("encode_plan failed");
+                });
+            });
+        }
+    }
+}

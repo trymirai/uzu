@@ -1,9 +1,12 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::Context;
 use itertools::Itertools;
 
-use crate::common::gpu_types::{GpuType, GpuTypeFile, GpuTypes};
+use crate::common::{
+    gpu_type_paths::GpuTypePaths,
+    gpu_types::{GpuType, GpuTypes},
+};
 
 mod gpu_type_constant;
 mod gpu_type_enum;
@@ -14,6 +17,17 @@ use gpu_type_constant::gpu_type_gen_constant;
 use gpu_type_enum::gpu_type_gen_enum;
 use gpu_type_option_set::gpu_type_gen_option_set;
 use gpu_type_struct::gpu_type_gen_struct;
+
+pub fn rust_path<'a>(
+    gpu_type_paths: &'a GpuTypePaths,
+    c_type: &str,
+) -> Option<&'a str> {
+    let path = c_type.strip_prefix("uzu::")?;
+    let short_name = path.rsplit("::").next()?;
+    let rust_path = gpu_type_paths.full_path_for(short_name)?;
+    let (_, type_path) = rust_path.split_once("::gpu_types::")?;
+    (type_path == path).then_some(rust_path)
+}
 
 fn rust_to_metal(ty: &str) -> anyhow::Result<&'static str> {
     match ty {
@@ -33,11 +47,18 @@ fn rust_to_metal(ty: &str) -> anyhow::Result<&'static str> {
 
 pub fn gpu_type_gen(
     gpu_types_dir: &Path,
-    gpu_types: &GpuTypes,
+    gpu_types: &[&GpuTypes],
 ) -> anyhow::Result<()> {
-    for gpu_type_file in &gpu_types.files {
-        gpu_type_gen_file(&gpu_types_dir.join(gpu_type_file.name.as_ref()).with_extension("h"), gpu_type_file)
-            .with_context(|| format!("Cannot generate gpu types for {}", gpu_type_file.name.as_ref()))?;
+    fs::create_dir_all(gpu_types_dir).context("cannot create gpu types directory")?;
+    let mut files: BTreeMap<&str, Vec<&GpuType>> = BTreeMap::new();
+    for gpu_types in gpu_types {
+        for file in &gpu_types.files {
+            files.entry(&file.name).or_default().extend(file.types.iter());
+        }
+    }
+    for (module_name, types) in files {
+        gpu_type_gen_file(&gpu_types_dir.join(module_name).with_extension("h"), module_name, &types)
+            .with_context(|| format!("Cannot generate gpu types for {module_name}"))?;
     }
 
     Ok(())
@@ -45,12 +66,10 @@ pub fn gpu_type_gen(
 
 fn gpu_type_gen_file(
     file_path: &Path,
-    gpu_types_file: &GpuTypeFile,
+    module_name: &str,
+    types: &[&GpuType],
 ) -> anyhow::Result<()> {
-    let module_name = gpu_types_file.name.as_ref();
-
-    let generated = gpu_types_file
-        .types
+    let generated = types
         .iter()
         .map(|gpu_type| match gpu_type {
             GpuType::Constant(gpu_type_constant) => gpu_type_gen_constant(gpu_type_constant)

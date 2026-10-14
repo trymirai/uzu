@@ -5,28 +5,28 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::Copy, kernel::KVCacheUpdateKernel,
+            gpu_types::kv_cache_update::Copy, kernel::KVCacheUpdateKernel,
         },
         cpu::Cpu,
     },
+    data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     keys: Box<[T]>,
     values: Box<[T]>,
     copies: Vec<Copy>,
     element_dim: u32,
 }
 
-fn make_data<T: ArrayElement + Float>(
+fn make_data<T: DataTypeRepr + Float>(
     max_sequence_length: usize,
     element_dim: usize,
 ) -> (Vec<T>, Vec<T>) {
@@ -40,7 +40,7 @@ fn make_data<T: ArrayElement + Float>(
     (keys, values)
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
+fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
     let context = B::Context::new().expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::KVCacheUpdateKernel::new(&context, T::data_type())
         .expect("Failed to create KVCacheUpdateKernel");
@@ -63,7 +63,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
 }
 
 /// Single copy between two different positions.
-fn get_test_data_single_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+fn get_test_data_single_copy<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 2usize;
     let max_sequence_length = 4usize;
     let head_dim = 3usize;
@@ -88,7 +88,7 @@ fn get_test_data_single_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Ve
 }
 
 /// Multiple copies.
-fn get_test_data_multi_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+fn get_test_data_multi_copy<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 2usize;
     let max_sequence_length = 8usize;
     let head_dim = 4usize;
@@ -123,7 +123,7 @@ fn get_test_data_multi_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec
 }
 
 /// No copies — data should remain unchanged.
-fn get_test_data_no_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+fn get_test_data_no_copy<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 2usize;
     let max_sequence_length = 4usize;
     let head_dim = 3usize;
@@ -145,7 +145,7 @@ fn get_test_data_no_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>
 }
 
 /// Larger dimensions to exercise more threads.
-fn get_test_data_large<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+fn get_test_data_large<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 8usize;
     let max_sequence_length = 64usize;
     let head_dim = 128usize;
@@ -179,7 +179,7 @@ fn get_test_data_large<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) 
     (input, expected_keys, expected_values)
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
     input: &Input<T>,
     expected_keys: &[T],
     expected_values: &[T],
@@ -195,22 +195,22 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-fn test_single_copy_internal<T: ArrayElement + Float + Debug + Display>() {
+fn test_single_copy_internal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected_keys, expected_values) = get_test_data_single_copy::<T>();
     test_internal::<T>(&input, &expected_keys, &expected_values, "single_copy");
 }
 
-fn test_multi_copy_internal<T: ArrayElement + Float + Debug + Display>() {
+fn test_multi_copy_internal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected_keys, expected_values) = get_test_data_multi_copy::<T>();
     test_internal::<T>(&input, &expected_keys, &expected_values, "multi_copy");
 }
 
-fn test_no_copy_internal<T: ArrayElement + Float + Debug + Display>() {
+fn test_no_copy_internal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected_keys, expected_values) = get_test_data_no_copy::<T>();
     test_internal::<T>(&input, &expected_keys, &expected_values, "no_copy");
 }
 
-fn test_large_internal<T: ArrayElement + Float + Debug + Display>() {
+fn test_large_internal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected_keys, expected_values) = get_test_data_large::<T>();
     test_internal::<T>(&input, &expected_keys, &expected_values, "large");
 }

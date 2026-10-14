@@ -7,18 +7,17 @@ use rand_distr::Normal;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::common::{
         Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
         gpu_types::trie::TrieNode,
     },
-    data_type::DataType,
-    dispatch_dtype,
+    data_type::{DataType, DataTypeRepr},
     encodable_block::{
         batch_topology::BatchTopology,
         sampling::{Sampling, SamplingMethod},
     },
     tests::proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
+    utils::dispatch_dtype::dispatch_dtype,
 };
 
 struct SamplingTestResults(Vec<u32>);
@@ -35,7 +34,7 @@ impl ComparableTestResults for SamplingTestResults {
     }
 }
 
-fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
+fn do_sampling_backend<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
     logits: &[T],
     seeds: Option<&[u64]>,
@@ -44,7 +43,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     method: &SamplingMethod,
     batch_size: u32,
 ) -> Result<SamplingTestResults, TestCaseError> {
-    let sampling = Sampling::<B>::new(T::data_type(), vocab_size as u32);
+    let sampling = Sampling::<B>::new(vocab_size as u32, T::data_type());
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let logits_buffer = command_buffer.allocate_constant_from_slice(logits).unwrap();
@@ -67,9 +66,9 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
             bitmask_buffer.as_ref(),
             None::<&B::GlobalBuffer>,   // TODO
             None::<&B::ConstantBuffer>, // TODO
-            method,
             &batch_topology,
             (0..batch_size).into(),
+            method,
             &mut command_buffer,
         )
         .unwrap();
@@ -83,7 +82,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     Ok(SamplingTestResults(sampled))
 }
 
-fn get_data<T: ArrayElement + Float>(
+fn get_data<T: DataTypeRepr + Float>(
     seed: u64,
     batch_size: usize,
     vocab_size: usize,

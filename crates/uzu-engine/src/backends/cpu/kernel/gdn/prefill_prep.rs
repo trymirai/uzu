@@ -2,14 +2,14 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 // Pre-compute L2-normalized q/k, beta, and decay for all tokens.
 #[kernel(DeltaNetPrefillPrep)]
 #[variants(T, f32, bf16)]
 #[variants(QKT, f32, bf16)]
 #[variants(HEAD_K_DIM, 128)]
-pub fn delta_net_prefill_prep<T: ArrayElement + Float, QKT: ArrayElement + Float, const HEAD_K_DIM: u32>(
+pub fn delta_net_prefill_prep<T: DataTypeRepr + Float, QKT: DataTypeRepr + Float, const HEAD_K_DIM: u32>(
     in_proj: *const T,
     a_log: *const f32,
     dt_bias: *const f32,

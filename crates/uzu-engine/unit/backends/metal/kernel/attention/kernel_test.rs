@@ -3,7 +3,6 @@ use uzu_engine_macros::uzu_test;
 
 use super::{gemm, single_pass, two_pass};
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,6 +12,7 @@ use crate::{
         cpu::Cpu,
         metal::Metal,
     },
+    data_type::DataTypeRepr,
     encodable_block::{mixer::attention::KVCacheView, sampling::PRng},
     tests::{
         assert::assert_eq_float,
@@ -90,7 +90,7 @@ fn run_attention_with_kernel<B: Backend>(
         sinks: sinks.as_ref(),
         cache,
         gate: None::<&B::GlobalBuffer>,
-        rope: None,
+        rope_cache: None,
     };
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let pooled = kernel.encode(arguments, &mut command_buffer).expect("encode");
@@ -132,7 +132,7 @@ fn run_direct_metal(
         sinks: sinks.as_ref(),
         cache: KVCacheView::full(prefix_length as u32),
         gate: None::<&<Metal as Backend>::GlobalBuffer>,
-        rope: None,
+        rope_cache: None,
     };
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let pooled = match route {
@@ -339,7 +339,7 @@ fn check_attention_gate<B: Backend>(
         sinks: None,
         cache: KVCacheView::full(prefix_length as u32),
         gate,
-        rope: None,
+        rope_cache: None,
     };
     let gate_segment = qkvg.subrange((PROJECTION_DIM - GATE_DIM) * size_of::<bf16>()..);
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");

@@ -2,12 +2,12 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(DeltaNetPrefill)]
 #[variants(T, f32, bf16)]
 #[variants(HEAD_K_DIM, 128)]
-pub fn delta_net_prefill<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
+pub fn delta_net_prefill<T: DataTypeRepr + Float, const HEAD_K_DIM: u32>(
     q_norm: *const f32,
     k_norm: *const f32,
     beta_buf: *const f32,

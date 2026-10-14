@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -14,7 +13,7 @@ use crate::{
         cpu::Cpu,
         metal::Metal,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
@@ -53,7 +52,7 @@ fn make_inputs(tree_size: usize) -> Inputs {
     }
 }
 
-fn get_output<B: Backend, T: ArrayElement + Float>(
+fn get_output<B: Backend, T: DataTypeRepr + Float>(
     q: &[T],
     k: &[T],
     trie: &[u32],
@@ -113,7 +112,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     (buffer_to_vec(&a_packed), buffer_to_vec(&qkd), buffer_to_vec(&a_inv), buffer_to_vec(&kh0))
 }
 
-fn check_type<T: ArrayElement + Float>(
+fn check_type<T: DataTypeRepr + Float>(
     inputs: &Inputs,
     tree_size: usize,
     scale: f32,

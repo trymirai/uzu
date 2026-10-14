@@ -10,9 +10,9 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{Linear, LinearBlockError},
+        linear::{Linear, LinearBlockError, LinearEncodeError},
         mixer::{
-            Mixer, MixerState,
+            Mixer, MixerEncodeError, MixerState,
             attention::{
                 mode::LinearProjection,
                 qkv_norm::{QKVNorm, QKVNormError},
@@ -20,7 +20,7 @@ use crate::{
             },
         },
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
 };
 
@@ -52,6 +52,8 @@ pub struct Attention<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum AttentionNewError<B: Backend> {
+    #[error("Attention kernel error: {0}")]
+    Kernel(#[source] <<B::Kernels as Kernels>::AttentionKernel as AttentionKernel>::Error),
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
@@ -60,6 +62,16 @@ pub enum AttentionNewError<B: Backend> {
     Linear(#[from] LinearBlockError<B>),
     #[error("QKVNorm error: {0}")]
     QKVNorm(#[from] QKVNormError<B>),
+}
+
+#[derive(Debug, Error)]
+pub enum AttentionEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Linear error: {0}")]
+    Linear(#[from] LinearEncodeError<B>),
+    #[error("Attention kernel error: {0}")]
+    Kernel(#[source] <<B::Kernels as Kernels>::AttentionKernel as AttentionKernel>::Error),
 }
 
 impl<B: Backend> Attention<B> {
@@ -98,33 +110,29 @@ impl<B: Backend> Attention<B> {
         };
         let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             hidden_dim,
-            [projection_dim],
-            config.has_qkvg_biases,
-            context,
+            projection_dim,
             data_type,
+            config.has_qkvg_biases,
             &projection_tree,
+            context,
         )?;
 
         let query_norm_config = config.query_norm_config.clone();
         // TODO: Fix lalamo config, those two must be None if kv sharing.
         let key_norm_config = (!is_kv_sharing).then(|| config.key_norm_config.clone()).flatten();
         let value_norm_config = (!is_kv_sharing).then(|| config.value_norm_config()).flatten();
-        let qkv_norm = (query_norm_config.is_some() || key_norm_config.is_some() || value_norm_config.is_some())
-            .then(|| {
-                QKVNorm::new(
-                    context,
-                    data_type,
-                    query_norm_config,
-                    key_norm_config,
-                    value_norm_config,
-                    parameter_tree,
-                    config.num_heads,
-                    num_kv_heads.unwrap_or(0), // TODO: should take option
-                    projection_dim,
-                    config.head_dim,
-                )
-            })
-            .transpose()?;
+        let qkv_norm = QKVNorm::new(
+            num_q_heads,
+            num_kv_heads,
+            projection_dim,
+            head_dim,
+            data_type,
+            query_norm_config,
+            key_norm_config,
+            value_norm_config,
+            parameter_tree,
+            context,
+        )?;
 
         let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
             context,
@@ -134,10 +142,8 @@ impl<B: Backend> Attention<B> {
             false,
         )
         .map_err(AttentionNewError::Backend)?;
-        let sinks = config
-            .has_sinks
-            .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_buffer())
-            .transpose()?;
+        let sinks =
+            config.has_sinks.then(|| parameter_tree.read_buffer("sinks", &[num_q_heads], data_type)).transpose()?;
 
         assert!(sliding_window_size.is_none_or(|size| size > 0), "zero sliding window size");
         let ring_capacity = sliding_window_size;
@@ -158,15 +164,15 @@ impl<B: Backend> Attention<B> {
                 data_type,
             },
         )
-        .map_err(AttentionNewError::Backend)?;
+        .map_err(AttentionNewError::Kernel)?;
 
         let out_projection = <dyn Linear<B>>::new(
             q_dim,
-            [hidden_dim],
-            config.has_out_biases,
-            context,
+            hidden_dim,
             data_type,
+            config.has_out_biases,
             &parameter_tree.subtree("out_projection"),
+            context,
         )?;
 
         Ok((
@@ -218,7 +224,7 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("attention");
 
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");

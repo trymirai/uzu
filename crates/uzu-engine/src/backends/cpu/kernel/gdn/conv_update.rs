@@ -2,12 +2,12 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
 
 // Single-token causal conv1d with SiLU, in-place.
 #[kernel(DeltaNetConvUpdate)]
 #[variants(T, f32, bf16)]
-pub fn delta_net_conv_update<T: ArrayElement + Float>(
+pub fn delta_net_conv_update<T: DataTypeRepr + Float>(
     conv_weight: *const f32,
     #[optional(has_bias)] bias: Option<*const f32>,
     in_out: *mut T,

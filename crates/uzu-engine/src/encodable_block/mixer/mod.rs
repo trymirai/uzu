@@ -9,23 +9,22 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        linear::LinearEncodeError,
         mixer::{
             attention::{
-                Attention, AttentionNewError,
+                Attention, AttentionEncodeError, AttentionNewError,
                 rope::{PrecalculatedRoPE, RopeCache},
             },
             delta_net::{DeltaNet, DeltaNetNewError},
-            mamba2::{Mamba2, Mamba2NewError},
             short_conv::{ShortConv, ShortConvNewError},
         },
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
     utils::maybe_mut::MaybeMut,
 };
 
 pub mod attention;
 pub mod delta_net;
-pub mod mamba2;
 pub mod short_conv;
 
 pub trait MixerState<B: Backend>: Any + Send {
@@ -51,6 +50,16 @@ impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum MixerEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Linear error: {0}")]
+    Linear(#[from] LinearEncodeError<B>),
+    #[error("Attention error: {0}")]
+    Attention(#[from] AttentionEncodeError<B>),
+}
+
 pub trait Mixer<B: Backend>: Any + Send + Sync {
     fn speculation_supported(&self) -> bool;
 
@@ -70,7 +79,7 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error>;
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>>;
 }
 
 #[derive(Debug, Error)]
@@ -79,8 +88,6 @@ pub enum MixerNewError<B: Backend> {
     Attention(#[from] AttentionNewError<B>),
     #[error("Delta net mixer error: {0}")]
     DeltaNet(#[from] DeltaNetNewError<B>),
-    #[error("Mamba2 mixer error: {0}")]
-    Mamba2(#[from] Mamba2NewError<B>),
     #[error("Short conv mixer error: {0}")]
     ShortConv(#[from] ShortConvNewError<B>),
 }
@@ -89,7 +96,7 @@ impl<B: Backend> dyn Mixer<B> {
     pub fn new(
         hidden_dim: u32,
         data_type: DataType,
-        rope_config: Option<&AnyRoPEConfig>,
+        rope_config: Option<&AnyRoPEConfig>, // TODO: this shouldn't exist
         config: &AnyTokenMixerConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
@@ -108,14 +115,6 @@ impl<B: Backend> dyn Mixer<B> {
                     DeltaNet::new(hidden_dim, data_type, config, parameter_tree, context)?;
 
                 Ok((Box::new(delta_net), in_projection_input_hadamard_factors))
-            },
-            AnyTokenMixerConfig::Mamba2Config(config) => {
-                assert!(rope_config.is_none(), "unexpected rope for mamba2 mixer");
-
-                let (mamba2, in_projection_input_hadamard_factors) =
-                    Mamba2::new(hidden_dim, data_type, config, parameter_tree, context)?;
-
-                Ok((Box::new(mamba2), in_projection_input_hadamard_factors))
             },
             AnyTokenMixerConfig::ShortConvConfig(config) => {
                 assert!(rope_config.is_none(), "unexpected rope for short conv mixer");

@@ -91,7 +91,7 @@ impl AttentionTwoPass {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let config = self.config;
-        if let Some(rope) = arguments.rope {
+        if let Some(rope) = arguments.rope_cache {
             assert!(
                 rope.dim > 0 && rope.dim.is_multiple_of(2) && rope.dim <= config.head_dim,
                 "invalid RoPE dimension"
@@ -109,13 +109,14 @@ impl AttentionTwoPass {
             &[arguments.suffix_length, config.num_q_heads, PARTIAL_BLOCKS],
             PARTIAL_DATA_TYPE,
         )?;
-        let first = self.get_or_create(command_buffer.context(), arguments.trie.is_some(), arguments.rope.is_some())?;
+        let first =
+            self.get_or_create(command_buffer.context(), arguments.trie.is_some(), arguments.rope_cache.is_some())?;
         first.encode(
             arguments.queries,
             arguments.keys,
             arguments.values,
-            arguments.rope.map(|rope| &rope.cosines),
-            arguments.rope.map(|rope| &rope.sines),
+            arguments.rope_cache.map(|rope| &rope.cosines),
+            arguments.rope_cache.map(|rope| &rope.sines),
             &mut partials,
             &mut sums,
             &mut maxs,
@@ -132,8 +133,8 @@ impl AttentionTwoPass {
             arguments.trie,
             config.sliding_window_size,
             arguments.sinks,
-            arguments.rope.map(|rope| rope.dim),
-            arguments.rope.map(|_| arguments.cache.context_length()),
+            arguments.rope_cache.map(|rope| rope.dim),
+            arguments.rope_cache.map(|_| arguments.cache.context_length()),
             command_buffer,
         );
         let mut output = command_buffer.allocate_scratch_for_shape(

@@ -6,12 +6,11 @@ use crate::{
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding,
-            gpu_types::AttnParams,
             kernel::{AttentionArguments, AttentionKernelConfig},
         },
         metal::{
             Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
-            kernel::AttentionGemmMetalKernel,
+            gpu_types::attention::AttnParams, kernel::AttentionGemmMetalKernel,
         },
     },
     data_type::DataType,
@@ -126,7 +125,7 @@ impl AttentionGemm {
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
-        if let Some(rope) = arguments.rope {
+        if let Some(rope) = arguments.rope_cache {
             assert!(rope.dim > 0 && rope.dim.is_multiple_of(2) && rope.dim <= self.head_dim, "invalid RoPE dimension");
         }
         let mut output = command_buffer
@@ -164,15 +163,15 @@ impl AttentionGemm {
             align_q: params.q_rem == 0,
             align_k: params.k_rem == 0,
             is_trie: arguments.trie.is_some(),
-            has_rope: arguments.rope.is_some(),
+            has_rope: arguments.rope_cache.is_some(),
         };
         let kernel = self.get_or_create(command_buffer.context(), key)?;
         kernel.encode(
             arguments.queries,
             arguments.keys,
             arguments.values,
-            arguments.rope.map(|rope| &rope.cosines),
-            arguments.rope.map(|rope| &rope.sines),
+            arguments.rope_cache.map(|rope| &rope.cosines),
+            arguments.rope_cache.map(|rope| &rope.sines),
             &mut output,
             params,
             arguments.cache.ring_params(),
@@ -181,8 +180,8 @@ impl AttentionGemm {
             arguments.sinks,
             self.num_q_heads,
             arguments.suffix_length,
-            arguments.rope.map(|rope| rope.dim),
-            arguments.rope.map(|_| arguments.cache.context_length()),
+            arguments.rope_cache.map(|rope| rope.dim),
+            arguments.rope_cache.map(|_| arguments.cache.context_length()),
             command_buffer,
         );
         Ok(output)

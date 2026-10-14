@@ -125,7 +125,6 @@ struct MxuMmaCore {
     };
 
     const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
-    const bool apply_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
     const bool apply_rht = output_transform.contains(GemmDTransform::RHT);
 
@@ -177,18 +176,6 @@ struct MxuMmaCore {
                   accumulator_tile.map([&](auto value) { return value * scale; });
                 }
 
-                if (apply_accumulate) {
-                  uzu::matmul::Fragment<OutputElementType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>>
-                      existing_output;
-                  auto output_src = uzu::matmul::fragment_source(d_simdgroup, int(params->leading_dimension_d));
-                  if constexpr (!(aligned_m.value && aligned_n.value)) {
-                    output_src = output_src.bounded(simdgroup_limit_m, simdgroup_limit_n);
-                  }
-                  existing_output.load_from(thread_context.simd_lane_id, output_src);
-                  thread OutputElementType* existing_data = existing_output.elements();
-                  accumulator_tile.map([&](auto value) { return value + AccumulatorType(*(existing_data++)); });
-                }
-
                 if (apply_bias && !apply_rht) {
                   accumulator_tile.map_coords(thread_context.simd_lane_id, [&](short, short col, auto value) {
                     if constexpr (aligned_n.value) {
@@ -222,10 +209,8 @@ struct MxuMmaCore {
     }
 
     if (output_transform.contains(GemmDTransform::RHT)) {
-      if constexpr (
-          schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
-          SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE
-      ) {
+      if constexpr (schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
+                    SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE) {
         if (alignment.contains(GemmAlignment::M) && alignment.contains(GemmAlignment::N)) {
           if (simdgroup_limit_m <= 0 || simdgroup_limit_n <= 0) {
             return;

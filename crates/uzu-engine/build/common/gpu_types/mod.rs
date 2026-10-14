@@ -91,13 +91,14 @@ impl GpuTypeFile {
 
 #[derive(Debug)]
 pub struct GpuTypes {
+    pub module_path: Box<str>,
     pub files: Box<[GpuTypeFile]>,
 }
 
 impl GpuTypes {
-    pub fn scan() -> anyhow::Result<Self> {
+    pub fn scan(backend: &str) -> anyhow::Result<Self> {
         let src_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("Missing CARGO_MANIFEST_DIR")?)
-            .join("src/backends/common/gpu_types");
+            .join(format!("src/backends/{backend}/gpu_types"));
         println!("cargo::rerun-if-changed={}", src_dir.display());
 
         let mut sources: Vec<PathBuf> = WalkDir::new(&src_dir)
@@ -110,6 +111,7 @@ impl GpuTypes {
         sources.sort();
 
         Ok(Self {
+            module_path: format!("crate::backends::{backend}::gpu_types").into(),
             files: sources
                 .into_iter()
                 .map(|source| {

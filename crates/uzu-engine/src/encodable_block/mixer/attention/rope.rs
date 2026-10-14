@@ -1,8 +1,8 @@
 use crate::{
-    array::size_for_shape,
     backends::common::{Backend, BufferMut, CommandBuffer, CommandBufferEncoding, Context},
     config::rope::AnyRoPEConfig,
     data_type::DataType,
+    utils::size_for_shape::size_for_shape,
 };
 
 pub struct PrecalculatedRoPE<B: Backend> {

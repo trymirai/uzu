@@ -1,20 +1,20 @@
 use crate::backends::common::Backend;
 
+mod error;
 mod fallback;
 mod gemm;
 mod gemm_grouped;
 mod single_pass;
 mod two_pass;
 
+pub use error::AttentionMetalError;
+
 use crate::backends::{
     common::{
         BufferRef, CommandBufferEncoding,
         kernel::{AttentionArguments, AttentionKernel, AttentionKernelConfig, SigmoidGateKernel},
     },
-    metal::{
-        Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
-        kernel::SigmoidGateMetalKernel,
-    },
+    metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, kernel::SigmoidGateMetalKernel},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,11 +62,12 @@ pub struct AttentionMetalKernel {
 
 impl AttentionKernel for AttentionMetalKernel {
     type Backend = Metal;
+    type Error = AttentionMetalError;
 
     fn new(
         context: &MetalContext,
         config: AttentionKernelConfig,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<Self, AttentionMetalError> {
         let grouped = gemm_grouped::AttentionGemmGrouped::is_supported(&config, context)
             .then(|| gemm_grouped::AttentionGemmGrouped::new(&config));
         let gemm = gemm::AttentionGemm::is_supported(&config).then(|| gemm::AttentionGemm::new(&config));
@@ -100,7 +101,7 @@ impl AttentionKernel for AttentionMetalKernel {
             impl BufferRef<Backend = Metal>,
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
+    ) -> Result<<Metal as Backend>::ScratchBuffer, AttentionMetalError> {
         let command_buffer = &mut *command_buffer.debug_group("attention core");
         let (gate, suffix_length) = (arguments.gate, arguments.suffix_length);
         self.encode_impl(arguments, command_buffer).map(|(mut output, gate_applied)| {
@@ -132,7 +133,7 @@ impl AttentionMetalKernel {
             impl BufferRef<Backend = Metal>,
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<(<Metal as Backend>::ScratchBuffer, bool), MetalError> {
+    ) -> Result<(<Metal as Backend>::ScratchBuffer, bool), AttentionMetalError> {
         let suffix_length = arguments.suffix_length;
         let gate_applied_by_two_pass = arguments.gate.is_some();
         let kv_length = arguments.cache.prefix_len() + suffix_length;
@@ -145,8 +146,9 @@ impl AttentionMetalKernel {
             && let Some(grouped) = &self.grouped
         {
             if grouped.should_encode(mask, suffix_length, kv_length) {
+                // TODO agolokoz: check
                 println!("ATTENTION GROUPED");
-                return grouped.encode(mask, arguments, command_buffer);
+                return grouped.encode(mask, arguments, command_buffer).map_err(AttentionMetalError::Backend);
             }
 
             // These measured sibling exceptions apply only when the
@@ -171,6 +173,7 @@ impl AttentionMetalKernel {
                 return Ok((gemm.encode(arguments, command_buffer)?, false));
             }
             if !is_trie && let Some(fallback) = &self.fallback {
+                // TODO agolokoz: check
                 println!("ATTENTION FALLBACK");
                 return Ok((fallback.encode(arguments, command_buffer)?, false));
             }

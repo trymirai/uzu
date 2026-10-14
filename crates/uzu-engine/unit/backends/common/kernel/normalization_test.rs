@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,7 +12,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend, for_each_non_cpu_backend},
@@ -22,9 +21,9 @@ use crate::{
 
 fn get_output<
     B: Backend,
-    InputT: ArrayElement + Float,
-    AffineT: ArrayElement + Float,
-    OutputT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    AffineT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float,
 >(
     input: &[InputT],
     scales: Option<&[AffineT]>,
@@ -81,9 +80,9 @@ fn get_output<
 }
 
 fn test_internal<
-    InputT: ArrayElement + Float,
-    AffineT: ArrayElement + Float,
-    OutputT: ArrayElement + Float + Debug + Display,
+    InputT: DataTypeRepr + Float,
+    AffineT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float + Debug + Display,
 >(
     has_scales: bool,
     full_layer: bool,
@@ -138,9 +137,9 @@ fn test_internal<
 }
 
 fn test_normalization<
-    InputT: ArrayElement + Float,
-    AffineT: ArrayElement + Float,
-    OutputT: ArrayElement + Float + Debug + Display,
+    InputT: DataTypeRepr + Float,
+    AffineT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float + Debug + Display,
 >() {
     for has_scales in [true, false] {
         for full_layer in [true, false] {
@@ -150,7 +149,7 @@ fn test_normalization<
 }
 
 // The fused transform has to match plain normalization followed by the standalone input RHT
-fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
+fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
     let batch_size = 2u32;
     let element_count = 64u32;
     let epsilon = 1e-6f32;

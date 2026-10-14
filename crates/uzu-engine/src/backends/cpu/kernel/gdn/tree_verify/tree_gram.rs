@@ -2,14 +2,14 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::trie::TrieNode};
+use crate::{backends::common::gpu_types::trie::TrieNode, data_type::DataTypeRepr};
 
 const BLOCK: usize = 16;
 
 #[kernel(BuildTreeGram)]
 #[variants(T, f32, bf16)]
 #[variants(USE_MXU, false)]
-pub fn build_tree_gram<T: ArrayElement + Float, const USE_MXU: bool>(
+pub fn build_tree_gram<T: DataTypeRepr + Float, const USE_MXU: bool>(
     q: *const T,
     k: *const T,
     trie: *const TrieNode,

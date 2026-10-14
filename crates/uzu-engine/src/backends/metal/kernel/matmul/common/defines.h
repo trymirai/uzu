@@ -33,27 +33,16 @@ using PointerElementType = typename PointerElementTypeImpl<T>::type;
 
 template <typename OutputType, typename InputType>
 struct TransformNone {
-  TransformNone(float = 1.0f, float = 0.0f) {}
-
   static METAL_FUNC OutputType apply(InputType x) { return static_cast<OutputType>(x); }
-  METAL_FUNC OutputType apply(InputType x, OutputType) const { return static_cast<OutputType>(x); }
 };
 
 template <typename OutputType, typename InputType>
-struct TransformScaleAccumulate {
+struct TransformScale {
   const float alpha;
-  const float beta;
 
-  TransformScaleAccumulate(float alpha, float beta) : alpha(alpha), beta(beta) {}
+  TransformScale(float alpha) : alpha(alpha) {}
 
-  static METAL_FUNC OutputType apply(InputType x) { return static_cast<OutputType>(x); }
-
-  METAL_FUNC OutputType apply(InputType x, OutputType c) const {
-    return static_cast<OutputType>(
-        x * static_cast<InputType>(alpha) +
-        (beta != 0.0f ? (static_cast<OutputType>(beta) * c) : static_cast<OutputType>(0.0))
-    );
-  }
+  METAL_FUNC OutputType apply(InputType x) const { return static_cast<OutputType>(x * static_cast<InputType>(alpha)); }
 };
 
 } // namespace matmul

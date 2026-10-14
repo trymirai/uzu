@@ -1,8 +1,11 @@
 use super::{GemmEngine, GemmPlan, error::GemmSpecializationError};
 use crate::{
-    backends::common::{
-        gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
-        kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
+    backends::{
+        common::{
+            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+            kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
+        },
+        metal::gpu_types::gemm::{GemmAPrologueKind, GemmAlignment, GemmTiling},
     },
     data_type::DataType,
 };

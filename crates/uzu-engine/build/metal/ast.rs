@@ -203,9 +203,7 @@ impl MetalArgument {
             ["ulong"] | ["uint64_t"] | ["unsigned", "long"] => Ok("u64".into()),
             ["int"] | ["int32_t"] => Ok("i32".into()),
             ["float"] => Ok("f32".into()),
-            [vpath] if vpath.starts_with("uzu::") => {
-                Ok(vpath.replacen("uzu::", "crate::backends::common::gpu_types::", 1).into())
-            },
+            [vpath] if vpath.starts_with("uzu::") => Ok(vpath.rsplit("::").next().unwrap().into()),
             _ => bail!("unknown scalar type: {c_type}"),
         }
     }

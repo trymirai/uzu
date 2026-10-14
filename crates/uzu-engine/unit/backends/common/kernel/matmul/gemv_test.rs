@@ -5,12 +5,13 @@ use num_traits::Float;
 use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::{backends::metal::Metal, tests::matmul::run_quant_cpu};
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::QuantizationMethod,
+            gpu_types::quantization_method::QuantizationMethod,
             kernel::{
                 Kernels,
                 matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
@@ -18,19 +19,15 @@ use crate::{
         },
         cpu::Cpu,
     },
+    data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
         matmul::{QuantBuffers, QuantInput},
     },
 };
-#[cfg(backend = "metal")]
-use crate::{
-    backends::metal::{Metal, MetalContext},
-    tests::matmul::run_quant_cpu,
-};
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     a: Box<[T]>,
     b: Box<[T]>,
     m: usize,
@@ -40,7 +37,7 @@ struct Input<T: ArrayElement + Float> {
     soft_cap: Option<f32>,
 }
 
-fn get_test_data<T: ArrayElement + Float>(
+fn get_test_data<T: DataTypeRepr + Float>(
     m: usize,
     k: usize,
     n: usize,
@@ -63,7 +60,7 @@ fn get_test_data<T: ArrayElement + Float>(
 }
 
 // Encode one GEMV (dense, or a per-row B-row gather when `gather_indices` is set) and copy out.
-fn run_gemv<B: Backend, T: ArrayElement + Float>(
+fn run_gemv<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
     a: impl BufferRef<Backend = B>,
     b: MatmulB<impl BufferRef<Backend = B>>,
@@ -107,7 +104,7 @@ fn run_gemv<B: Backend, T: ArrayElement + Float>(
     buffer_to_vec::<B, T>(&d)
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
+fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
     let a = create_buffer_with_data::<B, T>(&context, &input.a);
     let weights = create_buffer_with_data::<B, T>(&context, &input.b);
@@ -126,7 +123,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     )
 }
 
-fn test<T: ArrayElement + Float + Debug + Display>(
+fn test<T: DataTypeRepr + Float + Debug + Display>(
     m: usize,
     k: usize,
     n: usize,
@@ -165,7 +162,7 @@ fn group_major_gemv_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    let context = MetalContext::new().expect("Metal context");
+    let context = <Metal as Backend>::Context::new().expect("Metal context");
     let input = QuantInput::<bf16>::new(1, 256, 72, 32, bits, method, 0).with_group_output();
     let reference = run_quant_cpu::<bf16>(&input);
 
@@ -201,7 +198,7 @@ fn gemv_f32(
     test::<f32>(m, k, n, 0.01);
 }
 
-fn assert_gather<T: ArrayElement + Float + Debug + Display>(
+fn assert_gather<T: DataTypeRepr + Float + Debug + Display>(
     dense: &[T],
     gather: &[T],
     ids: &[u32],
@@ -235,7 +232,7 @@ macro_rules! check_gather {
     }};
 }
 
-fn fp_gather_case<T: ArrayElement + Float + Debug + Display>(
+fn fp_gather_case<T: DataTypeRepr + Float + Debug + Display>(
     soft_cap: Option<f32>,
     eps: f32,
 ) {

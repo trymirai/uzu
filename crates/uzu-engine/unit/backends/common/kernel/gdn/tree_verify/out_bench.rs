@@ -8,11 +8,11 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_bench;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{Backend, Context, Kernels, kernel::BuildTreeOutKernel},
         metal::Metal,
     },
+    data_type::DataTypeRepr,
     tests::{
         helpers::{create_buffer, create_buffer_with_data},
         matmul::iter_encode_loop_named,
@@ -44,7 +44,7 @@ struct TreeOutBuffers {
     o: <Metal as Backend>::GlobalBuffer,
 }
 
-fn make_buffers<T: ArrayElement + Float>(
+fn make_buffers<T: DataTypeRepr + Float>(
     context: &<Metal as Backend>::Context,
     batch_size: usize,
     tree_size: usize,
@@ -79,7 +79,7 @@ fn bench_build_tree_out(c: &mut Criterion) {
     bench_build_tree_out_type::<f32>(c, &context, "F32");
 }
 
-fn bench_build_tree_out_type<T: ArrayElement + Float>(
+fn bench_build_tree_out_type<T: DataTypeRepr + Float>(
     c: &mut Criterion,
     context: &<Metal as Backend>::Context,
     data_type_name: &str,

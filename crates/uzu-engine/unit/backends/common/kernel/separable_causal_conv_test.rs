@@ -2,7 +2,6 @@ use half::bf16;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -10,6 +9,7 @@ use crate::{
         },
         cpu::Cpu,
     },
+    data_type::DataTypeRepr,
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
 };
 

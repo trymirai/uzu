@@ -65,7 +65,7 @@ impl AttentionSinglePass {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let config = self.config;
-        if let Some(rope) = arguments.rope {
+        if let Some(rope) = arguments.rope_cache {
             assert!(
                 rope.dim > 0 && rope.dim.is_multiple_of(2) && rope.dim <= config.head_dim,
                 "invalid RoPE dimension"
@@ -76,13 +76,13 @@ impl AttentionSinglePass {
             config.data_type,
         )?;
         let kernel =
-            self.get_or_create(command_buffer.context(), arguments.trie.is_some(), arguments.rope.is_some())?;
+            self.get_or_create(command_buffer.context(), arguments.trie.is_some(), arguments.rope_cache.is_some())?;
         kernel.encode(
             arguments.queries,
             arguments.keys,
             arguments.values,
-            arguments.rope.map(|rope| &rope.cosines),
-            arguments.rope.map(|rope| &rope.sines),
+            arguments.rope_cache.map(|rope| &rope.cosines),
+            arguments.rope_cache.map(|rope| &rope.sines),
             &mut output,
             config.num_q_heads / config.num_groups,
             arguments.cache.prefix_len() + arguments.suffix_length,
@@ -97,8 +97,8 @@ impl AttentionSinglePass {
             arguments.sinks,
             config.num_q_heads,
             arguments.suffix_length,
-            arguments.rope.map(|rope| rope.dim),
-            arguments.rope.map(|_| arguments.cache.context_length()),
+            arguments.rope_cache.map(|rope| rope.dim),
+            arguments.rope_cache.map(|_| arguments.cache.context_length()),
             command_buffer,
         );
         Ok(output)

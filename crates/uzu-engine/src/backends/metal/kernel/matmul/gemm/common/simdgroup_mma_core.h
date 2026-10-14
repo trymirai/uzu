@@ -139,7 +139,7 @@ struct SimdgroupMmaCore {
       const thread ushort& tile_block_rows,
       const thread ushort& tile_block_cols,
       const bool needs_epilogue,
-      const thread uzu::matmul::TransformScaleAccumulate<float, float>& epilogue,
+      const thread uzu::matmul::TransformScale<float, float>& epilogue,
       const device RightElementType* bias_block,
       const bool needs_bias,
       const device int32_t* rht_factors_block,
@@ -147,19 +147,15 @@ struct SimdgroupMmaCore {
       const thread ThreadContext& thread_context
   ) {
     constexpr GemmAlignment gemm_alignment{GEMM_ALIGNMENT_RAW};
+    if (needs_epilogue) {
+      accumulator.apply_epilogue(epilogue);
+    }
     if constexpr (gemm_alignment.contains(GemmAlignment::M) && gemm_alignment.contains(GemmAlignment::N)) {
-      if (needs_epilogue) {
-        accumulator.apply_epilogue(d, params->leading_dimension_d, 1, epilogue);
-      }
       if (needs_bias && !needs_rht) {
         accumulator.apply_bias(bias_block);
       }
       accumulator.store_result(d, params->leading_dimension_d);
     } else {
-      if (needs_epilogue) {
-        accumulator
-            .apply_epilogue_safe(d, params->leading_dimension_d, 1, short2(tile_block_cols, tile_block_rows), epilogue);
-      }
       if (needs_bias && !needs_rht) {
         accumulator.apply_bias_safe(bias_block, short2(tile_block_cols, tile_block_rows));
       }
@@ -228,13 +224,9 @@ struct SimdgroupMmaCore {
     const ushort leftover_block_depth = params->K - params->aligned_inner_iterations * THREADGROUP_BLOCK_K;
 
     const bool needs_scale = output_transform.contains(GemmDTransform::SCALE);
-    const bool needs_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool needs_bias = output_transform.contains(GemmDTransform::BIAS);
     const bool needs_rht = output_transform.contains(GemmDTransform::RHT);
-    const bool needs_epilogue = needs_scale || needs_accumulate;
-    const float alpha = needs_scale ? params->ab_scale : 1.0f;
-    const float beta = needs_accumulate ? 1.0f : 0.0f;
-    uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
+    uzu::matmul::TransformScale<float, float> epilogue(params->ab_scale);
     const device RightElementType* bias_block = output_bias + block_col;
     const device int32_t* rht_factors_block = rht_factors + block_col;
 
@@ -267,7 +259,7 @@ struct SimdgroupMmaCore {
             params,
             tile_block_rows,
             tile_block_cols,
-            needs_epilogue,
+            needs_scale,
             epilogue,
             bias_block,
             needs_bias,

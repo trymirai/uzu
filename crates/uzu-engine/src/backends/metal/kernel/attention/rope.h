@@ -25,6 +25,6 @@ METAL_FUNC T apply_attention_rope(
   const float signed_paired = first_half ? -paired : paired;
 
   const uint64_t coefficient_idx = static_cast<uint64_t>(position) * rope_dim + head_dim_idx;
-  const float value = static_cast<float>(input) * cosines[coefficient_idx] + signed_paired * sines[coefficient_idx]
+  const float value = static_cast<float>(input) * cosines[coefficient_idx] + signed_paired * sines[coefficient_idx];
   return static_cast<T>(value);
 }

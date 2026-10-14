@@ -3,14 +3,14 @@ use num_traits::Float;
 use uzu_engine_macros::kernel;
 
 use crate::{
-    array::ArrayElement,
     backends::{common::gpu_types::trie::TrieNode, cpu::kernel::attention::mask::should_use_key},
+    data_type::DataTypeRepr,
 };
 
 #[kernel(AttentionSinglePass)]
 #[variants(T, f32, bf16)]
 #[variants(HEAD_DIM, 64, 128, 256, 512)]
-pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
+pub fn attention_single_pass<T: DataTypeRepr + Float, const HEAD_DIM: u32>(
     queries: *const T,
     keys: *const T,
     values: *const T,

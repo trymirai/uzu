@@ -1,14 +1,14 @@
 use std::any::Any;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, Buffer, CommandBuffer, Context, DeviceCapabilities, Kernels, SparseBuffer,
-        gpu_types::{Copy, ring::RingParams},
+        gpu_types::{kv_cache_update::Copy, ring::RingParams},
         kernel::KVCacheUpdateKernel,
     },
     data_type::DataType,
     encodable_block::mixer::{MixerState, attention::Attention},
+    utils::size_for_shape::size_for_shape,
 };
 
 pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
