@@ -22,13 +22,14 @@ pub struct BF16KV<B: Backend> {
     pub data_type: DataType,
 }
 
-/// K/V codes are sparse where supported; scales are dense and zeroed.
+/// K/V codes and scales are sparse where supported. A fresh sparse page is not zeroed: the attention kernel reads a
+/// scale below `MIN_VALUE_SCALE` (zero, negative, NaN, denormal) as never written.
 pub struct Int8KV<B: Backend> {
     pub layout: Int8KVLayout,
     pub k_codes: Box<dyn Buffer<Backend = B>>,
     pub v_codes: Box<dyn Buffer<Backend = B>>,
-    pub k_scales: B::GlobalBuffer,
-    pub v_scales: B::GlobalBuffer,
+    pub k_scales: Box<dyn Buffer<Backend = B>>,
+    pub v_scales: Box<dyn Buffer<Backend = B>>,
 }
 
 fn create_kv_buffer<B: Backend>(
@@ -54,17 +55,20 @@ impl<B: Backend> KVStorage<B> {
         Ok(match format {
             KVFormat::Int8 => {
                 let layout = Int8KVLayout::new(head_dim, num_kv_heads, max_elements);
-                // The kernel reads a scale <= 0 as never written.
-                let zeroed = || -> Result<B::GlobalBuffer, B::Error> {
-                    let mut buffer = context.create_buffer(2 * layout.scale_count())?;
+                let scales = || -> Result<Box<dyn Buffer<Backend = B>>, B::Error> {
+                    let bytes = layout.scale_tile_bytes(layout.padded_capacity);
+                    if context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
+                        return create_kv_buffer(context, bytes);
+                    }
+                    let mut buffer = context.create_buffer(bytes)?;
                     buffer.as_slice_mut::<u8>().fill(0);
-                    Ok(buffer)
+                    Ok(Box::new(buffer))
                 };
                 let kv = Int8KV {
                     k_codes: create_kv_buffer(context, layout.code_bytes())?,
                     v_codes: create_kv_buffer(context, layout.code_bytes())?,
-                    k_scales: zeroed()?,
-                    v_scales: zeroed()?,
+                    k_scales: scales()?,
+                    v_scales: scales()?,
                     layout,
                 };
                 Self::Int8(kv, <B::Kernels as Kernels>::KVCacheUpdateInt8Kernel::new(context, head_dim, num_kv_heads)?)
@@ -87,18 +91,27 @@ impl<B: Backend> KVStorage<B> {
         &mut self,
         elements_required: u32,
     ) -> Result<(), B::Error> {
-        let (buffers, bytes_required) = match self {
-            Self::BF16(kv, _) => {
-                ([&mut kv.keys, &mut kv.values], size_for_shape(&[elements_required, kv.element_dim], kv.data_type))
-            },
-            Self::Int8(kv, _) => ([&mut kv.k_codes, &mut kv.v_codes], kv.layout.tile_bytes(elements_required)),
-        };
-        for buffer in buffers {
-            if let Some(sparse) = (buffer.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>() {
-                sparse.map(bytes_required)?;
+        let map = |buffer: &mut Box<dyn Buffer<Backend = B>>, bytes: usize| -> Result<(), B::Error> {
+            match (buffer.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>() {
+                Some(sparse) => sparse.map(bytes),
+                None => Ok(()),
             }
+        };
+        match self {
+            Self::BF16(kv, _) => {
+                let bytes = size_for_shape(&[elements_required, kv.element_dim], kv.data_type);
+                map(&mut kv.keys, bytes)?;
+                map(&mut kv.values, bytes)
+            },
+            Self::Int8(kv, _) => {
+                let code_bytes = kv.layout.tile_bytes(elements_required);
+                map(&mut kv.k_codes, code_bytes)?;
+                map(&mut kv.v_codes, code_bytes)?;
+                let scale_bytes = kv.layout.scale_tile_bytes(elements_required);
+                map(&mut kv.k_scales, scale_bytes)?;
+                map(&mut kv.v_scales, scale_bytes)
+            },
         }
-        Ok(())
     }
 
     pub fn encode_accept(
@@ -114,11 +127,10 @@ impl<B: Backend> KVStorage<B> {
             Self::Int8(kv, update) => update.encode(
                 kv.k_codes.as_mut(),
                 kv.v_codes.as_mut(),
-                &mut kv.k_scales,
-                &mut kv.v_scales,
+                kv.k_scales.as_mut(),
+                kv.v_scales.as_mut(),
                 copies,
                 count,
-                kv.layout.padded_capacity,
                 command_buffer,
             ),
         }

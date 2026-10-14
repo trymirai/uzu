@@ -4,6 +4,7 @@ pub const TILE_DIMS: u32 = 16;
 pub const FRAGMENT_BYTES: u32 = TILE_KEYS * TILE_DIMS;
 pub const SLICE_DIMS: u32 = 64;
 pub const V_CODE_BIAS: i16 = 128;
+pub const MIN_VALUE_SCALE: f32 = 1e-30;
 
 pub const GROUP_ROWS: u32 = 8;
 pub const LANE_COLS: u32 = 4;

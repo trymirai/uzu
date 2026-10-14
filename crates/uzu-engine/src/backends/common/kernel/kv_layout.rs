@@ -1,3 +1,5 @@
+use half::bf16;
+
 use crate::backends::common::gpu_types::kv_layout;
 
 pub struct Int8KVLayout {
@@ -32,6 +34,13 @@ impl Int8KVLayout {
     ) -> usize {
         keys.min(self.padded_capacity).next_multiple_of(kv_layout::TILE_KEYS) as usize
             * (self.num_kv_heads * self.head_dim) as usize
+    }
+
+    pub fn scale_tile_bytes(
+        &self,
+        keys: u32,
+    ) -> usize {
+        self.tile_bytes(keys) / self.head_dim as usize * size_of::<bf16>()
     }
 
     pub fn k_code_index(

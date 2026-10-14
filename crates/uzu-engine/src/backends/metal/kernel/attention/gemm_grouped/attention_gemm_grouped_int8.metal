@@ -16,7 +16,7 @@ using namespace metal;
 using namespace uzu::matmul;
 using namespace uzu::attention;
 using namespace uzu::trie;
-using namespace uzu::kv_layout;
+namespace kv_layout = uzu::kv_layout;
 
 // Bit tricks: a float in [2^23, 2^24) holds its integer part in the mantissa.
 UZU_CONST float BIASED_INT_OFFSET = 0x1p23f;
@@ -32,7 +32,7 @@ METAL_FUNC float biased_int_to_float(const int i) {
 // One exchange slot per step: every simdgroup's u8 P codes, `(max0, sum0, max1, sum1)` stats and probability sums.
 template <uint HEAD_DIM>
 struct AttentionGemmGroupedInt8Layout {
-  using Grouped = AttentionGemmGroupedLayout<float, TILE_KEYS, HEAD_DIM, HEAD_DIM / KV_SLICE_DIMS>;
+  using Grouped = AttentionGemmGroupedLayout<float, kv_layout::TILE_KEYS, HEAD_DIM, HEAD_DIM / kv_layout::SLICE_DIMS>;
 
   UZU_CONST int CODE_FLOATS = Grouped::SIMDGROUPS * Grouped::SCORE_TILE_ELEMENTS / int(sizeof(float));
   UZU_CONST int STAT_FLOATS = Grouped::SIMDGROUPS * Grouped::TILE_ROWS * 2;
@@ -68,7 +68,6 @@ KERNEL(AttentionGemmGroupedInt8)(
     const constant uint& m_tiles,
     const constant uint& batch_count,
     const constant uint& num_splits,
-    const constant uint& padded_capacity,
     const constant uint& split_base,
     const constant uint& split_count,
     const constant uint& trie_nodes,
@@ -87,16 +86,16 @@ KERNEL(AttentionGemmGroupedInt8)(
   using Ops = typename Layout::Ops;
   using AccumType = float;
 
-  constexpr uint D_SLICES = HEAD_DIM / KV_SLICE_DIMS;
+  constexpr uint D_SLICES = HEAD_DIM / kv_layout::SLICE_DIMS;
 
-  constexpr int KEY_COL_FRAGMENTS = int(TILE_KEYS) / Ops::FRAGMENT_COLS;
+  constexpr int KEY_COL_FRAGMENTS = int(kv_layout::TILE_KEYS) / Ops::FRAGMENT_COLS;
   constexpr int HEAD_DIM_FRAGMENTS_PER_SLICE = Layout::SLICE_COLS / Ops::FRAGMENT_ROWS;
   constexpr int VALUE_COL_FRAGMENTS = Layout::SLICE_COLS / Ops::FRAGMENT_COLS;
   constexpr int PANEL_COL_FRAGMENTS = 2;
   constexpr int PANELS = VALUE_COL_FRAGMENTS / PANEL_COL_FRAGMENTS;
   constexpr int ROWS_PER_LANE = Ops::THREAD_ELEMENT_ROWS;
-  constexpr int LANE_COLS = KEY_COL_FRAGMENTS * Ops::THREAD_ELEMENT_COLS;
-  constexpr uint LANE_BYTES = 16;
+  constexpr int kv_layout::LANE_COLS = KEY_COL_FRAGMENTS * Ops::THREAD_ELEMENT_COLS;
+  constexpr uint kv_layout::LANE_BYTES = 16;
   constexpr uint STAT_ROWS = uint(Layout::TILE_ROWS / ROWS_PER_LANE);
 
   static_assert(KEY_COL_FRAGMENTS == 2 && VALUE_COL_FRAGMENTS == 4, "32 keys x 64 channels per simdgroup");
@@ -143,12 +142,14 @@ KERNEL(AttentionGemmGroupedInt8)(
 
   q_codes += size_t(batch_idx) * params.q_strides[0] + size_t(q_head_idx) * params.q_strides[1] +
              size_t(query_base) * query_row_stride;
-  k_codes += size_t(batch_idx) * params.k_strides[0] + uint(TILE_KEYS) * size_t(kv_head_idx) * params.k_strides[1];
-  k_codes += int(lane) * LANE_BYTES;
-  const device uchar* v_tile_codes = v_codes +
-                                     (size_t(batch_idx) * params.v_strides[0] +
-                                      size_t(TILE_KEYS) * (size_t(kv_head_idx) * params.v_strides[1] + slice_offset)) +
-                                     size_t(lane) * LANE_BYTES;
+  k_codes +=
+      size_t(batch_idx) * params.k_strides[0] + uint(kv_layout::TILE_KEYS) * size_t(kv_head_idx) * params.k_strides[1];
+  k_codes += int(lane) * kv_layout::LANE_BYTES;
+  const device uchar* v_tile_codes =
+      v_codes +
+      (size_t(batch_idx) * params.v_strides[0] +
+       size_t(kv_layout::TILE_KEYS) * (size_t(kv_head_idx) * params.v_strides[1] + slice_offset)) +
+      size_t(lane) * kv_layout::LANE_BYTES;
 
   const uint valid_query_rows = row_base < grouped_rows ? grouped_rows - row_base : 0u;
   // An empty band rewinds to the batch's first query row so the loads stay in bounds.
@@ -213,8 +214,8 @@ KERNEL(AttentionGemmGroupedInt8)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
-  const uint key_block_stride = uint(TILE_KEYS) * key_row_stride;
-  const uint value_block_stride = uint(TILE_KEYS) * value_row_stride;
+  const uint key_block_stride = uint(kv_layout::TILE_KEYS) * key_row_stride;
+  const uint value_block_stride = uint(kv_layout::TILE_KEYS) * value_row_stride;
 
   // This split's key blocks.
   const uint block_begin = (split_idx * params.nk) / num_splits;
@@ -225,19 +226,23 @@ KERNEL(AttentionGemmGroupedInt8)(
                                    : (params.q_len - 1u);
   const uint block_end_candidate = ((split_idx + 1u) * params.nk) / num_splits;
   const uint block_end =
-      min(block_end_candidate, (prefix_length + max_query_index + uint(TILE_KEYS)) / uint(TILE_KEYS));
+      min(block_end_candidate,
+          (prefix_length + max_query_index + uint(kv_layout::TILE_KEYS)) / uint(kv_layout::TILE_KEYS));
   const uint tail_keys = params.k_rem;
   const uint block_count = block_end > block_begin ? block_end - block_begin : 0u;
   const bool owns_tail_block = (tail_keys != 0u) && (block_count > 0u) && (block_end == params.nk);
 
   k_codes += size_t(block_begin) * key_block_stride;
   v_tile_codes += size_t(block_begin) * value_block_stride;
-  const uint first_key = block_begin * uint(TILE_KEYS);
+  const uint first_key = block_begin * uint(kv_layout::TILE_KEYS);
 
   const AccumType score_scale = AccumType(params.scale) * AccumType(M_LOG2E_F);
 
-  const device T* key_scales_base = k_scales + size_t(kv_head_idx) * padded_capacity + size_t(first_key);
-  const device T* value_scales_base = v_scales + size_t(kv_head_idx) * padded_capacity + size_t(first_key);
+  // Scales are [key block][kv head][32 keys]: one block's 32 scales are contiguous, blocks are num_kv_heads apart.
+  const uint scale_block_stride = uint(kv_layout::TILE_KEYS) * num_kv_heads;
+  const size_t split_scale_offset = kv_layout::Int8KVShape{HEAD_DIM, num_kv_heads}.scale_index(first_key, kv_head_idx);
+  const device T* key_scales_base = k_scales + split_scale_offset;
+  const device T* value_scales_base = v_scales + split_scale_offset;
 
   AccumType query_row_scale[ROWS_PER_LANE];
   METAL_PRAGMA_UNROLL
@@ -251,14 +256,14 @@ KERNEL(AttentionGemmGroupedInt8)(
   const ushort band_first_simdgroup = band * ushort(int(D_SLICES));
 
   threadgroup uchar* const lane_codes =
-      code_slot + uint(band_first_simdgroup) * uint(Layout::SCORE_TILE_ELEMENTS) + uint(lane) * LANE_BYTES;
+      code_slot + uint(band_first_simdgroup) * uint(Layout::SCORE_TILE_ELEMENTS) + uint(lane) * kv_layout::LANE_BYTES;
   threadgroup float4* const lane_stats = reinterpret_cast<threadgroup float4*>(stat_slot) +
                                          uint(band_first_simdgroup) * STAT_ROWS + uint(score_position.y);
   threadgroup float2* const lane_probability_sums =
       reinterpret_cast<threadgroup float2*>(stat_slot + Int8Layout::STAT_FLOATS) +
       uint(band_first_simdgroup) * STAT_ROWS + uint(score_position.y);
   uint slot_offset = 0u;
-  uint scale_offset = uint(slice) * uint(TILE_KEYS) + uint(score_position.x);
+  uint scale_offset = uint(slice) * scale_block_stride + uint(score_position.x);
 
   // Per step, each slice simdgroup scores one key block and publishes P; then all accumulate P x V.
   uint kb = 0;
@@ -272,7 +277,7 @@ KERNEL(AttentionGemmGroupedInt8)(
     if (publishes_block) {
       const uint own_block = kb + uint(slice);
       const bool is_tail_block = owns_tail_block && (own_block + 1u == block_count);
-      const uint key_base = first_key + own_block * uint(TILE_KEYS);
+      const uint key_base = first_key + own_block * uint(kv_layout::TILE_KEYS);
       const device int8_t* key_tile_base = k_codes + own_block * key_block_stride;
 
       ScoreFragment score;
@@ -305,7 +310,7 @@ KERNEL(AttentionGemmGroupedInt8)(
           METAL_PRAGMA_UNROLL
           for (int pair_index = 0; pair_index < 2; ++pair_index) {
             const uint4 key_chunk = *reinterpret_cast<const device uint4*>(
-                key_tile_base + (depth_fragment + pair_index) * int(FRAGMENT_BYTES)
+                key_tile_base + (depth_fragment + pair_index) * int(kv_layout::FRAGMENT_BYTES)
             );
             key_fragments.fragment_data[pair_index] = as_type<KeyVector>(uint2(key_chunk.x, key_chunk.y));
             key_fragments.fragment_data[2 + pair_index] = as_type<KeyVector>(uint2(key_chunk.z, key_chunk.w));
@@ -316,9 +321,9 @@ KERNEL(AttentionGemmGroupedInt8)(
       }
 
       // Dequantize scores to log2 units.
-      AccumType key_scale[LANE_COLS];
-      AccumType log2_value_scale[LANE_COLS];
-      AccumType inverse_value_scale[LANE_COLS];
+      AccumType key_scale[kv_layout::LANE_COLS];
+      AccumType log2_value_scale[kv_layout::LANE_COLS];
+      AccumType inverse_value_scale[kv_layout::LANE_COLS];
       {
         const device T* key_scale_lane = key_scales_base + scale_offset;
         const device T* value_scale_lane = value_scales_base + scale_offset;
@@ -329,8 +334,9 @@ KERNEL(AttentionGemmGroupedInt8)(
             const int lane_col = fragment_col * Ops::THREAD_ELEMENT_COLS + col;
             key_scale[lane_col] = AccumType(key_scale_lane[fragment_col * Ops::FRAGMENT_COLS + col]);
             const float v_scale = float(value_scale_lane[fragment_col * Ops::FRAGMENT_COLS + col]);
-            // A never-written slot (scale 0) gives (0, 0), so masked keys stay finite.
-            const bool written = v_scale > 0.0f;
+            // A never-written slot holds garbage: below MIN_VALUE_SCALE (0, negative, NaN, denormal) gives (0, 0), so
+            // 1 / scale stays finite and masked keys contribute exactly 0.
+            const bool written = v_scale >= kv_layout::MIN_VALUE_SCALE;
             log2_value_scale[lane_col] = written ? metal::precise::log2(v_scale) : 0.0f;
             inverse_value_scale[lane_col] = written ? metal::precise::divide(1.0f, v_scale) : 0.0f;
           }
@@ -351,7 +357,7 @@ KERNEL(AttentionGemmGroupedInt8)(
       );
 
       // Apply mask.
-      if (!MASK_FREE && (is_tail_block || (key_base + uint(TILE_KEYS) > prefix_length))) {
+      if (!MASK_FREE && (is_tail_block || (key_base + uint(kv_layout::TILE_KEYS) > prefix_length))) {
         ulong trie_row_masks[ROWS_PER_LANE] = {0ul, 0ul};
         if (is_trie) {
           METAL_PRAGMA_UNROLL
@@ -440,7 +446,7 @@ KERNEL(AttentionGemmGroupedInt8)(
       for (int r = 0; r < ROWS_PER_LANE; ++r) {
         alpha[r] = fast::exp2(block_max[r] - max_score[r]) * (1.0f / CODE_MAX);
         sum_score[r] += alpha[r] * probability_sum[r];
-        output_bias[r] += alpha[r] * AccumType(KV_V_CODE_BIAS) * code_sum[r];
+        output_bias[r] += alpha[r] * AccumType(kv_layout::V_CODE_BIAS) * code_sum[r];
         output_bias[r] += alpha[r] * BIASED_INT_OFFSET;
       }
 
@@ -461,8 +467,9 @@ KERNEL(AttentionGemmGroupedInt8)(
         ValuePanelFragment value_panel;
         METAL_PRAGMA_UNROLL
         for (int key_fragment = 0; key_fragment < KEY_COL_FRAGMENTS; ++key_fragment) {
-          const uint4 tile =
-              *reinterpret_cast<const device uint4*>(value_block + (key_fragment * PANELS + panel) * FRAGMENT_BYTES);
+          const uint4 tile = *reinterpret_cast<const device uint4*>(
+              value_block + (key_fragment * PANELS + panel) * kv_layout::FRAGMENT_BYTES
+          );
           value_panel.fragment_data[key_fragment * PANEL_COL_FRAGMENTS] = as_type<ValueVector>(tile.xy);
           value_panel.fragment_data[key_fragment * PANEL_COL_FRAGMENTS + 1] = as_type<ValueVector>(tile.zw);
         }
@@ -492,7 +499,7 @@ KERNEL(AttentionGemmGroupedInt8)(
     // Double-buffered: the next step writes the other slot, so one barrier per step suffices.
     slot_offset = uint(Int8Layout::SLOT_FLOATS) - slot_offset;
     kb += step_blocks;
-    scale_offset += step_blocks * uint(TILE_KEYS);
+    scale_offset += step_blocks * scale_block_stride;
   }
 
   // Normalize and store the split partials.

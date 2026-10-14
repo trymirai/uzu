@@ -387,15 +387,25 @@ fn int8_attention_matches_cpu() {
     let (metal, cpu) = (<Metal as Backend>::Context::new().unwrap(), <Cpu as Backend>::Context::new().unwrap());
     type Prepare = <<Metal as Backend>::Kernels as Kernels>::AttentionPrepareInt8Kernel;
     let trie: [GpuTrieNode; 3] = bytemuck::cast([0u32, 2, 0, 1, 1, 1, 2, 2, 1]); // (start, end, height) per token
-    // (q heads: GQA 6 or 4 over 4 KV heads, suffix, prefix, branching trie, KV-sharing reader)
-    for (q_heads, suffix, prefix, use_trie, reader) in [
-        (24, 1, 1024, false, false),
-        (24, 16, 48, false, false),
-        (16, 16, 1024, false, false),
-        (24, 80, 16, false, false),
-        (24, 3, 1024, true, false),
-        (16, 3, 16, true, false),
-        (24, 3, 16, true, true),
+    // (q heads: GQA 6 or 4 over 4 KV heads, suffix, prefix, branching trie, KV-sharing reader, bf16 pattern that fills
+    // the scales before any write: the never-written tail of the last tile must not matter)
+    const NAN: u16 = 0xFFFF;
+    const DENORMAL: u16 = 0x0001; // 1 / scale overflows to inf
+    const INFINITY: u16 = 0x7F80;
+    const NEGATIVE_DENORMAL: u16 = 0x8001;
+    const HUGE: u16 = 0x7F7F;
+    for (q_heads, suffix, prefix, use_trie, reader, poison) in [
+        (24, 1, 1024, false, false, NAN),
+        (24, 16, 48, false, false, 0),
+        (16, 16, 1024, false, false, DENORMAL),
+        (24, 80, 16, false, false, HUGE),
+        (24, 3, 1024, true, false, INFINITY),
+        (16, 3, 16, true, false, NEGATIVE_DENORMAL),
+        (24, 3, 16, true, true, NAN),
+        (24, 8, 32, false, false, DENORMAL),
+        (24, 1, 39, false, false, INFINITY),
+        (16, 3, 37, true, false, NEGATIVE_DENORMAL),
+        (24, 16, 24, false, false, DENORMAL),
     ] {
         let (shape, nodes) = ((256, q_heads, 4, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
         let config = super::default_attention_config::<bf16>(256, q_heads, 4, true);
@@ -417,6 +427,15 @@ fn int8_attention_matches_cpu() {
         let KVStorage::Int8(kv, _) = &mut cache else {
             unreachable!()
         };
+        let mut fill = metal.create_command_buffer(None, None).unwrap();
+        let pattern = create_buffer_with_data::<Metal, u16>(&metal, &vec![poison; kv.k_scales.size() / 2]);
+        for buffer in [&mut kv.k_codes, &mut kv.v_codes] {
+            fill.encode_fill(buffer.as_mut(), poison as u8);
+        }
+        for buffer in [&mut kv.k_scales, &mut kv.v_scales] {
+            fill.encode_copy(&pattern, buffer.as_mut());
+        }
+        submit_command_buffer(fill);
         let mut step = |rows: &[bf16], prefix: usize, trie: Option<&[GpuTrieNode]>, append_kv: bool| {
             let suffix = rows.len() / stride;
             let padded = suffix.next_multiple_of(QUERY_TILE_ROWS as usize);
@@ -431,15 +450,14 @@ fn int8_attention_matches_cpu() {
                 Some(&mut query_codes),
                 Some(&mut query_scales),
                 append_kv.then_some(kv.k_codes.as_mut()),
-                append_kv.then_some(&mut kv.k_scales),
+                append_kv.then_some(kv.k_scales.as_mut()),
                 append_kv.then_some(kv.v_codes.as_mut()),
-                append_kv.then_some(&mut kv.v_scales),
+                append_kv.then_some(kv.v_scales.as_mut()),
                 None::<&<Metal as Backend>::GlobalBuffer>,
                 None::<&<Metal as Backend>::GlobalBuffer>,
                 q_heads as u32,
                 None,
                 prefix as u32,
-                kv.layout.padded_capacity,
                 stride as u32,
                 suffix as u32,
                 padded as u32,
