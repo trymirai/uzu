@@ -5,7 +5,7 @@ use crate::{
         common::{
             CommandBufferEncoding,
             gpu_types::{
-                gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
+                gemm::{GemmBPrologueKind, GemmDTransform},
                 hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             },
             kernel::matmul::{MatmulB, MatmulShape},
@@ -14,6 +14,7 @@ use crate::{
             command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
+            gpu_types::gemm::GemmBLayout,
             kernel::{
                 GemvMetalKernel,
                 matmul::{
@@ -50,6 +51,7 @@ pub struct GemvSpecialization {
 impl GemvSpecialization {
     pub fn select_shape(
         shape: &MatmulShape,
+        gemm_b_layout: GemmBLayout,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
@@ -72,7 +74,7 @@ impl GemvSpecialization {
                 shape.k,
                 bf16_io,
             )
-            .map(|tile| match shape.gemm_b_layout {
+            .map(|tile| match gemm_b_layout {
                 GemmBLayout::MxuTiled if tile.output_row_tile() < 16 => {
                     policy::GemvTile::quantized_output_tile(8, 16, 1, 32, tile.group_lanes)
                 },
@@ -87,11 +89,12 @@ impl GemvSpecialization {
             let input_aligned = shape.k.is_multiple_of(FP_K_BLOCK);
             Some(policy::fp_tile(gpu_core_count, apple_gpu_family, shape.m, shape.n, shape.k, input_aligned))
         };
-        Self::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile?)
+        Self::select_tile(shape, gemm_b_layout, weights_data_type, input_data_type, output_data_type, tile?)
     }
 
     pub fn select_tile(
         shape: &MatmulShape,
+        gemm_b_layout: GemmBLayout,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
@@ -144,7 +147,7 @@ impl GemvSpecialization {
             group_lanes: tile.group_lanes,
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
-            gemm_b_layout: shape.gemm_b_layout,
+            gemm_b_layout,
             full_tile: full_tile(shape, tile),
         };
         Some(specialization)

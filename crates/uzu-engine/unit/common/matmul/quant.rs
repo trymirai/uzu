@@ -8,12 +8,12 @@ use crate::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
             Context,
-            gpu_types::{gemm::GemmBLayout, quantization::QuantizationMode, quantization_method::QuantizationMethod},
+            gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
                     Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
-                    QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection,
+                    QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout,
                 },
             },
         },
@@ -46,7 +46,6 @@ pub struct QuantInput<T: DataTypeRepr + Float> {
     pub mode: QuantizationMode,
     pub params_layout: QuantParamsLayout,
     pub signed_codes: bool,
-    pub gemm_b_layout: GemmBLayout,
     pub prepared_a: Option<PreparedInt8A>,
 }
 
@@ -174,7 +173,6 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             mode: mode_for_bits(bits),
             params_layout: QuantParamsLayout::OutputGroup,
             signed_codes: false,
-            gemm_b_layout: GemmBLayout::RowMajor,
             prepared_a: None,
         }
     }
@@ -295,6 +293,7 @@ pub struct QuantBuffers<B: Backend, T: DataTypeRepr + Float> {
     pub prepared_a_scales: Option<B::GlobalBuffer>,
     pub prepared_a_group_sums: Option<B::GlobalBuffer>,
     pub y: B::GlobalBuffer,
+    pub weights_layout: WeightsLayout<B>,
     _t: std::marker::PhantomData<T>,
 }
 
@@ -334,6 +333,7 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
                 .filter(|prepared| !prepared.group_sums.is_empty())
                 .map(|prepared| create_buffer_with_data::<B, i32>(context, &prepared.group_sums)),
             y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
+            weights_layout: Default::default(),
             _t: std::marker::PhantomData,
         };
         if params_layout == QuantParamsLayout::GroupOutput {
@@ -346,7 +346,15 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
         &'a self,
         input: &QuantInput<T>,
     ) -> MatmulB<&'a B::GlobalBuffer> {
-        quant_b_variant(&self.w, &self.scales, self.zp.as_ref(), self.bias.as_ref(), input.params_layout, input)
+        quant_b_variant(
+            &self.w,
+            &self.scales,
+            self.zp.as_ref(),
+            self.bias.as_ref(),
+            input.params_layout,
+            self.weights_layout,
+            input,
+        )
     }
 
     fn transpose_quant_params(
@@ -386,6 +394,7 @@ fn quant_b_variant<TB: BufferRef, T: DataTypeRepr + Float>(
     zero_points: Option<TB>,
     biases: Option<TB>,
     params_layout: QuantParamsLayout,
+    weights_layout: WeightsLayout<TB::Backend>,
     input: &QuantInput<T>,
 ) -> MatmulB<TB> {
     let params = QuantParams::new(params_layout, input.n, input.k.div_ceil(input.group_size));
@@ -402,7 +411,7 @@ fn quant_b_variant<TB: BufferRef, T: DataTypeRepr + Float>(
         mode: input.mode,
         group_size: input.group_size,
         signed_codes: input.signed_codes,
-        gemm_b_layout: input.gemm_b_layout,
+        weights_layout,
     })
 }
 
@@ -420,9 +429,10 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         prepared_a_scales,
         prepared_a_group_sums,
         y,
+        weights_layout,
         ..
     } = buffers;
-    let b = quant_b_variant(&*w, &*scales, zp.as_ref(), bias.as_ref(), input.params_layout, input);
+    let b = quant_b_variant(&*w, &*scales, zp.as_ref(), bias.as_ref(), input.params_layout, *weights_layout, input);
     let a = match &input.prepared_a {
         Some(prepared) => MatmulA::Int8Symmetric {
             values: prepared_a.as_ref().expect("prepared activation buffer"),

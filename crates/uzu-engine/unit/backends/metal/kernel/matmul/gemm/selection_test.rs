@@ -5,7 +5,7 @@ use super::*;
 use crate::backends::{
     common::{
         Context,
-        gpu_types::gemm::{GemmBLayout, GemmDTransform},
+        gpu_types::gemm::GemmDTransform,
         kernel::matmul::{MatmulKernel, QuantParamsLayout},
     },
     metal::{context::MetalContext, kernel::matmul::MatmulMetalKernel},
@@ -27,7 +27,6 @@ fn shape(
         b_bits: None,
         b_group_size: None,
         signed_codes: false,
-        gemm_b_layout: GemmBLayout::RowMajor,
         a_full_precision: true,
         gathered: false,
         params_layout: Some(QuantParamsLayout::OutputGroup),

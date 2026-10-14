@@ -11,7 +11,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::{gemm::GemmBLayout, quantization::QuantizationMode, quantization_method::QuantizationMethod},
+            gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
                 Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
@@ -22,7 +22,12 @@ use crate::{
             },
         },
         cpu::Cpu,
-        metal::{Metal, context::MetalContext, kernel::matmul::gemm::GemmEngine},
+        metal::{
+            Metal,
+            context::MetalContext,
+            gpu_types::gemm::GemmBLayout,
+            kernel::matmul::{MatmulMetalKernel, gemm::GemmEngine},
+        },
     },
     data_type::DataTypeRepr,
     tests::{
@@ -31,9 +36,25 @@ use crate::{
     },
 };
 
+fn tile_weights<T: DataTypeRepr + Float>(
+    matmul: &MatmulMetalKernel,
+    buffers: &mut QuantBuffers<Metal, T>,
+    input: &QuantInput<T>,
+    context: &MetalContext,
+) {
+    let shape = MatmulShape {
+        a_full_precision: false,
+        ..MatmulShape::from_arguments(&quant_arguments(buffers, input))
+    };
+    buffers.weights_layout =
+        matmul.optimize_weights_layout(&shape, &mut buffers.w, context).expect("optimize weights layout");
+    assert_eq!(buffers.weights_layout, GemmBLayout::MxuTiled);
+}
+
 fn run_quant_metal<T: DataTypeRepr + Float>(
     context: &MetalContext,
     input: &QuantInput<T>,
+    gemm_b_layout: GemmBLayout,
     dispatch: Option<GemmEngine>,
 ) -> Vec<T> {
     let mut buffers = QuantBuffers::<Metal, T>::allocate(context, input);
@@ -44,9 +65,8 @@ fn run_quant_metal<T: DataTypeRepr + Float>(
         T::data_type(),
     )
     .expect("MatmulMetalKernel");
-    if input.gemm_b_layout == GemmBLayout::MxuTiled {
-        let shape = MatmulShape::from_arguments(&quant_arguments(&mut buffers, input));
-        matmul.prepare_gemm_b_layout(&shape, &mut buffers.w, context).expect("prepare GEMM B layout");
+    if gemm_b_layout == GemmBLayout::MxuTiled {
+        tile_weights(&matmul, &mut buffers, input, context);
     }
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let args = quant_arguments(&mut buffers, input);
@@ -125,7 +145,7 @@ fn run_parity<T: DataTypeRepr + Float + Debug + Display>(
 ) {
     let context = MetalContext::new().expect("Metal context");
     let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 0);
-    let unified = run_quant_metal::<T>(&context, &input, dispatch);
+    let unified = run_quant_metal::<T>(&context, &input, GemmBLayout::RowMajor, dispatch);
     let reference = run_quant_cpu::<T>(&input);
 
     assert_parity::<T>(
@@ -500,7 +520,7 @@ fn mxu_quant_parity_bf16(
         return;
     }
     let input = QuantInput::<bf16>::new(m, k, n, gs, bits, method, 0);
-    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmEngine::Mxu));
+    let actual = run_quant_metal::<bf16>(&context, &input, GemmBLayout::RowMajor, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(
         &format!("MXU m={m} k={k} n={n} gs={gs} bits={bits} method={method:?}"),
@@ -544,11 +564,7 @@ fn a8w_mxu_parity_bf16(
             ACTIVATION_SCALE_GROUP_SIZE,
             (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
         );
-    let input = QuantInput {
-        gemm_b_layout,
-        ..input.with_group_output()
-    };
-    let actual = run_quant_metal(&context, &input, Some(GemmEngine::Mxu));
+    let actual = run_quant_metal(&context, &input.with_group_output(), gemm_b_layout, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&reference_input);
     assert_parity::<bf16>(
         &format!(
@@ -582,7 +598,8 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
                     (method != QuantizationMethod::ScaleSymmetric)
                         .then_some(activation_group_size.min(weight_group_size)),
                 );
-            let actual = run_quant_metal(&context, &input.with_group_output(), Some(GemmEngine::Mxu));
+            let actual =
+                run_quant_metal(&context, &input.with_group_output(), GemmBLayout::RowMajor, Some(GemmEngine::Mxu));
             let reference = run_quant_cpu::<bf16>(&reference_input);
             assert_parity::<bf16>(
                 &format!("A8W{bits} act{activation_group_size} weight{weight_group_size} m={m} method={method:?}"),
@@ -608,7 +625,7 @@ fn a8w4_zero_point_tail_parity(#[case] m: u32) {
     let input = QuantInput::<bf16>::new(m, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
         .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, Some(32));
     let reference = run_quant_cpu::<bf16>(&input);
-    let actual = run_quant_metal(&context, &input.with_group_output(), Some(GemmEngine::Mxu));
+    let actual = run_quant_metal(&context, &input.with_group_output(), GemmBLayout::RowMajor, Some(GemmEngine::Mxu));
     assert_parity::<bf16>(&format!("A8W4 ZP N-tail m={m}"), &reference, &actual, 0.08, 0.8);
 }
 
@@ -629,7 +646,7 @@ fn signed_weights_full_precision_activations_parity_bf16(
     let reference = run_quant_cpu::<bf16>(&reference_input);
 
     for (label, dispatch) in [("gemv", None), ("simdgroup", Some(GemmEngine::Simdgroup))] {
-        let actual = run_quant_metal::<bf16>(&context, &input, dispatch);
+        let actual = run_quant_metal::<bf16>(&context, &input, GemmBLayout::RowMajor, dispatch);
         assert_parity::<bf16>(
             &format!("signed weights FP-A {label} bits={bits} method={method:?}"),
             &reference,
@@ -811,9 +828,10 @@ fn gemv_reads_mxu_tiled_layout_bf16(
         return;
     }
     let input = QuantInput::<bf16>::new(1, k, n, group_size, bits, method, 0).with_group_output();
-    let input = QuantInput {
-        gemm_b_layout: GemmBLayout::MxuTiled,
-        ..input
+    let input = if bits == 8 {
+        input.with_signed_weight_codes()
+    } else {
+        input
     };
     let factors: Vec<i32> = (0..n)
         .map(|row| {
@@ -854,8 +872,7 @@ fn gemv_reads_mxu_tiled_layout_bf16(
         bf16::data_type(),
     )
     .expect("Metal matmul kernel");
-    let shape = MatmulShape::from_arguments(&quant_arguments(&mut buffers, &input));
-    matmul.prepare_gemm_b_layout(&shape, &mut buffers.w, &context).expect("prepare GEMM B layout");
+    tile_weights(&matmul, &mut buffers, &input, &context);
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let mut arguments = quant_arguments(&mut buffers, &input);
     arguments.output.ops = MatmulDOps {
@@ -889,9 +906,11 @@ fn gathered_gemv_reads_mxu_tiled_layout_bf16(
         return;
     }
     let (k, vocab, gathered_rows) = (256u32, 256u32, 10u32);
-    let input = QuantInput {
-        gemm_b_layout: GemmBLayout::MxuTiled,
-        ..QuantInput::<bf16>::new(1, k, vocab, group_size, bits, method, 0).with_group_output()
+    let input = QuantInput::<bf16>::new(1, k, vocab, group_size, bits, method, 0).with_group_output();
+    let input = if bits == 8 {
+        input.with_signed_weight_codes()
+    } else {
+        input
     };
     let ids: Vec<u32> = (0..gathered_rows).map(|row| (row * 37 + 11) % vocab).collect();
     let dense = run_quant_cpu::<bf16>(&input);
@@ -906,8 +925,7 @@ fn gathered_gemv_reads_mxu_tiled_layout_bf16(
         bf16::data_type(),
     )
     .expect("Metal matmul kernel");
-    let shape = MatmulShape::from_arguments(&quant_arguments(&mut buffers, &input));
-    matmul.prepare_gemm_b_layout(&shape, &mut buffers.w, &context).expect("prepare GEMM B layout");
+    tile_weights(&matmul, &mut buffers, &input, &context);
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let mut arguments = quant_arguments(&mut buffers, &input);
     arguments.gather_indices = Some(&ids_buffer);

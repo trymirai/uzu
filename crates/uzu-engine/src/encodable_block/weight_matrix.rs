@@ -4,8 +4,8 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferCpuAccessible, BufferMut,
-        gpu_types::{gemm::GemmBLayout, quantization::QuantizationMode, quantization_method::QuantizationMethod},
-        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection},
+        gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
+        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
@@ -86,7 +86,7 @@ struct Quantized<B: Backend> {
     params: QuantParams,
     info: QuantizationInfo,
     signed_codes: bool,
-    gemm_b_layout: GemmBLayout,
+    weights_layout: WeightsLayout<B>,
 }
 
 pub struct WeightMatrix<B: Backend> {
@@ -164,7 +164,7 @@ impl<B: Backend> WeightMatrix<B> {
                 params,
                 info,
                 signed_codes: false,
-                gemm_b_layout: GemmBLayout::RowMajor,
+                weights_layout: Default::default(),
             }),
         })
     }
@@ -206,21 +206,20 @@ impl<B: Backend> WeightMatrix<B> {
             mode,
             group_size,
             signed_codes,
-            gemm_b_layout: quantized.gemm_b_layout,
+            weights_layout: quantized.weights_layout,
         })
     }
 
-    pub fn prepare_gemm_b_layout<E>(
+    pub fn optimize_weights_layout<E>(
         &mut self,
-        prepare: impl FnOnce(&mut B::GlobalBuffer) -> Result<(), E>,
+        optimize: impl FnOnce(&mut B::GlobalBuffer) -> Result<WeightsLayout<B>, E>,
     ) -> Result<(), E> {
         let Some(quantized) =
-            self.quantized.as_mut().filter(|quantized| quantized.gemm_b_layout == GemmBLayout::RowMajor)
+            self.quantized.as_mut().filter(|quantized| quantized.weights_layout == WeightsLayout::<B>::default())
         else {
             return Ok(());
         };
-        prepare(&mut self.values)?;
-        quantized.gemm_b_layout = GemmBLayout::MxuTiled;
+        quantized.weights_layout = optimize(&mut self.values)?;
         Ok(())
     }
 

@@ -74,7 +74,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )?;
         let activation_quantization = inner_linear.prepare_a8(context);
         if activation_quantization.is_some() {
-            inner_linear.prepare_gemm_b_layout(context).map_err(RHTLinearWrapperError::BackendError)?;
+            inner_linear.optimize_weights_layout(context).map_err(RHTLinearWrapperError::BackendError)?;
         }
         Self::build_self_contained(
             input_data_type,
@@ -119,7 +119,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             activation_quantization: inner_linear.prepare_a8(context),
         };
         if input_preparation.activation_quantization.is_some() {
-            inner_linear.prepare_gemm_b_layout(context).map_err(RHTLinearWrapperError::BackendError)?;
+            inner_linear.optimize_weights_layout(context).map_err(RHTLinearWrapperError::BackendError)?;
         }
         if input_preparation.activation_quantization.is_some() && !allow_prequantized_activation {
             let wrapper = Self::build_self_contained(input_data_type, input_preparation, inner_linear, context)?;

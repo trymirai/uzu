@@ -1,11 +1,8 @@
-use super::{QuantParams, QuantParamsLayout};
+use super::{QuantParams, QuantParamsLayout, WeightsLayout};
 use crate::{
     backends::common::{
         BufferRef,
-        gpu_types::{
-            gemm::{GemmBLayout, GemmBPrologueKind},
-            quantization::QuantizationMode,
-        },
+        gpu_types::{gemm::GemmBPrologueKind, quantization::QuantizationMode},
     },
     data_type::DataType,
 };
@@ -38,7 +35,7 @@ pub struct QuantizedB<TB: BufferRef> {
     pub mode: QuantizationMode,
     pub group_size: u32,
     pub signed_codes: bool,
-    pub gemm_b_layout: GemmBLayout,
+    pub weights_layout: WeightsLayout<TB::Backend>,
 }
 
 #[derive(Clone, Copy)]
@@ -131,8 +128,8 @@ impl<TB: BufferRef> MatmulB<TB> {
         self.quantized().is_some_and(|quantized| quantized.signed_codes)
     }
 
-    pub fn gemm_b_layout(&self) -> GemmBLayout {
-        self.quantized().map_or(GemmBLayout::RowMajor, |quantized| quantized.gemm_b_layout)
+    pub fn weights_layout(&self) -> WeightsLayout<TB::Backend> {
+        self.quantized().map_or_else(Default::default, |quantized| quantized.weights_layout)
     }
 
     pub fn quant_params_layout(&self) -> Option<QuantParamsLayout> {

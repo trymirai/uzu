@@ -3,9 +3,12 @@ use uzu_engine_macros::uzu_test;
 
 use super::*;
 use crate::{
-    backends::common::{
-        gpu_types::gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
-        kernel::matmul::{MatmulShape, QuantParamsLayout},
+    backends::{
+        common::{
+            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+            kernel::matmul::{MatmulShape, QuantParamsLayout},
+        },
+        metal::gpu_types::gemm::GemmBLayout,
     },
     data_type::DataType,
 };
@@ -123,7 +126,6 @@ fn quant_shape(
         b_bits: Some(4),
         b_group_size: Some(32),
         signed_codes: false,
-        gemm_b_layout: GemmBLayout::RowMajor,
         a_full_precision: true,
         gathered: false,
         params_layout: Some(QuantParamsLayout::OutputGroup),
@@ -144,7 +146,6 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
         b_bits: Some(4),
         b_group_size: Some(64),
         signed_codes: false,
-        gemm_b_layout: GemmBLayout::RowMajor,
         a_full_precision: true,
         gathered: false,
         params_layout: Some(QuantParamsLayout::OutputGroup),
@@ -153,6 +154,7 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
     assert!(
         super::super::kernel::GemvSpecialization::select_shape(
             &shape,
+            GemmBLayout::RowMajor,
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,
@@ -168,6 +170,7 @@ fn specialization_preserves_quantized_route() {
     let select = |n, transform| {
         super::super::kernel::GemvSpecialization::select_shape(
             &quant_shape(4, n, transform),
+            GemmBLayout::RowMajor,
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,
@@ -188,6 +191,7 @@ fn gathered_group_major_is_a_gemv_route() {
     assert!(
         super::super::kernel::GemvSpecialization::select_tile(
             &shape,
+            GemmBLayout::RowMajor,
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,

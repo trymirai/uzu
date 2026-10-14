@@ -17,6 +17,7 @@ use crate::{
 pub trait MatmulKernel: Sized + Send + Sync {
     type Backend: Backend<Kernels: Kernels<MatmulKernel = Self>>;
     type Error: Error + 'static;
+    type WeightsLayout: Copy + Default + PartialEq + Send + Sync;
 
     fn new(
         context: &<Self::Backend as Backend>::Context,
@@ -49,17 +50,18 @@ pub trait MatmulKernel: Sized + Send + Sync {
     fn select_activation_format(
         &self,
         _bf16_shape: &MatmulShape,
+        _weights_layout: Self::WeightsLayout,
         _context: &<Self::Backend as Backend>::Context,
     ) -> ActivationFormat {
         ActivationFormat::Bf16
     }
 
-    fn prepare_gemm_b_layout(
+    fn optimize_weights_layout(
         &self,
         _a8_shape: &MatmulShape,
         _weights: &mut <Self::Backend as Backend>::GlobalBuffer,
         _context: &<Self::Backend as Backend>::Context,
-    ) -> Result<(), <Self::Backend as Backend>::Error> {
-        unreachable!("the GEMM B layout is prepared only after int8 activations were selected")
+    ) -> Result<Self::WeightsLayout, <Self::Backend as Backend>::Error> {
+        Ok(Self::WeightsLayout::default())
     }
 }

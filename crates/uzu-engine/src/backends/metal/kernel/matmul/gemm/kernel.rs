@@ -5,7 +5,7 @@ use crate::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
             Context,
-            gpu_types::gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
+            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{
                 Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulOutput, MatmulShape, QuantParamsLayout,
                 QuantParamsStrides, QuantizedB,
@@ -17,7 +17,7 @@ use crate::{
             context::MetalContext,
             error::MetalError,
             gpu_types::{
-                gemm::{GemmAPrologueKind, GemmAlignment},
+                gemm::{GemmAPrologueKind, GemmAlignment, GemmBLayout},
                 matmul::GemmParams,
             },
             kernel::{
@@ -254,7 +254,8 @@ impl GemmKernel {
             };
 
         let use_mxu = plan.engine == GemmEngine::Mxu;
-        if shape.gemm_b_layout == GemmBLayout::MxuTiled && (!use_mxu || shape.a_full_precision) {
+        let gemm_b_layout = quantized.as_ref().map_or(GemmBLayout::RowMajor, |quantized| quantized.weights_layout);
+        if gemm_b_layout == GemmBLayout::MxuTiled && (!use_mxu || shape.a_full_precision) {
             return Err(MatmulMetalError::IncompatibleA {
                 path: "Gemm",
                 reason: "MxuTiled GEMM B layout requires int8 activations on the MXU",
@@ -335,6 +336,7 @@ impl GemmKernel {
                 scale_strides,
                 zero_point_strides,
                 shape,
+                gemm_b_layout,
                 plan,
                 output_transform,
                 output_bias,
@@ -382,6 +384,7 @@ impl GemmKernel {
         let specialization = GemmSpecialization::from_plan(
             plan,
             shape,
+            gemm_b_layout,
             self.weights_data_type,
             output_transform,
             alignment,
@@ -423,6 +426,7 @@ impl GemmKernel {
         scale_strides: QuantParamsStrides,
         zero_point_strides: QuantParamsStrides,
         shape: MatmulShape,
+        gemm_b_layout: GemmBLayout,
         plan: GemmPlan,
         output_transform: GemmDTransform,
         output_bias: Option<impl BufferRef<Backend = Metal>>,
@@ -463,6 +467,7 @@ impl GemmKernel {
         let part_spec = GemmSpecialization::from_plan(
             plan,
             shape,
+            gemm_b_layout,
             self.weights_data_type,
             GemmDTransform::empty(),
             alignment,

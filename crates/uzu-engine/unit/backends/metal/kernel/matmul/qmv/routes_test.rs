@@ -6,10 +6,13 @@ use super::*;
 use crate::{
     backends::{
         common::{
-            gpu_types::gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
+            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{MatmulShape, QuantParamsLayout},
         },
-        metal::kernel::matmul::{MatmulDispatch, MatmulMetalKernel, gemv::GemvSpecialization},
+        metal::{
+            gpu_types::gemm::GemmBLayout,
+            kernel::matmul::{MatmulDispatch, MatmulMetalKernel, gemv::GemvSpecialization},
+        },
     },
     data_type::DataType,
 };
@@ -57,7 +60,6 @@ fn problem(
         b_bits: Some(bits),
         b_group_size: Some(group),
         signed_codes: false,
-        gemm_b_layout: GemmBLayout::RowMajor,
         a_full_precision: true,
         gathered: false,
         params_layout: Some(QuantParamsLayout::OutputGroup),
@@ -95,6 +97,7 @@ fn table_is_complete_and_fingerprint_is_stable() {
                     assert_eq!(route(device_name, apple_gpu_family, supports_mxu, &problem, true), Some(selected));
                     let runtime = MatmulMetalKernel::choose_dispatch(
                         &problem,
+                        GemmBLayout::RowMajor,
                         device_name,
                         gpu_core_count,
                         apple_gpu_family,
@@ -106,6 +109,7 @@ fn table_is_complete_and_fingerprint_is_stable() {
                     if let QmvRoute::Tuned(tile) | QmvRoute::MainGemv(tile) = selected {
                         let specialization = GemvSpecialization::select_tile(
                             &problem,
+                            GemmBLayout::RowMajor,
                             DataType::BF16,
                             DataType::BF16,
                             DataType::BF16,
@@ -134,7 +138,17 @@ fn weaver_linears_select_the_tuned_tile() {
         p.d_transform = GemmDTransform::RHT;
         let tile = GemvTile::quantized_output_tile(2, 16, 4, 8, 1);
         assert_eq!(route("Apple M5 Max", MTLGPUFamily::Apple10, true, &p, true), Some(QmvRoute::Tuned(tile)));
-        assert!(GemvSpecialization::select_tile(&p, DataType::BF16, DataType::BF16, DataType::BF16, tile).is_some());
+        assert!(
+            GemvSpecialization::select_tile(
+                &p,
+                GemmBLayout::RowMajor,
+                DataType::BF16,
+                DataType::BF16,
+                DataType::BF16,
+                tile
+            )
+            .is_some()
+        );
     }
 }
 
@@ -162,11 +176,29 @@ fn exact_lookup_rejects_non_matrix_inputs() {
     let QmvRoute::Tuned(tile) = selected else {
         panic!("test anchor must use a tuned tile");
     };
-    let deferred = GemvSpecialization::select_tile(&rht, DataType::BF16, DataType::BF16, DataType::BF16, tile).unwrap();
+    let deferred = GemvSpecialization::select_tile(
+        &rht,
+        GemmBLayout::RowMajor,
+        DataType::BF16,
+        DataType::BF16,
+        DataType::BF16,
+        tile,
+    )
+    .unwrap();
     assert_eq!(deferred.output_row_tile(), 16);
     assert!(!deferred.fuses_rht());
     rht.n -= 1;
-    assert!(GemvSpecialization::select_tile(&rht, DataType::BF16, DataType::BF16, DataType::BF16, tile).is_none());
+    assert!(
+        GemvSpecialization::select_tile(
+            &rht,
+            GemmBLayout::RowMajor,
+            DataType::BF16,
+            DataType::BF16,
+            DataType::BF16,
+            tile
+        )
+        .is_none()
+    );
 
     let p = problem(7, 5120, 17408, 8, 64, GemmBPrologueKind::ScaleSymmetricDequant);
     assert!(matches!(route("Apple M5 Max", MTLGPUFamily::Apple10, true, &p, true), Some(QmvRoute::MainGemm(_))));
@@ -180,6 +212,7 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
         assert_eq!(route("Apple M1", MTLGPUFamily::Apple7, false, &problem, true), None);
         let specialization = GemvSpecialization::select_shape(
             &problem,
+            GemmBLayout::RowMajor,
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,
@@ -189,7 +222,7 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
         .expect("normal M1 policy should select GEMV for this anchor");
         assert!(matches!(
             MatmulMetalKernel::choose_dispatch(
-                &problem,
+                &problem, GemmBLayout::RowMajor,
                 "Apple M1",
                 8,
                 MTLGPUFamily::Apple7,
@@ -209,12 +242,26 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
     let mut with_rht = fp;
     with_rht.d_transform = GemmDTransform::RHT;
     for (cores, family) in [(8, MTLGPUFamily::Apple7), (40, MTLGPUFamily::Apple10)] {
-        let plain =
-            GemvSpecialization::select_shape(&fp, DataType::BF16, DataType::BF16, DataType::BF16, cores, family)
-                .expect("generic M=1 FP GEMV tile");
-        let rht =
-            GemvSpecialization::select_shape(&with_rht, DataType::BF16, DataType::BF16, DataType::BF16, cores, family)
-                .expect("generic M=1 FP RHT GEMV tile");
+        let plain = GemvSpecialization::select_shape(
+            &fp,
+            GemmBLayout::RowMajor,
+            DataType::BF16,
+            DataType::BF16,
+            DataType::BF16,
+            cores,
+            family,
+        )
+        .expect("generic M=1 FP GEMV tile");
+        let rht = GemvSpecialization::select_shape(
+            &with_rht,
+            GemmBLayout::RowMajor,
+            DataType::BF16,
+            DataType::BF16,
+            DataType::BF16,
+            cores,
+            family,
+        )
+        .expect("generic M=1 FP RHT GEMV tile");
         assert!(plain.output_row_tile() < 32);
         assert_eq!(rht, plain);
     }

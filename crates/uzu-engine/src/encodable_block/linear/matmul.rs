@@ -118,13 +118,13 @@ impl<B: Backend> LinearMatmul<B> {
         self.matrix.try_prepare_a8_storage().then_some(quantization)
     }
 
-    pub fn prepare_gemm_b_layout(
+    pub fn optimize_weights_layout(
         &mut self,
         context: &B::Context,
     ) -> Result<(), B::Error> {
         let shape = self.matmul_shape(1, false);
         let kernel = self.kernel.lock();
-        self.matrix.prepare_gemm_b_layout(|weights| kernel.prepare_gemm_b_layout(&shape, weights, context))
+        self.matrix.optimize_weights_layout(|weights| kernel.optimize_weights_layout(&shape, weights, context))
     }
 
     pub(super) fn encode_with_a(
@@ -177,7 +177,6 @@ impl<B: Backend> LinearMatmul<B> {
             b_bits: b.bits_per_b(),
             b_group_size: b.group_size(),
             signed_codes: b.signed_codes(),
-            gemm_b_layout: b.gemm_b_layout(),
             a_full_precision,
             gathered: false,
             params_layout: b.quant_params_layout(),
@@ -214,6 +213,6 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         context: &B::Context,
     ) -> ActivationFormat {
         let bf16_shape = self.matmul_shape(batch_dim, true);
-        self.kernel.lock().select_activation_format(&bf16_shape, context)
+        self.kernel.lock().select_activation_format(&bf16_shape, self.matmul_b().weights_layout(), context)
     }
 }
