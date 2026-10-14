@@ -16,6 +16,7 @@ pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffi
 #[derive(Clone, Copy)]
 pub struct KVCacheView {
     prefix_len: u32,
+    context_length: u32,
     ring: Option<RingParams>,
 }
 
@@ -23,6 +24,7 @@ impl KVCacheView {
     pub fn full(prefix_len: u32) -> Self {
         Self {
             prefix_len,
+            context_length: prefix_len,
             ring: None,
         }
     }
@@ -30,9 +32,12 @@ impl KVCacheView {
     pub fn ring(
         prefix_len: u32,
         offset: u32,
+        context_length: u32,
     ) -> Self {
+        assert!(context_length >= prefix_len, "ring prefix exceeds context length");
         Self {
             prefix_len,
+            context_length,
             ring: Some(RingParams {
                 ring_offset: offset,
                 ring_length: prefix_len,
@@ -42,6 +47,11 @@ impl KVCacheView {
 
     pub fn prefix_len(self) -> u32 {
         self.prefix_len
+    }
+
+    /// Absolute position at which the current suffix starts, including tokens evicted from the ring.
+    pub fn context_length(self) -> u32 {
+        self.context_length
     }
 
     pub fn ring_params(self) -> Option<RingParams> {
@@ -57,6 +67,7 @@ enum KVCacheState {
         offset: u32,
         length: u32,
         capacity: u32,
+        context_length: u32,
     },
 }
 
@@ -73,6 +84,7 @@ impl KVCacheState {
             offset: 0,
             length: 0,
             capacity,
+            context_length: 0,
         }
     }
 
@@ -85,7 +97,8 @@ impl KVCacheState {
                 offset,
                 length,
                 capacity: _,
-            } => KVCacheView::ring(*length, *offset),
+                context_length,
+            } => KVCacheView::ring(*length, *offset, *context_length),
         }
     }
 
@@ -133,6 +146,7 @@ impl KVCacheState {
                 offset,
                 length,
                 capacity,
+                context_length,
             } => {
                 let count = accepted_indices.len() as u32;
                 let mut copies = Vec::with_capacity(accepted_indices.len().min(*capacity as usize));
@@ -154,6 +168,7 @@ impl KVCacheState {
                         *offset = (*offset + 1) % *capacity;
                     }
                 }
+                *context_length += count;
                 copies
             },
         }

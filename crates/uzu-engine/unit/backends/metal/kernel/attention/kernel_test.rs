@@ -90,6 +90,7 @@ fn run_attention_with_kernel<B: Backend>(
         sinks: sinks.as_ref(),
         cache,
         gate: None::<&B::GlobalBuffer>,
+        rope: None,
     };
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let pooled = kernel.encode(arguments, &mut command_buffer).expect("encode");
@@ -131,6 +132,7 @@ fn run_direct_metal(
         sinks: sinks.as_ref(),
         cache: KVCacheView::full(prefix_length as u32),
         gate: None::<&<Metal as Backend>::GlobalBuffer>,
+        rope: None,
     };
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let pooled = match route {
@@ -299,7 +301,7 @@ fn attention_kernel_ring_matches_full_on_wrap() {
         shape,
         &ring_keys,
         &ring_values,
-        KVCacheView::ring(CAPACITY as u32, ring_offset as u32),
+        KVCacheView::ring(CAPACITY as u32, ring_offset as u32, CONTEXT as u32),
         None,
         None,
     );
@@ -337,6 +339,7 @@ fn check_attention_gate<B: Backend>(
         sinks: None,
         cache: KVCacheView::full(prefix_length as u32),
         gate,
+        rope: None,
     };
     let gate_segment = qkvg.subrange((PROJECTION_DIM - GATE_DIM) * size_of::<bf16>()..);
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");

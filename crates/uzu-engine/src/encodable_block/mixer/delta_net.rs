@@ -21,7 +21,7 @@ use crate::{
         linear::{Linear, LinearBlockError},
         mixer::{
             Mixer, MixerState,
-            attention::rope::PrecalculatedRoPE,
+            attention::rope::{PrecalculatedRoPE, RopeCache},
             delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
         },
     },
@@ -466,13 +466,15 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         &self,
         hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        rope_cache: Option<&RopeCache<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let command_buffer = &mut *command_buffer.debug_group("delta net");
-
         assert!(precalculated_rope.is_none(), "unexpected rope for delta net mixer");
+        assert!(rope_cache.is_none(), "unexpected rope cache for delta net mixer");
+
+        let command_buffer = &mut *command_buffer.debug_group("delta net");
 
         let state = state.expect("delta net requires state");
         let state = state.downcast::<DeltaNetState<B>>().expect("incorrect type of delta net state");

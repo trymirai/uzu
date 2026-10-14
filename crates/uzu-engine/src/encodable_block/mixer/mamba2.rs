@@ -16,7 +16,10 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
-        mixer::{Mixer, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{
+            Mixer, MixerState,
+            attention::rope::{PrecalculatedRoPE, RopeCache},
+        },
     },
     parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -239,6 +242,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         &self,
         hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        rope_cache: Option<&RopeCache<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -246,6 +250,7 @@ impl<B: Backend> Mixer<B> for Mamba2<B> {
         let command_buffer = &mut *command_buffer.debug_group("mamba2");
 
         assert!(precalculated_rope.is_none(), "unexpected rope for mamba2 mixer");
+        assert!(rope_cache.is_none(), "unexpected rope cache for mamba2 mixer");
 
         if !batch_dim.full_accept() {
             panic!("mamba2 doesn't support speculation");

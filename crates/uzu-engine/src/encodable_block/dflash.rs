@@ -321,6 +321,7 @@ impl<B: Backend> DFlash<B> {
                     &mut residual,
                     None::<&B::ScratchBuffer>,
                     Some(&rope),
+                    None,
                     &batch_topology,
                     Some(MaybeMut::Mut(mixer_state.as_mut())),
                     command_buffer,

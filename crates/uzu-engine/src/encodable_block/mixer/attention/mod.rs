@@ -30,6 +30,8 @@ mod state;
 
 pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCacheView};
 
+use crate::encodable_block::mixer::attention::rope::RopeCache;
+
 pub mod rope;
 
 pub struct Attention<B: Backend> {
@@ -129,7 +131,7 @@ impl<B: Backend> Attention<B> {
             data_type,
             DataType::F32,
             !is_kv_sharing,
-            rope_config.is_some(),
+            false,
         )
         .map_err(AttentionNewError::Backend)?;
         let sinks = config
@@ -212,6 +214,7 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         &self,
         hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        rope_cache: Option<&RopeCache<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -222,7 +225,7 @@ impl<B: Backend> Mixer<B> for Attention<B> {
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        let output = self.attend(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
+        let output = self.attend(hidden, precalculated_rope, rope_cache, batch_dim, state, command_buffer)?;
 
         Ok(output)
     }

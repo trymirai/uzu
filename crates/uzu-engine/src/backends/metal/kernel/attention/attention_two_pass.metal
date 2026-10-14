@@ -7,6 +7,7 @@
 #include "../generated/trie.h"
 #include "attention_gate.h"
 #include "mask.h"
+#include "rope.h"
 
 #define TOTAL_BLOCKS_COUNT 32
 #define SIMDGROUPS_PER_THREADGROUP 8
@@ -25,6 +26,8 @@ KERNEL(AttentionTwoPass1)(
     const device T* queries,
     const device T* keys,
     const device T* values,
+    const device float* cosines OPTIONAL(has_rope),
+    const device float* sines OPTIONAL(has_rope),
     device float* out,
     device float* sums,
     device float* maxs,
@@ -41,11 +44,14 @@ KERNEL(AttentionTwoPass1)(
     const device TrieNode* trie OPTIONAL(is_trie),
     const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
     const device T* sinks OPTIONAL(has_sinks),
+    const constant uint& rope_dim OPTIONAL(has_rope),
+    const constant uint& rope_position_offset OPTIONAL(has_rope),
     const bool has_sinks SPECIALIZE,
     const bool is_kv_cache_ring SPECIALIZE,
     const bool is_causal SPECIALIZE,
     const bool is_trie SPECIALIZE,
     const bool is_sliding_window SPECIALIZE,
+    const bool has_rope SPECIALIZE,
     const ThreadContext thread_context,
     const uint head_group_idx GROUPS(num_heads.div_ceil(SIMDGROUPS_PER_THREADGROUP)),
     const uint q_seq_idx GROUPS(suffix_length),
@@ -72,16 +78,30 @@ KERNEL(AttentionTwoPass1)(
   thread U q[elements_per_thread];
   thread U o[elements_per_thread] = {0};
 
-  queries += q_offset * HEAD_DIM + thread_context.simd_lane_id * elements_per_thread;
-  keys += kv_head_idx * k_head_stride + block_idx * k_seq_stride + thread_context.simd_lane_id * elements_per_thread;
+  const uint head_dim_offset = thread_context.simd_lane_id * elements_per_thread;
+  queries += q_offset * HEAD_DIM + head_dim_offset;
+  keys += kv_head_idx * k_head_stride + block_idx * k_seq_stride + head_dim_offset;
   values += kv_head_idx * v_head_stride + block_idx * v_seq_stride + thread_context.simd_lane_id * elements_per_thread;
   out += o_offset * TOTAL_BLOCKS_COUNT * HEAD_DIM + block_idx * HEAD_DIM +
          thread_context.simd_lane_id * elements_per_thread;
   sums += o_offset * TOTAL_BLOCKS_COUNT + block_idx;
   maxs += o_offset * TOTAL_BLOCKS_COUNT + block_idx;
 
+  const uint query_rope_position = has_rope ? rope_position_offset + (is_trie ? trie[q_seq_idx].height : q_seq_idx) : 0;
   for (uint i = 0; i < elements_per_thread; i++) {
-    q[i] = static_cast<U>(scale) * queries[i];
+    T value = queries[i];
+    if (has_rope) {
+      value = apply_attention_rope(
+          value,
+          queries - head_dim_offset,
+          cosines,
+          sines,
+          query_rope_position,
+          head_dim_offset + i,
+          rope_dim
+      );
+    }
+    q[i] = static_cast<U>(scale) * value;
   }
   U max_score = -1e9;
   U sum_exp_score = 0;
@@ -106,10 +126,33 @@ KERNEL(AttentionTwoPass1)(
             is_trie,
             is_sliding_window
         )) {
+      uint key_rope_position = i;
+      if (has_rope) {
+        if (i >= prefix_length) {
+          const uint suffix_idx = i - prefix_length;
+          key_rope_position = rope_position_offset + (is_trie ? trie[suffix_idx].height : suffix_idx);
+        } else if (is_kv_cache_ring) {
+          const uint logical_idx = (prefix_length + i - ring_params.ring_offset) % prefix_length;
+          key_rope_position = rope_position_offset - prefix_length + logical_idx;
+        }
+      }
+
       // Compute score
       U score = 0;
       for (uint j = 0; j < elements_per_thread; j++) {
-        score += q[j] * static_cast<U>(keys[j]);
+        T value = keys[j];
+        if (has_rope) {
+          value = apply_attention_rope(
+              value,
+              keys - head_dim_offset,
+              cosines,
+              sines,
+              key_rope_position,
+              head_dim_offset + j,
+              rope_dim
+          );
+        }
+        score += q[j] * static_cast<U>(value);
       }
       score = simd_sum(score);
 

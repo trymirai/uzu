@@ -10,7 +10,10 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         mixer::{
-            attention::{Attention, AttentionNewError, rope::PrecalculatedRoPE},
+            attention::{
+                Attention, AttentionNewError,
+                rope::{PrecalculatedRoPE, RopeCache},
+            },
             delta_net::{DeltaNet, DeltaNetNewError},
             mamba2::{Mamba2, Mamba2NewError},
             short_conv::{ShortConv, ShortConvNewError},
@@ -63,6 +66,7 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         &self,
         hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        rope_cache: Option<&RopeCache<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,

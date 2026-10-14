@@ -11,7 +11,10 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        mixer::{MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{
+            MixerState,
+            attention::rope::{PrecalculatedRoPE, RopeCache, rope_values},
+        },
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
@@ -27,6 +30,7 @@ enum TransformerLayerStateType<B: Backend> {
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
+    ropes_cache: Box<[RopeCache<B>]>,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -116,7 +120,7 @@ impl<B: Backend> Transformer<B> {
             .map(|(layer_config, layer_index)| {
                 let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
 
-                let rope = layer_config.rope_config.as_ref().map(|layer_rope_config| {
+                let rope_config_position = layer_config.rope_config.as_ref().map(|layer_rope_config| {
                     ropes.iter().position(|rope_config| rope_config == layer_rope_config).unwrap_or_else(|| {
                         ropes.push(layer_rope_config.clone());
                         ropes.len() - 1
@@ -134,7 +138,7 @@ impl<B: Backend> Transformer<B> {
                     data_type,
                 )?;
 
-                Ok((layer, rope))
+                Ok((layer, rope_config_position))
             })
             .collect::<Result<Box<[_]>, TransformerNewError<B>>>()?;
 
@@ -219,11 +223,18 @@ impl<B: Backend> Transformer<B> {
             })
             .collect::<Result<_, B::Error>>()?;
 
-        let context_length = 0;
+        let mut ropes_cache: Vec<RopeCache<B>> = Vec::new();
+        for config in self.ropes.iter() {
+            let max_rope_length = config.max_sequence_length();
+            let max_positions = max_context_length.unwrap_or(*max_rope_length);
+            let cache = RopeCache::new(context, max_positions, *config.head_dim())?;
+            ropes_cache.push(cache);
+        }
 
         Ok(TransformerState {
             layer_states,
-            context_length,
+            context_length: 0,
+            ropes_cache: ropes_cache.into_boxed_slice(),
         })
     }
 
@@ -237,6 +248,8 @@ impl<B: Backend> Transformer<B> {
         mut state: Option<&mut TransformerState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
+        // TODO agolokoz: handle state with state == None
+
         let mut hidden = input;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
@@ -251,17 +264,23 @@ impl<B: Backend> Transformer<B> {
         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
         let token_positions = batch_dim.heights().map(|rel_pos| context_length + rel_pos).collect::<Box<[u32]>>();
 
-        let precalculated_ropes = self
-            .ropes
-            .iter()
-            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
-            .collect::<Result<Box<[_]>, B::Error>>()?;
+        let mut precalculated_ropes: Vec<PrecalculatedRoPE<B>> = Vec::new();
+        for (i, config) in self.ropes.iter().enumerate() {
+            let (cosines, sines) = rope_values(config, &token_positions);
+            let precalculated = PrecalculatedRoPE::new(&cosines, &sines, *config.head_dim(), command_buffer)?;
+            precalculated_ropes.push(precalculated);
+
+            if let Some(state) = &mut state {
+                state.ropes_cache[i].fill(&token_positions, &cosines, &sines)?;
+            }
+        }
 
         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
 
-            let layer_state = if let Some(state) = &mut state {
-                Some(match &mut state.layer_states[layer.layer_index as usize] {
+            let (layer_state, rope_cache) = if let Some(state) = &mut state {
+                let rope_cache = layer_rope_index.map(|i| &state.ropes_cache[i]);
+                let layer_state = match &mut state.layer_states[layer.layer_index as usize] {
                     TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
                     TransformerLayerStateType::Shared(owned_layer_index) => {
                         let TransformerLayerStateType::Owned(owned_layer) =
@@ -271,9 +290,10 @@ impl<B: Backend> Transformer<B> {
                         };
                         MaybeMut::Const(owned_layer.as_ref())
                     },
-                })
+                };
+                (Some(layer_state), rope_cache)
             } else {
-                None
+                (None, None)
             };
 
             hidden = layer.encode(
@@ -281,6 +301,7 @@ impl<B: Backend> Transformer<B> {
                 &mut shortcut,
                 per_layer_inputs,
                 precalculated_rope,
+                rope_cache,
                 batch_dim,
                 layer_state,
                 command_buffer,

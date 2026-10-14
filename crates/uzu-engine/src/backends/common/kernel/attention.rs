@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{Backend, BufferRef, CommandBuffer, Kernels},
     data_type::DataType,
-    encodable_block::mixer::attention::KVCacheView,
+    encodable_block::mixer::attention::{KVCacheView, rope::RopeCache},
 };
 
 pub trait AttentionKernel: Sized + Send + Sync {
@@ -58,4 +58,5 @@ pub struct AttentionArguments<
     pub sinks: Option<&'a B::GlobalBuffer>,
     pub cache: KVCacheView,
     pub gate: Option<GT>,
+    pub rope: Option<&'a RopeCache<B>>,
 }

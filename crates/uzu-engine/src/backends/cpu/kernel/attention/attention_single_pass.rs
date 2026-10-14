@@ -14,6 +14,8 @@ pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
     queries: *const T,
     keys: *const T,
     values: *const T,
+    #[optional(has_rope)] cosines: Option<*const f32>,
+    #[optional(has_rope)] sines: Option<*const f32>,
     out: *mut T,
     gqa_factor: u32,
     sequence_length: u32,
@@ -28,14 +30,45 @@ pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
     #[optional(has_sinks)] sinks: Option<*const T>,
     num_heads: u32,
     suffix_length: u32,
+    #[optional(has_rope)] rope_dim: Option<u32>,
+    #[optional(has_rope)] rope_position_offset: Option<u32>,
     #[specialize] has_sinks: bool,
     #[specialize] is_kv_cache_ring: bool,
     #[specialize] is_causal: bool,
     #[specialize] is_trie: bool,
     #[specialize] is_sliding_window: bool,
+    #[specialize] has_rope: bool,
 ) {
     assert_eq!(ring_params.is_some(), is_kv_cache_ring);
     assert_eq!(sliding_window_size.is_some(), is_sliding_window);
+    if has_rope {
+        let dim = rope_dim.unwrap();
+        assert!(dim > 0 && dim.is_multiple_of(2) && dim <= HEAD_DIM, "invalid RoPE dimension");
+    }
+
+    let load = |head: *const T, dim: usize, position: u32| {
+        let input = unsafe { *head.add(dim) }.to_f32().unwrap();
+        if !has_rope || dim >= rope_dim.unwrap() as usize {
+            return input;
+        }
+        let half = rope_dim.unwrap() as usize / 2;
+        let first_half = dim < half;
+        let paired_dim = if first_half {
+            dim + half
+        } else {
+            dim - half
+        };
+        let paired = unsafe { *head.add(paired_dim) }.to_f32().unwrap();
+        let signed_paired = if first_half {
+            -paired
+        } else {
+            paired
+        };
+        let index = position as usize * rope_dim.unwrap() as usize + dim;
+        let cosine = unsafe { *cosines.unwrap().add(index) };
+        let sine = unsafe { *sines.unwrap().add(index) };
+        T::from(input * cosine + signed_paired * sine).unwrap().to_f32().unwrap()
+    };
 
     let value_dim = HEAD_DIM;
 
@@ -65,10 +98,15 @@ pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
             let out: *mut T = unsafe { out.add((o_offset * value_dim) as usize) };
 
             // Read the query and 0 the output accumulator
+            let query_rope_position = if has_rope {
+                rope_position_offset.unwrap() + query_position - suffix_position
+            } else {
+                0
+            };
             let mut q = vec![0.0f32; HEAD_DIM as usize];
             let mut o = vec![0.0f32; HEAD_DIM as usize];
             for j in 0..HEAD_DIM as usize {
-                q[j] = scale * unsafe { *queries.add(j) }.to_f32().unwrap();
+                q[j] = scale * load(queries, j, query_rope_position);
             }
 
             let mut max_score = f32::NEG_INFINITY;
@@ -93,11 +131,27 @@ pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
                     is_causal,
                 ) {
                     let keys = unsafe { keys.add((i * k_seq_stride) as usize) };
+                    let key_rope_position = if !has_rope {
+                        0
+                    } else if i >= prefix_length {
+                        let suffix_idx = i - prefix_length;
+                        let position = if is_trie {
+                            unsafe { (*trie.unwrap().add(suffix_idx as usize)).height }
+                        } else {
+                            suffix_idx
+                        };
+                        rope_position_offset.unwrap() + position
+                    } else if let Some(ring) = ring_params {
+                        let logical_idx = (prefix_length + i - ring.ring_offset) % prefix_length;
+                        rope_position_offset.unwrap() - prefix_length + logical_idx
+                    } else {
+                        i
+                    };
 
                     // Compute the i-th score
                     let mut score = 0.0f32;
                     for j in 0..HEAD_DIM as usize {
-                        score += q[j] * unsafe { *keys.add(j) }.to_f32().unwrap();
+                        score += q[j] * load(keys, j, key_rope_position);
                     }
 
                     // Update the accumulators

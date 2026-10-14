@@ -16,6 +16,7 @@ use crate::{
         },
     },
     data_type::DataType,
+    encodable_block::mixer::attention::rope::RopeCache,
 };
 
 mod policy;
@@ -50,6 +51,7 @@ impl AttentionGemmGroupedMetal {
         scale: Option<f32>,
         gate_row_stride: Option<u32>,
         mask: MaskKind,
+        has_rope: bool,
     ) -> Result<Self, MetalError> {
         assert!(matches!(head_dim, 128 | 256), "head_dim must be 128 or 256");
         assert_eq!(num_q_heads % num_groups, 0, "num_q_heads must be divisible by num_groups");
@@ -65,6 +67,7 @@ impl AttentionGemmGroupedMetal {
                 split,
                 mask.is_causal(),
                 mask.is_trie(),
+                has_rope,
             )
         };
         let combine =
@@ -95,6 +98,8 @@ impl AttentionGemmGroupedMetal {
         kv_length: u32,
         q_replicas: u32,
         num_splits: u32,
+        rope: Option<&RopeCache<Metal>>,
+        rope_position_offset: u32,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<bool, MetalError> {
         let params = self.params(suffix_length, kv_length);
@@ -109,6 +114,8 @@ impl AttentionGemmGroupedMetal {
                 queries,
                 keys,
                 values,
+                rope.map(|rope| &rope.cosines),
+                rope.map(|rope| &rope.sines),
                 Some(output),
                 None::<&mut <Metal as Backend>::ScratchBuffer>,
                 None::<&mut <Metal as Backend>::ScratchBuffer>,
@@ -119,6 +126,8 @@ impl AttentionGemmGroupedMetal {
                 self.num_groups,
                 q_replicas,
                 1,
+                rope.map(|rope| rope.dim),
+                rope.map(|_| rope_position_offset),
                 command_buffer,
             );
             return Ok(false);
@@ -133,6 +142,8 @@ impl AttentionGemmGroupedMetal {
             queries,
             keys,
             values,
+            rope.map(|rope| &rope.cosines),
+            rope.map(|rope| &rope.sines),
             None::<&mut <Metal as Backend>::ScratchBuffer>,
             Some(&mut partials),
             Some(&mut partial_maxs),
@@ -143,6 +154,8 @@ impl AttentionGemmGroupedMetal {
             self.num_groups,
             q_replicas,
             num_splits,
+            rope.map(|rope| rope.dim),
+            rope.map(|_| rope_position_offset),
             command_buffer,
         );
 
@@ -195,8 +208,8 @@ impl AttentionGemmGroupedMetal {
 }
 
 pub struct AttentionGemmGrouped {
-    non_trie: Mutex<Option<AttentionGemmGroupedMetal>>,
-    trie: Mutex<Option<AttentionGemmGroupedMetal>>,
+    non_trie: Mutex<[Option<AttentionGemmGroupedMetal>; 2]>,
+    trie: Mutex<[Option<AttentionGemmGroupedMetal>; 2]>,
     head_dim: u32,
     num_groups: u32,
     num_q_heads: u32,
@@ -209,6 +222,7 @@ impl AttentionGemmGrouped {
         &self,
         context: &MetalContext,
         mask: MaskKind,
+        has_rope: bool,
     ) -> Result<MappedMutexGuard<'_, AttentionGemmGroupedMetal>, MetalError> {
         let cache = if mask.is_trie() {
             &self.trie
@@ -216,8 +230,9 @@ impl AttentionGemmGrouped {
             &self.non_trie
         };
         let mut cache = cache.lock();
-        if cache.is_none() {
-            *cache = Some(AttentionGemmGroupedMetal::new_fixed(
+        let index = usize::from(has_rope);
+        if cache[index].is_none() {
+            cache[index] = Some(AttentionGemmGroupedMetal::new_fixed(
                 context,
                 self.head_dim,
                 self.num_groups,
@@ -225,9 +240,10 @@ impl AttentionGemmGrouped {
                 self.scale,
                 self.gate_row_stride,
                 mask,
+                has_rope,
             )?);
         }
-        Ok(MutexGuard::map(cache, |cache| cache.as_mut().expect("attention pipeline was just initialized")))
+        Ok(MutexGuard::map(cache, |cache| cache[index].as_mut().expect("attention pipeline was just initialized")))
     }
 
     pub fn is_supported(
@@ -239,8 +255,8 @@ impl AttentionGemmGrouped {
 
     pub fn new(config: &AttentionKernelConfig) -> Self {
         Self {
-            non_trie: Mutex::new(None),
-            trie: Mutex::new(None),
+            non_trie: Mutex::new([None, None]),
+            trie: Mutex::new([None, None]),
             head_dim: config.head_dim,
             num_groups: config.num_groups,
             num_q_heads: config.num_q_heads,
@@ -275,12 +291,15 @@ impl AttentionGemmGrouped {
         let suffix_length = arguments.suffix_length;
         assert!(arguments.cache.ring_params().is_none(), "ring KV cache is unsupported");
         assert!(arguments.sinks.is_none(), "attention sinks are unsupported");
+        if let Some(rope) = arguments.rope {
+            assert!(rope.dim > 0 && rope.dim.is_multiple_of(2) && rope.dim <= self.head_dim, "invalid RoPE dimension");
+        }
 
         let kv_length = arguments.cache.prefix_len() + suffix_length;
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], DataType::BF16)?;
         let gpu_core_count = command_buffer.context().gpu_core_count;
-        let core = self.get_or_create(command_buffer.context(), mask)?;
+        let core = self.get_or_create(command_buffer.context(), mask, arguments.rope.is_some())?;
         let num_splits = choose_splits(
             SplitGeometry {
                 head_dim: core.head_dim,
@@ -304,6 +323,8 @@ impl AttentionGemmGrouped {
             kv_length,
             1,
             num_splits,
+            arguments.rope,
+            arguments.cache.context_length(),
             command_buffer,
         )?;
         Ok((output, gate_applied))

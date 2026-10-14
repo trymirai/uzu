@@ -23,7 +23,7 @@ const PARTIAL_DATA_TYPE: DataType = DataType::F32;
 const PARTIAL_BLOCKS: u32 = 32;
 
 pub struct AttentionTwoPass {
-    passes: Mutex<HashMap<bool, AttentionTwoPass1MetalKernel>>,
+    passes: Mutex<HashMap<(bool, bool), AttentionTwoPass1MetalKernel>>,
     second: Mutex<Option<AttentionTwoPass2MetalKernel>>,
     config: AttentionKernelConfig,
 }
@@ -41,9 +41,11 @@ impl AttentionTwoPass {
         &self,
         context: &MetalContext,
         is_trie: bool,
+        has_rope: bool,
     ) -> Result<MappedMutexGuard<'_, AttentionTwoPass1MetalKernel>, MetalError> {
         let mut passes = self.passes.lock();
-        if let Entry::Vacant(entry) = passes.entry(is_trie) {
+        let key = (is_trie, has_rope);
+        if let Entry::Vacant(entry) = passes.entry(key) {
             entry.insert(AttentionTwoPass1MetalKernel::new(
                 context,
                 self.config.data_type,
@@ -53,9 +55,10 @@ impl AttentionTwoPass {
                 self.config.is_causal,
                 is_trie,
                 self.config.sliding_window_size.is_some(),
+                has_rope,
             )?);
         }
-        Ok(MutexGuard::map(passes, |passes| passes.get_mut(&is_trie).expect("passes were just initialized")))
+        Ok(MutexGuard::map(passes, |passes| passes.get_mut(&key).expect("passes were just initialized")))
     }
 
     fn get_or_create_second(
@@ -88,6 +91,12 @@ impl AttentionTwoPass {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let config = self.config;
+        if let Some(rope) = arguments.rope {
+            assert!(
+                rope.dim > 0 && rope.dim.is_multiple_of(2) && rope.dim <= config.head_dim,
+                "invalid RoPE dimension"
+            );
+        }
         let mut partials = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, PARTIAL_BLOCKS, config.head_dim],
             PARTIAL_DATA_TYPE,
@@ -100,11 +109,13 @@ impl AttentionTwoPass {
             &[arguments.suffix_length, config.num_q_heads, PARTIAL_BLOCKS],
             PARTIAL_DATA_TYPE,
         )?;
-        let first = self.get_or_create(command_buffer.context(), arguments.trie.is_some())?;
+        let first = self.get_or_create(command_buffer.context(), arguments.trie.is_some(), arguments.rope.is_some())?;
         first.encode(
             arguments.queries,
             arguments.keys,
             arguments.values,
+            arguments.rope.map(|rope| &rope.cosines),
+            arguments.rope.map(|rope| &rope.sines),
             &mut partials,
             &mut sums,
             &mut maxs,
@@ -121,6 +132,8 @@ impl AttentionTwoPass {
             arguments.trie,
             config.sliding_window_size,
             arguments.sinks,
+            arguments.rope.map(|rope| rope.dim),
+            arguments.rope.map(|_| arguments.cache.context_length()),
             command_buffer,
         );
         let mut output = command_buffer.allocate_scratch_for_shape(

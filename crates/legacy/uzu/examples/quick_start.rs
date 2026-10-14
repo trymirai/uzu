@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 
+use shoji::types::basic::{SamplingMethod, SamplingPolicy};
 use uzu::{
     engine::{Engine, EngineConfig},
     types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
@@ -25,7 +26,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ChatMessage::user().with_text("Tell me a short, funny story about a robot".to_string()),
     ];
 
-    let replies = session.reply(messages, ChatReplyConfig::default()).await?;
+    let config = ChatReplyConfig::default()
+        .with_sampling_policy(SamplingPolicy::Custom {
+            method: SamplingMethod::Greedy {},
+        })
+        .with_token_limit(Some(512));
+    let replies = session.reply(messages, config).await?;
+    // let replies = session.reply(messages, ChatReplyConfig::default()).await?;
     if let Some(reply) = replies.last() {
         println!("Reasoning: {}", reply.message.reasoning().unwrap_or_default());
         println!("Text: {}", reply.message.text().unwrap_or_default());

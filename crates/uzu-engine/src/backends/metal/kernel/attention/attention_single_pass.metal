@@ -5,6 +5,7 @@
 #include "../generated/ring.h"
 #include "../generated/trie.h"
 #include "mask.h"
+#include "rope.h"
 
 #define SEQUENCE_BLOCK_SIZE 32
 #define HEAD_BLOCK_SIZE 32
@@ -19,6 +20,8 @@ PUBLIC KERNEL(AttentionSinglePass)(
     const device T* queries,
     const device T* keys,
     const device T* values,
+    const device float* cosines OPTIONAL(has_rope),
+    const device float* sines OPTIONAL(has_rope),
     device T* out,
     const constant uint& gqa_factor,
     const constant uint& sequence_length,
@@ -33,6 +36,8 @@ PUBLIC KERNEL(AttentionSinglePass)(
     const device T* sinks OPTIONAL(has_sinks),
     const constant uint& num_heads,
     const constant uint& suffix_length,
+    const constant uint& rope_dim OPTIONAL(has_rope),
+    const constant uint& rope_position_offset OPTIONAL(has_rope),
     threadgroup float shared_max_scores[SEQUENCE_BLOCK_SIZE * HEAD_BLOCK_SIZE],
     threadgroup float shared_sum_exp_scores[SEQUENCE_BLOCK_SIZE * HEAD_BLOCK_SIZE],
     threadgroup float shared_outputs[SEQUENCE_BLOCK_SIZE * HEAD_BLOCK_SIZE],
@@ -41,6 +46,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
     const bool is_causal SPECIALIZE,
     const bool is_trie SPECIALIZE,
     const bool is_sliding_window SPECIALIZE,
+    const bool has_rope SPECIALIZE,
     const ThreadContext thread_context,
     const uint head_idx GROUPS(num_heads),
     const uint q_seq_idx GROUPS(suffix_length),
@@ -70,17 +76,30 @@ PUBLIC KERNEL(AttentionSinglePass)(
 
   const uint query_position = is_trie ? suffix_position + trie[q_seq_idx].height : suffix_position + q_seq_idx;
 
-  queries += q_offset * HEAD_DIM + thread_context.simd_lane_id * qk_elements_per_thread;
-  keys += kv_head_idx * k_head_stride + thread_context.simdgroup_index * k_seq_stride +
-          thread_context.simd_lane_id * qk_elements_per_thread;
+  const uint head_dim_offset = thread_context.simd_lane_id * qk_elements_per_thread;
+  queries += q_offset * HEAD_DIM + head_dim_offset;
+  keys += kv_head_idx * k_head_stride + thread_context.simdgroup_index * k_seq_stride + head_dim_offset;
   values += kv_head_idx * v_head_stride + thread_context.simdgroup_index * v_seq_stride +
             thread_context.simd_lane_id * value_elements_per_thread;
 
   out += o_offset * value_dim + thread_context.simdgroup_index * value_elements_per_thread;
 
   // Read the query and 0 the output accumulator
+  const uint query_rope_position = has_rope ? rope_position_offset + (is_trie ? trie[q_seq_idx].height : q_seq_idx) : 0;
   for (uint i = 0; i < qk_elements_per_thread; i++) {
-    q[i] = static_cast<U>(scale) * queries[i];
+    T value = queries[i];
+    if (has_rope) {
+      value = apply_attention_rope(
+          value,
+          queries - head_dim_offset,
+          cosines,
+          sines,
+          query_rope_position,
+          head_dim_offset + i,
+          rope_dim
+      );
+    }
+    q[i] = static_cast<U>(scale) * value;
   }
   for (uint i = 0; i < value_elements_per_thread; i++) {
     o[i] = 0;
@@ -112,8 +131,30 @@ PUBLIC KERNEL(AttentionSinglePass)(
             is_sliding_window
         )) {
       // Read the key
+      uint key_rope_position = i;
+      if (has_rope) {
+        if (i >= prefix_length) {
+          const uint suffix_idx = i - prefix_length;
+          key_rope_position = rope_position_offset + (is_trie ? trie[suffix_idx].height : suffix_idx);
+        } else if (is_kv_cache_ring) {
+          const uint logical_idx = (prefix_length + i - ring_params.ring_offset) % prefix_length;
+          key_rope_position = rope_position_offset - prefix_length + logical_idx;
+        }
+      }
       for (uint j = 0; j < qk_elements_per_thread; j++) {
-        k[j] = keys[j];
+        T value = keys[j];
+        if (has_rope) {
+          value = apply_attention_rope(
+              value,
+              keys - head_dim_offset,
+              cosines,
+              sines,
+              key_rope_position,
+              head_dim_offset + j,
+              rope_dim
+          );
+        }
+        k[j] = value;
       }
 
       // Compute the i-th score

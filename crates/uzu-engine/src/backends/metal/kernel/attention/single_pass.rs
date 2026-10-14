@@ -14,7 +14,7 @@ use crate::backends::{
 };
 
 pub struct AttentionSinglePass {
-    kernels: Mutex<HashMap<bool, AttentionSinglePassMetalKernel>>,
+    kernels: Mutex<HashMap<(bool, bool), AttentionSinglePassMetalKernel>>,
     config: AttentionKernelConfig,
 }
 
@@ -30,9 +30,11 @@ impl AttentionSinglePass {
         &self,
         context: &MetalContext,
         is_trie: bool,
+        has_rope: bool,
     ) -> Result<MappedMutexGuard<'_, AttentionSinglePassMetalKernel>, MetalError> {
         let mut kernels = self.kernels.lock();
-        if let Entry::Vacant(entry) = kernels.entry(is_trie) {
+        let key = (is_trie, has_rope);
+        if let Entry::Vacant(entry) = kernels.entry(key) {
             let kernel = AttentionSinglePassMetalKernel::new(
                 context,
                 self.config.data_type,
@@ -42,10 +44,11 @@ impl AttentionSinglePass {
                 self.config.is_causal,
                 is_trie,
                 self.config.sliding_window_size.is_some(),
+                has_rope,
             )?;
             entry.insert(kernel);
         }
-        Ok(MutexGuard::map(kernels, |kernels| kernels.get_mut(&is_trie).expect("kernel was just initialized")))
+        Ok(MutexGuard::map(kernels, |kernels| kernels.get_mut(&key).expect("kernel was just initialized")))
     }
 
     pub fn encode(
@@ -62,15 +65,24 @@ impl AttentionSinglePass {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let config = self.config;
+        if let Some(rope) = arguments.rope {
+            assert!(
+                rope.dim > 0 && rope.dim.is_multiple_of(2) && rope.dim <= config.head_dim,
+                "invalid RoPE dimension"
+            );
+        }
         let mut output = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, config.head_dim],
             config.data_type,
         )?;
-        let kernel = self.get_or_create(command_buffer.context(), arguments.trie.is_some())?;
+        let kernel =
+            self.get_or_create(command_buffer.context(), arguments.trie.is_some(), arguments.rope.is_some())?;
         kernel.encode(
             arguments.queries,
             arguments.keys,
             arguments.values,
+            arguments.rope.map(|rope| &rope.cosines),
+            arguments.rope.map(|rope| &rope.sines),
             &mut output,
             config.num_q_heads / config.num_groups,
             arguments.cache.prefix_len() + arguments.suffix_length,
@@ -85,6 +97,8 @@ impl AttentionSinglePass {
             arguments.sinks,
             config.num_q_heads,
             arguments.suffix_length,
+            arguments.rope.map(|rope| rope.dim),
+            arguments.rope.map(|_| arguments.cache.context_length()),
             command_buffer,
         );
         Ok(output)

@@ -11,7 +11,10 @@ use crate::{
         batch_topology::BatchTopology,
         convolution::{ConvolutionNewError, SeparableCausalConv},
         linear::{Linear, LinearBlockError},
-        mixer::{Mixer, MixerNewError, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{
+            Mixer, MixerNewError, MixerState,
+            attention::rope::{PrecalculatedRoPE, RopeCache},
+        },
         mlp::{Mlp, MlpBlockError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::PerLayerEmbeddingProjection,
@@ -346,6 +349,7 @@ impl<B: Backend> TransformerLayer<B> {
         mut shortcut: impl BufferMut<Backend = B>,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        rope_cache: Option<&RopeCache<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -370,7 +374,7 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
-        hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
+        hidden = self.mixer.encode(hidden, precalculated_rope, rope_cache, batch_dim, state, command_buffer)?;
 
         if let Some(coefficients) = mixer_coefficients {
             let convolution = self.mixer_conv.as_ref().expect("mixer convolution required");

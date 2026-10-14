@@ -13,7 +13,10 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
-        mixer::{Mixer, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{
+            Mixer, MixerState,
+            attention::rope::{PrecalculatedRoPE, RopeCache},
+        },
     },
     parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -304,13 +307,15 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         &self,
         hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        rope_cache: Option<&RopeCache<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let command_buffer = &mut *command_buffer.debug_group("short conv");
-
         assert!(precalculated_rope.is_none(), "unexpected rope for short conv mixer");
+        assert!(rope_cache.is_none(), "unexpected rope cache for short conv mixer");
+
+        let command_buffer = &mut *command_buffer.debug_group("short conv");
 
         let state = state.expect("short conv requires state");
         let state = state.downcast::<ShortConvState<B>>().expect("incorrect type of short conv state");

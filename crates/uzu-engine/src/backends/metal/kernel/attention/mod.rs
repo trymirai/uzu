@@ -145,6 +145,7 @@ impl AttentionMetalKernel {
             && let Some(grouped) = &self.grouped
         {
             if grouped.should_encode(mask, suffix_length, kv_length) {
+                println!("ATTENTION GROUPED");
                 return grouped.encode(mask, arguments, command_buffer);
             }
 
@@ -170,6 +171,7 @@ impl AttentionMetalKernel {
                 return Ok((gemm.encode(arguments, command_buffer)?, false));
             }
             if !is_trie && let Some(fallback) = &self.fallback {
+                println!("ATTENTION FALLBACK");
                 return Ok((fallback.encode(arguments, command_buffer)?, false));
             }
         }

@@ -63,6 +63,7 @@ impl AttentionKernel for AttentionCpuKernel {
             config.is_causal,
             arguments.trie.is_some(),
             config.sliding_window_size.is_some(),
+            arguments.rope.is_some(),
         )?;
         {
             let command_buffer = &mut *command_buffer.debug_group("attention core");
@@ -70,6 +71,8 @@ impl AttentionKernel for AttentionCpuKernel {
                 arguments.queries,
                 arguments.keys,
                 arguments.values,
+                arguments.rope.map(|rope| &rope.cosines),
+                arguments.rope.map(|rope| &rope.sines),
                 &mut output,
                 config.num_q_heads / config.num_groups,
                 arguments.cache.prefix_len() + arguments.suffix_length,
@@ -84,6 +87,8 @@ impl AttentionKernel for AttentionCpuKernel {
                 arguments.sinks,
                 config.num_q_heads,
                 arguments.suffix_length,
+                arguments.rope.map(|rope| rope.dim),
+                arguments.rope.map(|_| arguments.cache.context_length()),
                 command_buffer,
             );
         }

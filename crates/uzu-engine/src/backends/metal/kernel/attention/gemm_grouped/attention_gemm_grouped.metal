@@ -8,6 +8,7 @@
 #include "../../generated/attention.h"
 #include "../../generated/trie.h"
 #include "../attention_gate.h"
+#include "../rope.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -66,6 +67,8 @@ KERNEL(AttentionGemmGrouped)(
     const device T* q,
     const device T* k,
     const device T* v,
+    const device float* cosines OPTIONAL(has_rope),
+    const device float* sines OPTIONAL(has_rope),
     device T* o OPTIONAL(!split_kv),
     device float* partials OPTIONAL(split_kv),
     device float* partial_maxs OPTIONAL(split_kv),
@@ -76,9 +79,12 @@ KERNEL(AttentionGemmGrouped)(
     const constant uint& kv_heads,
     const constant uint& batch_count,
     const constant uint& num_splits,
+    const constant uint& rope_dim OPTIONAL(has_rope),
+    const constant uint& rope_position_offset OPTIONAL(has_rope),
     const bool split_kv SPECIALIZE,
     const bool is_causal SPECIALIZE,
     const bool is_trie SPECIALIZE,
+    const bool has_rope SPECIALIZE,
     threadgroup float score_exchange[AttentionGemmGroupedLayout<T, BK, BD, D_SLICES>::SCORE_EXCHANGE_SIZE],
     const ThreadContext thread_context,
     const uint tile_split_flat GROUPS(m_tiles * num_splits),
@@ -148,6 +154,21 @@ KERNEL(AttentionGemmGrouped)(
           lane,
           query_source.advanced(head_dim_fragment_idx * Ops::FRAGMENT_ROWS)
       );
+      if (has_rope) {
+        query_frags[head_dim_fragment_idx].map_coords(lane, [&](short row, short col, T value) {
+          const uint grouped_row = row_base + uint(row);
+          if (grouped_row >= grouped_rows) {
+            return T(0);
+          }
+          // A fragment can span multiple query heads, each with its own sequence of positions.
+          const uint query_idx = grouped_row % params.q_len;
+          const uint position = rope_position_offset + (is_trie ? trie[query_idx].height : query_idx);
+          // The paired component may belong to another 64-dimensional slice.
+          const device T* head = q + size_t(row) * query_row_stride - slice_offset;
+          const uint dim = slice_offset + uint(head_dim_fragment_idx * Ops::FRAGMENT_ROWS + col);
+          return apply_attention_rope(value, head, cosines, sines, position, dim, rope_dim);
+        });
+      }
     }
   }
 
@@ -245,6 +266,23 @@ KERNEL(AttentionGemmGrouped)(
            ++head_dim_fragment_idx) {
         KeyFragment key_fragment;
         key_fragment.load_from(lane, key_source.advanced(head_dim_fragment_idx * Ops::FRAGMENT_ROWS));
+        if (has_rope) {
+          // MXU transposes at multiplication: fragment rows still index keys, columns index dimensions.
+          key_fragment.map_coords(lane, [&](short row, short col, T value) {
+            const uint key_idx = first_key + kb * uint(BK) + uint(row);
+            if (key_idx >= key_length) {
+              return T(0);
+            }
+            uint position = key_idx;
+            if (key_idx >= prefix_length) {
+              const uint suffix_idx = key_idx - prefix_length;
+              position = rope_position_offset + (is_trie ? trie[suffix_idx].height : suffix_idx);
+            }
+            const device T* head = k + size_t(kb) * key_block_stride + size_t(row) * key_row_stride - slice_offset;
+            const uint dim = slice_offset + uint(head_dim_fragment_idx * Ops::FRAGMENT_ROWS + col);
+            return apply_attention_rope(value, head, cosines, sines, position, dim, rope_dim);
+          });
+        }
         simdgroup_barrier(mem_flags::mem_none);
         fragment_mma(score, query_frags[head_dim_fragment_idx], key_fragment);
       }

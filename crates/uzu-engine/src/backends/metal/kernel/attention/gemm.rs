@@ -38,6 +38,7 @@ struct AttentionGemmKey {
     align_q: bool,
     align_k: bool,
     is_trie: bool,
+    has_rope: bool,
 }
 
 fn retile_params(
@@ -105,6 +106,7 @@ impl AttentionGemm {
                 key.is_trie,
                 self.is_sliding_window,
                 self.has_sinks,
+                key.has_rope,
             )?;
             entry.insert(kernel);
         }
@@ -124,6 +126,9 @@ impl AttentionGemm {
         >,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
+        if let Some(rope) = arguments.rope {
+            assert!(rope.dim > 0 && rope.dim.is_multiple_of(2) && rope.dim <= self.head_dim, "invalid RoPE dimension");
+        }
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[arguments.suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
 
@@ -159,12 +164,15 @@ impl AttentionGemm {
             align_q: params.q_rem == 0,
             align_k: params.k_rem == 0,
             is_trie: arguments.trie.is_some(),
+            has_rope: arguments.rope.is_some(),
         };
         let kernel = self.get_or_create(command_buffer.context(), key)?;
         kernel.encode(
             arguments.queries,
             arguments.keys,
             arguments.values,
+            arguments.rope.map(|rope| &rope.cosines),
+            arguments.rope.map(|rope| &rope.sines),
             &mut output,
             params,
             arguments.cache.ring_params(),
@@ -173,6 +181,8 @@ impl AttentionGemm {
             arguments.sinks,
             self.num_q_heads,
             arguments.suffix_length,
+            arguments.rope.map(|rope| rope.dim),
+            arguments.rope.map(|_| arguments.cache.context_length()),
             command_buffer,
         );
         Ok(output)

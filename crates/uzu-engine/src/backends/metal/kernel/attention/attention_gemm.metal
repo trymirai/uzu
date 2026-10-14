@@ -9,12 +9,35 @@
 #include "../generated/trie.h"
 #include "../generated/attention.h"
 #include "mask.h"
+#include "rope.h"
 
 using namespace metal;
 using namespace uzu::matmul;
 using namespace uzu::attention;
 using namespace uzu::ring;
 using namespace uzu::trie;
+
+METAL_FUNC uint attention_key_rope_position(
+    uint key_idx,
+    uint prefix_length,
+    uint position_offset,
+    const constant RingParams& ring_params,
+    const device TrieNode* trie,
+    bool is_kv_cache_ring,
+    bool is_trie
+) {
+  if (key_idx >= prefix_length) {
+    const uint suffix_idx = key_idx - prefix_length;
+    return position_offset + (is_trie ? trie[suffix_idx].height : suffix_idx);
+  }
+
+  if (is_kv_cache_ring) {
+    const uint logical_idx = (prefix_length + key_idx - ring_params.ring_offset) % prefix_length;
+    return position_offset - prefix_length + logical_idx;
+  }
+
+  return key_idx;
+}
 
 template <typename T>
 struct TransformScale {
@@ -47,6 +70,8 @@ KERNEL(AttentionGemm)(
     const device T* q,
     const device T* k,
     const device T* v,
+    const device float* cosines OPTIONAL(has_rope),
+    const device float* sines OPTIONAL(has_rope),
     device T* o,
     const constant AttnParams& params,
     const constant RingParams& ring_params OPTIONAL(is_kv_cache_ring),
@@ -55,6 +80,8 @@ KERNEL(AttentionGemm)(
     const device T* sinks OPTIONAL(has_sinks),
     const constant uint& num_heads,
     const constant uint& suffix_length,
+    const constant uint& rope_dim OPTIONAL(has_rope),
+    const constant uint& rope_position_offset OPTIONAL(has_rope),
     const bool align_q SPECIALIZE,
     const bool align_k SPECIALIZE,
     const bool is_kv_cache_ring SPECIALIZE,
@@ -62,6 +89,7 @@ KERNEL(AttentionGemm)(
     const bool is_trie SPECIALIZE,
     const bool is_sliding_window SPECIALIZE,
     const bool has_sinks SPECIALIZE,
+    const bool has_rope SPECIALIZE,
     threadgroup T q_smem[AttentionGemmLayout<T, BK, BD, USE_MXU>::Q_SMEM_SIZE],
     threadgroup T kv_smem[AttentionGemmLayout<T, BK, BD, USE_MXU>::KV_SMEM_SIZE],
     const ThreadContext thread_context,
@@ -138,11 +166,31 @@ KERNEL(AttentionGemm)(
     if (ragged_q) {
       q_src = q_src.bounded(params.q_rem - simdgroup_row_base, FRAGMENT_ROWS);
     }
+    
     const InputType query_scale = static_cast<InputType>(params.scale * M_LOG2E_F);
     METAL_PRAGMA_UNROLL
     for (short dd = 0; dd < HEAD_DIM_FRAGMENTS; dd++) {
       query_frags[dd].load_from(thread_context.simd_lane_id, q_src.advanced(dd * head_dim_fragment_stride));
-      query_frags[dd].map_coords(thread_context.simd_lane_id, [&](short, short, InputType v) {
+      query_frags[dd].map_coords(thread_context.simd_lane_id, [&](short row, short col, InputType v) {
+        if (has_rope) {
+          const uint tile_row = uint(simdgroup_row_base + row);
+          const uint query_idx = q_tile_idx * BLOCK_QUERY_ROWS + tile_row;
+          if (query_idx >= params.q_len) {
+            return InputType(0);
+          }
+
+          const uint position = rope_position_offset + (is_trie ? trie[query_idx].height : query_idx);
+          v = apply_attention_rope(
+              static_cast<T>(v),
+              q + int64_t(tile_row) * query_source_stride,
+              cosines,
+              sines,
+              position,
+              uint(dd * head_dim_fragment_stride + col),
+              rope_dim
+          );
+        }
+        
         return v * query_scale;
       });
     }
@@ -154,13 +202,30 @@ KERNEL(AttentionGemm)(
         query_leading_dimension,
         1,
         SIMDGROUPS_PER_THREADGROUP * METAL_SIMD_SIZE>;
-    thread QueryLoader query_loader(q, query_source_stride, query_shared, thread_context);
-    if (ragged_q) {
-      query_loader.load_safe(short2(BD, params.q_rem));
+    if (has_rope) {
+      const T query_scale = static_cast<T>(params.scale * M_LOG2E_F);
+      for (uint i = lid; i < BLOCK_QUERY_ROWS * BD; i += SIMDGROUPS_PER_THREADGROUP * METAL_SIMD_SIZE) {
+        const uint row = i / BD;
+        const uint dim = i % BD;
+        const uint query_idx = q_tile_idx * BLOCK_QUERY_ROWS + row;
+        T value = T(0);
+        if (query_idx < params.q_len) {
+          const device T* head = q + int64_t(row) * query_source_stride;
+          const uint position = rope_position_offset + (is_trie ? trie[query_idx].height : query_idx);
+          value = apply_attention_rope(head[dim], head, cosines, sines, position, dim, rope_dim);
+          value = query_scale * value;
+        }
+        query_shared[row * query_leading_dimension + dim] = value;
+      }
     } else {
-      query_loader.load_unsafe();
+      thread QueryLoader query_loader(q, query_source_stride, query_shared, thread_context);
+      if (ragged_q) {
+        query_loader.load_safe(short2(BD, params.q_rem));
+      } else {
+        query_loader.load_unsafe();
+      }
+      query_loader.apply_inplace_op(TransformScale<T>(static_cast<T>(params.scale * M_LOG2E_F)));
     }
-    query_loader.apply_inplace_op(TransformScale<T>(static_cast<T>(params.scale * M_LOG2E_F)));
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
@@ -219,6 +284,34 @@ KERNEL(AttentionGemm)(
 
       KeyFragment key_fragment;
       key_source.load(key_fragment, dd * head_dim_fragment_stride);
+      if (has_rope) {
+        key_fragment.map_coords(thread_context.simd_lane_id, [&](short row, short col, InputType value) {
+          // MXU keeps K in source orientation and transposes at MMA; SIMD loads K transposed.
+          const uint key_row = USE_MXU ? uint(row) : uint(col);
+          const uint dim = uint(dd * head_dim_fragment_stride) + (USE_MXU ? uint(col) : uint(row));
+          if (key_row >= uint(valid_k_rows)) {
+            return InputType(0);
+          }
+          const uint position = attention_key_rope_position(
+              kb * BK + key_row,
+              prefix_length,
+              rope_position_offset,
+              ring_params,
+              trie,
+              is_kv_cache_ring,
+              is_trie
+          );
+          return InputType(apply_attention_rope(
+              T(value),
+              k_block + int64_t(key_row) * key_source_stride,
+              cosines,
+              sines,
+              position,
+              dim,
+              rope_dim
+          ));
+        });
+      }
       simdgroup_barrier(mem_flags::mem_none);
       fragment_mma(score_fragment, query_frags[q_idx], key_fragment);
     }
