@@ -874,3 +874,53 @@ fn gemv_reads_mxu_tiled_layout_bf16(
         0.5,
     );
 }
+
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::w4_zp_gs32(4u32, 32u32, ScaleZeroPoint)]
+#[case::w8_sym_gs64(8u32, 64u32, QuantizationMethod::ScaleSymmetric)]
+fn gathered_gemv_reads_mxu_tiled_layout_bf16(
+    #[case] bits: u32,
+    #[case] group_size: u32,
+    #[case] method: QuantizationMethod,
+) {
+    let context = MetalContext::new().expect("Metal context");
+    if !context.supports_mxu {
+        return;
+    }
+    let (k, vocab, gathered_rows) = (256u32, 256u32, 10u32);
+    let input = QuantInput {
+        gemm_b_layout: GemmBLayout::MxuTiled,
+        ..QuantInput::<bf16>::new(1, k, vocab, group_size, bits, method, 0).with_group_output()
+    };
+    let ids: Vec<u32> = (0..gathered_rows).map(|row| (row * 37 + 11) % vocab).collect();
+    let dense = run_quant_cpu::<bf16>(&input);
+    let expected: Vec<bf16> = ids.iter().map(|&id| dense[id as usize]).collect();
+
+    let ids_buffer = crate::tests::helpers::create_buffer_with_data::<Metal, u32>(&context, &ids);
+    let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("Metal matmul kernel");
+    let shape = MatmulShape::from_arguments(&quant_arguments(&mut buffers, &input));
+    matmul.prepare_gemm_b_layout(&shape, &mut buffers.w, &context).expect("prepare GEMM B layout");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let mut arguments = quant_arguments(&mut buffers, &input);
+    arguments.gather_indices = Some(&ids_buffer);
+    arguments.n = gathered_rows;
+    matmul.encode(arguments, &mut command_buffer).expect("gathered GEMV");
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let actual = buffer_to_vec::<Metal, bf16>(&buffers.y)[..gathered_rows as usize].to_vec();
+
+    assert_parity::<bf16>(
+        &format!("gathered MxuTiled GEMV bits={bits} gs={group_size} method={method:?}"),
+        &expected,
+        &actual,
+        0.05,
+        0.5,
+    );
+}

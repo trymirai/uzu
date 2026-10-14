@@ -39,7 +39,7 @@ struct GemvParams {
   GemmBLayout gemm_b_layout;
 
   METAL_FUNC uint output_row(uint row) const thread {
-    if (gemm_b_layout != GemmBLayout::MxuTiled) {
+    if (gemm_b_layout != GemmBLayout::MxuTiled || gathered) {
       return row;
     }
     const uint block_row = row % 32;
