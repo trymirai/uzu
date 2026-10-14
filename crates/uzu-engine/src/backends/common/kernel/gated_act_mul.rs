@@ -3,7 +3,10 @@ use bitflags::bitflags;
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
-        gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+        gpu_types::{
+            activation_type::ActivationType, gated_act_mul::GatedActMulOp,
+            hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        },
         kernel::{ActivationQuantization, GatedActMulKernel},
     },
     config::clipping::ClippingBounds,

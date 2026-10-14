@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use crate::{
     backends::common::{Backend, BufferRef, CommandBuffer, Kernels},
     data_type::DataType,
@@ -6,11 +8,12 @@ use crate::{
 
 pub trait AttentionKernel: Sized + Send + Sync {
     type Backend: Backend<Kernels: Kernels<AttentionKernel = Self>>;
+    type Error: Error + 'static;
 
     fn new(
         context: &<Self::Backend as Backend>::Context,
         config: AttentionKernelConfig,
-    ) -> Result<Self, <Self::Backend as Backend>::Error>;
+    ) -> Result<Self, Self::Error>;
 
     fn encode(
         &self,
@@ -24,7 +27,7 @@ pub trait AttentionKernel: Sized + Send + Sync {
             impl BufferRef<Backend = Self::Backend>,
         >,
         command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<<Self::Backend as Backend>::ScratchBuffer, <Self::Backend as Backend>::Error>;
+    ) -> Result<<Self::Backend as Backend>::ScratchBuffer, Self::Error>;
 }
 
 #[derive(Clone, Copy)]

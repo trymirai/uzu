@@ -3,9 +3,9 @@ use std::{mem::size_of_val, time::Duration};
 use bytemuck::{AnyBitPattern, NoUninit};
 
 use crate::{
-    array::size_for_shape,
     backends::common::{Backend, BufferMut, BufferRef},
     data_type::DataType,
+    utils::size_for_shape::size_for_shape,
 };
 
 pub trait CommandBuffer {

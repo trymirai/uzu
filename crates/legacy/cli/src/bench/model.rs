@@ -4,7 +4,6 @@ use uzu::types::{
     basic::ReasoningEffort,
     session::chat::{ChatMessage, ChatReply, ChatReplyEnergy, ChatRole},
 };
-use uzu_engine::data_type::DataType;
 
 use crate::{
     common::thinking::ThinkingSupport,
@@ -105,7 +104,7 @@ pub struct BenchResult {
     pub device: BenchDevice,
     pub engine_version: String,
     pub timestamp: u64,
-    pub data_type: DataType,
+    pub data_type: String,
     pub memory_used: Option<usize>,
     pub tokens_count_input: u64,
     pub tokens_count_output: u64,

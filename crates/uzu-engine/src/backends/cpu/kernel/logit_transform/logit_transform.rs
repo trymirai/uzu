@@ -2,11 +2,11 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(LogitTransform)]
 #[variants(T, f32, bf16)]
-pub fn logit_transform<T: ArrayElement + Float>(
+pub fn logit_transform<T: DataTypeRepr + Float>(
     logits: *mut T,
     length: u32,
     scale: f32,

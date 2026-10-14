@@ -3,7 +3,7 @@ use std::{env, fs, path::PathBuf, process::ExitCode};
 use anyhow::Context;
 
 mod common;
-use common::{compiler::Compiler, enum_paths::EnumPaths, envs, gpu_types::GpuTypes, traitgen::traitgen_all};
+use common::{compiler::Compiler, envs, gpu_type_paths::GpuTypePaths, gpu_types::GpuTypes, traitgen::traitgen_all};
 
 mod cpu;
 
@@ -49,10 +49,10 @@ fn main() -> anyhow::Result<ExitCode> {
         debug_log!("cleaned caches");
     }
 
-    let gpu_types = GpuTypes::scan().context("Failed to scan gpu types")?;
+    let gpu_types = GpuTypes::scan("common").context("Failed to scan gpu types")?;
     debug_log!("gpu_types scan done");
 
-    let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
+    let gpu_type_paths = GpuTypePaths::from_gpu_types(&gpu_types).context("Failed to build GPU type path map")?;
 
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
 
@@ -71,11 +71,11 @@ fn main() -> anyhow::Result<ExitCode> {
     }
 
     let backends_kernels =
-        compilers.iter().map(|c| c.build(&gpu_types, &enum_paths)).collect::<anyhow::Result<Vec<_>>>()?;
+        compilers.iter().map(|c| c.build(&gpu_types, &gpu_type_paths)).collect::<anyhow::Result<Vec<_>>>()?;
 
     debug_log!("backend build end");
 
-    traitgen_all(backends_kernels)?;
+    traitgen_all(backends_kernels, &gpu_type_paths)?;
 
     debug_log!("build script ended");
 

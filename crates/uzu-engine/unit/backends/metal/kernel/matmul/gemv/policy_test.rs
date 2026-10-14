@@ -162,7 +162,7 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
 }
 
 #[uzu_test]
-fn specialization_preserves_quantized_route_and_accumulate_tail() {
+fn specialization_preserves_quantized_route() {
     let select = |n, transform| {
         super::super::kernel::GemvSpecialization::select_shape(
             &quant_shape(4, n, transform),
@@ -175,7 +175,7 @@ fn specialization_preserves_quantized_route_and_accumulate_tail() {
     };
     let clean = select(8192, GemmDTransform::empty()).expect("quantized specialization");
     assert!(clean.output_row_tile() > DEFAULT_RESULTS_PER_SIMDGROUP);
-    assert_eq!(select(8192 + clean.output_row_tile() / 2, GemmDTransform::ACCUMULATE), None);
+    assert!(select(8192 + clean.output_row_tile() / 2, GemmDTransform::empty()).is_some());
 }
 
 #[uzu_test]

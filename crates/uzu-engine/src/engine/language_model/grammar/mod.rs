@@ -3,6 +3,4 @@ mod engagement;
 mod error;
 mod grammar;
 
-pub use config::GrammarConfig;
-pub use error::GrammarError;
-pub use grammar::Grammar;
+pub use crate::engine::language_model::grammar::{config::GrammarConfig, error::GrammarError, grammar::Grammar};

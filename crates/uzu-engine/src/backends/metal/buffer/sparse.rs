@@ -9,7 +9,9 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::backends::{
     common::{Buffer, SparseBuffer},
-    metal::{Metal, MetalContext, error::MetalError, heaps::MetalHeapPage, metal_extensions::SparsePageSizeExt},
+    metal::{
+        Metal, context::MetalContext, error::MetalError, heaps::MetalHeapPage, metal_extensions::SparsePageSizeExt,
+    },
 };
 
 pub struct MetalSparseBuffer {

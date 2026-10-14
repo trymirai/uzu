@@ -1,7 +1,7 @@
 use tokenizers::Tokenizer;
 use xgrammar::{GrammarCompiler, GrammarMatcher, TokenizerInfo, get_bitmask_size};
 
-use super::{GrammarConfig, GrammarError, engagement::GrammarEngagementState};
+use crate::engine::language_model::grammar::{GrammarConfig, GrammarError, engagement::GrammarEngagementState};
 
 pub struct Grammar {
     bitmask_size: usize,

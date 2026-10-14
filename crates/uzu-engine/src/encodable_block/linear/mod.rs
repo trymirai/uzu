@@ -3,22 +3,20 @@ use thiserror::Error;
 
 mod input_rht;
 mod matmul;
-mod qlora_wrapper;
 mod rht_wrapper;
 mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
-pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 pub use untied_readout::UntiedReadout;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer,
-        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        Backend, BufferRef, CommandBuffer, Kernels,
+        gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationQuantization,
-            matmul::{ActivationFormat, Int8CodeLayout, MatmulA},
+            matmul::{ActivationFormat, Int8CodeLayout, MatmulA, MatmulKernel},
         },
     },
     config::weight_matrix::{
@@ -26,8 +24,16 @@ use crate::{
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
+
+#[derive(Debug, Error)]
+pub enum LinearEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Matmul error: {0}")]
+    Matmul(#[source] <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::Error),
+}
 
 pub trait Linear<B: Backend>: Send + Sync {
     fn encode(
@@ -35,23 +41,16 @@ pub trait Linear<B: Backend>: Send + Sync {
         input: B::ScratchBuffer,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error>;
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        self.encode_input(LinearInput::FullPrecision(input), batch_dim, command_buffer)
+    }
 
     fn encode_input(
         &self,
         input: LinearInput<B>,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
-        match input {
-            LinearInput::FullPrecision(input) => self.encode(input, batch_dim, command_buffer),
-            LinearInput::Int8Symmetric {
-                ..
-            } => {
-                panic!("linear does not support pre-quantized activations")
-            },
-        }
-    }
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>>;
 
     fn select_activation_format(
         &self,
@@ -111,8 +110,6 @@ pub struct LinearInputPreparation<B: Backend> {
 pub enum LinearBlockError<B: Backend> {
     #[error("LinearMatmul error: {0}")]
     LinearMatmulError(#[from] LinearMatmulError<B>),
-    #[error("QLoRALinearWrapper error: {0}")]
-    QLoRALinearWrapperError(#[from] QLoRALinearWrapperError<B>),
     #[error("RHTLinearWrapper error: {0}")]
     RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
     #[error("Parameter loading error: {0}")]
@@ -124,15 +121,14 @@ pub enum LinearBlockError<B: Backend> {
 impl<B: Backend> dyn Linear<B> {
     pub fn new_mixed_precision(
         input_dimension: u32,
-        output_dimensions: impl AsRef<[u32]>,
-        has_biases: bool,
-        context: &B::Context,
+        output_dimension: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
+        has_biases: bool,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
-        let output_dimension_sum: u32 = output_dimensions.as_ref().iter().sum();
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
@@ -140,175 +136,146 @@ impl<B: Backend> dyn Linear<B> {
             | AnyWeightMatrixSpec::MLXSpec(_)
             | AnyWeightMatrixSpec::IntSpec(_)) => {
                 let block = LinearMatmul::load(
-                    context,
-                    spec,
                     input_dimension,
-                    output_dimension_sum,
+                    output_dimension,
                     weights_data_type,
                     input_data_type,
                     output_data_type,
+                    spec,
+                    None,
                     &weights_tree,
                     has_biases.then_some(parameter_tree),
-                    None,
+                    context,
                 )?;
                 Ok(Box::new(block))
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                adapter_spec: None,
                 incoherence_block_size: Some(block_size),
                 incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
                 ..
             }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(RHTLinearWrapper::new(
-                context,
                 input_dimension,
-                output_dimension_sum,
-                has_biases,
+                output_dimension,
                 weights_data_type,
                 input_data_type,
                 output_data_type,
+                has_biases,
                 parameter_tree,
+                context,
             )?)),
-            AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                quantization_spec,
-                adapter_spec: Some(adapter_spec),
-                incoherence_block_size,
-                incoherence_processing_mode,
-                ..
-            }) => {
-                assert!(!has_biases, "QLoRA linear with biases is not supported");
-                let adapter_spec = *adapter_spec;
-                let AnyWeightMatrixSpec::LowRankSpec(adapter_spec) = adapter_spec else {
-                    return Err(LinearBlockError::UnsupportedConfiguration(format!("{adapter_spec:?}")));
-                };
-                Ok(Box::new(QLoRALinearWrapper::new(
-                    context,
-                    *quantization_spec,
-                    adapter_spec,
-                    incoherence_block_size,
-                    incoherence_processing_mode,
-                    input_dimension,
-                    output_dimension_sum,
-                    weights_data_type,
-                    input_data_type,
-                    output_data_type,
-                    &weights_tree,
-                )?))
-            },
             spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
     }
 
     pub fn new(
         input_dimension: u32,
-        output_dimensions: impl AsRef<[u32]>,
-        has_biases: bool,
-        context: &B::Context,
+        output_dimension: u32,
         data_type: DataType,
+        has_biases: bool,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         Self::new_mixed_precision(
             input_dimension,
-            output_dimensions,
+            output_dimension,
+            data_type,
+            data_type,
+            data_type,
             has_biases,
-            context,
-            data_type,
-            data_type,
-            data_type,
             parameter_tree,
+            context,
         )
     }
 
     pub fn new_with_input_rht_mixed_precision(
         input_dimension: u32,
-        output_dimensions: impl AsRef<[u32]>,
-        has_biases: bool,
-        context: &B::Context,
+        output_dimension: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
+        has_biases: bool,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
-        let output_dimension_sum: u32 = output_dimensions.as_ref().iter().sum();
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
-            context,
             input_dimension,
-            output_dimension_sum,
-            has_biases,
+            output_dimension,
             weights_data_type,
             input_data_type,
             output_data_type,
+            has_biases,
             false,
             parameter_tree,
+            context,
         )? {
             return Ok((linear.0, linear.1.map(|preparation| preparation.rht_signs)));
         }
 
         let linear = Self::new_mixed_precision(
             input_dimension,
-            output_dimensions,
-            has_biases,
-            context,
+            output_dimension,
             weights_data_type,
             input_data_type,
             output_data_type,
+            has_biases,
             parameter_tree,
+            context,
         )?;
         Ok((linear, None))
     }
 
     pub fn new_for_fused_input(
         input_dimension: u32,
-        output_dimensions: impl AsRef<[u32]>,
-        has_biases: bool,
-        context: &B::Context,
+        output_dimension: u32,
         data_type: DataType,
+        has_biases: bool,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
-        let output_dimension_sum: u32 = output_dimensions.as_ref().iter().sum();
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
-            context,
             input_dimension,
-            output_dimension_sum,
+            output_dimension,
+            data_type,
+            data_type,
+            data_type,
             has_biases,
-            data_type,
-            data_type,
-            data_type,
             true,
             parameter_tree,
+            context,
         )? {
             return Ok(linear);
         }
 
         let linear = Self::new_mixed_precision(
             input_dimension,
-            output_dimensions,
+            output_dimension,
+            data_type,
+            data_type,
+            data_type,
             has_biases,
-            context,
-            data_type,
-            data_type,
-            data_type,
             parameter_tree,
+            context,
         )?;
         Ok((linear, None))
     }
 
     pub fn new_with_input_rht(
         input_dimension: u32,
-        output_dimensions: impl AsRef<[u32]>,
-        has_biases: bool,
-        context: &B::Context,
+        output_dimension: u32,
         data_type: DataType,
+        has_biases: bool,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
         Self::new_with_input_rht_mixed_precision(
             input_dimension,
-            output_dimensions,
+            output_dimension,
+            data_type,
+            data_type,
+            data_type,
             has_biases,
-            context,
-            data_type,
-            data_type,
-            data_type,
             parameter_tree,
+            context,
         )
     }
 }

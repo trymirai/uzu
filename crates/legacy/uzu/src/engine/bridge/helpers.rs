@@ -12,7 +12,7 @@ use tokenizers::Tokenizer;
 #[cfg(feature = "capability-grammar")]
 use uzu_engine::engine::language_model::grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError};
 use uzu_engine::{
-    backends::common::Backend,
+    backends::Backend,
     engine::language_model::{LanguageModel, stream::SamplingMethod as UzuSamplingMethod},
 };
 

@@ -1,5 +1,7 @@
+#[cfg(backend = "cpu")]
+use crate::backends::common::kernel::Unsupported;
 use crate::{
-    backends::common::{Backend, CommandBuffer, Kernels, kernel::Unsupported},
+    backends::common::{Backend, CommandBuffer, Kernels},
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
 };
 
@@ -20,6 +22,7 @@ pub trait DeltaNetTreeVerify: Sized + Send + Sync {
     ) -> Result<<Self::Backend as Backend>::ScratchBuffer, <Self::Backend as Backend>::Error>;
 }
 
+#[cfg(backend = "cpu")]
 impl<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = Unsupported<B>>>> DeltaNetTreeVerify for Unsupported<B> {
     type Backend = B;
 

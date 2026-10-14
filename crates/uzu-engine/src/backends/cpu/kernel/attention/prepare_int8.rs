@@ -4,18 +4,18 @@ use uzu_engine_macros::kernel;
 
 use super::attention_prepare::apply_rope;
 use crate::{
-    array::ArrayElement,
     backends::{
         common::kernel::kv_layout::{Int8KVLayout, KV_ROTATION_SIGN_BITS},
         cpu::kernel::activation_transform::hadamard_transform,
     },
+    data_type::DataTypeRepr,
 };
 
 #[kernel(AttentionPrepareInt8)]
 #[variants(ElementT, bf16)]
 #[variants(RopeT, f32)]
 #[variants(HEAD_DIM, 256)]
-pub fn attention_prepare_int8<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float, const HEAD_DIM: u32>(
+pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     qkvg: *const ElementT,
     #[optional(!quantize_queries)] queries: Option<*mut ElementT>,
     #[optional(quantize_queries)] q_codes: Option<*mut i8>,

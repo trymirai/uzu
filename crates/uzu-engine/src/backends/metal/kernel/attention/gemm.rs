@@ -6,12 +6,11 @@ use crate::{
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding,
-            gpu_types::AttnParams,
             kernel::{AttentionArguments, AttentionKernelConfig},
         },
         metal::{
             Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
-            kernel::AttentionGemmMetalKernel,
+            gpu_types::attention::AttnParams, kernel::AttentionGemmMetalKernel,
         },
     },
     data_type::DataType,

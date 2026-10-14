@@ -14,7 +14,7 @@ use uzu::{
         session::chat::{ChatConfig, ChatReplyConfig, ChatReplyEnergy},
     },
 };
-use uzu_engine::{VERSION, data_type::DataType};
+use uzu_engine::VERSION;
 
 use crate::{
     bench::{
@@ -121,7 +121,7 @@ impl BenchRunner {
                 device: device.clone(),
                 engine_version: VERSION.to_string(),
                 timestamp,
-                data_type: DataType::BF16,
+                data_type: "bfloat16".to_string(),
                 memory_used: session.peak_memory_usage().await,
                 tokens_count_input,
                 tokens_count_output,

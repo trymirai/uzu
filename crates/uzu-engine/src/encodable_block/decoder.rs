@@ -12,9 +12,9 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
-        transformer::{Transformer, TransformerNewError, TransformerState},
+        transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
 };
 
 #[derive(Debug, Error)]
@@ -29,6 +29,8 @@ pub enum DecoderError<B: Backend> {
     PerLayerEmbedding(#[from] PerLayerEmbeddingError<B>),
     #[error("Transformer error: {0}")]
     Transformer(#[from] TransformerNewError<B>),
+    #[error("Transformer encoding error: {0}")]
+    TransformerEncode(#[from] TransformerEncodeError<B>),
 }
 
 pub struct Decoder<B: Backend> {
@@ -50,18 +52,18 @@ impl<B: Backend> Decoder<B> {
     }
 
     pub fn new(
-        context: &B::Context,
+        data_type: DataType,
         config: &DecoderConfig,
         parameter_tree: &ParameterTree<B>,
-        data_type: DataType,
+        context: &B::Context,
     ) -> Result<Self, DecoderError<B>> {
         let (embedding, readout_input_hadamard_factors) = Embedding::new(
-            context,
             config.vocab_size,
             config.transformer_config.model_dim,
+            data_type,
             &config.embedding_config,
             &parameter_tree.subtree("embedding"),
-            data_type,
+            context,
         )?;
 
         let embedding_norm = config
@@ -70,10 +72,10 @@ impl<B: Backend> Decoder<B> {
             .map(|norm_config| {
                 Normalization::new(
                     config.transformer_config.model_dim,
+                    data_type,
                     None,
                     ShortcutMode::None,
                     PostLayerScalar::None,
-                    data_type,
                     norm_config,
                     &parameter_tree.subtree("embedding_norm"),
                     context,
@@ -88,22 +90,22 @@ impl<B: Backend> Decoder<B> {
                 "per-layer embedding num_layers must match transformer layer count"
             );
             Some(PerLayerEmbedding::new(
-                context,
-                ple_config,
                 config.transformer_config.model_dim,
                 data_type,
+                ple_config,
                 &parameter_tree.subtree("per_layer_embedding"),
+                context,
             )?)
         } else {
             None
         };
 
         let transformer = Transformer::new(
-            context,
-            readout_input_hadamard_factors,
             data_type,
+            readout_input_hadamard_factors,
             &config.transformer_config,
             &parameter_tree.subtree("transformer"),
+            context,
         )?;
 
         Ok(Self {
@@ -155,33 +157,26 @@ impl<B: Backend> Decoder<B> {
         };
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
-            Some(
-                per_layer_embedding
-                    .encode(token_ids, &embedded, batch_dim.size(), command_buffer)
-                    .map_err(DecoderError::Backend)?,
-            )
+            Some(per_layer_embedding.encode(token_ids, &embedded, batch_dim.size(), command_buffer)?)
         } else {
             None
         };
 
-        let transformer_output = self
-            .transformer
-            .encode(
-                embedded,
-                per_layer_inputs.as_ref(),
-                batch_dim,
-                output_range,
-                hidden_feature_layer_indices,
-                Some(state),
-                command_buffer,
-            )
-            .map_err(DecoderError::Backend)?;
+        let transformer_output = self.transformer.encode(
+            embedded,
+            per_layer_inputs.as_ref(),
+            batch_dim,
+            output_range,
+            hidden_feature_layer_indices,
+            Some(state),
+            command_buffer,
+        )?;
 
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
             Some(self.embedding.encode_readout(
-                output_range.end - output_range.start,
                 output,
+                output_range.end - output_range.start,
                 self.embedding.vocab_size(),
                 None::<&B::ScratchBuffer>,
                 true,

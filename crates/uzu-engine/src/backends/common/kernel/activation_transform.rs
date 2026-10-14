@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
-        gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+        gpu_types::{activation_transform::ActivationTransformOp, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::{ActivationTransformKernel, matmul::Int8CodeLayout},
     },
     data_type::DataType,

@@ -13,7 +13,7 @@ use shoji::{
 };
 use uzu_engine::{
     TOOLCHAIN_VERSION,
-    backends::{BackendSelection, common::Backend, select_backend},
+    backends::{Backend, BackendSelection, select_backend},
 };
 
 use crate::engine::bridge::{

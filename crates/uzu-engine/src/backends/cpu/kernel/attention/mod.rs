@@ -26,6 +26,7 @@ pub struct AttentionCpuKernel {
 
 impl AttentionKernel for AttentionCpuKernel {
     type Backend = Cpu;
+    type Error = CpuError;
 
     fn new(
         _context: &CpuContext,

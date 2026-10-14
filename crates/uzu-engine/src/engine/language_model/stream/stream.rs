@@ -10,7 +10,6 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 #[cfg(grammar)]
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferPending, Context,
@@ -26,6 +25,7 @@ use crate::{
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
     trie::TrieNode,
+    utils::size_for_shape::size_for_shape,
 };
 
 enum ForwardPassChaining<B: Backend> {
@@ -299,9 +299,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                                 bitmask.as_ref(),
                                 context_ring.as_ref(),
                                 Some(&token_ids),
-                                &options.sampling_method,
                                 &batch_dim,
                                 (sampled_row..sampled_row + 1).into(),
+                                &options.sampling_method,
                                 &mut command_buffer,
                             )
                             .map_err(LanguageModelStreamError::Backend)?,
@@ -315,14 +315,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
                 if let Some(speculator) = model.speculator.as_ref() {
                     let speculator_state = model_state.speculator_state.as_mut().unwrap();
-                    speculator
-                        .encode_accept(
-                            speculator_state,
-                            decoder_output.hidden_features.as_ref().unwrap().iter(),
-                            &(0..input_chunk.len() as u32).collect::<Box<[u32]>>(),
-                            &mut command_buffer,
-                        )
-                        .map_err(LanguageModelStreamError::Backend)?;
+                    speculator.encode_accept(
+                        speculator_state,
+                        decoder_output.hidden_features.as_ref().unwrap().iter(),
+                        &(0..input_chunk.len() as u32).collect::<Box<[u32]>>(),
+                        &mut command_buffer,
+                    )?;
                 }
 
                 if let Some(suffix_repetition_length) = options.sampling_method.suffix_repetition_length() {
@@ -468,14 +466,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         .encode_accept(&accepted_token_indicies, &mut command_buffer)
                         .map_err(LanguageModelStreamError::Backend)?;
                     if let Some(speculator) = self.model.speculator.as_ref() {
-                        speculator
-                            .encode_accept(
-                                self.model_state.speculator_state.as_mut().unwrap(),
-                                hidden_features.as_ref().unwrap().iter(),
-                                &accepted_token_indicies,
-                                &mut command_buffer,
-                            )
-                            .map_err(LanguageModelStreamError::Backend)?;
+                        speculator.encode_accept(
+                            self.model_state.speculator_state.as_mut().unwrap(),
+                            hidden_features.as_ref().unwrap().iter(),
+                            &accepted_token_indicies,
+                            &mut command_buffer,
+                        )?;
                     }
                     let output_norm = if let Some((final_hidden, row_bytes)) = output_norm {
                         let row = full.last().unwrap().0;
@@ -704,9 +700,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 bitmask.as_ref(),
                 self.context_ring.as_ref(),
                 Some(token_ids),
-                &self.options.sampling_method,
                 &batch_dim,
                 (0..batch_dim.size()).into(),
+                &self.options.sampling_method,
                 &mut command_buffer,
             )
             .map_err(LanguageModelStreamError::Backend)?;
@@ -723,14 +719,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
             if let Some(speculator) = self.model.speculator.as_ref() {
                 let speculator_state = self.model_state.speculator_state.as_mut().unwrap();
-                speculator
-                    .encode_accept(
-                        speculator_state,
-                        decoder_output.hidden_features.as_ref().unwrap().iter(),
-                        &(0..batch_dim.size()).collect::<Box<[u32]>>(),
-                        &mut command_buffer,
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?;
+                speculator.encode_accept(
+                    speculator_state,
+                    decoder_output.hidden_features.as_ref().unwrap().iter(),
+                    &(0..batch_dim.size()).collect::<Box<[u32]>>(),
+                    &mut command_buffer,
+                )?;
             }
 
             if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {

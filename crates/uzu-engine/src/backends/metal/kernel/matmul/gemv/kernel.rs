@@ -1,22 +1,26 @@
 use metal::MTLGPUFamily;
 
-use super::{
-    super::MatmulOutputWork,
-    policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK},
-};
 use crate::{
     backends::{
         common::{
             CommandBufferEncoding,
             gpu_types::{
-                HADAMARD_TRANSFORM_BLOCK_SIZE,
                 gemm::{GemmBPrologueKind, GemmDTransform},
+                hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             },
             kernel::matmul::{MatmulB, MatmulShape},
         },
         metal::{
-            command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
-            kernel::GemvMetalKernel,
+            command_buffer::MetalCommandBufferEncoding,
+            context::MetalContext,
+            error::MetalError,
+            kernel::{
+                GemvMetalKernel,
+                matmul::{
+                    MatmulOutputWork,
+                    gemv::policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK},
+                },
+            },
         },
     },
     data_type::DataType,
@@ -99,9 +103,6 @@ impl GemvSpecialization {
             return None;
         }
         let output_transform = output_transform_for_tile(shape, tile)?;
-        if shape.d_transform.contains(GemmDTransform::ACCUMULATE) && !shape.n.is_multiple_of(32) {
-            return None;
-        }
         let bits = shape.b_bits.unwrap_or(0);
         if !is_quant {
             let mixed_precision = weights_data_type == DataType::F32
@@ -214,9 +215,9 @@ use std::collections::{HashMap, hash_map::Entry};
 use crate::backends::{
     common::{
         BufferMut, BufferRef,
-        kernel::matmul::{MatmulA, MatmulArguments, MatmulError},
+        kernel::matmul::{MatmulA, MatmulArguments},
     },
-    metal::Metal,
+    metal::{Metal, kernel::matmul::MatmulMetalError},
 };
 
 /// GEMV pipelines compiled on first use.
@@ -245,13 +246,16 @@ impl GemvKernel {
         &mut self,
         context: &MetalContext,
         specialization: GemvSpecialization,
-    ) -> Result<&GemvMetalKernel, MatmulError<Metal>> {
+    ) -> Result<&GemvMetalKernel, MatmulMetalError> {
         match self.pipelines.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let kernel = specialization
-                    .create_pipeline(context, self.weights_data_type, self.input_data_type, self.output_data_type)
-                    .map_err(MatmulError::BackendError)?;
+                let kernel = specialization.create_pipeline(
+                    context,
+                    self.weights_data_type,
+                    self.input_data_type,
+                    self.output_data_type,
+                )?;
                 Ok(entry.insert(kernel))
             },
         }
@@ -270,7 +274,7 @@ impl GemvKernel {
         specialization: GemvSpecialization,
         output_work: &MatmulOutputWork,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<(), MatmulError<Metal>> {
+    ) -> Result<(), MatmulMetalError> {
         let MatmulArguments {
             a,
             b,
@@ -297,7 +301,7 @@ impl GemvKernel {
             offset: a_offset,
         } = a
         else {
-            return Err(MatmulError::IncompatibleA {
+            return Err(MatmulMetalError::IncompatibleA {
                 path: "Gemv",
                 reason: "prepared int8 activations require GEMM",
             });
@@ -367,7 +371,7 @@ impl GemvKernel {
             MatmulB::Trellis {
                 ..
             } => {
-                return Err(MatmulError::UnsupportedLayout {
+                return Err(MatmulMetalError::UnsupportedLayout {
                     path: "Gemv",
                 });
             },

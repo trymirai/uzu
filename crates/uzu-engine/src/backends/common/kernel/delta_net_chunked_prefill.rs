@@ -1,5 +1,7 @@
+#[cfg(backend = "cpu")]
+use crate::backends::common::kernel::Unsupported;
 use crate::{
-    backends::common::{Backend, CommandBuffer, Kernels, kernel::Unsupported},
+    backends::common::{Backend, CommandBuffer, Kernels},
     data_type::DataType,
 };
 
@@ -38,6 +40,7 @@ pub trait DeltaNetChunkedPrefill: Sized + Send + Sync {
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 }
 
+#[cfg(backend = "cpu")]
 impl<B: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Unsupported<B>>>> DeltaNetChunkedPrefill for Unsupported<B> {
     type Backend = B;
 

@@ -1,18 +1,6 @@
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
-use crate::{
-    array::ArrayElement,
-    backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::{DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel},
-        },
-        cpu::Cpu,
-    },
-    data_type::DataType,
-    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
-};
 #[cfg(backend = "metal")]
 use crate::{
     backends::{
@@ -20,6 +8,17 @@ use crate::{
         metal::Metal,
     },
     tests::helpers::buffer_prefix_to_vec,
+};
+use crate::{
+    backends::{
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::{DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel},
+        },
+        cpu::Cpu,
+    },
+    data_type::{DataType, DataTypeRepr},
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
 };
 
 #[cfg(backend = "metal")]
@@ -60,7 +59,7 @@ fn run_conv_update<B: Backend>(
     (out, new_state)
 }
 
-fn run_delta_net_update<B: Backend, T: ArrayElement>(
+fn run_delta_net_update<B: Backend, T: DataTypeRepr>(
     in_proj: &[T],
     a_log: &[f32],
     dt_bias: &[f32],
@@ -108,7 +107,7 @@ fn run_delta_net_update<B: Backend, T: ArrayElement>(
     (out, new_state)
 }
 
-fn to_activation<T: ArrayElement>(values: &[f32]) -> Vec<T> {
+fn to_activation<T: DataTypeRepr>(values: &[f32]) -> Vec<T> {
     values.iter().map(|&value| <T as num_traits::NumCast>::from(value).expect("input to activation dtype")).collect()
 }
 
@@ -248,7 +247,7 @@ fn test_delta_net_conv_scan() {
 // DeltaNetUpdate (decode)
 
 // The reference is the CPU f32 kernel on the same rounded inputs; a_log, dt_bias, norm weight and state stay f32
-fn test_delta_net_update_impl<T: ArrayElement>(
+fn test_delta_net_update_impl<T: DataTypeRepr>(
     num_v_heads: usize,
     num_k_heads: usize,
     head_k_dim: usize,
@@ -318,7 +317,7 @@ fn test_delta_net_update_qwen35_shapes_bf16() {
 
 // DeltaNetPrefill + NormGate
 
-fn run_prefill_with_norm_gate_typed<B: Backend, T: ArrayElement>(
+fn run_prefill_with_norm_gate_typed<B: Backend, T: DataTypeRepr>(
     in_proj: &[T],
     a_log: &[f32],
     dt_bias: &[f32],
@@ -418,7 +417,7 @@ fn run_prefill_with_norm_gate_typed<B: Backend, T: ArrayElement>(
     (out, state)
 }
 
-fn test_prefill_norm_gate_impl<T: ArrayElement>(
+fn test_prefill_norm_gate_impl<T: DataTypeRepr>(
     num_v_heads: usize,
     num_k_heads: usize,
     head_k_dim: usize,

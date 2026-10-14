@@ -1,11 +1,11 @@
 use std::{mem::size_of, sync::Arc};
 
 use crate::{
-    array::ArrayElement,
     backends::common::{
         Backend, BufferCpuAccessible, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferPending, Context,
     },
+    data_type::DataTypeRepr,
 };
 
 /// Invokes `$body` once per available backend, with `$B` bound to each backend type.
@@ -52,7 +52,7 @@ pub fn create_buffer<B: Backend, T>(
     context.create_buffer(buffer_size_bytes::<T>(elements_count)).expect("Failed to create buffer")
 }
 
-pub fn create_buffer_with_data<B: Backend, T: ArrayElement>(
+pub fn create_buffer_with_data<B: Backend, T: DataTypeRepr>(
     context: &B::Context,
     data: &[T],
 ) -> B::GlobalBuffer {
@@ -61,13 +61,13 @@ pub fn create_buffer_with_data<B: Backend, T: ArrayElement>(
     buffer
 }
 
-pub fn buffer_to_vec<B: Backend, T: ArrayElement>(
+pub fn buffer_to_vec<B: Backend, T: DataTypeRepr>(
     buffer: impl BufferRef<Backend = B, Buffer: BufferCpuAccessible>
 ) -> Vec<T> {
     buffer.copyout()
 }
 
-pub fn buffer_prefix_to_vec<B: Backend, T: ArrayElement>(
+pub fn buffer_prefix_to_vec<B: Backend, T: DataTypeRepr>(
     buffer: impl BufferRef<Backend = B, Buffer: BufferCpuAccessible>,
     elements_count: usize,
 ) -> Vec<T> {

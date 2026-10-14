@@ -2,11 +2,11 @@ use half::bf16;
 use num_traits::{Float, NumCast};
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::ring::RingParams};
+use crate::{backends::common::gpu_types::ring::RingParams, data_type::DataTypeRepr};
 
 #[kernel(RepetitionPenalty)]
 #[variants(T, f32, bf16)]
-pub fn repetition_penalty<T: ArrayElement + Float + NumCast>(
+pub fn repetition_penalty<T: DataTypeRepr + Float + NumCast>(
     original_logits: *const T,
     logits_copy: *mut T,
     context_ring: *const u32,
@@ -18,8 +18,8 @@ pub fn repetition_penalty<T: ArrayElement + Float + NumCast>(
     sampling_length: u32,
 ) {
     fn apply(
-        original_logits: *const (impl ArrayElement + Float),
-        logits_copy: *mut (impl ArrayElement + Float),
+        original_logits: *const (impl DataTypeRepr + Float),
+        logits_copy: *mut (impl DataTypeRepr + Float),
         vocab_size: usize,
         sample_index: usize,
         token_id: usize,

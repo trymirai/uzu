@@ -82,32 +82,21 @@ private:
         if (!OutputTile<Tile, FULL_TILE>::row_in_range(global_row, params.out_vec_size)) {
           return;
         }
-        if (tile.clamped && params.output_transform.contains(GemmDTransform::ACCUMULATE)) {
-          return;
-        }
         if constexpr (STAGE_HADAMARD) {
           shared_results[I * Tile::OUTPUT_ROWS + tile.local_row + R] =
-              transform<false>(result[I][R], output + R, global_row, ops, params);
+              transform<false>(result[I][R], global_row, ops, params);
         } else {
-          output[R] = static_cast<DT>(transform<true>(result[I][R], output + R, global_row, ops, params));
+          output[R] = static_cast<DT>(transform<true>(result[I][R], global_row, ops, params));
         }
       });
     });
   }
 
   template <bool APPLY_BIAS>
-  static METAL_FUNC U transform(
-      U value,
-      const device DT* output,
-      uint global_row,
-      const thread GemvOperands<AT, BT, DT>& ops,
-      const thread GemvParams& params
-  ) {
+  static METAL_FUNC U
+  transform(U value, uint global_row, const thread GemvOperands<AT, BT, DT>& ops, const thread GemvParams& params) {
     if (params.output_transform.contains(GemmDTransform::SCALE)) {
       value *= params.ab_scale;
-    }
-    if (params.output_transform.contains(GemmDTransform::ACCUMULATE)) {
-      value += static_cast<U>(*output);
     }
     if constexpr (APPLY_BIAS) {
       if (params.output_transform.contains(GemmDTransform::BIAS)) {

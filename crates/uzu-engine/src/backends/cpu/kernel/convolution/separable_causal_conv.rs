@@ -2,11 +2,11 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 #[kernel(SeparableCausalConv)]
 #[variants(T, bf16)]
-pub fn separable_causal_conv<T: ArrayElement + Float>(
+pub fn separable_causal_conv<T: DataTypeRepr + Float>(
     input: *const T,
     coefficient_deltas: *const T,
     weights: *const T,

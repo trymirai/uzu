@@ -1,11 +1,6 @@
-use std::{error::Error as StdError, sync::mpsc::RecvError};
+use std::sync::mpsc::RecvError;
 
 use thiserror::Error;
-
-use crate::backends::{
-    common::kernel::matmul::MatmulError,
-    metal::{Metal, kernel::matmul::gemm::GemmSpecializationError},
-};
 
 #[derive(Debug, Error)]
 pub enum MetalError {
@@ -40,21 +35,4 @@ pub enum MetalError {
         function_name: String,
         error: String,
     },
-    #[error("Kernel dispatch failed: {0}")]
-    KernelDispatchFailed(#[source] Box<dyn StdError + Send + Sync + 'static>),
-}
-
-impl From<MatmulError<Metal>> for MetalError {
-    fn from(value: MatmulError<Metal>) -> Self {
-        match value {
-            MatmulError::BackendError(e) => e,
-            other => MetalError::KernelDispatchFailed(Box::new(other)),
-        }
-    }
-}
-
-impl From<GemmSpecializationError> for MetalError {
-    fn from(value: GemmSpecializationError) -> Self {
-        MetalError::KernelDispatchFailed(Box::new(value))
-    }
 }

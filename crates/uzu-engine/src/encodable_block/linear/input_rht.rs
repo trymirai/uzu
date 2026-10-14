@@ -17,10 +17,10 @@ pub(super) struct InputRht<B: Backend> {
 
 impl<B: Backend> InputRht<B> {
     pub(super) fn new(
-        context: &B::Context,
         data_type: DataType,
         preparation: LinearInputPreparation<B>,
         in_place: bool,
+        context: &B::Context,
     ) -> Result<Self, B::Error> {
         let LinearInputPreparation {
             rht_signs,
