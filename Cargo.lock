@@ -1068,6 +1068,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-random"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2350,7 +2360,9 @@ dependencies = [
 name = "hanashi"
 version = "0.6.3"
 dependencies = [
+ "chrono",
  "indexmap 2.14.0",
+ "js-sys",
  "libc",
  "minijinja",
  "minijinja-contrib",
@@ -7520,9 +7532,11 @@ dependencies = [
  "criterion",
  "depfile",
  "derive_more",
+ "getrandom 0.3.4",
  "half",
  "is_close",
  "itertools 0.14.0",
+ "js-sys",
  "keisoku",
  "libm",
  "libtest-mimic",
@@ -7557,6 +7571,8 @@ dependencies = [
  "uzu",
  "uzu-engine-macros",
  "walkdir",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "xgrammar-rs",
  "xxhash-rust",
 ]
@@ -7567,6 +7583,28 @@ version = "0.6.3"
 dependencies = [
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "uzu-web"
+version = "0.6.3"
+dependencies = [
+ "chrono",
+ "console_error_panic_hook",
+ "fancy-regex 0.17.0",
+ "hanashi",
+ "js-sys",
+ "libc",
+ "minijinja",
+ "minijinja-contrib",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "shoji",
+ "tokenizers",
+ "uzu-engine",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

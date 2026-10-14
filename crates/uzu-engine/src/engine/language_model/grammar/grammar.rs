@@ -20,7 +20,10 @@ impl Grammar {
             TokenizerInfo::from_huggingface(tokenizer, None, stop_token_ids).map_err(GrammarError::XGrammar)?;
 
         let bitmask_size = get_bitmask_size(tokenizer_info.vocab_size()) as usize;
+        #[cfg(not(target_arch = "wasm32"))]
         let compiler = GrammarCompiler::with_defaults(tokenizer_info);
+        #[cfg(target_arch = "wasm32")]
+        let compiler = GrammarCompiler::new(tokenizer_info, 1, true, -1);
 
         let compiled = match config {
             GrammarConfig::JsonSchema {

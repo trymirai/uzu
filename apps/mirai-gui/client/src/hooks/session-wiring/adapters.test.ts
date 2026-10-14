@@ -77,3 +77,12 @@ it("turns a finished load into the resident session", () => {
   expect(useRuntimeSessionStore.getState().loadingSession).toBeNull();
   expect(useRuntimeSessionStore.getState().residentSession).toEqual({ repoId: REPO });
 });
+
+it("clears cancelled loading without an error and ignores a different model's unload", () => {
+  mocks.loading?.({ status: "start", repoId: REPO });
+  mocks.state?.({ active: false, repoId: "different/model", isEjecting: false });
+  expect(useChatSessionStore.getState().isModelLoading).toBe(true);
+  mocks.state?.({ active: false, repoId: REPO, isEjecting: false });
+  expect(useChatSessionStore.getState().isModelLoading).toBe(false);
+  expect(useRuntimeSessionStore.getState().loadingSession).toBeNull();
+});

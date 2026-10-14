@@ -2,7 +2,7 @@
 
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
-#[cfg(target_family = "wasm")]
+#[cfg(target_os = "wasi")]
 use std::os::wasi::fs::FileExt;
 use std::{collections::HashMap, fs::File};
 
@@ -26,14 +26,25 @@ pub enum HeaderLoadingError {
     #[error("Invalid data offsets for tensor {key}: begin={begin}, end={end}")]
     InvalidTensorOffsets {
         key: Box<str>,
-        begin: usize,
-        end: usize,
+        begin: u64,
+        end: u64,
     },
     #[error("Tensor offset overflow for tensor {key}: global_offset={global_offset}, local_begin={local_begin}")]
     TensorOffsetOverflow {
         key: Box<str>,
-        global_offset: usize,
-        local_begin: usize,
+        global_offset: u64,
+        local_begin: u64,
+    },
+    #[error("Tensor {key} extends beyond the weights data: end={end}, available={available}")]
+    TensorOutOfBounds {
+        key: Box<str>,
+        end: u64,
+        available: u64,
+    },
+    #[error("Tensor {key} is too large for this address space: {size} bytes")]
+    TensorTooLarge {
+        key: Box<str>,
+        size: u64,
     },
 }
 
@@ -50,7 +61,7 @@ pub struct HashMetadata {
 pub struct TensorInfo {
     pub dtype: Dtype,
     pub shape: Vec<u32>,
-    pub data_offsets: (usize, usize),
+    pub data_offsets: (u64, u64),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
@@ -109,9 +120,9 @@ impl Dtype {
 
 const MAX_HEADER_SIZE: usize = 100_000_000;
 
-pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoadingError> {
+pub fn read_metadata(file: &File) -> Result<(u64, HashMetadata), HeaderLoadingError> {
     let mut header_buffer = [0u8; size_of::<u64>()];
-    file.read_exact_at(&mut header_buffer, 0).map_err(HeaderLoadingError::UnableToReadHeader)?;
+    read_exact_at(file, &mut header_buffer, 0).map_err(HeaderLoadingError::UnableToReadHeader)?;
     let metadata_size: usize =
         u64::from_le_bytes(header_buffer).try_into().map_err(|_| HeaderLoadingError::HeaderTooLarge)?;
     if metadata_size > MAX_HEADER_SIZE {
@@ -119,10 +130,62 @@ pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoading
     }
 
     let mut json_buffer = vec![0u8; metadata_size];
-    file.read_exact_at(&mut json_buffer, size_of::<u64>() as u64)
+    read_exact_at(file, &mut json_buffer, size_of::<u64>() as u64)
         .map_err(HeaderLoadingError::UnableToReadHeaderJson)?;
     let metadata: HashMetadata = serde_json::from_slice(&json_buffer)?;
-    Ok((size_of::<u64>() + metadata_size, metadata))
+    Ok(((size_of::<u64>() + metadata_size) as u64, metadata))
+}
+
+/// Reads a safetensors header directly from a downloaded or embedded model.
+/// Tensor data remains borrowed; loading the header does not copy the weights.
+pub fn read_metadata_from_bytes(bytes: &[u8]) -> Result<(u64, HashMetadata), HeaderLoadingError> {
+    let truncated = || std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "truncated safetensors file");
+    let header: [u8; 8] =
+        bytes.get(..8).ok_or_else(|| HeaderLoadingError::UnableToReadHeader(truncated()))?.try_into().unwrap();
+    let size = usize::try_from(u64::from_le_bytes(header)).map_err(|_| HeaderLoadingError::HeaderTooLarge)?;
+    if size > MAX_HEADER_SIZE {
+        return Err(HeaderLoadingError::HeaderTooLarge);
+    }
+    let offset = 8 + size;
+    let json = bytes.get(8..offset).ok_or_else(|| HeaderLoadingError::UnableToReadHeaderJson(truncated()))?;
+    Ok((offset as u64, serde_json::from_slice(json)?))
+}
+
+pub fn read_metadata_from_source(
+    source: &dyn super::ParameterReadSource
+) -> Result<(u64, HashMetadata), HeaderLoadingError> {
+    let mut header = [0u8; 8];
+    source.read_exact_at(&mut header, 0).map_err(HeaderLoadingError::UnableToReadHeader)?;
+    let size = usize::try_from(u64::from_le_bytes(header)).map_err(|_| HeaderLoadingError::HeaderTooLarge)?;
+    if size > MAX_HEADER_SIZE {
+        return Err(HeaderLoadingError::HeaderTooLarge);
+    }
+    if 8 + size as u64 > source.len() {
+        return Err(HeaderLoadingError::UnableToReadHeaderJson(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "Header extends beyond the weights source",
+        )));
+    }
+    let mut json = vec![0u8; size];
+    source.read_exact_at(&mut json, 8).map_err(HeaderLoadingError::UnableToReadHeaderJson)?;
+    Ok((8 + size as u64, serde_json::from_slice(&json)?))
+}
+
+pub(super) fn read_exact_at(
+    file: &File,
+    destination: &mut [u8],
+    offset: u64,
+) -> std::io::Result<()> {
+    #[cfg(any(unix, target_os = "wasi"))]
+    return file.read_exact_at(destination, offset);
+
+    #[cfg(not(any(unix, target_os = "wasi")))]
+    {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = file;
+        file.seek(SeekFrom::Start(offset))?;
+        file.read_exact(destination)
+    }
 }
 
 #[cfg(test)]

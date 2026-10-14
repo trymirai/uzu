@@ -1,4 +1,3 @@
-import { platformInfo } from "@/platform/platform-info";
 import { createFileRoute, Navigate } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
@@ -6,5 +5,5 @@ export const Route = createFileRoute("/")({
 });
 
 function HomePage() {
-  return <Navigate to={platformInfo.isWeb ? "/chats" : "/local-models"} />;
+  return <Navigate to="/local-models" />;
 }

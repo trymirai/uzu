@@ -77,19 +77,19 @@ export function DownloadActions({
               />
             </span>
           </Tooltip>
-          {onCancel && (
-            <Tooltip content="Cancel" side="top">
-              <span>
-                <IconAction
-                  label="Cancel download"
-                  icon={<X size={14} />}
-                  onClick={onCancel}
-                  className={ACTION_BUTTON_CLASS}
-                />
-              </span>
-            </Tooltip>
-          )}
         </>
+      )}
+      {(isDownloading || isError) && onCancel && (
+        <Tooltip content={isError ? "Delete partial download" : "Cancel"} side="top">
+          <span>
+            <IconAction
+              label={isError ? "Delete partial download" : "Cancel download"}
+              icon={<X size={14} />}
+              onClick={onCancel}
+              className={ACTION_BUTTON_CLASS}
+            />
+          </span>
+        </Tooltip>
       )}
     </>
   );

@@ -1,7 +1,3 @@
-#[cfg(unix)]
-use std::os::unix::fs::FileExt;
-#[cfg(target_family = "wasm")]
-use std::os::wasi::fs::FileExt;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -9,8 +5,12 @@ use std::{
 };
 
 use super::{
+    ParameterReadSource,
     error::ParameterLoaderError,
-    safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata},
+    safetensors_metadata::{
+        HashMetadata, HeaderLoadingError, read_exact_at, read_metadata as read_st_metadata, read_metadata_from_bytes,
+        read_metadata_from_source,
+    },
 };
 use crate::{
     array::{ArrayElement, size_for_shape},
@@ -22,7 +22,7 @@ use crate::{
 struct ParameterMetadata {
     shape: Box<[u32]>,
     data_type: DataType,
-    offset: usize,
+    offset: u64,
     size: usize,
 }
 
@@ -31,7 +31,45 @@ pub struct ParameterLoader<'a, B: Backend> {
     index: HashMap<String, ParameterMetadata>,
     metadata: HashMap<String, String>,
     validated_tensors: RefCell<HashSet<String>>,
-    file: &'a File,
+    source: ParameterSource<'a>,
+    buffer_initializer: Option<&'a ParameterBufferInitializer<'a, B>>,
+}
+
+/// Optional initialization of a fresh backend buffer. The default File/bytes
+/// loaders read directly into CPU-accessible storage; streaming GPU backends
+/// can initialize without first exposing a persistent CPU mirror.
+pub type ParameterBufferInitializer<'a, B> =
+    dyn Fn(&<B as Backend>::Context, u64, usize) -> Result<<B as Backend>::GlobalBuffer, ParameterLoaderError<B>> + 'a;
+
+enum ParameterSource<'a> {
+    File(&'a File),
+    Bytes(&'a [u8]),
+    Reader(&'a dyn ParameterReadSource),
+}
+
+impl ParameterSource<'_> {
+    fn read(
+        &self,
+        destination: &mut [u8],
+        offset: u64,
+    ) -> std::io::Result<()> {
+        match self {
+            Self::File(file) => read_exact_at(file, destination, offset),
+            Self::Reader(source) => source.read_exact_at(destination, offset),
+            Self::Bytes(bytes) => {
+                let offset = usize::try_from(offset)
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "tensor offset overflow"))?;
+                let end = offset
+                    .checked_add(destination.len())
+                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "tensor offset overflow"))?;
+                let source = bytes
+                    .get(offset..end)
+                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "truncated tensor"))?;
+                destination.copy_from_slice(source);
+                Ok(())
+            },
+        }
+    }
 }
 
 impl<'a, B: Backend> ParameterLoader<'a, B> {
@@ -40,6 +78,55 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
         context: &'a B::Context,
     ) -> Result<Self, ParameterLoaderError<B>> {
         let (global_offset, st_metadata) = read_st_metadata(file)?;
+        Self::with_metadata(
+            context,
+            ParameterSource::File(file),
+            global_offset,
+            st_metadata,
+            file.metadata()?.len(),
+            None,
+        )
+    }
+
+    pub fn from_bytes(
+        bytes: &'a [u8],
+        context: &'a B::Context,
+    ) -> Result<Self, ParameterLoaderError<B>> {
+        let (global_offset, st_metadata) = read_metadata_from_bytes(bytes)?;
+        Self::with_metadata(
+            context,
+            ParameterSource::Bytes(bytes),
+            global_offset,
+            st_metadata,
+            bytes.len() as u64,
+            None,
+        )
+    }
+
+    pub fn from_source(
+        source: &'a dyn ParameterReadSource,
+        context: &'a B::Context,
+        buffer_initializer: Option<&'a ParameterBufferInitializer<'a, B>>,
+    ) -> Result<Self, ParameterLoaderError<B>> {
+        let (global_offset, metadata) = read_metadata_from_source(source)?;
+        Self::with_metadata(
+            context,
+            ParameterSource::Reader(source),
+            global_offset,
+            metadata,
+            source.len(),
+            buffer_initializer,
+        )
+    }
+
+    fn with_metadata(
+        context: &'a B::Context,
+        source: ParameterSource<'a>,
+        global_offset: u64,
+        st_metadata: HashMetadata,
+        source_size: u64,
+        buffer_initializer: Option<&'a ParameterBufferInitializer<'a, B>>,
+    ) -> Result<Self, ParameterLoaderError<B>> {
         let index = st_metadata
             .tensors
             .into_iter()
@@ -57,6 +144,22 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
                         global_offset,
                         local_begin,
                     })?;
+                let end = offset.checked_add(size).ok_or_else(|| HeaderLoadingError::TensorOffsetOverflow {
+                    key: key.clone().into_boxed_str(),
+                    global_offset: offset,
+                    local_begin: size,
+                })?;
+                if end > source_size {
+                    return Err(HeaderLoadingError::TensorOutOfBounds {
+                        key: key.into_boxed_str(),
+                        end,
+                        available: source_size,
+                    });
+                }
+                let size = usize::try_from(size).map_err(|_| HeaderLoadingError::TensorTooLarge {
+                    key: key.clone().into_boxed_str(),
+                    size,
+                })?;
                 let weight_metadata = ParameterMetadata {
                     shape: value.shape.into(),
                     data_type: value.dtype.data_type()?,
@@ -72,7 +175,8 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
             index,
             metadata,
             validated_tensors: RefCell::new(HashSet::new()),
-            file,
+            source,
+            buffer_initializer,
         })
     }
 
@@ -129,14 +233,17 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
         let element_count = self.metadata.size / std::mem::size_of::<T>();
         let mut data = vec![T::zeroed(); element_count];
         let destination = bytemuck::cast_slice_mut(&mut data);
-        self.loader.file.read_exact_at(destination, self.metadata.offset as u64)?;
+        self.loader.source.read(destination, self.metadata.offset)?;
         Ok(data.into_boxed_slice())
     }
 
     pub fn read_buffer(&self) -> Result<B::GlobalBuffer, ParameterLoaderError<B>> {
+        if let Some(initialize) = self.loader.buffer_initializer {
+            return initialize(self.loader.context, self.metadata.offset, self.metadata.size);
+        }
         let mut buffer =
             self.loader.context.create_buffer(self.metadata.size).map_err(ParameterLoaderError::BackendError)?;
-        self.loader.file.read_exact_at(buffer.as_slice_mut::<u8>(), self.metadata.offset as u64)?;
+        self.loader.source.read(buffer.as_slice_mut::<u8>(), self.metadata.offset)?;
         Ok(buffer)
     }
 }

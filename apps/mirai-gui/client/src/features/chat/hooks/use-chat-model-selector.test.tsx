@@ -67,3 +67,17 @@ it("clears a selected model after initialization confirms it is not downloaded",
   );
   expect(result.current.currentModelId).toBeUndefined();
 });
+
+it("does not restore an unsupported model from downloads, the resident session, or a chat URL", () => {
+  useModelsStore.setState({
+    models: [{ ...model, browserUnsupportedReason: "Unsupported architecture" }],
+    catalogComplete: true,
+    modelPhasesById: { [model.repoId]: modelDownloadPhases.downloaded },
+  });
+  useRuntimeSessionStore.setState({ residentSession: { repoId: model.repoId } });
+  const { result } = renderHook(() =>
+    useChatModelSelector({ chatId: "chat", searchModel: model.repoId, searchModelName: model.name }),
+  );
+  expect(result.current.hasAvailableModels).toBe(false);
+  expect(result.current.currentModelId).toBeUndefined();
+});

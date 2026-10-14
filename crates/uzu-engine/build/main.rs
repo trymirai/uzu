@@ -6,6 +6,8 @@ mod common;
 use common::{compiler::Compiler, enum_paths::EnumPaths, envs, gpu_types::GpuTypes, traitgen::traitgen_all};
 
 mod cpu;
+mod webgpu;
+mod webgpu_slang;
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
@@ -20,11 +22,15 @@ fn main() -> anyhow::Result<ExitCode> {
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH")?;
     let target_os = env::var("CARGO_CFG_TARGET_OS")?;
 
-    println!("cargo::rustc-check-cfg=cfg(backend, values(\"cpu\", \"metal\"))");
+    println!("cargo::rustc-check-cfg=cfg(backend, values(\"cpu\", \"metal\", \"webgpu\"))");
 
     let backend_cpu = cfg!(feature = "cpu");
     if backend_cpu {
         println!("cargo::rustc-cfg=backend=\"cpu\"");
+    }
+    let backend_webgpu = cfg!(feature = "webgpu") && target_arch == "wasm32";
+    if backend_webgpu {
+        println!("cargo::rustc-cfg=backend=\"webgpu\"");
     }
 
     let backend_metal = cfg!(feature = "metal") && matches!(target_os.as_ref(), "macos" | "ios" | "tvos" | "visionos");
@@ -32,7 +38,7 @@ fn main() -> anyhow::Result<ExitCode> {
         println!("cargo::rustc-cfg=backend=\"metal\"");
     }
 
-    let grammar = cfg!(feature = "grammar") && target_arch != "wasm32";
+    let grammar = cfg!(feature = "grammar");
     println!("cargo::rustc-check-cfg=cfg(grammar)");
     if grammar {
         println!("cargo::rustc-cfg=grammar");
@@ -56,7 +62,9 @@ fn main() -> anyhow::Result<ExitCode> {
 
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
 
-    if backend_cpu {
+    // The CPU signatures are the canonical kernel contract; WebGPU uses the
+    // same generated traits without compiling the CPU runtime or kernels.
+    if backend_cpu || backend_webgpu {
         compilers.push(Box::new(cpu::CpuCompiler::new()?));
     }
 
@@ -75,6 +83,10 @@ fn main() -> anyhow::Result<ExitCode> {
 
     debug_log!("backend build end");
 
+    if backend_webgpu {
+        webgpu_slang::compile()?;
+        webgpu::generate(&backends_kernels[0])?;
+    }
     traitgen_all(backends_kernels)?;
 
     debug_log!("build script ended");

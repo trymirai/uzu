@@ -17,6 +17,10 @@ default = ["cpu", "metal", "grammar"]
 
 cpu = [] # TODO: move libm here
 
+# Browser WebGPU, hosted by a dedicated GPU worker. The engine keeps its
+# existing synchronous command-buffer API in a separate inference worker.
+webgpu = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:getrandom"]
+
 metal = [
     "dep:rayon",
     "dep:clang-ast",
@@ -70,6 +74,14 @@ num-traits.workspace = true
 libm.workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
+xgrammar = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+js-sys = { version = "0.3", optional = true }
+getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }
@@ -77,9 +89,6 @@ obfstr = { workspace = true, optional = true }
 xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 metal = { workspace = true, optional = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-xgrammar = { workspace = true, optional = true }
-schemars = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-tag.workspace = true

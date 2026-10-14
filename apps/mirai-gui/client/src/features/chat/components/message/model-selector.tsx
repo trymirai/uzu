@@ -20,7 +20,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onM
   const getModelState = useModelsStore((s) => s.getModelState);
   const loadingModels = useModelsStore((s) => s.loading);
 
-  const installedModelsList = models.filter((m) => getModelState(m.repoId)?.phase === modelDownloadPhases.downloaded);
+  const installedModelsList = models.filter(
+    (m) => !m.browserUnsupportedReason && getModelState(m.repoId)?.phase === modelDownloadPhases.downloaded,
+  );
 
   const handleModelSelect = (modelId: string) => {
     const selectedModel = installedModelsList.find((model) => model.repoId === modelId);

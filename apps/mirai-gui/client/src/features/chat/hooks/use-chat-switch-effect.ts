@@ -3,7 +3,6 @@ import { useChatStore } from "@/stores/use-chat-store";
 
 type UseChatSwitchEffectParams = {
   chatId: string;
-  isNewChat: boolean;
   replayActiveBuffer: () => void;
   resetLocalUi: () => void;
 };
@@ -11,12 +10,7 @@ type UseChatSwitchEffectParams = {
 // `replayActiveBuffer` / `resetLocalUi` are read through refs: including them
 // in deps would re-trigger clearChat+loadChat on every stream chunk (they
 // rebuild with streaming state).
-export const useChatSwitchEffect = ({
-  chatId,
-  isNewChat,
-  replayActiveBuffer,
-  resetLocalUi,
-}: UseChatSwitchEffectParams): void => {
+export const useChatSwitchEffect = ({ chatId, replayActiveBuffer, resetLocalUi }: UseChatSwitchEffectParams): void => {
   const setCurrentChatId = useChatStore((s) => s.setCurrentChatId);
   const loadChat = useChatStore((s) => s.loadChat);
 
@@ -30,10 +24,8 @@ export const useChatSwitchEffect = ({
     resetRef.current();
     setCurrentChatId(chatId);
     useChatStore.getState().clearChat();
-    if (isNewChat) {
-      replayRef.current();
-      return;
-    }
+    // The URL can retain isNew=true after the first message is saved. Always
+    // hydrate from storage; a genuinely new draft simply has no stored chat.
     let stale = false;
     loadChat(chatId)
       .then(() => {
@@ -43,5 +35,5 @@ export const useChatSwitchEffect = ({
     return () => {
       stale = true;
     };
-  }, [chatId, isNewChat, loadChat, setCurrentChatId]);
+  }, [chatId, loadChat, setCurrentChatId]);
 };

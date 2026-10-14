@@ -1,8 +1,8 @@
 import type { SessionService } from ".";
-import { noopUnsubscribe } from "../shared/noop";
+import { browserRuntime } from "../chat/browser-runtime";
 
 export const webSession: SessionService = {
-  onSessionState: noopUnsubscribe,
-  onSessionLoading: noopUnsubscribe,
-  ejectSession: () => Promise.reject(new Error("Not available on web")),
+  onSessionState: (listener) => browserRuntime.onSessionState(listener),
+  onSessionLoading: (listener) => browserRuntime.onSessionLoading(listener),
+  ejectSession: ({ repoId }) => browserRuntime.eject(repoId),
 };

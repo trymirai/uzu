@@ -1,5 +1,6 @@
 import JSZip from "jszip";
-import { listChatFiles, loadChatFile } from "./chat-files";
+import * as nativeFiles from "./chat-files";
+import type { ChatFiles } from "./chat-repository";
 import { stripHtmlComments, wrapCotInDetails } from "./markdown/parse";
 import { isChartSpec } from "@/types/chart";
 import { chartToMarkdown } from "@/utils/chart-data";
@@ -28,7 +29,10 @@ const includeChartTables = (markdown: string): string => {
   return result + markdown.slice(offset);
 };
 
-export const buildChatsZip = async (): Promise<Uint8Array | null> => {
+export const buildChatsZip = async ({
+  listChatFiles,
+  loadChatFile,
+}: Pick<ChatFiles, "listChatFiles" | "loadChatFile"> = nativeFiles): Promise<Uint8Array | null> => {
   const zip = new JSZip();
   const files = await listChatFiles();
   const mdFiles = files.filter((f) => f.endsWith(".md"));

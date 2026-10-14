@@ -16,7 +16,7 @@ use crate::{
         sampling::{Sampling, SamplingMethod},
     },
     engine::Engine,
-    parameters::{ParameterLoader, ParameterLoaderError},
+    parameters::{ParameterBufferInitializer, ParameterLoader, ParameterLoaderError, ParameterReadSource},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
 };
 
@@ -74,6 +74,46 @@ impl<B: Backend> Engine<B> {
 
         let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
 
+        self.load_language_model_with_parameters(config, tokenizer, &weight_loader, speculator_path.as_deref())
+    }
+
+    /// Loads the same model format as `load_language_model` from browser downloads
+    /// or other in-memory sources. Weights are copied directly to backend buffers.
+    pub fn load_language_model_from_bytes(
+        self: &Arc<Self>,
+        config: &[u8],
+        tokenizer: &[u8],
+        weights: &[u8],
+    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
+        let config = serde_json::from_slice(config)?;
+        let tokenizer = Arc::new(Tokenizer::from_bytes(tokenizer)?);
+        let weight_loader = ParameterLoader::from_bytes(weights, &*self.context)?;
+        self.load_language_model_with_parameters(config, tokenizer, &weight_loader, None)
+    }
+
+    /// Loads from a random-access source without requiring a contiguous weights
+    /// allocation. Sources and initialization callbacks are borrowed only while
+    /// constructing the model; decoding uses the same backend buffers as usual.
+    pub fn load_language_model_from_source(
+        self: &Arc<Self>,
+        config: &[u8],
+        tokenizer: &[u8],
+        source: &dyn ParameterReadSource,
+        buffer_initializer: Option<&ParameterBufferInitializer<'_, B>>,
+    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
+        let config = serde_json::from_slice(config)?;
+        let tokenizer = Arc::new(Tokenizer::from_bytes(tokenizer)?);
+        let weight_loader = ParameterLoader::from_source(source, &*self.context, buffer_initializer)?;
+        self.load_language_model_with_parameters(config, tokenizer, &weight_loader, None)
+    }
+
+    fn load_language_model_with_parameters(
+        self: &Arc<Self>,
+        config: LanguageModelConfig,
+        tokenizer: Arc<Tokenizer>,
+        weight_loader: &ParameterLoader<'_, B>,
+        speculator_path: Option<&Path>,
+    ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
@@ -89,7 +129,6 @@ impl<B: Backend> Engine<B> {
         );
 
         let speculator = speculator_path
-            .as_deref()
             .map(|speculator_path| DFlashTfmSpeculator::new(speculator_path, self.context.clone()))
             .transpose()?
             .flatten();

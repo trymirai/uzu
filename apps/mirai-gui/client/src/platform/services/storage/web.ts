@@ -1,29 +1,65 @@
 import type { StorageService } from ".";
-import { ChatNotFoundError } from ".";
+import { createChatRepository } from "./chat-repository";
+import { browserChatFiles } from "./browser-chat-files";
+import { buildChatsZip } from "./export-zip";
+import { browserDb } from "../shared/browser-db";
+import { withFileQueue } from "./file-queue";
+import { webModels } from "../models/web";
+import type { EngineModel } from "@/types/model-manager";
 
-// Inference is native, so the browser build can never produce a chat. Nothing
-// is persisted here: the calls exist only to satisfy the platform contract.
+const isSkipped = (model: EngineModel, identifiers: string[]): boolean =>
+  identifiers.includes(model.identifier) || (model.repoId != null && identifiers.includes(model.repoId));
+
 export const webStorage: StorageService = {
-  listChats: () => Promise.resolve([]),
-  loadChat: () => Promise.resolve(null),
-  createOrReplaceChat: () => Promise.resolve(),
-  appendMessage: () => Promise.resolve(),
-  updateStoredMessage: () => Promise.resolve(),
-  editUserMessage: (chatId) => Promise.reject(new ChatNotFoundError(chatId)),
-  removeMessage: () => Promise.resolve(),
-  updateChatTitle: () => Promise.resolve(false),
-  deleteChat: () => Promise.resolve(),
-  exportAllChatsZip: () => Promise.resolve(null),
-
-  saveBinaryFile: () => Promise.resolve(false),
-  saveGlobalInstructions: () => Promise.resolve(),
-  loadGlobalInstructions: () => Promise.resolve(null),
-
-  previewCleanup: () =>
-    Promise.resolve({
-      dialogs: { count: 0, sizeBytes: 0 },
-      models: { count: 0, sizeBytes: 0 },
+  ...createChatRepository(browserChatFiles),
+  exportAllChatsZip: () => buildChatsZip(browserChatFiles),
+  async saveBinaryFile(fileName, data) {
+    const url = URL.createObjectURL(new Blob([new Uint8Array(data)]));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName.split(/[\\/]/).pop() || "download";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    return true;
+  },
+  saveGlobalInstructions: (content) =>
+    withFileQueue("global-instructions", () => browserDb.put("files", "global-instructions", content)),
+  loadGlobalInstructions: async () => (await browserDb.get<string>("files", "global-instructions")) ?? null,
+  async previewCleanup(skipModelIdentifiers = []) {
+    const files = await browserChatFiles.listChatFiles();
+    let chatBytes = 0;
+    for (const file of files)
+      chatBytes += new TextEncoder().encode((await browserChatFiles.loadChatFile(file)) ?? "").byteLength;
+    const { models } = await webModels.getModels();
+    const removable = models.filter(
+      (model) => !isSkipped(model, skipModelIdentifiers) && model.state.downloadedKbytes > 0,
+    );
+    return {
+      dialogs: { count: files.length, sizeBytes: chatBytes },
+      models: {
+        count: removable.length,
+        sizeBytes: removable.reduce((sum, model) => sum + model.state.downloadedKbytes * 1024, 0),
+      },
       logs: { sizeBytes: 0 },
-    }),
-  executeCleanup: () => Promise.resolve({ executed: [], modelsSkipped: [] }),
+    };
+  },
+  async executeCleanup(categories, skipModelIdentifiers = []) {
+    const executed: string[] = [];
+    const modelsSkipped: string[] = [];
+    if (categories.includes("dialogs")) {
+      for (const file of await browserChatFiles.listChatFiles()) {
+        const chatId = file.replace(/\.md$/, "");
+        await webStorage.deleteChat(chatId);
+      }
+      executed.push("dialogs");
+    }
+    if (categories.includes("models")) {
+      for (const model of (await webModels.getModels()).models) {
+        if (isSkipped(model, skipModelIdentifiers)) modelsSkipped.push(model.identifier);
+        else await webModels.deleteModel(model.identifier);
+      }
+      executed.push("models");
+    }
+    return { executed, modelsSkipped };
+  },
 };

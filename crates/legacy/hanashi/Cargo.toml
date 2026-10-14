@@ -12,7 +12,6 @@ license.workspace = true
 shoji.workspace = true
 token-stream-parser.workspace = true
 tokenizers.workspace = true
-openai-harmony.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -22,6 +21,13 @@ regex.workspace = true
 libc.workspace = true
 indexmap.workspace = true
 tracing.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+openai-harmony.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+chrono.workspace = true
+js-sys = "0.3"
 
 [build-dependencies]
 serde_json.workspace = true

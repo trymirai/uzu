@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatNotFoundError, type ChatData } from ".";
 import { serializeToMarkdown } from "./markdown/serialize";
@@ -128,7 +129,7 @@ describe("editUserMessage", () => {
     expect((await chatRepository.loadChat("chat"))?.messages).toHaveLength(3);
   });
 
-  it("rejects edits in the browser provider, which has no stored chats", async () => {
+  it("rejects edits for a missing browser chat", async () => {
     await expect(webStorage.editUserMessage("chat", "u2", "Edit")).rejects.toBeInstanceOf(ChatNotFoundError);
   });
 });
@@ -164,7 +165,7 @@ describe("updateChatTitle", () => {
     expect(files.save).toHaveBeenCalledOnce();
   });
 
-  it("reports missing chats and the browser provider as unapplied updates", async () => {
+  it("reports missing desktop and browser chats as unapplied updates", async () => {
     expect(await chatRepository.updateChatTitle("missing-chat", generated)).toBe(false);
     expect(await webStorage.updateChatTitle("chat", generated)).toBe(false);
     expect(files.save).not.toHaveBeenCalled();

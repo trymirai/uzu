@@ -5,6 +5,7 @@ import React from "react";
 import { twMerge } from "tailwind-merge";
 import { EjectIcon } from "../icons/eject-icon";
 import { Loader } from "../loader";
+import { platformInfo } from "@/platform/platform-info";
 
 export const FooterBar = React.memo(({ className }: { className?: string }) => {
   const version = useAppStore((s) => s.appVersion);
@@ -20,6 +21,9 @@ export const FooterBar = React.memo(({ className }: { className?: string }) => {
       <div className="flex min-w-0 items-center gap-2 overflow-clip">
         {footerModel.visible && (
           <>
+            {platformInfo.isWeb && (
+              <span className="text-[11px] font-[450] leading-[1.3] text-text-secondary">WebGPU</span>
+            )}
             {footerModel.status === "loading" || footerModel.status === "ejecting" ? (
               <Loader
                 showText

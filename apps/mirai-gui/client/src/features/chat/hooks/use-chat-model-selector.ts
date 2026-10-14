@@ -41,9 +41,16 @@ export function useChatModelSelector(props: UseChatModelSelectorProps): UseChatM
   const lastUsedModel = useChatStore((s) => s.lastUsedModel);
 
   const residentSession = useRuntimeSessionStore((s) => s.residentSession);
+  const unsupportedIds = useMemo(
+    () => new Set(models.filter((model) => model.browserUnsupportedReason).map((model) => model.repoId)),
+    [models],
+  );
 
   const allAvailableModels = useMemo(
-    () => models.filter((model) => modelPhasesById[model.repoId] === modelDownloadPhases.downloaded),
+    () =>
+      models.filter(
+        (model) => !model.browserUnsupportedReason && modelPhasesById[model.repoId] === modelDownloadPhases.downloaded,
+      ),
     [models, modelPhasesById],
   );
 
@@ -51,11 +58,15 @@ export function useChatModelSelector(props: UseChatModelSelectorProps): UseChatM
     if (!localsLoaded) return;
     const selectedId = selectedChatModel.modelId;
     if (!selectedId) return;
-    if (searchModel && selectedId === searchModel) return;
+    if (searchModel && selectedId === searchModel && !unsupportedIds.has(selectedId)) return;
 
     const exists = allAvailableModels.some((model) => model.repoId === selectedId);
     if (exists) return;
-    if (modelPhasesById[selectedId] === modelDownloadPhases.initializing || !catalogComplete) return;
+    if (
+      !unsupportedIds.has(selectedId) &&
+      (modelPhasesById[selectedId] === modelDownloadPhases.initializing || !catalogComplete)
+    )
+      return;
 
     setChatModel(chatId, "", "");
   }, [
@@ -67,26 +78,27 @@ export function useChatModelSelector(props: UseChatModelSelectorProps): UseChatM
     localsLoaded,
     catalogComplete,
     modelPhasesById,
+    unsupportedIds,
   ]);
 
   useEffect(() => {
     if (autoSelectSuppressed) return;
 
-    if (searchModel && searchModelName && !selectedChatModel.modelId) {
+    if (searchModel && searchModelName && !unsupportedIds.has(searchModel) && !selectedChatModel.modelId) {
       setChatModel(chatId, searchModel, searchModelName);
       return;
     }
 
     if (selectedChatModel.modelId) return;
 
-    if (residentSession?.repoId) {
+    if (residentSession?.repoId && !unsupportedIds.has(residentSession.repoId)) {
       const residentName =
         allAvailableModels.find((model) => model.repoId === residentSession.repoId)?.name || residentSession.repoId;
       setChatModel(chatId, residentSession.repoId, residentName);
       return;
     }
 
-    if (lastUsedModel?.modelId) {
+    if (lastUsedModel?.modelId && !unsupportedIds.has(lastUsedModel.modelId)) {
       const isAvailable = allAvailableModels.some((model) => model.repoId === lastUsedModel.modelId);
       if (
         !localsLoaded ||
@@ -111,9 +123,11 @@ export function useChatModelSelector(props: UseChatModelSelectorProps): UseChatM
     localsLoaded,
     catalogComplete,
     modelPhasesById,
+    unsupportedIds,
   ]);
 
-  const currentModelId = selectedChatModel.modelId || searchModel;
+  const currentModelId =
+    selectedChatModel.modelId || (searchModel && !unsupportedIds.has(searchModel) ? searchModel : undefined);
 
   return {
     selectedChatModel,

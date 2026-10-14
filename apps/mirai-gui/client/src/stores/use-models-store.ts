@@ -65,7 +65,12 @@ export const useModelsStore = create<ModelsState>()(
           do {
             fetchAgain = false;
             try {
-              const { models: rawModels, complete, refreshing } = await getPlatform().models.getModels();
+              const {
+                models: rawModels,
+                complete,
+                refreshing,
+                error: catalogError,
+              } = await getPlatform().models.getModels();
 
               const prevById = get().modelStatesById;
               const prevInstalledAt = get().installedAtById;
@@ -109,6 +114,7 @@ export const useModelsStore = create<ModelsState>()(
                   kind: ModelKind.Text,
                   reasoning: m.reasoning,
                   supportsTools: m.supportsTools,
+                  ...(m.browserUnsupportedReason ? { browserUnsupportedReason: m.browserUnsupportedReason } : {}),
                   size: totalBytes,
                   ...(typeof m.paramSize === "number" ? { paramSize: m.paramSize } : {}),
                   family: familyName,
@@ -132,7 +138,7 @@ export const useModelsStore = create<ModelsState>()(
                 hasLoadedModels: true,
                 catalogComplete: complete,
                 catalogRefreshing: refreshing,
-                error: null,
+                error: catalogError ?? null,
               });
             } catch (error) {
               set({

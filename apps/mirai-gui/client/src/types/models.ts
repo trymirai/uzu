@@ -21,4 +21,5 @@ export type PlatformModel = UzuModel & {
   familyIdentifier?: string;
   paramSize?: number;
   sourceIndex?: number;
+  browserUnsupportedReason?: string;
 };

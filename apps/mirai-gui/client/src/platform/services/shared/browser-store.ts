@@ -8,9 +8,7 @@ export const readJson = <T>(key: string, fallback: T): T => {
 };
 
 export const writeJson = (key: string, value: unknown): void => {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Private mode and full quotas both throw here; losing a preference is survivable.
-  }
+  // Callers must observe a rejected save so their UI can restore the persisted
+  // preference instead of treating blocked or full storage as a successful write.
+  localStorage.setItem(key, JSON.stringify(value));
 };

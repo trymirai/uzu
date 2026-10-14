@@ -1,0 +1,42 @@
+[package]
+name = "uzu-web"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Browser worker bindings for the Uzu inference engine"
+
+[features]
+kernel-tests = []
+native-metal = ["uzu-engine/metal"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+minijinja.workspace = true
+minijinja-contrib.workspace = true
+chrono.workspace = true
+fancy-regex.workspace = true
+hanashi.workspace = true
+shoji.workspace = true
+tokenizers.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uzu-engine = { workspace = true, features = ["webgpu", "grammar"] }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+serde-wasm-bindgen.workspace = true
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+uzu-engine = { workspace = true, features = ["cpu"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+libc.workspace = true
+
+[lints]
+workspace = true

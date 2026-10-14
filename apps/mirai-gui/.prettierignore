@@ -1,5 +1,7 @@
 client/src/route-tree.gen.ts
 client/dist-*/
+client/public/wasm/
+client/public/models/
 desktop/target/
 desktop/gen/
 pnpm-lock.yaml

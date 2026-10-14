@@ -24,3 +24,10 @@ __pycache__/
 *.log
 
 .tanstack/
+
+# Locally built browser engine and staged model weights
+client/public/wasm/
+client/public/models/
+
+# Optional local fixtures for browser engine tests
+/.web-test-models/

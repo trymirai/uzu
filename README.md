@@ -1421,6 +1421,7 @@ It supports:
 - Backends:
     - `metal`
     - `cpu`
+    - `webgpu` (browser workers; see [browser setup and model coverage](crates/uzu-web/README.md))
 - Targets:
     - `aarch64-apple-darwin`
     - `aarch64-apple-ios`
@@ -1429,6 +1430,7 @@ It supports:
     - `aarch64-pc-windows-msvc` _(in progress)_
     - `aarch64-unknown-linux-gnu` _(in progress)_
     - `wasm32-wasip1-threads` _(in progress)_
+    - `wasm32-unknown-unknown` (WebGPU browser chat)
     - `x86_64-apple-darwin`
     - `x86_64-pc-windows-msvc` _(in progress)_
     - `x86_64-unknown-linux-gnu` _(in progress)_

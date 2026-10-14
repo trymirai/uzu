@@ -18,7 +18,11 @@
     "test:rust": "cargo test --manifest-path desktop/Cargo.toml",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm lint:rust && pnpm test:rust",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,css,md}\"",
-    "format:check": "prettier --check \"**/*.{js,jsx,ts,tsx,json,css,md}\""
+    "format:check": "prettier --check \"**/*.{js,jsx,ts,tsx,json,css,md}\"",
+    "web:wasm": "node scripts/build-web-wasm.mjs",
+    "web:fixture": "node scripts/stage-web-model.mjs",
+    "web:preview": "vite preview --mode web",
+    "web:setup": "node scripts/setup-slang.mjs"
   },
   "author": "Mirai Team",
   "license": "MIT",
@@ -48,6 +52,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "eslint": "^10.11.0",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^26.1.0",
     "prettier": "^3.9.9",
     "tailwindcss": "^4.3.3",
@@ -69,6 +74,7 @@
     "@tauri-apps/plugin-dialog": "^2.8.0",
     "chart.js": "^4.5.1",
     "date-fns": "^4.4.0",
+    "hash-wasm": "^4.12.0",
     "jszip": "^3.10.2",
     "katex": "^0.16.47",
     "lucide-react": "^0.544.0",

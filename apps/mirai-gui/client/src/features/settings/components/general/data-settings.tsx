@@ -81,7 +81,7 @@ export function DataSettings() {
       <SettingDivider />
       <SettingRow
         title="Clear data"
-        description="Delete chats, models, or logs"
+        description={platformInfo.features.logExport ? "Delete chats, models, or logs" : "Delete chats or models"}
         control={
           <Button kind="secondary" size="sm" onClick={() => setClearDataOpen(true)}>
             Clear data

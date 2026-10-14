@@ -24,6 +24,8 @@ export function ModelCardRow({
   onRetry,
   onOpen,
   compact = false,
+  unavailableReason,
+  error,
 }: ModelCardProps) {
   const { status, isDownloading, isDownloaded, isPaused, isError, progress } = deriveModelCardState(state);
 
@@ -35,7 +37,7 @@ export function ModelCardRow({
         isDownloaded && "cursor-pointer hover:bg-surface-tertiary outline-hidden data-[focus]:shadow-focus",
         isError && "bg-danger-bg",
       )}
-      {...(isDownloaded && onOpen
+      {...(isDownloaded && onOpen && !unavailableReason
         ? {
             tabIndex: 0,
             onClick: onOpen,
@@ -102,10 +104,10 @@ export function ModelCardRow({
             isDownloading={isDownloading}
             isPaused={isPaused}
             isError={isError}
-            onDownload={onDownload}
+            onDownload={unavailableReason ? undefined : onDownload}
             onPause={onPause}
             onCancel={onCancel}
-            onRetry={onRetry}
+            onRetry={unavailableReason ? undefined : onRetry}
           />
           {isDownloaded && (
             <>
@@ -137,6 +139,11 @@ export function ModelCardRow({
         </div>
       )}
 
+      {(unavailableReason || (isError && error)) && (
+        <p className="mt-2 px-4 text-xs text-text-muted" role={isError ? "alert" : undefined}>
+          {unavailableReason ?? error}
+        </p>
+      )}
       {isDownloading && (
         <div className="mt-2.5 pl-4 pr-3">
           <div className="h-0.5 bg-border-default rounded overflow-clip">

@@ -11,7 +11,7 @@ export const useInstalledPickerModels = (): ChatInputModel[] => {
   return useMemo(
     () =>
       models
-        .filter((m) => modelPhasesById[m.repoId] === modelDownloadPhases.downloaded)
+        .filter((m) => !m.browserUnsupportedReason && modelPhasesById[m.repoId] === modelDownloadPhases.downloaded)
         .map((m) => ({
           id: m.repoId,
           name: m.name,

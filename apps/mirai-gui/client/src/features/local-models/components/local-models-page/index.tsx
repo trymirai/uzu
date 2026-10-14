@@ -19,11 +19,14 @@ import { buildFamiliesView, formatParamRange, type FamilyEntry } from "../../lib
 import { FamilyDetailPage } from "../family-detail-page";
 import { LocalModelsHeader } from "./local-models-header";
 import { useModelDeletion } from "./use-model-deletion";
+import { platformInfo } from "@/platform/platform-info";
+import { browserInferenceError } from "@/platform/services/chat/browser-runtime";
 
 const TEXT_14 = "text-[14px] font-[450] leading-[1.5]";
 const TEXT_14_STYLE = { fontVariationSettings: "'opsz' 20" } as const;
 
 export function LocalModelsPage() {
+  const browserError = platformInfo.isWeb ? browserInferenceError() : null;
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const createNewChat = useChatStore((s) => s.createNewChat);
@@ -140,6 +143,15 @@ export function LocalModelsPage() {
 
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain scrollbar-hide">
               <div className="px-4 py-4">
+                {platformInfo.isWeb && (
+                  <div
+                    role={browserError ? "alert" : "status"}
+                    className="mb-4 rounded-md border border-border-default p-3 text-sm text-text-muted"
+                  >
+                    {browserError ??
+                      "Models run on your device. Downloads and conversations are saved in this browser."}
+                  </div>
+                )}
                 {(modelsError || incompleteCatalog) && (
                   <div className="my-4">
                     <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-800 dark:bg-red-900/20">

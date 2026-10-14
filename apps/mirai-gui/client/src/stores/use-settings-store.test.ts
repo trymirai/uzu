@@ -8,6 +8,8 @@ const settings = vi.hoisted(() => ({
   setModelChatNamingEnabled: vi.fn<(enabled: boolean) => Promise<void>>().mockResolvedValue(undefined),
   getAutoEjectEnabled: vi.fn(async () => true),
   getAutoEjectMinutes: vi.fn(async () => 15),
+  setAutoEjectEnabled: vi.fn<(enabled: boolean) => Promise<boolean>>().mockResolvedValue(true),
+  setAutoEjectMinutes: vi.fn<(minutes: number) => Promise<boolean>>().mockResolvedValue(true),
 }));
 
 vi.mock("@/platform/platform-singleton", () => ({ getPlatform: () => ({ settings }) }));
@@ -76,5 +78,18 @@ it("defaults auto-eject to fifteen minutes, including when settings cannot be re
 it("loads an explicit auto-eject interval without replacing it with the default", async () => {
   settings.getAutoEjectMinutes.mockResolvedValueOnce(7);
   await useSettingsStore.getState().fetch();
+  expect(useSettingsStore.getState().autoEjectMinutes).toBe(7);
+});
+
+it("restores the displayed auto-eject toggle when persistence fails", async () => {
+  settings.setAutoEjectEnabled.mockRejectedValueOnce(new Error("Could not save settings"));
+  await useSettingsStore.getState().setAutoEjectEnabled(false);
+  expect(useSettingsStore.getState().autoEjectEnabled).toBe(true);
+});
+
+it("restores the displayed auto-eject interval when persistence fails", async () => {
+  useSettingsStore.setState({ autoEjectMinutes: 7 });
+  settings.setAutoEjectMinutes.mockRejectedValueOnce(new Error("Could not save settings"));
+  await useSettingsStore.getState().setAutoEjectMinutes(2);
   expect(useSettingsStore.getState().autoEjectMinutes).toBe(7);
 });

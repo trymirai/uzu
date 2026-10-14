@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tauriSettings } from "./tauri";
-import { webSettings } from "./web";
+import { onBrowserAutoEjectChanged, webSettings } from "./web";
 import { invoke } from "../shared/invoke";
 
 vi.mock("../shared/invoke", () => ({ invoke: vi.fn() }));
@@ -8,6 +8,41 @@ vi.mock("../shared/invoke", () => ({ invoke: vi.fn() }));
 beforeEach(() => {
   vi.resetAllMocks();
   localStorage.clear();
+});
+afterEach(() => vi.restoreAllMocks());
+
+describe.each(["QuotaExceededError", "SecurityError"])("browser persistence failure: %s", (name) => {
+  const changes: Array<[string, () => Promise<unknown>]> = [
+    ["analytics opt-out", () => webSettings.setAnalyticsEnabled(false)],
+    ["chat naming", () => webSettings.setModelChatNamingEnabled(false)],
+    ["model parameters", () => webSettings.setModelParams("model", { sampling: { type: "Default" } })],
+    ["reset model parameters", () => webSettings.setModelParams("model", null)],
+    ["auto-eject enabled", () => webSettings.setAutoEjectEnabled(false)],
+    ["auto-eject interval", () => webSettings.setAutoEjectMinutes(2)],
+  ];
+
+  it.each(changes)("rejects %s without changing saved values or idle timers", async (_, change) => {
+    const preferences = JSON.stringify({ autoEjectEnabled: true, autoEjectMinutes: 15, modelChatNamingEnabled: true });
+    const parameters = JSON.stringify({ model: { sampling: { type: "Greedy" } } });
+    localStorage.setItem("mirai.web.settings", preferences);
+    localStorage.setItem("mirai.web.modelParams", parameters);
+    const notify = vi.fn();
+    const stop = onBrowserAutoEjectChanged(notify);
+    const error = new DOMException("Could not save browser settings", name);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw error;
+    });
+    try {
+      const result = change();
+      expect(result).toBeInstanceOf(Promise);
+      await expect(result).rejects.toBe(error);
+      expect(localStorage.getItem("mirai.web.settings")).toBe(preferences);
+      expect(localStorage.getItem("mirai.web.modelParams")).toBe(parameters);
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
+  });
 });
 
 describe("analytics consent", () => {
@@ -24,12 +59,15 @@ describe("analytics consent", () => {
     expect(invoke).toHaveBeenLastCalledWith("settings_patch", { patch: { analyticsEnabled: false } });
   });
 
-  it("defaults off in the browser and preserves other preferences when changed", async () => {
-    localStorage.setItem("mirai.web.settings", JSON.stringify({ modelChatNamingEnabled: false }));
+  it("does not claim analytics is enabled in the browser or overwrite other preferences", async () => {
+    localStorage.setItem(
+      "mirai.web.settings",
+      JSON.stringify({ analyticsEnabled: true, modelChatNamingEnabled: false }),
+    );
     expect(await webSettings.getAnalyticsEnabled()).toBe(false);
 
-    await webSettings.setAnalyticsEnabled(true);
-    expect(await webSettings.getAnalyticsEnabled()).toBe(true);
+    await expect(webSettings.setAnalyticsEnabled(true)).rejects.toThrow("unavailable");
+    expect(await webSettings.getAnalyticsEnabled()).toBe(false);
     expect(await webSettings.getModelChatNamingEnabled()).toBe(false);
     await webSettings.setAnalyticsEnabled(false);
     expect(await webSettings.getAnalyticsEnabled()).toBe(false);
@@ -57,6 +95,28 @@ describe("model chat naming preference", () => {
     await webSettings.setModelChatNamingEnabled(false);
     expect(await webSettings.getModelChatNamingEnabled()).toBe(false);
     expect(JSON.parse(localStorage.getItem("mirai.web.settings")!)).toMatchObject({ unrelatedPreference: true });
+  });
+});
+
+it("restores browser tool and reasoning preferences without overriding explicit choices", async () => {
+  localStorage.setItem(
+    "mirai.web.modelParams",
+    JSON.stringify({
+      model: {
+        sampling: { type: "Greedy" },
+        reasoningEffort: "disabled",
+        dateTimeToolEnabled: true,
+        chartToolEnabled: true,
+        modelChatNamingEnabled: true,
+      },
+    }),
+  );
+  expect((await webSettings.getModelParams()).model).toEqual({
+    sampling: { type: "Greedy" },
+    reasoningEffort: "disabled",
+    dateTimeToolEnabled: true,
+    chartToolEnabled: true,
+    modelChatNamingEnabled: true,
   });
 });
 

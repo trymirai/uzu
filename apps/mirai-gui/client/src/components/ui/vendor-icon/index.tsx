@@ -8,6 +8,7 @@ export function VendorIcon({ src, vendor, className, size = 16 }: VendorIconProp
   return (
     <img
       src={src}
+      crossOrigin="anonymous"
       alt={vendor}
       width={size}
       height={size}

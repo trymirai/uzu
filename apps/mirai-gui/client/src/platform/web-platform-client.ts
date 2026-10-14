@@ -9,8 +9,8 @@ import { webSystem } from "./services/system/web";
 import { webSystemUi } from "./services/system-ui/web";
 import { webUpdater } from "./services/updater/web";
 
-// Browser build: no engine and no backend. Inference is unavailable, settings
-// live in localStorage, chats are not persisted at all.
+// Browser inference stays in workers; conversations and model downloads remain
+// on this device in IndexedDB and Cache Storage.
 export class WebPlatformClient implements PlatformClient {
   readonly chat = webChat;
   readonly session = webSession;

@@ -5,8 +5,9 @@ export const platformInfo = {
     autoUpdate: __PLATFORM__ === "tauri",
     fileSystem: __PLATFORM__ === "tauri",
     logExport: __PLATFORM__ === "tauri",
-    localModelDownloads: __PLATFORM__ === "tauri",
-    autoEject: __PLATFORM__ === "tauri",
+    analytics: __PLATFORM__ === "tauri",
+    localModelDownloads: true,
+    autoEject: true,
     cliInstall: __PLATFORM__ === "tauri",
     // Overlay title bar with in-content macOS traffic lights: UI must reserve
     // space on the top-left so controls don't sit under the traffic lights.

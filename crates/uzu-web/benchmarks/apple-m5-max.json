@@ -1,0 +1,397 @@
+{
+  "recordedOn": "2026-10-14",
+  "hardware": "Apple M5 Max",
+  "browser": "Google Chrome 152.0.7977.83 (headless)",
+  "unsafeWebGpu": false,
+  "gpu": "apple metal-3",
+  "subgroups": {
+    "subgroups": true,
+    "minSize": 32,
+    "maxSize": 32,
+    "subgroupId": true
+  },
+  "slangVersion": "2026.19",
+  "testWasmSha256": "0b78fd3a79e6372963b18070201c673882a3f0293e8972fd3429bf2f0fcd75bd",
+  "productionWasmSha256": "ce2e7c8786df90e5c2838412ecdcd46e97235fe9f5210857458cfdc931e4529d",
+  "protocol": {
+    "contextLength": 256,
+    "speculator": false,
+    "samplingPolicy": {
+      "type": "Greedy"
+    },
+    "seed": 42,
+    "warmupOutputTokens": 1,
+    "decodeTrials": 3,
+    "longPrefillBrowserTrials": 3,
+    "longPrefillMetalTrials": 3,
+    "profiling": false,
+    "prefillDefinition": "Start of fresh state through receipt of first token, including host work.",
+    "generationDefinition": "First token through stream completion, including already submitted GPU work.",
+    "nativeReference": "Fresh native Metal measurements made sequentially with each browser workload; identical cached files, context, sampling and token caps."
+  },
+  "models": [
+    {
+      "model": "LFM2.5-230M (Mirai M4)",
+      "revision": "d5255025efb900218f82775df83424350da3dd1e",
+      "prompt": "Explain why the sky is blue in detail.",
+      "inputTokens": 19,
+      "maxOutputTokens": 64,
+      "outputTokens": 64,
+      "cpuTokenParity": true,
+      "metalTokenParity": true,
+      "metalParityNote": null,
+      "webgpuTrials": [
+        {
+          "prefillMs": 10.455,
+          "generationMs": 62.075,
+          "tokensPerSecond": 1031.0108741408073,
+          "wallMs": 72.855
+        },
+        {
+          "prefillMs": 7.025,
+          "generationMs": 57.825,
+          "tokensPerSecond": 1106.787721801884,
+          "wallMs": 65.12
+        },
+        {
+          "prefillMs": 6.925,
+          "generationMs": 57.795,
+          "tokensPerSecond": 1107.3622282467152,
+          "wallMs": 64.98
+        }
+      ],
+      "webgpuMedianTokensPerSecond": 1106.787722,
+      "metalTrials": [
+        {
+          "prefillMs": 5.215083,
+          "generationMs": 47.975125,
+          "tokensPerSecond": 1334.0246638231793,
+          "wallMs": 53.190208
+        },
+        {
+          "prefillMs": 3.19725,
+          "generationMs": 40.549458,
+          "tokensPerSecond": 1578.319493197665,
+          "wallMs": 43.746708
+        },
+        {
+          "prefillMs": 3.069208,
+          "generationMs": 40.577333,
+          "tokensPerSecond": 1577.2352510205635,
+          "wallMs": 43.646541
+        }
+      ],
+      "metalMedianTokensPerSecond": 1577.235251,
+      "webgpuMedianPrefillMs": 7.025,
+      "metalMedianPrefillMs": 3.19725,
+      "webgpuMedianWallMs": 65.12,
+      "metalMedianWallMs": 43.746708,
+      "loading": {
+        "weightsSource": "composite Blob",
+        "weightsBytes": 124955416,
+        "wasmMemoryBefore": 55640064,
+        "wasmMemoryAfter": 55640064
+      },
+      "configSha256": "3c13cb1fa3cb0dcffc41e225e4c7fafd512dc0b2dd7600e8b6f5c3712c57b82c",
+      "longPrompt": {
+        "text": "Read the following description and summarize its main point in one sentence. A small village sits beside a river at the foot of a mountain. Every spring, rain fills the river and waters the fields around the village. Farmers grow vegetables, fruit, and grain, while children walk along the river on their way to school. During the dry summer, the villagers share stored water carefully so that homes, farms, and wild animals have enough. In autumn they repair the channels and plant trees to protect the soil. Explain why the river matters to the community.",
+        "inputTokens": 118,
+        "maxOutputTokens": 8,
+        "metalTokenParity": true,
+        "webgpuPrefillMs": [
+          24.835,
+          22.815,
+          22.48
+        ],
+        "webgpuMedianPrefillMs": 22.815,
+        "metalPrefillMs": [
+          5.596458,
+          3.946833,
+          3.911916
+        ],
+        "metalMedianPrefillMs": 3.946833
+      }
+    },
+    {
+      "model": "Qwen3.5-0.8B (Mirai M4)",
+      "revision": "c12202e4c764e559960827761566aaa1fd15a87a",
+      "prompt": "Say hello in one sentence.",
+      "inputTokens": 18,
+      "maxOutputTokens": 32,
+      "outputTokens": 28,
+      "cpuTokenParity": true,
+      "metalTokenParity": false,
+      "metalParityNote": "One near-tie token: CPU/WebGPU help versus Metal assist.",
+      "webgpuTrials": [
+        {
+          "prefillMs": 23.155,
+          "generationMs": 74.79,
+          "tokensPerSecond": 374.38160200937995,
+          "wallMs": 98.42
+        },
+        {
+          "prefillMs": 19.12,
+          "generationMs": 74.565,
+          "tokensPerSecond": 375.5112988787674,
+          "wallMs": 94.035
+        },
+        {
+          "prefillMs": 19.325,
+          "generationMs": 87.835,
+          "tokensPerSecond": 318.7795296617468,
+          "wallMs": 107.47
+        }
+      ],
+      "webgpuMedianTokensPerSecond": 374.381602,
+      "metalTrials": [
+        {
+          "prefillMs": 8.432209,
+          "generationMs": 51.682958,
+          "tokensPerSecond": 541.7646567365591,
+          "wallMs": 60.115167
+        },
+        {
+          "prefillMs": 6.360958,
+          "generationMs": 51.310959,
+          "tokensPerSecond": 545.6923929252617,
+          "wallMs": 57.671917
+        },
+        {
+          "prefillMs": 6.669667,
+          "generationMs": 63.557958,
+          "tokensPerSecond": 440.5427877339923,
+          "wallMs": 70.227625
+        }
+      ],
+      "metalMedianTokensPerSecond": 541.764657,
+      "webgpuMedianPrefillMs": 19.325,
+      "metalMedianPrefillMs": 6.669667,
+      "webgpuMedianWallMs": 98.42,
+      "metalMedianWallMs": 60.115167,
+      "loading": {
+        "weightsSource": "composite Blob",
+        "weightsBytes": 439161360,
+        "wasmMemoryBefore": 55640064,
+        "wasmMemoryAfter": 186384384
+      },
+      "configSha256": "95fe76fdca82d8f257ac2970ed787b760e33bb8b7a0a1bad0f42dd3132704afa",
+      "longPrompt": {
+        "text": "Read the following description and summarize its main point in one sentence. A small village sits beside a river at the foot of a mountain. Every spring, rain fills the river and waters the fields around the village. Farmers grow vegetables, fruit, and grain, while children walk along the river on their way to school. During the dry summer, the villagers share stored water carefully so that homes, farms, and wild animals have enough. In autumn they repair the channels and plant trees to protect the soil. Explain why the river matters to the community.",
+        "inputTokens": 121,
+        "maxOutputTokens": 8,
+        "metalTokenParity": true,
+        "webgpuPrefillMs": [
+          72.445,
+          69.295,
+          76.73
+        ],
+        "webgpuMedianPrefillMs": 72.445,
+        "metalPrefillMs": [
+          10.24325,
+          9.851375,
+          9.760541
+        ],
+        "metalMedianPrefillMs": 9.851375
+      }
+    },
+    {
+      "model": "Qwen3.5-4B (Mirai M4)",
+      "revision": "c04a48535ccbb69c8c17417c39fb69cfeaa80274",
+      "prompt": "Say hello in one sentence.",
+      "inputTokens": 16,
+      "maxOutputTokens": 64,
+      "outputTokens": 64,
+      "cpuTokenParity": null,
+      "metalTokenParity": true,
+      "metalParityNote": null,
+      "webgpuTrials": [
+        {
+          "prefillMs": 62.235,
+          "generationMs": 537.335,
+          "tokensPerSecond": 119.10633032010897,
+          "wallMs": 599.99
+        },
+        {
+          "prefillMs": 69.54,
+          "generationMs": 540.92,
+          "tokensPerSecond": 118.31694150341156,
+          "wallMs": 610.85
+        },
+        {
+          "prefillMs": 65.88,
+          "generationMs": 558.865,
+          "tokensPerSecond": 114.51781736002053,
+          "wallMs": 625.09
+        }
+      ],
+      "webgpuMedianTokensPerSecond": 118.316942,
+      "metalTrials": [
+        {
+          "prefillMs": 15.391333,
+          "generationMs": 409.129042,
+          "tokensPerSecond": 156.42986302595455,
+          "wallMs": 424.520375
+        },
+        {
+          "prefillMs": 19.786375,
+          "generationMs": 429.823209,
+          "tokensPerSecond": 148.8984276789018,
+          "wallMs": 449.609584
+        },
+        {
+          "prefillMs": 15.087292,
+          "generationMs": 414.898583,
+          "tokensPerSecond": 154.25456394002677,
+          "wallMs": 429.985875
+        }
+      ],
+      "metalMedianTokensPerSecond": 154.254564,
+      "webgpuMedianPrefillMs": 65.88,
+      "metalMedianPrefillMs": 15.391333,
+      "webgpuMedianWallMs": 610.85,
+      "metalMedianWallMs": 429.985875,
+      "loading": {
+        "weightsSource": "composite Blob",
+        "weightsBytes": 2441821768,
+        "wasmMemoryBefore": 55640064,
+        "wasmMemoryAfter": 186384384
+      },
+      "configSha256": "711b8d994d3dc0d6b1bfb1525e7ddda8a30d1aa7b2370c46dfa082672297ae1c",
+      "outputNote": "64-token capped reasoning prefix; not a completed answer. Large checkpoint tests use cached local files, not a full remote download."
+    },
+    {
+      "model": "Qwen3.5-9B (Mirai M4)",
+      "revision": "c7be6b81cf077f6b430b332bfad90adf35afa943",
+      "prompt": "Say hello in one sentence.",
+      "inputTokens": 16,
+      "maxOutputTokens": 64,
+      "outputTokens": 64,
+      "cpuTokenParity": null,
+      "metalTokenParity": true,
+      "metalParityNote": null,
+      "webgpuTrials": [
+        {
+          "prefillMs": 102.33,
+          "generationMs": 896.57,
+          "tokensPerSecond": 71.38316026691788,
+          "wallMs": 999.28
+        },
+        {
+          "prefillMs": 95.255,
+          "generationMs": 902.545,
+          "tokensPerSecond": 70.91059171902027,
+          "wallMs": 998.14
+        },
+        {
+          "prefillMs": 107.325,
+          "generationMs": 907.565,
+          "tokensPerSecond": 70.51836507596495,
+          "wallMs": 1015.19
+        }
+      ],
+      "webgpuMedianTokensPerSecond": 70.910592,
+      "metalTrials": [
+        {
+          "prefillMs": 25.726875,
+          "generationMs": 655.6215,
+          "tokensPerSecond": 97.61729900560003,
+          "wallMs": 681.348375
+        },
+        {
+          "prefillMs": 18.260875,
+          "generationMs": 663.79525,
+          "tokensPerSecond": 96.41527263113137,
+          "wallMs": 682.056125
+        },
+        {
+          "prefillMs": 18.924209,
+          "generationMs": 666.032375,
+          "tokensPerSecond": 96.09142498515932,
+          "wallMs": 684.956584
+        }
+      ],
+      "metalMedianTokensPerSecond": 96.415273,
+      "webgpuMedianPrefillMs": 102.33,
+      "metalMedianPrefillMs": 18.924209,
+      "webgpuMedianWallMs": 999.28,
+      "metalMedianWallMs": 682.056125,
+      "loading": {
+        "weightsSource": "composite Blob",
+        "weightsBytes": 5189121136,
+        "wasmMemoryBefore": 55640064,
+        "wasmMemoryAfter": 186384384
+      },
+      "configSha256": "e1693f8baff5ae4b86b64cf8beaa3b8d01dcf92caf18eb4525ea6383b657e4d5",
+      "outputNote": "64-token capped reasoning prefix; not a completed answer. Large checkpoint tests use cached local files, not a full remote download."
+    }
+  ],
+  "validation": {
+    "frontendTests": 533,
+    "kernelCases": 177,
+    "kernelPaths": [
+      "subgroups",
+      "portable"
+    ],
+    "bridgeAndSnapshotChecks": 20,
+    "browserChatChecks": 16,
+    "typecheck": true,
+    "lint": true,
+    "productionBuild": true,
+    "bundledModelWeights": false,
+    "remoteDownload": {
+      "ok": true,
+      "catalogModels": 24,
+      "vendorIcon": true,
+      "repoId": "trymirai/LFM2.5-230M-M",
+      "pausedBytes": 7520133,
+      "files": {
+        "config.json": 33266,
+        "tokenizer.json": 4733389,
+        "model.safetensors": 124955416
+      },
+      "blobWeights": true,
+      "resumed": [
+        {
+          "url": "https://huggingface.co/trymirai/LFM2.5-230M-M/resolve/d5255025efb900218f82775df83424350da3dd1e/model.safetensors",
+          "range": "bytes=7486867-",
+          "status": 206,
+          "type": "cors"
+        }
+      ],
+      "offlineReuse": true,
+      "deletion": true,
+      "crossOriginIsolated": true
+    },
+    "portableExecutedCases": 175,
+    "portableSkippedCases": [
+      {
+        "name": "W4 prefill paged columns grid",
+        "skipped": "requires the fixed-32 subgroup prefill route"
+      },
+      {
+        "name": "W4 prefill paged rows grid",
+        "skipped": "requires the fixed-32 subgroup prefill route"
+      }
+    ],
+    "wasmWeightSourceChecks": 7,
+    "rawLoadingChecks": 14,
+    "loadCancellationAndContextChecks": 7,
+    "productionTestExports": false,
+    "productionUi": {
+      "chat": true,
+      "eject": true,
+      "reloadAfterEject": true,
+      "webgpuBadge": true,
+      "consoleErrors": 0
+    }
+  },
+  "limits": [
+    "Metal performance parity has not been achieved.",
+    "Safari end-to-end is unverified.",
+    "Weights use one safetensors file. Individual buffers must fit adapter limits and 2,147,483,584 bytes; total checkpoint size is not capped at 2 GB or 4 GiB.",
+    "WASM memory measurements exclude GPU allocations, JavaScript and browser Blob backing storage.",
+    "4B and 9B used cached local checkpoints; only the 125 MB LFM checkpoint was fully downloaded in the remote integration test.",
+    "Speculative decoding, Harmony, Mamba2, MoE, per-layer embeddings and general transformer convolution are not yet supported.",
+    "Cross-backend stochastic token identity is not guaranteed."
+  ]
+}

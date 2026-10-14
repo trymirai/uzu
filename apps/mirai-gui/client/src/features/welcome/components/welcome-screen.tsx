@@ -20,7 +20,7 @@ function WelcomeScreen() {
 
   const handleContinue = () => {
     completeWelcome();
-    navigate({ to: platformInfo.isTauri ? "/local-models" : "/chats" });
+    navigate({ to: "/local-models" });
   };
 
   const featureItem = (icon: ReactNode, text: string, delayS: number) => (
@@ -124,7 +124,7 @@ function WelcomeScreen() {
             {renderAnimatedSubtitle(
               [
                 platformInfo.isWeb
-                  ? "Your private AI assistant, accessible anywhere"
+                  ? "Private AI, running locally in your browser"
                   : "Try the full private and local AI potential of your Mac",
               ],
               1,

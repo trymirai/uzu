@@ -1,0 +1,4 @@
+BasedOnStyle: LLVM
+ColumnLimit: 110
+IndentWidth: 4
+StatementMacros: [UZU_PARAM, UZU_ARRAY, UZU_BUFFER]

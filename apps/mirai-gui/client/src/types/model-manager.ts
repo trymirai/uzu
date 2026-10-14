@@ -36,6 +36,7 @@ export type EngineModel = {
   supportsTools: boolean;
   quantization?: string | null;
   quantizationBits?: number;
+  browserUnsupportedReason?: string;
   state: ModelDownloadState;
 };
 
@@ -43,4 +44,5 @@ export type ModelCatalog = {
   models: EngineModel[];
   complete: boolean;
   refreshing: boolean;
+  error?: string;
 };
