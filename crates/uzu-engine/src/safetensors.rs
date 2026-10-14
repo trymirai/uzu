@@ -2,6 +2,8 @@
 use std::os::unix::fs::FileExt;
 #[cfg(target_family = "wasm")]
 use std::os::wasi::fs::FileExt;
+#[cfg(windows)]
+use std::os::windows::fs::FileExt;
 use std::{cell::Cell, collections::HashMap, fs::File};
 
 use derive_more::Debug;
@@ -13,6 +15,38 @@ use crate::{
     data_type::{DataType, DataTypeRepr},
     utils::{size_for_shape::size_for_shape, strict_serde::DeserializeStrictOwned},
 };
+
+// Windows has no read_exact_at, seek_read may return fewer bytes than requested
+#[cfg(windows)]
+trait ReadExactAt {
+    fn read_exact_at(
+        &self,
+        buf: &mut [u8],
+        offset: u64,
+    ) -> std::io::Result<()>;
+}
+
+#[cfg(windows)]
+impl ReadExactAt for File {
+    fn read_exact_at(
+        &self,
+        mut buf: &mut [u8],
+        mut offset: u64,
+    ) -> std::io::Result<()> {
+        while !buf.is_empty() {
+            match self.seek_read(buf, offset) {
+                Ok(0) => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+                Ok(read) => {
+                    buf = &mut buf[read..];
+                    offset += read as u64;
+                },
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {},
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ParameterLoaderError<B: Backend> {
