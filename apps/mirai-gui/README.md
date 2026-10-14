@@ -33,7 +33,7 @@ Download the `mirai-macos-…` artifact from the completed run. It contains the
 Apple-signed app in a notarized DMG, plus the app archive and updater signature, and
 is retained for 14 days. The app and bundled CLI are built from the selected
 commit using its existing version. Manual runs do not create a release or tag,
-change versions, publish an updater manifest, or upload to the website bucket.
+change versions, or publish an updater manifest.
 
 These builds use the normal Mirai app identity, local data, and release update
 feed; installing one replaces the regular app. Published engine releases still
