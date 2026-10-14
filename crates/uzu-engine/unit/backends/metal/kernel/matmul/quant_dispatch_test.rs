@@ -815,6 +815,8 @@ fn parity_widened_f32_output(#[case] m: u32) {
 #[case::w4_zp_gs64_deep(3584u32, 1024u32, 64u32, 4u32, ScaleZeroPoint)]
 #[case::w4_bias_gs64(2048u32, 2048u32, 64u32, 4u32, ScaleBias)]
 #[case::w8_sym_gs64(1024u32, 2048u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
+#[case::w8_sym_gs64_blocks(2048u32, 4096u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
+#[case::w8_sym_gs32_blocks(2048u32, 4096u32, 32u32, 8u32, QuantizationMethod::ScaleSymmetric)]
 fn gemv_reads_mxu_tiled_layout_bf16(
     #[case] k: u32,
     #[case] n: u32,
