@@ -59,35 +59,6 @@ impl<B: Backend> Attention<B> {
         });
 
         let attention_output = match state {
-            None => {
-                let Some(num_kv_heads) = self.num_kv_heads else {
-                    panic!("stateless attention doesn't support query-only projection");
-                };
-                assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
-
-                let mut keys = command_buffer
-                    .allocate_scratch_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)
-                    .map_err(AttentionEncodeError::Backend)?;
-                let mut values = command_buffer
-                    .allocate_scratch_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)
-                    .map_err(AttentionEncodeError::Backend)?;
-
-                let queries = self
-                    .prepare_kv_and_queries(
-                        &qkvg,
-                        &mut keys,
-                        &mut values,
-                        0,
-                        self.num_q_heads,
-                        precalculated_rope,
-                        batch_dim.size(),
-                        command_buffer,
-                    )
-                    .map_err(AttentionEncodeError::Backend)?;
-
-                let cache = self.ring_capacity.map_or_else(|| KVCacheView::full(0), |_| KVCacheView::ring(0, 0));
-                self.encode_bf16(&queries, &keys, &values, cache, gate, batch_dim, command_buffer)?
-            },
             Some(MaybeMut::Mut(state)) => {
                 let cache = state.view();
                 match &mut state.kv {
@@ -122,8 +93,8 @@ impl<B: Backend> Attention<B> {
                     },
                 }
             },
-            // KV sharing: QKVG contains queries and an optional gate only.
             Some(MaybeMut::Const(state)) => {
+                // KV sharing: QKVG contains queries and an optional gate only.
                 let cache = state.view();
                 match &state.kv {
                     KVStorage::BF16(kv, _) => {
@@ -147,6 +118,35 @@ impl<B: Backend> Attention<B> {
                         self.encode_int8(queries, kv, cache, gate, batch_dim, command_buffer)?
                     },
                 }
+            },
+            None => {
+                let Some(num_kv_heads) = self.num_kv_heads else {
+                    panic!("stateless attention doesn't support query-only projection");
+                };
+                assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
+
+                let mut keys = command_buffer
+                    .allocate_scratch_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)
+                    .map_err(AttentionEncodeError::Backend)?;
+                let mut values = command_buffer
+                    .allocate_scratch_for_shape(&[batch_dim.size(), num_kv_heads, self.head_dim], self.data_type)
+                    .map_err(AttentionEncodeError::Backend)?;
+
+                let queries = self
+                    .prepare_kv_and_queries(
+                        &qkvg,
+                        &mut keys,
+                        &mut values,
+                        0,
+                        self.num_q_heads,
+                        precalculated_rope,
+                        batch_dim.size(),
+                        command_buffer,
+                    )
+                    .map_err(AttentionEncodeError::Backend)?;
+
+                let cache = self.ring_capacity.map_or_else(|| KVCacheView::full(0), |_| KVCacheView::ring(0, 0));
+                self.encode_bf16(&queries, &keys, &values, cache, gate, batch_dim, command_buffer)?
             },
         };
 

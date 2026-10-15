@@ -20,7 +20,7 @@ use crate::{
 
 const BLOCK_ROWS: u32 = 2 * kv_layout::TILE_QUERIES;
 
-pub(super) struct Int8Attention {
+pub struct Int8Attention {
     config: AttentionKernelConfig,
     mask_free: AttentionGemmGroupedInt8MetalKernel,
     masked: AttentionGemmGroupedInt8MetalKernel,
