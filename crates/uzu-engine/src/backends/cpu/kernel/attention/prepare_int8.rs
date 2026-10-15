@@ -60,7 +60,6 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
             _ => (head - v_head_start, v_scales),
         };
         for token in 0..suffix_length {
-            let query_row = ((head / gqa_factor) * query_rows + (head % gqa_factor) * suffix_length + token) as usize;
             let source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {
@@ -95,7 +94,7 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
             })
             .unwrap();
             let scale_index = if is_query {
-                query_row
+                ((head / gqa_factor) * query_rows + (head % gqa_factor) * suffix_length + token) as usize
             } else {
                 layout.scale_index(kv_token_offset + token, kv_head)
             };

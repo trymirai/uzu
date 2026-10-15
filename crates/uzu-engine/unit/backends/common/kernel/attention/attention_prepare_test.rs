@@ -138,15 +138,15 @@ struct Int8Output {
     scales: [Vec<bf16>; 3],
 }
 
-fn run_int8<B: Backend>() -> Int8Output {
+fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
     const DIM: usize = 256;
     const CACHE_TOKENS: usize = 64;
     let code_bytes = CACHE_TOKENS * DIM;
     let rows: Vec<bf16> = (0..3 * DIM).map(|i| bf16::from_f32((i as f32 * 0.37).sin())).collect();
     let context = B::Context::new().unwrap();
-    let qkvg = create_buffer_with_data::<B, bf16>(&context, &rows);
-    let mut q_codes = create_buffer::<B, i8>(&context, DIM);
-    let mut q_scales = create_buffer::<B, bf16>(&context, 1);
+    let qkvg = create_buffer_with_data::<B, bf16>(&context, &rows[(1 - num_q_heads) as usize * DIM..]);
+    let mut q_codes = create_buffer_with_data::<B, i8>(&context, &[0; DIM]);
+    let mut q_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO]);
     let mut k_codes = create_buffer_with_data::<B, i8>(&context, &vec![0; code_bytes]);
     let mut v_codes = create_buffer_with_data::<B, u8>(&context, &vec![0; code_bytes]);
     let mut k_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO; CACHE_TOKENS]);
@@ -174,12 +174,12 @@ fn run_int8<B: Backend>() -> Int8Output {
         Some(&mut v_scales),
         None::<&B::GlobalBuffer>,
         None::<&B::GlobalBuffer>,
-        1,
+        num_q_heads,
         None,
         33,
-        (3 * DIM) as u32,
+        (num_q_heads + 2) * DIM as u32,
         1,
-        1,
+        num_q_heads,
         &mut command_buffer,
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
@@ -192,8 +192,10 @@ fn run_int8<B: Backend>() -> Int8Output {
 
 #[uzu_test]
 fn test_attention_prepare_int8() {
-    let cpu = run_int8::<Cpu>();
-    for_each_non_cpu_backend!(|B| {
-        assert_eq!(cpu, run_int8::<B>(), "INT8 prepare mismatch on {}", std::any::type_name::<B>());
-    });
+    for num_q_heads in [0, 1] {
+        let cpu = run_int8::<Cpu>(num_q_heads);
+        for_each_non_cpu_backend!(|B| {
+            assert_eq!(cpu, run_int8::<B>(num_q_heads), "INT8 prepare mismatch on {}", std::any::type_name::<B>());
+        });
+    }
 }

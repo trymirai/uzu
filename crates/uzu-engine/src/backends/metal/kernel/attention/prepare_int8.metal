@@ -64,7 +64,8 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
   }
   const uint32_t gqa_factor = num_q_heads / num_kv_heads;
   const size_t query_row =
-      size_t(head_idx / gqa_factor) * query_rows + size_t(head_idx % gqa_factor) * suffix_length + token_idx;
+      is_query ? size_t(head_idx / gqa_factor) * query_rows + size_t(head_idx % gqa_factor) * suffix_length + token_idx
+               : 0;
   const bool is_key = !is_query && head_idx < num_q_heads + num_kv_heads;
   const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
 
