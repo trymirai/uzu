@@ -86,10 +86,9 @@ KERNEL(AttentionGemmGrouped)(
   const uint output_row_stride = params.o_strides[2];
   const uint slice_offset = uint(slice) * uint(SLICE_COLS);
 
-  q += size_t(batch_idx) * params.q_strides[0] + size_t(q_head_idx) * params.q_strides[1] +
-       size_t(query_base) * query_row_stride + slice_offset;
-  k += size_t(batch_idx) * params.k_strides[0] + size_t(kv_head_idx) * params.k_strides[1] + slice_offset;
-  v += size_t(batch_idx) * params.v_strides[0] + size_t(kv_head_idx) * params.v_strides[1] + slice_offset;
+  q += size_t(q_head_idx) * params.q_strides[1] + size_t(query_base) * query_row_stride + slice_offset;
+  k += size_t(kv_head_idx) * params.k_strides[1] + slice_offset;
+  v += size_t(kv_head_idx) * params.v_strides[1] + slice_offset;
 
   QueryFragment query_frags[HEAD_DIM_FRAGMENTS_PER_SLICE];
   {
@@ -295,7 +294,7 @@ KERNEL(AttentionGemmGrouped)(
   }
 
   if (split_kv) {
-    const uint tile_index = ((split_idx + batch_idx) * kv_heads + kv_head_idx) * query_tiles + query_tile_idx;
+    const uint tile_index = (split_idx * kv_heads + kv_head_idx) * query_tiles + query_tile_idx;
     device float* partial_tile = partials + size_t(tile_index) * BLOCK_ROWS * BD + size_t(band) * TILE_ROWS * BD;
     output.store(lane, partial_tile + slice_offset, int(BD));
 
@@ -319,11 +318,10 @@ KERNEL(AttentionGemmGrouped)(
     }
     output.map_rows(inverse_sum, [](AccumType value, AccumType s) { return value * s; });
 
-    device T* output_base = o + size_t(batch_idx) * params.o_strides[0];
     if (params.q_len % uint(TILE_ROWS) == 0u) {
       if (row_base < grouped_rows) {
-        device T* destination = output_base + size_t(q_head_idx) * params.o_strides[1] +
-                                size_t(query_base) * output_row_stride + slice_offset;
+        device T* destination =
+            o + size_t(q_head_idx) * params.o_strides[1] + size_t(query_base) * output_row_stride + slice_offset;
         output.store(lane, destination, int(output_row_stride));
       }
     } else {
@@ -335,8 +333,7 @@ KERNEL(AttentionGemmGrouped)(
         if (row < grouped_rows) {
           const uint row_head = row / params.q_len;
           const uint row_position = row - row_head * params.q_len;
-          device T* destination = output_base +
-                                  (size_t(kv_head_idx) * params.gqa_factor + row_head) * params.o_strides[1] +
+          device T* destination = o + (size_t(kv_head_idx) * params.gqa_factor + row_head) * params.o_strides[1] +
                                   size_t(row_position) * output_row_stride + slice_offset + position.x;
           METAL_PRAGMA_UNROLL
           for (ushort fragment_col = 0; fragment_col < VALUE_COL_FRAGMENTS; ++fragment_col) {
