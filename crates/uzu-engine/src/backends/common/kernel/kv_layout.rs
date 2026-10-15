@@ -2,13 +2,6 @@ use half::bf16;
 
 use crate::backends::common::gpu_types::kv_layout;
 
-pub fn packed_query_rows(
-    gqa_factor: u32,
-    suffix_length: u32,
-) -> u32 {
-    (gqa_factor * suffix_length).next_multiple_of(kv_layout::TILE_QUERIES)
-}
-
 pub struct Int8KVLayout {
     pub head_dim: u32,
     pub num_kv_heads: u32,

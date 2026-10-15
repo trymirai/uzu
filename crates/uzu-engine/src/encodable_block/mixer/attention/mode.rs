@@ -3,7 +3,7 @@ use crate::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareInt8Kernel, AttentionPrepareKernel,
-            FullPrecisionInput, Int8Input, kv_layout::packed_query_rows,
+            FullPrecisionInput, Int8Input,
         },
     },
     data_type::DataType,
@@ -220,11 +220,11 @@ impl<B: Backend> Attention<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
         let suffix_length = batch_dim.size();
-        let packed_rows = packed_query_rows(self.num_q_heads / self.num_groups, suffix_length);
+        let query_rows = self.num_q_heads / self.num_groups * suffix_length;
         let mut query_codes =
-            command_buffer.allocate_scratch_for_shape(&[self.num_groups, packed_rows, self.head_dim], DataType::I8)?;
+            command_buffer.allocate_scratch_for_shape(&[self.num_groups, query_rows, self.head_dim], DataType::I8)?;
         let mut query_scales =
-            command_buffer.allocate_scratch_for_shape(&[self.num_groups, packed_rows], DataType::BF16)?;
+            command_buffer.allocate_scratch_for_shape(&[self.num_groups, query_rows], DataType::BF16)?;
         let (k_codes, k_scales, v_codes, v_scales) = match kv {
             Some(kv) => (
                 Some(kv.k_codes.as_mut()),
@@ -250,7 +250,7 @@ impl<B: Backend> Attention<B> {
             cache.prefix_len(),
             self.projection_dim,
             suffix_length,
-            packed_rows,
+            query_rows,
             command_buffer,
         );
         Ok((query_codes, query_scales))

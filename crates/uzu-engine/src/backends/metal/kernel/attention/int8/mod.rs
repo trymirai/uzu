@@ -4,7 +4,7 @@ use crate::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding,
             gpu_types::kv_layout,
-            kernel::{AttentionArguments, AttentionKernelConfig, Int8Input, kv_layout::packed_query_rows},
+            kernel::{AttentionArguments, AttentionKernelConfig, Int8Input},
         },
         metal::{
             Metal,
@@ -95,8 +95,7 @@ impl Int8Attention {
 
         let gqa_factor = num_q_heads / num_groups;
         let grouped_rows = gqa_factor * suffix_length;
-        let packed_rows = packed_query_rows(gqa_factor, suffix_length);
-        let m_tiles = packed_rows.div_ceil(BLOCK_ROWS);
+        let m_tiles = grouped_rows.div_ceil(BLOCK_ROWS);
         let split_rows = num_groups * m_tiles * BLOCK_ROWS;
         let num_splits = int8_splits(split_rows, head_dim, suffix_length, kv_length);
 
@@ -105,7 +104,7 @@ impl Int8Attention {
         let mut partial_maxs = command_buffer.allocate_scratch_for_shape(&[rows], DataType::F32)?;
         let mut partial_sums = command_buffer.allocate_scratch_for_shape(&[rows], DataType::F32)?;
         let params = AttnParams {
-            q_strides: [num_groups * packed_rows * head_dim, packed_rows * head_dim, head_dim],
+            q_strides: [num_groups * grouped_rows * head_dim, grouped_rows * head_dim, head_dim],
             k_strides: [0, head_dim, num_groups * head_dim],
             v_strides: [0, head_dim, num_groups * head_dim],
             o_strides: [suffix_length * num_q_heads * head_dim, head_dim, num_q_heads * head_dim],

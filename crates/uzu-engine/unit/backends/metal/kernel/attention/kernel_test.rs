@@ -9,7 +9,7 @@ use crate::{
             gpu_types::trie::TrieNode as GpuTrieNode,
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareInt8Kernel, Int8Input, KVFormat,
-                SigmoidGateKernel, kv_layout::packed_query_rows,
+                SigmoidGateKernel,
             },
         },
         cpu::Cpu,
@@ -452,7 +452,7 @@ fn int8_attention_matches_cpu() {
         submit_command_buffer(fill);
         let mut step = |rows: &[bf16], prefix: usize, trie: Option<&[GpuTrieNode]>, append_kv: bool| {
             let suffix = rows.len() / stride;
-            let packed_rows = packed_query_rows((q_heads / KV_HEADS) as u32, suffix as u32) as usize;
+            let query_rows = q_heads / KV_HEADS * suffix;
             let prepare = Prepare::new(
                 &metal,
                 DataType::BF16,
@@ -464,8 +464,8 @@ fn int8_attention_matches_cpu() {
                 append_kv,
             )
             .unwrap();
-            let mut query_codes = create_buffer::<Metal, i8>(&metal, KV_HEADS * packed_rows * DIM);
-            let mut query_scales = create_buffer::<Metal, bf16>(&metal, KV_HEADS * packed_rows);
+            let mut query_codes = create_buffer::<Metal, i8>(&metal, KV_HEADS * query_rows * DIM);
+            let mut query_scales = create_buffer::<Metal, bf16>(&metal, KV_HEADS * query_rows);
             let mut command_buffer = metal.create_command_buffer(None, None).unwrap();
             let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
             prepare.encode(
@@ -484,7 +484,7 @@ fn int8_attention_matches_cpu() {
                 prefix as u32,
                 stride as u32,
                 suffix as u32,
-                packed_rows as u32,
+                query_rows as u32,
                 &mut command_buffer,
             );
             let input = AttentionInput::Int8(Int8Input {
