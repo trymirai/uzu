@@ -34,7 +34,7 @@ KERNEL(AttentionGemmGrouped)(
     device float* partial_sums OPTIONAL(split_kv),
     const device TrieNode* trie OPTIONAL(is_trie),
     const constant AttnParams& params,
-    const constant uint& m_tiles,
+    const constant uint& query_tiles,
     const constant uint& kv_heads,
     const constant uint& batch_count,
     const constant uint& num_splits,
@@ -43,7 +43,7 @@ KERNEL(AttentionGemmGrouped)(
     const bool is_trie SPECIALIZE,
     threadgroup float score_exchange[AttentionGemmGroupedLayout<BK, BD, D_SLICES>::SCORE_EXCHANGE_SIZE],
     const ThreadContext thread_context,
-    const uint tile_split_flat GROUPS(m_tiles * num_splits),
+    const uint tile_split_flat GROUPS(query_tiles * num_splits),
     const uint kv_head_idx GROUPS(kv_heads),
     const uint batch_idx GROUPS(batch_count),
     const uint lid THREADS(ATTENTION_GQA_SIMDGROUPS * METAL_SIMD_SIZE)
@@ -76,11 +76,11 @@ KERNEL(AttentionGemmGrouped)(
   const ushort band = simdgroup_index / ushort(D_SLICES);
   const ushort slice = simdgroup_index % ushort(D_SLICES);
 
-  const uint m_tile_idx = split_kv ? (tile_split_flat % m_tiles) : tile_split_flat;
-  const uint split_idx = split_kv ? (tile_split_flat / m_tiles) : 0u;
+  const uint query_tile_idx = split_kv ? (tile_split_flat % query_tiles) : tile_split_flat;
+  const uint split_idx = split_kv ? (tile_split_flat / query_tiles) : 0u;
 
   const uint grouped_rows = params.gqa_factor * params.q_len;
-  const uint row_base = m_tile_idx * uint(BLOCK_ROWS) + uint(band) * uint(TILE_ROWS);
+  const uint row_base = query_tile_idx * uint(BLOCK_ROWS) + uint(band) * uint(TILE_ROWS);
   const uint head_in_group = row_base / params.q_len;
   const uint query_base = row_base - head_in_group * params.q_len;
   const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
@@ -170,7 +170,7 @@ KERNEL(AttentionGemmGrouped)(
   uint block_end = split_kv ? ((split_idx + 1u) * params.nk) / num_splits : params.nk;
 
   if (is_causal) {
-    const uint tile_first_row = m_tile_idx * uint(BLOCK_ROWS);
+    const uint tile_first_row = query_tile_idx * uint(BLOCK_ROWS);
     const uint tile_last_row = min(tile_first_row + uint(BLOCK_ROWS) - 1u, grouped_rows - 1u);
     const uint max_query_index = (tile_first_row / params.q_len == tile_last_row / params.q_len)
                                      ? (tile_last_row % params.q_len)
@@ -300,7 +300,8 @@ KERNEL(AttentionGemmGrouped)(
   }
 
   if (split_kv) {
-    const uint tile_index = ((split_idx * batch_count + batch_idx) * kv_heads + kv_head_idx) * m_tiles + m_tile_idx;
+    const uint tile_index =
+        ((split_idx * batch_count + batch_idx) * kv_heads + kv_head_idx) * query_tiles + query_tile_idx;
     device float* partial_tile = partials + size_t(tile_index) * BLOCK_ROWS * BD + size_t(band) * TILE_ROWS * BD;
     output.store(lane, partial_tile + slice_offset, int(BD));
 
@@ -369,12 +370,11 @@ KERNEL(AttentionGemmGroupedCombine)(
     const constant AttnParams& params,
     const constant uint& grouped_rows,
     const constant uint& block_rows,
-    const constant uint& m_tiles,
+    const constant uint& query_tiles,
     const constant uint& kv_heads,
     const constant uint& batch_count,
     const constant uint& num_splits,
     const constant uint& gate_row_stride OPTIONAL(has_gate),
-    const constant uint& real_rows OPTIONAL(quantized),
     const bool has_gate SPECIALIZE,
     const bool quantized SPECIALIZE,
     threadgroup float rotation[BD],
@@ -383,15 +383,12 @@ KERNEL(AttentionGemmGroupedCombine)(
     const uint batch_idx GROUPS(batch_count),
     const uint column THREADS(BD)
 ) {
-  const uint m_tile_idx = grouped_row_idx / block_rows;
-  const uint row_in_tile = grouped_row_idx - m_tile_idx * block_rows;
-  const uint tile_base = (batch_idx * kv_heads + kv_head_idx) * m_tiles + m_tile_idx;
-  const uint split_rows = batch_count * kv_heads * m_tiles * block_rows;
+  const uint query_tile_idx = grouped_row_idx / block_rows;
+  const uint row_in_tile = grouped_row_idx - query_tile_idx * block_rows;
+  const uint tile_base = (batch_idx * kv_heads + kv_head_idx) * query_tiles + query_tile_idx;
+  const uint split_rows = batch_count * kv_heads * query_tiles * block_rows;
   const uint head_in_group = grouped_row_idx / params.q_len;
   const uint query_position = grouped_row_idx - head_in_group * params.q_len;
-  if (quantized && query_position >= real_rows) {
-    return;
-  }
   const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
   const device float* row_maxs = partial_maxs + size_t(tile_base) * block_rows + row_in_tile;
   const device float* row_sums = partial_sums + size_t(tile_base) * block_rows + row_in_tile;

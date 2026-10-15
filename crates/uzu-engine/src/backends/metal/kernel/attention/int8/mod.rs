@@ -18,7 +18,7 @@ use crate::{
     data_type::DataType,
 };
 
-const BLOCK_ROWS: u32 = 2 * kv_layout::TILE_QUERIES;
+const QUERIES_PER_BLOCK: u32 = 2 * kv_layout::TILE_QUERIES;
 
 pub struct Int8Attention {
     config: AttentionKernelConfig,
@@ -95,8 +95,8 @@ impl Int8Attention {
 
         let gqa_factor = num_q_heads / num_groups;
         let grouped_rows = gqa_factor * suffix_length;
-        let m_tiles = grouped_rows.div_ceil(BLOCK_ROWS);
-        let split_rows = num_groups * m_tiles * BLOCK_ROWS;
+        let query_tiles = grouped_rows.div_ceil(QUERIES_PER_BLOCK);
+        let split_rows = num_groups * query_tiles * QUERIES_PER_BLOCK;
         let num_splits = int8_splits(split_rows, head_dim, suffix_length, kv_length);
 
         let rows = split_rows * num_splits;
@@ -118,11 +118,10 @@ impl Int8Attention {
             k_rem: kv_length % kv_layout::TILE_KEYS,
             ..AttnParams::default()
         };
-        let mask_free_splits = (0..num_splits)
+        let prefix_splits = (0..num_splits)
             .take_while(|split| ((split + 1) * params.nk / num_splits) * kv_layout::TILE_KEYS <= params.q_off)
             .count() as u32;
         let mut dispatch = |kernel: &AttentionGemmGroupedInt8MetalKernel, trie, split_base: u32, split_count: u32| {
-            // Split-major partials let each dispatch write a separate range.
             let split_byte_range = |row_bytes: usize| {
                 let split_bytes = split_rows as usize * row_bytes;
                 split_base as usize * split_bytes..(split_base + split_count) as usize * split_bytes
@@ -139,7 +138,7 @@ impl Int8Attention {
                 (&mut partial_maxs).subrange_mut(split_byte_range(DataType::F32.size_in_bytes())),
                 (&mut partial_sums).subrange_mut(split_byte_range(DataType::F32.size_in_bytes())),
                 params,
-                m_tiles,
+                query_tiles,
                 1,
                 num_splits,
                 split_base,
@@ -148,10 +147,10 @@ impl Int8Attention {
                 command_buffer,
             )
         };
-        if mask_free_splits > 0 {
-            dispatch(&self.mask_free, None, 0, mask_free_splits);
+        if prefix_splits > 0 {
+            dispatch(&self.mask_free, None, 0, prefix_splits);
         }
-        dispatch(trie.map_or(&self.masked, |_| &self.trie), trie, mask_free_splits, num_splits - mask_free_splits);
+        dispatch(trie.map_or(&self.masked, |_| &self.trie), trie, prefix_splits, num_splits - prefix_splits);
 
         let mut output =
             command_buffer.allocate_scratch_for_shape(&[suffix_length, num_q_heads, head_dim], DataType::BF16)?;
@@ -163,13 +162,12 @@ impl Int8Attention {
             gate,
             params,
             grouped_rows,
-            BLOCK_ROWS,
-            m_tiles,
+            QUERIES_PER_BLOCK,
+            query_tiles,
             num_groups,
             1,
             num_splits,
             config.gate_row_stride,
-            Some(suffix_length),
             command_buffer,
         );
         Ok(output)

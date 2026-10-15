@@ -105,10 +105,8 @@ impl AttentionGemmGroupedMetal {
     ) -> Result<bool, MetalError> {
         let params = self.params(suffix_length, kv_length);
         let grouped_rows = self.num_q_heads / self.num_groups * suffix_length;
-        let m_tiles = grouped_rows.div_ceil(self.block_rows);
+        let query_tiles = grouped_rows.div_ceil(self.block_rows);
         assert_eq!(trie.is_some(), self.mask.is_trie(), "trie presence must match mask");
-        assert!(num_splits >= 1, "num_splits must be at least one");
-        assert!(num_splits <= params.nk, "num_splits must not exceed KV blocks");
 
         if num_splits == 1 {
             self.kernel.encode(
@@ -121,7 +119,7 @@ impl AttentionGemmGroupedMetal {
                 None::<&mut <Metal as Backend>::ScratchBuffer>,
                 trie,
                 params,
-                m_tiles,
+                query_tiles,
                 self.num_groups,
                 q_replicas,
                 1,
@@ -130,7 +128,7 @@ impl AttentionGemmGroupedMetal {
             return Ok(false);
         }
 
-        let partial_rows = q_replicas * self.num_groups * m_tiles * num_splits * self.block_rows;
+        let partial_rows = q_replicas * self.num_groups * query_tiles * num_splits * self.block_rows;
         let mut partials = command_buffer.allocate_scratch_for_shape(&[partial_rows, self.head_dim], DataType::F32)?;
         let mut partial_maxs = command_buffer.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
         let mut partial_sums = command_buffer.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
@@ -145,7 +143,7 @@ impl AttentionGemmGroupedMetal {
             Some(&mut partial_sums),
             trie,
             params,
-            m_tiles,
+            query_tiles,
             self.num_groups,
             q_replicas,
             num_splits,
@@ -161,12 +159,11 @@ impl AttentionGemmGroupedMetal {
             params,
             grouped_rows,
             self.block_rows,
-            m_tiles,
+            query_tiles,
             self.num_groups,
             q_replicas,
             num_splits,
             self.gate_row_stride,
-            None,
             command_buffer,
         );
         Ok(gate.is_some())

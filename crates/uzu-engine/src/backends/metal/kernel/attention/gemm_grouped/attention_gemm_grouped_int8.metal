@@ -67,7 +67,7 @@ KERNEL(AttentionGemmGroupedInt8)(
     device float* partial_maxs,
     device float* partial_sums,
     const constant AttnParams& params,
-    const constant uint& m_tiles,
+    const constant uint& query_tiles,
     const constant uint& batch_count,
     const constant uint& num_splits,
     const constant uint& split_base,
@@ -79,7 +79,7 @@ KERNEL(AttentionGemmGroupedInt8)(
     threadgroup ulong trie_masks[AttentionGemmGroupedInt8Layout<HEAD_DIM>::BLOCK_ROWS],
     threadgroup uint4 query_stage[AttentionGemmGroupedInt8Layout<HEAD_DIM>::QUERY_VECTORS],
     const ThreadContext thread_context,
-    const uint tile_split_flat GROUPS(m_tiles * split_count),
+    const uint tile_split_flat GROUPS(query_tiles * split_count),
     const uint kv_head_idx GROUPS(num_kv_heads),
     const uint batch_idx GROUPS(batch_count),
     const uint lid THREADS(ATTENTION_GQA_SIMDGROUPS * METAL_SIMD_SIZE)
@@ -128,11 +128,11 @@ KERNEL(AttentionGemmGroupedInt8)(
   const ushort band = simdgroup_index / ushort(D_SLICES);
   const ushort slice = simdgroup_index % ushort(D_SLICES);
 
-  const uint m_tile_idx = tile_split_flat % m_tiles;
-  const uint split_idx = split_base + tile_split_flat / m_tiles;
+  const uint query_tile_idx = tile_split_flat % query_tiles;
+  const uint split_idx = split_base + tile_split_flat / query_tiles;
 
   const uint grouped_rows = params.gqa_factor * params.q_len;
-  const uint row_base = m_tile_idx * uint(Layout::BLOCK_ROWS) + uint(band) * uint(Layout::TILE_ROWS);
+  const uint row_base = query_tile_idx * uint(Layout::BLOCK_ROWS) + uint(band) * uint(Layout::TILE_ROWS);
 
   const uint query_row_stride = params.q_strides[2];
   const uint key_row_stride = params.k_strides[2];
@@ -213,7 +213,7 @@ KERNEL(AttentionGemmGroupedInt8)(
   const uint value_block_stride = uint(kv_layout::TILE_KEYS) * value_row_stride;
 
   const uint block_begin = (split_idx * params.nk) / num_splits;
-  const uint tile_first_row = m_tile_idx * uint(Layout::BLOCK_ROWS);
+  const uint tile_first_row = query_tile_idx * uint(Layout::BLOCK_ROWS);
   const uint tile_last_row = min(tile_first_row + uint(Layout::BLOCK_ROWS) - 1u, grouped_rows - 1u);
   const uint max_query_index = (tile_first_row / params.q_len == tile_last_row / params.q_len)
                                    ? (tile_last_row % params.q_len)
@@ -511,7 +511,8 @@ KERNEL(AttentionGemmGroupedInt8)(
   output.map_rows(output_bias, [](AccumType value, AccumType bias) UZU_ALWAYS_INLINE { return value - bias; });
 
   const uint tile_index =
-      (((split_idx - split_base) * batch_count + batch_idx) * num_kv_heads + kv_head_idx) * m_tiles + m_tile_idx;
+      (((split_idx - split_base) * batch_count + batch_idx) * num_kv_heads + kv_head_idx) * query_tiles +
+      query_tile_idx;
   const size_t partial_offset =
       size_t(tile_index) * Layout::BLOCK_ROWS * HEAD_DIM + size_t(band) * Layout::TILE_ROWS * HEAD_DIM + slice_offset;
   AccumType inverse_split_sum[ROWS_PER_LANE];
