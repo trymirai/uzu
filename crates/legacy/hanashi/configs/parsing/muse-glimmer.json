@@ -439,25 +439,11 @@
                             ],
                             "value": [
                                 {
-                                    "type": "object",
-                                    "fields": {
-                                        "name": [
-                                            {
-                                                "type": "get",
-                                                "path": [
-                                                    "$value",
-                                                    "role"
-                                                ]
-                                            },
-                                            {
-                                                "type": "regex_find_all",
-                                                "pattern": "^assistant to=(\\S+)"
-                                            },
-                                            {
-                                                "type": "first"
-                                            }
-                                        ]
-                                    }
+                                    "type": "get",
+                                    "path": [
+                                        "$value",
+                                        "content"
+                                    ]
                                 }
                             ]
                         }
@@ -557,35 +543,8 @@
         ],
         "parse_atem_arguments": [
             {
-                "type": "regex_find_all",
-                "pattern": "<atem:parameter name=\"[^\"]+\">[\\s\\S]*?</atem:parameter>"
-            },
-            {
-                "type": "each",
-                "apply": [
-                    {
-                        "type": "regex_replace",
-                        "pattern": "<atem:parameter name=\"([^\"]+)\">([{\\[][\\s\\S]*[}\\]])</atem:parameter>",
-                        "template": "\"$1\": $2"
-                    },
-                    {
-                        "type": "regex_replace",
-                        "pattern": "<atem:parameter name=\"([^\"]+)\">([\\s\\S]*?)</atem:parameter>",
-                        "template": "\"$1\": \"$2\""
-                    }
-                ]
-            },
-            {
-                "type": "join",
-                "separator": ", "
-            },
-            {
-                "type": "format",
-                "template": "{ {} }"
-            },
-            {
-                "type": "parse_json",
-                "repair": true
+                "type": "regex_capture_object",
+                "pattern": "<atem:parameter name=\"([^\"]+)\">([\\s\\S]*?)</atem:parameter>"
             }
         ],
         "parse_tool_output_value": [

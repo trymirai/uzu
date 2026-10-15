@@ -6,6 +6,7 @@ pub mod config;
 mod downloader;
 mod downloader_stream;
 mod error;
+mod model_info;
 mod sampling;
 mod shorthand;
 
@@ -27,6 +28,7 @@ pub use error::EngineError;
 use futures_util::stream::FuturesUnordered;
 use indexmap::IndexSet;
 use kiban::rt::RuntimeHandle;
+pub use model_info::ChatModelInfo;
 use nagare::{
     chat::{ChatInstance, ChatSession},
     classification::ClassificationSession,
@@ -338,6 +340,20 @@ impl Engine {
     #[bindings::export(Method(Getter))]
     pub async fn models(&self) -> Result<Vec<Model>, EngineError> {
         Ok(self.catalog_snapshot().await?.0)
+    }
+
+    /// Refresh registries and wait until the catalog has been published to storage.
+    /// Registries that fail to refresh retain their last known entries.
+    #[bindings::export(Method)]
+    pub async fn refresh_models(&self) -> Result<Vec<Model>, EngineError> {
+        let mut updates = self.catalog_subscribe();
+        self.refresh_catalog().await?;
+        while self.catalog_is_refreshing() {
+            if updates.next().await.is_none() {
+                break;
+            }
+        }
+        self.models().await
     }
 
     #[bindings::export(Method(Getter))]

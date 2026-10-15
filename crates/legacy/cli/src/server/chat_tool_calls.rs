@@ -1,11 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+pub use uzu::session::chat::tool_call::{ToolParameterTypes, coerce_tool_call, parse_parameter_text};
 use uzu::{
-    session::chat::normalize_tool_call_arguments,
+    session::chat::{ChatSessionError, normalize_tool_call_arguments, tool_call::ToolCallArgumentStream},
     types::{
-        basic::{ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value, parse_lenient_json},
+        basic::{ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value},
         session::chat::{ChatContentBlock, ChatMessage, ChatRole},
     },
 };
@@ -92,193 +93,10 @@ pub fn choose_tools<'t>(
     }
 }
 
-/// Declared JSON-Schema types of each tool parameter, keyed by function name.
-/// Tool-call markup cannot carry types — the parser keeps every parameter the
-/// text the model wrote — so the declared schema is what restores the wire
-/// types clients validate against.
-#[derive(Clone, Default)]
-pub struct ToolParameterTypes(HashMap<String, HashMap<String, Vec<String>>>);
-
-impl ToolParameterTypes {
-    pub fn from_tools(tools: Option<&[OaiTool]>) -> Self {
-        let mut functions = HashMap::new();
-        for tool in tools.unwrap_or_default() {
-            let Some(parameters) = &tool.function.parameters else {
-                continue;
-            };
-            let Ok(schema) = serde_json::from_str::<serde_json::Value>(&parameters.json) else {
-                continue;
-            };
-            let Some(properties) = schema.get("properties").and_then(serde_json::Value::as_object) else {
-                continue;
-            };
-            let parameters = properties
-                .iter()
-                .filter_map(|(name, property)| {
-                    let types = declared_types(property, &schema, 8);
-                    (!types.is_empty()).then(|| (name.clone(), types))
-                })
-                .collect();
-            functions.insert(tool.function.name.clone(), parameters);
-        }
-        Self(functions)
-    }
-
-    fn declared(
-        &self,
-        function: &str,
-        parameter: &str,
-    ) -> Option<&[String]> {
-        Some(self.0.get(function)?.get(parameter)?.as_slice())
-    }
-}
-
-// Per parameter: count each queued schema and each entry in a type array.
-const MAX_SCHEMA_TRAVERSAL_WORK: usize = 1024;
-
-/// The JSON-Schema types a property schema declares: its `type` keyword, or the
-/// union of its `anyOf`/`oneOf` branches, following local `$ref`s (the shape
-/// pydantic and schemars clients emit for optional and nested objects).
-fn declared_types(
-    property: &serde_json::Value,
-    root: &serde_json::Value,
-    depth: u32,
-) -> Vec<String> {
-    let mut pending = vec![(property, depth)];
-    let mut visited = HashMap::new();
-    let mut types = HashSet::new();
-    let mut remaining_work = MAX_SCHEMA_TRAVERSAL_WORK - 1;
-    while let Some((property, depth)) = pending.pop() {
-        if depth == 0 {
-            continue;
-        }
-        let property = match property.get("$ref").and_then(serde_json::Value::as_str) {
-            Some(reference) => {
-                reference.strip_prefix('#').and_then(|pointer| root.pointer(pointer)).unwrap_or(property)
-            },
-            None => property,
-        };
-        // Track identity without hashing the schema's contents. Revisit a shared
-        // node only when a shorter path leaves more depth to discover its types.
-        let identity = std::ptr::from_ref(property);
-        if visited.get(&identity).is_some_and(|seen_depth| *seen_depth >= depth) {
-            continue;
-        }
-        visited.insert(identity, depth);
-        match property.get("type") {
-            Some(serde_json::Value::String(kind)) => {
-                types.insert(kind.as_str());
-            },
-            Some(serde_json::Value::Array(kinds)) => {
-                let Some(remaining) = remaining_work.checked_sub(kinds.len()) else {
-                    return Vec::new();
-                };
-                remaining_work = remaining;
-                types.extend(kinds.iter().filter_map(serde_json::Value::as_str));
-            },
-            _ if depth > 1 => {
-                for branches in
-                    ["anyOf", "oneOf"].iter().filter_map(|key| property.get(*key).and_then(serde_json::Value::as_array))
-                {
-                    // Charge work before enqueueing, bounding both visits and
-                    // pending allocations even for a wide, nonrecursive union.
-                    let Some(remaining) = remaining_work.checked_sub(branches.len()) else {
-                        // Partial types may omit a string branch and cause an
-                        // incorrect coercion, so leave the parameter unchanged.
-                        return Vec::new();
-                    };
-                    remaining_work = remaining;
-                    pending.extend(branches.iter().map(|branch| (branch, depth - 1)));
-                }
-            },
-            _ => {},
-        }
-    }
-    let mut types: Vec<String> = types.into_iter().map(str::to_string).collect();
-    types.sort_unstable();
-    types
-}
-
-fn matches_declared_type(
-    value: &serde_json::Value,
-    declared: &[String],
-) -> bool {
-    declared.iter().any(|kind| match kind.as_str() {
-        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
-        "number" => value.is_number(),
-        "boolean" => value.is_boolean(),
-        "null" => value.is_null(),
-        "object" => value.is_object(),
-        "array" => value.is_array(),
-        "string" => value.is_string(),
-        _ => false,
-    })
-}
-
-/// Parameter text read as JSON: strict first, then with the bounded repair of
-/// control characters and bare quotes models leave inside string values, plus
-/// the Python-style booleans some models emit in tool markup (qwen3.5 writes
-/// `True`/`False`).
-pub fn parse_parameter_text(text: &str) -> Option<serde_json::Value> {
-    if let Some(parsed) = parse_lenient_json(text) {
-        return Some(parsed);
-    }
-    match text.trim() {
-        text if text.eq_ignore_ascii_case("true") => Some(serde_json::Value::Bool(true)),
-        text if text.eq_ignore_ascii_case("false") => Some(serde_json::Value::Bool(false)),
-        _ => None,
-    }
-}
-
-fn coerce_parameter_value(
-    value: &serde_json::Value,
-    declared: &[String],
-) -> Option<serde_json::Value> {
-    let declares_string = declared.iter().any(|kind| kind == "string");
-    match value {
-        // The parser kept the markup text as a string; restore the declared
-        // type when the text reads as it. A union that includes "string" stays
-        // a string: the text is already schema-valid and the intended type is
-        // unknowable.
-        serde_json::Value::String(text) if !declares_string => {
-            let parsed = parse_parameter_text(text)?;
-            matches_declared_type(&parsed, declared).then_some(parsed)
-        },
-        // A JSON-format parser typed a value although the parameter is a
-        // plain string.
-        value if declared == ["string"] && !value.is_string() => Some(serde_json::Value::String(value.to_string())),
-        _ => None,
-    }
-}
-
-/// Restores the declared types the markup could not carry. Applied only at
-/// the OpenAI boundary: the session keeps the parser's values so its stored
-/// history stays consistent with what the template renders.
-pub fn coerce_tool_call(
-    tool_call: &ToolCall,
-    types: &ToolParameterTypes,
-) -> ToolCall {
-    let Ok(serde_json::Value::Object(mut object)) = serde_json::from_str(&tool_call.arguments.json) else {
-        return tool_call.clone();
-    };
-    let mut changed = false;
-    for (parameter, value) in object.iter_mut() {
-        if let Some(declared) = types.declared(&tool_call.name, parameter)
-            && let Some(coerced) = coerce_parameter_value(value, declared)
-        {
-            *value = coerced;
-            changed = true;
-        }
-    }
-    if !changed {
-        return tool_call.clone();
-    }
-    ToolCall {
-        arguments: Value {
-            json: serde_json::Value::Object(object).to_string(),
-        },
-        ..tool_call.clone()
-    }
+pub fn tool_parameter_types(tools: Option<&[OaiTool]>) -> ToolParameterTypes {
+    ToolParameterTypes::from_parameters(tools.unwrap_or_default().iter().filter_map(|tool| {
+        tool.function.parameters.as_ref().map(|parameters| (tool.function.name.as_str(), parameters))
+    }))
 }
 
 pub fn to_tool_call(tool_call: &OaiToolCall) -> ToolCall {
@@ -402,165 +220,18 @@ pub fn withhold_stream_text(
     has_tools && (trimmed.is_empty() || trimmed.starts_with('{'))
 }
 
-// Streaming state for one in-progress tool call.
-//
-// OpenAI clients assemble `function.arguments` by concatenating delta fragments and parsing the
-// result when the call ends, so every fragment must extend one string. Candidate content comes in
-// two shapes:
-// - framed (qwen3.5-style): the candidate value is the model's raw `<function=name>` /
-//   `<parameter=key>` markup, growing token by token. Arguments are synthesized into compact JSON;
-//   the currently open parameter's value streams as escaped string content.
-// - bare JSON (llama-3-style): the candidate value is partial JSON text; only the name is
-//   announced, since the raw text is not a prefix of the canonical arguments string.
 pub struct ToolCallStreamer {
     id: String,
-    name_announced: bool,
-    key_order: Vec<String>,
-    open_text: String,
-    final_candidate: Option<String>,
-}
-
-enum FramedParam {
-    Complete(String),
-    Open(String),
-}
-
-struct FramedCall {
-    name: Option<String>,
-    params: Vec<(String, FramedParam)>,
-}
-
-fn parse_framed_call(raw: &str) -> FramedCall {
-    let name = raw.find("<function=").and_then(|start| {
-        let rest = &raw[start + "<function=".len()..];
-        rest.find('>').map(|end| rest[..end].to_string())
-    });
-    let mut params = Vec::new();
-    let mut rest = raw;
-    while let Some(start) = rest.find("<parameter=") {
-        rest = &rest[start + "<parameter=".len()..];
-        let Some(tag_end) = rest.find('>') else {
-            break;
-        };
-        let key = rest[..tag_end].to_string();
-        let value_part = &rest[tag_end + 1..];
-        let value_part = value_part.strip_prefix('\n').unwrap_or(value_part);
-        match value_part.find("\n</parameter>") {
-            Some(end) => {
-                params.push((key, FramedParam::Complete(value_part[..end].to_string())));
-                rest = &value_part[end + "\n</parameter>".len()..];
-            },
-            None => {
-                params.push((key, FramedParam::Open(value_part.to_string())));
-                break;
-            },
-        }
-    }
-    FramedCall {
-        name,
-        params,
-    }
-}
-
-// A completed parameter serializes exactly as coerce_tool_call serializes it in
-// the final call, so the streamed prefix is a prefix of the final text.
-fn serialize_param_value(
-    value: &str,
-    declared: Option<&[String]>,
-) -> String {
-    let text = serde_json::Value::String(value.to_string());
-    declared.and_then(|declared| coerce_parameter_value(&text, declared)).unwrap_or(text).to_string()
-}
-
-// The longest suffix of `content` that could be the start of the parameter close tag is
-// ambiguous until more tokens arrive, so it is withheld from streaming.
-const PARAMETER_CLOSE_SEQUENCE: &str = "\n</parameter>";
-
-fn withhold_ambiguous_tail(content: &str) -> &str {
-    // the leftmost char boundary whose suffix is a prefix of the close sequence
-    // gives the longest ambiguous tail
-    for (index, _) in content.char_indices() {
-        let suffix = &content[index..];
-        if suffix.len() <= PARAMETER_CLOSE_SEQUENCE.len() && PARAMETER_CLOSE_SEQUENCE.starts_with(suffix) {
-            return &content[..index];
-        }
-    }
-    content
-}
-
-// The arguments text with no closing brace: completed parameters are frozen, the open
-// parameter's value streams as it grows.
-fn open_arguments_text(
-    params: &[(String, FramedParam)],
-    function: Option<&str>,
-    types: &ToolParameterTypes,
-) -> Option<String> {
-    let mut entries: Vec<(String, String)> = Vec::new();
-    for (key, param) in params {
-        let declared = function.and_then(|function| types.declared(function, key));
-        let serialized = match param {
-            FramedParam::Complete(value) => serialize_param_value(value, declared),
-            FramedParam::Open(content) => {
-                // an empty value has nothing to emit yet, and a declared non-string
-                // value takes its final form (a bare literal) only once complete:
-                // either way nothing about the parameter may be emitted
-                let streamable = withhold_ambiguous_tail(content);
-                let declared_non_string =
-                    declared.is_some_and(|declared| !declared.iter().any(|kind| kind == "string"));
-                if streamable.is_empty() || declared_non_string {
-                    break;
-                }
-                let quoted = serde_json::Value::String(streamable.to_string()).to_string();
-                quoted[..quoted.len() - 1].to_string()
-            },
-        };
-        entries.push((key.clone(), serialized));
-    }
-    if entries.is_empty() {
-        return None;
-    }
-    let mut out = String::from("{");
-    for (index, (key, serialized)) in entries.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        out.push_str(&serde_json::to_string(key).expect("key serializes"));
-        out.push(':');
-        out.push_str(serialized);
-    }
-    Some(out)
-}
-
-fn json_candidate_name(raw: &str) -> Option<String> {
-    let rest = &raw[raw.find("\"name\"")? + 6..];
-    let rest = rest[rest.find(':')? + 1..].trim_start();
-    let rest = rest.strip_prefix('"')?;
-    let mut name = String::new();
-    let mut chars = rest.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => return Some(name),
-            '\\' => match chars.next() {
-                Some('n') => name.push('\n'),
-                Some(other) => name.push(other),
-                None => return None,
-            },
-            c => name.push(c),
-        }
-    }
-    None
+    announced: bool,
+    arguments: Option<ToolCallArgumentStream>,
 }
 
 impl ToolCallStreamer {
     pub fn new() -> Self {
         Self {
-            // The id is assigned by the server at announcement time: clients key
-            // in-progress tool call UI by id, so it must never change mid-call.
             id: Uuid::new_v4().to_string(),
-            name_announced: false,
-            key_order: Vec::new(),
-            open_text: String::new(),
-            final_candidate: None,
+            announced: false,
+            arguments: None,
         }
     }
 
@@ -569,121 +240,67 @@ impl ToolCallStreamer {
         index: usize,
         raw: &str,
         types: &ToolParameterTypes,
-    ) -> Vec<OaiToolCall> {
+    ) -> Result<Vec<OaiToolCall>, ChatSessionError> {
+        let stream = self.arguments.get_or_insert_with(|| ToolCallArgumentStream::new(types.clone()));
+        let delta = stream.update(raw.to_string())?;
+        if delta.name.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut deltas = Vec::new();
-        let name;
-        if raw.trim_start().starts_with('<') {
-            let call = parse_framed_call(raw);
-            name = call.name.filter(|name| !name.is_empty());
-            self.key_order = call.params.iter().map(|(key, _)| key.clone()).collect();
-            if let Some(open_text) = open_arguments_text(&call.params, name.as_deref(), types) {
-                if call.params.iter().all(|(_, param)| matches!(param, FramedParam::Complete(_))) {
-                    self.final_candidate = Some(format!("{open_text}}}"));
-                }
-                if open_text.len() > self.open_text.len() && open_text.starts_with(&self.open_text) {
-                    deltas.push(OaiToolCall {
-                        index: Some(index),
-                        id: String::new(),
-                        kind: String::new(),
-                        function: OaiFunctionCall {
-                            name: String::new(),
-                            arguments: open_text[self.open_text.len()..].to_string(),
-                        },
-                    });
-                    self.open_text = open_text;
-                }
-            }
-        } else {
-            name = json_candidate_name(raw);
-        }
-        if let Some(name) = name
-            && !name.is_empty()
-            && !self.name_announced
-        {
-            self.name_announced = true;
-            deltas.insert(
-                0,
-                OaiToolCall {
-                    index: Some(index),
-                    id: self.id.clone(),
-                    kind: "function".to_string(),
-                    function: OaiFunctionCall {
-                        name,
-                        arguments: String::new(),
-                    },
+        if !self.announced {
+            self.announced = true;
+            deltas.push(OaiToolCall {
+                index: Some(index),
+                id: self.id.clone(),
+                kind: "function".into(),
+                function: OaiFunctionCall {
+                    name: delta.name,
+                    arguments: String::new(),
                 },
-            );
+            });
         }
-        deltas
+        if !delta.arguments.is_empty() {
+            deltas.push(OaiToolCall {
+                index: Some(index),
+                id: String::new(),
+                kind: String::new(),
+                function: OaiFunctionCall {
+                    name: String::new(),
+                    arguments: delta.arguments,
+                },
+            });
+        }
+        Ok(deltas)
     }
 
     pub fn finish(
         &mut self,
         index: usize,
         call: &ToolCall,
-    ) -> OaiToolCall {
-        let arguments = if self.open_text.is_empty() {
-            call.arguments.json.clone()
-        } else {
-            self.closing_fragment(call)
-        };
-        let (id, kind, name) = if self.name_announced {
-            (String::new(), String::new(), String::new())
-        } else {
-            (self.id.clone(), "function".to_string(), call.name.clone())
-        };
-        OaiToolCall {
+    ) -> Result<OaiToolCall, ChatSessionError> {
+        let stream = self.arguments.get_or_insert_with(|| ToolCallArgumentStream::new(ToolParameterTypes::default()));
+        let delta = stream.finish(call.clone())?;
+        Ok(OaiToolCall {
             index: Some(index),
-            id,
-            kind,
+            id: if self.announced {
+                String::new()
+            } else {
+                self.id.clone()
+            },
+            kind: if self.announced {
+                String::new()
+            } else {
+                "function".into()
+            },
             function: OaiFunctionCall {
-                name,
-                arguments,
+                name: if self.announced {
+                    String::new()
+                } else {
+                    delta.name
+                },
+                arguments: delta.arguments,
             },
-        }
-    }
-
-    fn closing_fragment(
-        &self,
-        call: &ToolCall,
-    ) -> String {
-        // Rebuild the final arguments with keys in streamed order so the closing fragment
-        // completes the exact string the earlier fragments started.
-        let final_text = match serde_json::from_str::<serde_json::Value>(&call.arguments.json) {
-            Ok(serde_json::Value::Object(map)) => {
-                let mut keys: Vec<&str> =
-                    self.key_order.iter().map(String::as_str).filter(|key| map.contains_key(*key)).collect();
-                for key in map.keys() {
-                    if !keys.contains(&key.as_str()) {
-                        keys.push(key);
-                    }
-                }
-                let entries = keys
-                    .iter()
-                    .map(|key| format!("{}:{}", serde_json::to_string(key).expect("key serializes"), map[*key]))
-                    .collect::<Vec<_>>();
-                format!("{{{}}}", entries.join(","))
-            },
-            _ => call.arguments.json.clone(),
-        };
-        match final_text.strip_prefix(&self.open_text) {
-            Some(suffix) => suffix.to_string(),
-            None => {
-                if let Some(candidate) = self.final_candidate.as_deref()
-                    && serde_json::from_str::<serde_json::Value>(candidate).is_ok()
-                    && let Some(suffix) = candidate.strip_prefix(&self.open_text)
-                {
-                    eprintln!(
-                        "[server] tool call stream diverged from the final call; using the structurally parsed candidate"
-                    );
-                    return suffix.to_string();
-                }
-                eprintln!(
-                    "[server] tool call stream diverged from the final call; the client may reject the assembled arguments"
-                );
-                final_text
-            },
-        }
+        })
     }
 }
 

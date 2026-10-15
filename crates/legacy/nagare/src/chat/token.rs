@@ -316,9 +316,10 @@ impl Session {
                 } => Some(ToolCallState::Finished(value.clone())),
                 ChatContentBlock::ToolCallCandidate {
                     value,
+                    ..
                 } => Some(ToolCallState::Candidate(
                     // the block stores the candidate text as a JSON string document
-                    serde_json::from_str::<String>(&value.json).unwrap_or_default(),
+                    serde_json::from_str::<String>(&value.json).unwrap_or_else(|_| value.json.clone()),
                 )),
                 _ => None,
             })

@@ -170,10 +170,11 @@ fn reply_tool_calls_serialize_in_openai_format() {
 #[test]
 fn json_candidate_announces_name_once_it_is_complete() {
     let mut streamer = ToolCallStreamer::new();
-    assert!(streamer.update(0, r#"{"name": "wr"#, &ToolParameterTypes::default()).is_empty());
-    assert!(streamer.update(0, r#"{"arguments": {}}"#, &ToolParameterTypes::default()).is_empty());
+    assert!(streamer.update(0, r#"{"name": "wr"#, &ToolParameterTypes::default()).unwrap().is_empty());
+    assert!(streamer.update(0, r#"{"arguments": {}}"#, &ToolParameterTypes::default()).unwrap().is_empty());
 
-    let deltas = streamer.update(1, r#"{"name": "write", "arguments": {"path":"#, &ToolParameterTypes::default());
+    let deltas =
+        streamer.update(1, r#"{"name": "write", "arguments": {"path":"#, &ToolParameterTypes::default()).unwrap();
     assert_eq!(deltas.len(), 1);
     assert_eq!(deltas[0].index, Some(1));
     assert_eq!(deltas[0].function.name, "write");
@@ -189,7 +190,7 @@ fn json_candidate_announces_name_once_it_is_complete() {
         },
     };
 
-    let finish = serde_json::to_value(streamer.finish(1, &call)).expect("serializable final delta");
+    let finish = serde_json::to_value(streamer.finish(1, &call).unwrap()).expect("serializable final delta");
     assert_eq!(
         finish,
         serde_json::json!({
@@ -198,15 +199,14 @@ fn json_candidate_announces_name_once_it_is_complete() {
         })
     );
 
-    assert!(
-        streamer.update(1, r#"{"name": "write", "arguments": {"path": "/"#, &ToolParameterTypes::default()).is_empty()
-    );
+    assert!(streamer.update(1, r#"{"name": "write"}"#, &ToolParameterTypes::default()).is_err());
 }
 
 #[test]
 fn framed_argument_deltas_do_not_repeat_announced_metadata() {
     let mut streamer = ToolCallStreamer::new();
-    let deltas = streamer.update(0, "<function=write>\n<parameter=path>\n/tmp/a", &ToolParameterTypes::default());
+    let deltas =
+        streamer.update(0, "<function=write>\n<parameter=path>\n/tmp/a", &ToolParameterTypes::default()).unwrap();
     assert_eq!(deltas.len(), 2);
 
     let announcement = serde_json::to_value(&deltas[0]).expect("serializable announcement");
@@ -234,7 +234,7 @@ fn finish_emits_metadata_when_no_announcement_was_possible() {
         },
     };
 
-    let finish = serde_json::to_value(streamer.finish(0, &call)).expect("serializable final delta");
+    let finish = serde_json::to_value(streamer.finish(0, &call).unwrap()).expect("serializable final delta");
     assert_eq!(finish["type"], "function");
     assert_eq!(finish["function"]["name"], "write");
     assert!(!finish["id"].as_str().expect("string id").is_empty());
@@ -258,7 +258,7 @@ fn framed_tool_call_streams_arguments_incrementally() {
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
-        for delta in streamer.update(0, &partial, &ToolParameterTypes::default()) {
+        for delta in streamer.update(0, &partial, &ToolParameterTypes::default()).unwrap() {
             if !delta.function.name.is_empty() {
                 announcements += 1;
                 assert_eq!(delta.function.name, "write");
@@ -267,7 +267,7 @@ fn framed_tool_call_streams_arguments_incrementally() {
         }
     }
     assert_eq!(announcements, 1);
-    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+    fragments.push_str(&streamer.finish(0, &call).unwrap().function.arguments);
 
     let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
     assert_eq!(parsed, final_arguments);
@@ -281,11 +281,12 @@ fn framed_tool_call_withholds_typed_parameter_until_complete() {
             "parameters":{"type":"object","properties":{"options":{"type":"object"}}}}}]"#,
     );
     let mut streamer = ToolCallStreamer::new();
-    let deltas = streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\"", &types);
+    let deltas = streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\"", &types).unwrap();
     assert!(deltas.iter().all(|delta| delta.function.arguments.is_empty()));
 
-    let deltas =
-        streamer.update(0, "\n<function=read>\n<parameter=options>\n{\"a\": 1}\n</parameter>\n</function>\n", &types);
+    let deltas = streamer
+        .update(0, "\n<function=read>\n<parameter=options>\n{\"a\": 1}\n</parameter>\n</function>\n", &types)
+        .unwrap();
     let fragment: String = deltas.iter().map(|delta| delta.function.arguments.as_str()).collect();
     assert_eq!(fragment, r#"{"options":{"a":1}"#);
 
@@ -296,7 +297,7 @@ fn framed_tool_call_withholds_typed_parameter_until_complete() {
             json: r#"{"options":{"a":1}}"#.to_string(),
         },
     };
-    assert_eq!(streamer.finish(0, &call).function.arguments, "}");
+    assert_eq!(streamer.finish(0, &call).unwrap().function.arguments, "}");
 }
 
 #[test]
@@ -315,17 +316,17 @@ fn framed_tool_call_streams_multibyte_content_without_panicking() {
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
-        for delta in streamer.update(0, &partial, &ToolParameterTypes::default()) {
+        for delta in streamer.update(0, &partial, &ToolParameterTypes::default()).unwrap() {
             fragments.push_str(&delta.function.arguments);
         }
     }
-    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+    fragments.push_str(&streamer.finish(0, &call).unwrap().function.arguments);
     let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
     assert_eq!(parsed, serde_json::json!({ "content": "London — a city" }));
 }
 
 #[test]
-fn framed_tool_call_uses_valid_candidate_when_final_call_diverges() {
+fn framed_tool_call_rejects_divergent_final_arguments() {
     let markup = "<function=write_file>\n<parameter=path>\nrepro.rs\n</parameter>\n<parameter=content>\nlet x = \"hello\";\n</parameter>\n</function>";
     let corrupted_call = ToolCall {
         identifier: None,
@@ -337,13 +338,10 @@ fn framed_tool_call_uses_valid_candidate_when_final_call_diverges() {
 
     let mut streamer = ToolCallStreamer::new();
     let mut fragments = String::new();
-    for delta in streamer.update(0, markup, &ToolParameterTypes::default()) {
+    for delta in streamer.update(0, markup, &ToolParameterTypes::default()).unwrap() {
         fragments.push_str(&delta.function.arguments);
     }
-    fragments.push_str(&streamer.finish(0, &corrupted_call).function.arguments);
-
-    let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
-    assert_eq!(parsed, serde_json::json!({"path": "repro.rs", "content": "let x = \"hello\";"}));
+    assert!(streamer.finish(0, &corrupted_call).is_err());
 }
 
 #[test]
@@ -373,12 +371,12 @@ fn framed_tool_call_with_array_parameter_assembles_exactly() {
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
-        for delta in streamer.update(0, &partial, &types) {
+        for delta in streamer.update(0, &partial, &types).unwrap() {
             fragment_count += 1;
             fragments.push_str(&delta.function.arguments);
         }
     }
-    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+    fragments.push_str(&streamer.finish(0, &call).unwrap().function.arguments);
 
     assert!(fragment_count > 2, "fragments: {fragments:?}");
     let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
@@ -416,14 +414,14 @@ fn framed_string_parameter_streams_json_shaped_text_verbatim() {
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
-        for delta in streamer.update(0, &partial, &types) {
+        for delta in streamer.update(0, &partial, &types).unwrap() {
             if streamed.contains("\"content\":") && !delta.function.arguments.is_empty() {
                 content_fragments += 1;
             }
             streamed.push_str(&delta.function.arguments);
         }
     }
-    let closing = streamer.finish(0, &call).function.arguments;
+    let closing = streamer.finish(0, &call).unwrap().function.arguments;
 
     // the coerced final call, not a hand-written literal: a stream that disagreed with it would fall back
     // to the streamer's own candidate and still close with "}", so equality with the call is the check
@@ -468,75 +466,9 @@ fn declared_types_follow_refs_and_unions() {
     assert_eq!(coerced["shape"], serde_json::json!("{\"r\": 1}"));
 }
 
-#[test]
-fn declared_types_stop_recursive_union_expansion() {
-    for keyword in ["anyOf", "oneOf"] {
-        let mut branches = vec![serde_json::json!({"type": "object"})];
-        branches.extend(std::iter::repeat_n(serde_json::json!({"$ref": "#"}), 32));
-        let schema = serde_json::json!({keyword: branches});
-
-        assert_eq!(declared_types(&schema, &schema, 8), ["object"]);
-    }
-}
-
-#[test]
-fn declared_types_reuse_shared_union_nodes() {
-    let mut definitions = serde_json::Map::new();
-    definitions.insert("0".to_string(), serde_json::json!({"type": ["object", "object", "null"]}));
-    for level in 1..=6 {
-        let branches = vec![serde_json::json!({"$ref": format!("#/$defs/{}", level - 1)}); 32];
-        definitions.insert(level.to_string(), serde_json::json!({"anyOf": branches}));
-    }
-    let schema = serde_json::json!({"$ref": "#/$defs/6", "$defs": definitions});
-
-    assert_eq!(declared_types(&schema, &schema, 8), ["null", "object"]);
-}
-
-#[test]
-fn declared_types_revisit_shared_nodes_with_more_depth() {
-    let mut nested = serde_json::json!({"$ref": "#/$defs/Shared"});
-    for _ in 0..6 {
-        nested = serde_json::json!({"anyOf": [nested]});
-    }
-    let schema = serde_json::json!({
-        "$defs": {"Shared": {"anyOf": [{"type": "string"}]}},
-        "anyOf": [{"type": "object"}, {"$ref": "#/$defs/Shared"}, nested]
-    });
-
-    assert_eq!(declared_types(&schema, &schema, 8), ["object", "string"]);
-}
-
-#[test]
-fn declared_types_discard_partial_results_when_work_is_exhausted() {
-    let leaves = vec![serde_json::json!({"type": "object"}); 32];
-    let mut branches = vec![serde_json::json!({"type": "string"})];
-    branches.extend(std::iter::repeat_n(serde_json::json!({"anyOf": leaves}), 32));
-    let mut kinds = vec!["object"; MAX_SCHEMA_TRAVERSAL_WORK];
-    kinds.push("string");
-
-    for property in [serde_json::json!({"anyOf": branches}), serde_json::json!({"type": kinds})] {
-        let tools = serde_json::json!([{"function": {
-            "name": "read",
-            "parameters": {"properties": {"options": property}}
-        }}]);
-        let types = parameter_types(&tools.to_string());
-        assert!(types.declared("read", "options").is_none());
-
-        let call = ToolCall {
-            identifier: None,
-            name: "read".to_string(),
-            arguments: Value {
-                json: serde_json::json!({"options": "{\"a\": 1}"}).to_string(),
-            },
-        };
-        assert_eq!(coerce_tool_call(&call, &types).arguments.json, call.arguments.json);
-        assert_eq!(serialize_param_value("{\"a\": 1}", types.declared("read", "options")), r#""{\"a\": 1}""#);
-    }
-}
-
 fn parameter_types(tools_json: &str) -> ToolParameterTypes {
     let tools: Vec<OaiTool> = serde_json::from_str(tools_json).expect("valid tools json");
-    ToolParameterTypes::from_tools(Some(&tools))
+    tool_parameter_types(Some(&tools))
 }
 
 const SEARCH_TOOL: &str = r#"[{"type":"function","function":{"name":"search","description":"Search",
@@ -624,11 +556,11 @@ fn framed_streamer_agrees_with_coerced_boolean_finish() {
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
-        for delta in streamer.update(0, &partial, &types) {
+        for delta in streamer.update(0, &partial, &types).unwrap() {
             fragments.push_str(&delta.function.arguments);
         }
     }
-    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+    fragments.push_str(&streamer.finish(0, &call).unwrap().function.arguments);
 
     let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
     assert_eq!(parsed, serde_json::json!({"query": "cats", "metric": true}));
@@ -694,11 +626,11 @@ fn framed_streamer_agrees_with_coerced_finish() {
     let chars = final_markup.chars().collect::<Vec<_>>();
     for i in 0..=chars.len() {
         let partial: String = chars[..i].iter().collect();
-        for delta in streamer.update(0, &partial, &types) {
+        for delta in streamer.update(0, &partial, &types).unwrap() {
             fragments.push_str(&delta.function.arguments);
         }
     }
-    fragments.push_str(&streamer.finish(0, &call).function.arguments);
+    fragments.push_str(&streamer.finish(0, &call).unwrap().function.arguments);
 
     let parsed: serde_json::Value = serde_json::from_str(&fragments).expect("assembled arguments parse");
     assert_eq!(parsed, serde_json::json!({"query": "cats", "limit": 5}));

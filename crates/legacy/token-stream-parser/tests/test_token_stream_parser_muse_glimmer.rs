@@ -244,6 +244,26 @@ mod hermetic {
         let section = &assistant["content"][0];
         assert_eq!(section["type"], "tool_call");
         assert!(section["value"].get("arguments").is_none(), "an unfinished call must not expose arguments: {section}");
+        assert_eq!(section["value"], "<", "preserve the raw markup for argument streaming");
+    }
+
+    #[test]
+    fn tool_call_candidates_preserve_partial_parameter_text() {
+        let mut parser = parser();
+        let mut next_id = 0;
+        feed(&mut parser, "<|start|>user<|message|>hi<|eot|><|start|>assistant to=bash<|message|>", &mut next_id);
+        let raw = concat!(
+            "<atem:function_calls>\n<atem:invoke name=\"bash\">\n",
+            "<atem:parameter name=\"command\">printf '%s\\n' \"hello"
+        );
+        let mut prefix = String::new();
+        for character in raw.chars() {
+            prefix.push(character);
+            feed(&mut parser, &character.to_string(), &mut next_id);
+            let section = &parser.state().value[1]["content"][0];
+            assert_eq!(section["type"], "tool_call");
+            assert_eq!(section["value"], prefix);
+        }
     }
 
     #[test]

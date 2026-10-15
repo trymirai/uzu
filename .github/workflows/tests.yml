@@ -259,10 +259,53 @@ jobs:
           path: apps/mirai-gui/desktop/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
+  build-uzu-pi-extension:
+    name: check and build (uzu-pi-extension)
+    runs-on: prefect-github-actions
+
+    defaults:
+      run:
+        working-directory: apps/uzu-pi-extension
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          metal: true
+          bindings: true
+          node-version: '24'
+
+      - name: Build monorepo bindings
+        working-directory: crates/legacy/uzu/bindings/typescript
+        env:
+          MIRAI_DISABLE_DENO_BUILD: '1'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec napi build --manifest-path ../../Cargo.toml --no-default-features --features backend-metal,capability-grammar,bindings-napi --platform --output-dir src/napi
+          pnpm build
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck, test and build
+        run: pnpm check
+
+      - name: Check package
+        run: |
+          pnpm --dir dist pack
+          node scripts/check-package.mjs
+
+      - name: Upload extension package
+        uses: actions/upload-artifact@v4
+        with:
+          name: uzu-pi-extension
+          path: apps/uzu-pi-extension/dist/*.tgz
+          if-no-files-found: error
+
   completed:
     name: completed
     runs-on: ubuntu-latest
-    needs: [linters, tests, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui]
+    needs: [linters, tests, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui, build-uzu-pi-extension]
     if: ${{ always() }}
 
     steps:
@@ -273,3 +316,4 @@ jobs:
           [ "${{ needs.linters-mirai-gui.result }}" = success ]
           [ "${{ needs.tests-mirai-gui.result }}" = success ]
           [ "${{ needs.build-mirai-gui.result }}" = success ]
+          [ "${{ needs.build-uzu-pi-extension.result }}" = success ]

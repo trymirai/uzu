@@ -6,6 +6,7 @@ mod chat_instance;
 mod error;
 pub mod message;
 pub mod token;
+pub mod tool_call;
 #[cfg(test)]
 mod tool_cancellation_tests;
 
@@ -659,27 +660,26 @@ fn build_message(
         message = message.with_text(text.clone());
     }
     for (index, tool_call) in output.tool_calls.iter().enumerate() {
+        let supplied_identifier = match tool_call {
+            ToolCallState::Finished(call) => call.identifier.clone(),
+            ToolCallState::Candidate(_) => None,
+        };
+        if generated_tool_call_identifiers.len() <= index {
+            generated_tool_call_identifiers.resize(index + 1, None);
+        }
+        let identifier = generated_tool_call_identifiers[index]
+            .get_or_insert_with(|| supplied_identifier.unwrap_or_else(|| Uuid::new_v4().to_string()))
+            .clone();
         message = match tool_call {
-            ToolCallState::Candidate(candidate) => {
-                message.with_tool_call_candidate(Value::from(serde_json::Value::String(candidate.clone())))
-            },
-            ToolCallState::Finished(tool_call) => {
-                let identifier = tool_call.identifier.clone().or_else(|| {
-                    if generated_tool_call_identifiers.len() <= index {
-                        generated_tool_call_identifiers.resize(index + 1, None);
-                    }
-                    Some(
-                        generated_tool_call_identifiers[index]
-                            .get_or_insert_with(|| Uuid::new_v4().to_string())
-                            .clone(),
-                    )
-                });
-                message.with_tool_call(ToolCall {
-                    identifier,
-                    name: tool_call.name.clone(),
-                    arguments: normalize_tool_call_arguments(tool_call.arguments.clone()),
-                })
-            },
+            ToolCallState::Candidate(candidate) => message.with_block(ChatContentBlock::ToolCallCandidate {
+                value: Value::from(serde_json::Value::String(candidate.clone())),
+                identifier: Some(identifier),
+            }),
+            ToolCallState::Finished(tool_call) => message.with_tool_call(ToolCall {
+                identifier: Some(identifier),
+                name: tool_call.name.clone(),
+                arguments: normalize_tool_call_arguments(tool_call.arguments.clone()),
+            }),
         };
     }
     message
