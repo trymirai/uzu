@@ -139,6 +139,19 @@ export declare class TextToSpeechSessionStreamChunkOutput {
   constructor(output: TextToSpeechOutput)
 }
 
+export declare class ToolCallArgumentDelta {
+  name: string
+  arguments: string
+  constructor(name: string, arguments: string)
+}
+
+/** Converts model tool-call candidates into append-only JSON argument fragments. */
+export declare class ToolCallArgumentStream {
+  update(raw: string): ToolCallArgumentDelta
+  finish(call: ToolCall): ToolCallArgumentDelta
+  static create(tools: Array<ToolNamespace>): ToolCallArgumentStream
+}
+
 export type ChatSessionError =
   | { type: 'Backend', message: string }
   | { type: 'Loading', message: string }
@@ -259,7 +272,8 @@ export declare class ChatContentBlockToolCall {
 
 export declare class ChatContentBlockToolCallCandidate {
   value: any
-  constructor(value: any)
+  identifier?: string
+  constructor(value: any, identifier?: string)
 }
 
 export declare class ChatContentBlockToolCallResult {
@@ -912,6 +926,15 @@ export type ToolDescription =
 
 export type TranslationPayload =
   TranslationPayloadText | TranslationPayloadImage
+/** Chat metadata available without loading model weights or allocating a session. */
+export declare class ChatModelInfo {
+  /** Architectural limit; absent before download or for models without a finite limit. */
+  contextLength?: number
+  capabilities: ChatModelCapabilities
+  defaultReasoningEffort?: ReasoningEffort
+  constructor(contextLength?: number, capabilities: ChatModelCapabilities, defaultReasoningEffort?: ReasoningEffort)
+}
+
 export declare class Device {
   osName?: string
   cpuName?: string
@@ -942,11 +965,23 @@ export declare class DownloaderStream {
 }
 
 export declare class Engine {
+  /**
+   * Returns metadata for a Uzu chat model, including models not yet downloaded.
+   * Encoding capabilities come from the catalog; the context limit needs local configuration.
+   * Remote and non-chat models return `None`.
+   */
+  chatModelInfo(model: Model): Promise<ChatModelInfo | null>
+
   static create(config: EngineConfig): Promise<Engine>
   registerCallback(callback: EngineCallback): Promise<void>
   removeRegistry(registryIdentifier: string): Promise<void>
   removeBackend(identifier: string): Promise<void>
   get models(): Promise<Array<Model>>
+  /**
+   * Refresh registries and wait until the catalog has been published to storage.
+   * Registries that fail to refresh retain their last known entries.
+   */
+  refreshModels(): Promise<Array<Model>>
   get modelsOnDevice(): Promise<Array<Model>>
   get modelsRemote(): Promise<Array<Model>>
   get modelsDownloadable(): Promise<Array<Model>>

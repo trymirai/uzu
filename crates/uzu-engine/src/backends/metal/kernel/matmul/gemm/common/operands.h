@@ -88,6 +88,7 @@ struct RightStorage {
   const device typename Right::ScaleElement* biases;
   const device uint8_t* zero_points;
   bool signed_codes;
+  GemmBLayout gemm_b_layout;
 
   METAL_FUNC const device typename Right::ScaleElement* bias() const thread {
     static_assert(Right::SCHEME == GemmBPrologueKind::ScaleBiasDequant, "bias is only valid for ScaleBiasDequant");
@@ -123,10 +124,11 @@ METAL_FUNC RightStorage<Right> pack_right(
     const device Element* scales,
     const device Element* biases,
     const device uint8_t* zero_points,
-    const bool signed_codes
+    const bool signed_codes,
+    const GemmBLayout gemm_b_layout
 ) {
   if constexpr (!Right::QUANTIZED) {
-    return {dense, nullptr, nullptr, nullptr, nullptr, false};
+    return {dense, nullptr, nullptr, nullptr, nullptr, false, GemmBLayout::RowMajor};
   } else {
     return {
         nullptr,
@@ -134,7 +136,8 @@ METAL_FUNC RightStorage<Right> pack_right(
         scales,
         Right::SCHEME == GemmBPrologueKind::ScaleBiasDequant ? biases : nullptr,
         Right::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant ? zero_points : nullptr,
-        signed_codes
+        signed_codes,
+        gemm_b_layout
     };
   }
 }

@@ -41,6 +41,10 @@ impl ToolCallState {
                 },
             });
         }
-        OutputToolCallState::Candidate(self.arguments.clone())
+        OutputToolCallState::Candidate(format!(
+            "{{\"name\":{},\"arguments\":{}",
+            serde_json::to_string(&self.name).expect("tool name serializes"),
+            self.arguments,
+        ))
     }
 }

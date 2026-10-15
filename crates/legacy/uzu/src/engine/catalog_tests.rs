@@ -114,6 +114,120 @@ async fn engine() -> (Engine, TempDir) {
 }
 
 #[tokio::test]
+async fn refresh_models_waits_for_in_flight_catalog_publication() {
+    let (engine, _directory) = engine().await;
+    let (registry, complete, started) = registry("refresh", Some(vec![model("cached")]));
+    engine.start_registry(registry).await.unwrap();
+    started.notified().await;
+    let refresh = tokio::spawn({
+        let engine = engine.clone();
+        async move { engine.refresh_models().await }
+    });
+    tokio::task::yield_now().await;
+    assert!(!refresh.is_finished());
+    complete.send(Ok(vec![model("updated")])).unwrap();
+    let models = tokio::time::timeout(Duration::from_secs(1), refresh).await.unwrap().unwrap().unwrap();
+    assert_eq!(models, vec![model("updated")]);
+    assert!(!engine.catalog_is_refreshing());
+}
+
+#[tokio::test]
+async fn chat_model_info_reads_capabilities_and_context_without_weights() {
+    use shoji::types::{
+        basic::Value,
+        model::{ModelSource, ModelSpecialization},
+    };
+
+    let (engine, directory) = engine().await;
+    let norm = serde_json::json!({
+        "epsilon": 0.00001, "scale_offset": null, "upcast_mode": "only_normalization",
+        "subtract_mean": false, "has_scale": true, "has_biases": false,
+    });
+    let layer = |length| {
+        serde_json::json!({
+            "pre_mixer_norm_config": null, "post_mixer_norm_config": null,
+            "mixer_conv_config": null, "mlp_conv_config": null, "post_mlp_norm_config": null,
+            "hidden_dim": null, "ple_config": null, "has_post_layer_scalar": false,
+            "kv_source_layer_index": null, "pre_mlp_norm_config": norm,
+            "rope_config": { "type": "UnscaledRoPEConfig", "base": 10000.0, "max_sequence_length": length, "head_dim": 4 },
+            "mixer_config": {
+                "type": "AttentionConfig", "qkvg_projection_config": {}, "out_projection_config": {},
+                "query_norm_config": null, "key_norm_config": null, "num_heads": 1, "num_groups": 1,
+                "head_dim": 4, "is_causal": true, "scale": null, "sliding_window_size": null,
+                "logit_soft_cap": null, "has_sinks": false, "has_qkvg_biases": false,
+                "has_out_biases": false, "has_gate": false, "normalize_values": false, "is_kv_sharing": false,
+            },
+            "mlp_config": {
+            "type": "DenseMLPConfig", "linear_config": {}, "activation": { "type": "SiLU", "alpha": 1.0 },
+                "has_up_biases": false, "has_down_biases": false, "gate_clipping": null, "up_clipping": null,
+            },
+        })
+    };
+    let config = serde_json::json!({
+        "type": "LanguageModelConfig", "token_codec_config": { "type": "RawTextCodecConfig" },
+        "decoder_config": {
+            "embedding_config": { "type": "TiedEmbeddingConfig", "input_scale": null, "logit_soft_cap": null, "logit_scale": null },
+            "transformer_config": { "layer_configs": [layer(32768), layer(16384)], "model_dim": 4, "hidden_dim": 4, "output_norm_config": norm },
+            "vocab_size": 4, "ple_model_config": null, "embedding_norm_config": null,
+        },
+        "generation_config": {
+            "stop_token_ids": [], "temperature": null, "top_k": null, "top_p": null, "min_p": null,
+            "banned_tokens": null, "repetition_penalty": null, "presence_penalty": null,
+            "frequency_penalty": null, "suffix_repetition_length": null,
+        },
+    });
+    std::fs::write(directory.path().join("config.json"), config.to_string()).unwrap();
+    let model = Model::external(
+        "metadata-test".into(),
+        "local".into(),
+        "Local".into(),
+        "uzu".into(),
+        "Uzu".into(),
+        "1".into(),
+        vec![ModelSpecialization::Chat {}],
+        ModelAccessibility::OnDevice {
+            source: ModelSource::Filesystem {
+                path: directory.path().to_string_lossy().into_owned(),
+            },
+        },
+        Some(Value::from(serde_json::json!({ "type": "hanashi", "name": "qwen3.5" }))),
+    );
+    let info = engine.chat_model_info(&model).await.unwrap().unwrap();
+    assert_eq!(info.context_length, Some(16384));
+    assert!(info.capabilities.supports_tools);
+    assert!(info.capabilities.supports_reasoning);
+    assert!(info.capabilities.supports_disable_reasoning);
+    let mut unlimited = config;
+    unlimited["decoder_config"]["transformer_config"]["layer_configs"] = serde_json::json!([]);
+    std::fs::write(directory.path().join("config.json"), unlimited.to_string()).unwrap();
+    assert_eq!(engine.chat_model_info(&model).await.unwrap().unwrap().context_length, None);
+
+    let downloadable = Model {
+        identifier: "not-downloaded".into(),
+        accessibility: ModelAccessibility::OnDevice {
+            source: ModelSource::Registry {
+                toolchain_version: "1".into(),
+                repository: None,
+                source_repository: None,
+                files: vec![],
+            },
+        },
+        ..model.clone()
+    };
+    let pending = engine.chat_model_info(&downloadable).await.unwrap().unwrap();
+    assert_eq!(pending.context_length, None);
+    assert_eq!(pending.capabilities, info.capabilities);
+    assert_eq!(pending.default_reasoning_effort, info.default_reasoning_effort);
+    let remote = Model {
+        accessibility: ModelAccessibility::Remote {
+            repository: None,
+        },
+        ..model
+    };
+    assert!(engine.chat_model_info(&remote).await.unwrap().is_none());
+}
+
+#[tokio::test]
 async fn a_stalled_registry_does_not_delay_a_healthy_registry() {
     let (engine, _directory) = engine().await;
     let (slow, slow_result, started) = registry("slow", None);

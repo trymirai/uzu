@@ -118,6 +118,15 @@ impl<B: Backend> LinearMatmul<B> {
         self.matrix.try_prepare_a8_storage().then_some(quantization)
     }
 
+    pub fn optimize_weights_layout(
+        &mut self,
+        context: &B::Context,
+    ) -> Result<(), B::Error> {
+        let shape = self.matmul_shape(1, false);
+        let kernel = self.kernel.lock();
+        self.matrix.optimize_weights_layout(|weights| kernel.optimize_weights_layout(&shape, weights, context))
+    }
+
     pub(super) fn encode_with_a(
         &self,
         a: MatmulA<impl BufferRef<Backend = B>>,
@@ -204,6 +213,6 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         context: &B::Context,
     ) -> ActivationFormat {
         let bf16_shape = self.matmul_shape(batch_dim, true);
-        self.kernel.lock().select_activation_format(&bf16_shape, context)
+        self.kernel.lock().select_activation_format(&bf16_shape, self.matmul_b().weights_layout(), context)
     }
 }

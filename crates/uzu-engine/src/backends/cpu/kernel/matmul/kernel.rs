@@ -34,6 +34,7 @@ pub struct MatmulCpuKernel {
 impl MatmulKernel for MatmulCpuKernel {
     type Backend = Cpu;
     type Error = MatmulCpuError;
+    type WeightsLayout = ();
 
     fn new(
         context: &CpuContext,

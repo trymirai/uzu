@@ -36,6 +36,15 @@ struct GemvParams {
   GemmDTransform output_transform;
   bool gathered;
   bool signed_codes;
+  GemmBLayout gemm_b_layout;
+
+  METAL_FUNC uint output_row(uint row) const thread {
+    if (gemm_b_layout != GemmBLayout::MxuTiled || gathered) {
+      return row;
+    }
+    const uint block_row = row % 32;
+    return row - block_row + block_row / 16 * 4 + block_row / 4 % 4 + block_row % 4 * 8;
+  }
 };
 
 } // namespace gemm

@@ -33,7 +33,7 @@ use crate::{
         chat_tool_calls::{
             OaiTool, OaiToolCall, ToolCallStreamer, ToolParameterTypes, backfill_tool_result_names, choose_tools,
             coerce_tool_call, insert_tools_message, oai_tool_call, parse_parameter_text, reply_tool_calls,
-            to_tool_call, tool_call_result_block, withhold_stream_text,
+            to_tool_call, tool_call_result_block, tool_parameter_types, withhold_stream_text,
         },
         request_info::RequestInfo,
         request_log::RequestLog,
@@ -1011,19 +1011,32 @@ async fn run_stream(
                 let candidates = reply.message.content.iter().filter_map(|block| match block {
                     ChatContentBlock::ToolCallCandidate {
                         value,
+                        ..
                     } => Some(value),
                     _ => None,
                 });
                 for (offset, value) in candidates.enumerate() {
                     let index = finished_count + offset;
-                    // candidates carry their partial text as a JSON string document, except
-                    // object-valued ones (e.g. muse-glimmer's name-only progress objects)
+                    // Candidates carry partial markup as a JSON string document or a JSON object.
                     let raw = serde_json::from_str::<String>(&value.json).unwrap_or_else(|_| value.json.clone());
                     let deltas = tool_call_streamers.entry(index).or_insert_with(ToolCallStreamer::new).update(
                         index,
                         &raw,
                         &parameter_types,
                     );
+                    let deltas = match deltas {
+                        Ok(deltas) => deltas,
+                        Err(error) => {
+                            let message = error.to_string();
+                            let _ = sender.send(Event::data(
+                                serde_json::to_string(&oai_error_body(Status::BadRequest, "backend_error", &message))
+                                    .unwrap_or_default(),
+                            ));
+                            cancel_and_drain(&stream).await;
+                            log.fail(&message);
+                            return;
+                        },
+                    };
                     for delta in deltas {
                         let sent = sender.send(Event::data(chunk_json(
                             &id,
@@ -1053,7 +1066,23 @@ async fn run_stream(
                     }
                     let call = coerce_tool_call(&tool_calls[index], &parameter_types);
                     let delta = match tool_call_streamers.remove(&index) {
-                        Some(mut streamer) => streamer.finish(index, &call),
+                        Some(mut streamer) => match streamer.finish(index, &call) {
+                            Ok(delta) => delta,
+                            Err(error) => {
+                                let message = error.to_string();
+                                let _ = sender.send(Event::data(
+                                    serde_json::to_string(&oai_error_body(
+                                        Status::BadRequest,
+                                        "backend_error",
+                                        &message,
+                                    ))
+                                    .unwrap_or_default(),
+                                ));
+                                cancel_and_drain(&stream).await;
+                                log.fail(&message);
+                                return;
+                            },
+                        },
                         None => oai_tool_call(Some(index), &call),
                     };
                     let sent = sender.send(Event::data(chunk_json(
@@ -1224,7 +1253,7 @@ pub async fn handle_chat_completions(
 
     // The parser keeps every argument the text the model wrote; the declared
     // schemas restore the types when replies cross back into the OpenAI wire format.
-    let parameter_types = ToolParameterTypes::from_tools(request.tools.as_deref());
+    let parameter_types = tool_parameter_types(request.tools.as_deref());
 
     let id = request_info.id.as_str().to_owned();
     if is_stream {

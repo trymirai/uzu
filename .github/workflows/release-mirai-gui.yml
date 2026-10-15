@@ -66,7 +66,7 @@ jobs:
     name: Build signed macOS app
     needs: decide
     if: ${{ needs.decide.outputs.build == 'true' }}
-    runs-on: prefect-github-actions
+    runs-on: macos-26
     outputs:
       artifact-id: ${{ steps.artifacts.outputs.artifact-id }}
 
@@ -318,14 +318,3 @@ jobs:
           fi
           gh release upload "${TAG}" --clobber "${DMG_TARGET}" "${TARGZ_NAME}" "${TARGZ_NAME}.sig"
           gh release upload "${TAG}" --clobber latest.json
-
-      - uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.ASSETS_GOOGLE_CREDENTIALS }}
-
-      - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Upload the DMG to the website bucket
-        run: |
-          set -euo pipefail
-          gsutil cp -n "${DMG_TARGET}" "gs://${{ vars.ASSETS_BUCKET_NAME }}/app/$(basename "${DMG_TARGET}")"

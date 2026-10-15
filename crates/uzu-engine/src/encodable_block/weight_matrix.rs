@@ -5,7 +5,7 @@ use crate::{
     backends::common::{
         Backend, BufferCpuAccessible, BufferMut,
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
-        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection},
+        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
@@ -86,6 +86,7 @@ struct Quantized<B: Backend> {
     params: QuantParams,
     info: QuantizationInfo,
     signed_codes: bool,
+    weights_layout: WeightsLayout<B>,
 }
 
 pub struct WeightMatrix<B: Backend> {
@@ -163,6 +164,7 @@ impl<B: Backend> WeightMatrix<B> {
                 params,
                 info,
                 signed_codes: false,
+                weights_layout: Default::default(),
             }),
         })
     }
@@ -204,7 +206,21 @@ impl<B: Backend> WeightMatrix<B> {
             mode,
             group_size,
             signed_codes,
+            weights_layout: quantized.weights_layout,
         })
+    }
+
+    pub fn optimize_weights_layout<E>(
+        &mut self,
+        optimize: impl FnOnce(&mut B::GlobalBuffer) -> Result<WeightsLayout<B>, E>,
+    ) -> Result<(), E> {
+        let Some(quantized) =
+            self.quantized.as_mut().filter(|quantized| quantized.weights_layout == WeightsLayout::<B>::default())
+        else {
+            return Ok(());
+        };
+        quantized.weights_layout = optimize(&mut self.values)?;
+        Ok(())
     }
 
     pub fn try_prepare_a8_storage(&mut self) -> bool {

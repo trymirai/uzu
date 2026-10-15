@@ -1609,6 +1609,194 @@ public func FfiConverterTypeTextToSpeechSessionStream_lower(_ value: TextToSpeec
 
 
 
+
+
+/**
+ * Converts model tool-call candidates into append-only JSON argument fragments.
+ */
+public protocol ToolCallArgumentStreamProtocol: AnyObject, Sendable {
+    
+    func finish(call: ToolCall) throws  -> ToolCallArgumentDelta
+    
+    func update(raw: String) throws  -> ToolCallArgumentDelta
+    
+}
+/**
+ * Converts model tool-call candidates into append-only JSON argument fragments.
+ */
+open class ToolCallArgumentStream: ToolCallArgumentStreamProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_nagare_fn_clone_toolcallargumentstream(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_nagare_fn_free_toolcallargumentstream(handle, $0) }
+    }
+
+    
+
+    
+open func finish(call: ToolCall)throws  -> ToolCallArgumentDelta  {
+    return try  FfiConverterTypeToolCallArgumentDelta_lift(try rustCallWithError(FfiConverterTypeChatSessionError_lift) {
+    uniffi_nagare_fn_method_toolcallargumentstream_finish(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeToolCall_lower(call),$0
+    )
+})
+}
+    
+open func update(raw: String)throws  -> ToolCallArgumentDelta  {
+    return try  FfiConverterTypeToolCallArgumentDelta_lift(try rustCallWithError(FfiConverterTypeChatSessionError_lift) {
+    uniffi_nagare_fn_method_toolcallargumentstream_update(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(raw),$0
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeToolCallArgumentStream: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ToolCallArgumentStream
+
+    public static func lift(_ handle: UInt64) throws -> ToolCallArgumentStream {
+        return ToolCallArgumentStream(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ToolCallArgumentStream) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ToolCallArgumentStream {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ToolCallArgumentStream, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeToolCallArgumentStream_lift(_ handle: UInt64) throws -> ToolCallArgumentStream {
+    return try FfiConverterTypeToolCallArgumentStream.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeToolCallArgumentStream_lower(_ value: ToolCallArgumentStream) -> UInt64 {
+    return FfiConverterTypeToolCallArgumentStream.lower(value)
+}
+
+
+
+
+public struct ToolCallArgumentDelta: Equatable, Hashable, Codable {
+    public var name: String
+    public var arguments: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, arguments: String) {
+        self.name = name
+        self.arguments = arguments
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ToolCallArgumentDelta: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeToolCallArgumentDelta: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ToolCallArgumentDelta {
+        return
+            try ToolCallArgumentDelta(
+                name: FfiConverterString.read(from: &buf), 
+                arguments: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ToolCallArgumentDelta, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.arguments, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeToolCallArgumentDelta_lift(_ buf: RustBuffer) throws -> ToolCallArgumentDelta {
+    return try FfiConverterTypeToolCallArgumentDelta.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeToolCallArgumentDelta_lower(_ value: ToolCallArgumentDelta) -> RustBuffer {
+    return FfiConverterTypeToolCallArgumentDelta.lower(value)
+}
+
+
 public enum ChatSessionError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
     
@@ -2663,6 +2851,31 @@ fileprivate struct FfiConverterSequenceTypeClassificationMessage: FfiConverterRu
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeToolNamespace: FfiConverterRustBuffer {
+    typealias SwiftType = [ToolNamespace]
+
+    public static func write(_ value: [ToolNamespace], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeToolNamespace.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ToolNamespace] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ToolNamespace]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeToolNamespace.read(from: &buf))
+        }
+        return seq
+    }
+}
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
 private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
 
@@ -2801,6 +3014,13 @@ private func uniffiForeignFutureDroppedCallback(handle: UInt64) {
 public func uniffiForeignFutureHandleCountNagare() -> Int {
     UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.count
 }
+public func toolCallArgumentStreamCreate(tools: [ToolNamespace]) -> ToolCallArgumentStream  {
+    return try!  FfiConverterTypeToolCallArgumentStream_lift(try! rustCall() {
+    uniffi_nagare_fn_func_tool_call_argument_stream_create(
+        FfiConverterSequenceTypeToolNamespace.lower(tools),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -2816,6 +3036,9 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_nagare_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_nagare_checksum_func_tool_call_argument_stream_create() != 13199) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_chatsession_add_foreign_tool() != 48906) {
         return InitializationResult.apiChecksumMismatch
@@ -2851,6 +3074,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_chatinstance_model() != 52758) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_toolcallargumentstream_finish() != 39556) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_toolcallargumentstream_update() != 26013) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_classificationsession_classify() != 62366) {
