@@ -141,7 +141,6 @@ KERNEL(AttentionGemmGroupedInt8)(
     const ThreadContext thread_context,
     const uint tile_split_index GROUPS(query_tiles * split_count),
     const uint kv_head_index GROUPS(num_kv_heads),
-    // Keep Z indexing: folding it to zero increases register spills on M5.
     const uint batch_index GROUPS(1),
     const uint thread_index THREADS(ATTENTION_GQA_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {

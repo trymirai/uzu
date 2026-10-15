@@ -41,8 +41,6 @@ KERNEL(AttentionGemmGrouped)(
     const ThreadContext thread_context,
     const uint tile_split_flat GROUPS(query_tiles * num_splits),
     const uint kv_head_idx GROUPS(kv_heads),
-    // Keep Z indexing: folding it to zero increases register spills on M5.
-    const uint batch_idx GROUPS(1),
     const uint lid THREADS(ATTENTION_GQA_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
   using Layout = AttentionGemmGroupedLayout<BK, BD, D_SLICES>;
