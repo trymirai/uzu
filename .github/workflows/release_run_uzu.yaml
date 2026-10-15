@@ -1,0 +1,86 @@
+name: Release run.uzu
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch, tag, or commit to release
+        type: string
+        default: experiments/demo-w
+        required: true
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-run-uzu
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Resolve the release revision
+        id: source
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          RELEASE_TARGET: ${{ secrets.RUN_UZU_RELEASE_TARGET }}
+        with:
+          script: |
+            let target;
+            try {
+              target = JSON.parse(process.env.RELEASE_TARGET);
+              for (const key of ['owner', 'repo', 'workflow', 'ref']) {
+                if (typeof target[key] !== 'string' || !target[key].trim()) {
+                  throw new Error('Missing release configuration');
+                }
+                core.setSecret(target[key]);
+              }
+            } catch {
+              core.setFailed('The release destination is not configured');
+              return;
+            }
+            const ref = context.eventName === 'release'
+              ? context.payload.release.tag_name
+              : process.env.SOURCE_REF;
+            const { data } = await github.rest.repos.getCommit({ ...context.repo, ref });
+            core.setOutput('sha', data.sha);
+            core.info(`Releasing source revision ${data.sha}`);
+
+      - name: Authorize the release request
+        id: release-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          app-id: ${{ secrets.RUN_UZU_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.RUN_UZU_DISPATCH_PRIVATE_KEY }}
+          owner: ${{ fromJSON(secrets.RUN_UZU_RELEASE_TARGET).owner }}
+          repositories: ${{ fromJSON(secrets.RUN_UZU_RELEASE_TARGET).repo }}
+          permission-actions: write
+
+      - name: Request the release
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          RELEASE_TARGET: ${{ secrets.RUN_UZU_RELEASE_TARGET }}
+        with:
+          github-token: ${{ steps.release-token.outputs.token }}
+          script: |
+            const target = JSON.parse(process.env.RELEASE_TARGET);
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: target.owner,
+                repo: target.repo,
+                workflow_id: target.workflow,
+                ref: target.ref,
+                inputs: { source_sha: process.env.SOURCE_SHA }
+              });
+              await core.summary
+                .addRaw(`Release request accepted for source revision ${process.env.SOURCE_SHA}.`)
+                .write();
+            } catch (error) {
+              core.setFailed(`Release request failed (HTTP ${error.status ?? 'unknown'})`);
+            }
