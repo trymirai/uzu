@@ -7,21 +7,20 @@
 
 namespace kv_layout = uzu::kv_layout;
 
-UZU_CONST float INT8_MAX = 127.0f;
-
 template <typename ElementT, ushort VALUES_PER_LANE>
 METAL_FUNC ElementT kv_quantize_row(const thread float* values, thread int* codes) {
+  constexpr float CODE_MAX = static_cast<float>(metal::numeric_limits<int8_t>::max());
   float abs_max = 0.0f;
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     abs_max = metal::max(abs_max, metal::abs(values[value_index]));
   }
   abs_max = metal::simd_max(abs_max);
-  const ElementT scale = ElementT(abs_max > 0.0f ? metal::precise::divide(abs_max, INT8_MAX) : 1.0f);
+  const ElementT scale = ElementT(abs_max > 0.0f ? metal::precise::divide(abs_max, CODE_MAX) : 1.0f);
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     codes[value_index] =
-        int(metal::clamp(metal::rint(metal::precise::divide(values[value_index], float(scale))), -INT8_MAX, INT8_MAX));
+        int(metal::clamp(metal::rint(metal::precise::divide(values[value_index], float(scale))), -CODE_MAX, CODE_MAX));
   }
   return scale;
 }
