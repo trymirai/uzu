@@ -1,14 +1,14 @@
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
-use super::{gemm, single_pass, two_pass};
+use super::{super::FullPrecisionInput, gemm, single_pass, two_pass};
 use crate::{
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
             gpu_types::trie::TrieNode as GpuTrieNode,
             kernel::{
-                AttentionArguments, AttentionKernel, AttentionPrepareInt8Kernel, Int8AttentionArguments, KVFormat,
+                AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareInt8Kernel, Int8Input, KVFormat,
                 SigmoidGateKernel, kv_layout::packed_query_rows,
             },
         },
@@ -87,10 +87,12 @@ fn run_attention_with_kernel<B: Backend>(
         let words: Vec<u32> = nodes.iter().flat_map(|node| [node.trie_start, node.trie_end, node.height]).collect();
         create_buffer_with_data::<B, u32>(context, &words)
     });
-    let arguments = AttentionArguments {
+    let input = AttentionInput::FullPrecision(FullPrecisionInput {
         queries: &queries,
         keys: &keys,
         values: &values,
+    });
+    let arguments = AttentionArguments {
         suffix_length: suffix_length as u32,
         trie: trie.as_ref(),
         sinks: sinks.as_ref(),
@@ -98,7 +100,7 @@ fn run_attention_with_kernel<B: Backend>(
         gate: None::<&B::GlobalBuffer>,
     };
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    let pooled = kernel.encode(arguments, &mut command_buffer).expect("encode");
+    let pooled = kernel.encode(input, arguments, &mut command_buffer).expect("encode");
     let mut output = create_buffer::<B, bf16>(context, suffix_length * num_q_heads * head_dim);
     command_buffer.encode_copy(&pooled, &mut output);
     let completed = command_buffer.end_encoding().submit().wait_until_completed().expect("submit");
@@ -128,10 +130,12 @@ fn run_direct_metal(
     let keys = create_buffer_with_data::<Metal, bf16>(context, &keys_data);
     let values = create_buffer_with_data::<Metal, bf16>(context, &values_data);
     let sinks = sinks_data.map(|data| create_buffer_with_data::<Metal, bf16>(context, data));
-    let arguments = AttentionArguments {
+    let input = FullPrecisionInput {
         queries: &queries,
         keys: &keys,
         values: &values,
+    };
+    let arguments = AttentionArguments {
         suffix_length: suffix_length as u32,
         trie: None::<&<Metal as Backend>::GlobalBuffer>,
         sinks: sinks.as_ref(),
@@ -141,10 +145,10 @@ fn run_direct_metal(
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let pooled = match route {
         DirectKernel::SinglePass => {
-            single_pass::AttentionSinglePass::new(&config).encode(arguments, &mut command_buffer)
+            single_pass::AttentionSinglePass::new(&config).encode(input, arguments, &mut command_buffer)
         },
-        DirectKernel::TwoPass => two_pass::AttentionTwoPass::new(&config).encode(arguments, &mut command_buffer),
-        DirectKernel::Gemm => gemm::AttentionGemm::new(&config).encode(arguments, &mut command_buffer),
+        DirectKernel::TwoPass => two_pass::AttentionTwoPass::new(&config).encode(input, arguments, &mut command_buffer),
+        DirectKernel::Gemm => gemm::AttentionGemm::new(&config).encode(input, arguments, &mut command_buffer),
     }
     .expect("direct attention");
     let mut output = create_buffer::<Metal, bf16>(context, suffix_length * num_q_heads * head_dim);
@@ -334,10 +338,12 @@ fn check_attention_gate<B: Backend>(
     let keys = create_buffer_with_data::<B, bf16>(context, &keys);
     let values = create_buffer_with_data::<B, bf16>(context, &values);
     let qkvg = create_buffer_with_data::<B, bf16>(context, &fill_attention(suffix_length * PROJECTION_DIM, 3.0));
-    let arguments = |gate| AttentionArguments {
+    let input = AttentionInput::FullPrecision(FullPrecisionInput {
         queries: &queries,
         keys: &keys,
         values: &values,
+    });
+    let arguments = |gate| AttentionArguments {
         suffix_length: suffix_length as u32,
         trie: None::<&B::GlobalBuffer>,
         sinks: None,
@@ -346,7 +352,7 @@ fn check_attention_gate<B: Backend>(
     };
     let gate_segment = qkvg.subrange((PROJECTION_DIM - GATE_DIM) * size_of::<bf16>()..);
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    let mut expected = plain.encode(arguments(None), &mut command_buffer).expect("plain attention");
+    let mut expected = plain.encode(input, arguments(None), &mut command_buffer).expect("plain attention");
     sigmoid_gate.encode(
         gate_segment,
         &mut expected,
@@ -355,7 +361,7 @@ fn check_attention_gate<B: Backend>(
         PROJECTION_DIM as u32,
         &mut command_buffer,
     );
-    let fused = gated.encode(arguments(Some(gate_segment)), &mut command_buffer).expect("gated attention");
+    let fused = gated.encode(input, arguments(Some(gate_segment)), &mut command_buffer).expect("gated attention");
     let mut expected_out = create_buffer::<B, bf16>(context, suffix_length * GATE_DIM);
     let mut fused_out = create_buffer::<B, bf16>(context, suffix_length * GATE_DIM);
     command_buffer.encode_copy(&expected, &mut expected_out);
@@ -428,7 +434,7 @@ fn int8_attention_matches_cpu() {
             rows[(prefix + index % suffix) * stride + index / suffix * DIM..][..DIM].copy_from_slice(query);
         }
         let mut cache =
-            KVStorage::<Metal>::create_empty(KVFormat::Int8, KV_HEADS as u32, DIM as u32, 2048, DataType::BF16, &metal)
+            KVStorage::<Metal>::create_empty(KVFormat::INT8, KV_HEADS as u32, DIM as u32, 2048, DataType::BF16, &metal)
                 .unwrap();
         cache.prepare(2048).unwrap();
         let KVStorage::Int8(kv, _) = &mut cache else {
@@ -481,16 +487,22 @@ fn int8_attention_matches_cpu() {
                 packed_rows as u32,
                 &mut command_buffer,
             );
-            let arguments = Int8AttentionArguments {
+            let input = AttentionInput::Int8(Int8Input {
                 query_codes: &query_codes,
                 query_scales: &query_scales,
-                kv: &*kv,
+                k_codes: kv.k_codes.as_ref(),
+                k_scales: kv.k_scales.as_ref(),
+                v_codes: kv.v_codes.as_ref(),
+                v_scales: kv.v_scales.as_ref(),
+            });
+            let arguments = AttentionArguments {
+                sinks: None,
                 suffix_length: suffix as u32,
                 trie: trie.as_ref(),
                 cache: KVCacheView::full(prefix as u32),
                 gate: None::<&<Metal as Backend>::GlobalBuffer>,
             };
-            let pooled = kernel.encode_int8(arguments, &mut command_buffer).unwrap();
+            let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();
             let mut output = create_buffer::<Metal, bf16>(&metal, suffix * q_heads * DIM);
             command_buffer.encode_copy(&pooled, &mut output);
             drop((pooled, trie));

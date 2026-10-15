@@ -1,5 +1,6 @@
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
+use super::FullPrecisionInput;
 use crate::{
     backends::{
         common::{
@@ -267,15 +268,12 @@ impl AttentionGemmGrouped {
     pub fn encode(
         &self,
         mask: MaskKind,
-        arguments: AttentionArguments<
-            '_,
-            Metal,
-            impl BufferRef<Backend = Metal>,
-            impl BufferRef<Backend = Metal>,
+        input: FullPrecisionInput<
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
+        arguments: AttentionArguments<'_, Metal, impl BufferRef<Backend = Metal>, impl BufferRef<Backend = Metal>>,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(<Metal as Backend>::ScratchBuffer, bool), MetalError> {
         let suffix_length = arguments.suffix_length;
@@ -300,9 +298,9 @@ impl AttentionGemmGrouped {
             gpu_core_count,
         );
         let gate_applied = core.encode(
-            arguments.queries,
-            arguments.keys,
-            arguments.values,
+            input.queries,
+            input.keys,
+            input.values,
             &mut output,
             arguments.trie,
             arguments.gate,

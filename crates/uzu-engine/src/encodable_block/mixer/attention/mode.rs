@@ -2,8 +2,8 @@ use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{
-            AttentionArguments, AttentionKernel, AttentionPrepareInt8Kernel, AttentionPrepareKernel,
-            Int8AttentionArguments, kv_layout::packed_query_rows,
+            AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareInt8Kernel, AttentionPrepareKernel,
+            FullPrecisionInput, Int8Input, kv_layout::packed_query_rows,
         },
     },
     data_type::DataType,
@@ -193,10 +193,12 @@ impl<B: Backend> Attention<B> {
         let trie = Self::trie(batch_dim, command_buffer).map_err(AttentionEncodeError::Backend)?;
         self.kernel
             .encode(
-                AttentionArguments {
+                AttentionInput::FullPrecision(FullPrecisionInput {
                     queries,
                     keys,
                     values,
+                }),
+                AttentionArguments {
                     suffix_length: batch_dim.size(),
                     trie: trie.as_ref(),
                     sinks: self.sinks.as_ref(),
@@ -265,11 +267,17 @@ impl<B: Backend> Attention<B> {
     ) -> Result<B::ScratchBuffer, AttentionEncodeError<B>> {
         let trie = Self::trie(batch_dim, command_buffer).map_err(AttentionEncodeError::Backend)?;
         self.kernel
-            .encode_int8(
-                Int8AttentionArguments {
+            .encode(
+                AttentionInput::Int8(Int8Input {
                     query_codes: &query_codes,
                     query_scales: &query_scales,
-                    kv,
+                    k_codes: kv.k_codes.as_ref(),
+                    k_scales: kv.k_scales.as_ref(),
+                    v_codes: kv.v_codes.as_ref(),
+                    v_scales: kv.v_scales.as_ref(),
+                }),
+                AttentionArguments {
+                    sinks: self.sinks.as_ref(),
                     suffix_length: batch_dim.size(),
                     trie: trie.as_ref(),
                     cache,

@@ -51,7 +51,7 @@ impl<B: Backend> KVStorage<B> {
         context: &B::Context,
     ) -> Result<Self, B::Error> {
         Ok(match format {
-            KVFormat::Int8 => {
+            KVFormat::INT8 => {
                 let layout = Int8KVLayout::new(head_dim, num_kv_heads);
                 let scales = || -> Result<Box<dyn Buffer<Backend = B>>, B::Error> {
                     let bytes = layout.scale_bytes(max_elements);

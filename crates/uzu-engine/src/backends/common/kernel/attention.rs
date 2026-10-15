@@ -3,13 +3,13 @@ use std::error::Error;
 use crate::{
     backends::common::{Backend, BufferRef, CommandBuffer, Kernels},
     data_type::DataType,
-    encodable_block::mixer::attention::{KVCacheView, kv_storage::Int8KV},
+    encodable_block::mixer::attention::KVCacheView,
 };
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum KVFormat {
     BF16,
-    Int8,
+    INT8,
 }
 
 pub trait AttentionKernel: Sized + Send + Sync {
@@ -27,32 +27,19 @@ pub trait AttentionKernel: Sized + Send + Sync {
 
     fn encode(
         &self,
+        input: AttentionInput<
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
+        >,
         arguments: AttentionArguments<
             '_,
             Self::Backend,
             impl BufferRef<Backend = Self::Backend>,
             impl BufferRef<Backend = Self::Backend>,
-            impl BufferRef<Backend = Self::Backend>,
-            impl BufferRef<Backend = Self::Backend>,
-            impl BufferRef<Backend = Self::Backend>,
         >,
         command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<<Self::Backend as Backend>::ScratchBuffer, Self::Error>;
-
-    fn encode_int8(
-        &self,
-        _arguments: Int8AttentionArguments<
-            '_,
-            Self::Backend,
-            impl BufferRef<Backend = Self::Backend>,
-            impl BufferRef<Backend = Self::Backend>,
-            impl BufferRef<Backend = Self::Backend>,
-            impl BufferRef<Backend = Self::Backend>,
-        >,
-        _command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<<Self::Backend as Backend>::ScratchBuffer, Self::Error> {
-        unreachable!("no INT8 KV path")
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -69,18 +56,7 @@ pub struct AttentionKernelConfig {
     pub data_type: DataType,
 }
 
-pub struct AttentionArguments<
-    'a,
-    B: Backend,
-    QT: BufferRef<Backend = B>,
-    TT: BufferRef<Backend = B>,
-    KT: BufferRef<Backend = B>,
-    VT: BufferRef<Backend = B>,
-    GT: BufferRef<Backend = B>,
-> {
-    pub queries: QT,
-    pub keys: KT,
-    pub values: VT,
+pub struct AttentionArguments<'a, B: Backend, TT: BufferRef<Backend = B>, GT: BufferRef<Backend = B>> {
     pub suffix_length: u32,
     pub trie: Option<TT>,
     pub sinks: Option<&'a B::GlobalBuffer>,
@@ -88,19 +64,25 @@ pub struct AttentionArguments<
     pub gate: Option<GT>,
 }
 
-pub struct Int8AttentionArguments<
-    'a,
-    B: Backend,
-    QT: BufferRef<Backend = B>,
-    ST: BufferRef<Backend = B>,
-    TT: BufferRef<Backend = B>,
-    GT: BufferRef<Backend = B>,
-> {
+#[derive(Clone, Copy)]
+pub enum AttentionInput<QT: BufferRef, KT: BufferRef, VT: BufferRef> {
+    FullPrecision(FullPrecisionInput<QT, KT, VT>),
+    Int8(Int8Input<QT, KT, VT>),
+}
+
+#[derive(Clone, Copy)]
+pub struct FullPrecisionInput<QT: BufferRef, KT: BufferRef, VT: BufferRef> {
+    pub queries: QT,
+    pub keys: KT,
+    pub values: VT,
+}
+
+#[derive(Clone, Copy)]
+pub struct Int8Input<QT: BufferRef, KT: BufferRef, VT: BufferRef> {
     pub query_codes: QT,
-    pub query_scales: ST,
-    pub kv: &'a Int8KV<B>,
-    pub suffix_length: u32,
-    pub trie: Option<TT>,
-    pub cache: KVCacheView,
-    pub gate: Option<GT>,
+    pub query_scales: QT,
+    pub k_codes: KT,
+    pub k_scales: KT,
+    pub v_codes: VT,
+    pub v_scales: VT,
 }

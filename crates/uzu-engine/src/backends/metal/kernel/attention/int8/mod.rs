@@ -4,7 +4,7 @@ use crate::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding,
             gpu_types::kv_layout,
-            kernel::{AttentionKernelConfig, Int8AttentionArguments, kv_layout::packed_query_rows},
+            kernel::{AttentionArguments, AttentionKernelConfig, Int8Input, kv_layout::packed_query_rows},
         },
         metal::{
             Metal,
@@ -72,24 +72,20 @@ impl Int8Attention {
 
     pub fn encode(
         &self,
-        arguments: Int8AttentionArguments<
-            '_,
-            Metal,
-            impl BufferRef<Backend = Metal>,
+        input: Int8Input<
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
+        arguments: AttentionArguments<'_, Metal, impl BufferRef<Backend = Metal>, impl BufferRef<Backend = Metal>>,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
-        let Int8AttentionArguments {
-            query_codes,
-            query_scales,
-            kv,
+        let AttentionArguments {
             suffix_length,
             trie,
             cache,
             gate,
+            ..
         } = arguments;
         let config = &self.config;
         let (head_dim, num_q_heads, num_groups) = (config.head_dim, config.num_q_heads, config.num_groups);
@@ -133,12 +129,12 @@ impl Int8Attention {
                 split_base as usize * split_bytes..(split_base + split_count) as usize * split_bytes
             };
             kernel.encode(
-                query_codes,
-                query_scales,
-                &*kv.k_codes,
-                &*kv.k_scales,
-                &*kv.v_codes,
-                &*kv.v_scales,
+                input.query_codes,
+                input.query_scales,
+                input.k_codes,
+                input.k_scales,
+                input.v_codes,
+                input.v_scales,
                 trie,
                 (&mut partials).subrange_mut(split_byte_range(head_dim as usize * DataType::BF16.size_in_bytes())),
                 (&mut partial_maxs).subrange_mut(split_byte_range(DataType::F32.size_in_bytes())),
