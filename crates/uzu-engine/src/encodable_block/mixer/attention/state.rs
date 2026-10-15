@@ -168,6 +168,7 @@ pub struct AttentionState<B: Backend> {
     pub keys: Box<dyn Buffer<Backend = B>>,
     pub values: Box<dyn Buffer<Backend = B>>,
     pub kv_cache_update: <B::Kernels as Kernels>::KVCacheUpdateKernel,
+    suffix_capacity: u32,
 }
 
 impl<B: Backend> AttentionState<B> {
@@ -178,6 +179,15 @@ impl<B: Backend> AttentionState<B> {
     pub fn create_empty(
         attention: &Attention<B>,
         max_context_length: Option<u32>,
+        context: &B::Context,
+    ) -> Result<Self, B::Error> {
+        Self::create_empty_with_suffix_capacity(attention, max_context_length, ATTENTION_SUFFIX_CAPACITY, context)
+    }
+
+    pub fn create_empty_with_suffix_capacity(
+        attention: &Attention<B>,
+        max_context_length: Option<u32>,
+        suffix_capacity: u32,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
         if let Some(max_context_length) = max_context_length {
@@ -197,7 +207,7 @@ impl<B: Backend> AttentionState<B> {
 
         let cache = attention.ring_capacity.map_or_else(KVCacheState::full, KVCacheState::ring);
 
-        let max_elements = max_prefix_elements + ATTENTION_SUFFIX_CAPACITY;
+        let max_elements = max_prefix_elements + suffix_capacity;
         let element_dim = attention.num_kv_heads.unwrap() * attention.head_dim;
         let kv_buffer_bytes = size_for_shape(&[max_elements, element_dim], data_type);
 
@@ -222,6 +232,7 @@ impl<B: Backend> AttentionState<B> {
             keys,
             values,
             kv_cache_update,
+            suffix_capacity,
         })
     }
 }
@@ -232,7 +243,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         context_length: u32,
         suffix_length: u32,
     ) -> Result<(), B::Error> {
-        assert!(suffix_length <= ATTENTION_SUFFIX_CAPACITY, "suffix exceeds capacity");
+        assert!(suffix_length <= self.suffix_capacity, "suffix exceeds capacity");
 
         if self.is_sparse {
             let elements_required = self.cache.required_prefix_len(context_length) + suffix_length;

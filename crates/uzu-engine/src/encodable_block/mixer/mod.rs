@@ -68,6 +68,14 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error>;
 
+    fn create_empty_state_for_prefill(
+        &self,
+        sequence_length: u32,
+        context: &B::Context,
+    ) -> Result<Box<dyn MixerState<B>>, B::Error> {
+        self.create_empty_state(Some(sequence_length), context)
+    }
+
     fn encode(
         &self,
         hidden: B::ScratchBuffer,

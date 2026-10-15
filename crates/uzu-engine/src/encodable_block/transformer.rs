@@ -235,6 +235,28 @@ impl<B: Backend> Transformer<B> {
         })
     }
 
+    pub fn create_empty_state_for_prefill(
+        &self,
+        sequence_length: u32,
+        context: &B::Context,
+    ) -> Result<TransformerState<B>, B::Error> {
+        let layer_states = self
+            .layers
+            .iter()
+            .map(|(layer, _rope)| match layer.kv_source_layer_index {
+                None => layer
+                    .mixer
+                    .create_empty_state_for_prefill(sequence_length, context)
+                    .map(TransformerLayerStateType::Owned),
+                Some(kv_source_layer_index) => Ok(TransformerLayerStateType::Shared(kv_source_layer_index)),
+            })
+            .collect::<Result<_, B::Error>>()?;
+        Ok(TransformerState {
+            layer_states,
+            context_length: 0,
+        })
+    }
+
     pub fn encode(
         &self,
         input: B::ScratchBuffer,

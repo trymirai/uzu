@@ -214,6 +214,19 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         Ok(Box::new(AttentionState::create_empty(self, max_context_length, context)?))
     }
 
+    fn create_empty_state_for_prefill(
+        &self,
+        sequence_length: u32,
+        context: &B::Context,
+    ) -> Result<Box<dyn MixerState<B>>, B::Error> {
+        Ok(Box::new(AttentionState::create_empty_with_suffix_capacity(
+            self,
+            Some(sequence_length),
+            sequence_length,
+            context,
+        )?))
+    }
+
     fn encode(
         &self,
         hidden: B::ScratchBuffer,
