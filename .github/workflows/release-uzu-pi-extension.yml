@@ -53,7 +53,7 @@ jobs:
     name: Build extension package
     needs: decide
     if: ${{ needs.decide.outputs.build == 'true' }}
-    runs-on: prefect-github-actions
+    runs-on: macos-26
     outputs:
       artifact-id: ${{ steps.artifacts.outputs.artifact-id }}
     defaults:
