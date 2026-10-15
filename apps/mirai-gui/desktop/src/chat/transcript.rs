@@ -486,6 +486,7 @@ mod tests {
                         reply(
                             initial.with_block(ChatContentBlock::ToolCallCandidate {
                                 value: serde_json::json!(candidate).into(),
+                                identifier: None,
                             }),
                             false,
                         ),

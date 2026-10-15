@@ -112,6 +112,36 @@ fn add_tool_result(
 }
 
 #[test]
+fn muse_glimmer_tool_arguments_survive_continuation() {
+    let config = HanashiConfig::MuseGlimmer;
+    for options in [
+        "printf '%s\\n' \"hello\", \"world\"\n",
+        "héllo 🙂\n\"quoted\"\\path\n</atem:parametric>\n",
+        "{\n  \"b\": 2,\n  \"a\": [1, true, null]\n}",
+    ] {
+        let mut encoding = encoding(config.clone());
+        let mut history = history();
+        history[0] = ChatMessage::system().with_reasoning_effort(ReasoningEffort::High);
+        encoding.encode(history.clone()).unwrap();
+        decode(
+            &mut encoding,
+            &format!(
+                " to=inspect<|message|><atem:function_calls>\n<atem:invoke name=\"inspect\">\n\
+                 <atem:parameter name=\"options\">{options}</atem:parameter>\n\
+                 </atem:invoke>\n</atem:function_calls><|eot|>"
+            ),
+        );
+        let sampled = encoding.state().tokens.clone();
+        add_tool_result(&encoding, &mut history, options);
+        let suffix = encoding.try_append(&history).unwrap().expect("must retain the sampled tool call");
+        assert!(!suffix.is_empty());
+        assert_eq!(&encoding.state().tokens[..sampled.len()], sampled);
+        // A fresh session must be able to replay the same call as well.
+        assert!(canonical_text(config.clone(), history).contains(options));
+    }
+}
+
+#[test]
 fn formatting_and_sampled_token_ids_survive_repeated_tool_continuations() {
     for config in [HanashiConfig::Qwen35, HanashiConfig::Qwen36, HanashiConfig::Qwen38] {
         for options in [r#"{"a":1,"b":2}"#, r#"{"a":1, "b": 2}"#, "{\n  \"b\": 2,\n  \"a\": 1\n}"] {

@@ -68,6 +68,7 @@ impl Content {
                                     } else {
                                         tool_calls.push(ChatContentBlock::ToolCallCandidate {
                                             value: value.into(),
+                                            identifier: None,
                                         });
                                     }
                                 },
@@ -78,6 +79,7 @@ impl Content {
                         } => {
                             tool_calls.push(ChatContentBlock::ToolCallCandidate {
                                 value: Value::Null.into(),
+                                identifier: None,
                             });
                         },
                         Section::ToolCallResult {

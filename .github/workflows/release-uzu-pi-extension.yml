@@ -1,0 +1,129 @@
+name: "Build / release uzu-pi-extension"
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uzu-pi-extension-${{ github.event_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  decide:
+    name: decide
+    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - id: decide
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const version = JSON.parse(fs.readFileSync('apps/uzu-pi-extension/package.json')).version;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          let build = true;
+          if (process.env.GITHUB_EVENT_NAME === 'release') {
+            if (!/^\d+\.\d+\.\d+$/.test(process.env.TAG)) build = false;
+            else {
+              if (version !== process.env.TAG) throw new Error('Extension version does not match release tag; run cargo tools sync');
+              const response = await fetch(`https://registry.npmjs.org/@trymirai%2fuzu-pi-extension/${version}`);
+              if (response.ok) build = false;
+              else if (response.status !== 404) throw new Error(`npm registry returned ${response.status}`);
+            }
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `build=${build}\n`);
+          JS
+
+  build:
+    name: Build extension package
+    needs: decide
+    if: ${{ needs.decide.outputs.build == 'true' }}
+    runs-on: prefect-github-actions
+    outputs:
+      artifact-id: ${{ steps.artifacts.outputs.artifact-id }}
+    defaults:
+      run:
+        working-directory: apps/uzu-pi-extension
+    env:
+      APP_VERSION: ${{ needs.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          metal: true
+          bindings: true
+          node-version: '24'
+
+      - name: Verify matching npm release
+        if: ${{ github.event_name == 'release' }}
+        run: test "$(npm view "@trymirai/uzu@$APP_VERSION" version)" = "$APP_VERSION"
+
+      - name: Build monorepo bindings
+        working-directory: crates/legacy/uzu/bindings/typescript
+        env:
+          MIRAI_DISABLE_DENO_BUILD: '1'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec napi build --manifest-path ../../Cargo.toml --no-default-features --features backend-metal,capability-grammar,bindings-napi --platform --output-dir src/napi
+          pnpm build
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check and build extension
+        run: |
+          pnpm check
+          pnpm --dir dist pack
+          node scripts/check-package.mjs
+
+      - name: Verify released dependency
+        if: ${{ github.event_name == 'release' }}
+        working-directory: apps/uzu-pi-extension/dist
+        run: |
+          npm install --ignore-scripts --omit=dev
+          node --input-type=module -e 'import { Engine, ChatModelInfo, ToolCallArgumentStream } from "@trymirai/uzu"; if (!Engine.prototype.chatModelInfo || !Engine.prototype.refreshModels || !ChatModelInfo || !ToolCallArgumentStream) throw new Error("Released Uzu lacks the required API"); await import("./index.js");'
+
+      - uses: actions/upload-artifact@v4
+        id: artifacts
+        with:
+          name: uzu-pi-extension-${{ needs.decide.outputs.version }}
+          path: apps/uzu-pi-extension/dist/*.tgz
+          if-no-files-found: error
+
+  publish:
+    name: Publish npm package
+    needs: [decide, build]
+    if: ${{ github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          merge-multiple: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          APP_VERSION: ${{ needs.decide.outputs.version }}
+        run: npm publish "trymirai-uzu-pi-extension-${APP_VERSION}.tgz" --access public

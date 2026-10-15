@@ -108,6 +108,12 @@ extension Player {
     }
 }
 
+extension ToolCallArgumentStream {
+    public static func create(tools: [ToolNamespace]) -> ToolCallArgumentStream {
+        toolCallArgumentStreamCreate(tools: tools)
+    }
+}
+
 extension EngineCallback {
     public typealias Closure = @Sendable () -> Void
 

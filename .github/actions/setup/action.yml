@@ -26,6 +26,10 @@ inputs:
     description: "Install bindings requirements"
     required: false
     default: 'false'
+  node-version:
+    description: "Node.js version for bindings and apps"
+    required: false
+    default: '20'
 
 runs:
   using: composite
@@ -90,7 +94,7 @@ runs:
     - if: inputs.bindings == 'true'
       uses: actions/setup-node@v4
       with:
-        node-version: "20"
+        node-version: ${{ inputs.node-version }}
         registry-url: "https://registry.npmjs.org"
 
     - if: inputs.bindings == 'true'

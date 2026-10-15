@@ -1,0 +1,56 @@
+{
+  "name": "@trymirai/uzu-pi-extension",
+  "version": "0.6.7",
+  "description": "On-device Uzu models for the Pi coding agent",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trymirai/uzu.git",
+    "directory": "apps/uzu-pi-extension"
+  },
+  "keywords": [
+    "pi-package",
+    "uzu",
+    "local-models"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "packageManager": "pnpm@10.33.0",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "publishConfig": {
+    "access": "public",
+    "directory": "dist"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node scripts/package.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "check": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "@trymirai/uzu": "link:../../crates/legacy/uzu/bindings/typescript"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "^1.1.0",
+    "@earendil-works/pi-coding-agent": "^1.1.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "~5.8.3"
+  }
+}
