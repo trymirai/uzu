@@ -72,9 +72,14 @@ jobs:
           bindings: true
           node-version: '24'
 
-      - name: Verify matching npm release
+      - name: Wait for matching npm release
         if: ${{ github.event_name == 'release' }}
-        run: test "$(npm view "@trymirai/uzu@$APP_VERSION" version)" = "$APP_VERSION"
+        timeout-minutes: 30
+        run: |
+          until [ "$(npm view "@trymirai/uzu@$APP_VERSION" version --prefer-online)" = "$APP_VERSION" ]; do
+            echo "Waiting for @trymirai/uzu@$APP_VERSION on npm"
+            sleep 10
+          done
 
       - name: Build monorepo bindings
         working-directory: crates/legacy/uzu/bindings/typescript
