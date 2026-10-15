@@ -2,7 +2,7 @@ use std::any::Any;
 
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferMut, CommandBuffer, Context, DeviceCapabilities, Kernels, SparseBuffer,
+        Backend, Buffer, CommandBuffer, Context, DeviceCapabilities, Kernels, SparseBuffer,
         gpu_types::kv_cache_update::Copy,
         kernel::{KVCacheUpdateInt8Kernel, KVCacheUpdateKernel, KVFormat, kv_layout::Int8KVLayout},
     },
@@ -53,20 +53,13 @@ impl<B: Backend> KVStorage<B> {
         Ok(match format {
             KVFormat::INT8 => {
                 let layout = Int8KVLayout::new(head_dim, num_kv_heads);
-                let scales = || -> Result<Box<dyn Buffer<Backend = B>>, B::Error> {
-                    let bytes = layout.scale_bytes(max_elements);
-                    if context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
-                        return create_kv_buffer(context, bytes);
-                    }
-                    let mut buffer = context.create_buffer(bytes)?;
-                    buffer.as_slice_mut::<u8>().fill(0);
-                    Ok(Box::new(buffer))
-                };
+                let code_bytes = layout.code_bytes(max_elements);
+                let scale_bytes = layout.scale_bytes(max_elements);
                 let kv = Int8KV {
-                    k_codes: create_kv_buffer(context, layout.code_bytes(max_elements))?,
-                    v_codes: create_kv_buffer(context, layout.code_bytes(max_elements))?,
-                    k_scales: scales()?,
-                    v_scales: scales()?,
+                    k_codes: create_kv_buffer(context, code_bytes)?,
+                    v_codes: create_kv_buffer(context, code_bytes)?,
+                    k_scales: create_kv_buffer(context, scale_bytes)?,
+                    v_scales: create_kv_buffer(context, scale_bytes)?,
                     layout,
                 };
                 Self::Int8(kv, <B::Kernels as Kernels>::KVCacheUpdateInt8Kernel::new(context, head_dim, num_kv_heads)?)
@@ -89,8 +82,8 @@ impl<B: Backend> KVStorage<B> {
         &mut self,
         elements_required: u32,
     ) -> Result<(), B::Error> {
-        let map = |buffer: &mut Box<dyn Buffer<Backend = B>>, bytes: usize| -> Result<(), B::Error> {
-            match (buffer.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>() {
+        let map = |buffer: &mut dyn Buffer<Backend = B>, bytes: usize| -> Result<(), B::Error> {
+            match (buffer as &mut dyn Any).downcast_mut::<B::SparseBuffer>() {
                 Some(sparse) => sparse.map(bytes),
                 None => Ok(()),
             }
@@ -98,16 +91,16 @@ impl<B: Backend> KVStorage<B> {
         match self {
             Self::BF16(kv, _) => {
                 let bytes = size_for_shape(&[elements_required, kv.element_dim], kv.data_type);
-                map(&mut kv.keys, bytes)?;
-                map(&mut kv.values, bytes)
+                map(kv.keys.as_mut(), bytes)?;
+                map(kv.values.as_mut(), bytes)
             },
             Self::Int8(kv, _) => {
                 let code_bytes = kv.layout.code_bytes(elements_required);
-                map(&mut kv.k_codes, code_bytes)?;
-                map(&mut kv.v_codes, code_bytes)?;
+                map(kv.k_codes.as_mut(), code_bytes)?;
+                map(kv.v_codes.as_mut(), code_bytes)?;
                 let scale_bytes = kv.layout.scale_bytes(elements_required);
-                map(&mut kv.k_scales, scale_bytes)?;
-                map(&mut kv.v_scales, scale_bytes)
+                map(kv.k_scales.as_mut(), scale_bytes)?;
+                map(kv.v_scales.as_mut(), scale_bytes)
             },
         }
     }
