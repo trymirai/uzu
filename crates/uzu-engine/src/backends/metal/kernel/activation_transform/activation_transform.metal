@@ -1,6 +1,7 @@
 #include <metal_stdlib>
 #include "../common/activation_quantization.h"
 #include "../common/defines.h"
+#include "../common/conversion.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../generated/activation_transform.h"
@@ -68,7 +69,7 @@ PUBLIC KERNEL(ActivationTransform)(
     if (in_bounds) {
       if (has_bias) {
         if constexpr (metal::is_same_v<T, bfloat>) {
-          values = as_type<float4>(uint4(as_type<ushort4>(vec<bfloat, HADAMARD_VECTOR_SIZE>(values))) << 16);
+          values = uzu::bfloat_to_float(vec<bfloat, HADAMARD_VECTOR_SIZE>(values));
         }
         values += float4(load_hadamard_vector(bias + first_index));
       }

@@ -20,10 +20,10 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
     #[optional(!quantize_queries)] queries: Option<*mut ElementT>,
     #[optional(quantize_queries)] q_codes: Option<*mut i8>,
     #[optional(quantize_queries)] q_scales: Option<*mut ElementT>,
-    k_codes: *mut i8,
-    k_scales: *mut ElementT,
-    v_codes: *mut u8,
-    v_scales: *mut ElementT,
+    #[optional(append_kv)] k_codes: Option<*mut i8>,
+    #[optional(append_kv)] k_scales: Option<*mut ElementT>,
+    #[optional(append_kv)] v_codes: Option<*mut u8>,
+    #[optional(append_kv)] v_scales: Option<*mut ElementT>,
     #[optional(has_rope)] cosines: Option<*const RopeT>,
     #[optional(has_rope)] sines: Option<*const RopeT>,
     num_q_heads: u32,
@@ -31,10 +31,11 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
     kv_token_offset: u32,
     input_row_stride: u32,
     suffix_length: u32,
-    padded_suffix: u32,
+    query_rows: u32,
     #[specialize] has_rope: bool,
     #[specialize] quantize_queries: bool,
     #[specialize] num_kv_heads: u32,
+    #[specialize] append_kv: bool,
 ) {
     let head_dim = HEAD_DIM as usize;
     let rope_dim = if has_rope {
@@ -44,27 +45,21 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
     };
     let layout = Int8KVLayout::new(HEAD_DIM, num_kv_heads);
     let mut values = vec![0.0f32; head_dim];
+    let gqa_factor = num_q_heads / num_kv_heads;
     let v_head_start = num_q_heads + num_kv_heads;
     for head in 0..v_head_start + num_kv_heads {
         let is_query = head < num_q_heads;
+        if !append_kv && !is_query {
+            continue;
+        }
         let is_key = !is_query && head < v_head_start;
         let quantize = !is_query || quantize_queries;
         let (kv_head, scales) = match (is_query, is_key) {
             (true, _) => (0, q_scales),
-            (_, true) => (head - num_q_heads, Some(k_scales)),
-            _ => (head - v_head_start, Some(v_scales)),
+            (_, true) => (head - num_q_heads, k_scales),
+            _ => (head - v_head_start, v_scales),
         };
-        for token in 0..padded_suffix {
-            let query_row = (head * padded_suffix + token) as usize;
-            if token >= suffix_length {
-                if is_query && quantize_queries {
-                    unsafe {
-                        std::ptr::write_bytes(q_codes.unwrap().add(query_row * head_dim), 0, head_dim);
-                        *scales.unwrap().add(query_row) = ElementT::one();
-                    }
-                }
-                continue;
-            }
+        for token in 0..suffix_length {
             let source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {
@@ -99,7 +94,7 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
             })
             .unwrap();
             let scale_index = if is_query {
-                query_row
+                ((head / gqa_factor) * query_rows + (head % gqa_factor) * suffix_length + token) as usize
             } else {
                 layout.scale_index(kv_token_offset + token, kv_head)
             };
@@ -109,9 +104,10 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
                     if is_query {
                         *q_codes.unwrap().add(scale_index * head_dim + channel) = code;
                     } else if is_key {
-                        *k_codes.add(layout.k_code_index(kv_token_offset + token, kv_head, channel as u32)) = code;
+                        *k_codes.unwrap().add(layout.k_code_index(kv_token_offset + token, kv_head, channel as u32)) =
+                            code;
                     } else {
-                        *v_codes.add(layout.v_code_index(kv_token_offset + token, kv_head, channel as u32)) =
+                        *v_codes.unwrap().add(layout.v_code_index(kv_token_offset + token, kv_head, channel as u32)) =
                             (i16::from(code) + kv_layout::V_CODE_BIAS) as u8;
                     }
                 }

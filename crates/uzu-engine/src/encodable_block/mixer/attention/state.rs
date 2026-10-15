@@ -1,14 +1,13 @@
-use std::any::Any;
-
 use crate::{
     backends::common::{
-        Backend, Buffer, CommandBuffer, Context, DeviceCapabilities, Kernels, SparseBuffer,
+        Backend, CommandBuffer,
         gpu_types::{kv_cache_update::Copy, ring::RingParams},
-        kernel::KVCacheUpdateKernel,
+        kernel::{AttentionKernel, KVFormat},
     },
-    data_type::DataType,
-    encodable_block::mixer::{MixerState, attention::Attention},
-    utils::size_for_shape::size_for_shape,
+    encodable_block::mixer::{
+        MixerState,
+        attention::{Attention, kv_storage::KVStorage},
+    },
 };
 
 pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
@@ -161,13 +160,8 @@ impl KVCacheState {
 }
 
 pub struct AttentionState<B: Backend> {
-    pub element_dim: u32,
-    pub data_type: DataType,
     cache: KVCacheState,
-    pub is_sparse: bool,
-    pub keys: Box<dyn Buffer<Backend = B>>,
-    pub values: Box<dyn Buffer<Backend = B>>,
-    pub kv_cache_update: <B::Kernels as Kernels>::KVCacheUpdateKernel,
+    pub kv: KVStorage<B>,
 }
 
 impl<B: Backend> AttentionState<B> {
@@ -187,8 +181,6 @@ impl<B: Backend> AttentionState<B> {
             );
         }
 
-        let data_type = attention.data_type;
-
         let max_prefix_elements = attention.ring_capacity.unwrap_or_else(|| {
             max_context_length
                 .or(attention.max_rope_length)
@@ -197,31 +189,23 @@ impl<B: Backend> AttentionState<B> {
 
         let cache = attention.ring_capacity.map_or_else(KVCacheState::full, KVCacheState::ring);
 
-        let max_elements = max_prefix_elements + ATTENTION_SUFFIX_CAPACITY;
-        let element_dim = attention.num_kv_heads.unwrap() * attention.head_dim;
-        let kv_buffer_bytes = size_for_shape(&[max_elements, element_dim], data_type);
-
-        let is_sparse = context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS);
-
-        let (keys, values): (Box<dyn Buffer<Backend = B>>, Box<dyn Buffer<Backend = B>>) = if is_sparse {
-            (
-                Box::new(context.create_sparse_buffer(kv_buffer_bytes)?),
-                Box::new(context.create_sparse_buffer(kv_buffer_bytes)?),
-            )
+        let format = if attention.kernel.supports_int8() {
+            KVFormat::INT8
         } else {
-            (Box::new(context.create_buffer(kv_buffer_bytes)?), Box::new(context.create_buffer(kv_buffer_bytes)?))
+            KVFormat::BF16
         };
-
-        let kv_cache_update = <B::Kernels as Kernels>::KVCacheUpdateKernel::new(context, data_type)?;
+        let kv = KVStorage::create_empty(
+            format,
+            attention.num_kv_heads.unwrap(),
+            attention.head_dim,
+            max_prefix_elements + ATTENTION_SUFFIX_CAPACITY,
+            attention.data_type,
+            context,
+        )?;
 
         Ok(Self {
-            element_dim,
-            data_type,
             cache,
-            is_sparse,
-            keys,
-            values,
-            kv_cache_update,
+            kv,
         })
     }
 }
@@ -234,18 +218,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
     ) -> Result<(), B::Error> {
         assert!(suffix_length <= ATTENTION_SUFFIX_CAPACITY, "suffix exceeds capacity");
 
-        if self.is_sparse {
-            let elements_required = self.cache.required_prefix_len(context_length) + suffix_length;
-            let bytes_required = size_for_shape(&[elements_required, self.element_dim], self.data_type);
-
-            let keys = (self.keys.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>().unwrap();
-            let values = (self.values.as_mut() as &mut dyn Any).downcast_mut::<B::SparseBuffer>().unwrap();
-
-            keys.map(bytes_required)?;
-            values.map(bytes_required)?;
-        }
-
-        Ok(())
+        self.kv.prepare(self.cache.required_prefix_len(context_length) + suffix_length)
     }
 
     fn encode_accept(
@@ -256,14 +229,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         let copies = self.cache.accept(accepted_indices);
 
         if !copies.is_empty() {
-            self.kv_cache_update.encode(
-                self.keys.as_mut(),
-                self.values.as_mut(),
-                &copies,
-                copies.len() as u32,
-                self.element_dim,
-                command_buffer,
-            );
+            self.kv.encode_accept(&copies, command_buffer);
         }
 
         Ok(())

@@ -1,3 +1,5 @@
+use half::bf16;
+
 use crate::backends::common::gpu_types::kv_layout;
 
 pub struct Int8KVLayout {
@@ -17,6 +19,7 @@ impl Int8KVLayout {
     }
 
     /// Scales: [key block][head][key in block].
+    #[cfg(backend = "cpu")]
     pub fn scale_index(
         &self,
         key: u32,
@@ -26,6 +29,21 @@ impl Int8KVLayout {
             as usize
     }
 
+    pub fn code_bytes(
+        &self,
+        keys: u32,
+    ) -> usize {
+        keys.next_multiple_of(kv_layout::TILE_KEYS) as usize * (self.num_kv_heads * self.head_dim) as usize
+    }
+
+    pub fn scale_bytes(
+        &self,
+        keys: u32,
+    ) -> usize {
+        self.code_bytes(keys) / self.head_dim as usize * size_of::<bf16>()
+    }
+
+    #[cfg(backend = "cpu")]
     pub fn k_code_index(
         &self,
         key: u32,
@@ -40,6 +58,7 @@ impl Int8KVLayout {
                 as usize
     }
 
+    #[cfg(backend = "cpu")]
     pub fn v_code_index(
         &self,
         key: u32,
@@ -60,6 +79,7 @@ impl Int8KVLayout {
     }
 }
 
+#[cfg(backend = "cpu")]
 fn mma_lane(
     row: u32,
     group: u32,

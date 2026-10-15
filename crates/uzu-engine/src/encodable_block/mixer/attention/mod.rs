@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, Kernels,
-        kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
+        kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareInt8Kernel, AttentionPrepareKernel},
     },
     config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
@@ -24,6 +24,7 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
+pub mod kv_storage;
 mod mode;
 mod qkv_norm;
 mod state;
@@ -35,6 +36,7 @@ pub mod rope;
 pub struct Attention<B: Backend> {
     head_dim: u32,
     num_q_heads: u32,
+    num_groups: u32,
     num_kv_heads: Option<u32>,
     ring_capacity: Option<u32>,
     max_rope_length: Option<u32>,
@@ -43,6 +45,7 @@ pub struct Attention<B: Backend> {
     projection_dim: u32,
     projection: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
+    prepare_int8: Option<<B::Kernels as Kernels>::AttentionPrepareInt8Kernel>,
     sinks: Option<B::GlobalBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
     out_projection: Box<dyn Linear<B>>,
@@ -163,6 +166,22 @@ impl<B: Backend> Attention<B> {
             },
         )
         .map_err(AttentionNewError::Kernel)?;
+        let prepare_int8 = kernel
+            .supports_int8()
+            .then(|| {
+                <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
+                    context,
+                    data_type,
+                    DataType::F32,
+                    head_dim,
+                    rope_config.is_some(),
+                    true,
+                    num_groups,
+                    !is_kv_sharing,
+                )
+            })
+            .transpose()
+            .map_err(AttentionNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new(
             q_dim,
@@ -177,6 +196,7 @@ impl<B: Backend> Attention<B> {
             Self {
                 head_dim,
                 num_q_heads,
+                num_groups,
                 num_kv_heads,
                 ring_capacity,
                 max_rope_length,
@@ -188,6 +208,7 @@ impl<B: Backend> Attention<B> {
                     norm: qkv_norm,
                 },
                 prepare,
+                prepare_int8,
                 sinks,
                 kernel,
                 out_projection,

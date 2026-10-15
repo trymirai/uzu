@@ -7,20 +7,21 @@
 
 namespace kv_layout = uzu::kv_layout;
 
+UZU_CONST float INT8_MAX = 127.0f;
+
 template <typename ElementT, ushort VALUES_PER_LANE>
 METAL_FUNC ElementT kv_quantize_row(const thread float* values, thread int* codes) {
-  constexpr float CODE_MAX = static_cast<float>(metal::numeric_limits<int8_t>::max());
   float abs_max = 0.0f;
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     abs_max = metal::max(abs_max, metal::abs(values[value_index]));
   }
   abs_max = metal::simd_max(abs_max);
-  const ElementT scale = ElementT(abs_max > 0.0f ? metal::precise::divide(abs_max, CODE_MAX) : 1.0f);
+  const ElementT scale = ElementT(abs_max > 0.0f ? metal::precise::divide(abs_max, INT8_MAX) : 1.0f);
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     codes[value_index] =
-        int(metal::clamp(metal::rint(metal::precise::divide(values[value_index], float(scale))), -CODE_MAX, CODE_MAX));
+        int(metal::clamp(metal::rint(metal::precise::divide(values[value_index], float(scale))), -INT8_MAX, INT8_MAX));
   }
   return scale;
 }
@@ -34,10 +35,10 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
     device ElementT* queries OPTIONAL(!quantize_queries),
     device int8_t* q_codes OPTIONAL(quantize_queries),
     device ElementT* q_scales OPTIONAL(quantize_queries),
-    device int8_t* k_codes,
-    device ElementT* k_scales,
-    device uchar* v_codes,
-    device ElementT* v_scales,
+    device int8_t* k_codes OPTIONAL(append_kv),
+    device ElementT* k_scales OPTIONAL(append_kv),
+    device uchar* v_codes OPTIONAL(append_kv),
+    device ElementT* v_scales OPTIONAL(append_kv),
     const device RopeT* cosines OPTIONAL(has_rope),
     const device RopeT* sines OPTIONAL(has_rope),
     const constant uint32_t& num_q_heads,
@@ -45,11 +46,12 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
     const constant uint32_t& kv_token_offset,
     const constant uint32_t& input_row_stride,
     const constant uint32_t& suffix_length,
-    const constant uint32_t& padded_suffix,
+    const constant uint32_t& query_rows,
     const bool has_rope SPECIALIZE,
     const bool quantize_queries SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
-    const uint32_t token_idx GROUPS(padded_suffix),
+    const bool append_kv SPECIALIZE,
+    const uint32_t token_idx GROUPS(suffix_length),
     const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
     const uint32_t lane THREADS(METAL_SIMD_SIZE)
 ) {
@@ -57,22 +59,15 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
   const kv_layout::Int8KVShape shape{HEAD_DIM, num_kv_heads};
   const ushort lane_index = ushort(lane);
   const bool is_query = head_idx < num_q_heads;
-  const bool is_key = !is_query && head_idx < num_q_heads + num_kv_heads;
-  const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
-
-  if (token_idx >= suffix_length) {
-    if (is_query && quantize_queries) {
-      const size_t row = size_t(head_idx) * padded_suffix + token_idx;
-      METAL_PRAGMA_UNROLL
-      for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
-        q_codes[row * HEAD_DIM + value_index * METAL_SIMD_SIZE + lane_index] = 0;
-      }
-      if (lane_index == 0) {
-        q_scales[row] = ElementT(1.0f);
-      }
-    }
+  if (!append_kv && !is_query) {
     return;
   }
+  const uint32_t gqa_factor = num_q_heads / num_kv_heads;
+  const size_t query_row =
+      is_query ? size_t(head_idx / gqa_factor) * query_rows + size_t(head_idx % gqa_factor) * suffix_length + token_idx
+               : 0;
+  const bool is_key = !is_query && head_idx < num_q_heads + num_kv_heads;
+  const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
 
   const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   float values[VALUES_PER_LANE];
@@ -105,7 +100,7 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
   const ElementT scale = kv_quantize_row<ElementT, VALUES_PER_LANE>(values, codes);
 
   const uint32_t key = kv_token_offset + token_idx;
-  const size_t scale_index = is_query ? size_t(head_idx) * padded_suffix + token_idx : shape.scale_index(key, kv_head);
+  const size_t scale_index = is_query ? query_row : shape.scale_index(key, kv_head);
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     const uint32_t channel = value_index * METAL_SIMD_SIZE + lane_index;

@@ -1,5 +1,6 @@
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
+use super::FullPrecisionInput;
 use crate::{
     backends::{
         common::{
@@ -18,7 +19,7 @@ use crate::{
     data_type::DataType,
 };
 
-mod policy;
+pub(super) mod policy;
 use policy::{MAX_TRIE_SUFFIX, SplitGeometry, choose_splits};
 
 use super::MaskKind;
@@ -93,16 +94,13 @@ impl AttentionGemmGroupedMetal {
         gate: Option<impl BufferRef<Backend = Metal>>,
         suffix_length: u32,
         kv_length: u32,
-        q_replicas: u32,
         num_splits: u32,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<bool, MetalError> {
         let params = self.params(suffix_length, kv_length);
         let grouped_rows = self.num_q_heads / self.num_groups * suffix_length;
-        let m_tiles = grouped_rows.div_ceil(self.block_rows);
+        let query_tiles = grouped_rows.div_ceil(self.block_rows);
         assert_eq!(trie.is_some(), self.mask.is_trie(), "trie presence must match mask");
-        assert!(num_splits >= 1, "num_splits must be at least one");
-        assert!(num_splits <= params.nk, "num_splits must not exceed KV blocks");
 
         if num_splits == 1 {
             self.kernel.encode(
@@ -115,16 +113,15 @@ impl AttentionGemmGroupedMetal {
                 None::<&mut <Metal as Backend>::ScratchBuffer>,
                 trie,
                 params,
-                m_tiles,
+                query_tiles,
                 self.num_groups,
-                q_replicas,
                 1,
                 command_buffer,
             );
             return Ok(false);
         }
 
-        let partial_rows = q_replicas * self.num_groups * m_tiles * num_splits * self.block_rows;
+        let partial_rows = self.num_groups * query_tiles * num_splits * self.block_rows;
         let mut partials = command_buffer.allocate_scratch_for_shape(&[partial_rows, self.head_dim], DataType::F32)?;
         let mut partial_maxs = command_buffer.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
         let mut partial_sums = command_buffer.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
@@ -139,9 +136,8 @@ impl AttentionGemmGroupedMetal {
             Some(&mut partial_sums),
             trie,
             params,
-            m_tiles,
+            query_tiles,
             self.num_groups,
-            q_replicas,
             num_splits,
             command_buffer,
         );
@@ -154,10 +150,8 @@ impl AttentionGemmGroupedMetal {
             gate,
             params,
             grouped_rows,
-            self.block_rows,
-            m_tiles,
+            query_tiles * self.block_rows,
             self.num_groups,
-            q_replicas,
             num_splits,
             self.gate_row_stride,
             command_buffer,
@@ -176,10 +170,10 @@ impl AttentionGemmGroupedMetal {
 
         let head_dim = self.head_dim;
         AttnParams {
-            q_strides: [self.num_q_heads * suffix_length * head_dim, suffix_length * head_dim, head_dim],
+            q_strides: [0, suffix_length * head_dim, head_dim],
             k_strides: [0, head_dim, self.num_groups * head_dim],
             v_strides: [0, head_dim, self.num_groups * head_dim],
-            o_strides: [suffix_length * self.num_q_heads * head_dim, head_dim, self.num_q_heads * head_dim],
+            o_strides: [0, head_dim, self.num_q_heads * head_dim],
             gqa_factor: self.num_q_heads / self.num_groups,
             scale: self.scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt()),
             q_len: suffix_length,
@@ -261,15 +255,12 @@ impl AttentionGemmGrouped {
     pub fn encode(
         &self,
         mask: MaskKind,
-        arguments: AttentionArguments<
-            '_,
-            Metal,
-            impl BufferRef<Backend = Metal>,
-            impl BufferRef<Backend = Metal>,
+        input: FullPrecisionInput<
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
+        arguments: AttentionArguments<'_, Metal, impl BufferRef<Backend = Metal>, impl BufferRef<Backend = Metal>>,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(<Metal as Backend>::ScratchBuffer, bool), MetalError> {
         let suffix_length = arguments.suffix_length;
@@ -294,15 +285,14 @@ impl AttentionGemmGrouped {
             gpu_core_count,
         );
         let gate_applied = core.encode(
-            arguments.queries,
-            arguments.keys,
-            arguments.values,
+            input.queries,
+            input.keys,
+            input.values,
             &mut output,
             arguments.trie,
             arguments.gate,
             suffix_length,
             kv_length,
-            1,
             num_splits,
             command_buffer,
         )?;

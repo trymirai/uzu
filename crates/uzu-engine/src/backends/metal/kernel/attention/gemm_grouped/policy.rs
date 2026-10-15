@@ -1,6 +1,9 @@
 use super::MaskKind;
 use crate::{
-    backends::{common::kernel::AttentionKernelConfig, metal::context::MetalContext},
+    backends::{
+        common::{gpu_types::kv_layout, kernel::AttentionKernelConfig},
+        metal::context::MetalContext,
+    },
     data_type::DataType,
 };
 
@@ -10,6 +13,8 @@ const GEMM_GROUPED_DECODE_SUFFIX_MAX: u32 = 64;
 const GEMM_GROUPED_PREFILL_SUFFIX_MAX: u32 = 1024;
 const GEMM_GROUPED_MIN_KV_LENGTH: u32 = 1024;
 pub const MAX_TRIE_SUFFIX: u32 = 64;
+const SMALL_SUFFIX_MAX: u32 = 4;
+const SMALL_SUFFIX_MAX_SPLITS: u32 = 16;
 
 pub fn is_supported(
     arguments: &AttentionKernelConfig,
@@ -143,6 +148,37 @@ pub fn choose_splits(
         None => splits_for_ratio(TENTHS_PER_RATIO * TG_PER_CORE_FALLBACK, gpu_core_count, threadgroups_per_kv_split),
     };
     splits.clamp(1, max_splits)
+}
+
+pub fn int8_splits(
+    split_rows: u32,
+    head_dim: u32,
+    suffix_length: u32,
+    kv_length: u32,
+) -> u32 {
+    let kv_blocks = kv_length.div_ceil(kv_layout::TILE_KEYS);
+    let splits = if suffix_length <= GEMM_GROUPED_DECODE_SUFFIX_MAX {
+        // Estimate split count using at least 16 query tokens.
+        let query_tokens = suffix_length.max(kv_layout::TILE_QUERIES);
+        let splits = (kv_length as f32 / query_tokens as f32).sqrt().round() as u32;
+        // Tuned on M5 Max.
+        if suffix_length <= SMALL_SUFFIX_MAX {
+            splits.min(SMALL_SUFFIX_MAX_SPLITS)
+        } else {
+            splits
+        }
+    } else if kv_length >= PREFILL_SPLIT_MIN_KV {
+        let row_bytes = head_dim as u64 * DataType::BF16.size_in_bytes() as u64
+            + PARTIAL_STATS_PER_ROW * DataType::F32.size_in_bytes() as u64;
+        let bytes_per_split = split_rows as u64 * row_bytes;
+        let scratch_splits = (PREFILL_SPLIT_SCRATCH_BYTES / bytes_per_split) as u32;
+        // Round to the nearest split count.
+        let requested_splits = (kv_length + PREFILL_SPLIT_KEYS / 2) / PREFILL_SPLIT_KEYS;
+        requested_splits.min(scratch_splits)
+    } else {
+        1
+    };
+    splits.clamp(1, kv_blocks.max(1))
 }
 
 #[cfg(test)]

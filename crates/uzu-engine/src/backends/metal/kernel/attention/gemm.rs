@@ -2,6 +2,7 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
+use super::FullPrecisionInput;
 use crate::{
     backends::{
         common::{
@@ -112,15 +113,12 @@ impl AttentionGemm {
 
     pub fn encode(
         &self,
-        arguments: AttentionArguments<
-            '_,
-            Metal,
-            impl BufferRef<Backend = Metal>,
-            impl BufferRef<Backend = Metal>,
+        input: FullPrecisionInput<
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
+        arguments: AttentionArguments<'_, Metal, impl BufferRef<Backend = Metal>, impl BufferRef<Backend = Metal>>,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let mut output = command_buffer
@@ -161,9 +159,9 @@ impl AttentionGemm {
         };
         let kernel = self.get_or_create(command_buffer.context(), key)?;
         kernel.encode(
-            arguments.queries,
-            arguments.keys,
-            arguments.values,
+            input.queries,
+            input.keys,
+            input.values,
             &mut output,
             params,
             arguments.cache.ring_params(),
