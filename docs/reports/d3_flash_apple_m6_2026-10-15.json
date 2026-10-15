@@ -1,0 +1,208 @@
+{
+  "schema": "uzu-d3-flash-device-verification/1",
+  "date": "2026-10-15",
+  "complete": true,
+  "hardware": {
+    "device": "Apple M6",
+    "physical_memory_bytes": 34359738368,
+    "os": "macOS 27 arm64"
+  },
+  "upstream": {
+    "release": "0.6.8",
+    "commit": "16afb3dd4c62f6992748afc8e25da42c299d1389"
+  },
+  "tested_code_commit": "bf8a3b43e1ef310cf08d4270d40bd9503437faff",
+  "engine_binary_sha256": "5a3dfc06fd3d2022049ab47307c7450f45d85e374c4cb8c25770f3cb61de8ef3",
+  "previous_engine": {
+    "base_commit": "432da1b7bf42d5f5ffd30d7acf9ca201c9c70455",
+    "binary_sha256": "42bd6ce9740721f605ebb3212ee2ff5fd7d7b02669c5a97f3bcb7673c4ebf640"
+  },
+  "model": {
+    "source": "vllm-sr/d3-flash",
+    "source_revision": "521525effa79469d899a570726547dd7f00da3af",
+    "recipe": "Retained Lalamo INT4/group32/RHT32 text bundle, BF16 scales, INT4 embedding and FP32 255-code readout; no Fisher/QAD",
+    "converter_base": "831accb8",
+    "weights_sha256": "03abceda58f76b7c7097f3925314e4ecfe59f0bb37d6c6ae299fd012500a8d8d",
+    "conversion_manifest_sha256": "91a048381a688d69111887baada2b0c4be54cb06d11a59985128c37e1980b694",
+    "weights_unchanged": true
+  },
+  "quality_protocol": {
+    "requests": 1356,
+    "failed_requests": 0,
+    "official_scorer_commit": "9eb2dbe2a358004c8782c66e40a83ac07b953fec",
+    "description": "Same frozen one-choice payloads, tokenizer/formatter, token hashes, answer-code order and temperature; batch 1, one warmup per suite, serial Metal inference; no tuning on outputs.",
+    "selection": "When2Call 200; BANKING77 154 (77 classes x 2); CLINC150+OOS 302 (151 classes x 2); iSarcasm 400 (51 positive/349 negative); ANLI 100 (33/33/34 by round); WinoGrande 100; HellaSwag 100.",
+    "selection_uses_gold": "Only for BANKING77/CLINC class stratification, never in prompt payloads or model tuning. When2Call uses seeded hash sampling and has B/C/D 76/65/59, no direct-answer A positives.",
+    "scope": "Partial held-out subsets, not the complete Decision Index or an official leaderboard run; one choice per case, not broad Korean/noul/score/multi-question accuracy."
+  },
+  "quality_metrics": [
+    {
+      "catalog_id": 62,
+      "benchmark": "When2Call MCQ",
+      "metric": "accuracy",
+      "requests": 200,
+      "previous": 0.885,
+      "updated": 0.885
+    },
+    {
+      "catalog_id": 4,
+      "benchmark": "BANKING77",
+      "metric": "macro-F1",
+      "requests": 154,
+      "previous": 0.8822510822510823,
+      "updated": 0.8822510822510823
+    },
+    {
+      "catalog_id": 5,
+      "benchmark": "CLINC150+OOS",
+      "metric": "macro-F1",
+      "requests": 302,
+      "previous": 0.9721854304635762,
+      "updated": 0.9721854304635762
+    },
+    {
+      "catalog_id": 40,
+      "benchmark": "iSarcasmEval",
+      "metric": "sarcastic positive F1",
+      "requests": 400,
+      "previous": 0.5274725274725275,
+      "updated": 0.5274725274725275
+    },
+    {
+      "catalog_id": 12,
+      "benchmark": "ANLI",
+      "metric": "macro-F1",
+      "requests": 100,
+      "previous": 0.6005398110661269,
+      "updated": 0.6005398110661269
+    },
+    {
+      "catalog_id": 28,
+      "benchmark": "WinoGrande",
+      "metric": "accuracy",
+      "requests": 100,
+      "previous": 0.86,
+      "updated": 0.86
+    },
+    {
+      "catalog_id": 29,
+      "benchmark": "HellaSwag",
+      "metric": "accuracy",
+      "requests": 100,
+      "previous": 0.94,
+      "updated": 0.94
+    }
+  ],
+  "suites": {
+    "roles": {
+      "requests": 1056,
+      "failed_requests": 0,
+      "rows_sha256": "375703d68ef421fc7c272391f2413adb44592728e0ed068da9abc3603afd373d",
+      "same_top_count": 1056,
+      "top_agreement": 1.0,
+      "max_probability_delta": 0.0,
+      "request_wall_latency": {
+        "previous": {
+          "p50_ms": 655.7541040001524,
+          "p95_ms": 1139.8845512499065,
+          "results_sha256": "ce1523bcc1988dfd14e510a05a854d134ee25764fed85e958568a9c6d24156dc"
+        },
+        "updated": {
+          "p50_ms": 637.5667709999107,
+          "p95_ms": 1104.3272389952108,
+          "results_sha256": "2a54e5e392ff670b27229928508f76e73196023b472b1f83c3fdea75c2d541bc"
+        }
+      }
+    },
+    "regression": {
+      "requests": 300,
+      "failed_requests": 0,
+      "rows_sha256": "db63dbd7aa3ef678d9b57b309468244f489c5c2a6c66d3bd6c17f7a58029c29c",
+      "same_top_count": 300,
+      "top_agreement": 1.0,
+      "max_probability_delta": 0.0,
+      "request_wall_latency": {
+        "previous": {
+          "p50_ms": 130.41775049987336,
+          "p95_ms": 225.5560717507251,
+          "results_sha256": "be350d0eff8aedce0bbd2e697a63ac1d8f390daca66a78fac9a6a137ed73f747"
+        },
+        "updated": {
+          "p50_ms": 125.65497899595357,
+          "p95_ms": 219.40080689892056,
+          "results_sha256": "1873cc17b84d8d0ae2a980572dbbbd0845b6460f097690b96c82f02292a64e4e"
+        }
+      }
+    }
+  },
+  "timing_methodology": {
+    "recorded_field": "total_wall_ms",
+    "formula": "python_prepare_ms + engine_call_wall_ms + python_postprocess_ms",
+    "included": "Input preparation, synchronized native request/IPC, and typed answer construction",
+    "excluded": "Probability normalization and trace bookkeeping between the measured regions, scorer checks, result serialization, model startup and warmup",
+    "scope": "Instrumented component sum, not complete caller-observed latency"
+  },
+  "native_boundary_checks": {
+    "requests_per_binary": 8,
+    "tested_input_lengths": [
+      3,
+      1024,
+      1025
+    ],
+    "repeated_outputs_exact": true,
+    "continues_after_invalid_requests": true,
+    "paired_outputs": {
+      "short-before": {
+        "logits_max_absolute_difference": 0.0,
+        "hidden_max_absolute_difference": 0.0,
+        "same_top_code": true
+      },
+      "length-1024": {
+        "logits_max_absolute_difference": 0.0,
+        "hidden_max_absolute_difference": 0.0,
+        "same_top_code": true
+      },
+      "length-1025": {
+        "logits_max_absolute_difference": 0.0,
+        "hidden_max_absolute_difference": 0.0,
+        "same_top_code": true
+      }
+    },
+    "scope": "Synthetic token IDs test native NDJSON and real-model prefill/isolation; not semantic accuracy or a source-model oracle."
+  },
+  "code_validation": {
+    "rust_cpu_d3_tests": 16,
+    "rust_cpu_metal_d3_tests": 16,
+    "combined_tests_are_the_same_cases": true,
+    "existing_attention_state_tests": 2,
+    "rustfmt_all": "passed",
+    "clippy": "release library and d3_decision example; cpu,metal; -D warnings; passed",
+    "metal_release_example": "passed; --no-default-features --features metal",
+    "rust_usage_example_compiles": true,
+    "local_python_runtime_regressions": {
+      "tests": 76,
+      "subtests": 21
+    },
+    "metal_only_lib_test_limitation": "The existing lib-test helper graph unconditionally references Cpu. A metal-only lib test build fails on those upstream references; CPU-only and cpu,metal test configurations passed."
+  },
+  "limits": [
+    "This evaluates the retained final 831accb8-derived Lalamo artifact; it is not a fresh conversion using the current Lalamo PR head.",
+    "Previous-vs-updated results compare the same quantized weights across engine builds, not quantization accuracy versus original BF16.",
+    "Request timings are the sum of three instrumented regions, excluding probability normalization/trace bookkeeping outside those regions as well as startup/warmup. Single device runs do not establish complete caller-observed latency, throughput, load latency or statistical speedup.",
+    "Published data contains aggregates and artifact identities only. Raw model weights, benchmark payloads, application fixtures and full response archives are retained locally and are not included."
+  ],
+  "local_artifact_sha256": {
+    "PROTOCOL_VERIFICATION.json": "8597bfece4aff3f4850233c0004e06fbe469563d305c665627dcd9f1debe21dd",
+    "FINAL_VERIFICATION.json": "27f716bf745ed5d3b3632487f6d4472fc787f439586fb2950a9318b1ddbd9484",
+    "FINAL_CODE_VALIDATION.json": "00d712afc855c49327b16919ec6272baba0344cf30ec64cab188394b90ed06e8",
+    "DOCS_COMPILE.json": "07a9a6e5bfc1faed59f0d62e3011698413e71130455c32d5a1444ac4d7f5bf94",
+    "build-environment.json": "34711e55ed2073d28ec85a6f4a0a7812fd5c07ad9c00c963e00ec550aa00c98b",
+    "tests/native-rust-final.log": "07a220648a9f7fbd11a3a03298358dbb3677bd68c37ea399f081e80e0e960d72",
+    "tests/native-rust-cpu-metal.log": "c3401d6e4afb06e721047772f023dd2f0cf7b74e09f36b04403e1bb315e26468",
+    "tests/upstream-attention-state.log": "b5e9231d41f7b4c3fa5729d18838d215de8b0a5a44cd4a46c587e77720f6fba4",
+    "clippy.log": "542ee20ef642f1de2075e320e1c153b1990b1a93e627d3c76aae9316c95457c0",
+    "docs-compile.log": "025e4d92d6232e4133eda648631a8937fc02a004d931b26e355e05de9a45505d",
+    "gpu/roles/comparison.json": "c31977315b914b09489d8b5662fe92f44098fb49df3de2f30e4be518ab9f8033",
+    "gpu/regression/comparison.json": "9e50b7aaca8ae6c0484dc41e8b653ed062b27ed88ff5e847bba3f392f43611c9"
+  }
+}

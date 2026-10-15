@@ -239,6 +239,9 @@ main().catch((error) => {
 
 Everything from model downloading to inference configuration is handled automatically. Refer to the [documentation](https://docs.trymirai.com) for details on how to customize each step of the process.
 
+For standalone inference with converted D3-Flash decision models, see the
+[D3 decision adapter](docs/d3_decision.md).
+
 ## Examples
 
 You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-shared-instance** | **chat-structured-output** | **quick-start** | **tool-calls**\>:
