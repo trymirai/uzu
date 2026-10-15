@@ -1,5 +1,6 @@
 [package]
 name = "uzu-engine"
+description = "Inference engine for uzu AI models"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -57,7 +58,6 @@ xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 uzu-engine-macros.workspace = true
 bitflags.workspace = true
 derive_more = { workspace = true, features = ["debug"] }
-shoji.workspace = true
 half.workspace = true
 serde.workspace = true
 serde_json.workspace = true

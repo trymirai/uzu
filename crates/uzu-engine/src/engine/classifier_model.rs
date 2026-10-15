@@ -9,10 +9,6 @@ use std::{
 
 use derive_more::Debug;
 use half::bf16;
-use shoji::{
-    traits::backend::classification::ClassifierOutput,
-    types::session::classification::{ChatTokenCodecConfig, TokenCodecConfig},
-};
 use thiserror::Error;
 use tokenizers::Tokenizer;
 
@@ -23,7 +19,7 @@ use crate::{
     config::{model::classifier_model::ClassifierModelConfig, token_codec::AnyTokenCodecConfig},
     data_type::DataType,
     encodable_block::classifier::{Classifier as ClassifierEncodable, ClassifierError as ClassifierEncodableError},
-    engine::Engine,
+    engine::{ClassifierOutput, Engine},
     safetensors::{ParameterLoader, ParameterLoaderError},
 };
 
@@ -112,21 +108,8 @@ impl<B: Backend> ClassifierModel<B> {
         &self.tokenizer
     }
 
-    pub fn token_codec_config(&self) -> TokenCodecConfig {
-        match &self.token_codec_config {
-            AnyTokenCodecConfig::ChatCodecConfig(config) => TokenCodecConfig::Chat(ChatTokenCodecConfig {
-                prompt_template: config.prompt_template.clone(),
-                output_parser_regex: config.output_parser_regex.clone(),
-                system_role_name: config.system_role_name.clone(),
-                user_role_name: config.user_role_name.clone(),
-                assistant_role_name: config.assistant_role_name.clone(),
-                eos_token: config.eos_token.clone(),
-                bos_token: config.bos_token.clone(),
-                end_of_thinking_tag: config.end_of_thinking_tag.clone(),
-                default_system_prompt: config.default_system_prompt.clone(),
-            }),
-            AnyTokenCodecConfig::RawTextCodecConfig(_) => TokenCodecConfig::RawText,
-        }
+    pub fn token_codec_config(&self) -> &AnyTokenCodecConfig {
+        &self.token_codec_config
     }
 
     pub fn classify(

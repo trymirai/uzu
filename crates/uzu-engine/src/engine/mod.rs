@@ -13,7 +13,10 @@ use crate::{
 };
 
 pub mod classifier_model;
+mod classifier_output;
 pub mod language_model;
+
+pub use classifier_output::ClassifierOutput;
 
 pub struct Engine<B: Backend> {
     _capture_span: Option<CaptureMatcherSpan>,

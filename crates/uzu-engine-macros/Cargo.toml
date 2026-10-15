@@ -1,5 +1,6 @@
 [package]
 name = "uzu-engine-macros"
+description = "Procedural macros for the uzu inference engine"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true

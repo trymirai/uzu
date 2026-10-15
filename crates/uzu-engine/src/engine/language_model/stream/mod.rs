@@ -14,6 +14,9 @@ pub use crate::{
 };
 
 mod stream;
+mod token_stream_metrics;
+
+pub use token_stream_metrics::TokenStreamMetrics;
 
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,

@@ -14,6 +14,7 @@ pub mod backends;
 
 pub mod engine;
 
+pub use config::token_codec::AnyTokenCodecConfig;
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 
 #[cfg(test)]

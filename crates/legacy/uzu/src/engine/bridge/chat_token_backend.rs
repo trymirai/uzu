@@ -15,7 +15,8 @@ use shoji::{
             Error as BackendError, Instance as BackendInstance, InstanceStream, NoMetricsStream,
             chat_token::{
                 Instance as ChatTokenBackendInstance, StreamInput as ChatTokenStreamInput,
-                StreamMetrics as ChatTokenStreamMetrics, StreamOutput as ChatTokenStreamOutput, TokenStreamOutput,
+                StreamMetrics as ChatTokenStreamMetrics, StreamOutput as ChatTokenStreamOutput, TokenStreamMetrics,
+                TokenStreamOutput,
             },
         },
     },
@@ -271,6 +272,14 @@ impl<'a, B: Backend> InstanceStream for UzuChatTokenStream<'a, B> {
     type Metrics = ChatTokenStreamMetrics;
 
     fn metrics(&self) -> Self::Metrics {
-        Some(self.stream.metrics().clone())
+        let metrics = self.stream.metrics();
+        Some(TokenStreamMetrics {
+            num_prefill_forward_passes: metrics.num_prefill_forward_passes,
+            num_decode_forward_passes: metrics.num_decode_forward_passes,
+            num_tokens_prefilled: metrics.num_tokens_prefilled,
+            num_tokens_proposed: metrics.num_tokens_proposed,
+            num_tokens_accepted: metrics.num_tokens_accepted,
+            num_tokens_returned: metrics.num_tokens_returned,
+        })
     }
 }

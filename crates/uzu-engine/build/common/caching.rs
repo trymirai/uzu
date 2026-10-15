@@ -49,12 +49,10 @@ pub fn build_system_hash() -> anyhow::Result<&'static blake3::Hash> {
         Ok(bsh)
     } else {
         let crate_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").context("missing CARGO_MANIFEST_DIR")?);
-        let workspace_dir =
-            crate_dir.parent().and_then(Path::parent).context("cannot find workspace root from CARGO_MANIFEST_DIR")?;
 
         let mut hasher = blake3::Hasher::new();
-        hash_file(&mut hasher, &workspace_dir.join("Cargo.toml")).context("cannot hash Cargo.toml")?;
-        hash_file(&mut hasher, &workspace_dir.join("Cargo.lock")).context("cannot hash Cargo.lock")?;
+        hash_file(&mut hasher, &std::env::current_exe().context("cannot locate build script")?)
+            .context("cannot hash build script")?;
         hash_file(&mut hasher, &crate_dir.join("Cargo.toml")).context("cannot hash Cargo.toml")?;
         hash_directory(&mut hasher, &crate_dir.join("build")).context("cannot hash build/")?;
 

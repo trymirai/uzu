@@ -5,8 +5,6 @@ use std::{
     sync::Arc,
 };
 
-use shoji::traits::backend::chat_token::TokenStreamMetrics;
-
 #[cfg(grammar)]
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
@@ -22,7 +20,7 @@ use crate::{
     engine::language_model::{
         LanguageModel,
         state::LanguageModelState,
-        stream::{LanguageModelStreamError, LanguageModelStreamOptions},
+        stream::{LanguageModelStreamError, LanguageModelStreamOptions, TokenStreamMetrics},
     },
     trie::TrieNode,
     utils::size_for_shape::size_for_shape,
