@@ -12,7 +12,7 @@ use crate::{
             context::MetalContext,
             error::MetalError,
             gpu_types::attention::AttnParams,
-            kernel::{AttentionGemmGroupedCombineMetalKernel, AttentionGemmGroupedInt8MetalKernel},
+            kernel::{AttentionGemmGroupedInt8CombineMetalKernel, AttentionGemmGroupedInt8MetalKernel},
         },
     },
     data_type::DataType,
@@ -25,7 +25,7 @@ pub struct Int8Attention {
     mask_free: AttentionGemmGroupedInt8MetalKernel,
     masked: AttentionGemmGroupedInt8MetalKernel,
     trie: AttentionGemmGroupedInt8MetalKernel,
-    combine: AttentionGemmGroupedCombineMetalKernel,
+    combine: AttentionGemmGroupedInt8CombineMetalKernel,
 }
 
 impl Int8Attention {
@@ -60,12 +60,11 @@ impl Int8Attention {
             mask_free: kernel(true, false)?,
             masked: kernel(false, false)?,
             trie: kernel(false, true)?,
-            combine: AttentionGemmGroupedCombineMetalKernel::new(
+            combine: AttentionGemmGroupedInt8CombineMetalKernel::new(
                 context,
                 DataType::BF16,
                 config.head_dim,
                 config.gate_row_stride.is_some(),
-                true,
             )?,
         })
     }
