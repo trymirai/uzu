@@ -3,7 +3,8 @@ use std::collections::{HashMap, hash_map::Entry};
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, BufferRef, CommandBufferEncoding,
+            Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
+            Context,
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{
                 Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulOutput, MatmulShape, QuantParamsLayout,
@@ -16,11 +17,11 @@ use crate::{
             context::MetalContext,
             error::MetalError,
             gpu_types::{
-                gemm::{GemmAPrologueKind, GemmAlignment},
+                gemm::{GemmAPrologueKind, GemmAlignment, GemmBLayout},
                 matmul::GemmParams,
             },
             kernel::{
-                GemmMetalKernel, GemmSplitKReduceMetalKernel,
+                GemmMetalKernel, GemmPrepareBLayoutMetalKernel, GemmSplitKReduceMetalKernel,
                 matmul::{
                     MatmulMetalError, MatmulOutputWork,
                     gemm::{
@@ -91,10 +92,39 @@ impl GemmKernel {
                     specialization.output_transform,
                     specialization.alignment,
                     specialization.signed_codes,
+                    specialization.gemm_b_layout,
                 )?;
                 Ok(entry.insert(kernel))
             },
         }
+    }
+
+    pub fn mxu_tiled_words_per_thread(
+        k: u32,
+        bits: u32,
+    ) -> Option<u32> {
+        let words_per_thread = (k * bits / 32).div_ceil(32);
+        [32, 72, 160].into_iter().find(|&variant| variant >= words_per_thread)
+    }
+
+    pub fn prepare_gemm_b_layout(
+        weights: &mut <Metal as Backend>::GlobalBuffer,
+        rows: u32,
+        k: u32,
+        bits: u32,
+        context: &MetalContext,
+    ) -> Result<(), MetalError> {
+        let row_words = k * bits / 32;
+        let variant = Self::mxu_tiled_words_per_thread(k, bits).expect("int8 eligibility admits only tileable weights");
+        let mut command_buffer = context.create_command_buffer(Some("prepare GEMM B layout"), None)?;
+        GemmPrepareBLayoutMetalKernel::new(context, bits, variant)?.encode(
+            weights,
+            row_words,
+            rows / 32,
+            &mut command_buffer,
+        );
+        command_buffer.end_encoding().submit().wait_until_completed()?;
+        Ok(())
     }
 
     fn get_or_create_split_k_reduce(
@@ -224,6 +254,13 @@ impl GemmKernel {
             };
 
         let use_mxu = plan.engine == GemmEngine::Mxu;
+        let gemm_b_layout = quantized.as_ref().map_or(GemmBLayout::RowMajor, |quantized| quantized.weights_layout);
+        if gemm_b_layout == GemmBLayout::MxuTiled && (!use_mxu || shape.a_full_precision) {
+            return Err(MatmulMetalError::IncompatibleA {
+                path: "Gemm",
+                reason: "MxuTiled GEMM B layout requires int8 activations on the MXU",
+            });
+        }
 
         let is_quant = quantized.is_some();
         if !is_quant && !matches!(&a, MatmulA::FullPrecision { .. }) {
@@ -299,6 +336,7 @@ impl GemmKernel {
                 scale_strides,
                 zero_point_strides,
                 shape,
+                gemm_b_layout,
                 plan,
                 output_transform,
                 output_bias,
@@ -346,6 +384,7 @@ impl GemmKernel {
         let specialization = GemmSpecialization::from_plan(
             plan,
             shape,
+            gemm_b_layout,
             self.weights_data_type,
             output_transform,
             alignment,
@@ -387,6 +426,7 @@ impl GemmKernel {
         scale_strides: QuantParamsStrides,
         zero_point_strides: QuantParamsStrides,
         shape: MatmulShape,
+        gemm_b_layout: GemmBLayout,
         plan: GemmPlan,
         output_transform: GemmDTransform,
         output_bias: Option<impl BufferRef<Backend = Metal>>,
@@ -427,6 +467,7 @@ impl GemmKernel {
         let part_spec = GemmSpecialization::from_plan(
             plan,
             shape,
+            gemm_b_layout,
             self.weights_data_type,
             GemmDTransform::empty(),
             alignment,

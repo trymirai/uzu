@@ -1,4 +1,4 @@
-use super::{QuantParams, QuantParamsLayout};
+use super::{QuantParams, QuantParamsLayout, WeightsLayout};
 use crate::{
     backends::common::{
         BufferRef,
@@ -35,6 +35,7 @@ pub struct QuantizedB<TB: BufferRef> {
     pub mode: QuantizationMode,
     pub group_size: u32,
     pub signed_codes: bool,
+    pub weights_layout: WeightsLayout<TB::Backend>,
 }
 
 #[derive(Clone, Copy)]
@@ -125,6 +126,10 @@ impl<TB: BufferRef> MatmulB<TB> {
 
     pub fn signed_codes(&self) -> bool {
         self.quantized().is_some_and(|quantized| quantized.signed_codes)
+    }
+
+    pub fn weights_layout(&self) -> WeightsLayout<TB::Backend> {
+        self.quantized().map_or_else(Default::default, |quantized| quantized.weights_layout)
     }
 
     pub fn quant_params_layout(&self) -> Option<QuantParamsLayout> {

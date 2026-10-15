@@ -44,6 +44,53 @@ private:
 
   uint4 weights[Tile::ROWS_PER_LANE][SLICE_WORDS];
 
+  static METAL_FUNC uint mxu_tiled_offset(uint row, uint row_stride, uint byte) {
+    constexpr uint CHUNK_BYTES = BITS * 4;
+    const uint y = row % 8;
+    const uint x = byte % CHUNK_BYTES / BITS;
+    const uint lane = (x & 1) | ((y & 1) << 1) | ((y >> 1 & 1) << 2) | ((x >> 1) << 3) | ((y >> 2) << 4);
+    return row / 32 * 32 * row_stride + (byte / CHUNK_BYTES * 32 + lane) * CHUNK_BYTES + row % 32 / 8 * BITS +
+           byte % BITS;
+  }
+
+  METAL_FUNC void load_mxu_tiled_weights(
+      const device uint8_t* weights_base,
+      const thread uint (&weight_row_indices)[Tile::ROWS_PER_LANE],
+      uint row_stride,
+      uint offset_bytes,
+      bool gathered
+  ) thread {
+    constexpr uint ROW_WORDS = BITS / 4;
+    constexpr uint SEGMENT_WORDS = Tile::ROWS_PER_LANE * ROW_WORDS;
+    constexpr uint VECTOR_WORDS = SEGMENT_WORDS < 4 ? SEGMENT_WORDS : 4;
+    constexpr bool VECTOR_LOADS = 4 % Tile::ROWS_PER_LANE == 0 && VECTOR_WORDS > 1;
+    METAL_PRAGMA_UNROLL
+    for (uint segment = 0; segment < SLICE_BYTES / BITS; ++segment) {
+      const uint byte = offset_bytes + segment * BITS;
+      if (VECTOR_LOADS && !gathered) {
+        const device vec<uint, VECTOR_WORDS>* source = reinterpret_cast<const device vec<uint, VECTOR_WORDS>*>(
+            weights_base + mxu_tiled_offset(weight_row_indices[0], row_stride, byte)
+        );
+        METAL_PRAGMA_UNROLL
+        for (uint word = 0; word < SEGMENT_WORDS; ++word) {
+          reinterpret_cast<thread uint*>(weights[word / ROW_WORDS])[segment * ROW_WORDS + word % ROW_WORDS] =
+              source[word / VECTOR_WORDS][word % VECTOR_WORDS];
+        }
+      } else {
+        Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
+          constexpr uint R = decltype(output_index)::value;
+          METAL_PRAGMA_UNROLL
+          for (uint word = 0; word < ROW_WORDS; ++word) {
+            reinterpret_cast<thread uint*>(weights[R])[segment * ROW_WORDS + word] =
+                *reinterpret_cast<const device uint*>(
+                    weights_base + mxu_tiled_offset(weight_row_indices[R], row_stride, byte + word * 4)
+                );
+          }
+        });
+      }
+    }
+  }
+
 public:
   static METAL_FUNC uint row_stride(const thread GemvParams& params) {
     return params.in_vec_size * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
@@ -54,10 +101,15 @@ public:
       const device uint8_t* weights_base,
       const thread uint (&weight_row_indices)[Tile::ROWS_PER_LANE],
       uint row_stride,
-      uint group_offset
+      uint group_offset,
+      const thread GemvParams& params
   ) thread {
     const uint k = position.group * GROUP_SIZE + group_offset + position.slice * SLICE_VALUES;
     const uint offset_bytes = k * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
+    if (params.gemm_b_layout == GemmBLayout::MxuTiled) {
+      load_mxu_tiled_weights(weights_base, weight_row_indices, row_stride, offset_bytes, params.gathered);
+      return;
+    }
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
       const uint row = weight_row_indices[R];
@@ -103,9 +155,18 @@ public:
         const uint k =
             position.group * GROUP_SIZE + group_offset + position.slice * SLICE_VALUES + chunk * CHUNK_VALUES;
         const uint input_row = tile.input_row + source_row;
-        const device AT* input = ops.a + input_row * params.in_vec_size + k;
         float input_values[CHUNK_VALUES];
-        QuantChunk<BITS>::template load<INPUT_ALIGNED>(input, input_values, k, params.in_vec_size, input_row);
+        if (BITS == 8 && params.gemm_b_layout == GemmBLayout::MxuTiled) {
+          const device AT* input = ops.a + input_row * params.in_vec_size + k - k % 32 / 2;
+          METAL_PRAGMA_UNROLL
+          for (uint i = 0; i < CHUNK_VALUES / 2; i++) {
+            input_values[i] = float(input[i]);
+            input_values[CHUNK_VALUES / 2 + i] = float(input[16 + i]);
+          }
+        } else {
+          const device AT* input = ops.a + input_row * params.in_vec_size + k;
+          QuantChunk<BITS>::template load<INPUT_ALIGNED>(input, input_values, k, params.in_vec_size, input_row);
+        }
         if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
           METAL_PRAGMA_UNROLL
           for (uint i = 0; i < CHUNK_VALUES; i++) {

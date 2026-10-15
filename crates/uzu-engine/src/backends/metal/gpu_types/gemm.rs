@@ -9,6 +9,14 @@ pub enum GemmAPrologueKind {
 }
 
 #[repr(C)]
+#[derive(Debug, Display, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GemmBLayout {
+    #[default]
+    RowMajor,
+    MxuTiled,
+}
+
+#[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(non_camel_case_types)]
 pub enum GemmTiling {

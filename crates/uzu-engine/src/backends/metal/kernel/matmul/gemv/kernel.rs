@@ -14,8 +14,9 @@ use crate::{
             command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
+            gpu_types::gemm::GemmBLayout,
             kernel::{
-                GemvMetalKernel,
+                GemvMetalKernel, GemvMxuTiledMetalKernel,
                 matmul::{
                     MatmulOutputWork,
                     gemv::policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK},
@@ -27,6 +28,7 @@ use crate::{
 };
 
 const GEMV_MAX_BATCH: u32 = 8;
+const MXU_TILED_KERNEL_MIN_K: u32 = 2048;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GemvSpecialization {
@@ -43,12 +45,15 @@ pub struct GemvSpecialization {
     group_lanes: u32,
     gathered: bool,
     signed_codes: bool,
+    gemm_b_layout: GemmBLayout,
     full_tile: bool,
+    mxu_tiled_kernel: bool,
 }
 
 impl GemvSpecialization {
     pub fn select_shape(
         shape: &MatmulShape,
+        gemm_b_layout: GemmBLayout,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
@@ -58,6 +63,14 @@ impl GemvSpecialization {
         let is_quant = shape.is_quant();
         let bits = shape.b_bits.unwrap_or(0);
         let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
+        let mxu_tiled_kernel = gemm_b_layout == GemmBLayout::MxuTiled
+            && shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant
+            && shape.m == 1
+            && !shape.gathered
+            && bf16_io
+            && weights_data_type == DataType::BF16
+            && shape.k >= MXU_TILED_KERNEL_MIN_K
+            && shape.n >= 32 * gpu_core_count;
         let tile = if is_quant && shape.gathered {
             policy::gathered_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
         } else if is_quant {
@@ -71,6 +84,15 @@ impl GemvSpecialization {
                 shape.k,
                 bf16_io,
             )
+            .map(|tile| match gemm_b_layout {
+                GemmBLayout::MxuTiled if mxu_tiled_kernel => {
+                    policy::GemvTile::quantized_output_tile(8, 32, 1, 32, tile.group_lanes)
+                },
+                GemmBLayout::MxuTiled if tile.output_row_tile() < 16 => {
+                    policy::GemvTile::quantized_output_tile(8, 16, 1, 32, tile.group_lanes)
+                },
+                _ => tile,
+            })
         } else {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
@@ -80,11 +102,17 @@ impl GemvSpecialization {
             let input_aligned = shape.k.is_multiple_of(FP_K_BLOCK);
             Some(policy::fp_tile(gpu_core_count, apple_gpu_family, shape.m, shape.n, shape.k, input_aligned))
         };
-        Self::select_tile(shape, weights_data_type, input_data_type, output_data_type, tile?)
+        Self::select_tile(shape, gemm_b_layout, weights_data_type, input_data_type, output_data_type, tile?).map(
+            |specialization| Self {
+                mxu_tiled_kernel,
+                ..specialization
+            },
+        )
     }
 
     pub fn select_tile(
         shape: &MatmulShape,
+        gemm_b_layout: GemmBLayout,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
@@ -137,7 +165,9 @@ impl GemvSpecialization {
             group_lanes: tile.group_lanes,
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
+            gemm_b_layout,
             full_tile: full_tile(shape, tile),
+            mxu_tiled_kernel: false,
         };
         Some(specialization)
     }
@@ -175,6 +205,7 @@ impl GemvSpecialization {
             self.output_transform,
             self.gathered,
             self.signed_codes,
+            self.gemm_b_layout,
             self.full_tile,
         )
     }
@@ -226,6 +257,7 @@ pub struct GemvKernel {
     input_data_type: DataType,
     output_data_type: DataType,
     pipelines: HashMap<GemvSpecialization, GemvMetalKernel>,
+    mxu_tiled_pipelines: HashMap<GemvSpecialization, GemvMxuTiledMetalKernel>,
 }
 
 impl GemvKernel {
@@ -239,6 +271,7 @@ impl GemvKernel {
             input_data_type,
             output_data_type,
             pipelines: HashMap::new(),
+            mxu_tiled_pipelines: HashMap::new(),
         }
     }
 
@@ -320,6 +353,38 @@ impl GemvKernel {
             });
         let output_group_count = n.div_ceil(specialization.output_row_tile());
         let context = command_buffer.context();
+        if specialization.mxu_tiled_kernel {
+            let MatmulB::Quantized(quantized) = b else {
+                return Err(MatmulMetalError::UnsupportedLayout {
+                    path: "Gemv",
+                });
+            };
+            let pipeline = match self.mxu_tiled_pipelines.entry(specialization) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => entry.insert(GemvMxuTiledMetalKernel::new(
+                    context,
+                    specialization.group_size,
+                    specialization.output_transform,
+                    specialization.signed_codes,
+                )?),
+            };
+            pipeline.encode(
+                quantized.codes,
+                quantized.scales,
+                a,
+                d.reborrow(),
+                gemv_bias,
+                gemv_rht_factors,
+                k,
+                n,
+                ab_scale,
+                scale_strides.output_stride,
+                scale_strides.group_stride,
+                soft_cap,
+                command_buffer,
+            );
+            return Ok(());
+        }
         let pipeline = self.get_or_create(context, specialization)?;
         match b {
             MatmulB::FullPrecision {

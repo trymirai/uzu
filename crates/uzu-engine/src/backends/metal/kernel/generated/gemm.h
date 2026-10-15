@@ -31,6 +31,11 @@ enum class GemmAPrologueKind : uint32_t {
   Int8Symmetric = 1,
 };
 
+enum class GemmBLayout : uint32_t {
+  RowMajor = 0,
+  MxuTiled = 1,
+};
+
 enum class GemmTiling : uint32_t {
   Tile8x32x32_Simdgroups1x1 = 0,
   Tile64x32x32_Simdgroups2x2 = 1,
