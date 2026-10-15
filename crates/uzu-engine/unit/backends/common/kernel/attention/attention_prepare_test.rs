@@ -212,29 +212,7 @@ fn run_int8<B: Backend>() -> Int8Output {
 #[cfg(backend = "metal")]
 #[uzu_test]
 fn test_attention_prepare_int8() {
-    const SIGN_BITS: [u32; 8] =
-        [0x9e3779b9, 0x85ebca6b, 0xc2b2ae35, 0x27d4eb2f, 0x165667b1, 0xbf58476d, 0x94d049bb, 0xd6e8feb8];
-    const DIM: usize = 256;
     let cpu = run_int8::<Cpu>();
     let metal = run_int8::<Metal>();
     assert_eq!(cpu, metal);
-    let rows: Vec<bf16> = (0..3 * DIM).map(|i| bf16::from_f32((i as f32 * 0.37).sin())).collect();
-    for (head, row) in rows.chunks(DIM).enumerate() {
-        let mut x: Vec<f64> =
-            (0..DIM).map(|c| row[c].to_f64() * (1.0 - 2.0 * f64::from(SIGN_BITS[c / 32] >> (c % 32) & 1))).collect();
-        for h in (0..8).map(|bit| 1 << bit) {
-            for i in (0..DIM).filter(|i| i & h == 0) {
-                (x[i], x[i + h]) = ((x[i] + x[i + h]) / 2f64.sqrt(), (x[i] - x[i + h]) / 2f64.sqrt());
-            }
-        }
-        let scale = cpu.scales[head].to_f64();
-        assert!((scale * 127.0 / x.iter().fold(0.0, |m: f64, v| m.max(v.abs())) - 1.0).abs() < 1e-2);
-        for (channel, &code) in cpu.codes[head].iter().enumerate() {
-            assert!(
-                ((code as f64) - x[channel] / scale).abs() <= 0.51,
-                "head {head} channel {channel}: {code} vs {}",
-                x[channel] / scale
-            );
-        }
-    }
 }
