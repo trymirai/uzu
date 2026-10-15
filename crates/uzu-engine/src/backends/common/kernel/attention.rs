@@ -21,7 +21,7 @@ pub trait AttentionKernel: Sized + Send + Sync {
         config: AttentionKernelConfig,
     ) -> Result<Self, Self::Error>;
 
-    fn supports_int8_kv(&self) -> bool {
+    fn supports_int8(&self) -> bool {
         false
     }
 

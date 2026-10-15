@@ -99,7 +99,7 @@ impl AttentionKernel for AttentionMetalKernel {
         })
     }
 
-    fn supports_int8_kv(&self) -> bool {
+    fn supports_int8(&self) -> bool {
         self.int8.is_some()
     }
 

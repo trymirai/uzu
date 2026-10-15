@@ -418,7 +418,7 @@ fn int8_attention_matches_cpu() {
         let (shape, nodes) = ((DIM, q_heads, KV_HEADS, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
         let config = super::default_attention_config::<bf16>(DIM, q_heads, KV_HEADS, true);
         let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionKernel::new(&metal, config).unwrap();
-        if !kernel.supports_int8_kv() {
+        if !kernel.supports_int8() {
             return;
         }
         // Fused QKV rows over the data `run_attention` uses; its queries are head-major.

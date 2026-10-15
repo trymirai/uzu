@@ -167,7 +167,7 @@ impl<B: Backend> Attention<B> {
         )
         .map_err(AttentionNewError::Kernel)?;
         let prepare_int8 = kernel
-            .supports_int8_kv()
+            .supports_int8()
             .then(|| {
                 <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
                     context,

@@ -189,7 +189,7 @@ impl<B: Backend> AttentionState<B> {
 
         let cache = attention.ring_capacity.map_or_else(KVCacheState::full, KVCacheState::ring);
 
-        let format = if attention.kernel.supports_int8_kv() {
+        let format = if attention.kernel.supports_int8() {
             KVFormat::INT8
         } else {
             KVFormat::BF16
