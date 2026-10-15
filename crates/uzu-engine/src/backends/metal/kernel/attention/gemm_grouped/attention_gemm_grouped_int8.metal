@@ -27,9 +27,8 @@ struct Int8Scratch {
   UZU_CONST int QUERY_VECTORS = Layout::BANDS * QUERY_VECTORS_PER_BAND;
 };
 
-template <typename T, bool MASK_FREE, uint HEAD_DIM>
+template <typename T, uint HEAD_DIM>
 VARIANTS(T, bfloat)
-VARIANTS(MASK_FREE, false, true)
 VARIANTS(HEAD_DIM, 256)
 KERNEL(AttentionGemmGroupedInt8)(
     const device int8_t* q_codes,
@@ -48,6 +47,7 @@ KERNEL(AttentionGemmGroupedInt8)(
     const constant uint& split_base,
     const constant uint& split_count,
     const constant uint& trie_nodes,
+    const bool mask_free SPECIALIZE,
     const bool is_trie SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     threadgroup float p_exchange[2 * Int8Scratch<HEAD_DIM>::SLOT_FLOATS],
@@ -79,15 +79,11 @@ KERNEL(AttentionGemmGroupedInt8)(
   static_assert(KEY_TILES == 2, "probabilities pack two key fragments");
   static_assert(ROWS_PER_LANE == 2, "stats pack two rows per lane");
 
-  // Online softmax in log2 units. The running max starts finite so the first rescale is exp2(-huge) = 0, not NaN;
-  // masked scores underflow to 0.
-  constexpr AccumType INITIAL_MAX = -1e30f;
-  constexpr AccumType MASKED_SCORE = -1e9f;
-  // Rescale only when a block max exceeds the running max by more than this (block weights stay <= 2^8).
+  // Lazy rescale (FlashAttention-4): keep the running max until a block beats it by 8 (2^8).
   constexpr AccumType RESCALE_THRESHOLD = 8.0f;
 
   // P is stored as u8: p_code = rint(255 * exp2(score - block_max)), so p = p_code / 255.
-  constexpr AccumType CODE_MAX = 255.0f;
+  constexpr AccumType CODE_MAX = static_cast<AccumType>(metal::numeric_limits<uchar>::max());
 
   using ScoreFragment = Fragment<AccumType, 1, KEY_TILES, Ops>;
   using ProbabilityFragment = Fragment<uchar, 1, KEY_TILES, Ops>;
@@ -108,7 +104,7 @@ KERNEL(AttentionGemmGroupedInt8)(
   const uint slice_offset = uint(slice) * uint(Layout::SLICE_COLS);
 
   const size_t query_group_base = size_t(batch_idx) * params.q_strides[0] + size_t(kv_head_idx) * params.q_strides[1];
-  q_codes += query_group_base + size_t(row_base) * query_row_stride;
+  q_codes += query_group_base;
   k_codes += size_t(batch_idx) * params.k_strides[0] +
              uint(uzu::kv_layout::TILE_KEYS) * size_t(kv_head_idx) * params.k_strides[1];
   k_codes += int(lane) * uzu::kv_layout::LANE_BYTES;
@@ -118,28 +114,15 @@ KERNEL(AttentionGemmGroupedInt8)(
        size_t(uzu::kv_layout::TILE_KEYS) * (size_t(kv_head_idx) * params.v_strides[1] + slice_offset)) +
       size_t(lane) * uzu::kv_layout::LANE_BYTES;
 
-  // Padding rows reread the last real row.
-  int query_offset_row0 = 0;
-  int query_offset_row1 = 0;
-  {
-    const short2 query_position = Ops::get_position(lane);
-    const uint last_query_row = grouped_rows - 1u;
-    query_offset_row0 =
-        (int(min(row_base + uint(query_position.y), last_query_row)) - int(row_base)) * int(query_row_stride) +
-        int(query_position.x);
-    query_offset_row1 =
-        (int(min(row_base + uint(query_position.y) + uint(Ops::THREAD_ELEMENT_ROW_STRIDE), last_query_row)) -
-         int(row_base)) *
-            int(query_row_stride) +
-        int(query_position.x);
-  }
-
   Fragment<AccumType, 1, VALUE_TILES, Ops> output;
   output.clear();
 
-  AccumType max_score[ROWS_PER_LANE] = {INITIAL_MAX, INITIAL_MAX};
-  AccumType sum_score[ROWS_PER_LANE] = {0.0f, 0.0f};
-  AccumType output_bias[ROWS_PER_LANE] = {0.0f, 0.0f};
+  AccumType max_score[ROWS_PER_LANE] = {
+      metal::numeric_limits<AccumType>::lowest(),
+      metal::numeric_limits<AccumType>::lowest()
+  };
+  AccumType sum_score[ROWS_PER_LANE] = {};
+  AccumType output_bias[ROWS_PER_LANE] = {};
 
   const uint prefix_length = params.q_off;
   const uint key_length = params.k_len;
@@ -149,32 +132,31 @@ KERNEL(AttentionGemmGroupedInt8)(
       uint(score_position.y) + uint(Ops::THREAD_ELEMENT_ROW_STRIDE)
   };
   const uint block_band_base = uint(band) * uint(Layout::TILE_ROWS);
-  uint last_visible_key[MASK_FREE ? 1 : ROWS_PER_LANE];
-  if (!MASK_FREE) {
+  uint query_rows[ROWS_PER_LANE];
+  if (!mask_free) {
     METAL_PRAGMA_UNROLL
     for (ushort r = 0; r < ROWS_PER_LANE; ++r) {
-      last_visible_key[r] = prefix_length + (row_base + band_rows[r]) % params.q_len;
+      query_rows[r] = (row_base + band_rows[r]) % params.q_len;
     }
-  }
-  if (!MASK_FREE && is_trie) {
-    ulong row_trie_mask[ROWS_PER_LANE] = {0ul, 0ul};
-    for (uint node_index = 0; node_index < trie_nodes; ++node_index) {
-      const uzu::trie::TrieNode node = trie[node_index];
-      METAL_PRAGMA_UNROLL
-      for (ushort r = 0; r < ROWS_PER_LANE; ++r) {
-        const uint query_index = last_visible_key[r] - prefix_length;
-        if (query_index >= node.trie_start && query_index <= node.trie_end) {
-          row_trie_mask[r] |= (1ul << node_index);
+    if (is_trie) {
+      ulong row_trie_mask[ROWS_PER_LANE] = {};
+      for (uint node_index = 0; node_index < trie_nodes; ++node_index) {
+        const uzu::trie::TrieNode node = trie[node_index];
+        METAL_PRAGMA_UNROLL
+        for (ushort r = 0; r < ROWS_PER_LANE; ++r) {
+          if (query_rows[r] >= node.trie_start && query_rows[r] <= node.trie_end) {
+            row_trie_mask[r] |= (1ul << node_index);
+          }
         }
       }
-    }
-    if (score_position.x == 0) {
-      METAL_PRAGMA_UNROLL
-      for (ushort r = 0; r < ROWS_PER_LANE; ++r) {
-        trie_masks[block_band_base + band_rows[r]] = row_trie_mask[r];
+      if (score_position.x == 0) {
+        METAL_PRAGMA_UNROLL
+        for (ushort r = 0; r < ROWS_PER_LANE; ++r) {
+          trie_masks[block_band_base + band_rows[r]] = row_trie_mask[r];
+        }
       }
+      threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
   const uint key_block_stride = uint(uzu::kv_layout::TILE_KEYS) * key_row_stride;
@@ -229,23 +211,24 @@ KERNEL(AttentionGemmGroupedInt8)(
   // Each slice simdgroup stages its depth slice of the band's Q.
   threadgroup uint4* const staged_query = query_stage + uint(band) * uint(Scratch::QUERY_VECTORS_PER_BAND) + uint(lane);
   {
+    // Padding rows reread the last real row.
+    const short2 query_position = Ops::get_position(lane);
+    const uint query_row = row_base + uint(query_position.y);
+    const uint last_query_row = grouped_rows - 1u;
+    const device int8_t* query_row0 =
+        q_codes + size_t(min(query_row, last_query_row)) * query_row_stride + uint(query_position.x);
+    const device int8_t* query_row1 =
+        q_codes + size_t(min(query_row + uint(Ops::THREAD_ELEMENT_ROW_STRIDE), last_query_row)) * query_row_stride +
+        uint(query_position.x);
     constexpr int SLICE_PAIRS = DEPTH_TILES / 2;
     METAL_PRAGMA_UNROLL
     for (int slice_pair = 0; slice_pair < SLICE_PAIRS; ++slice_pair) {
       const int query_fragment = (int(slice) * SLICE_PAIRS + slice_pair) * 2;
       uint4 query_pair;
-      query_pair.x = *reinterpret_cast<const device uint*>(
-          q_codes + (query_offset_row0 + query_fragment * int(Ops::FRAGMENT_ROWS))
-      );
-      query_pair.y = *reinterpret_cast<const device uint*>(
-          q_codes + (query_offset_row1 + query_fragment * int(Ops::FRAGMENT_ROWS))
-      );
-      query_pair.z = *reinterpret_cast<const device uint*>(
-          q_codes + (query_offset_row0 + (query_fragment + 1) * int(Ops::FRAGMENT_ROWS))
-      );
-      query_pair.w = *reinterpret_cast<const device uint*>(
-          q_codes + (query_offset_row1 + (query_fragment + 1) * int(Ops::FRAGMENT_ROWS))
-      );
+      query_pair.x = *reinterpret_cast<const device uint*>(query_row0 + query_fragment * int(Ops::FRAGMENT_ROWS));
+      query_pair.y = *reinterpret_cast<const device uint*>(query_row1 + query_fragment * int(Ops::FRAGMENT_ROWS));
+      query_pair.z = *reinterpret_cast<const device uint*>(query_row0 + (query_fragment + 1) * int(Ops::FRAGMENT_ROWS));
+      query_pair.w = *reinterpret_cast<const device uint*>(query_row1 + (query_fragment + 1) * int(Ops::FRAGMENT_ROWS));
       staged_query[(int(slice) * SLICE_PAIRS + slice_pair) * METAL_SIMD_SIZE] = query_pair;
     }
   }
@@ -307,7 +290,7 @@ KERNEL(AttentionGemmGroupedInt8)(
           for (int col = 0; col < Ops::THREAD_ELEMENT_COLS; ++col) {
             const int lane_col = fragment_col * Ops::THREAD_ELEMENT_COLS + col;
             const int scale_col = fragment_col * Ops::FRAGMENT_COLS + col;
-            const bool valid = MASK_FREE || key_base + uint(score_position.x) + uint(scale_col) < key_length;
+            const bool valid = mask_free || key_base + uint(score_position.x) + uint(scale_col) < key_length;
             key_scale[lane_col] = AccumType(key_scale_lane[scale_col]);
             const float v_scale = float(value_scale_lane[scale_col]);
             log2_value_scale[lane_col] = valid ? metal::precise::log2(v_scale) : 0.0f;
@@ -322,7 +305,7 @@ KERNEL(AttentionGemmGroupedInt8)(
           int_score
       );
 
-      if (!MASK_FREE && (is_tail_block || (key_base + uint(uzu::kv_layout::TILE_KEYS) > prefix_length))) {
+      if (!mask_free && (is_tail_block || (key_base + uint(uzu::kv_layout::TILE_KEYS) > prefix_length))) {
         ulong trie_row_masks[ROWS_PER_LANE] = {0ul, 0ul};
         if (is_trie) {
           METAL_PRAGMA_UNROLL
@@ -337,9 +320,9 @@ KERNEL(AttentionGemmGroupedInt8)(
             visible = visible &&
                       (key < prefix_length || ((trie_row_masks[lane_row] >> ulong(key - prefix_length)) & 1ul) != 0ul);
           } else {
-            visible = visible && key <= last_visible_key[MASK_FREE ? 0 : lane_row];
+            visible = visible && key <= prefix_length + query_rows[lane_row];
           }
-          return visible ? value : MASKED_SCORE;
+          return visible ? value : -metal::numeric_limits<AccumType>::infinity();
         });
       }
 
@@ -347,9 +330,11 @@ KERNEL(AttentionGemmGroupedInt8)(
       AccumType block_max[ROWS_PER_LANE];
       AccumType code_sum[ROWS_PER_LANE];
       ProbabilityFragment p_codes;
-      score.row_reduce(block_max, -INFINITY, [](AccumType a, AccumType b) UZU_ALWAYS_INLINE {
-        return metal::max(a, b);
-      });
+      score.row_reduce(
+          block_max,
+          metal::numeric_limits<AccumType>::lowest(),
+          [](AccumType a, AccumType b) UZU_ALWAYS_INLINE { return metal::max(a, b); }
+      );
       score.for_each_lane(
           [&](ushort row, ushort col, thread AccumType& value, thread uchar& code) UZU_ALWAYS_INLINE {
             value = metal::rint(fast::exp2(value - (block_max[row] - metal::log2(CODE_MAX))));
@@ -519,7 +504,7 @@ KERNEL(AttentionGemmGroupedInt8Combine)(
   float numerator = 0.0f;
   float denominator = 0.0f;
   constexpr uint SIMDGROUPS = BD / METAL_SIMD_SIZE;
-  float global_max = -INFINITY;
+  float global_max = -metal::numeric_limits<float>::infinity();
   for (uint s = column; s < num_splits; s += BD) {
     if (row_sums[s * split_rows] > 0.0f) {
       global_max = metal::max(global_max, row_maxs[s * split_rows]);

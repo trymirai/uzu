@@ -49,8 +49,8 @@ impl Int8Attention {
             AttentionGemmGroupedInt8MetalKernel::new(
                 context,
                 DataType::BF16,
-                mask_free,
                 config.head_dim,
+                mask_free,
                 is_trie,
                 config.num_groups,
             )
