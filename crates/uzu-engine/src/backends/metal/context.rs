@@ -60,6 +60,7 @@ pub struct MetalContext {
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     pub(super) blit_copy: [OnceLock<BlitCopyMetalKernel>; 3],
     pub(super) blit_fill: [OnceLock<BlitFillMetalKernel>; 2],
+    records_timestamps: bool,
     weak_self: Weak<MetalContext>,
 }
 
@@ -110,12 +111,12 @@ impl MetalContext {
 
         Ok(pipeline)
     }
-}
 
-impl Context for MetalContext {
-    type Backend = Metal;
+    pub fn new_with_timestamps() -> Result<Arc<Self>, MetalError> {
+        Self::create(true)
+    }
 
-    fn new() -> Result<Arc<Self>, MetalError> {
+    fn create(records_timestamps: bool) -> Result<Arc<Self>, MetalError> {
         if CAPTURE_MATCHER.enabled() {
             unsafe {
                 std::env::set_var("METAL_CAPTURE_ENABLED", "1");
@@ -181,8 +182,21 @@ impl Context for MetalContext {
             pipeline_cache: Mutex::new(HashMap::new()),
             blit_copy: std::array::from_fn(|_| OnceLock::new()),
             blit_fill: std::array::from_fn(|_| OnceLock::new()),
+            records_timestamps,
             weak_self: weak_self.clone(),
         }))
+    }
+}
+
+impl Context for MetalContext {
+    type Backend = Metal;
+
+    fn new() -> Result<Arc<Self>, MetalError> {
+        Self::create(false)
+    }
+
+    fn records_timestamps(&self) -> bool {
+        self.records_timestamps
     }
 
     fn device_name(&self) -> Option<&str> {

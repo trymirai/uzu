@@ -29,6 +29,7 @@ pub enum PredictionHeadError<B: Backend> {
 }
 
 pub struct PredictionHead<B: Backend> {
+    name: String,
     hidden_dim: u32,
     activation: ActivationType,
     dense_projection: Box<dyn Linear<B>>,
@@ -39,6 +40,7 @@ pub struct PredictionHead<B: Backend> {
 
 impl<B: Backend> PredictionHead<B> {
     pub fn new(
+        name: String,
         hidden_dim: u32,
         num_labels: u32,
         data_type: DataType,
@@ -47,6 +49,7 @@ impl<B: Backend> PredictionHead<B> {
         context: &B::Context,
     ) -> Result<Self, PredictionHeadError<B>> {
         let dense_projection = <dyn Linear<B>>::new(
+            format!("{name}/dense projection"),
             hidden_dim,
             hidden_dim,
             data_type,
@@ -60,6 +63,7 @@ impl<B: Backend> PredictionHead<B> {
             .map_err(PredictionHeadError::Backend)?;
 
         let normalization = Normalization::new(
+            format!("{name}/norm"),
             hidden_dim,
             data_type,
             None,
@@ -70,10 +74,18 @@ impl<B: Backend> PredictionHead<B> {
             context,
         )?;
 
-        let readout =
-            <dyn Linear<B>>::new(hidden_dim, num_labels, data_type, true, &parameter_tree.subtree("readout"), context)?;
+        let readout = <dyn Linear<B>>::new(
+            format!("{name}/readout"),
+            hidden_dim,
+            num_labels,
+            data_type,
+            true,
+            &parameter_tree.subtree("readout"),
+            context,
+        )?;
 
         Ok(Self {
+            name,
             hidden_dim,
             activation,
             dense_projection,
@@ -89,7 +101,8 @@ impl<B: Backend> PredictionHead<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, PredictionHeadError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("prediction head");
+        let command_buffer = &mut *command_buffer.debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let mut hidden = self.dense_projection.encode(input, batch_dim, command_buffer)?;
         self.activation_kernel.encode(
@@ -105,6 +118,7 @@ impl<B: Backend> PredictionHead<B> {
             .map_err(PredictionHeadError::Backend)?;
         let logits = self.readout.encode(normalized, batch_dim, command_buffer)?;
 
+        command_buffer.sample_end_timestamp();
         Ok(logits)
     }
 }

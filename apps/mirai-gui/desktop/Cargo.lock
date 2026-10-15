@@ -3483,9 +3483,9 @@ dependencies = [
 
 [[package]]
 name = "mtl-rs"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9f1de2bca596db925db758d497cbf9cb394a2981933319b3777510097e1d360"
+checksum = "4aa9291872296e9e734b0caf6e7a933fe6861d25ed86240461d6114355f7dbbf"
 dependencies = [
  "bitflags 2.13.0",
  "block2",

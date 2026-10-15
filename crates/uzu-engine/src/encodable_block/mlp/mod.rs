@@ -42,6 +42,7 @@ pub enum MlpBlockNewError<B: Backend> {
 
 impl<B: Backend> dyn Mlp<B> {
     pub fn new(
+        name: String,
         model_dimension: u32,
         hidden_dimension: u32,
         data_type: DataType,
@@ -52,7 +53,7 @@ impl<B: Backend> dyn Mlp<B> {
         match config {
             AnyMLPConfig::DenseMLPConfig(config) => {
                 let (dense, up_input_hadamard_factors) =
-                    DenseMlp::new(model_dimension, hidden_dimension, data_type, config, parameter_tree, context)?;
+                    DenseMlp::new(name, model_dimension, hidden_dimension, data_type, config, parameter_tree, context)?;
 
                 Ok((Box::new(dense), up_input_hadamard_factors))
             },

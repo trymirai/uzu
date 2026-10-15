@@ -34,6 +34,7 @@ pub enum DecoderError<B: Backend> {
 }
 
 pub struct Decoder<B: Backend> {
+    name: String,
     embedding: Embedding<B>,
     embedding_norm: Option<Normalization<B>>,
     per_layer_embedding: Option<PerLayerEmbedding<B>>,
@@ -52,12 +53,14 @@ impl<B: Backend> Decoder<B> {
     }
 
     pub fn new(
+        name: String,
         data_type: DataType,
         config: &DecoderConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
     ) -> Result<Self, DecoderError<B>> {
         let (embedding, readout_input_hadamard_factors) = Embedding::new(
+            format!("{name}/embedding"),
             config.vocab_size,
             config.transformer_config.model_dim,
             data_type,
@@ -71,6 +74,7 @@ impl<B: Backend> Decoder<B> {
             .as_ref()
             .map(|norm_config| {
                 Normalization::new(
+                    format!("{name}/embedding norm"),
                     config.transformer_config.model_dim,
                     data_type,
                     None,
@@ -90,6 +94,7 @@ impl<B: Backend> Decoder<B> {
                 "per-layer embedding num_layers must match transformer layer count"
             );
             Some(PerLayerEmbedding::new(
+                format!("{name}/per layer embedding"),
                 config.transformer_config.model_dim,
                 data_type,
                 ple_config,
@@ -101,6 +106,7 @@ impl<B: Backend> Decoder<B> {
         };
 
         let transformer = Transformer::new(
+            format!("{name}/transformer"),
             data_type,
             readout_input_hadamard_factors,
             &config.transformer_config,
@@ -109,6 +115,7 @@ impl<B: Backend> Decoder<B> {
         )?;
 
         Ok(Self {
+            name,
             embedding,
             embedding_norm,
             per_layer_embedding,
@@ -145,7 +152,8 @@ impl<B: Backend> Decoder<B> {
         state: &mut TransformerState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("decoder");
+        let command_buffer = &mut *command_buffer.debug_group(&self.name);
+        command_buffer.sample_start_timestamp(&self.name);
 
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
@@ -191,6 +199,7 @@ impl<B: Backend> Decoder<B> {
             transformer_output.output
         };
 
+        command_buffer.sample_end_timestamp();
         Ok(DecoderEncodeOutput {
             logits,
             hidden_features: transformer_output.hidden_features,

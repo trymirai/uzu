@@ -5,4 +5,5 @@ pub mod maybe_mut;
 pub mod pointers;
 pub mod size_for_shape;
 pub mod strict_serde;
+pub mod timestamps;
 pub mod version;

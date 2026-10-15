@@ -9,5 +9,8 @@ mod gpu_types;
 mod heaps;
 mod kernel;
 mod metal_extensions;
+mod span_boundary;
+mod timestamp_recorder;
+mod timestamp_span_recorder;
 
 pub use backend::Metal;

@@ -120,6 +120,7 @@ pub enum LinearBlockError<B: Backend> {
 
 impl<B: Backend> dyn Linear<B> {
     pub fn new_mixed_precision(
+        name: String,
         input_dimension: u32,
         output_dimension: u32,
         weights_data_type: DataType,
@@ -136,6 +137,7 @@ impl<B: Backend> dyn Linear<B> {
             | AnyWeightMatrixSpec::MLXSpec(_)
             | AnyWeightMatrixSpec::IntSpec(_)) => {
                 let block = LinearMatmul::load(
+                    name,
                     input_dimension,
                     output_dimension,
                     weights_data_type,
@@ -154,6 +156,7 @@ impl<B: Backend> dyn Linear<B> {
                 incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
                 ..
             }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(RHTLinearWrapper::new(
+                name,
                 input_dimension,
                 output_dimension,
                 weights_data_type,
@@ -168,6 +171,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new(
+        name: String,
         input_dimension: u32,
         output_dimension: u32,
         data_type: DataType,
@@ -176,6 +180,7 @@ impl<B: Backend> dyn Linear<B> {
         context: &B::Context,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         Self::new_mixed_precision(
+            name,
             input_dimension,
             output_dimension,
             data_type,
@@ -188,6 +193,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_with_input_rht_mixed_precision(
+        name: String,
         input_dimension: u32,
         output_dimension: u32,
         weights_data_type: DataType,
@@ -198,6 +204,7 @@ impl<B: Backend> dyn Linear<B> {
         context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
+            name.clone(),
             input_dimension,
             output_dimension,
             weights_data_type,
@@ -212,6 +219,7 @@ impl<B: Backend> dyn Linear<B> {
         }
 
         let linear = Self::new_mixed_precision(
+            name,
             input_dimension,
             output_dimension,
             weights_data_type,
@@ -225,6 +233,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_for_fused_input(
+        name: String,
         input_dimension: u32,
         output_dimension: u32,
         data_type: DataType,
@@ -233,6 +242,7 @@ impl<B: Backend> dyn Linear<B> {
         context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
+            name.clone(),
             input_dimension,
             output_dimension,
             data_type,
@@ -247,6 +257,7 @@ impl<B: Backend> dyn Linear<B> {
         }
 
         let linear = Self::new_mixed_precision(
+            name,
             input_dimension,
             output_dimension,
             data_type,
@@ -260,6 +271,7 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     pub fn new_with_input_rht(
+        name: String,
         input_dimension: u32,
         output_dimension: u32,
         data_type: DataType,
@@ -268,6 +280,7 @@ impl<B: Backend> dyn Linear<B> {
         context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
         Self::new_with_input_rht_mixed_precision(
+            name,
             input_dimension,
             output_dimension,
             data_type,
