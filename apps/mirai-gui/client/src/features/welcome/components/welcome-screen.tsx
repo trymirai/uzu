@@ -130,6 +130,11 @@ function WelcomeScreen() {
               1,
               0,
             )}
+            <div className="w-full mt-8 md:hidden">
+              <Button kind="primary" size="lg" fullWidth onClick={handleContinue}>
+                Get started
+              </Button>
+            </div>
           </div>
 
           <div className="flex flex-col items-start md:items-center w-full md:mt-[120px]">
@@ -139,7 +144,7 @@ function WelcomeScreen() {
               {!platformInfo.isWeb && featureItem(<WifiOff size={14} />, "Works Offline", 2.4)}
             </div>
 
-            <div className="w-full mt-8">
+            <div className="hidden md:block w-full mt-8">
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
