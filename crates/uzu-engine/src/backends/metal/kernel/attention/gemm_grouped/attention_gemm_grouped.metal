@@ -34,7 +34,6 @@ KERNEL(AttentionGemmGrouped)(
     const constant AttnParams& params,
     const constant uint& query_tiles,
     const constant uint& kv_heads,
-    const constant uint& batch_count,
     const constant uint& num_splits,
     const bool split_kv SPECIALIZE,
     const bool is_causal SPECIALIZE,
@@ -43,7 +42,8 @@ KERNEL(AttentionGemmGrouped)(
     const ThreadContext thread_context,
     const uint tile_split_flat GROUPS(query_tiles * num_splits),
     const uint kv_head_idx GROUPS(kv_heads),
-    const uint batch_idx GROUPS(batch_count),
+    // Keep Z indexing: folding it to zero increases register spills on M5.
+    const uint batch_idx GROUPS(1),
     const uint lid THREADS(ATTENTION_GQA_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
   using Layout = AttentionGemmGroupedLayout<BK, BD, D_SLICES>;
@@ -298,8 +298,7 @@ KERNEL(AttentionGemmGrouped)(
   }
 
   if (split_kv) {
-    const uint tile_index =
-        ((split_idx * batch_count + batch_idx) * kv_heads + kv_head_idx) * query_tiles + query_tile_idx;
+    const uint tile_index = ((split_idx + batch_idx) * kv_heads + kv_head_idx) * query_tiles + query_tile_idx;
     device float* partial_tile = partials + size_t(tile_index) * BLOCK_ROWS * BD + size_t(band) * TILE_ROWS * BD;
     output.store(lane, partial_tile + slice_offset, int(BD));
 
@@ -367,28 +366,23 @@ KERNEL(AttentionGemmGroupedCombine)(
     const device T* gate OPTIONAL(has_gate),
     const constant AttnParams& params,
     const constant uint& grouped_rows,
-    const constant uint& block_rows,
-    const constant uint& query_tiles,
+    const constant uint& padded_rows,
     const constant uint& kv_heads,
-    const constant uint& batch_count,
     const constant uint& num_splits,
     const constant uint& gate_row_stride OPTIONAL(has_gate),
     const bool has_gate SPECIALIZE,
     const uint grouped_row_idx GROUPS(grouped_rows),
     const uint kv_head_idx GROUPS(kv_heads),
-    const uint batch_idx GROUPS(batch_count),
     const uint column THREADS(BD)
 ) {
-  const uint query_tile_idx = grouped_row_idx / block_rows;
-  const uint row_in_tile = grouped_row_idx - query_tile_idx * block_rows;
-  const uint tile_base = (batch_idx * kv_heads + kv_head_idx) * query_tiles + query_tile_idx;
-  const uint split_rows = batch_count * kv_heads * query_tiles * block_rows;
+  const size_t row = size_t(kv_head_idx) * padded_rows + grouped_row_idx;
+  const uint split_rows = kv_heads * padded_rows;
   const uint head_in_group = grouped_row_idx / params.q_len;
   const uint query_position = grouped_row_idx - head_in_group * params.q_len;
   const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
-  const device float* row_maxs = partial_maxs + size_t(tile_base) * block_rows + row_in_tile;
-  const device float* row_sums = partial_sums + size_t(tile_base) * block_rows + row_in_tile;
-  const device float* row_partials = partials + size_t(tile_base) * block_rows * BD + size_t(row_in_tile) * BD + column;
+  const device float* row_maxs = partial_maxs + row;
+  const device float* row_sums = partial_sums + row;
+  const device float* row_partials = partials + row * BD + column;
 
   float numerator = 0.0f;
   float denominator = 0.0f;
@@ -413,12 +407,8 @@ KERNEL(AttentionGemmGroupedCombine)(
   const float mean = denominator > 0.0f ? numerator / denominator : 0.0f;
   T result = static_cast<T>(mean);
   if (has_gate) {
-    result = attention_apply_gate(
-        result,
-        gate[(batch_idx * params.q_len + query_position) * gate_row_stride + q_head_idx * BD + column]
-    );
+    result = attention_apply_gate(result, gate[query_position * gate_row_stride + q_head_idx * BD + column]);
   }
-  o += size_t(batch_idx) * params.o_strides[0] + size_t(q_head_idx) * params.o_strides[1] +
-       size_t(query_position) * params.o_strides[2] + column;
+  o += size_t(q_head_idx) * params.o_strides[1] + size_t(query_position) * params.o_strides[2] + column;
   o[0] = result;
 }

@@ -94,7 +94,6 @@ impl AttentionGemmGroupedMetal {
         gate: Option<impl BufferRef<Backend = Metal>>,
         suffix_length: u32,
         kv_length: u32,
-        q_replicas: u32,
         num_splits: u32,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<bool, MetalError> {
@@ -116,14 +115,13 @@ impl AttentionGemmGroupedMetal {
                 params,
                 query_tiles,
                 self.num_groups,
-                q_replicas,
                 1,
                 command_buffer,
             );
             return Ok(false);
         }
 
-        let partial_rows = q_replicas * self.num_groups * query_tiles * num_splits * self.block_rows;
+        let partial_rows = self.num_groups * query_tiles * num_splits * self.block_rows;
         let mut partials = command_buffer.allocate_scratch_for_shape(&[partial_rows, self.head_dim], DataType::F32)?;
         let mut partial_maxs = command_buffer.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
         let mut partial_sums = command_buffer.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
@@ -140,7 +138,6 @@ impl AttentionGemmGroupedMetal {
             params,
             query_tiles,
             self.num_groups,
-            q_replicas,
             num_splits,
             command_buffer,
         );
@@ -153,10 +150,8 @@ impl AttentionGemmGroupedMetal {
             gate,
             params,
             grouped_rows,
-            self.block_rows,
-            query_tiles,
+            query_tiles * self.block_rows,
             self.num_groups,
-            q_replicas,
             num_splits,
             self.gate_row_stride,
             command_buffer,
@@ -175,10 +170,10 @@ impl AttentionGemmGroupedMetal {
 
         let head_dim = self.head_dim;
         AttnParams {
-            q_strides: [self.num_q_heads * suffix_length * head_dim, suffix_length * head_dim, head_dim],
+            q_strides: [0, suffix_length * head_dim, head_dim],
             k_strides: [0, head_dim, self.num_groups * head_dim],
             v_strides: [0, head_dim, self.num_groups * head_dim],
-            o_strides: [suffix_length * self.num_q_heads * head_dim, head_dim, self.num_q_heads * head_dim],
+            o_strides: [0, head_dim, self.num_q_heads * head_dim],
             gqa_factor: self.num_q_heads / self.num_groups,
             scale: self.scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt()),
             q_len: suffix_length,
@@ -298,7 +293,6 @@ impl AttentionGemmGrouped {
             arguments.gate,
             suffix_length,
             kv_length,
-            1,
             num_splits,
             command_buffer,
         )?;

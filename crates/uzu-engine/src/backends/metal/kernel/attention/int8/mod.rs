@@ -103,10 +103,10 @@ impl Int8Attention {
         let mut partial_maxs = command_buffer.allocate_scratch_for_shape(&[rows], DataType::F32)?;
         let mut partial_sums = command_buffer.allocate_scratch_for_shape(&[rows], DataType::F32)?;
         let params = AttnParams {
-            q_strides: [num_groups * grouped_rows * head_dim, grouped_rows * head_dim, head_dim],
+            q_strides: [0, grouped_rows * head_dim, head_dim],
             k_strides: [0, head_dim, num_groups * head_dim],
             v_strides: [0, head_dim, num_groups * head_dim],
-            o_strides: [suffix_length * num_q_heads * head_dim, head_dim, num_q_heads * head_dim],
+            o_strides: [0, head_dim, num_q_heads * head_dim],
             gqa_factor,
             scale: config.scale.unwrap_or(1.0 / (head_dim as f32).sqrt()),
             q_len: suffix_length,
@@ -138,7 +138,6 @@ impl Int8Attention {
                 (&mut partial_sums).subrange_mut(split_byte_range(DataType::F32.size_in_bytes())),
                 params,
                 query_tiles,
-                1,
                 num_splits,
                 split_base,
                 split_count,
@@ -161,10 +160,8 @@ impl Int8Attention {
             gate,
             params,
             grouped_rows,
-            QUERIES_PER_BLOCK,
-            query_tiles,
+            query_tiles * QUERIES_PER_BLOCK,
             num_groups,
-            1,
             num_splits,
             config.gate_row_stride,
             command_buffer,

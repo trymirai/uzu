@@ -1,9 +1,8 @@
 #include <metal_stdlib>
 #include "../../common/dsl.h"
-#include "../../common/integral_constant.h"
+#include "../../common/conversion.h"
 #include "../../common/thread_context.h"
 #include "../../matmul/common/fragment.h"
-#include "../../matmul/common/mxu_fragment/ops.h"
 #include "../../generated/attention.h"
 #include "../../generated/trie.h"
 #include "../attention_gate.h"
@@ -11,47 +10,22 @@
 #include "../../hadamard_transform/hadamard_transform.h"
 #include "util.h"
 
-// Each simdgroup scores one key block; all consume the published probabilities.
-
 using namespace metal;
 using namespace uzu::matmul;
-using namespace uzu::attention;
-using namespace uzu::trie;
-namespace kv_layout = uzu::kv_layout;
 
-// Integers below 2^23 fit in a biased float mantissa.
-UZU_CONST float INT_BIAS = 0x1p23f;
-
-// Round [0, 255] by extracting float mantissa bits.
-METAL_FUNC uchar round_to_byte(const float x) { return uchar(as_type<uint>(x + 0x1.8p23f)); }
-
-// Add the bias without an integer-to-float conversion.
-METAL_FUNC float biased_float(const int i) { return as_type<float>(as_type<uint>(i) | as_type<uint>(INT_BIAS)); }
-
-// Exchange probabilities and row statistics between simdgroups.
 template <uint HEAD_DIM>
-struct AttentionGemmGroupedInt8Layout {
-  using Grouped = AttentionGemmGroupedLayout<kv_layout::TILE_KEYS, HEAD_DIM, HEAD_DIM / kv_layout::SLICE_DIMS>;
+struct Int8Scratch {
+  using Layout = AttentionGemmGroupedLayout<uzu::kv_layout::TILE_KEYS, HEAD_DIM, HEAD_DIM / uzu::kv_layout::SLICE_DIMS>;
 
-  UZU_CONST int BLOCK_ROWS = Grouped::BLOCK_ROWS;
-  UZU_CONST int CODE_FLOATS = Grouped::SIMDGROUPS * Grouped::SCORE_TILE_ELEMENTS / int(sizeof(float));
-  UZU_CONST int STAT_FLOATS = Grouped::SIMDGROUPS * Grouped::TILE_ROWS * 2;
-  UZU_CONST int SLOT_FLOATS = CODE_FLOATS + STAT_FLOATS + Grouped::SIMDGROUPS * Grouped::TILE_ROWS;
+  // Exchange offsets are in floats.
+  UZU_CONST int STATS_OFFSET = Layout::SIMDGROUPS * Layout::SCORE_TILE_ELEMENTS / int(sizeof(float));
+  UZU_CONST int SUMS_OFFSET = STATS_OFFSET + Layout::SIMDGROUPS * Layout::TILE_ROWS * 2;
+  UZU_CONST int SLOT_FLOATS = SUMS_OFFSET + Layout::SIMDGROUPS * Layout::TILE_ROWS;
+  UZU_CONST int TRIE_MASKS = Layout::BLOCK_ROWS;
 
-  // Q stage: one uint4 per lane and fragment pair.
-  UZU_CONST int QUERY_PAIRS = int(HEAD_DIM) / (2 * Grouped::TILE_ROWS);
-  UZU_CONST int QUERY_VECTORS = Grouped::BANDS * QUERY_PAIRS * METAL_SIMD_SIZE;
+  UZU_CONST int QUERY_VECTORS_PER_BAND = int(HEAD_DIM) / (2 * uzu::kv_layout::TILE_DIMS) * METAL_SIMD_SIZE;
+  UZU_CONST int QUERY_VECTORS = Layout::BANDS * QUERY_VECTORS_PER_BAND;
 };
-
-// Fragment coordinates to lane-local indices.
-template <class Ops>
-METAL_FUNC ushort2 lane_index(const short2 position, const short row, const short col) {
-  const short lane_col = col - position.x;
-  return ushort2(
-      ushort(lane_col / Ops::FRAGMENT_COLS * Ops::THREAD_ELEMENT_COLS + lane_col % Ops::FRAGMENT_COLS),
-      ushort((row - position.y) / Ops::THREAD_ELEMENT_ROW_STRIDE)
-  );
-}
 
 template <typename T, bool MASK_FREE, uint HEAD_DIM>
 VARIANTS(T, bfloat)
@@ -64,36 +38,36 @@ KERNEL(AttentionGemmGroupedInt8)(
     const device T* k_scales,
     const device uchar* v_codes,
     const device T* v_scales,
-    const device TrieNode* trie OPTIONAL(is_trie),
+    const device uzu::trie::TrieNode* trie OPTIONAL(is_trie),
     device bfloat* partials,
     device float* partial_maxs,
     device float* partial_sums,
-    const constant AttnParams& params,
+    const constant uzu::attention::AttnParams& params,
     const constant uint& query_tiles,
-    const constant uint& batch_count,
     const constant uint& num_splits,
     const constant uint& split_base,
     const constant uint& split_count,
     const constant uint& trie_nodes,
     const bool is_trie SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
-    threadgroup float p_exchange[2 * AttentionGemmGroupedInt8Layout<HEAD_DIM>::SLOT_FLOATS],
-    threadgroup ulong trie_masks[AttentionGemmGroupedInt8Layout<HEAD_DIM>::BLOCK_ROWS],
-    threadgroup uint4 query_stage[AttentionGemmGroupedInt8Layout<HEAD_DIM>::QUERY_VECTORS],
+    threadgroup float p_exchange[2 * Int8Scratch<HEAD_DIM>::SLOT_FLOATS],
+    threadgroup ulong trie_masks[Int8Scratch<HEAD_DIM>::TRIE_MASKS],
+    threadgroup uint4 query_stage[Int8Scratch<HEAD_DIM>::QUERY_VECTORS],
     const ThreadContext thread_context,
     const uint tile_split_flat GROUPS(query_tiles * split_count),
     const uint kv_head_idx GROUPS(num_kv_heads),
-    const uint batch_idx GROUPS(batch_count),
+    // Keep Z indexing: folding it to zero increases register spills on M5.
+    const uint batch_idx GROUPS(1),
     const uint lid THREADS(ATTENTION_GQA_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
-  using Int8Layout = AttentionGemmGroupedInt8Layout<HEAD_DIM>;
-  using Layout = typename Int8Layout::Grouped;
+  using Layout = AttentionGemmGroupedLayout<uzu::kv_layout::TILE_KEYS, HEAD_DIM, HEAD_DIM / uzu::kv_layout::SLICE_DIMS>;
+  using Scratch = Int8Scratch<HEAD_DIM>;
   using Ops = typename Layout::Ops;
   using AccumType = float;
 
-  constexpr uint D_SLICES = HEAD_DIM / kv_layout::SLICE_DIMS;
+  constexpr uint D_SLICES = HEAD_DIM / uzu::kv_layout::SLICE_DIMS;
 
-  constexpr int KEY_TILES = int(kv_layout::TILE_KEYS) / Ops::FRAGMENT_COLS;
+  constexpr int KEY_TILES = int(uzu::kv_layout::TILE_KEYS) / Ops::FRAGMENT_COLS;
   constexpr int DEPTH_TILES = Layout::SLICE_COLS / Ops::FRAGMENT_ROWS;
   constexpr int VALUE_TILES = Layout::SLICE_COLS / Ops::FRAGMENT_COLS;
   constexpr int PANEL_TILES = 2;
@@ -102,7 +76,7 @@ KERNEL(AttentionGemmGroupedInt8)(
   constexpr int LANE_COLS = KEY_TILES * Ops::THREAD_ELEMENT_COLS;
   constexpr uint STAT_ROWS = uint(Layout::TILE_ROWS / ROWS_PER_LANE);
 
-  static_assert(KEY_TILES == 2 && VALUE_TILES == 4, "32 keys x 64 channels per simdgroup");
+  static_assert(KEY_TILES == 2, "probabilities pack two key fragments");
   static_assert(ROWS_PER_LANE == 2, "stats pack two rows per lane");
 
   // Online softmax in log2 units. The running max starts finite so the first rescale is exp2(-huge) = 0, not NaN;
@@ -114,21 +88,13 @@ KERNEL(AttentionGemmGroupedInt8)(
 
   // P is stored as u8: p_code = rint(255 * exp2(score - block_max)), so p = p_code / 255.
   constexpr AccumType CODE_MAX = 255.0f;
-  constexpr AccumType LOG2_CODE_MAX = 7.9943534368588578f; // log2(255)
 
-  using QueryFragment = OperandFragment<int8_t, 1, 1, Ops>;
-  using KeyFragment = OperandFragment<int8_t, 1, KEY_TILES, Ops, ReadTranspose>;
   using ScoreFragment = Fragment<AccumType, 1, KEY_TILES, Ops>;
-  using IntScoreFragment = Fragment<int, 1, KEY_TILES, Ops>;
-  using OutputFragment = Fragment<AccumType, 1, VALUE_TILES, Ops>;
   using ProbabilityFragment = Fragment<uchar, 1, KEY_TILES, Ops>;
-  using ValueFragment = OperandFragment<uchar, KEY_TILES, PANEL_TILES, Ops>;
-  using ProductFragment = Fragment<int, 1, PANEL_TILES, Ops>;
 
   const ushort lane = ushort(thread_context.simd_lane_id);
-  const ushort simdgroup_index = ushort(thread_context.simdgroup_index);
-  const ushort band = simdgroup_index / ushort(D_SLICES);
-  const ushort slice = simdgroup_index % ushort(D_SLICES);
+  const ushort band = ushort(thread_context.simdgroup_index) / ushort(D_SLICES);
+  const ushort slice = ushort(thread_context.simdgroup_index) % ushort(D_SLICES);
 
   const uint query_tile_idx = tile_split_flat % query_tiles;
   const uint split_idx = split_base + tile_split_flat / query_tiles;
@@ -143,20 +109,20 @@ KERNEL(AttentionGemmGroupedInt8)(
 
   const size_t query_group_base = size_t(batch_idx) * params.q_strides[0] + size_t(kv_head_idx) * params.q_strides[1];
   q_codes += query_group_base + size_t(row_base) * query_row_stride;
-  k_codes +=
-      size_t(batch_idx) * params.k_strides[0] + uint(kv_layout::TILE_KEYS) * size_t(kv_head_idx) * params.k_strides[1];
-  k_codes += int(lane) * kv_layout::LANE_BYTES;
+  k_codes += size_t(batch_idx) * params.k_strides[0] +
+             uint(uzu::kv_layout::TILE_KEYS) * size_t(kv_head_idx) * params.k_strides[1];
+  k_codes += int(lane) * uzu::kv_layout::LANE_BYTES;
   const device uchar* v_tile_codes =
       v_codes +
       (size_t(batch_idx) * params.v_strides[0] +
-       size_t(kv_layout::TILE_KEYS) * (size_t(kv_head_idx) * params.v_strides[1] + slice_offset)) +
-      size_t(lane) * kv_layout::LANE_BYTES;
+       size_t(uzu::kv_layout::TILE_KEYS) * (size_t(kv_head_idx) * params.v_strides[1] + slice_offset)) +
+      size_t(lane) * uzu::kv_layout::LANE_BYTES;
 
   // Padding rows reread the last real row.
   int query_offset_row0 = 0;
   int query_offset_row1 = 0;
   {
-    const short2 query_position = QueryFragment::get_position(lane);
+    const short2 query_position = Ops::get_position(lane);
     const uint last_query_row = grouped_rows - 1u;
     query_offset_row0 =
         (int(min(row_base + uint(query_position.y), last_query_row)) - int(row_base)) * int(query_row_stride) +
@@ -168,7 +134,7 @@ KERNEL(AttentionGemmGroupedInt8)(
         int(query_position.x);
   }
 
-  OutputFragment output;
+  Fragment<AccumType, 1, VALUE_TILES, Ops> output;
   output.clear();
 
   AccumType max_score[ROWS_PER_LANE] = {INITIAL_MAX, INITIAL_MAX};
@@ -193,7 +159,7 @@ KERNEL(AttentionGemmGroupedInt8)(
   if (!MASK_FREE && is_trie) {
     ulong row_trie_mask[ROWS_PER_LANE] = {0ul, 0ul};
     for (uint node_index = 0; node_index < trie_nodes; ++node_index) {
-      const TrieNode node = trie[node_index];
+      const uzu::trie::TrieNode node = trie[node_index];
       METAL_PRAGMA_UNROLL
       for (ushort r = 0; r < ROWS_PER_LANE; ++r) {
         const uint query_index = last_visible_key[r] - prefix_length;
@@ -211,8 +177,8 @@ KERNEL(AttentionGemmGroupedInt8)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
-  const uint key_block_stride = uint(kv_layout::TILE_KEYS) * key_row_stride;
-  const uint value_block_stride = uint(kv_layout::TILE_KEYS) * value_row_stride;
+  const uint key_block_stride = uint(uzu::kv_layout::TILE_KEYS) * key_row_stride;
+  const uint value_block_stride = uint(uzu::kv_layout::TILE_KEYS) * value_row_stride;
 
   const uint block_begin = (split_idx * params.nk) / num_splits;
   const uint tile_first_row = query_tile_idx * uint(Layout::BLOCK_ROWS);
@@ -223,19 +189,20 @@ KERNEL(AttentionGemmGroupedInt8)(
   const uint block_end_candidate = ((split_idx + 1u) * params.nk) / num_splits;
   const uint block_end =
       min(block_end_candidate,
-          (prefix_length + max_query_index + uint(kv_layout::TILE_KEYS)) / uint(kv_layout::TILE_KEYS));
+          (prefix_length + max_query_index + uint(uzu::kv_layout::TILE_KEYS)) / uint(uzu::kv_layout::TILE_KEYS));
   const uint tail_keys = params.k_rem;
   const uint block_count = block_end > block_begin ? block_end - block_begin : 0u;
   const bool owns_tail_block = (tail_keys != 0u) && (block_count > 0u) && (block_end == params.nk);
 
   k_codes += size_t(block_begin) * key_block_stride;
   v_tile_codes += size_t(block_begin) * value_block_stride;
-  const uint first_key = block_begin * uint(kv_layout::TILE_KEYS);
+  const uint first_key = block_begin * uint(uzu::kv_layout::TILE_KEYS);
 
   const AccumType score_scale = AccumType(params.scale) * AccumType(M_LOG2E_F);
 
-  const uint scale_block_stride = uint(kv_layout::TILE_KEYS) * num_kv_heads;
-  const size_t split_scale_offset = kv_layout::Int8KVShape{HEAD_DIM, num_kv_heads}.scale_index(first_key, kv_head_idx);
+  const uint scale_block_stride = uint(uzu::kv_layout::TILE_KEYS) * num_kv_heads;
+  const size_t split_scale_offset =
+      uzu::kv_layout::Int8KVShape{HEAD_DIM, num_kv_heads}.scale_index(first_key, kv_head_idx);
   const device T* key_scales_base = k_scales + split_scale_offset;
   const device T* value_scales_base = v_scales + split_scale_offset;
 
@@ -247,21 +214,20 @@ KERNEL(AttentionGemmGroupedInt8)(
   }
 
   threadgroup uchar* code_slot = reinterpret_cast<threadgroup uchar*>(p_exchange);
-  threadgroup float* stat_slot = p_exchange + Int8Layout::CODE_FLOATS;
+  threadgroup float* stat_slot = p_exchange + Scratch::STATS_OFFSET;
   const ushort band_first_simdgroup = band * ushort(int(D_SLICES));
 
-  threadgroup uchar* const lane_codes =
-      code_slot + uint(band_first_simdgroup) * uint(Layout::SCORE_TILE_ELEMENTS) + uint(lane) * kv_layout::LANE_BYTES;
+  threadgroup uchar* const lane_codes = code_slot + uint(band_first_simdgroup) * uint(Layout::SCORE_TILE_ELEMENTS) +
+                                        uint(lane) * uzu::kv_layout::LANE_BYTES;
   threadgroup float4* const lane_stats = reinterpret_cast<threadgroup float4*>(stat_slot) +
                                          uint(band_first_simdgroup) * STAT_ROWS + uint(score_position.y);
-  threadgroup float2* const lane_sums = reinterpret_cast<threadgroup float2*>(stat_slot + Int8Layout::STAT_FLOATS) +
+  threadgroup float2* const lane_sums = reinterpret_cast<threadgroup float2*>(p_exchange + Scratch::SUMS_OFFSET) +
                                         uint(band_first_simdgroup) * STAT_ROWS + uint(score_position.y);
   uint slot_offset = 0u;
   uint scale_offset = uint(slice) * scale_block_stride + uint(score_position.x);
 
   // Each slice simdgroup stages its depth slice of the band's Q.
-  threadgroup uint4* const staged_query =
-      query_stage + uint(band) * uint(Int8Layout::QUERY_PAIRS * METAL_SIMD_SIZE) + uint(lane);
+  threadgroup uint4* const staged_query = query_stage + uint(band) * uint(Scratch::QUERY_VECTORS_PER_BAND) + uint(lane);
   {
     constexpr int SLICE_PAIRS = DEPTH_TILES / 2;
     METAL_PRAGMA_UNROLL
@@ -297,34 +263,31 @@ KERNEL(AttentionGemmGroupedInt8)(
     if (publishes_block) {
       const uint own_block = kb + uint(slice);
       const bool is_tail_block = owns_tail_block && (own_block + 1u == block_count);
-      const uint key_base = first_key + own_block * uint(kv_layout::TILE_KEYS);
+      const uint key_base = first_key + own_block * uint(uzu::kv_layout::TILE_KEYS);
       const device int8_t* key_tile_base = k_codes + own_block * key_block_stride;
 
       ScoreFragment score;
 
       // Q x K^T (int8).
-      IntScoreFragment int_score;
+      Fragment<int, 1, KEY_TILES, Ops> int_score;
       int_score.clear();
       for (int depth_slice = 0; depth_slice < int(D_SLICES); ++depth_slice) {
         METAL_PRAGMA_UNROLL
         for (int slice_fragment = 0; slice_fragment < DEPTH_TILES; slice_fragment += 2) {
           const int depth_fragment = depth_slice * DEPTH_TILES + slice_fragment;
-          using KeyVector = typename KeyFragment::ThreadVectorType;
-          using QueryVector = typename QueryFragment::ThreadVectorType;
-          using QueryPairFragment = OperandFragment<int8_t, 1, 2, Ops>;
-          using KeyPairFragment = OperandFragment<int8_t, 2, 2, Ops, ReadTranspose>;
-          QueryPairFragment query_fragments;
+          using CodeVector = typename Ops::template ThreadVector<int8_t>;
+          OperandFragment<int8_t, 1, 2, Ops> query_fragments;
           const uint4 query_pair = staged_query[(depth_fragment / 2) * METAL_SIMD_SIZE];
-          query_fragments.fragment_data[0] = as_type<QueryVector>(query_pair.xy);
-          query_fragments.fragment_data[1] = as_type<QueryVector>(query_pair.zw);
-          KeyPairFragment key_fragments;
+          query_fragments.fragment_data[0] = as_type<CodeVector>(query_pair.xy);
+          query_fragments.fragment_data[1] = as_type<CodeVector>(query_pair.zw);
+          OperandFragment<int8_t, 2, 2, Ops, ReadTranspose> key_fragments;
           METAL_PRAGMA_UNROLL
           for (int pair_index = 0; pair_index < 2; ++pair_index) {
             const uint4 key_chunk = *reinterpret_cast<const device uint4*>(
-                key_tile_base + (depth_fragment + pair_index) * int(kv_layout::FRAGMENT_BYTES)
+                key_tile_base + (depth_fragment + pair_index) * int(uzu::kv_layout::FRAGMENT_BYTES)
             );
-            key_fragments.fragment_data[pair_index] = as_type<KeyVector>(uint2(key_chunk.x, key_chunk.y));
-            key_fragments.fragment_data[2 + pair_index] = as_type<KeyVector>(uint2(key_chunk.z, key_chunk.w));
+            key_fragments.fragment_data[pair_index] = as_type<CodeVector>(uint2(key_chunk.x, key_chunk.y));
+            key_fragments.fragment_data[2 + pair_index] = as_type<CodeVector>(uint2(key_chunk.z, key_chunk.w));
           }
           simdgroup_barrier(mem_flags::mem_none);
           fragment_mma(int_score, query_fragments, key_fragments);
@@ -352,21 +315,14 @@ KERNEL(AttentionGemmGroupedInt8)(
           }
         }
       }
-      ScoreFragment::zip_for_each_coord(
-          lane,
-          [&](short row, short col, thread AccumType& value, thread int& int_value) UZU_ALWAYS_INLINE {
-            const ushort2 index = lane_index<Ops>(score_position, row, col);
-            value = metal::fma(
-                AccumType(int_value) * key_scale[index.x],
-                query_row_scale[index.y],
-                log2_value_scale[index.x]
-            );
+      score.for_each_lane(
+          [&](ushort row, ushort col, thread AccumType& value, thread int& int_value) UZU_ALWAYS_INLINE {
+            value = metal::fma(AccumType(int_value) * key_scale[col], query_row_scale[row], log2_value_scale[col]);
           },
-          score,
           int_score
       );
 
-      if (!MASK_FREE && (is_tail_block || (key_base + uint(kv_layout::TILE_KEYS) > prefix_length))) {
+      if (!MASK_FREE && (is_tail_block || (key_base + uint(uzu::kv_layout::TILE_KEYS) > prefix_length))) {
         ulong trie_row_masks[ROWS_PER_LANE] = {0ul, 0ul};
         if (is_trie) {
           METAL_PRAGMA_UNROLL
@@ -394,21 +350,17 @@ KERNEL(AttentionGemmGroupedInt8)(
       score.row_reduce(block_max, -INFINITY, [](AccumType a, AccumType b) UZU_ALWAYS_INLINE {
         return metal::max(a, b);
       });
-      ScoreFragment::zip_for_each_coord(
-          lane,
-          [&](short row, short col, thread AccumType& value, thread uchar& code) UZU_ALWAYS_INLINE {
-            const ushort2 index = lane_index<Ops>(score_position, row, col);
-            value = metal::rint(fast::exp2(value - (block_max[index.y] - LOG2_CODE_MAX)));
-            code = round_to_byte(value);
+      score.for_each_lane(
+          [&](ushort row, ushort col, thread AccumType& value, thread uchar& code) UZU_ALWAYS_INLINE {
+            value = metal::rint(fast::exp2(value - (block_max[row] - metal::log2(CODE_MAX))));
+            code = uzu::round_to_byte(value);
           },
-          score,
           p_codes
       );
       score.row_reduce(code_sum, AccumType(0), [](AccumType a, AccumType b) UZU_ALWAYS_INLINE { return a + b; });
       AccumType p_sum[ROWS_PER_LANE];
-      score.map_coords(lane, [&](short row, short col, AccumType value) UZU_ALWAYS_INLINE {
-        return value * inverse_value_scale[lane_index<Ops>(score_position, row, col).x];
-      });
+      score.for_each_lane([&](ushort row, ushort col, thread AccumType& value)
+                              UZU_ALWAYS_INLINE { value *= inverse_value_scale[col]; });
       score.row_reduce(p_sum, AccumType(0), [](AccumType a, AccumType b) UZU_ALWAYS_INLINE { return a + b; });
 
       // Publish probabilities and row statistics.
@@ -455,8 +407,8 @@ KERNEL(AttentionGemmGroupedInt8)(
       for (int r = 0; r < ROWS_PER_LANE; ++r) {
         alpha[r] = fast::exp2(block_max[r] - max_score[r]) * (1.0f / CODE_MAX);
         sum_score[r] += alpha[r] * p_sum[r];
-        output_bias[r] += alpha[r] * AccumType(kv_layout::V_CODE_BIAS) * code_sum[r];
-        output_bias[r] += alpha[r] * INT_BIAS;
+        output_bias[r] += alpha[r] * AccumType(uzu::kv_layout::V_CODE_BIAS) * code_sum[r];
+        output_bias[r] += alpha[r] * uzu::FLOAT_OFFSET;
       }
 
       ProbabilityFragment p_codes;
@@ -468,21 +420,21 @@ KERNEL(AttentionGemmGroupedInt8)(
       const uint value_block_index = kb + published_block;
       thread AccumType* accumulated = output.elements();
       // Accumulate V panels directly into their output columns.
-      using ValueVector = typename ValueFragment::ThreadVectorType;
+      using ValueVector = typename Ops::template ThreadVector<uchar>;
       const device uchar* value_block = v_tile_codes + value_block_index * value_block_stride;
       METAL_PRAGMA_UNROLL
       for (int panel = 0; panel < PANELS; ++panel) {
-        ValueFragment value_panel;
+        OperandFragment<uchar, KEY_TILES, PANEL_TILES, Ops> value_panel;
         METAL_PRAGMA_UNROLL
         for (int key_fragment = 0; key_fragment < KEY_TILES; ++key_fragment) {
           const uint4 tile = *reinterpret_cast<const device uint4*>(
-              value_block + (key_fragment * PANELS + panel) * kv_layout::FRAGMENT_BYTES
+              value_block + (key_fragment * PANELS + panel) * uzu::kv_layout::FRAGMENT_BYTES
           );
           value_panel.fragment_data[key_fragment * PANEL_TILES] = as_type<ValueVector>(tile.xy);
           value_panel.fragment_data[key_fragment * PANEL_TILES + 1] = as_type<ValueVector>(tile.zw);
         }
         simdgroup_barrier(mem_flags::mem_none);
-        ProductFragment product;
+        Fragment<int, 1, PANEL_TILES, Ops> product;
         product.clear();
         fragment_mma(product, p_codes, value_panel);
         thread int* int_product = product.elements();
@@ -496,7 +448,7 @@ KERNEL(AttentionGemmGroupedInt8)(
               const ushort panel_element = panel_col * Ops::ELEMENTS_PER_THREAD + row * Ops::THREAD_ELEMENT_COLS + col;
               const ushort element =
                   (panel * PANEL_TILES + panel_col) * Ops::ELEMENTS_PER_THREAD + row * Ops::THREAD_ELEMENT_COLS + col;
-              const AccumType value_dot = biased_float(int_product[panel_element]);
+              const AccumType value_dot = uzu::float_with_offset(int_product[panel_element]);
               accumulated[element] = metal::fma(block_weight, value_dot, accumulated[element]);
             }
           }
@@ -505,7 +457,7 @@ KERNEL(AttentionGemmGroupedInt8)(
     }
 
     // Alternate slots to avoid a second barrier.
-    slot_offset = uint(Int8Layout::SLOT_FLOATS) - slot_offset;
+    slot_offset = uint(Scratch::SLOT_FLOATS) - slot_offset;
     kb += step_blocks;
     scale_offset += step_blocks * scale_block_stride;
   }
@@ -513,8 +465,7 @@ KERNEL(AttentionGemmGroupedInt8)(
   output.map_rows(output_bias, [](AccumType value, AccumType bias) UZU_ALWAYS_INLINE { return value - bias; });
 
   const uint tile_index =
-      (((split_idx - split_base) * batch_count + batch_idx) * num_kv_heads + kv_head_idx) * query_tiles +
-      query_tile_idx;
+      ((split_idx - split_base + batch_idx) * num_kv_heads + kv_head_idx) * query_tiles + query_tile_idx;
   const size_t partial_offset =
       size_t(tile_index) * Layout::BLOCK_ROWS * HEAD_DIM + size_t(band) * Layout::TILE_ROWS * HEAD_DIM + slice_offset;
   AccumType inverse_split_sum[ROWS_PER_LANE];
@@ -544,31 +495,26 @@ KERNEL(AttentionGemmGroupedInt8Combine)(
     const device float* partial_sums,
     device T* o,
     const device T* gate OPTIONAL(has_gate),
-    const constant AttnParams& params,
+    const constant uzu::attention::AttnParams& params,
     const constant uint& grouped_rows,
-    const constant uint& block_rows,
-    const constant uint& query_tiles,
+    const constant uint& padded_rows,
     const constant uint& kv_heads,
-    const constant uint& batch_count,
     const constant uint& num_splits,
     const constant uint& gate_row_stride OPTIONAL(has_gate),
     const bool has_gate SPECIALIZE,
     threadgroup float rotation[BD],
     const uint grouped_row_idx GROUPS(grouped_rows),
     const uint kv_head_idx GROUPS(kv_heads),
-    const uint batch_idx GROUPS(batch_count),
     const uint column THREADS(BD)
 ) {
-  const uint query_tile_idx = grouped_row_idx / block_rows;
-  const uint row_in_tile = grouped_row_idx - query_tile_idx * block_rows;
-  const uint tile_base = (batch_idx * kv_heads + kv_head_idx) * query_tiles + query_tile_idx;
-  const uint split_rows = batch_count * kv_heads * query_tiles * block_rows;
+  const size_t row = size_t(kv_head_idx) * padded_rows + grouped_row_idx;
+  const uint split_rows = kv_heads * padded_rows;
   const uint head_in_group = grouped_row_idx / params.q_len;
   const uint query_position = grouped_row_idx - head_in_group * params.q_len;
   const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
-  const device float* row_maxs = partial_maxs + size_t(tile_base) * block_rows + row_in_tile;
-  const device float* row_sums = partial_sums + size_t(tile_base) * block_rows + row_in_tile;
-  const device bfloat* row_means = partials + size_t(tile_base) * block_rows * BD + size_t(row_in_tile) * BD + column;
+  const device float* row_maxs = partial_maxs + row;
+  const device float* row_sums = partial_sums + row;
+  const device bfloat* row_means = partials + row * BD + column;
 
   float numerator = 0.0f;
   float denominator = 0.0f;
@@ -621,17 +567,13 @@ KERNEL(AttentionGemmGroupedInt8Combine)(
     rotated[value_index] = rotation[value_index * METAL_SIMD_SIZE + column];
   }
   simdgroup_hadamard_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(ushort(column), rotated);
-  device T* output_row = o + size_t(batch_idx) * params.o_strides[0] + size_t(q_head_idx) * params.o_strides[1] +
-                         size_t(query_position) * params.o_strides[2];
+  device T* output_row = o + size_t(q_head_idx) * params.o_strides[1] + size_t(query_position) * params.o_strides[2];
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     const uint channel = value_index * METAL_SIMD_SIZE + column;
     T result = static_cast<T>(rotated[value_index] * uzu::kv_layout::rotation_sign(channel));
     if (has_gate) {
-      result = attention_apply_gate(
-          result,
-          gate[(batch_idx * params.q_len + query_position) * gate_row_stride + q_head_idx * BD + channel]
-      );
+      result = attention_apply_gate(result, gate[query_position * gate_row_stride + q_head_idx * BD + channel]);
     }
     output_row[channel] = result;
   }
