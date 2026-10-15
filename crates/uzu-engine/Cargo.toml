@@ -9,6 +9,10 @@ repository.workspace = true
 license.workspace = true
 build = "build/main.rs"
 
+[[example]]
+name = "d3_decision"
+required-features = ["metal"]
+
 [lints]
 workspace = true
 

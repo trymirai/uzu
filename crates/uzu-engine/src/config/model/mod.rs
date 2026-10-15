@@ -3,6 +3,7 @@ use uzu_engine_macros::uzu_config_abstract;
 use crate::config::token_codec::AnyTokenCodecConfig;
 
 pub mod classifier_model;
+pub mod d3_decision;
 pub mod generation;
 pub mod language_model;
 

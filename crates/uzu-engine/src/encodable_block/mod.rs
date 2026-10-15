@@ -1,6 +1,7 @@
 pub mod batch_topology;
 pub mod classifier;
 pub mod convolution;
+pub mod d3_decision;
 pub mod decoder;
 pub mod dflash;
 pub mod embedding;

@@ -13,6 +13,7 @@ use crate::{
 };
 
 pub mod classifier_model;
+pub mod d3_decision_model;
 pub mod language_model;
 
 pub struct Engine<B: Backend> {
