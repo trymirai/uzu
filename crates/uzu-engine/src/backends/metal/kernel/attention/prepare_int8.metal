@@ -5,7 +5,7 @@
 #include "kv_layout.h"
 #include "rope.h"
 
-using namespace uzu::kv_layout;
+namespace kv_layout = uzu::kv_layout;
 
 UZU_CONST float INT8_MAX = 127.0f;
 
@@ -55,7 +55,7 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
     const uint32_t lane THREADS(METAL_SIMD_SIZE)
 ) {
   constexpr ushort VALUES_PER_LANE = HEAD_DIM / METAL_SIMD_SIZE;
-  const Int8KVShape shape{HEAD_DIM, num_kv_heads};
+  const kv_layout::Int8KVShape shape{HEAD_DIM, num_kv_heads};
   const ushort lane_index = ushort(lane);
   const bool is_query = head_idx < num_q_heads;
   const bool is_key = !is_query && head_idx < num_q_heads + num_kv_heads;
@@ -98,7 +98,7 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
 
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
-    values[value_index] *= kv_rotation_sign(value_index * METAL_SIMD_SIZE + lane_index);
+    values[value_index] *= kv_layout::rotation_sign(value_index * METAL_SIMD_SIZE + lane_index);
   }
   simdgroup_hadamard_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(lane_index, values);
 
@@ -115,7 +115,7 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
     } else if (is_key) {
       k_codes[shape.k_code_index(key, kv_head, channel)] = int8_t(codes[value_index]);
     } else {
-      v_codes[shape.v_code_index(key, kv_head, channel)] = uchar(codes[value_index] + KV_V_CODE_BIAS);
+      v_codes[shape.v_code_index(key, kv_head, channel)] = uchar(codes[value_index] + kv_layout::V_CODE_BIAS);
     }
   }
   if (lane_index == 0) {

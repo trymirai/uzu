@@ -4,7 +4,7 @@
 #include "kv_cache_update.h"
 #include "kv_layout.h"
 
-using namespace uzu::kv_layout;
+namespace kv_layout = uzu::kv_layout;
 
 template <typename T>
 VARIANTS(T, bfloat)
@@ -36,7 +36,7 @@ PUBLIC KERNEL(KVCacheUpdateInt8)(
     const uint num_kv_heads SPECIALIZE,
     const uint element AXIS(num_kv_heads* head_dim, 256)
 ) {
-  const Int8KVShape shape{head_dim, num_kv_heads};
+  const kv_layout::Int8KVShape shape{head_dim, num_kv_heads};
   const uint kv_head = element / head_dim;
   const uint channel = element % head_dim;
   for (uint i = 0; i < copy_count; ++i) {

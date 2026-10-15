@@ -5,8 +5,8 @@ use uzu_engine_macros::kernel;
 use super::attention_prepare::apply_rope;
 use crate::{
     backends::{
-        common::kernel::kv_layout::{Int8KVLayout, KV_ROTATION_SIGN_BITS},
-        cpu::kernel::activation_transform::hadamard_transform,
+        common::{gpu_types::kv_layout, kernel::kv_layout::Int8KVLayout},
+        cpu::kernel::activation_transform::{INT8_SYMMETRIC_QUANTIZATION_MAXIMUM as INT8_MAX, hadamard_transform},
     },
     data_type::DataTypeRepr,
 };
@@ -37,17 +37,22 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
     #[specialize] num_kv_heads: u32,
 ) {
     let head_dim = HEAD_DIM as usize;
+    let rope_dim = if has_rope {
+        rope_dim.unwrap() as usize
+    } else {
+        0
+    };
     let layout = Int8KVLayout::new(HEAD_DIM, num_kv_heads);
     let mut values = vec![0.0f32; head_dim];
-    for head in 0..num_q_heads + 2 * num_kv_heads {
+    let v_head_start = num_q_heads + num_kv_heads;
+    for head in 0..v_head_start + num_kv_heads {
         let is_query = head < num_q_heads;
-        let is_key = head >= num_q_heads && head < num_q_heads + num_kv_heads;
-        let kv_head = if is_query {
-            0
-        } else if is_key {
-            head - num_q_heads
-        } else {
-            head - num_q_heads - num_kv_heads
+        let is_key = !is_query && head < v_head_start;
+        let quantize = !is_query || quantize_queries;
+        let (kv_head, scales) = match (is_query, is_key) {
+            (true, _) => (0, q_scales),
+            (_, true) => (head - num_q_heads, Some(k_scales)),
+            _ => (head - v_head_start, Some(v_scales)),
         };
         for token in 0..padded_suffix {
             let query_row = (head * padded_suffix + token) as usize;
@@ -55,43 +60,40 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
                 if is_query && quantize_queries {
                     unsafe {
                         std::ptr::write_bytes(q_codes.unwrap().add(query_row * head_dim), 0, head_dim);
-                        *q_scales.unwrap().add(query_row) = ElementT::from(1.0).unwrap();
+                        *scales.unwrap().add(query_row) = ElementT::one();
                     }
                 }
                 continue;
             }
             let source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             for (channel, value) in values.iter_mut().enumerate() {
-                let element = if has_rope && (is_query || is_key) && channel < rope_dim.unwrap() as usize {
-                    apply_rope(
-                        source,
-                        cosines.unwrap(),
-                        sines.unwrap(),
-                        token as usize,
-                        channel,
-                        rope_dim.unwrap() as usize,
-                    )
+                let element = if (is_query || is_key) && channel < rope_dim {
+                    apply_rope(source, cosines.unwrap(), sines.unwrap(), token as usize, channel, rope_dim)
                 } else {
                     unsafe { *source.add(channel) }
-                };
-                *value = element.to_f32().unwrap();
-            }
-            if is_query && !quantize_queries {
-                let row = (head * suffix_length + token) as usize * head_dim;
-                for (channel, &value) in values.iter().enumerate() {
-                    unsafe { *queries.unwrap().add(row + channel) = ElementT::from(value).unwrap() };
                 }
+                .to_f32()
+                .unwrap();
+                if !quantize {
+                    let row = (head * suffix_length + token) as usize * head_dim;
+                    unsafe { *queries.unwrap().add(row + channel) = ElementT::from(element).unwrap() };
+                } else {
+                    let sign_word = kv_layout::ROTATION_SIGN_BITS[channel / kv_layout::WORD_BITS as usize];
+                    let flip_sign = (sign_word >> (channel % kv_layout::WORD_BITS as usize)) & 1 != 0;
+                    *value = if flip_sign {
+                        -element
+                    } else {
+                        element
+                    };
+                }
+            }
+            if !quantize {
                 continue;
-            }
-            for (channel, value) in values.iter_mut().enumerate() {
-                if KV_ROTATION_SIGN_BITS[channel / 32] >> (channel % 32) & 1 != 0 {
-                    *value = -*value;
-                }
             }
             hadamard_transform(&mut values);
             let maximum = values.iter().fold(0.0f32, |maximum, value| maximum.max(value.abs()));
             let scale = ElementT::from(if maximum > 0.0 {
-                maximum / 127.0
+                maximum / INT8_MAX
             } else {
                 1.0
             })
@@ -102,7 +104,7 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
                 layout.scale_index(kv_token_offset + token, kv_head)
             };
             for (channel, &value) in values.iter().enumerate() {
-                let code = (value / scale.to_f32().unwrap()).round_ties_even().clamp(-127.0, 127.0) as i8;
+                let code = (value / scale.to_f32().unwrap()).round_ties_even().clamp(-INT8_MAX, INT8_MAX) as i8;
                 unsafe {
                     if is_query {
                         *q_codes.unwrap().add(scale_index * head_dim + channel) = code;
@@ -110,19 +112,11 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
                         *k_codes.add(layout.k_code_index(kv_token_offset + token, kv_head, channel as u32)) = code;
                     } else {
                         *v_codes.add(layout.v_code_index(kv_token_offset + token, kv_head, channel as u32)) =
-                            (i16::from(code) + 128) as u8;
+                            (i16::from(code) + kv_layout::V_CODE_BIAS) as u8;
                     }
                 }
             }
-            unsafe {
-                if is_query {
-                    *q_scales.unwrap().add(scale_index) = scale;
-                } else if is_key {
-                    *k_scales.add(scale_index) = scale;
-                } else {
-                    *v_scales.add(scale_index) = scale;
-                }
-            }
+            unsafe { *scales.unwrap().add(scale_index) = scale };
         }
     }
 }
