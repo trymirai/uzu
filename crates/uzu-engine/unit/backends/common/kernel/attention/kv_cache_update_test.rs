@@ -8,7 +8,8 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::kv_cache_update::Copy, kernel::KVCacheUpdateKernel,
+            gpu_types::kv_cache_update::Copy,
+            kernel::{KVCacheUpdateInt8Kernel, KVCacheUpdateKernel, kv_layout::Int8KVLayout},
         },
         cpu::Cpu,
     },
@@ -237,4 +238,45 @@ fn test_no_copy_bf16() {
 #[uzu_test]
 fn test_large_bf16() {
     test_large_internal::<bf16>();
+}
+
+#[uzu_test]
+fn test_int8_copy() {
+    let expected = get_int8_output::<Cpu>();
+    for_each_non_cpu_backend!(|B| {
+        assert_eq!(expected, get_int8_output::<B>(), "INT8 cache update mismatch on {}", std::any::type_name::<B>());
+    });
+}
+
+fn get_int8_output<B: Backend>() -> ([Vec<u8>; 2], [Vec<bf16>; 2]) {
+    let layout = Int8KVLayout::new(256, 2);
+    let scale_count = 64 * layout.num_kv_heads as usize;
+    let code_bytes = scale_count * layout.head_dim as usize;
+    let k_codes: Vec<i8> = (0..code_bytes).map(|i| ((i * 37) ^ (i >> 8)) as i8).collect();
+    let v_codes: Vec<u8> = (0..code_bytes).map(|i| ((i * 19) ^ (i >> 7)) as u8).collect();
+    let k_scales: Vec<bf16> = (0..scale_count).map(|i| bf16::from_f32(i as f32 + 1.0)).collect();
+    let v_scales: Vec<bf16> = (0..scale_count).map(|i| bf16::from_f32(i as f32 + 129.0)).collect();
+    let copies = [Copy {
+        source: 40,
+        destination: 5,
+    }];
+    let context = B::Context::new().unwrap();
+    let mut keys = create_buffer_with_data::<B, i8>(&context, &k_codes);
+    let mut values = create_buffer_with_data::<B, u8>(&context, &v_codes);
+    let mut key_scales = create_buffer_with_data::<B, bf16>(&context, &k_scales);
+    let mut value_scales = create_buffer_with_data::<B, bf16>(&context, &v_scales);
+    let kernel =
+        <B::Kernels as Kernels>::KVCacheUpdateInt8Kernel::new(&context, layout.head_dim, layout.num_kv_heads).unwrap();
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    kernel.encode(
+        &mut keys,
+        &mut values,
+        &mut key_scales,
+        &mut value_scales,
+        &copies,
+        copies.len() as u32,
+        &mut command_buffer,
+    );
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    ([&keys, &values].map(buffer_to_vec::<B, u8>), [&key_scales, &value_scales].map(buffer_to_vec::<B, bf16>))
 }

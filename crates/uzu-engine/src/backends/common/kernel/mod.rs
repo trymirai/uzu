@@ -8,6 +8,8 @@ pub mod attention;
 pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod gated_act_mul;
+#[cfg(any(backend = "cpu", test))]
+pub mod kv_layout;
 pub mod matmul;
 pub mod radix_top_k_small;
 #[cfg(any(backend = "cpu", test))]

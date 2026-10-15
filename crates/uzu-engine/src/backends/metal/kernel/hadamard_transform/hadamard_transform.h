@@ -13,13 +13,47 @@ static_assert(
     "Hadamard transform block size must match the Metal SIMD width"
 );
 
-static METAL_FUNC float simdgroup_hadamard_transform(ushort lane_index, float lane_value) {
-  for (ushort stride = 1; stride < HADAMARD_TRANSFORM_BLOCK_SIZE; stride <<= 1) {
-    float partner_lane_value = simd_shuffle_xor(lane_value, stride);
-    lane_value = (lane_index & stride) ? (partner_lane_value - lane_value) : (partner_lane_value + lane_value);
+/// Normalized Walsh-Hadamard transform of `VALUES_PER_LANE` values in each of `LANES` lanes.
+template <ushort VALUES_PER_LANE, ushort LANES>
+static METAL_FUNC void simdgroup_hadamard_transform(ushort lane_index, thread float* values) {
+  constexpr ushort SIZE = VALUES_PER_LANE * LANES;
+  constexpr ushort CHUNK = VALUES_PER_LANE < 4 ? VALUES_PER_LANE : 4;
+  using Chunk = metal::conditional_t<CHUNK == 1, float, vec<float, CHUNK>>;
+  static_assert(
+      LANES <= METAL_SIMD_SIZE && (LANES & (LANES - 1)) == 0,
+      "lanes must be a power of two within a simdgroup"
+  );
+  static_assert(SIZE == 32 || SIZE == 64 || SIZE == 128 || SIZE == 256, "transform size must be 32, 64, 128 or 256");
+  METAL_PRAGMA_UNROLL
+  for (ushort stride = 1; stride < VALUES_PER_LANE; stride <<= 1) {
+    METAL_PRAGMA_UNROLL
+    for (ushort index = 0; index < VALUES_PER_LANE; ++index) {
+      if (!(index & stride)) {
+        const float value = values[index];
+        const float partner_value = values[index + stride];
+        values[index] = partner_value + value;
+        values[index + stride] = value - partner_value;
+      }
+    }
   }
+  METAL_PRAGMA_UNROLL
+  for (ushort lane_stride = 1; lane_stride < LANES; lane_stride <<= 1) {
+    METAL_PRAGMA_UNROLL
+    for (ushort index = 0; index < VALUES_PER_LANE; index += CHUNK) {
+      thread Chunk& chunk = *reinterpret_cast<thread Chunk*>(values + index);
+      const Chunk partner = simd_shuffle_xor(chunk, lane_stride);
+      chunk = (lane_index & lane_stride) ? (partner - chunk) : (partner + chunk);
+    }
+  }
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < VALUES_PER_LANE; ++index) {
+    values[index] /= sqrt(static_cast<float>(SIZE));
+  }
+}
 
-  return lane_value / sqrt(static_cast<float>(HADAMARD_TRANSFORM_BLOCK_SIZE));
+static METAL_FUNC float simdgroup_hadamard_transform(ushort lane_index, float lane_value) {
+  simdgroup_hadamard_transform<1, HADAMARD_TRANSFORM_BLOCK_SIZE>(lane_index, &lane_value);
+  return lane_value;
 }
 
 template <typename T>
@@ -37,22 +71,11 @@ static METAL_FUNC T simdgroup_output_random_hadamard_transform(ushort lane_index
 UZU_CONST ushort HADAMARD_LANES_PER_BLOCK = HADAMARD_TRANSFORM_BLOCK_SIZE / HADAMARD_VECTOR_SIZE;
 
 static METAL_FUNC float4 simdgroup_hadamard_transform_vector(ushort lane_index, float4 lane_values) {
-  for (ushort stride = 1; stride < HADAMARD_VECTOR_SIZE; stride <<= 1) {
-    METAL_PRAGMA_UNROLL
-    for (ushort index = 0; index < HADAMARD_VECTOR_SIZE; ++index) {
-      if (!(index & stride)) {
-        const float value = lane_values[index];
-        const float partner_value = lane_values[index + stride];
-        lane_values[index] = partner_value + value;
-        lane_values[index + stride] = value - partner_value;
-      }
-    }
-  }
-  for (ushort lane_stride = 1; lane_stride < HADAMARD_LANES_PER_BLOCK; lane_stride <<= 1) {
-    const float4 partner_values = simd_shuffle_xor(lane_values, lane_stride);
-    lane_values = (lane_index & lane_stride) ? (partner_values - lane_values) : (partner_values + lane_values);
-  }
-  return lane_values / sqrt(static_cast<float>(HADAMARD_TRANSFORM_BLOCK_SIZE));
+  simdgroup_hadamard_transform<HADAMARD_VECTOR_SIZE, HADAMARD_LANES_PER_BLOCK>(
+      lane_index,
+      reinterpret_cast<thread float*>(&lane_values)
+  );
+  return lane_values;
 }
 
 template <typename T>
