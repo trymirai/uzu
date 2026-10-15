@@ -141,7 +141,6 @@ KERNEL(AttentionGemmGroupedInt8)(
     const ThreadContext thread_context,
     const uint tile_split_index GROUPS(query_tiles * split_count),
     const uint kv_head_index GROUPS(num_kv_heads),
-    const uint batch_index GROUPS(1),
     const uint thread_index THREADS(ATTENTION_GQA_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
   using Layout = AttentionGemmGroupedLayout<uzu::kv_layout::TILE_KEYS, HEAD_DIM, HEAD_DIM / uzu::kv_layout::SLICE_DIMS>;
@@ -181,16 +180,13 @@ KERNEL(AttentionGemmGroupedInt8)(
 
   const uint channel_offset = uint(channel_slice) * uint(Layout::SLICE_COLS);
 
-  const size_t query_group_offset =
-      size_t(batch_index) * params.q_strides[0] + size_t(kv_head_index) * params.q_strides[1];
+  const size_t query_group_offset = size_t(kv_head_index) * params.q_strides[1];
   query_codes += query_group_offset;
-  key_codes += size_t(batch_index) * params.k_strides[0] +
-               uint(uzu::kv_layout::TILE_KEYS) * size_t(kv_head_index) * params.k_strides[1];
+  key_codes += uint(uzu::kv_layout::TILE_KEYS) * size_t(kv_head_index) * params.k_strides[1];
   key_codes += int(lane) * uzu::kv_layout::LANE_BYTES;
   const device uchar* value_tiles =
       value_codes +
-      (size_t(batch_index) * params.v_strides[0] +
-       size_t(uzu::kv_layout::TILE_KEYS) * (size_t(kv_head_index) * params.v_strides[1] + channel_offset)) +
+      (size_t(uzu::kv_layout::TILE_KEYS) * (size_t(kv_head_index) * params.v_strides[1] + channel_offset)) +
       size_t(lane) * uzu::kv_layout::LANE_BYTES;
 
   Int8Softmax<Fragment<AccumType, 1, VALUE_FRAGMENTS, Ops>> softmax;
@@ -516,7 +512,7 @@ KERNEL(AttentionGemmGroupedInt8)(
   softmax.normalize();
 
   const uint partial_tile_index =
-      ((split_index - split_base + batch_index) * num_kv_heads + kv_head_index) * query_tiles + query_tile_index;
+      ((split_index - split_base) * num_kv_heads + kv_head_index) * query_tiles + query_tile_index;
   const size_t partial_offset = size_t(partial_tile_index) * Layout::BLOCK_ROWS * HEAD_DIM +
                                 size_t(query_band) * Layout::TILE_ROWS * HEAD_DIM + channel_offset;
   softmax.output.store(lane, partial_values + partial_offset, int(HEAD_DIM));
