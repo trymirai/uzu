@@ -1,17 +1,11 @@
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
-#[cfg(backend = "metal")]
-use super::kv_layout::Int8KVLayout;
-#[cfg(backend = "metal")]
-use crate::backends::common::kernel::AttentionPrepareInt8Kernel;
-#[cfg(backend = "metal")]
-use crate::backends::metal::Metal;
 use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::AttentionPrepareKernel,
+            kernel::{AttentionPrepareInt8Kernel, AttentionPrepareKernel},
         },
         cpu::Cpu,
     },
@@ -138,31 +132,25 @@ fn test_attention_prepare_uses_query_gate_row_stride() {
     });
 }
 
-#[cfg(backend = "metal")]
 #[derive(Debug, PartialEq)]
 struct Int8Output {
-    codes: [Vec<i16>; 3],
-    scales: [bf16; 3],
+    codes: [Vec<u8>; 3],
+    scales: [Vec<bf16>; 3],
 }
 
-#[cfg(backend = "metal")]
 fn run_int8<B: Backend>() -> Int8Output {
     const DIM: usize = 256;
-    let layout = Int8KVLayout {
-        head_dim: DIM as u32,
-        num_kv_heads: 1,
-    };
-    let scale_count = 64 * layout.num_kv_heads as usize;
-    let code_bytes = scale_count * DIM;
+    const CACHE_TOKENS: usize = 64;
+    let code_bytes = CACHE_TOKENS * DIM;
     let rows: Vec<bf16> = (0..3 * DIM).map(|i| bf16::from_f32((i as f32 * 0.37).sin())).collect();
     let context = B::Context::new().unwrap();
     let qkvg = create_buffer_with_data::<B, bf16>(&context, &rows);
     let mut q_codes = create_buffer::<B, i8>(&context, DIM);
     let mut q_scales = create_buffer::<B, bf16>(&context, 1);
-    let mut k_codes = create_buffer::<B, i8>(&context, code_bytes);
-    let mut v_codes = create_buffer::<B, u8>(&context, code_bytes);
-    let mut k_scales = create_buffer::<B, bf16>(&context, scale_count);
-    let mut v_scales = create_buffer::<B, bf16>(&context, scale_count);
+    let mut k_codes = create_buffer_with_data::<B, i8>(&context, &vec![0; code_bytes]);
+    let mut v_codes = create_buffer_with_data::<B, u8>(&context, &vec![0; code_bytes]);
+    let mut k_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO; CACHE_TOKENS]);
+    let mut v_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO; CACHE_TOKENS]);
     let kernel = <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
         &context,
         DataType::BF16,
@@ -195,24 +183,16 @@ fn run_int8<B: Backend>() -> Int8Output {
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    let q_codes = buffer_to_vec::<B, i8>(&q_codes);
-    let k_codes = buffer_to_vec::<B, i8>(&k_codes);
-    let v_codes = buffer_to_vec::<B, u8>(&v_codes);
     Int8Output {
-        codes: [
-            q_codes.into_iter().map(i16::from).collect(),
-            (0..DIM).map(|c| i16::from(k_codes[layout.k_code_index(33, 0, c as u32)])).collect(),
-            (0..DIM).map(|c| i16::from(v_codes[layout.v_code_index(33, 0, c as u32)]) - 128).collect(),
-        ],
-        scales: [(&q_scales, 0), (&k_scales, layout.scale_index(33, 0)), (&v_scales, layout.scale_index(33, 0))]
-            .map(|(buffer, slot)| buffer_to_vec::<B, bf16>(buffer)[slot]),
+        codes: [&q_codes, &k_codes, &v_codes].map(buffer_to_vec::<B, u8>),
+        scales: [&q_scales, &k_scales, &v_scales].map(buffer_to_vec::<B, bf16>),
     }
 }
 
-#[cfg(backend = "metal")]
 #[uzu_test]
 fn test_attention_prepare_int8() {
     let cpu = run_int8::<Cpu>();
-    let metal = run_int8::<Metal>();
-    assert_eq!(cpu, metal);
+    for_each_non_cpu_backend!(|B| {
+        assert_eq!(cpu, run_int8::<B>(), "INT8 prepare mismatch on {}", std::any::type_name::<B>());
+    });
 }

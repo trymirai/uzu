@@ -4,8 +4,6 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
-#[cfg(backend = "metal")]
-use crate::backends::metal::Metal;
 use crate::{
     backends::{
         common::{
@@ -244,12 +242,13 @@ fn test_large_bf16() {
 
 #[uzu_test]
 fn test_int8_copy() {
-    test_int8_copy_for::<Cpu>();
-    #[cfg(backend = "metal")]
-    test_int8_copy_for::<Metal>();
+    let expected = get_int8_output::<Cpu>();
+    for_each_non_cpu_backend!(|B| {
+        assert_eq!(expected, get_int8_output::<B>(), "INT8 cache update mismatch on {}", std::any::type_name::<B>());
+    });
 }
 
-fn test_int8_copy_for<B: Backend>() {
+fn get_int8_output<B: Backend>() -> ([Vec<u8>; 2], [Vec<bf16>; 2]) {
     let layout = Int8KVLayout::new(256, 2);
     let scale_count = 64 * layout.num_kv_heads as usize;
     let code_bytes = scale_count * layout.head_dim as usize;
@@ -279,12 +278,5 @@ fn test_int8_copy_for<B: Backend>() {
         &mut command_buffer,
     );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-    let (keys, values) = (buffer_to_vec::<B, i8>(&keys), buffer_to_vec::<B, u8>(&values));
-    for channel in 0..layout.head_dim {
-        assert_eq!(keys[layout.k_code_index(5, 1, channel)], k_codes[layout.k_code_index(40, 1, channel)]);
-        assert_eq!(values[layout.v_code_index(5, 1, channel)], v_codes[layout.v_code_index(40, 1, channel)]);
-    }
-    let (from, to) = (layout.scale_index(40, 1), layout.scale_index(5, 1));
-    assert_eq!(buffer_to_vec::<B, bf16>(&key_scales)[to], k_scales[from]);
-    assert_eq!(buffer_to_vec::<B, bf16>(&value_scales)[to], v_scales[from]);
+    ([&keys, &values].map(buffer_to_vec::<B, u8>), [&key_scales, &value_scales].map(buffer_to_vec::<B, bf16>))
 }
