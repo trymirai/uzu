@@ -7,7 +7,7 @@ using namespace metal;
 namespace uzu::kv_layout {
 static constant constexpr uint32_t TILE_KEYS = 32;
 
-static constant constexpr uint32_t QUERY_TILE_ROWS = 16;
+static constant constexpr uint32_t TILE_QUERIES = 16;
 
 static constant constexpr uint32_t TILE_DIMS = 16;
 
@@ -16,8 +16,6 @@ static constant constexpr uint32_t FRAGMENT_BYTES = TILE_KEYS * TILE_DIMS;
 static constant constexpr uint32_t SLICE_DIMS = 64;
 
 static constant constexpr int16_t V_CODE_BIAS = 128;
-
-static constant constexpr float MIN_VALUE_SCALE = 1e-30;
 
 static constant constexpr uint32_t GROUP_ROWS = 8;
 

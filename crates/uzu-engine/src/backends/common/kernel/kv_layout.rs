@@ -2,12 +2,11 @@ use half::bf16;
 
 use crate::backends::common::gpu_types::kv_layout;
 
-/// Query rows per KV head, `[head in group][query]`, padded to whole query tiles.
 pub fn packed_query_rows(
     gqa_factor: u32,
     suffix_length: u32,
 ) -> u32 {
-    (gqa_factor * suffix_length).next_multiple_of(kv_layout::QUERY_TILE_ROWS)
+    (gqa_factor * suffix_length).next_multiple_of(kv_layout::TILE_QUERIES)
 }
 
 pub struct Int8KVLayout {
@@ -36,18 +35,18 @@ impl Int8KVLayout {
             as usize
     }
 
-    pub fn tile_bytes(
+    pub fn code_bytes(
         &self,
         keys: u32,
     ) -> usize {
         keys.next_multiple_of(kv_layout::TILE_KEYS) as usize * (self.num_kv_heads * self.head_dim) as usize
     }
 
-    pub fn scale_tile_bytes(
+    pub fn scale_bytes(
         &self,
         keys: u32,
     ) -> usize {
-        self.tile_bytes(keys) / self.head_dim as usize * size_of::<bf16>()
+        self.code_bytes(keys) / self.head_dim as usize * size_of::<bf16>()
     }
 
     pub fn k_code_index(

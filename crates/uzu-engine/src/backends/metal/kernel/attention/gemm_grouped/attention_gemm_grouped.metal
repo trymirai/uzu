@@ -41,14 +41,14 @@ KERNEL(AttentionGemmGrouped)(
     const bool split_kv SPECIALIZE,
     const bool is_causal SPECIALIZE,
     const bool is_trie SPECIALIZE,
-    threadgroup float score_exchange[AttentionGemmGroupedLayout<T, BK, BD, D_SLICES>::SCORE_EXCHANGE_SIZE],
+    threadgroup float score_exchange[AttentionGemmGroupedLayout<BK, BD, D_SLICES>::SCORE_EXCHANGE_SIZE],
     const ThreadContext thread_context,
     const uint tile_split_flat GROUPS(m_tiles * num_splits),
     const uint kv_head_idx GROUPS(kv_heads),
     const uint batch_idx GROUPS(batch_count),
     const uint lid THREADS(ATTENTION_GQA_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
-  using Layout = AttentionGemmGroupedLayout<T, BK, BD, D_SLICES>;
+  using Layout = AttentionGemmGroupedLayout<BK, BD, D_SLICES>;
   using Ops = typename Layout::Ops;
   using AccumType = float;
 

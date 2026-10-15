@@ -18,8 +18,7 @@ use crate::{
     data_type::DataType,
 };
 
-/// Grouped rows of one threadgroup: two bands of [`kv_layout::QUERY_TILE_ROWS`].
-const BLOCK_ROWS: u32 = 2 * kv_layout::QUERY_TILE_ROWS;
+const BLOCK_ROWS: u32 = 2 * kv_layout::TILE_QUERIES;
 
 pub(super) struct Int8Attention {
     config: AttentionKernelConfig,
@@ -35,7 +34,7 @@ impl Int8Attention {
         context: &MetalContext,
     ) -> bool {
         context.supports_mxu
-            && config.head_dim == 256 // TODO: support + tune other head_dim
+            && config.head_dim == 256
             && config.is_causal
             && config.data_type == DataType::BF16
             && !config.has_sinks
@@ -128,7 +127,7 @@ impl Int8Attention {
             .take_while(|split| ((split + 1) * params.nk / num_splits) * kv_layout::TILE_KEYS <= params.q_off)
             .count() as u32;
         let mut dispatch = |kernel: &AttentionGemmGroupedInt8MetalKernel, trie, split_base: u32, split_count: u32| {
-            // Partials are [split][row], so each dispatch writes its own subrange and needs no barrier.
+            // Split-major partials let each dispatch write a separate range.
             let split_byte_range = |row_bytes: usize| {
                 let split_bytes = split_rows as usize * row_bytes;
                 split_base as usize * split_bytes..(split_base + split_count) as usize * split_bytes

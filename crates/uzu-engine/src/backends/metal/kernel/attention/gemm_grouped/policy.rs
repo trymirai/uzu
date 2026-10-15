@@ -159,7 +159,7 @@ pub fn int8_splits(
     let max_splits = kv_length.div_ceil(kv_layout::TILE_KEYS).max(1);
     let splits = if suffix_length <= GEMM_GROUPED_DECODE_SUFFIX_MAX {
         // A partial query tile costs as much as a full one.
-        let splits = (kv_length as f32 / suffix_length.max(kv_layout::QUERY_TILE_ROWS) as f32).sqrt().round() as u32;
+        let splits = (kv_length as f32 / suffix_length.max(kv_layout::TILE_QUERIES) as f32).sqrt().round() as u32;
         // Tuned on M5 Max.
         if suffix_length <= SMALL_SUFFIX_MAX {
             splits.min(SMALL_SUFFIX_MAX_SPLITS)
@@ -167,9 +167,9 @@ pub fn int8_splits(
             splits
         }
     } else if kv_length >= PREFILL_SPLIT_MIN_KV {
-        // One partial row: `head_dim` BF16 means, one F32 max, one F32 sum.
-        let single_split_bytes = split_rows as u64 * (head_dim as u64 * 2 + 8);
-        let scratch_splits = (PREFILL_SPLIT_SCRATCH_BYTES / single_split_bytes) as u32;
+        let row_bytes = head_dim as u64 * DataType::BF16.size_in_bytes() as u64
+            + PARTIAL_STATS_PER_ROW * DataType::F32.size_in_bytes() as u64;
+        let scratch_splits = (PREFILL_SPLIT_SCRATCH_BYTES / (split_rows as u64 * row_bytes)) as u32;
         ((kv_length + PREFILL_SPLIT_KEYS / 2) / PREFILL_SPLIT_KEYS).min(scratch_splits)
     } else {
         1

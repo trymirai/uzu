@@ -9,7 +9,7 @@ using namespace metal;
 
 #define ATTENTION_GQA_SIMDGROUPS 8
 
-template <typename T, uint BK, uint BD, uint D_SLICES>
+template <uint BK, uint BD, uint D_SLICES>
 struct AttentionGemmGroupedLayout {
   using Ops = uzu::matmul::MxuFragmentOps<>;
 

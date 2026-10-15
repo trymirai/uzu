@@ -54,7 +54,7 @@ impl<B: Backend> KVStorage<B> {
             KVFormat::Int8 => {
                 let layout = Int8KVLayout::new(head_dim, num_kv_heads);
                 let scales = || -> Result<Box<dyn Buffer<Backend = B>>, B::Error> {
-                    let bytes = layout.scale_tile_bytes(max_elements);
+                    let bytes = layout.scale_bytes(max_elements);
                     if context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
                         return create_kv_buffer(context, bytes);
                     }
@@ -63,8 +63,8 @@ impl<B: Backend> KVStorage<B> {
                     Ok(Box::new(buffer))
                 };
                 let kv = Int8KV {
-                    k_codes: create_kv_buffer(context, layout.tile_bytes(max_elements))?,
-                    v_codes: create_kv_buffer(context, layout.tile_bytes(max_elements))?,
+                    k_codes: create_kv_buffer(context, layout.code_bytes(max_elements))?,
+                    v_codes: create_kv_buffer(context, layout.code_bytes(max_elements))?,
                     k_scales: scales()?,
                     v_scales: scales()?,
                     layout,
@@ -102,10 +102,10 @@ impl<B: Backend> KVStorage<B> {
                 map(&mut kv.values, bytes)
             },
             Self::Int8(kv, _) => {
-                let code_bytes = kv.layout.tile_bytes(elements_required);
+                let code_bytes = kv.layout.code_bytes(elements_required);
                 map(&mut kv.k_codes, code_bytes)?;
                 map(&mut kv.v_codes, code_bytes)?;
-                let scale_bytes = kv.layout.scale_tile_bytes(elements_required);
+                let scale_bytes = kv.layout.scale_bytes(elements_required);
                 map(&mut kv.k_scales, scale_bytes)?;
                 map(&mut kv.v_scales, scale_bytes)
             },

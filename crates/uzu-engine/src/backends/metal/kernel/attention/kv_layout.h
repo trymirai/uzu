@@ -6,7 +6,6 @@
 
 // K: [block][head][fragment][lane][LANE_BYTES].
 // V: [block][head][slice][chunk group][lane][LANE_BYTES].
-// Scales below MIN_VALUE_SCALE are unwritten.
 
 namespace uzu::kv_layout {
 

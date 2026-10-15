@@ -384,10 +384,12 @@ fn attention_gate_matches_standalone_gate_on_metal() {
 
 #[uzu_test]
 fn int8_attention_matches_cpu() {
+    const DIM: usize = 256;
+    const KV_HEADS: usize = 4;
     let (metal, cpu) = (<Metal as Backend>::Context::new().unwrap(), <Cpu as Backend>::Context::new().unwrap());
     type Prepare = <<Metal as Backend>::Kernels as Kernels>::AttentionPrepareInt8Kernel;
     let trie: [GpuTrieNode; 3] = bytemuck::cast([0u32, 2, 0, 1, 1, 1, 2, 2, 1]); // (start, end, height) per token
-    // (q heads: GQA 6 or 4 over 4 KV heads, suffix, prefix, branching trie, KV-sharing reader, unwritten scale pattern)
+    // (query heads, suffix, prefix, trie, shared KV, unwritten scale bits)
     const NAN: u16 = 0xFFFF;
     const DENORMAL: u16 = 0x0001; // 1 / scale overflows to inf
     const INFINITY: u16 = 0x7F80;
@@ -407,28 +409,34 @@ fn int8_attention_matches_cpu() {
         (16, 3, 37, true, false, NEGATIVE_DENORMAL),
         (24, 16, 24, false, false, DENORMAL),
     ] {
-        let (shape, nodes) = ((256, q_heads, 4, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
-        let config = super::default_attention_config::<bf16>(256, q_heads, 4, true);
+        let (shape, nodes) = ((DIM, q_heads, KV_HEADS, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
+        let config = super::default_attention_config::<bf16>(DIM, q_heads, KV_HEADS, true);
         let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionKernel::new(&metal, config).unwrap();
         if !kernel.supports_int8_kv() {
             return;
         }
         // Fused QKV rows over the data `run_attention` uses; its queries are head-major.
-        let ((keys, values), stride) = (attention_data(shape), (q_heads + 8) * 256);
+        let ((keys, values), stride) = (attention_data(shape), (q_heads + 2 * KV_HEADS) * DIM);
         let mut rows = vec![bf16::ZERO; (prefix + suffix) * stride];
-        for (row, (k, v)) in rows.chunks_mut(stride).zip(keys.chunks(1024).zip(values.chunks(1024))) {
-            row[q_heads * 256..].copy_from_slice(&[k, v].concat());
+        for (row, (k, v)) in rows.chunks_mut(stride).zip(keys.chunks(KV_HEADS * DIM).zip(values.chunks(KV_HEADS * DIM)))
+        {
+            let (key_row, value_row) = row[q_heads * DIM..].split_at_mut(KV_HEADS * DIM);
+            key_row.copy_from_slice(k);
+            value_row.copy_from_slice(v);
         }
-        for (index, query) in fill_attention(q_heads * suffix * 256, 0.5).chunks(256).enumerate() {
-            rows[(prefix + index % suffix) * stride + index / suffix * 256..][..256].copy_from_slice(query);
+        for (index, query) in fill_attention(q_heads * suffix * DIM, 0.5).chunks(DIM).enumerate() {
+            rows[(prefix + index % suffix) * stride + index / suffix * DIM..][..DIM].copy_from_slice(query);
         }
-        let mut cache = KVStorage::<Metal>::create_empty(KVFormat::Int8, 4, 256, 2048, DataType::BF16, &metal).unwrap();
+        let mut cache =
+            KVStorage::<Metal>::create_empty(KVFormat::Int8, KV_HEADS as u32, DIM as u32, 2048, DataType::BF16, &metal)
+                .unwrap();
         cache.prepare(2048).unwrap();
         let KVStorage::Int8(kv, _) = &mut cache else {
             unreachable!()
         };
         let mut fill = metal.create_command_buffer(None, None).unwrap();
-        let pattern = create_buffer_with_data::<Metal, u16>(&metal, &vec![poison; kv.k_scales.size() / 2]);
+        let pattern =
+            create_buffer_with_data::<Metal, u16>(&metal, &vec![poison; kv.k_scales.size() / size_of::<bf16>()]);
         for buffer in [&mut kv.k_codes, &mut kv.v_codes] {
             fill.encode_fill(buffer.as_mut(), poison as u8);
         }
@@ -438,10 +446,20 @@ fn int8_attention_matches_cpu() {
         submit_command_buffer(fill);
         let mut step = |rows: &[bf16], prefix: usize, trie: Option<&[GpuTrieNode]>, append_kv: bool| {
             let suffix = rows.len() / stride;
-            let packed_rows = packed_query_rows((q_heads / 4) as u32, suffix as u32) as usize;
-            let prepare = Prepare::new(&metal, DataType::BF16, DataType::F32, 256, false, true, 4, append_kv).unwrap();
-            let mut query_codes = create_buffer::<Metal, i8>(&metal, 4 * packed_rows * 256);
-            let mut query_scales = create_buffer::<Metal, bf16>(&metal, 4 * packed_rows);
+            let packed_rows = packed_query_rows((q_heads / KV_HEADS) as u32, suffix as u32) as usize;
+            let prepare = Prepare::new(
+                &metal,
+                DataType::BF16,
+                DataType::F32,
+                DIM as u32,
+                false,
+                true,
+                KV_HEADS as u32,
+                append_kv,
+            )
+            .unwrap();
+            let mut query_codes = create_buffer::<Metal, i8>(&metal, KV_HEADS * packed_rows * DIM);
+            let mut query_scales = create_buffer::<Metal, bf16>(&metal, KV_HEADS * packed_rows);
             let mut command_buffer = metal.create_command_buffer(None, None).unwrap();
             let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
             prepare.encode(
@@ -473,7 +491,7 @@ fn int8_attention_matches_cpu() {
                 gate: None::<&<Metal as Backend>::GlobalBuffer>,
             };
             let pooled = kernel.encode_int8(arguments, &mut command_buffer).unwrap();
-            let mut output = create_buffer::<Metal, bf16>(&metal, suffix * q_heads * 256);
+            let mut output = create_buffer::<Metal, bf16>(&metal, suffix * q_heads * DIM);
             command_buffer.encode_copy(&pooled, &mut output);
             drop((pooled, trie));
             submit_command_buffer(command_buffer);
@@ -483,7 +501,7 @@ fn int8_attention_matches_cpu() {
         let mut actual = step(&rows[prefix * stride..], prefix, nodes, true);
         if reader {
             // The reader's own K/V rows are junk: appending them would change the output.
-            rows[prefix * stride..].chunks_mut(stride).for_each(|row| row[q_heads * 256..].fill(bf16::ONE));
+            rows[prefix * stride..].chunks_mut(stride).for_each(|row| row[q_heads * DIM..].fill(bf16::ONE));
             actual = step(&rows[prefix * stride..], prefix, nodes, false);
         }
         let label = format!("int8 attention q{q_heads} S{suffix} L{prefix} trie={use_trie} reader={reader}");

@@ -9,8 +9,7 @@
 #include "../kv_layout.h"
 #include "util.h"
 
-// Per 128-key step, slice simdgroup `s` scores key block `s` in full and publishes its u8 P codes and row stats to
-// threadgroup memory; every simdgroup then accumulates its 64-channel P x V slice over all published blocks.
+// Each simdgroup scores one key block; all consume the published probabilities.
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -18,32 +17,31 @@ using namespace uzu::attention;
 using namespace uzu::trie;
 namespace kv_layout = uzu::kv_layout;
 
-// Bit tricks: a float in [2^23, 2^24) holds its integer part in the mantissa.
-UZU_CONST float BIASED_INT_OFFSET = 0x1p23f;
+// Integers below 2^23 fit in a biased float mantissa.
+UZU_CONST float INT_BIAS = 0x1p23f;
 
-// rint(x) for 0 <= x < 256, in one add.
+// Round [0, 255] by extracting float mantissa bits.
 METAL_FUNC uchar round_to_byte(const float x) { return uchar(as_type<uint>(x + 0x1.8p23f)); }
 
-// BIASED_INT_OFFSET + i for 0 <= i < 2^23, in one or; the offset is subtracted after accumulation.
-METAL_FUNC float biased_int_to_float(const int i) {
-  return as_type<float>(as_type<uint>(i) | as_type<uint>(BIASED_INT_OFFSET));
-}
+// Add the bias without an integer-to-float conversion.
+METAL_FUNC float biased_float(const int i) { return as_type<float>(as_type<uint>(i) | as_type<uint>(INT_BIAS)); }
 
-// One exchange slot per step: every simdgroup's u8 P codes, `(max0, sum0, max1, sum1)` stats and probability sums.
+// Exchange probabilities and row statistics between simdgroups.
 template <uint HEAD_DIM>
 struct AttentionGemmGroupedInt8Layout {
-  using Grouped = AttentionGemmGroupedLayout<float, kv_layout::TILE_KEYS, HEAD_DIM, HEAD_DIM / kv_layout::SLICE_DIMS>;
+  using Grouped = AttentionGemmGroupedLayout<kv_layout::TILE_KEYS, HEAD_DIM, HEAD_DIM / kv_layout::SLICE_DIMS>;
 
+  UZU_CONST int BLOCK_ROWS = Grouped::BLOCK_ROWS;
   UZU_CONST int CODE_FLOATS = Grouped::SIMDGROUPS * Grouped::SCORE_TILE_ELEMENTS / int(sizeof(float));
   UZU_CONST int STAT_FLOATS = Grouped::SIMDGROUPS * Grouped::TILE_ROWS * 2;
   UZU_CONST int SLOT_FLOATS = CODE_FLOATS + STAT_FLOATS + Grouped::SIMDGROUPS * Grouped::TILE_ROWS;
 
   // Q stage: one uint4 per lane and fragment pair.
-  UZU_CONST int QUERY_FRAGMENT_PAIRS = int(HEAD_DIM) / (2 * Grouped::TILE_ROWS);
-  UZU_CONST int QUERY_STAGE_VECTORS = Grouped::BANDS * QUERY_FRAGMENT_PAIRS * METAL_SIMD_SIZE;
+  UZU_CONST int QUERY_PAIRS = int(HEAD_DIM) / (2 * Grouped::TILE_ROWS);
+  UZU_CONST int QUERY_VECTORS = Grouped::BANDS * QUERY_PAIRS * METAL_SIMD_SIZE;
 };
 
-// Lane-local (column, row) index of the element at fragment coordinate (row, col); constant once unrolled.
+// Fragment coordinates to lane-local indices.
 template <class Ops>
 METAL_FUNC ushort2 lane_index(const short2 position, const short row, const short col) {
   const short lane_col = col - position.x;
@@ -78,8 +76,8 @@ KERNEL(AttentionGemmGroupedInt8)(
     const bool is_trie SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     threadgroup float p_exchange[2 * AttentionGemmGroupedInt8Layout<HEAD_DIM>::SLOT_FLOATS],
-    threadgroup ulong trie_masks[32],
-    threadgroup uint4 query_stage[AttentionGemmGroupedInt8Layout<HEAD_DIM>::QUERY_STAGE_VECTORS],
+    threadgroup ulong trie_masks[AttentionGemmGroupedInt8Layout<HEAD_DIM>::BLOCK_ROWS],
+    threadgroup uint4 query_stage[AttentionGemmGroupedInt8Layout<HEAD_DIM>::QUERY_VECTORS],
     const ThreadContext thread_context,
     const uint tile_split_flat GROUPS(m_tiles * split_count),
     const uint kv_head_idx GROUPS(num_kv_heads),
@@ -93,16 +91,16 @@ KERNEL(AttentionGemmGroupedInt8)(
 
   constexpr uint D_SLICES = HEAD_DIM / kv_layout::SLICE_DIMS;
 
-  constexpr int KEY_COL_FRAGMENTS = int(kv_layout::TILE_KEYS) / Ops::FRAGMENT_COLS;
-  constexpr int HEAD_DIM_FRAGMENTS_PER_SLICE = Layout::SLICE_COLS / Ops::FRAGMENT_ROWS;
-  constexpr int VALUE_COL_FRAGMENTS = Layout::SLICE_COLS / Ops::FRAGMENT_COLS;
-  constexpr int PANEL_COL_FRAGMENTS = 2;
-  constexpr int PANELS = VALUE_COL_FRAGMENTS / PANEL_COL_FRAGMENTS;
+  constexpr int KEY_TILES = int(kv_layout::TILE_KEYS) / Ops::FRAGMENT_COLS;
+  constexpr int DEPTH_TILES = Layout::SLICE_COLS / Ops::FRAGMENT_ROWS;
+  constexpr int VALUE_TILES = Layout::SLICE_COLS / Ops::FRAGMENT_COLS;
+  constexpr int PANEL_TILES = 2;
+  constexpr int PANELS = VALUE_TILES / PANEL_TILES;
   constexpr int ROWS_PER_LANE = Ops::THREAD_ELEMENT_ROWS;
-  constexpr int LANE_COLS = KEY_COL_FRAGMENTS * Ops::THREAD_ELEMENT_COLS;
+  constexpr int LANE_COLS = KEY_TILES * Ops::THREAD_ELEMENT_COLS;
   constexpr uint STAT_ROWS = uint(Layout::TILE_ROWS / ROWS_PER_LANE);
 
-  static_assert(KEY_COL_FRAGMENTS == 2 && VALUE_COL_FRAGMENTS == 4, "32 keys x 64 channels per simdgroup");
+  static_assert(KEY_TILES == 2 && VALUE_TILES == 4, "32 keys x 64 channels per simdgroup");
   static_assert(ROWS_PER_LANE == 2, "stats pack two rows per lane");
 
   // Online softmax in log2 units. The running max starts finite so the first rescale is exp2(-huge) = 0, not NaN;
@@ -116,14 +114,14 @@ KERNEL(AttentionGemmGroupedInt8)(
   constexpr AccumType CODE_MAX = 255.0f;
   constexpr AccumType LOG2_CODE_MAX = 7.9943534368588578f; // log2(255)
 
-  using QueryCodeFragment = OperandFragment<int8_t, 1, 1, Ops>;
-  using KeyCodeFragment = OperandFragment<int8_t, 1, KEY_COL_FRAGMENTS, Ops, ReadTranspose>;
-  using ScoreFragment = Fragment<AccumType, 1, KEY_COL_FRAGMENTS, Ops>;
-  using IntScoreFragment = Fragment<int, 1, KEY_COL_FRAGMENTS, Ops>;
-  using OutputFragment = Fragment<AccumType, 1, VALUE_COL_FRAGMENTS, Ops>;
-  using ProbabilityCodeFragment = Fragment<uchar, 1, KEY_COL_FRAGMENTS, Ops>;
-  using ValuePanelFragment = OperandFragment<uchar, KEY_COL_FRAGMENTS, PANEL_COL_FRAGMENTS, Ops>;
-  using IntPanelFragment = Fragment<int, 1, PANEL_COL_FRAGMENTS, Ops>;
+  using QueryFragment = OperandFragment<int8_t, 1, 1, Ops>;
+  using KeyFragment = OperandFragment<int8_t, 1, KEY_TILES, Ops, ReadTranspose>;
+  using ScoreFragment = Fragment<AccumType, 1, KEY_TILES, Ops>;
+  using IntScoreFragment = Fragment<int, 1, KEY_TILES, Ops>;
+  using OutputFragment = Fragment<AccumType, 1, VALUE_TILES, Ops>;
+  using ProbabilityFragment = Fragment<uchar, 1, KEY_TILES, Ops>;
+  using ValueFragment = OperandFragment<uchar, KEY_TILES, PANEL_TILES, Ops>;
+  using ProductFragment = Fragment<int, 1, PANEL_TILES, Ops>;
 
   const ushort lane = ushort(thread_context.simd_lane_id);
   const ushort simdgroup_index = ushort(thread_context.simdgroup_index);
@@ -156,7 +154,7 @@ KERNEL(AttentionGemmGroupedInt8)(
   int query_offset_row0 = 0;
   int query_offset_row1 = 0;
   {
-    const short2 query_position = QueryCodeFragment::get_position(lane);
+    const short2 query_position = QueryFragment::get_position(lane);
     const uint last_query_row = grouped_rows - 1u;
     query_offset_row0 =
         (int(min(row_base + uint(query_position.y), last_query_row)) - int(row_base)) * int(query_row_stride) +
@@ -178,13 +176,11 @@ KERNEL(AttentionGemmGroupedInt8)(
   const uint prefix_length = params.q_off;
   const uint key_length = params.k_len;
   const short2 score_position = ScoreFragment::get_position(lane);
-  // This lane's two rows within the band.
   const uint band_rows[ROWS_PER_LANE] = {
       uint(score_position.y),
       uint(score_position.y) + uint(Ops::THREAD_ELEMENT_ROW_STRIDE)
   };
   const uint block_band_base = uint(band) * uint(Layout::TILE_ROWS);
-  // Causal or trie mask per row.
   uint last_visible_key[MASK_FREE ? 1 : ROWS_PER_LANE];
   if (!MASK_FREE) {
     METAL_PRAGMA_UNROLL
@@ -216,7 +212,6 @@ KERNEL(AttentionGemmGroupedInt8)(
   const uint key_block_stride = uint(kv_layout::TILE_KEYS) * key_row_stride;
   const uint value_block_stride = uint(kv_layout::TILE_KEYS) * value_row_stride;
 
-  // This split's key blocks.
   const uint block_begin = (split_idx * params.nk) / num_splits;
   const uint tile_first_row = m_tile_idx * uint(Layout::BLOCK_ROWS);
   const uint tile_last_row = min(tile_first_row + uint(Layout::BLOCK_ROWS) - 1u, grouped_rows - 1u);
@@ -257,17 +252,16 @@ KERNEL(AttentionGemmGroupedInt8)(
       code_slot + uint(band_first_simdgroup) * uint(Layout::SCORE_TILE_ELEMENTS) + uint(lane) * kv_layout::LANE_BYTES;
   threadgroup float4* const lane_stats = reinterpret_cast<threadgroup float4*>(stat_slot) +
                                          uint(band_first_simdgroup) * STAT_ROWS + uint(score_position.y);
-  threadgroup float2* const lane_probability_sums =
-      reinterpret_cast<threadgroup float2*>(stat_slot + Int8Layout::STAT_FLOATS) +
-      uint(band_first_simdgroup) * STAT_ROWS + uint(score_position.y);
+  threadgroup float2* const lane_sums = reinterpret_cast<threadgroup float2*>(stat_slot + Int8Layout::STAT_FLOATS) +
+                                        uint(band_first_simdgroup) * STAT_ROWS + uint(score_position.y);
   uint slot_offset = 0u;
   uint scale_offset = uint(slice) * scale_block_stride + uint(score_position.x);
 
   // Each slice simdgroup stages its depth slice of the band's Q.
   threadgroup uint4* const staged_query =
-      query_stage + uint(band) * uint(Int8Layout::QUERY_FRAGMENT_PAIRS * METAL_SIMD_SIZE) + uint(lane);
+      query_stage + uint(band) * uint(Int8Layout::QUERY_PAIRS * METAL_SIMD_SIZE) + uint(lane);
   {
-    constexpr int SLICE_PAIRS = HEAD_DIM_FRAGMENTS_PER_SLICE / 2;
+    constexpr int SLICE_PAIRS = DEPTH_TILES / 2;
     METAL_PRAGMA_UNROLL
     for (int slice_pair = 0; slice_pair < SLICE_PAIRS; ++slice_pair) {
       const int query_fragment = (int(slice) * SLICE_PAIRS + slice_pair) * 2;
@@ -295,7 +289,7 @@ KERNEL(AttentionGemmGroupedInt8)(
     const uint step_blocks = min(uint(int(D_SLICES)), block_count - kb);
     const bool publishes_block = uint(slice) < step_blocks;
     threadgroup float4* slot_stats = lane_stats + slot_offset / 4u;
-    threadgroup float2* slot_probability_sums = lane_probability_sums + slot_offset / 2u;
+    threadgroup float2* slot_sums = lane_sums + slot_offset / 2u;
     threadgroup uchar* slot_codes = lane_codes + 4u * slot_offset;
 
     if (publishes_block) {
@@ -311,10 +305,10 @@ KERNEL(AttentionGemmGroupedInt8)(
       int_score.clear();
       for (int depth_slice = 0; depth_slice < int(D_SLICES); ++depth_slice) {
         METAL_PRAGMA_UNROLL
-        for (int slice_fragment = 0; slice_fragment < HEAD_DIM_FRAGMENTS_PER_SLICE; slice_fragment += 2) {
-          const int depth_fragment = depth_slice * HEAD_DIM_FRAGMENTS_PER_SLICE + slice_fragment;
-          using KeyVector = typename KeyCodeFragment::ThreadVectorType;
-          using QueryVector = typename QueryCodeFragment::ThreadVectorType;
+        for (int slice_fragment = 0; slice_fragment < DEPTH_TILES; slice_fragment += 2) {
+          const int depth_fragment = depth_slice * DEPTH_TILES + slice_fragment;
+          using KeyVector = typename KeyFragment::ThreadVectorType;
+          using QueryVector = typename QueryFragment::ThreadVectorType;
           using QueryPairFragment = OperandFragment<int8_t, 1, 2, Ops>;
           using KeyPairFragment = OperandFragment<int8_t, 2, 2, Ops, ReadTranspose>;
           QueryPairFragment query_fragments;
@@ -343,16 +337,16 @@ KERNEL(AttentionGemmGroupedInt8)(
         const device T* key_scale_lane = key_scales_base + scale_offset;
         const device T* value_scale_lane = value_scales_base + scale_offset;
         METAL_PRAGMA_UNROLL
-        for (int fragment_col = 0; fragment_col < KEY_COL_FRAGMENTS; ++fragment_col) {
+        for (int fragment_col = 0; fragment_col < KEY_TILES; ++fragment_col) {
           METAL_PRAGMA_UNROLL
           for (int col = 0; col < Ops::THREAD_ELEMENT_COLS; ++col) {
             const int lane_col = fragment_col * Ops::THREAD_ELEMENT_COLS + col;
-            key_scale[lane_col] = AccumType(key_scale_lane[fragment_col * Ops::FRAGMENT_COLS + col]);
-            const float v_scale = float(value_scale_lane[fragment_col * Ops::FRAGMENT_COLS + col]);
-            // A never-written slot gives (0, 0), so masked keys stay finite.
-            const bool written = v_scale >= kv_layout::MIN_VALUE_SCALE;
-            log2_value_scale[lane_col] = written ? metal::precise::log2(v_scale) : 0.0f;
-            inverse_value_scale[lane_col] = written ? metal::precise::divide(1.0f, v_scale) : 0.0f;
+            const int scale_col = fragment_col * Ops::FRAGMENT_COLS + col;
+            const bool valid = MASK_FREE || key_base + uint(score_position.x) + uint(scale_col) < key_length;
+            key_scale[lane_col] = AccumType(key_scale_lane[scale_col]);
+            const float v_scale = float(value_scale_lane[scale_col]);
+            log2_value_scale[lane_col] = valid ? metal::precise::log2(v_scale) : 0.0f;
+            inverse_value_scale[lane_col] = valid ? metal::precise::divide(1.0f, v_scale) : 0.0f;
           }
         }
       }
@@ -370,7 +364,6 @@ KERNEL(AttentionGemmGroupedInt8)(
           int_score
       );
 
-      // Apply mask.
       if (!MASK_FREE && (is_tail_block || (key_base + uint(kv_layout::TILE_KEYS) > prefix_length))) {
         ulong trie_row_masks[ROWS_PER_LANE] = {0ul, 0ul};
         if (is_trie) {
@@ -392,10 +385,10 @@ KERNEL(AttentionGemmGroupedInt8)(
         });
       }
 
-      // Quantize P to u8 codes; row max, code sum and probability sum.
+      // Quantize probabilities and reduce row statistics.
       AccumType block_max[ROWS_PER_LANE];
       AccumType code_sum[ROWS_PER_LANE];
-      ProbabilityCodeFragment probability_codes;
+      ProbabilityFragment p_codes;
       score.row_reduce(block_max, -INFINITY, [](AccumType a, AccumType b) UZU_ALWAYS_INLINE {
         return metal::max(a, b);
       });
@@ -407,21 +400,21 @@ KERNEL(AttentionGemmGroupedInt8)(
             code = round_to_byte(value);
           },
           score,
-          probability_codes
+          p_codes
       );
       score.row_reduce(code_sum, AccumType(0), [](AccumType a, AccumType b) UZU_ALWAYS_INLINE { return a + b; });
-      AccumType probability_sum[ROWS_PER_LANE];
+      AccumType p_sum[ROWS_PER_LANE];
       score.map_coords(lane, [&](short row, short col, AccumType value) UZU_ALWAYS_INLINE {
         return value * inverse_value_scale[lane_index<Ops>(score_position, row, col).x];
       });
-      score.row_reduce(probability_sum, AccumType(0), [](AccumType a, AccumType b) UZU_ALWAYS_INLINE { return a + b; });
+      score.row_reduce(p_sum, AccumType(0), [](AccumType a, AccumType b) UZU_ALWAYS_INLINE { return a + b; });
 
-      // Publish.
+      // Publish probabilities and row statistics.
       *reinterpret_cast<threadgroup uint4*>(slot_codes + uint(slice) * uint(Layout::SCORE_TILE_ELEMENTS)) =
-          uint4(as_type<uint2>(probability_codes.fragment_data[0]), as_type<uint2>(probability_codes.fragment_data[1]));
+          uint4(as_type<uint2>(p_codes.fragment_data[0]), as_type<uint2>(p_codes.fragment_data[1]));
       if (score_position.x == 0) {
         slot_stats[uint(slice) * STAT_ROWS] = float4(block_max[0], code_sum[0], block_max[1], code_sum[1]);
-        slot_probability_sums[uint(slice) * STAT_ROWS] = float2(probability_sum[0], probability_sum[1]);
+        slot_sums[uint(slice) * STAT_ROWS] = float2(p_sum[0], p_sum[1]);
       }
     }
 
@@ -453,56 +446,55 @@ KERNEL(AttentionGemmGroupedInt8)(
       const float4 packed_stats = slot_stats[published_block * STAT_ROWS];
       const AccumType block_max[ROWS_PER_LANE] = {packed_stats.x, packed_stats.z};
       const AccumType code_sum[ROWS_PER_LANE] = {packed_stats.y, packed_stats.w};
-      const float2 packed_probability_sums = slot_probability_sums[published_block * STAT_ROWS];
-      const AccumType probability_sum[ROWS_PER_LANE] = {packed_probability_sums.x, packed_probability_sums.y};
+      const float2 packed_sums = slot_sums[published_block * STAT_ROWS];
+      const AccumType p_sum[ROWS_PER_LANE] = {packed_sums.x, packed_sums.y};
       AccumType alpha[ROWS_PER_LANE];
       METAL_PRAGMA_UNROLL
       for (int r = 0; r < ROWS_PER_LANE; ++r) {
         alpha[r] = fast::exp2(block_max[r] - max_score[r]) * (1.0f / CODE_MAX);
-        sum_score[r] += alpha[r] * probability_sum[r];
+        sum_score[r] += alpha[r] * p_sum[r];
         output_bias[r] += alpha[r] * AccumType(kv_layout::V_CODE_BIAS) * code_sum[r];
-        output_bias[r] += alpha[r] * BIASED_INT_OFFSET;
+        output_bias[r] += alpha[r] * INT_BIAS;
       }
 
-      ProbabilityCodeFragment probability_codes;
+      ProbabilityFragment p_codes;
       const uint4 packed_codes =
           *reinterpret_cast<const threadgroup uint4*>(slot_codes + published_block * Layout::SCORE_TILE_ELEMENTS);
-      probability_codes.fragment_data[0] = as_type<typename ProbabilityCodeFragment::ThreadVectorType>(packed_codes.xy);
-      probability_codes.fragment_data[1] = as_type<typename ProbabilityCodeFragment::ThreadVectorType>(packed_codes.zw);
+      p_codes.fragment_data[0] = as_type<typename ProbabilityFragment::ThreadVectorType>(packed_codes.xy);
+      p_codes.fragment_data[1] = as_type<typename ProbabilityFragment::ThreadVectorType>(packed_codes.zw);
 
       const uint value_block_index = kb + published_block;
       thread AccumType* accumulated = output.elements();
-      // Each 32-channel panel is merged into the output before the next panel's V is loaded. The panel is a column
-      // sub-range of `output`, so the shape-matched Fragment helpers do not apply.
-      using ValueVector = typename ValuePanelFragment::ThreadVectorType;
+      // Accumulate V panels directly into their output columns.
+      using ValueVector = typename ValueFragment::ThreadVectorType;
       const device uchar* value_block = v_tile_codes + value_block_index * value_block_stride;
       METAL_PRAGMA_UNROLL
       for (int panel = 0; panel < PANELS; ++panel) {
-        ValuePanelFragment value_panel;
+        ValueFragment value_panel;
         METAL_PRAGMA_UNROLL
-        for (int key_fragment = 0; key_fragment < KEY_COL_FRAGMENTS; ++key_fragment) {
+        for (int key_fragment = 0; key_fragment < KEY_TILES; ++key_fragment) {
           const uint4 tile = *reinterpret_cast<const device uint4*>(
               value_block + (key_fragment * PANELS + panel) * kv_layout::FRAGMENT_BYTES
           );
-          value_panel.fragment_data[key_fragment * PANEL_COL_FRAGMENTS] = as_type<ValueVector>(tile.xy);
-          value_panel.fragment_data[key_fragment * PANEL_COL_FRAGMENTS + 1] = as_type<ValueVector>(tile.zw);
+          value_panel.fragment_data[key_fragment * PANEL_TILES] = as_type<ValueVector>(tile.xy);
+          value_panel.fragment_data[key_fragment * PANEL_TILES + 1] = as_type<ValueVector>(tile.zw);
         }
         simdgroup_barrier(mem_flags::mem_none);
-        IntPanelFragment product;
+        ProductFragment product;
         product.clear();
-        fragment_mma(product, probability_codes, value_panel);
+        fragment_mma(product, p_codes, value_panel);
         thread int* int_product = product.elements();
         METAL_PRAGMA_UNROLL
         for (ushort row = 0; row < Ops::THREAD_ELEMENT_ROWS; ++row) {
           const AccumType block_weight = alpha[row];
           METAL_PRAGMA_UNROLL
-          for (ushort panel_col = 0; panel_col < PANEL_COL_FRAGMENTS; ++panel_col) {
+          for (ushort panel_col = 0; panel_col < PANEL_TILES; ++panel_col) {
             METAL_PRAGMA_UNROLL
             for (ushort col = 0; col < Ops::THREAD_ELEMENT_COLS; ++col) {
               const ushort panel_element = panel_col * Ops::ELEMENTS_PER_THREAD + row * Ops::THREAD_ELEMENT_COLS + col;
-              const ushort element = (panel * PANEL_COL_FRAGMENTS + panel_col) * Ops::ELEMENTS_PER_THREAD +
-                                     row * Ops::THREAD_ELEMENT_COLS + col;
-              const AccumType value_dot = biased_int_to_float(int_product[panel_element]);
+              const ushort element =
+                  (panel * PANEL_TILES + panel_col) * Ops::ELEMENTS_PER_THREAD + row * Ops::THREAD_ELEMENT_COLS + col;
+              const AccumType value_dot = biased_float(int_product[panel_element]);
               accumulated[element] = metal::fma(block_weight, value_dot, accumulated[element]);
             }
           }
@@ -510,13 +502,12 @@ KERNEL(AttentionGemmGroupedInt8)(
       }
     }
 
-    // Double-buffered: the next step writes the other slot, so one barrier per step suffices.
+    // Alternate slots to avoid a second barrier.
     slot_offset = uint(Int8Layout::SLOT_FLOATS) - slot_offset;
     kb += step_blocks;
     scale_offset += step_blocks * scale_block_stride;
   }
 
-  // Normalize and store the split partials.
   output.map_rows(output_bias, [](AccumType value, AccumType bias) UZU_ALWAYS_INLINE { return value - bias; });
 
   const uint tile_index =
