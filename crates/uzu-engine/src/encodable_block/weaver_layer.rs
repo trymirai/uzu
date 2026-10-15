@@ -153,11 +153,11 @@ impl<B: Backend> WeaverLayer<B> {
         token_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<PreparedPrefixAttention<B>, WeaverEncodeError<B>> {
-        let attention_input = self
+        let input = self
             .pre_attention_norm
             .encode(residual_input, 0, token_count, Some(residual_state), command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
-        let qkv = self.qkv_projection.encode(attention_input, token_count, command_buffer)?;
+        let qkv = self.qkv_projection.encode(input, token_count, command_buffer)?;
         let mut queries = command_buffer
             .allocate_scratch_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE)
             .map_err(WeaverEncodeError::Backend)?;

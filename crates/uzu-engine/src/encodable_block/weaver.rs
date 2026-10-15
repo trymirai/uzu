@@ -8,8 +8,8 @@ use crate::{
             CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FrontierIdx, MetadataIdx, TreeIdx,
         },
         kernel::{
-            AncestorAttentionKernel, AttentionArguments, AttentionKernel, WeaverFrontierSelectKernel,
-            WeaverTopChildrenKernel, radix_top_k_small::RadixTopKSmall,
+            AncestorAttentionKernel, AttentionArguments, AttentionInput, AttentionKernel, FullPrecisionInput,
+            WeaverFrontierSelectKernel, WeaverTopChildrenKernel, radix_top_k_small::RadixTopKSmall,
         },
     },
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
@@ -334,10 +334,12 @@ impl<B: Backend> Weaver<B> {
             let attention_output = layer
                 .prefix_attention
                 .encode(
-                    AttentionArguments {
+                    AttentionInput::FullPrecision(FullPrecisionInput {
                         queries: &queries,
                         keys: &kv_cache,
                         values: kv_cache.subrange(kv_plane_bytes..),
+                    }),
+                    AttentionArguments {
                         suffix_length: depth,
                         trie: None::<&B::ConstantBuffer>,
                         sinks: None,
@@ -433,11 +435,11 @@ impl<B: Backend> Weaver<B> {
         let node_metadata = node_metadata.as_ref();
         let metadata_field_bytes = size_for_shape(&[batch_node_count], DataType::U32);
         for layer in &self.layers {
-            let attention_input = layer
+            let input = layer
                 .pre_attention_norm
                 .encode(&residual_input, 0, batch_node_count, Some(&mut residual_state), command_buffer)
                 .map_err(WeaverEncodeError::Backend)?;
-            let current_qkv = layer.qkv_projection.encode(attention_input, batch_node_count, command_buffer)?;
+            let current_qkv = layer.qkv_projection.encode(input, batch_node_count, command_buffer)?;
             let mut attention_output = command_buffer
                 .allocate_scratch_for_shape(&[batch_node_count, self.model_dim], DATA_TYPE)
                 .map_err(WeaverEncodeError::Backend)?;

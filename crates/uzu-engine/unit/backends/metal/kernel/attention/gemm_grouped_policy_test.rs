@@ -1,6 +1,6 @@
 use uzu_engine_macros::uzu_test;
 
-use super::{MaskKind, SplitGeometry, choose_splits, should_encode};
+use super::{MaskKind, SplitGeometry, choose_splits, int8_splits, should_encode};
 
 fn geometry(head_dim: u32) -> SplitGeometry {
     let (num_q_heads, block_rows, num_groups) = if head_dim == 128 {
@@ -82,4 +82,13 @@ fn long_prefill_split_selection_boundaries() {
         ..geometry(256)
     };
     assert_eq!(choose_splits(many_heads, 1024, 61_440, 40), 1, "fewer than two prefill splits fit");
+}
+
+#[uzu_test]
+fn int8_small_suffix_split_cap() {
+    for (suffix, kv, expected) in
+        [(1, 30_720, 16), (1, 102_400, 16), (4, 61_440, 16), (8, 61_440, 62), (16, 61_440, 62)]
+    {
+        assert_eq!(int8_splits(32, 256, suffix, kv), expected, "suffix={suffix}, kv={kv}");
+    }
 }

@@ -166,6 +166,31 @@ struct Fragment {
     });
   }
 
+  // Indices address each lane's rows and columns.
+  template <class Fn, class... Fragments>
+  METAL_FUNC void for_each_lane(Fn fn, thread Fragments&... fragments) thread {
+    static_assert(
+        ((Fragments::ROW_FRAGMENTS == ROW_FRAGMENTS && Fragments::COL_FRAGMENTS == COL_FRAGMENTS &&
+          metal::is_same_v<typename Fragments::FragmentOpsType, Ops>) &&
+         ...),
+        "zipped fragments must share this fragment's layout"
+    );
+    static_assert(Ops::THREAD_ELEMENT_ROWS * Ops::THREAD_ELEMENT_COLS == Ops::ELEMENTS_PER_THREAD);
+    METAL_PRAGMA_UNROLL
+    for (ushort tr = 0; tr < ROW_FRAGMENTS; ++tr) {
+      METAL_PRAGMA_UNROLL
+      for (ushort tc = 0; tc < COL_FRAGMENTS; ++tc) {
+        METAL_PRAGMA_UNROLL
+        for (ushort e = 0; e < Ops::ELEMENTS_PER_THREAD; ++e) {
+          const ushort row = tr * Ops::THREAD_ELEMENT_ROWS + e / Ops::THREAD_ELEMENT_COLS;
+          const ushort col = tc * Ops::THREAD_ELEMENT_COLS + e % Ops::THREAD_ELEMENT_COLS;
+          const ushort index = (tr * COL_FRAGMENTS + tc) * Ops::ELEMENTS_PER_THREAD + e;
+          fn(row, col, elements()[index], fragments.elements()[index]...);
+        }
+      }
+    }
+  }
+
   // Row lanes differ in bits {0,3} for both simdgroup and MXU layouts.
   template <typename Acc, class Fn>
   METAL_FUNC void row_reduce(thread Acc* out, const Acc identity, Fn op) thread {

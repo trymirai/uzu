@@ -4,11 +4,12 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
+use super::super::FullPrecisionInput;
 use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::{AttentionArguments, AttentionKernel, AttentionKernelConfig},
+            kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig},
         },
         cpu::Cpu,
         metal::Metal,
@@ -79,21 +80,23 @@ fn get_test_data<T: DataTypeRepr + Float>(
     (input, expected)
 }
 
-fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
+fn get_output<T: DataTypeRepr + Float, B: Backend>(fixture: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let config = attention_config(input);
+    let config = attention_config(fixture);
 
-    let queries_buffer = create_buffer_with_data::<B, T>(context.as_ref(), &input.queries);
-    let keys_buffer = create_buffer_with_data::<B, T>(context.as_ref(), &input.keys);
-    let values_buffer = create_buffer_with_data::<B, T>(context.as_ref(), &input.values);
+    let queries_buffer = create_buffer_with_data::<B, T>(context.as_ref(), &fixture.queries);
+    let keys_buffer = create_buffer_with_data::<B, T>(context.as_ref(), &fixture.keys);
+    let values_buffer = create_buffer_with_data::<B, T>(context.as_ref(), &fixture.values);
 
-    let segment_prefix_length = input.sequence_length - input.suffix_length;
-    let args = AttentionArguments {
+    let segment_prefix_length = fixture.sequence_length - fixture.suffix_length;
+    let input = AttentionInput::FullPrecision(FullPrecisionInput {
         queries: &queries_buffer,
         keys: &keys_buffer,
         values: &values_buffer,
-        suffix_length: input.suffix_length as u32,
+    });
+    let args = AttentionArguments {
+        suffix_length: fixture.suffix_length as u32,
         trie: None::<&B::GlobalBuffer>,
         sinks: None,
         cache: KVCacheView::full(segment_prefix_length as u32),
@@ -103,9 +106,9 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     let kernel = <B::Kernels as Kernels>::AttentionKernel::new(context.as_ref(), config)
         .expect("Failed to create attention kernel");
-    let pooled_output = kernel.encode(args, &mut command_buffer).expect("Failed to encode attention");
+    let pooled_output = kernel.encode(input, args, &mut command_buffer).expect("Failed to encode attention");
     let mut output_buffer =
-        create_buffer::<B, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
+        create_buffer::<B, T>(context.as_ref(), fixture.suffix_length * fixture.num_heads * fixture.head_dim);
     command_buffer.encode_copy(&pooled_output, &mut output_buffer);
     drop(pooled_output);
     let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
@@ -124,10 +127,12 @@ fn get_gemm_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     let pooled = super::gemm::AttentionGemm::new(&config)
         .encode(
-            AttentionArguments {
+            FullPrecisionInput {
                 queries: &queries,
                 keys: &keys,
                 values: &values,
+            },
+            AttentionArguments {
                 suffix_length: input.suffix_length as u32,
                 trie: None::<&<Metal as Backend>::GlobalBuffer>,
                 sinks: None,

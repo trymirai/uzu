@@ -7,53 +7,12 @@
 #include "../../matmul/common/mxu_fragment/ops.h"
 #include "../../generated/attention.h"
 #include "../../generated/trie.h"
-#include "../attention_gate.h"
+#include "util.h"
 
 using namespace metal;
 using namespace uzu::matmul;
 using namespace uzu::attention;
 using namespace uzu::trie;
-
-#define ATTENTION_GQA_SIMDGROUPS 8
-
-template <typename T, uint BK, uint BD, uint D_SLICES>
-struct AttentionGemmGroupedLayout {
-  using Ops = MxuFragmentOps<>;
-
-  UZU_CONST int SIMDGROUPS = ATTENTION_GQA_SIMDGROUPS;
-  UZU_CONST int TILE_ROWS = Ops::FRAGMENT_ROWS;
-  UZU_CONST int SLICE_COLS = int(BD) / int(D_SLICES);
-  UZU_CONST int BANDS = SIMDGROUPS / int(D_SLICES);
-  UZU_CONST int BLOCK_ROWS = BANDS * TILE_ROWS;
-  UZU_CONST int SCORE_TILE_ELEMENTS = TILE_ROWS * int(BK);
-  UZU_CONST int SCORE_EXCHANGE_SIZE = SIMDGROUPS * SCORE_TILE_ELEMENTS;
-};
-
-template <class FragmentType, class Fn>
-METAL_FUNC void map_lane_rows(thread FragmentType& tile, const short2 position, Fn fn) {
-  using Ops = typename FragmentType::FragmentOpsType;
-  using Element = typename FragmentType::ElementType;
-  static_assert(FragmentType::ROW_FRAGMENTS == 1, "requires one row fragment");
-  static_assert(
-      Ops::THREAD_ELEMENT_ROWS * Ops::THREAD_ELEMENT_COLS == Ops::ELEMENTS_PER_THREAD,
-      "requires row-major thread elements"
-  );
-
-  thread Element* data = tile.elements();
-  METAL_PRAGMA_UNROLL
-  for (ushort fragment_col = 0; fragment_col < FragmentType::COL_FRAGMENTS; ++fragment_col) {
-    const ushort fragment_base = fragment_col * Ops::ELEMENTS_PER_THREAD;
-    const short col_base = position.x + short(fragment_col) * short(Ops::FRAGMENT_COLS);
-    METAL_PRAGMA_UNROLL
-    for (ushort row = 0; row < Ops::THREAD_ELEMENT_ROWS; ++row) {
-      METAL_PRAGMA_UNROLL
-      for (ushort col = 0; col < Ops::THREAD_ELEMENT_COLS; ++col) {
-        const ushort element = fragment_base + row * Ops::THREAD_ELEMENT_COLS + col;
-        data[element] = Element(fn(row, col_base + short(col), data[element]));
-      }
-    }
-  }
-}
 
 // TODO: support more BD and should tune more to replace AttentionGEMM
 template <typename T, uint BK, uint BD, uint D_SLICES>
@@ -72,21 +31,19 @@ KERNEL(AttentionGemmGrouped)(
     device float* partial_sums OPTIONAL(split_kv),
     const device TrieNode* trie OPTIONAL(is_trie),
     const constant AttnParams& params,
-    const constant uint& m_tiles,
+    const constant uint& query_tiles,
     const constant uint& kv_heads,
-    const constant uint& batch_count,
     const constant uint& num_splits,
     const bool split_kv SPECIALIZE,
     const bool is_causal SPECIALIZE,
     const bool is_trie SPECIALIZE,
-    threadgroup float score_exchange[AttentionGemmGroupedLayout<T, BK, BD, D_SLICES>::SCORE_EXCHANGE_SIZE],
+    threadgroup float score_exchange[AttentionGemmGroupedLayout<BK, BD, D_SLICES>::SCORE_EXCHANGE_SIZE],
     const ThreadContext thread_context,
-    const uint tile_split_flat GROUPS(m_tiles * num_splits),
+    const uint tile_split_flat GROUPS(query_tiles * num_splits),
     const uint kv_head_idx GROUPS(kv_heads),
-    const uint batch_idx GROUPS(batch_count),
     const uint lid THREADS(ATTENTION_GQA_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
-  using Layout = AttentionGemmGroupedLayout<T, BK, BD, D_SLICES>;
+  using Layout = AttentionGemmGroupedLayout<BK, BD, D_SLICES>;
   using Ops = typename Layout::Ops;
   using AccumType = float;
 
@@ -114,11 +71,11 @@ KERNEL(AttentionGemmGrouped)(
   const ushort band = simdgroup_index / ushort(D_SLICES);
   const ushort slice = simdgroup_index % ushort(D_SLICES);
 
-  const uint m_tile_idx = split_kv ? (tile_split_flat % m_tiles) : tile_split_flat;
-  const uint split_idx = split_kv ? (tile_split_flat / m_tiles) : 0u;
+  const uint query_tile_idx = split_kv ? (tile_split_flat % query_tiles) : tile_split_flat;
+  const uint split_idx = split_kv ? (tile_split_flat / query_tiles) : 0u;
 
   const uint grouped_rows = params.gqa_factor * params.q_len;
-  const uint row_base = m_tile_idx * uint(BLOCK_ROWS) + uint(band) * uint(TILE_ROWS);
+  const uint row_base = query_tile_idx * uint(BLOCK_ROWS) + uint(band) * uint(TILE_ROWS);
   const uint head_in_group = row_base / params.q_len;
   const uint query_base = row_base - head_in_group * params.q_len;
   const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
@@ -129,10 +86,9 @@ KERNEL(AttentionGemmGrouped)(
   const uint output_row_stride = params.o_strides[2];
   const uint slice_offset = uint(slice) * uint(SLICE_COLS);
 
-  q += size_t(batch_idx) * params.q_strides[0] + size_t(q_head_idx) * params.q_strides[1] +
-       size_t(query_base) * query_row_stride + slice_offset;
-  k += size_t(batch_idx) * params.k_strides[0] + size_t(kv_head_idx) * params.k_strides[1] + slice_offset;
-  v += size_t(batch_idx) * params.v_strides[0] + size_t(kv_head_idx) * params.v_strides[1] + slice_offset;
+  q += size_t(q_head_idx) * params.q_strides[1] + size_t(query_base) * query_row_stride + slice_offset;
+  k += size_t(kv_head_idx) * params.k_strides[1] + slice_offset;
+  v += size_t(kv_head_idx) * params.v_strides[1] + slice_offset;
 
   QueryFragment query_frags[HEAD_DIM_FRAGMENTS_PER_SLICE];
   {
@@ -208,7 +164,7 @@ KERNEL(AttentionGemmGrouped)(
   uint block_end = split_kv ? ((split_idx + 1u) * params.nk) / num_splits : params.nk;
 
   if (is_causal) {
-    const uint tile_first_row = m_tile_idx * uint(BLOCK_ROWS);
+    const uint tile_first_row = query_tile_idx * uint(BLOCK_ROWS);
     const uint tile_last_row = min(tile_first_row + uint(BLOCK_ROWS) - 1u, grouped_rows - 1u);
     const uint max_query_index = (tile_first_row / params.q_len == tile_last_row / params.q_len)
                                      ? (tile_last_row % params.q_len)
@@ -338,7 +294,7 @@ KERNEL(AttentionGemmGrouped)(
   }
 
   if (split_kv) {
-    const uint tile_index = ((batch_idx * kv_heads + kv_head_idx) * m_tiles + m_tile_idx) * num_splits + split_idx;
+    const uint tile_index = (split_idx * kv_heads + kv_head_idx) * query_tiles + query_tile_idx;
     device float* partial_tile = partials + size_t(tile_index) * BLOCK_ROWS * BD + size_t(band) * TILE_ROWS * BD;
     output.store(lane, partial_tile + slice_offset, int(BD));
 
@@ -362,11 +318,10 @@ KERNEL(AttentionGemmGrouped)(
     }
     output.map_rows(inverse_sum, [](AccumType value, AccumType s) { return value * s; });
 
-    device T* output_base = o + size_t(batch_idx) * params.o_strides[0];
     if (params.q_len % uint(TILE_ROWS) == 0u) {
       if (row_base < grouped_rows) {
-        device T* destination = output_base + size_t(q_head_idx) * params.o_strides[1] +
-                                size_t(query_base) * output_row_stride + slice_offset;
+        device T* destination =
+            o + size_t(q_head_idx) * params.o_strides[1] + size_t(query_base) * output_row_stride + slice_offset;
         output.store(lane, destination, int(output_row_stride));
       }
     } else {
@@ -378,8 +333,7 @@ KERNEL(AttentionGemmGrouped)(
         if (row < grouped_rows) {
           const uint row_head = row / params.q_len;
           const uint row_position = row - row_head * params.q_len;
-          device T* destination = output_base +
-                                  (size_t(kv_head_idx) * params.gqa_factor + row_head) * params.o_strides[1] +
+          device T* destination = o + (size_t(kv_head_idx) * params.gqa_factor + row_head) * params.o_strides[1] +
                                   size_t(row_position) * output_row_stride + slice_offset + position.x;
           METAL_PRAGMA_UNROLL
           for (ushort fragment_col = 0; fragment_col < VALUE_COL_FRAGMENTS; ++fragment_col) {
@@ -393,71 +347,4 @@ KERNEL(AttentionGemmGrouped)(
       }
     }
   }
-}
-
-template <typename T, uint BD>
-VARIANTS(T, bfloat)
-VARIANTS(BD, 128, 256)
-KERNEL(AttentionGemmGroupedCombine)(
-    const device float* partials,
-    const device float* partial_maxs,
-    const device float* partial_sums,
-    device T* o,
-    const device T* gate OPTIONAL(has_gate),
-    const constant AttnParams& params,
-    const constant uint& grouped_rows,
-    const constant uint& block_rows,
-    const constant uint& m_tiles,
-    const constant uint& kv_heads,
-    const constant uint& batch_count,
-    const constant uint& num_splits,
-    const constant uint& gate_row_stride OPTIONAL(has_gate),
-    const bool has_gate SPECIALIZE,
-    const uint grouped_row_idx GROUPS(grouped_rows),
-    const uint kv_head_idx GROUPS(kv_heads),
-    const uint batch_idx GROUPS(batch_count),
-    const uint column THREADS(BD)
-) {
-  const uint m_tile_idx = grouped_row_idx / block_rows;
-  const uint row_in_tile = grouped_row_idx - m_tile_idx * block_rows;
-  const uint tile_base = ((batch_idx * kv_heads + kv_head_idx) * m_tiles + m_tile_idx) * num_splits;
-
-  const device float* row_maxs = partial_maxs + size_t(tile_base) * block_rows + row_in_tile;
-  const device float* row_sums = partial_sums + size_t(tile_base) * block_rows + row_in_tile;
-  const device float* row_partials = partials + size_t(tile_base) * block_rows * BD + size_t(row_in_tile) * BD + column;
-
-  float global_max = -INFINITY;
-  for (uint s = 0; s < num_splits; ++s) {
-    if (row_sums[s * block_rows] > 0.0f) {
-      global_max = metal::max(global_max, row_maxs[s * block_rows]);
-    }
-  }
-
-  float numerator = 0.0f;
-  float denominator = 0.0f;
-  if (global_max > -INFINITY) {
-    for (uint s = 0; s < num_splits; ++s) {
-      const float split_sum = row_sums[s * block_rows];
-      if (split_sum <= 0.0f) {
-        continue;
-      }
-      const float rescale = fast::exp2(row_maxs[s * block_rows] - global_max);
-      denominator += rescale * split_sum;
-      numerator += rescale * row_partials[size_t(s) * block_rows * BD];
-    }
-  }
-
-  const uint head_in_group = grouped_row_idx / params.q_len;
-  const uint query_position = grouped_row_idx - head_in_group * params.q_len;
-  const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
-  T result = static_cast<T>(denominator > 0.0f ? numerator / denominator : 0.0f);
-  if (has_gate) {
-    result = attention_apply_gate(
-        result,
-        gate[(batch_idx * params.q_len + query_position) * gate_row_stride + q_head_idx * BD + column]
-    );
-  }
-  o += size_t(batch_idx) * params.o_strides[0] + size_t(q_head_idx) * params.o_strides[1] +
-       size_t(query_position) * params.o_strides[2] + column;
-  o[0] = result;
 }

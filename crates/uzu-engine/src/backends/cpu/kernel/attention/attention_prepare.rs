@@ -4,7 +4,7 @@ use uzu_engine_macros::kernel;
 
 use crate::data_type::DataTypeRepr;
 
-fn apply_rope<ElementT: DataTypeRepr + Float>(
+pub(super) fn apply_rope<ElementT: DataTypeRepr + Float>(
     head: *const ElementT,
     cosines: *const (impl DataTypeRepr + Float),
     sines: *const (impl DataTypeRepr + Float),

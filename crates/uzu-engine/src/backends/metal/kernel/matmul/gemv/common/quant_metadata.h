@@ -38,15 +38,14 @@ public:
             row * params.zero_point_output_stride + group_index * params.zero_point_group_stride;
         const uint zero_point_row = zero_point_index / ZERO_POINTS_PER_BYTE;
         const uint packed_index = zero_point_index % ZERO_POINTS_PER_BYTE;
-        origin[R] = QuantChunk<BITS>::MANTISSA_BASE +
-                    float(decode_zero_point<BITS>(ops.zero_points + zero_point_row, packed_index));
+        origin[R] = FLOAT_OFFSET + float(decode_zero_point<BITS>(ops.zero_points + zero_point_row, packed_index));
         bias[R] = 0.0f;
       } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant) {
-        origin[R] = QuantChunk<BITS>::MANTISSA_BASE + float(symmetric_zero_point<BITS>());
+        origin[R] = FLOAT_OFFSET + float(symmetric_zero_point<BITS>());
         bias[R] = 0.0f;
       } else {
         static_assert(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant);
-        origin[R] = QuantChunk<BITS>::MANTISSA_BASE;
+        origin[R] = FLOAT_OFFSET;
         bias[R] = float(ops.biases[scale_index]);
       }
     });

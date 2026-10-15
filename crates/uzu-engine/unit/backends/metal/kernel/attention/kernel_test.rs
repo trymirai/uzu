@@ -1,19 +1,25 @@
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
-use super::{gemm, single_pass, two_pass};
+use super::super::FullPrecisionInput;
 use crate::{
     backends::{
         common::{
-            Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            Backend, BufferRef, CommandBufferEncoding, Context, Kernels,
             gpu_types::trie::TrieNode as GpuTrieNode,
-            kernel::{AttentionArguments, AttentionKernel, SigmoidGateKernel},
+            kernel::{
+                AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareInt8Kernel, Int8Input, KVFormat,
+                SigmoidGateKernel,
+            },
         },
         cpu::Cpu,
         metal::Metal,
     },
-    data_type::DataTypeRepr,
-    encodable_block::{mixer::attention::KVCacheView, sampling::PRng},
+    data_type::{DataType, DataTypeRepr},
+    encodable_block::{
+        mixer::attention::{KVCacheView, kv_storage::KVStorage},
+        sampling::PRng,
+    },
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, submit_command_buffer},
@@ -44,8 +50,7 @@ fn run_attention<B: Backend>(
     sinks_data: Option<&[bf16]>,
 ) -> Vec<bf16> {
     let (keys, values) = attention_data(shape);
-    let (_, _, _, _, prefix_length, _) = shape;
-    let (head_dim, num_q_heads, num_groups, _, _, is_causal) = shape;
+    let (head_dim, num_q_heads, num_groups, _, prefix_length, is_causal) = shape;
     let mut config = super::default_attention_config::<bf16>(head_dim, num_q_heads, num_groups, is_causal);
     config.has_sinks = sinks_data.is_some();
     let kernel = <B::Kernels as Kernels>::AttentionKernel::new(context, config).expect("attention kernel");
@@ -77,14 +82,13 @@ fn run_attention_with_kernel<B: Backend>(
     let keys = create_buffer_with_data::<B, bf16>(context, keys_data);
     let values = create_buffer_with_data::<B, bf16>(context, values_data);
     let sinks = sinks_data.map(|data| create_buffer_with_data::<B, bf16>(context, data));
-    let trie = trie_nodes.map(|nodes| {
-        let words: Vec<u32> = nodes.iter().flat_map(|node| [node.trie_start, node.trie_end, node.height]).collect();
-        create_buffer_with_data::<B, u32>(context, &words)
-    });
-    let arguments = AttentionArguments {
+    let trie = trie_nodes.map(|nodes| create_buffer_with_data::<B, u32>(context, bytemuck::cast_slice(nodes)));
+    let input = AttentionInput::FullPrecision(FullPrecisionInput {
         queries: &queries,
         keys: &keys,
         values: &values,
+    });
+    let arguments = AttentionArguments {
         suffix_length: suffix_length as u32,
         trie: trie.as_ref(),
         sinks: sinks.as_ref(),
@@ -92,79 +96,11 @@ fn run_attention_with_kernel<B: Backend>(
         gate: None::<&B::GlobalBuffer>,
     };
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    let pooled = kernel.encode(arguments, &mut command_buffer).expect("encode");
+    let pooled = kernel.encode(input, arguments, &mut command_buffer).expect("encode");
     let mut output = create_buffer::<B, bf16>(context, suffix_length * num_q_heads * head_dim);
     command_buffer.encode_copy(&pooled, &mut output);
-    let completed = command_buffer.end_encoding().submit().wait_until_completed().expect("submit");
-    drop(pooled);
-    drop(completed);
-    buffer_to_vec::<B, bf16>(&output)
-}
-
-enum DirectKernel {
-    SinglePass,
-    TwoPass,
-    Gemm,
-}
-
-fn run_direct_metal(
-    context: &<Metal as Backend>::Context,
-    shape: AttentionShape,
-    sinks_data: Option<&[bf16]>,
-    route: DirectKernel,
-) -> Vec<bf16> {
-    let (head_dim, num_q_heads, num_groups, suffix_length, prefix_length, is_causal) = shape;
-    let mut config = super::default_attention_config::<bf16>(head_dim, num_q_heads, num_groups, is_causal);
-    config.has_sinks = sinks_data.is_some();
-    let (keys_data, values_data) = attention_data(shape);
-    let queries =
-        create_buffer_with_data::<Metal, bf16>(context, &fill_attention(num_q_heads * suffix_length * head_dim, 0.5));
-    let keys = create_buffer_with_data::<Metal, bf16>(context, &keys_data);
-    let values = create_buffer_with_data::<Metal, bf16>(context, &values_data);
-    let sinks = sinks_data.map(|data| create_buffer_with_data::<Metal, bf16>(context, data));
-    let arguments = AttentionArguments {
-        queries: &queries,
-        keys: &keys,
-        values: &values,
-        suffix_length: suffix_length as u32,
-        trie: None::<&<Metal as Backend>::GlobalBuffer>,
-        sinks: sinks.as_ref(),
-        cache: KVCacheView::full(prefix_length as u32),
-        gate: None::<&<Metal as Backend>::GlobalBuffer>,
-    };
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    let pooled = match route {
-        DirectKernel::SinglePass => {
-            single_pass::AttentionSinglePass::new(&config).encode(arguments, &mut command_buffer)
-        },
-        DirectKernel::TwoPass => two_pass::AttentionTwoPass::new(&config).encode(arguments, &mut command_buffer),
-        DirectKernel::Gemm => gemm::AttentionGemm::new(&config).encode(arguments, &mut command_buffer),
-    }
-    .expect("direct attention");
-    let mut output = create_buffer::<Metal, bf16>(context, suffix_length * num_q_heads * head_dim);
-    command_buffer.encode_copy(&pooled, &mut output);
     submit_command_buffer(command_buffer);
-    buffer_to_vec::<Metal, bf16>(&output)
-}
-
-#[uzu_test]
-fn direct_bf16_attention_matches_cpu() {
-    let cpu = <Cpu as Backend>::Context::new().expect("CPU context");
-    let metal = <Metal as Backend>::Context::new().expect("Metal context");
-    for (shape, route, has_sinks) in [
-        ((64, 4, 4, 8, 0, false), DirectKernel::SinglePass, false),
-        ((64, 4, 4, 64, 0, false), DirectKernel::SinglePass, true),
-        ((64, 8, 2, 8, 0, false), DirectKernel::SinglePass, false),
-        ((64, 8, 2, 256, 0, true), DirectKernel::SinglePass, false),
-        ((64, 8, 2, 256, 0, true), DirectKernel::Gemm, false),
-        ((64, 8, 8, 128, 0, false), DirectKernel::TwoPass, false),
-        ((64, 8, 2, 64, 1024, false), DirectKernel::TwoPass, false),
-    ] {
-        let sinks = has_sinks.then(|| vec![bf16::from_f32(1.0); shape.1]);
-        let expected = run_attention::<Cpu>(cpu.as_ref(), shape, None, sinks.as_deref());
-        let actual = run_direct_metal(metal.as_ref(), shape, sinks.as_deref(), route);
-        assert_eq_float::<bf16>(&expected, &actual, 1e-2, "direct BF16 attention");
-    }
+    buffer_to_vec::<B, bf16>(&output)
 }
 
 #[uzu_test]
@@ -184,6 +120,10 @@ fn attention_kernel_matches_cpu() {
         (512, 8, 8, 1, 0, false, false),
         (512, 8, 8, 1, 1024, false, false),
         (64, 8, 8, 9, 0, false, false),
+        (64, 4, 4, 8, 0, false, false),
+        (64, 8, 2, 8, 0, false, false),
+        (64, 8, 8, 8, 1024, false, false),
+        (64, 8, 2, 8, 1024, false, false),
     ] {
         let nodes = use_trie.then_some(trie.as_slice());
         let shape = (head_dim, num_q_heads, num_groups, suffix_length, prefix_length, causal);
@@ -192,9 +132,8 @@ fn attention_kernel_matches_cpu() {
         let label = format!("attention kernel D{head_dim} S{suffix_length} L{prefix_length} causal={causal}");
         assert_eq_float::<bf16>(&expected, &actual, 1e-2, &label);
     }
-    let sinks = vec![bf16::from_f32(1.0); 8];
-    for prefix_length in [32, 2048] {
-        let shape = (512, 8, 2, 1, prefix_length, false);
+    for shape in [(512, 8, 2, 1, 32, false), (512, 8, 2, 1, 2048, false), (64, 4, 4, 64, 0, false)] {
+        let sinks = vec![bf16::ONE; shape.1];
         let expected = run_attention::<Cpu>(cpu_context.as_ref(), shape, None, Some(&sinks));
         let actual = run_attention::<Metal>(metal_context.as_ref(), shape, None, Some(&sinks));
         assert_eq_float::<bf16>(&expected, &actual, 1e-2, "BF16 GQA with sinks");
@@ -214,29 +153,12 @@ fn attention_kernel_reuses_instance_for_flat_and_trie() {
     .expect("attention kernel");
     let (keys, values) = attention_data(shape);
     let cache = KVCacheView::full(1024);
-    let flat = run_attention_with_kernel::<Metal>(context.as_ref(), &kernel, shape, &keys, &values, cache, None, None);
-    let trie_output =
-        run_attention_with_kernel::<Metal>(context.as_ref(), &kernel, shape, &keys, &values, cache, Some(&trie), None);
-    let cpu_context = <Cpu as Backend>::Context::new().expect("CPU attention context");
-    let cpu_kernel = <<Cpu as Backend>::Kernels as Kernels>::AttentionKernel::new(
-        cpu_context.as_ref(),
-        super::default_attention_config::<bf16>(shape.0, shape.1, shape.2, shape.5),
-    )
-    .expect("CPU attention kernel");
-    let expected_flat =
-        run_attention_with_kernel::<Cpu>(cpu_context.as_ref(), &cpu_kernel, shape, &keys, &values, cache, None, None);
-    let expected_trie = run_attention_with_kernel::<Cpu>(
-        cpu_context.as_ref(),
-        &cpu_kernel,
-        shape,
-        &keys,
-        &values,
-        cache,
-        Some(&trie),
-        None,
-    );
-    assert_eq_float::<bf16>(&expected_flat, &flat, 1e-2, "flat mask specialization");
-    assert_eq_float::<bf16>(&expected_trie, &trie_output, 1e-2, "trie mask specialization");
+    let cpu = <Cpu as Backend>::Context::new().expect("CPU attention context");
+    for nodes in [None, Some(trie.as_slice())] {
+        let expected = run_attention::<Cpu>(&cpu, shape, nodes, None);
+        let actual = run_attention_with_kernel::<Metal>(&context, &kernel, shape, &keys, &values, cache, nodes, None);
+        assert_eq_float::<bf16>(&expected, &actual, 1e-2, "reused flat/trie attention kernel");
+    }
 }
 
 #[uzu_test]
@@ -252,57 +174,27 @@ fn attention_kernel_ring_matches_full_on_wrap() {
     let mut ring_keys = vec![bf16::ZERO; (CAPACITY + SUFFIX) * row];
     let mut ring_values = vec![bf16::ZERO; (CAPACITY + SUFFIX) * row];
     let ring_offset = (CONTEXT - CAPACITY) % CAPACITY;
-    for index in 0..CAPACITY {
-        let source = CONTEXT - CAPACITY + index;
-        let destination = (ring_offset + index) % CAPACITY;
-        ring_keys[destination * row..(destination + 1) * row]
-            .copy_from_slice(&full_keys[source * row..(source + 1) * row]);
-        ring_values[destination * row..(destination + 1) * row]
-            .copy_from_slice(&full_values[source * row..(source + 1) * row]);
-    }
-    for index in 0..SUFFIX {
-        let source = CONTEXT + index;
-        let destination = CAPACITY + index;
-        ring_keys[destination * row..(destination + 1) * row]
-            .copy_from_slice(&full_keys[source * row..(source + 1) * row]);
-        ring_values[destination * row..(destination + 1) * row]
-            .copy_from_slice(&full_values[source * row..(source + 1) * row]);
+    let rows = (0..CAPACITY)
+        .map(|index| (CONTEXT - CAPACITY + index, (ring_offset + index) % CAPACITY))
+        .chain((0..SUFFIX).map(|index| (CONTEXT + index, CAPACITY + index)));
+    for (source, destination) in rows {
+        for (full, ring) in [(&full_keys, &mut ring_keys), (&full_values, &mut ring_values)] {
+            ring[destination * row..(destination + 1) * row].copy_from_slice(&full[source * row..(source + 1) * row]);
+        }
     }
 
     let context = <Metal as Backend>::Context::new().expect("Metal attention context");
-    let full_kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionKernel::new(context.as_ref(), {
-        let mut config = super::default_attention_config::<bf16>(shape.0, shape.1, shape.2, shape.5);
-        config.sliding_window_size = Some(CAPACITY as u32);
-        config
-    })
-    .expect("full attention kernel");
-    let ring_kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionKernel::new(context.as_ref(), {
-        let mut config = super::default_attention_config::<bf16>(shape.0, shape.1, shape.2, shape.5);
-        config.is_kv_cache_ring = true;
-        config.sliding_window_size = Some(CAPACITY as u32);
-        config
-    })
-    .expect("ring attention kernel");
-    let full = run_attention_with_kernel::<Metal>(
-        context.as_ref(),
-        &full_kernel,
-        shape,
-        &full_keys,
-        &full_values,
-        KVCacheView::full(CONTEXT as u32),
-        None,
-        None,
-    );
-    let ring = run_attention_with_kernel::<Metal>(
-        context.as_ref(),
-        &ring_kernel,
-        shape,
-        &ring_keys,
-        &ring_values,
-        KVCacheView::ring(CAPACITY as u32, ring_offset as u32),
-        None,
-        None,
-    );
+    let mut config = super::default_attention_config::<bf16>(shape.0, shape.1, shape.2, shape.5);
+    config.sliding_window_size = Some(CAPACITY as u32);
+    let [full, ring] = [
+        (&full_keys, &full_values, KVCacheView::full(CONTEXT as u32)),
+        (&ring_keys, &ring_values, KVCacheView::ring(CAPACITY as u32, ring_offset as u32)),
+    ]
+    .map(|(keys, values, cache)| {
+        config.is_kv_cache_ring = cache.ring_params().is_some();
+        let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionKernel::new(&context, config).unwrap();
+        run_attention_with_kernel::<Metal>(&context, &kernel, shape, keys, values, cache, None, None)
+    });
     assert_eq_float::<bf16>(&full, &ring, 1e-2, "wrapped ring attention");
 }
 
@@ -328,10 +220,12 @@ fn check_attention_gate<B: Backend>(
     let keys = create_buffer_with_data::<B, bf16>(context, &keys);
     let values = create_buffer_with_data::<B, bf16>(context, &values);
     let qkvg = create_buffer_with_data::<B, bf16>(context, &fill_attention(suffix_length * PROJECTION_DIM, 3.0));
-    let arguments = |gate| AttentionArguments {
+    let input = AttentionInput::FullPrecision(FullPrecisionInput {
         queries: &queries,
         keys: &keys,
         values: &values,
+    });
+    let arguments = |gate| AttentionArguments {
         suffix_length: suffix_length as u32,
         trie: None::<&B::GlobalBuffer>,
         sinks: None,
@@ -340,7 +234,7 @@ fn check_attention_gate<B: Backend>(
     };
     let gate_segment = qkvg.subrange((PROJECTION_DIM - GATE_DIM) * size_of::<bf16>()..);
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    let mut expected = plain.encode(arguments(None), &mut command_buffer).expect("plain attention");
+    let mut expected = plain.encode(input, arguments(None), &mut command_buffer).expect("plain attention");
     sigmoid_gate.encode(
         gate_segment,
         &mut expected,
@@ -349,7 +243,7 @@ fn check_attention_gate<B: Backend>(
         PROJECTION_DIM as u32,
         &mut command_buffer,
     );
-    let fused = gated.encode(arguments(Some(gate_segment)), &mut command_buffer).expect("gated attention");
+    let fused = gated.encode(input, arguments(Some(gate_segment)), &mut command_buffer).expect("gated attention");
     let mut expected_out = create_buffer::<B, bf16>(context, suffix_length * GATE_DIM);
     let mut fused_out = create_buffer::<B, bf16>(context, suffix_length * GATE_DIM);
     command_buffer.encode_copy(&expected, &mut expected_out);
@@ -373,5 +267,129 @@ fn attention_gate_matches_standalone_gate_on_metal() {
         [(1, 100), (1, 2000), (200, 800), (2, 1022), (16, 16368), (65, 959), (65, 16319), (1024, 0)]
     {
         check_attention_gate::<Metal>(context.as_ref(), suffix_length, prefix_length);
+    }
+}
+
+#[uzu_test]
+fn int8_attention_matches_cpu() {
+    const DIM: usize = 256;
+    const KV_HEADS: usize = 4;
+    let (metal, cpu) = (<Metal as Backend>::Context::new().unwrap(), <Cpu as Backend>::Context::new().unwrap());
+    type Prepare = <<Metal as Backend>::Kernels as Kernels>::AttentionPrepareInt8Kernel;
+    let trie: [GpuTrieNode; 3] = bytemuck::cast([0u32, 2, 0, 1, 1, 1, 2, 2, 1]); // (start, end, height) per token
+    // (query heads, suffix, prefix, trie, shared KV, unwritten scale bits)
+    const NAN: u16 = bf16::NAN.to_bits();
+    const DENORMAL: u16 = 1; // 1 / scale overflows to inf
+    for (q_heads, suffix, prefix, use_trie, reader, poison) in [
+        (24, 1, 1024, false, false, NAN),
+        (16, 16, 1024, false, false, DENORMAL),
+        (24, 80, 16, false, false, NAN),
+        (24, 3, 16, true, true, NAN),
+        (24, 8, 32, false, false, DENORMAL),
+        (16, 3, 37, true, false, DENORMAL),
+    ] {
+        let (shape, nodes) = ((DIM, q_heads, KV_HEADS, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
+        let config = super::default_attention_config::<bf16>(DIM, q_heads, KV_HEADS, true);
+        let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionKernel::new(&metal, config).unwrap();
+        if !kernel.supports_int8() {
+            return;
+        }
+        // Fused QKV rows over the data `run_attention` uses; its queries are head-major.
+        let ((keys, values), stride) = (attention_data(shape), (q_heads + 2 * KV_HEADS) * DIM);
+        let mut rows = vec![bf16::ZERO; (prefix + suffix) * stride];
+        for (row, (k, v)) in rows.chunks_mut(stride).zip(keys.chunks(KV_HEADS * DIM).zip(values.chunks(KV_HEADS * DIM)))
+        {
+            let (key_row, value_row) = row[q_heads * DIM..].split_at_mut(KV_HEADS * DIM);
+            key_row.copy_from_slice(k);
+            value_row.copy_from_slice(v);
+        }
+        for (index, query) in fill_attention(q_heads * suffix * DIM, 0.5).chunks(DIM).enumerate() {
+            rows[(prefix + index % suffix) * stride + index / suffix * DIM..][..DIM].copy_from_slice(query);
+        }
+        let mut cache =
+            KVStorage::<Metal>::create_empty(KVFormat::INT8, KV_HEADS as u32, DIM as u32, 2048, DataType::BF16, &metal)
+                .unwrap();
+        cache.prepare(2048).unwrap();
+        let KVStorage::Int8(kv, _) = &mut cache else {
+            unreachable!()
+        };
+        let mut fill = metal.create_command_buffer(None, None).unwrap();
+        let pattern =
+            create_buffer_with_data::<Metal, u16>(&metal, &vec![poison; kv.k_scales.size() / size_of::<bf16>()]);
+        for buffer in [&mut kv.k_codes, &mut kv.v_codes] {
+            fill.encode_fill(buffer.as_mut(), poison as u8);
+        }
+        for buffer in [&mut kv.k_scales, &mut kv.v_scales] {
+            fill.encode_copy(&pattern, buffer.as_mut());
+        }
+        submit_command_buffer(fill);
+        let mut step = |rows: &[bf16], prefix: usize, trie: Option<&[GpuTrieNode]>, append_kv: bool| {
+            let suffix = rows.len() / stride;
+            let query_rows = q_heads / KV_HEADS * suffix;
+            let prepare = Prepare::new(
+                &metal,
+                DataType::BF16,
+                DataType::F32,
+                DIM as u32,
+                false,
+                true,
+                KV_HEADS as u32,
+                append_kv,
+            )
+            .unwrap();
+            let mut query_codes = create_buffer::<Metal, i8>(&metal, KV_HEADS * query_rows * DIM);
+            let mut query_scales = create_buffer::<Metal, bf16>(&metal, KV_HEADS * query_rows);
+            let mut command_buffer = metal.create_command_buffer(None, None).unwrap();
+            let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
+            prepare.encode(
+                &create_buffer_with_data::<Metal, bf16>(&metal, rows),
+                None::<&mut <Metal as Backend>::GlobalBuffer>,
+                Some(&mut query_codes),
+                Some(&mut query_scales),
+                append_kv.then_some(kv.k_codes.as_mut()),
+                append_kv.then_some(kv.k_scales.as_mut()),
+                append_kv.then_some(kv.v_codes.as_mut()),
+                append_kv.then_some(kv.v_scales.as_mut()),
+                None::<&<Metal as Backend>::GlobalBuffer>,
+                None::<&<Metal as Backend>::GlobalBuffer>,
+                q_heads as u32,
+                None,
+                prefix as u32,
+                stride as u32,
+                suffix as u32,
+                query_rows as u32,
+                &mut command_buffer,
+            );
+            let input = AttentionInput::Int8(Int8Input {
+                query_codes: &query_codes,
+                query_scales: &query_scales,
+                k_codes: kv.k_codes.as_ref(),
+                k_scales: kv.k_scales.as_ref(),
+                v_codes: kv.v_codes.as_ref(),
+                v_scales: kv.v_scales.as_ref(),
+            });
+            let arguments = AttentionArguments {
+                sinks: None,
+                suffix_length: suffix as u32,
+                trie: trie.as_ref(),
+                cache: KVCacheView::full(prefix as u32),
+                gate: None::<&<Metal as Backend>::GlobalBuffer>,
+            };
+            let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();
+            let mut output = create_buffer::<Metal, bf16>(&metal, suffix * q_heads * DIM);
+            command_buffer.encode_copy(&pooled, &mut output);
+            drop((pooled, trie));
+            submit_command_buffer(command_buffer);
+            buffer_to_vec::<Metal, bf16>(&output)
+        };
+        step(&rows[..prefix * stride], 0, None, true);
+        let mut actual = step(&rows[prefix * stride..], prefix, nodes, true);
+        if reader {
+            // The reader's own K/V rows are junk: appending them would change the output.
+            rows[prefix * stride..].chunks_mut(stride).for_each(|row| row[q_heads * DIM..].fill(bf16::ONE));
+            actual = step(&rows[prefix * stride..], prefix, nodes, false);
+        }
+        let label = format!("int8 attention q{q_heads} S{suffix} L{prefix} trie={use_trie} reader={reader}");
+        assert_eq_float::<bf16>(&run_attention::<Cpu>(cpu.as_ref(), shape, nodes, None), &actual, 1e-2, &label);
     }
 }

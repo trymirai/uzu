@@ -4,6 +4,7 @@ pub mod ancestor_attention;
 pub mod attention_prepare;
 pub mod attention_single_pass;
 pub mod kv_cache_update;
+pub mod prepare_int8;
 pub mod qkv_norm;
 pub mod sigmoid_gate;
 
@@ -13,7 +14,8 @@ use crate::backends::{
     common::{
         BufferRef, CommandBufferEncoding,
         kernel::{
-            AttentionArguments, AttentionKernel, AttentionKernelConfig, AttentionSinglePassKernel, SigmoidGateKernel,
+            AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionSinglePassKernel,
+            SigmoidGateKernel,
         },
     },
     cpu::{Cpu, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError},
@@ -38,17 +40,17 @@ impl AttentionKernel for AttentionCpuKernel {
 
     fn encode(
         &self,
-        arguments: AttentionArguments<
-            '_,
-            Cpu,
-            impl BufferRef<Backend = Cpu>,
-            impl BufferRef<Backend = Cpu>,
+        input: AttentionInput<
             impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,
         >,
+        arguments: AttentionArguments<'_, Cpu, impl BufferRef<Backend = Cpu>, impl BufferRef<Backend = Cpu>>,
         command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<<Cpu as Backend>::ScratchBuffer, CpuError> {
+        let AttentionInput::FullPrecision(input) = input else {
+            return Err(CpuError::NotSupported);
+        };
         let config = self.config;
         let mut output = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, config.head_dim],
@@ -68,9 +70,9 @@ impl AttentionKernel for AttentionCpuKernel {
         {
             let command_buffer = &mut *command_buffer.debug_group("attention core");
             single_pass.encode(
-                arguments.queries,
-                arguments.keys,
-                arguments.values,
+                input.queries,
+                input.keys,
+                input.values,
                 &mut output,
                 config.num_q_heads / config.num_groups,
                 arguments.cache.prefix_len() + arguments.suffix_length,
