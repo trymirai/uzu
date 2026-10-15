@@ -1,11 +1,10 @@
 import { platformInfo } from "@/platform/platform-info";
 import { useNavigate } from "@tanstack/react-router";
-import { Lock, WifiOff } from "lucide-react";
+import { WifiOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { twMerge } from "tailwind-merge";
 import { useAppStore } from "@/stores/use-app-store";
 
-import { LightningIcon } from "@/components/icons/lightning-icon";
 import { Logo } from "@/components/icons/logo";
 import { LogoLightMode } from "@/components/icons/logo-light-mode";
 import { Button } from "@/components/ui/button";
@@ -82,8 +81,6 @@ function WelcomeScreen() {
 
           <div className="flex flex-col items-start md:items-center w-full md:mt-[120px]">
             <div className="flex flex-col md:flex-row md:items-center md:justify-center md:gap-6 gap-4">
-              {featureItem(<Lock size={14} />, "100% Private")}
-              {featureItem(<LightningIcon className="w-[14px] h-[15px]" />, "Blazing Fast Responses")}
               {!platformInfo.isWeb && featureItem(<WifiOff size={14} />, "Works Offline")}
             </div>
 
