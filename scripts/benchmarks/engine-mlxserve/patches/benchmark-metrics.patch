@@ -1,0 +1,29 @@
+--- a/src/transformer.zig
++++ b/src/transformer.zig
+@@ -16345,6 +16345,8 @@
+ }
+ 
+ pub const Transformer = struct {
++    // Benchmark-only logical target-forward counter; no GPU synchronization.
++    benchmark_target_forwards: ?*usize = null,
+     config: ModelConfig,
+     cache: KVCache,
+     s: mlx.mlx_stream,
+@@ -19807,6 +19809,7 @@
+     }
+ 
+     pub fn forwardWith(self: *Transformer, ctx: *ForwardCtx, token_ids: mlx.mlx_array) !mlx.mlx_array {
++        if (self.benchmark_target_forwards) |count| count.* += 1;
+         if (ctx.batch_slots == null) try self.ssmGroupRelease(ctx);
+         if (self.dsv4) |mdl| return forwardDsv4WithImpl(self, ctx, token_ids, mdl);
+         if (self.bert_layers != null) return self.forwardBertWith(ctx, token_ids);
+--- a/src/generate.zig
++++ b/src/generate.zig
+@@ -2880,6 +2880,7 @@
+                     }
+                     _ = mlx.mlx_eval(eval_vec);
+                 }
++                try @import("bench_memory.zig").sampleActive();
+                 _ = mlx.mlx_clear_cache();
+                 if (trace_enabled) eval_ns += prefill_sw.read() - eval_start_ns;
+ 

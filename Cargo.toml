@@ -2,6 +2,7 @@
 members = [
     "crates/uzu-engine",
     "crates/uzu-engine-macros",
+    "scripts/benchmarks/engine-uzu",
     # --- to be rewritten
     "crates/legacy/bindings-types",
     "crates/legacy/bindings",

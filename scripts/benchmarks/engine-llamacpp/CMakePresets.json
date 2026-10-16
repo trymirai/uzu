@@ -1,0 +1,62 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/build/${presetName}/bin",
+        "BUILD_SHARED_LIBS": false,
+        "GGML_NATIVE": true,
+        "GGML_METAL": true,
+        "GGML_METAL_EMBED_LIBRARY": true,
+        "GGML_METAL_SHADER_DEBUG": false,
+        "GGML_ACCELERATE": true,
+        "GGML_BLAS": true,
+        "GGML_BLAS_VENDOR": "Apple"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": false,
+        "GGML_LTO": false,
+        "GGML_METAL_NDEBUG": false
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": true,
+        "GGML_LTO": true,
+        "GGML_METAL_NDEBUG": true
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "configuration": "Debug",
+      "targets": [
+        "engine-llamacpp"
+      ],
+      "jobs": 8
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release",
+      "targets": [
+        "engine-llamacpp"
+      ],
+      "jobs": 8
+    }
+  ]
+}
