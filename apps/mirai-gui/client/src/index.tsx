@@ -11,6 +11,7 @@ import { TauriPlatformClient } from "./platform/tauri-platform-client";
 import { WebPlatformClient } from "./platform/web-platform-client";
 import { platformInfo } from "./platform/platform-info";
 import { useAppStore } from "./stores/use-app-store";
+import { initializeWebAnalytics } from "./web-analytics";
 
 RuntimeLoader.setWasmUrl(riveWasmUrl);
 
@@ -28,8 +29,11 @@ if (platformInfo.isTauri) {
   initPlatform(new WebPlatformClient());
 }
 
+const router = createAppRouter(getInitialPath());
+initializeWebAnalytics(router);
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <RouterProvider router={createAppRouter(getInitialPath())} />
+    <RouterProvider router={router} />
   </React.StrictMode>,
 );
