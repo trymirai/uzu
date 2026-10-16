@@ -78,7 +78,7 @@ pub struct SplitGeometry {
     pub head_dim: u32,
     pub num_q_heads: u32,
     pub num_groups: u32,
-    pub block_rows: u32,
+    pub query_rows_per_threadgroup: u32,
     pub block_k: u32,
 }
 
@@ -123,14 +123,14 @@ pub fn choose_splits(
     gpu_core_count: u32,
 ) -> u32 {
     let threadgroups_per_kv_split = (geometry.num_q_heads / geometry.num_groups * suffix_length)
-        .div_ceil(geometry.block_rows)
+        .div_ceil(geometry.query_rows_per_threadgroup)
         * geometry.num_groups;
     let max_splits = kv_length.div_ceil(geometry.block_k).max(1);
 
     if suffix_length > GEMM_GROUPED_DECODE_SUFFIX_MAX && kv_length >= PREFILL_SPLIT_MIN_KV {
         // Each padded row has head_dim partial values, one max, and one sum, all F32.
         let bytes_per_split = threadgroups_per_kv_split as u64
-            * geometry.block_rows as u64
+            * geometry.query_rows_per_threadgroup as u64
             * (geometry.head_dim as u64 + PARTIAL_STATS_PER_ROW)
             * DataType::F32.size_in_bytes() as u64;
         let requested_splits = kv_length.div_ceil(PREFILL_SPLIT_KEYS).min(max_splits);

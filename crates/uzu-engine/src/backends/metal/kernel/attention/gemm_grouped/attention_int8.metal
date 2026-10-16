@@ -19,7 +19,7 @@ struct Int8Scratch {
   UZU_CONST int STATS_OFFSET = Layout::SIMDGROUPS * Layout::SCORE_TILE_ELEMENTS / int(sizeof(float));
   UZU_CONST int SUMS_OFFSET = STATS_OFFSET + Layout::SIMDGROUPS * Layout::TILE_ROWS * 2;
   UZU_CONST int SLOT_FLOATS = SUMS_OFFSET + Layout::SIMDGROUPS * Layout::TILE_ROWS;
-  UZU_CONST int TRIE_MASKS = Layout::BLOCK_ROWS;
+  UZU_CONST int ROW_MASKS = Layout::BLOCK_ROWS;
 
   UZU_CONST int QUERY_VECTORS_PER_BAND = int(HEAD_DIM) / (2 * uzu::kv_layout::TILE_DIMS) * METAL_SIMD_SIZE;
   UZU_CONST int QUERY_VECTORS = Layout::BANDS * QUERY_VECTORS_PER_BAND;
@@ -114,7 +114,7 @@ struct Int8Softmax {
 
 template <typename ScaleType, uint HEAD_DIM>
 VARIANTS(ScaleType, bfloat)
-VARIANTS(HEAD_DIM, 256)
+VARIANTS(HEAD_DIM, 128, 256)
 KERNEL(AttentionGemmGroupedInt8)(
     const device int8_t* query_codes,
     const device ScaleType* query_scales,
@@ -136,7 +136,7 @@ KERNEL(AttentionGemmGroupedInt8)(
     const bool is_trie SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     threadgroup float probability_exchange[2 * Int8Scratch<HEAD_DIM>::SLOT_FLOATS],
-    threadgroup ulong trie_masks[Int8Scratch<HEAD_DIM>::TRIE_MASKS],
+    threadgroup ulong row_masks[Int8Scratch<HEAD_DIM>::ROW_MASKS],
     threadgroup uint4 query_stage[Int8Scratch<HEAD_DIM>::QUERY_VECTORS],
     const ThreadContext thread_context,
     const uint tile_split_index GROUPS(query_tiles * split_count),
@@ -199,30 +199,30 @@ KERNEL(AttentionGemmGroupedInt8)(
       uint(score_position.y) + uint(Ops::THREAD_ELEMENT_ROW_STRIDE)
   };
   const uint query_band_offset = uint(query_band) * uint(Layout::TILE_ROWS);
-  uint query_positions[ROWS_PER_LANE];
   if (!mask_free) {
+    ulong row_mask[ROWS_PER_LANE];
+    uint query_positions[ROWS_PER_LANE];
     METAL_PRAGMA_UNROLL
     for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
       query_positions[row] = (query_row_base + lane_rows[row]) % params.q_len;
+      row_mask[row] = is_trie ? 0ul : ulong(prefix_length + query_positions[row]);
     }
     if (is_trie) {
-      ulong row_trie_mask[ROWS_PER_LANE] = {};
       for (uint node_index = 0; node_index < trie_nodes; ++node_index) {
         const uzu::trie::TrieNode node = trie[node_index];
         METAL_PRAGMA_UNROLL
         for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
           if (query_positions[row] >= node.trie_start && query_positions[row] <= node.trie_end) {
-            row_trie_mask[row] |= (1ul << node_index);
+            row_mask[row] |= (1ul << node_index);
           }
         }
       }
-      if (score_position.x == 0) {
-        METAL_PRAGMA_UNROLL
-        for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
-          trie_masks[query_band_offset + lane_rows[row]] = row_trie_mask[row];
-        }
+    }
+    if (score_position.x == 0) {
+      METAL_PRAGMA_UNROLL
+      for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
+        row_masks[query_band_offset + lane_rows[row]] = row_mask[row];
       }
-      threadgroup_barrier(mem_flags::mem_threadgroup);
     }
   }
 
@@ -348,21 +348,19 @@ KERNEL(AttentionGemmGroupedInt8)(
     );
 
     if (!mask_free && (is_tail_block || (key_base + uint(uzu::kv_layout::TILE_KEYS) > prefix_length))) {
-      ulong trie_row_masks[ROWS_PER_LANE] = {0ul, 0ul};
-      if (is_trie) {
-        METAL_PRAGMA_UNROLL
-        for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
-          trie_row_masks[row] = trie_masks[query_band_offset + lane_rows[row]];
-        }
+      ulong row_mask[ROWS_PER_LANE];
+      METAL_PRAGMA_UNROLL
+      for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
+        row_mask[row] = row_masks[query_band_offset + lane_rows[row]];
       }
       map_lane_rows(scores, score_position, [&](ushort lane_row, short column, AccumType value) UZU_ALWAYS_INLINE {
         const uint key = key_base + uint(column);
         bool visible = key < key_length;
         if (is_trie) {
-          visible = visible &&
-                    (key < prefix_length || ((trie_row_masks[lane_row] >> ulong(key - prefix_length)) & 1ul) != 0ul);
+          visible =
+              visible && (key < prefix_length || ((row_mask[lane_row] >> ulong(key - prefix_length)) & 1ul) != 0ul);
         } else {
-          visible = visible && key <= prefix_length + query_positions[lane_row];
+          visible = visible && key <= uint(row_mask[lane_row]);
         }
         return visible ? value : -metal::numeric_limits<AccumType>::infinity();
       });

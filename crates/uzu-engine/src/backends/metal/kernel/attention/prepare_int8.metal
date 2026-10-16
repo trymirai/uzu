@@ -29,7 +29,7 @@ METAL_FUNC ElementT kv_quantize_row(const thread float* values, thread int* code
 template <typename ElementT, typename RopeT, uint HEAD_DIM>
 VARIANTS(ElementT, bfloat)
 VARIANTS(RopeT, float)
-VARIANTS(HEAD_DIM, 256)
+VARIANTS(HEAD_DIM, 128, 256)
 PUBLIC KERNEL(AttentionPrepareInt8)(
     const device ElementT* qkvg,
     device ElementT* queries OPTIONAL(!quantize_queries),

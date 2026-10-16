@@ -3,7 +3,7 @@ use uzu_engine_macros::uzu_test;
 use super::{MaskKind, SplitGeometry, choose_splits, int8_splits, should_encode};
 
 fn geometry(head_dim: u32) -> SplitGeometry {
-    let (num_q_heads, block_rows, num_groups) = if head_dim == 128 {
+    let (num_q_heads, query_rows_per_threadgroup, num_groups) = if head_dim == 128 {
         (32, 64, 8)
     } else {
         (24, 32, 4)
@@ -12,7 +12,7 @@ fn geometry(head_dim: u32) -> SplitGeometry {
         head_dim,
         num_q_heads,
         num_groups,
-        block_rows,
+        query_rows_per_threadgroup,
         block_k: 32,
     }
 }
