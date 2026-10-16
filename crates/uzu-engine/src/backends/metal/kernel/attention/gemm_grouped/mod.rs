@@ -29,7 +29,7 @@ const SLICE_COLS: u32 = 64;
 const TILE_ROWS: u32 = 16;
 const BLOCK_K: u32 = 32;
 
-pub fn block_rows(head_dim: u32) -> u32 {
+pub fn query_rows_per_threadgroup(head_dim: u32) -> u32 {
     SIMDGROUPS_PER_THREADGROUP / (head_dim / SLICE_COLS) * TILE_ROWS
 }
 
@@ -42,7 +42,7 @@ struct AttentionGemmGroupedMetal {
     num_q_heads: u32,
     scale: Option<f32>,
     gate_row_stride: Option<u32>,
-    block_rows: u32,
+    query_rows_per_threadgroup: u32,
     mask: MaskKind,
 }
 
@@ -82,7 +82,7 @@ impl AttentionGemmGroupedMetal {
             num_q_heads,
             scale,
             gate_row_stride,
-            block_rows: block_rows(head_dim),
+            query_rows_per_threadgroup: query_rows_per_threadgroup(head_dim),
             mask,
         })
     }
@@ -102,7 +102,7 @@ impl AttentionGemmGroupedMetal {
     ) -> Result<bool, MetalError> {
         let params = self.params(suffix_length, kv_length);
         let grouped_rows = self.num_q_heads / self.num_groups * suffix_length;
-        let query_tiles = grouped_rows.div_ceil(self.block_rows);
+        let query_tiles = grouped_rows.div_ceil(self.query_rows_per_threadgroup);
         assert_eq!(trie.is_some(), self.mask.is_trie(), "trie presence must match mask");
 
         if num_splits == 1 {
@@ -124,7 +124,7 @@ impl AttentionGemmGroupedMetal {
             return Ok(false);
         }
 
-        let partial_rows = self.num_groups * query_tiles * num_splits * self.block_rows;
+        let partial_rows = self.num_groups * query_tiles * num_splits * self.query_rows_per_threadgroup;
         let mut partials = command_buffer.allocate_scratch_for_shape(&[partial_rows, self.head_dim], DataType::F32)?;
         let mut partial_maxs = command_buffer.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
         let mut partial_sums = command_buffer.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
@@ -153,7 +153,7 @@ impl AttentionGemmGroupedMetal {
             gate,
             params,
             grouped_rows,
-            query_tiles * self.block_rows,
+            query_tiles * self.query_rows_per_threadgroup,
             self.num_groups,
             num_splits,
             self.gate_row_stride,
@@ -280,7 +280,7 @@ impl AttentionGemmGrouped {
                 head_dim: core.head_dim,
                 num_q_heads: core.num_q_heads,
                 num_groups: core.num_groups,
-                block_rows: core.block_rows,
+                query_rows_per_threadgroup: core.query_rows_per_threadgroup,
                 block_k: BLOCK_K,
             },
             suffix_length,

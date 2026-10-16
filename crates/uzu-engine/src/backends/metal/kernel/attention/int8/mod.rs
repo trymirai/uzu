@@ -1,6 +1,6 @@
 use super::gemm_grouped::{
-    block_rows,
     policy::{self, MAX_TRIE_SUFFIX, int8_splits},
+    query_rows_per_threadgroup,
 };
 use crate::{
     backends::{
@@ -90,9 +90,9 @@ impl Int8Attention {
 
         let gqa_factor = num_q_heads / num_groups;
         let grouped_rows = gqa_factor * suffix_length;
-        let block_rows = block_rows(head_dim);
-        let query_tiles = grouped_rows.div_ceil(block_rows);
-        let split_rows = num_groups * query_tiles * block_rows;
+        let query_rows_per_threadgroup = query_rows_per_threadgroup(head_dim);
+        let query_tiles = grouped_rows.div_ceil(query_rows_per_threadgroup);
+        let split_rows = num_groups * query_tiles * query_rows_per_threadgroup;
         let num_splits = int8_splits(split_rows, head_dim, suffix_length, kv_length);
 
         let rows = split_rows * num_splits;
@@ -157,7 +157,7 @@ impl Int8Attention {
             gate,
             params,
             grouped_rows,
-            query_tiles * block_rows,
+            query_tiles * query_rows_per_threadgroup,
             num_groups,
             num_splits,
             config.gate_row_stride,
