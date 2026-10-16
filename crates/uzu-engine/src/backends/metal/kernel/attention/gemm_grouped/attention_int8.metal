@@ -6,7 +6,7 @@
 #include "../../generated/attention.h"
 #include "../../generated/trie.h"
 #include "../kv_layout.h"
-#include "util.h"
+#include "layout.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -348,19 +348,14 @@ KERNEL(AttentionGemmGroupedInt8)(
     );
 
     if (!mask_free && (is_tail_block || (key_base + uint(uzu::kv_layout::TILE_KEYS) > prefix_length))) {
-      ulong row_mask[ROWS_PER_LANE];
-      METAL_PRAGMA_UNROLL
-      for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
-        row_mask[row] = row_masks[query_band_offset + lane_rows[row]];
-      }
-      map_lane_rows(scores, score_position, [&](ushort lane_row, short column, AccumType value) UZU_ALWAYS_INLINE {
+      scores.map_coords(lane, [&](short row, short column, AccumType value) UZU_ALWAYS_INLINE {
+        const ulong row_mask = row_masks[query_band_offset + uint(row)];
         const uint key = key_base + uint(column);
         bool visible = key < key_length;
         if (is_trie) {
-          visible =
-              visible && (key < prefix_length || ((row_mask[lane_row] >> ulong(key - prefix_length)) & 1ul) != 0ul);
+          visible = visible && (key < prefix_length || ((row_mask >> ulong(key - prefix_length)) & 1ul) != 0ul);
         } else {
-          visible = visible && key <= uint(row_mask[lane_row]);
+          visible = visible && key <= uint(row_mask);
         }
         return visible ? value : -metal::numeric_limits<AccumType>::infinity();
       });
