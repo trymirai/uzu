@@ -51,8 +51,6 @@ impl MaskKind {
 }
 
 const SINGLE_PASS_KV_THRESHOLD: u32 = 1_024;
-const D256_SINGLE_PASS_KV_THRESHOLD: u32 = 150_000;
-const D128_SHORT_KV_GEMM_THRESHOLD: u32 = 2_048;
 
 pub struct AttentionMetalKernel {
     config: AttentionKernelConfig,
@@ -166,26 +164,9 @@ impl AttentionMetalKernel {
         if !is_ring
             && let Some(mask) = mask
             && let Some(grouped) = &self.grouped
+            && grouped.should_encode(mask, suffix_length)
         {
-            if grouped.should_encode(mask, suffix_length, kv_length) {
-                return grouped.encode(mask, input, arguments, command_buffer).map_err(AttentionMetalError::Backend);
-            }
-
-            // These measured sibling exceptions apply only when the
-            // grouped core was built for this layer.
-            if self.config.head_dim == 256
-                && (1..=16).contains(&suffix_length)
-                && kv_length > D256_SINGLE_PASS_KV_THRESHOLD
-            {
-                return Ok((self.single_pass.encode(input, arguments, command_buffer)?, false));
-            }
-            if (self.config.head_dim == 256 && (9..=16).contains(&suffix_length))
-                || (self.config.head_dim == 128
-                    && (9..=16).contains(&suffix_length)
-                    && kv_length > D128_SHORT_KV_GEMM_THRESHOLD)
-            {
-                return Ok((self.two_pass.encode(input, arguments, command_buffer)?, gate_applied_by_two_pass));
-            }
+            return grouped.encode(mask, input, arguments, command_buffer).map_err(AttentionMetalError::Backend);
         }
 
         if suffix_length > 8 {
