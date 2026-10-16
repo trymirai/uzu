@@ -14,7 +14,7 @@ use crate::{
 #[kernel(AttentionPrepareInt8)]
 #[variants(ElementT, bf16)]
 #[variants(RopeT, f32)]
-#[variants(HEAD_DIM, 256)]
+#[variants(HEAD_DIM, 128, 256)]
 pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     qkvg: *const ElementT,
     #[optional(!quantize_queries)] queries: Option<*mut ElementT>,

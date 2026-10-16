@@ -3,7 +3,7 @@ use uzu_engine_macros::uzu_test;
 use super::{MaskKind, SplitGeometry, choose_splits, int8_splits, should_encode};
 
 fn geometry(head_dim: u32) -> SplitGeometry {
-    let (num_q_heads, block_rows, num_groups) = if head_dim == 128 {
+    let (num_q_heads, query_rows_per_threadgroup, num_groups) = if head_dim == 128 {
         (32, 64, 8)
     } else {
         (24, 32, 4)
@@ -12,7 +12,7 @@ fn geometry(head_dim: u32) -> SplitGeometry {
         head_dim,
         num_q_heads,
         num_groups,
-        block_rows,
+        query_rows_per_threadgroup,
         block_k: 32,
     }
 }
@@ -47,20 +47,17 @@ fn measured_and_fallback_boundaries() {
 
 #[uzu_test]
 fn should_encode_boundaries() {
-    for (head_dim, mask, suffix_length, kv_length, expected) in [
-        (256, MaskKind::Causal, 1, 150_001, false),
-        (256, MaskKind::Causal, 2, 1_023, false),
-        (256, MaskKind::Causal, 2, 1_024, true),
-        (128, MaskKind::Trie, 15, 1_024, true),
-        (128, MaskKind::Causal, 16, 1_024, true),
-        (128, MaskKind::Causal, 32, 1_023, false),
-        (256, MaskKind::Causal, 16, 1_023, false),
-        (256, MaskKind::Causal, 8, 150_001, true),
-        (256, MaskKind::Causal, 1_024, 1_024, true),
-        (256, MaskKind::None, 1_024, 1_024, false),
-        (256, MaskKind::Trie, 65, 1_024, false),
+    for (head_dim, mask, suffix_length, expected) in [
+        (256, MaskKind::Causal, 1, false),
+        (256, MaskKind::Causal, 2, true),
+        (128, MaskKind::Trie, 64, true),
+        (128, MaskKind::Causal, 65, false),
+        (256, MaskKind::Causal, 1_024, true),
+        (256, MaskKind::Causal, 1_025, false),
+        (256, MaskKind::None, 1_024, false),
+        (256, MaskKind::Trie, 65, false),
     ] {
-        assert_eq!(should_encode(head_dim, mask, suffix_length, kv_length), expected);
+        assert_eq!(should_encode(head_dim, mask, suffix_length), expected);
     }
 }
 

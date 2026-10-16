@@ -9,7 +9,7 @@ using namespace metal;
 
 template <typename T, uint BD>
 VARIANTS(T, bfloat)
-VARIANTS(BD, 256)
+VARIANTS(BD, 128, 256)
 KERNEL(AttentionGemmGroupedInt8Combine)(
     const device bfloat* partials,
     const device float* partial_maxs,
