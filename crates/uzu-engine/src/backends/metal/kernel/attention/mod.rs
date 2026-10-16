@@ -164,14 +164,9 @@ impl AttentionMetalKernel {
         if !is_ring
             && let Some(mask) = mask
             && let Some(grouped) = &self.grouped
+            && grouped.should_encode(mask, suffix_length)
         {
-            if grouped.should_encode(mask, suffix_length, kv_length) {
-                return grouped.encode(mask, input, arguments, command_buffer).map_err(AttentionMetalError::Backend);
-            }
-            // Short KV: two-pass beats gemm here.
-            if self.config.head_dim == 256 && (9..=16).contains(&suffix_length) {
-                return Ok((self.two_pass.encode(input, arguments, command_buffer)?, gate_applied_by_two_pass));
-            }
+            return grouped.encode(mask, input, arguments, command_buffer).map_err(AttentionMetalError::Backend);
         }
 
         if suffix_length > 8 {

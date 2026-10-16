@@ -250,9 +250,8 @@ impl AttentionGemmGrouped {
         &self,
         mask: MaskKind,
         suffix_length: u32,
-        kv_length: u32,
     ) -> bool {
-        policy::should_encode(self.head_dim, mask, suffix_length, kv_length)
+        policy::should_encode(self.head_dim, mask, suffix_length)
     }
 
     pub fn encode(

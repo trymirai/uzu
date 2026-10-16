@@ -11,7 +11,6 @@ const GEMM_GROUPED_HEAD_DIMS: [u32; 2] = [128, 256];
 const GEMM_GROUPED_DECODE_SUFFIX_MIN: u32 = 2;
 const GEMM_GROUPED_DECODE_SUFFIX_MAX: u32 = 64;
 const GEMM_GROUPED_PREFILL_SUFFIX_MAX: u32 = 1024;
-const GEMM_GROUPED_MIN_KV_LENGTH: u32 = 1024;
 pub const MAX_TRIE_SUFFIX: u32 = 64;
 const SMALL_SUFFIX_MAX: u32 = 4;
 const SMALL_SUFFIX_MAX_SPLITS: u32 = 16;
@@ -36,7 +35,6 @@ pub fn should_encode(
     head_dim: u32,
     mask: MaskKind,
     suffix_length: u32,
-    kv_length: u32,
 ) -> bool {
     let decode = (GEMM_GROUPED_DECODE_SUFFIX_MIN..=GEMM_GROUPED_DECODE_SUFFIX_MAX).contains(&suffix_length);
     // The grouped prefill path is only tuned for head_dim 256.
@@ -44,9 +42,7 @@ pub fn should_encode(
     let causal_prefill = prefill_tuned
         && mask == MaskKind::Causal
         && (GEMM_GROUPED_DECODE_SUFFIX_MAX + 1..=GEMM_GROUPED_PREFILL_SUFFIX_MAX).contains(&suffix_length);
-    // Trie (tree-structured) attention is fastest on the grouped kernel at any KV length.
-    let enough_kv = mask == MaskKind::Trie || kv_length >= GEMM_GROUPED_MIN_KV_LENGTH;
-    enough_kv && (decode || causal_prefill)
+    decode || causal_prefill
 }
 
 type MeasuredSplits = (u32, u32, &'static [(u32, u32)]);

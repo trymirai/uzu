@@ -47,20 +47,17 @@ fn measured_and_fallback_boundaries() {
 
 #[uzu_test]
 fn should_encode_boundaries() {
-    for (head_dim, mask, suffix_length, kv_length, expected) in [
-        (256, MaskKind::Causal, 1, 150_001, false),
-        (256, MaskKind::Causal, 2, 1_023, false),
-        (256, MaskKind::Causal, 2, 1_024, true),
-        (128, MaskKind::Trie, 15, 1_024, true),
-        (128, MaskKind::Causal, 16, 1_024, true),
-        (128, MaskKind::Causal, 32, 1_023, false),
-        (256, MaskKind::Causal, 16, 1_023, false),
-        (256, MaskKind::Causal, 8, 150_001, true),
-        (256, MaskKind::Causal, 1_024, 1_024, true),
-        (256, MaskKind::None, 1_024, 1_024, false),
-        (256, MaskKind::Trie, 65, 1_024, false),
+    for (head_dim, mask, suffix_length, expected) in [
+        (256, MaskKind::Causal, 1, false),
+        (256, MaskKind::Causal, 2, true),
+        (128, MaskKind::Trie, 64, true),
+        (128, MaskKind::Causal, 65, false),
+        (256, MaskKind::Causal, 1_024, true),
+        (256, MaskKind::Causal, 1_025, false),
+        (256, MaskKind::None, 1_024, false),
+        (256, MaskKind::Trie, 65, false),
     ] {
-        assert_eq!(should_encode(head_dim, mask, suffix_length, kv_length), expected);
+        assert_eq!(should_encode(head_dim, mask, suffix_length), expected);
     }
 }
 
