@@ -7,7 +7,7 @@
 #include "../../matmul/common/mxu_fragment/ops.h"
 #include "../../generated/attention.h"
 #include "../../generated/trie.h"
-#include "util.h"
+#include "layout.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -231,14 +231,15 @@ KERNEL(AttentionGemmGrouped)(
     const uint key_base = first_key + kb * uint(BK);
     const bool masked_block = IS_TAIL || ((is_causal || is_trie) && (key_base + uint(BK) > prefix_length));
     if (masked_block) {
-      map_lane_rows(score, score_position, [&](ushort row, short col, AccumType value) {
+      score.map_coords(lane, [&](short row, short col, AccumType value) UZU_ALWAYS_INLINE {
+        const ushort lane_row = ushort(row - score_position.y) / Ops::THREAD_ELEMENT_ROW_STRIDE;
         const uint key = key_base + uint(col);
         bool visible = key < key_length;
         if (is_trie) {
-          visible =
-              visible && (key < prefix_length || ((row_trie_mask[row] >> ulong(key - prefix_length)) & 1ul) != 0ul);
+          visible = visible &&
+                    (key < prefix_length || ((row_trie_mask[lane_row] >> ulong(key - prefix_length)) & 1ul) != 0ul);
         } else if (is_causal) {
-          visible = visible && (key <= last_visible_key[row]);
+          visible = visible && (key <= last_visible_key[lane_row]);
         }
         return visible ? value : masked_score_pre_scale;
       });
