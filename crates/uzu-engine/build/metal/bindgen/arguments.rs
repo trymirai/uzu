@@ -4,7 +4,7 @@ use quote::{format_ident, quote};
 use syn::{Expr, Ident, Type};
 
 use crate::{
-    common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with},
+    common::{expr_rewrite::rewrite_paths_with, gpu_type_paths::GpuTypePaths},
     metal::{
         ast::{
             MetalArgument, MetalArgumentType, MetalBufferAccess, MetalConstantType, MetalGroupsType, MetalKernelInfo,
@@ -60,7 +60,7 @@ pub struct IndirectDispatchArgument;
 
 pub fn parse(
     kernel: &MetalKernelInfo,
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
     host_expression_rewriter: &mut HostExpressionRewriter,
 ) -> Result<Vec<ArgumentEmission>> {
     let mut emissions = Vec::new();
@@ -71,13 +71,18 @@ pub fn parse(
     for argument in kernel.arguments.iter() {
         match &argument.argument_type {
             MetalArgumentType::Buffer(access) => {
-                let buffer = parse_buffer_argument(argument, *access, next_buffer_index, enum_paths)?;
+                let buffer = parse_buffer_argument(argument, *access, next_buffer_index, gpu_type_paths)?;
                 emissions.push(ArgumentEmission::Buffer(buffer));
                 next_buffer_index += 1;
             },
             MetalArgumentType::Constant((rust_type_text, constant_type)) => {
-                let constant =
-                    parse_constant_argument(argument, rust_type_text, constant_type, next_buffer_index, enum_paths)?;
+                let constant = parse_constant_argument(
+                    argument,
+                    rust_type_text,
+                    constant_type,
+                    next_buffer_index,
+                    gpu_type_paths,
+                )?;
                 emissions.push(ArgumentEmission::Constant(constant));
                 next_buffer_index += 1;
             },
@@ -86,7 +91,7 @@ pub fn parse(
                     argument,
                     dimensions.as_deref(),
                     next_threadgroup_index,
-                    enum_paths,
+                    gpu_type_paths,
                     host_expression_rewriter,
                 )?;
                 emissions.push(ArgumentEmission::Shared(shared));
@@ -109,10 +114,10 @@ fn parse_shared_argument(
     argument: &MetalArgument,
     dimensions: Option<&str>,
     threadgroup_index: usize,
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
     host_expression_rewriter: &mut HostExpressionRewriter,
 ) -> Result<SharedArgument> {
-    let condition = parse_argument_condition(argument, enum_paths)?
+    let condition = parse_argument_condition(argument, gpu_type_paths)?
         .context("optional threadgroup argument must carry a condition")?;
     let dimensions = dimensions.context("optional threadgroup argument must have explicit array dimensions")?;
     let element_size = shared_element_byte_size(&argument.c_type)?;
@@ -136,10 +141,10 @@ fn parse_buffer_argument(
     argument: &MetalArgument,
     access: MetalBufferAccess,
     buffer_index: usize,
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
 ) -> Result<BufferArgument> {
     let name = format_ident!("{}", argument.name.as_ref());
-    let condition = parse_argument_condition(argument, enum_paths)?;
+    let condition = parse_argument_condition(argument, gpu_type_paths)?;
     Ok(BufferArgument {
         name,
         buffer_index,
@@ -153,10 +158,11 @@ fn parse_constant_argument(
     rust_type_text: &str,
     constant_type: &MetalConstantType,
     buffer_index: usize,
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
 ) -> Result<ConstantArgument> {
     let name = format_ident!("{}", argument.name.as_ref());
-    let element_type: Type = syn::parse_str(rust_type_text)
+    let element_type = gpu_type_paths
+        .resolve_type(rust_type_text)
         .with_context(|| format!("constant rust type `{}` cannot be parsed", rust_type_text))?;
     let shape = match constant_type {
         MetalConstantType::Scalar => ConstantShape::Scalar(element_type),
@@ -170,7 +176,7 @@ fn parse_constant_argument(
             }
         },
     };
-    let condition = parse_argument_condition(argument, enum_paths)?;
+    let condition = parse_argument_condition(argument, gpu_type_paths)?;
     Ok(ConstantArgument {
         name,
         buffer_index,
@@ -181,12 +187,12 @@ fn parse_constant_argument(
 
 fn parse_argument_condition(
     argument: &MetalArgument,
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
 ) -> Result<Option<ArgumentCondition>> {
     match argument.condition.as_deref() {
         Some(condition_text) => {
             let field_name = format_ident!("has_{}", argument.name.as_ref());
-            let rust_expression = rewrite_for_rust(enum_paths, condition_text).with_context(|| {
+            let rust_expression = rewrite_for_rust(gpu_type_paths, condition_text).with_context(|| {
                 format!("OPTIONAL condition `{}` cannot be parsed as a rust expression", condition_text)
             })?;
             Ok(Some(ArgumentCondition {

@@ -127,16 +127,21 @@ METAL_FUNC static void fragment_matmul(
   constexpr ushort output_col_count = pair_output_rows ? 1 : cols;
   constexpr ushort output_col_step = pair_output_rows ? 1 : 2;
 
+  constexpr bool interleave_rows = rows == 2 && cols == 2 && depth == 2 &&
+                                   metal::is_same_v<typename OutputFragment::ElementType, int> &&
+                                   metal::is_same_v<typename LeftFragment::ElementType, int8_t> &&
+                                   metal::is_same_v<typename RightFragment::ElementType, int8_t>;
+
   METAL_PRAGMA_UNROLL
-  for (ushort row = 0; row < rows; row += output_row_step) {
+  for (ushort outer_index = 0; outer_index < (interleave_rows ? depth : rows); outer_index += output_row_step) {
     METAL_PRAGMA_UNROLL
     for (ushort col = 0; col < output_col_count; col += output_col_step) {
       METAL_PRAGMA_UNROLL
-      for (ushort depth_index = 0; depth_index < depth; ++depth_index) {
+      for (ushort inner_index = 0; inner_index < (interleave_rows ? rows : depth); ++inner_index) {
         matmul_paired_outputs(
-            row,
+            interleave_rows ? inner_index : outer_index,
             col,
-            depth_index,
+            interleave_rows ? outer_index : inner_index,
             uzu::integral_constant<MatmulMode, MatmulMode::multiply_accumulate>{}
         );
       }

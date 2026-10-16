@@ -4,6 +4,7 @@ pub mod ancestor_attention;
 pub mod attention_prepare;
 pub mod attention_single_pass;
 pub mod kv_cache_update;
+pub mod prepare_int8;
 pub mod qkv_norm;
 pub mod sigmoid_gate;
 
@@ -12,7 +13,10 @@ mod mask;
 use crate::backends::{
     common::{
         BufferRef, CommandBufferEncoding,
-        kernel::{AttentionArguments, AttentionKernel, AttentionKernelConfig, AttentionSinglePassKernel},
+        kernel::{
+            AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionSinglePassKernel,
+            SigmoidGateKernel,
+        },
     },
     cpu::{Cpu, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError},
 };
@@ -23,6 +27,7 @@ pub struct AttentionCpuKernel {
 
 impl AttentionKernel for AttentionCpuKernel {
     type Backend = Cpu;
+    type Error = CpuError;
 
     fn new(
         _context: &CpuContext,
@@ -35,16 +40,17 @@ impl AttentionKernel for AttentionCpuKernel {
 
     fn encode(
         &self,
-        arguments: AttentionArguments<
-            '_,
-            Cpu,
-            impl BufferRef<Backend = Cpu>,
+        input: AttentionInput<
             impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,
         >,
+        arguments: AttentionArguments<'_, Cpu, impl BufferRef<Backend = Cpu>, impl BufferRef<Backend = Cpu>>,
         command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<<Cpu as Backend>::ScratchBuffer, CpuError> {
+        let AttentionInput::FullPrecision(input) = input else {
+            return Err(CpuError::NotSupported);
+        };
         let config = self.config;
         let mut output = command_buffer.allocate_scratch_for_shape(
             &[arguments.suffix_length, config.num_q_heads, config.head_dim],
@@ -61,28 +67,40 @@ impl AttentionKernel for AttentionCpuKernel {
             arguments.trie.is_some(),
             config.sliding_window_size.is_some(),
         )?;
-        command_buffer.push_debug_group("attention core");
-        single_pass.encode(
-            arguments.queries,
-            arguments.keys,
-            arguments.values,
-            &mut output,
-            config.num_q_heads / config.num_groups,
-            arguments.cache.prefix_len() + arguments.suffix_length,
-            config.head_dim,
-            config.num_groups * config.head_dim,
-            config.head_dim,
-            config.num_groups * config.head_dim,
-            arguments.cache.ring_params(),
-            config.scale.unwrap_or(1.0 / (config.head_dim as f32).sqrt()),
-            arguments.trie,
-            config.sliding_window_size,
-            arguments.sinks,
-            config.num_q_heads,
-            arguments.suffix_length,
-            command_buffer,
-        );
-        command_buffer.pop_debug_group();
+        {
+            let command_buffer = &mut *command_buffer.debug_group("attention core");
+            single_pass.encode(
+                input.queries,
+                input.keys,
+                input.values,
+                &mut output,
+                config.num_q_heads / config.num_groups,
+                arguments.cache.prefix_len() + arguments.suffix_length,
+                config.head_dim,
+                config.num_groups * config.head_dim,
+                config.head_dim,
+                config.num_groups * config.head_dim,
+                arguments.cache.ring_params(),
+                config.scale.unwrap_or(1.0 / (config.head_dim as f32).sqrt()),
+                arguments.trie,
+                config.sliding_window_size,
+                arguments.sinks,
+                config.num_q_heads,
+                arguments.suffix_length,
+                command_buffer,
+            );
+        }
+        if let (Some(gate), Some(gate_row_stride)) = (arguments.gate, config.gate_row_stride) {
+            <sigmoid_gate::SigmoidGateCpuKernel as SigmoidGateKernel>::new(command_buffer.context(), config.data_type)?
+                .encode(
+                    gate,
+                    &mut output,
+                    config.num_q_heads * config.head_dim,
+                    arguments.suffix_length,
+                    gate_row_stride,
+                    command_buffer,
+                );
+        }
         Ok(output)
     }
 }

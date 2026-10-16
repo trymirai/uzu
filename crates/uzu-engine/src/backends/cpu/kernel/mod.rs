@@ -18,7 +18,6 @@ mod radix_top_k_small;
 mod sampling;
 mod short_conv;
 mod softmax;
-mod ssm;
 mod tensor_add_bias;
 mod tensor_add_scale;
 mod weaver;

@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,14 +12,14 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     input: Box<[T]>,
     bias: Box<[T]>,
     num_cols: u32,
@@ -28,7 +27,7 @@ struct Input<T: ArrayElement + Float> {
     scale: f32,
 }
 
-fn get_input<T: ArrayElement + Float>(
+fn get_input<T: DataTypeRepr + Float>(
     num_rows: usize,
     num_cols: usize,
 ) -> (Vec<T>, Vec<T>) {
@@ -38,7 +37,7 @@ fn get_input<T: ArrayElement + Float>(
     (input, bias)
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(
+fn get_output<T: DataTypeRepr + Float, B: Backend>(
     input: &Input<T>,
     in_place: bool,
 ) -> Vec<T> {
@@ -71,7 +70,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     buffer_to_vec::<B, T>(&output_buffer)
 }
 
-fn get_test_data_basic<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
+fn get_test_data_basic<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>) {
     let num_rows = 4usize;
     let num_cols = 32usize;
     let (data, bias) = get_input::<T>(num_rows, num_cols);
@@ -88,7 +87,7 @@ fn get_test_data_basic<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     (input, expected)
 }
 
-fn get_test_data_large<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
+fn get_test_data_large<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>) {
     let num_rows = 64usize;
     let num_cols = 128usize;
     let (data, bias) = get_input::<T>(num_rows, num_cols);
@@ -105,7 +104,7 @@ fn get_test_data_large<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     (input, expected)
 }
 
-fn get_test_data_edge<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
+fn get_test_data_edge<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>) {
     // Single row, small dim, scale = 1.0
     let num_rows = 1usize;
     let num_cols = 4usize;
@@ -124,7 +123,7 @@ fn get_test_data_edge<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     (input, expected)
 }
 
-fn test_basic<T: ArrayElement + Float + Debug + Display>() {
+fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         0.05f32
     } else {
@@ -142,7 +141,7 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>() {
     });
 }
 
-fn test_large<T: ArrayElement + Float + Debug + Display>() {
+fn test_large<T: DataTypeRepr + Float + Debug + Display>() {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         0.05f32
     } else {
@@ -160,7 +159,7 @@ fn test_large<T: ArrayElement + Float + Debug + Display>() {
     });
 }
 
-fn test_edge<T: ArrayElement + Float + Debug + Display>() {
+fn test_edge<T: DataTypeRepr + Float + Debug + Display>() {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         0.05f32
     } else {
@@ -178,7 +177,7 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>() {
     });
 }
 
-fn test_in_place<T: ArrayElement + Float + Debug + Display>() {
+fn test_in_place<T: DataTypeRepr + Float + Debug + Display>() {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         0.05f32
     } else {

@@ -1,8 +1,9 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
+#include "attention_gate.h"
 
 template <typename T>
-VARIANTS(T, float, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(SigmoidGate)(
     const device T* gate,
     device T* output,
@@ -13,6 +14,5 @@ PUBLIC KERNEL(SigmoidGate)(
     const uint batch_idx AXIS(batch_dim, 1)
 ) {
   const uint output_idx = batch_idx * gate_dim + gate_idx;
-  float sigmoid = 1.0f / (1.0f + exp(-float(gate[batch_idx * gate_row_stride + gate_idx])));
-  output[output_idx] = T(float(output[output_idx]) * sigmoid);
+  output[output_idx] = attention_apply_gate(output[output_idx], gate[batch_idx * gate_row_stride + gate_idx]);
 }

@@ -27,7 +27,7 @@ use shoji::{
 use tokenizers::Tokenizer;
 use tokio_util::sync::CancellationToken;
 use uzu_engine::{
-    backends::common::Backend,
+    backends::Backend,
     engine::{
         Engine,
         language_model::{LanguageModel, state::LanguageModelState, stream::LanguageModelStream},

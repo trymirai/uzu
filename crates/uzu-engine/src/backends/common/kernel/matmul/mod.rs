@@ -1,6 +1,5 @@
 mod arguments;
 mod d_ops;
-mod error;
 mod kernel;
 mod matmul_a;
 mod matmul_b;
@@ -9,14 +8,20 @@ pub mod routing;
 
 pub use arguments::MatmulArguments;
 pub use d_ops::MatmulDOps;
-pub use error::MatmulError;
 pub use kernel::MatmulKernel;
 pub use matmul_a::{Int8CodeLayout, MatmulA};
-pub use matmul_b::{MatmulB, QuantizedB, QuantizedCorrection, TrellisFormat};
-pub use output::MatmulOutput;
+#[cfg(backend = "metal")]
+pub use matmul_b::TrellisFormat;
+pub use matmul_b::{MatmulB, QuantizedB, QuantizedCorrection};
+pub use output::{MatmulOutput, MatmulOutputError};
 pub use routing::{ActivationFormat, MatmulShape};
 
-use crate::backends::common::gpu_types::{QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT, QuantizationMode};
+use crate::backends::common::{
+    Backend, Kernels,
+    gpu_types::{matmul::QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT, quantization::QuantizationMode},
+};
+
+pub type WeightsLayout<B> = <<<B as Backend>::Kernels as Kernels>::MatmulKernel as MatmulKernel>::WeightsLayout;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum QuantParamsLayout {

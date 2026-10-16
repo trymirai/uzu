@@ -1,15 +1,15 @@
-use half::{bf16, f16};
+use num_traits::AsPrimitive;
 
 use crate::{
     backends::{
         common::{
             BufferRef,
-            kernel::matmul::{MatmulB, MatmulError, QuantParamsStrides},
+            kernel::matmul::{MatmulB, QuantParamsStrides},
         },
-        cpu::{Cpu, buffer::CpuBufferExt},
+        cpu::{Cpu, buffer::CpuBufferExt, kernel::matmul::MatmulCpuError},
     },
     data_type::DataType,
-    utils::pointers::SendPtr,
+    utils::{dispatch_dtype::dispatch_dtype, pointers::SendPtr},
 };
 
 pub(super) enum WeightData {
@@ -37,7 +37,7 @@ impl WeightData {
         b_transpose: bool,
         k: usize,
         n: usize,
-    ) -> Result<Self, MatmulError<Cpu>> {
+    ) -> Result<Self, MatmulCpuError> {
         fn buffer_ptr(view: impl BufferRef<Backend = Cpu>) -> SendPtr<u8> {
             let (buffer, range) = view.parts();
             SendPtr(buffer.cpu_address().as_ptr().cast::<u8>().cast_const().wrapping_byte_add(range.start))
@@ -59,7 +59,7 @@ impl WeightData {
             },
             MatmulB::Trellis {
                 ..
-            } => Err(MatmulError::UnsupportedLayout {
+            } => Err(MatmulCpuError::UnsupportedLayout {
                 path: "CpuMatmul",
             }),
             MatmulB::Quantized(quantized) => Ok(WeightData::Quantized {
@@ -82,14 +82,7 @@ pub(super) unsafe fn read_f32(
     data_type: DataType,
     index: usize,
 ) -> f32 {
-    unsafe {
-        match data_type {
-            DataType::F32 => *(base as *const f32).add(index),
-            DataType::F16 => (*(base as *const f16).add(index)).to_f32(),
-            DataType::BF16 => (*(base as *const bf16).add(index)).to_f32(),
-            _ => unreachable!(),
-        }
-    }
+    dispatch_dtype!(|(T: data_type)| unsafe { (*base.cast::<T>().add(index)).as_() })
 }
 
 #[inline]
@@ -99,12 +92,5 @@ pub(super) unsafe fn write_f32(
     index: usize,
     value: f32,
 ) {
-    unsafe {
-        match data_type {
-            DataType::F32 => *(base as *mut f32).add(index) = value,
-            DataType::F16 => *(base as *mut f16).add(index) = f16::from_f32(value),
-            DataType::BF16 => *(base as *mut bf16).add(index) = bf16::from_f32(value),
-            _ => unreachable!(),
-        }
-    }
+    dispatch_dtype!(|(T: data_type)| unsafe { *base.cast::<T>().add(index) = value.as_() })
 }

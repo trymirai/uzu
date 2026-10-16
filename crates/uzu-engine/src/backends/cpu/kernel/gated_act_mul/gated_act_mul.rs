@@ -3,19 +3,23 @@ use num_traits::Float;
 use uzu_engine_macros::kernel;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
-            gpu_types::{ActivationType, GatedActMulOp, HADAMARD_TRANSFORM_BLOCK_SIZE, activation_silu_alpha},
+            gpu_types::{
+                activation_type::{ActivationType, activation_silu_alpha},
+                gated_act_mul::GatedActMulOp,
+                hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            },
             kernel::matmul::Int8CodeLayout,
         },
         cpu::kernel::activation_transform::{hadamard_transform, quantize_transformed_row},
     },
+    data_type::DataTypeRepr,
 };
 
 #[kernel(GatedActMul)]
 #[variants(T, f32, bf16)]
-pub fn gated_act_mul<T: ArrayElement + Float>(
+pub fn gated_act_mul<T: DataTypeRepr + Float>(
     act_operand: *const T,
     #[optional(!interleaved)] value_operand: Option<*const T>,
     #[optional(ops == GatedActMulOp::FullPrecision)] fp_out: Option<*mut T>,

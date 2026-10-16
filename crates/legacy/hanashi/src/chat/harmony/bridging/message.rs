@@ -477,7 +477,11 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                                         },
                                         Err(_) => {
                                             content.push(ChatContentBlock::ToolCallCandidate {
-                                                value: Value::from(serde_json::Value::String(text)),
+                                                value: Value::from(serde_json::Value::String(format!(
+                                                    "{{\"name\":{},\"arguments\":{text}",
+                                                    serde_json::to_string(name).expect("tool name serializes")
+                                                ))),
+                                                identifier: None,
                                             });
                                         },
                                     }

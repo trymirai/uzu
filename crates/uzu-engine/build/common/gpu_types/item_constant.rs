@@ -1,24 +1,30 @@
 use anyhow::bail;
 use quote::ToTokens;
 use syn::{
-    BinOp, Expr, ExprBinary, ExprGroup, ExprLit, ExprParen, ExprPath, ExprUnary, ItemConst, Lit, Type, TypePath, UnOp,
+    BinOp, Expr, ExprArray, ExprBinary, ExprGroup, ExprLit, ExprParen, ExprPath, ExprUnary, ItemConst, Lit, Type,
+    TypePath, UnOp,
 };
 
 #[derive(Debug)]
 pub struct GpuTypeConstant {
     pub name: Box<str>,
     pub ty: Box<str>,
+    pub array_length: Option<Box<str>>,
     pub value_expression: Box<str>,
 }
 
 impl GpuTypeConstant {
     pub fn parse(item: ItemConst) -> anyhow::Result<Self> {
+        let (ty, array_length) = match *item.ty {
+            Type::Array(array) => (*array.elem, Some(render_const_expr(&array.len, false)?.into())),
+            ty => (ty, None),
+        };
         let Type::Path(TypePath {
             qself: None,
             path,
-        }) = *item.ty
+        }) = ty
         else {
-            bail!("GPU constant type must be a path, found {:?}", item.ty);
+            bail!("GPU constant element type must be a path, found {ty:?}");
         };
 
         let is_bool = path.is_ident("bool");
@@ -27,6 +33,7 @@ impl GpuTypeConstant {
         Ok(Self {
             name: item.ident.to_string().into(),
             ty: path.into_token_stream().to_string().into(),
+            array_length,
             value_expression,
         })
     }
@@ -37,6 +44,14 @@ fn render_const_expr(
     is_bool: bool,
 ) -> anyhow::Result<String> {
     match expr {
+        Expr::Array(ExprArray {
+            elems,
+            ..
+        }) => {
+            let elements =
+                elems.iter().map(|element| render_const_expr(element, is_bool)).collect::<anyhow::Result<Vec<_>>>()?;
+            Ok(format!("{{{}}}", elements.join(", ")))
+        },
         Expr::Lit(ExprLit {
             lit: Lit::Int(value),
             ..

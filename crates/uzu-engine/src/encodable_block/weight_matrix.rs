@@ -4,12 +4,12 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferCpuAccessible, BufferMut,
-        gpu_types::{QuantizationMethod, QuantizationMode},
-        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection},
+        gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
+        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -86,6 +86,7 @@ struct Quantized<B: Backend> {
     params: QuantParams,
     info: QuantizationInfo,
     signed_codes: bool,
+    weights_layout: WeightsLayout<B>,
 }
 
 pub struct WeightMatrix<B: Backend> {
@@ -95,12 +96,12 @@ pub struct WeightMatrix<B: Backend> {
 
 impl<B: Backend> WeightMatrix<B> {
     pub fn load(
-        tree: &ParameterTree<B>,
-        spec: AnyWeightMatrixSpec,
-        required_layout: Layout,
         output_dim: u32,
         input_dim: u32,
         data_type: DataType,
+        spec: AnyWeightMatrixSpec,
+        required_layout: Layout,
+        tree: &ParameterTree<B>,
     ) -> Result<Self, WeightMatrixError<B>> {
         let ParsedWeightSpec {
             layout,
@@ -114,7 +115,7 @@ impl<B: Backend> WeightMatrix<B> {
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
         let Some(info) = quantization_info else {
-            let values = tree.leaf("weights")?.validate(&[rows, columns], data_type)?.read_buffer()?;
+            let values = tree.read_buffer("weights", &[rows, columns], data_type)?;
             return Ok(Self {
                 values,
                 quantized: None,
@@ -136,12 +137,11 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let groups = columns.div_ceil(group_size);
 
-        let values =
-            tree.leaf("weights")?.validate(&[rows, columns / packing_divisor], storage_data_type)?.read_buffer()?;
+        let values = tree.read_buffer("weights", &[rows, columns / packing_divisor], storage_data_type)?;
         let params = QuantParams::new(params_layout, rows, groups);
         let load_plane =
             |name: &str, shape: [u32; 2], storage_type: DataType| -> Result<B::GlobalBuffer, WeightMatrixError<B>> {
-                Ok(tree.leaf(name)?.validate(&shape, storage_type)?.read_buffer()?)
+                Ok(tree.read_buffer(name, &shape, storage_type)?)
             };
         let scales = load_plane("scales", params.scale_shape(), data_type)?;
         let correction = match info.method {
@@ -164,6 +164,7 @@ impl<B: Backend> WeightMatrix<B> {
                 params,
                 info,
                 signed_codes: false,
+                weights_layout: Default::default(),
             }),
         })
     }
@@ -205,7 +206,21 @@ impl<B: Backend> WeightMatrix<B> {
             mode,
             group_size,
             signed_codes,
+            weights_layout: quantized.weights_layout,
         })
+    }
+
+    pub fn optimize_weights_layout<E>(
+        &mut self,
+        optimize: impl FnOnce(&mut B::GlobalBuffer) -> Result<WeightsLayout<B>, E>,
+    ) -> Result<(), E> {
+        let Some(quantized) =
+            self.quantized.as_mut().filter(|quantized| quantized.weights_layout == WeightsLayout::<B>::default())
+        else {
+            return Ok(());
+        };
+        quantized.weights_layout = optimize(&mut self.values)?;
+        Ok(())
     }
 
     pub fn try_prepare_a8_storage(&mut self) -> bool {

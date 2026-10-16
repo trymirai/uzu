@@ -46,6 +46,8 @@ struct MxuMmaCore {
   UZU_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
   UZU_CONST ushort SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
   UZU_CONST ushort SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(GEMM_TILING);
+  UZU_CONST ushort SIMDGROUPS_PER_K = gemm_tiling_simdgroups_per_k(GEMM_TILING);
+  static_assert(SIMDGROUPS_PER_K == 1 || SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN == 1, "K slices share one tile");
   UZU_CONST ushort SIMDGROUP_BLOCK_M = THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
   UZU_CONST ushort SIMDGROUP_BLOCK_N = THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
   UZU_CONST ushort SIMDGROUP_BLOCK_K = static_cast<ushort>(MXU_SIMDGROUP_BLOCK_K);
@@ -91,21 +93,24 @@ struct MxuMmaCore {
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    const uint k_offset = partition * params->aligned_inner_iterations * uint(THREADGROUP_BLOCK_K);
+    const ushort k_slice = ushort(thread_context.simdgroup_index) / (SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN);
+    const ushort tile_index = ushort(thread_context.simdgroup_index) % (SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN);
+    const uint k_offset =
+        (partition * SIMDGROUPS_PER_K + k_slice) * params->aligned_inner_iterations * uint(THREADGROUP_BLOCK_K);
 
-    const ushort tile_row_offset = SIMDGROUP_BLOCK_M * (thread_context.simdgroup_index / SIMDGROUPS_PER_COLUMN);
-    const ushort tile_col_offset = SIMDGROUP_BLOCK_N * (thread_context.simdgroup_index % SIMDGROUPS_PER_COLUMN);
+    const ushort tile_row_offset = SIMDGROUP_BLOCK_M * (tile_index / SIMDGROUPS_PER_COLUMN);
+    const ushort tile_col_offset = SIMDGROUP_BLOCK_N * (tile_index % SIMDGROUPS_PER_COLUMN);
 
     device OutputElementType* d_simdgroup = d + size_t(partition) * size_t(params->M) * size_t(params->N) +
                                             block_row * params->leading_dimension_d + block_col +
                                             tile_row_offset * params->leading_dimension_d + tile_col_offset;
 
     const short simdgroup_limit_m =
-        alignment.contains(GemmAlignment::M)
+        !Left::QUANTIZED && alignment.contains(GemmAlignment::M)
             ? SIMDGROUP_BLOCK_M
             : short(min(int(SIMDGROUP_BLOCK_M), int(params->M) - int(geometry.block_row_start + tile_row_offset)));
     const short simdgroup_limit_n =
-        alignment.contains(GemmAlignment::N)
+        !Left::QUANTIZED && alignment.contains(GemmAlignment::N)
             ? SIMDGROUP_BLOCK_N
             : short(min(int(SIMDGROUP_BLOCK_N), int(params->N) - int(geometry.block_col_start + tile_col_offset)));
 
@@ -120,17 +125,17 @@ struct MxuMmaCore {
     };
 
     const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
-    const bool apply_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
     const bool apply_rht = output_transform.contains(GemmDTransform::RHT);
 
     const device RightElementType* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
 
     dispatch_bool(
-        alignment.contains(GemmAlignment::M) || (simdgroup_limit_m == SIMDGROUP_BLOCK_M),
+        (alignment.contains(GemmAlignment::M) || (simdgroup_limit_m == SIMDGROUP_BLOCK_M)) && simdgroup_limit_m > 0,
         [&](auto aligned_m) {
           dispatch_bool(
-              alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
+              (alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N)) &&
+                  simdgroup_limit_n > 0,
               [&](auto aligned_n) {
                 AccumFragment accumulator_tile =
                     Schedule::template launch<MxuMmaCore, aligned_m.value, aligned_n.value>(
@@ -143,21 +148,32 @@ struct MxuMmaCore {
                         thread_context
                     );
 
+                if constexpr (SIMDGROUPS_PER_K > 1) {
+                  threadgroup float* k_partials = reinterpret_cast<threadgroup float*>(b_shared);
+                  thread AccumulatorType* values = accumulator_tile.elements();
+                  const ushort lane = ushort(thread_context.simd_lane_id);
+                  if (k_slice != 0) {
+                    for (ushort element = 0; element < AccumFragment::ELEMENTS_PER_FRAGMENT; ++element) {
+                      k_partials
+                          [((k_slice - 1) * AccumFragment::ELEMENTS_PER_FRAGMENT + element) * METAL_SIMD_SIZE + lane] =
+                              values[element];
+                    }
+                  }
+                  threadgroup_barrier(mem_flags::mem_threadgroup);
+                  if (k_slice != 0) {
+                    return;
+                  }
+                  for (ushort slice = 1; slice < SIMDGROUPS_PER_K; ++slice) {
+                    for (ushort element = 0; element < AccumFragment::ELEMENTS_PER_FRAGMENT; ++element) {
+                      values[element] += k_partials
+                          [((slice - 1) * AccumFragment::ELEMENTS_PER_FRAGMENT + element) * METAL_SIMD_SIZE + lane];
+                    }
+                  }
+                }
+
                 if (apply_scale) {
                   const AccumulatorType scale = AccumulatorType(params->ab_scale);
                   accumulator_tile.map([&](auto value) { return value * scale; });
-                }
-
-                if (apply_accumulate) {
-                  uzu::matmul::Fragment<OutputElementType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps<>>
-                      existing_output;
-                  auto output_src = uzu::matmul::fragment_source(d_simdgroup, int(params->leading_dimension_d));
-                  if constexpr (!(aligned_m.value && aligned_n.value)) {
-                    output_src = output_src.bounded(simdgroup_limit_m, simdgroup_limit_n);
-                  }
-                  existing_output.load_from(thread_context.simd_lane_id, output_src);
-                  thread OutputElementType* existing_data = existing_output.elements();
-                  accumulator_tile.map([&](auto value) { return value + AccumulatorType(*(existing_data++)); });
                 }
 
                 if (apply_bias && !apply_rht) {
@@ -176,7 +192,7 @@ struct MxuMmaCore {
                 if constexpr (aligned_m.value && aligned_n.value) {
                   accumulator_tile.store(thread_context.simd_lane_id, d_simdgroup, int(params->leading_dimension_d));
                 } else {
-                  accumulator_tile.store_safe(
+                  accumulator_tile.template store_safe<aligned_m.value, aligned_n.value>(
                       thread_context.simd_lane_id,
                       d_simdgroup,
                       int(params->leading_dimension_d),
@@ -188,7 +204,34 @@ struct MxuMmaCore {
         }
     );
 
+    if (k_slice != 0) {
+      return;
+    }
+
     if (output_transform.contains(GemmDTransform::RHT)) {
+      if constexpr (
+          schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
+          SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE
+      ) {
+        if (alignment.contains(GemmAlignment::M) && alignment.contains(GemmAlignment::N)) {
+          if (simdgroup_limit_m <= 0 || simdgroup_limit_n <= 0) {
+            return;
+          }
+          simdgroup_barrier(mem_flags::mem_device);
+          apply_output_random_hadamard_transform<OutputElementType, RightElementType, true>(
+              d_simdgroup,
+              rht_factors + block_col + tile_col_offset,
+              bias_simdgroup,
+              apply_bias,
+              SIMDGROUP_BLOCK_M,
+              SIMDGROUP_BLOCK_N,
+              params->leading_dimension_d,
+              1,
+              thread_context
+          );
+          return;
+        }
+      }
       // Metal rejects a threadgroup barrier when the threadgroup contains one simdgroup.
       if constexpr (SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN == 1) {
         simdgroup_barrier(mem_flags::mem_device);

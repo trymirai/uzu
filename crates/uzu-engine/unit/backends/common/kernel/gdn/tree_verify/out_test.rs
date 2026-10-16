@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -14,6 +13,7 @@ use crate::{
         cpu::Cpu,
         metal::Metal,
     },
+    data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
@@ -36,7 +36,6 @@ struct Inputs<T> {
     qkd: Vec<f32>,
     u: Vec<f32>,
     h0: Vec<f32>,
-    h0_indices: Vec<i32>,
 }
 
 const BUILD_TREE_OUT_PATHS: &[(&str, bool, bool)] = &[
@@ -45,13 +44,12 @@ const BUILD_TREE_OUT_PATHS: &[(&str, bool, bool)] = &[
     ("MXU/H0Direct/Rows16_VCols32_SG4", true, false),
 ];
 
-fn make_inputs<T: ArrayElement + Float>(shape: Shape) -> Inputs<T> {
+fn make_inputs<T: DataTypeRepr + Float>(shape: Shape) -> Inputs<T> {
     let q_len = shape.batch_size * shape.tree_size * shape.qk_heads * shape.head_k_dim;
     let prefix_len = shape.batch_size * shape.tree_size * shape.value_heads;
     let qkd_len = shape.batch_size * shape.value_heads * shape.tree_size * shape.tree_size;
     let u_len = shape.batch_size * shape.value_heads * shape.tree_size * shape.head_v_dim;
-    let h0_pool = shape.batch_size + 1;
-    let h0_len = h0_pool * shape.value_heads * shape.head_v_dim * shape.head_k_dim;
+    let h0_len = shape.batch_size * shape.value_heads * shape.head_v_dim * shape.head_k_dim;
 
     Inputs {
         q: (0..q_len).map(|i| T::from(((i as f32 * 0.017).sin() * 0.2) + 0.01).unwrap()).collect(),
@@ -61,19 +59,10 @@ fn make_inputs<T: ArrayElement + Float>(shape: Shape) -> Inputs<T> {
         qkd: (0..qkd_len).map(|i| ((i as f32 * 0.013).cos() * 0.1) - 0.02).collect(),
         u: (0..u_len).map(|i| ((i as f32 * 0.011).sin() * 0.3) + 0.04).collect(),
         h0: (0..h0_len).map(|i| ((i as f32 * 0.019).cos() * 0.2) - 0.01).collect(),
-        h0_indices: (0..shape.batch_size)
-            .map(|i| {
-                if i + 1 == shape.batch_size {
-                    -1
-                } else {
-                    i as i32
-                }
-            })
-            .collect(),
     }
 }
 
-fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
+fn run_build_tree_out<B: Backend, T: DataTypeRepr + Float>(
     shape: Shape,
     inputs: &Inputs<T>,
     use_h0: bool,
@@ -95,7 +84,6 @@ fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
     let qkd = create_buffer_with_data::<B, f32>(&context, &inputs.qkd);
     let u = create_buffer_with_data::<B, f32>(&context, &inputs.u);
     let h0 = use_h0.then(|| create_buffer_with_data::<B, f32>(&context, &inputs.h0));
-    let h0_indices = use_h0.then(|| create_buffer_with_data::<B, i32>(&context, &inputs.h0_indices));
     let mut o =
         create_buffer::<B, T>(&context, shape.batch_size * shape.tree_size * shape.value_heads * shape.head_v_dim);
 
@@ -106,7 +94,6 @@ fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
         &qkd,
         &u,
         h0.as_ref(),
-        h0_indices.as_ref(),
         &mut o,
         (shape.head_k_dim as f32).sqrt().recip(),
         shape.batch_size as u32,
@@ -121,7 +108,7 @@ fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
     buffer_to_vec(&o)
 }
 
-fn check_shape<T: ArrayElement + Float + std::fmt::Display>(
+fn check_shape<T: DataTypeRepr + Float + std::fmt::Display>(
     shape: Shape,
     eps: f32,
 ) {

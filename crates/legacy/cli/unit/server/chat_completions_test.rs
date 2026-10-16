@@ -405,6 +405,103 @@ fn assistant_reasoning_content_round_trips_in_session_block_order() {
 }
 
 #[test]
+fn prefix_match_allows_omitted_assistant_reasoning_across_turns() {
+    let current = vec![
+        ChatMessage::system().with_text("instructions".to_string()),
+        ChatMessage::user().with_text("hi".to_string()),
+        ChatMessage::assistant().with_reasoning("first thoughts".to_string()).with_text("hello".to_string()),
+        ChatMessage::user().with_text("again".to_string()),
+        ChatMessage::assistant().with_reasoning("second thoughts".to_string()).with_text("hello again".to_string()),
+    ];
+    // OpenAI clients commonly omit the reasoning field or echo null/empty text.
+    for reasoning in [None, Some(serde_json::Value::Null), Some(serde_json::json!(""))] {
+        let mut body = serde_json::json!({"messages": [
+            {"role": "system", "content": "instructions"},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": "again"},
+            {"role": "assistant", "content": "hello again"},
+            {"role": "user", "content": "once more"}
+        ]});
+        if let Some(reasoning) = reasoning {
+            body["messages"][2]["reasoning_content"] = reasoning.clone();
+            body["messages"][4]["reasoning_content"] = reasoning;
+        }
+        let request: ChatCompletionRequest = serde_json::from_value(body).unwrap();
+        assert!(messages_have_prefix(&to_chat_messages(&request.messages), &current));
+    }
+}
+
+#[test]
+fn prefix_match_still_rejects_edits_when_assistant_reasoning_is_omitted() {
+    let current = vec![ChatMessage::assistant().with_reasoning("thoughts".to_string()).with_text("hello".to_string())];
+    for edited in [
+        ChatMessage::assistant().with_text("changed".to_string()),
+        ChatMessage::assistant(),
+        ChatMessage::user().with_text("hello".to_string()),
+        ChatMessage::assistant().with_text("hello".to_string()).with_reasoning_effort(ReasoningEffort::Disabled),
+        ChatMessage::assistant().with_reasoning("different thoughts".to_string()).with_text("hello".to_string()),
+    ] {
+        assert!(!messages_have_prefix(&[edited, ChatMessage::user().with_text("more".to_string())], &current));
+    }
+
+    let without_reasoning = vec![ChatMessage::assistant().with_text("hello".to_string())];
+    assert!(!messages_have_prefix(&current, &without_reasoning), "new reasoning must not be ignored");
+
+    let system = vec![ChatMessage::system().with_reasoning("thoughts".to_string()).with_text("hello".to_string())];
+    assert!(!messages_have_prefix(&[ChatMessage::system().with_text("hello".to_string())], &system));
+}
+
+#[test]
+fn prefix_match_preserves_tool_calls_with_empty_assistant_content() {
+    let tool_call = uzu::types::basic::ToolCall {
+        identifier: Some("c1".to_string()),
+        name: "f".to_string(),
+        arguments: uzu::types::basic::Value {
+            json: "{}".to_string(),
+        },
+    };
+    for reasoning in ["", "thoughts"] {
+        let mut assistant = ChatMessage::assistant();
+        if !reasoning.is_empty() {
+            assistant = assistant.with_reasoning(reasoning.to_string());
+        }
+        let current =
+            vec![ChatMessage::user().with_text("hi".to_string()), assistant.with_tool_call(tool_call.clone())];
+        for content in [None, Some("null"), Some("\"\""), Some("[]"), Some(r#"[{"type":"text","text":""}]"#)] {
+            let mut body = serde_json::json!({"messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "reasoning_content": reasoning, "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+                ]},
+                {"role": "tool", "tool_call_id": "c1", "content": "result"}
+            ]});
+            if let Some(content) = content {
+                body["messages"][1]["content"] = serde_json::from_str(content).unwrap();
+            }
+            for echo_reasoning in [true, false] {
+                if !echo_reasoning {
+                    body["messages"][1].as_object_mut().unwrap().remove("reasoning_content");
+                }
+                let request: ChatCompletionRequest = serde_json::from_value(body.clone()).unwrap();
+                let messages = to_chat_messages(&request.messages);
+                assert!(messages.len() > current.len());
+                assert!(messages_have_prefix(&messages, &current), "content: {content:?}, reasoning: {reasoning:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn empty_tool_result_content_is_preserved() {
+    let request = request(r#"{"messages":[{"role":"tool","tool_call_id":"c1","content":""}]}"#);
+    assert_eq!(
+        to_chat_messages(&request.messages),
+        vec![ChatMessage::tool().with_block(tool_call_result_block("c1", String::new()))]
+    );
+}
+
+#[test]
 fn prefix_match_ignores_tool_call_identifiers() {
     let assistant_call = |identifier: &str| {
         ChatMessage::assistant().with_tool_call(uzu::types::basic::ToolCall {

@@ -2,14 +2,14 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, SeparableCausalConvKernel},
     },
     config::token_mixer::convolutions::SeparableCausalConvConfig,
     data_type::DataType,
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
+    utils::size_for_shape::size_for_shape,
 };
 
 #[derive(Debug, Error)]
@@ -43,12 +43,11 @@ impl<B: Backend> SeparableCausalConv<B> {
         assert!(model_dim.is_multiple_of(group_size));
         assert_eq!(data_type, DataType::BF16, "SeparableCausalConv only supports BF16");
 
-        let weights =
-            parameter_tree.leaf("weights")?.validate(&[model_dim, kernel_size], DataType::BF16)?.read_buffer()?;
+        let weights = parameter_tree.read_buffer("weights", &[model_dim, kernel_size], DataType::BF16)?;
 
         let biases = config
             .has_biases
-            .then(|| parameter_tree.leaf("biases")?.validate(&[model_dim], DataType::BF16)?.read_buffer())
+            .then(|| parameter_tree.read_buffer("biases", &[model_dim], DataType::BF16))
             .transpose()?;
 
         let kernel = <B::Kernels as Kernels>::SeparableCausalConvKernel::new(
@@ -79,8 +78,6 @@ impl<B: Backend> SeparableCausalConv<B> {
         sequence_length: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("SeparableCausalConv");
-
         let mut output =
             command_buffer.allocate_scratch_for_shape(&[sequence_length, self.model_dim], self.data_type)?;
         let coefficients_offset_bytes = size_for_shape(&[coefficient_column_offset], self.data_type);
@@ -95,7 +92,6 @@ impl<B: Backend> SeparableCausalConv<B> {
             command_buffer,
         );
 
-        command_buffer.pop_debug_group();
         Ok(output)
     }
 }

@@ -5,7 +5,6 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -14,7 +13,7 @@ use crate::{
         cpu::Cpu,
         metal::Metal,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
@@ -35,7 +34,6 @@ struct Inputs {
     prefix: Vec<f32>,
     beta: Vec<f32>,
     h0: Vec<f32>,
-    h0_idx: Vec<i32>,
 }
 
 fn make_inputs(tree_size: usize) -> Inputs {
@@ -51,19 +49,16 @@ fn make_inputs(tree_size: usize) -> Inputs {
             .collect(),
         beta: (0..scalar_len).map(|i| 0.25 + ((i as f32 * 0.013).sin() + 1.0) * 0.2).collect(),
         h0: (0..h0_len).map(|i| ((i as f32 * 0.007).sin() * 0.05) - 0.01).collect(),
-        // Batch 1 has no initial state: covers the kh0-skip path.
-        h0_idx: vec![0, -1],
     }
 }
 
-fn get_output<B: Backend, T: ArrayElement + Float>(
+fn get_output<B: Backend, T: DataTypeRepr + Float>(
     q: &[T],
     k: &[T],
     trie: &[u32],
     prefix: &[f32],
     beta: &[f32],
     h0: &[f32],
-    h0_idx: &[i32],
     tree_size: usize,
     scale: f32,
     use_mxu: bool,
@@ -84,15 +79,12 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     let prefix = create_buffer_with_data::<B, f32>(&context, prefix);
     let beta = create_buffer_with_data::<B, f32>(&context, beta);
     let h0 = create_buffer_with_data::<B, f32>(&context, h0);
-    let h0_idx = create_buffer_with_data::<B, i32>(&context, h0_idx);
     // The GPU only writes packed-A tiles touching the block lower triangle;
     // zero-init so CPU and GPU buffers stay comparable elsewhere.
     let mut a_packed = create_buffer_with_data::<B, f32>(&context, &vec![0.0f32; a_len]);
     let mut qkd = create_buffer::<B, f32>(&context, output_len);
     let mut a_inv = create_buffer::<B, f32>(&context, a_inv_len);
-    // kh0 is only written for batches with h0_idx >= 0; zero-init so CPU and GPU
-    // outputs stay comparable on the skipped batch.
-    let mut kh0 = create_buffer_with_data::<B, f32>(&context, &vec![0.0f32; kh0_len]);
+    let mut kh0 = create_buffer::<B, f32>(&context, kh0_len);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
@@ -102,7 +94,6 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         &prefix,
         &beta,
         Some(&h0),
-        Some(&h0_idx),
         &mut a_packed,
         &mut qkd,
         &mut a_inv,
@@ -121,39 +112,19 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     (buffer_to_vec(&a_packed), buffer_to_vec(&qkd), buffer_to_vec(&a_inv), buffer_to_vec(&kh0))
 }
 
-fn check_type<T: ArrayElement + Float>(
+fn check_type<T: DataTypeRepr + Float>(
     inputs: &Inputs,
     tree_size: usize,
     scale: f32,
 ) {
     let q = inputs.q.iter().map(|&value| T::from(value).unwrap()).collect::<Vec<_>>();
     let k = inputs.k.iter().map(|&value| T::from(value).unwrap()).collect::<Vec<_>>();
-    let expected = get_output::<Cpu, T>(
-        &q,
-        &k,
-        &inputs.trie,
-        &inputs.prefix,
-        &inputs.beta,
-        &inputs.h0,
-        &inputs.h0_idx,
-        tree_size,
-        scale,
-        false,
-    );
+    let expected =
+        get_output::<Cpu, T>(&q, &k, &inputs.trie, &inputs.prefix, &inputs.beta, &inputs.h0, tree_size, scale, false);
 
     for_each_non_cpu_backend!(|B| {
-        let actual = get_output::<B, T>(
-            &q,
-            &k,
-            &inputs.trie,
-            &inputs.prefix,
-            &inputs.beta,
-            &inputs.h0,
-            &inputs.h0_idx,
-            tree_size,
-            scale,
-            false,
-        );
+        let actual =
+            get_output::<B, T>(&q, &k, &inputs.trie, &inputs.prefix, &inputs.beta, &inputs.h0, tree_size, scale, false);
         let msg = format!("backend {} simdgroup tree_size {tree_size}", std::any::type_name::<B>());
         assert_eq_float::<f32>(&expected.0, &actual.0, 2e-4, &format!("a_packed {msg}"));
         assert_eq_float::<f32>(&expected.1, &actual.1, 2e-4, &format!("qkd {msg}"));
@@ -169,7 +140,6 @@ fn check_type<T: ArrayElement + Float>(
             &inputs.prefix,
             &inputs.beta,
             &inputs.h0,
-            &inputs.h0_idx,
             tree_size,
             scale,
             true,

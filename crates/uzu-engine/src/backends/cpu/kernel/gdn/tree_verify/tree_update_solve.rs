@@ -2,21 +2,20 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
 /// Solves chunked GDN update coefficients: `(I + A) U = beta * (v - exp(prefix) * kh0)`.
 /// `kh0 = k @ h0^T` is precomputed by BuildTreeGram.
 #[kernel(TreeUpdateSolve)]
 #[variants(T, f32, bf16)]
 #[variants(BV, 16, 32)]
-pub fn tree_update_solve<T: ArrayElement + Float, const BV: u32>(
+pub fn tree_update_solve<T: DataTypeRepr + Float, const BV: u32>(
     #[optional(use_h0)] kh0: Option<*const f32>,
     v: *const T,
     prefix: *const f32,
     beta: *const f32,
     a_packed: *const f32,
     a_inv: *const f32,
-    #[optional(use_h0)] h0_idx: Option<*const i32>,
     u: *mut f32,
     batch_size: u32,
     tree_size: u32,
@@ -38,15 +37,7 @@ pub fn tree_update_solve<T: ArrayElement + Float, const BV: u32>(
     let num_col_pairs = num_blocks.div_ceil(2);
 
     let kh0 = kh0.unwrap_or(std::ptr::null());
-    let h0_idx = h0_idx.unwrap_or(std::ptr::null());
-
     for batch in 0..batch_size {
-        let h0_slot = if use_h0 {
-            unsafe { *h0_idx.add(batch) }
-        } else {
-            -1
-        };
-
         for hv in 0..value_heads {
             let batch_value_head_idx = batch * value_heads + hv;
 
@@ -68,7 +59,7 @@ pub fn tree_update_solve<T: ArrayElement + Float, const BV: u32>(
                         let v_idx = (((batch * tree_size + token) * value_heads + hv) * head_v_dim) + dv;
                         let v_val = unsafe { (*v.add(v_idx)).to_f32().unwrap() };
 
-                        let kh0_val = if h0_slot >= 0 {
+                        let kh0_val = if use_h0 {
                             unsafe { *kh0.add(v_idx) }
                         } else {
                             0.0

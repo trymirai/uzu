@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::backends::common::gpu_types::gemm::GemmTiling;
+use crate::backends::metal::gpu_types::gemm::GemmTiling;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum GemmSpecializationError {

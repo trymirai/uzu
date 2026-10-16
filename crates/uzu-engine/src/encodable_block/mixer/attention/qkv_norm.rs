@@ -3,12 +3,12 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferMut, CommandBuffer,
         kernel::{Kernels, QKVNormKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
     data_type::DataType,
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -30,93 +30,62 @@ pub struct QKVNorm<B: Backend> {
     key: Option<Head<B>>,
     value: Option<Head<B>>,
     num_q_heads: u32,
-    num_kv_heads: u32,
+    num_kv_heads: Option<u32>,
     projection_row_stride: u32,
     head_dim: u32,
 }
 
 impl<B: Backend> QKVNorm<B> {
     pub fn new(
-        context: &B::Context,
+        num_q_heads: u32,
+        num_kv_heads: Option<u32>,
+        projection_row_stride: u32,
+        head_dim: u32,
         intermediate_data_type: DataType,
         query_config: Option<NormalizationConfig>,
         key_config: Option<NormalizationConfig>,
         value_config: Option<NormalizationConfig>,
         parameter_tree: &ParameterTree<B>,
-        num_q_heads: u32,
-        num_kv_heads: u32,
-        projection_row_stride: u32,
-        head_dim: u32,
+        context: &B::Context,
     ) -> Result<Self, QKVNormError<B>> {
-        let query = query_config
-            .map(|cfg| {
-                Self::build_head(
-                    context,
-                    intermediate_data_type,
-                    cfg,
-                    Some(&parameter_tree.subtree("query_norm")),
-                    head_dim,
-                )
-            })
-            .transpose()?;
-        let key = key_config
-            .map(|cfg| {
-                Self::build_head(
-                    context,
-                    intermediate_data_type,
-                    cfg,
-                    Some(&parameter_tree.subtree("key_norm")),
-                    head_dim,
-                )
-            })
-            .transpose()?;
-        let value = value_config
-            .map(|cfg| Self::build_head(context, intermediate_data_type, cfg, None, head_dim))
-            .transpose()?;
+        let build_head = |config: Option<NormalizationConfig>, parameter_name: Option<&str>| {
+            let Some(config) = config else {
+                return Ok::<_, QKVNormError<B>>(None);
+            };
+            let scales =
+                config
+                    .has_scale
+                    .then(|| {
+                        parameter_tree
+                            .subtree(parameter_name.expect("scaled norm requires parameter tree"))
+                            .read_buffer("scales", &[head_dim], DataType::F32)
+                    })
+                    .transpose()?;
+            let kernel = <B::Kernels as Kernels>::QKVNormKernel::new(
+                context,
+                intermediate_data_type,
+                DataType::F32,
+                intermediate_data_type,
+                DataType::F32,
+                true,
+                scales.is_some(),
+            )
+            .map_err(QKVNormError::BackendError)?;
+            Ok(Some(Head {
+                kernel,
+                scales,
+                config,
+            }))
+        };
 
         Ok(Self {
-            query,
-            key,
-            value,
+            query: build_head(query_config, Some("query_norm"))?,
+            key: build_head(key_config, Some("key_norm"))?,
+            value: build_head(value_config, None)?,
             num_q_heads,
             num_kv_heads,
             projection_row_stride,
             head_dim,
-        })
-    }
-
-    fn build_head(
-        context: &B::Context,
-        intermediate_data_type: DataType,
-        config: NormalizationConfig,
-        parameter_tree: Option<&ParameterTree<B>>,
-        head_dim: u32,
-    ) -> Result<Head<B>, QKVNormError<B>> {
-        let scales = if config.has_scale {
-            Some(
-                parameter_tree
-                    .expect("scaled norm requires parameter tree")
-                    .leaf("scales")?
-                    .validate(&[head_dim], DataType::F32)?
-                    .read_buffer()?,
-            )
-        } else {
-            None
-        };
-        let kernel = <B::Kernels as Kernels>::QKVNormKernel::new(
-            context,
-            intermediate_data_type,
-            DataType::F32,
-            intermediate_data_type,
-            DataType::F32,
-            true,
-            scales.is_some(),
-        )
-        .map_err(QKVNormError::BackendError)?;
-        Ok(Head {
-            kernel,
-            scales,
-            config,
         })
     }
 
@@ -125,7 +94,7 @@ impl<B: Backend> QKVNorm<B> {
         qkvg: impl BufferMut<Backend = B>,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), B::Error> {
+    ) {
         self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, command_buffer)
     }
 
@@ -134,8 +103,9 @@ impl<B: Backend> QKVNorm<B> {
         key_value: impl BufferMut<Backend = B>,
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), B::Error> {
-        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, command_buffer)
+    ) {
+        let num_kv_heads = self.num_kv_heads.expect("KV norm requires KV heads");
+        self.encode_packed(key_value, batch_dim, 0, 2 * num_kv_heads * self.head_dim, command_buffer)
     }
 
     fn encode_packed(
@@ -145,16 +115,14 @@ impl<B: Backend> QKVNorm<B> {
         q_heads: u32,
         input_row_stride: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), B::Error> {
-        let packed_row_width = (q_heads + 2 * self.num_kv_heads) * self.head_dim;
+    ) {
+        let kv = self.num_kv_heads.unwrap_or(0);
+        let packed_row_width = (q_heads + 2 * kv) * self.head_dim;
         assert!(
             input_row_stride >= packed_row_width,
             "QKV norm input row stride ({input_row_stride}) is smaller than its packed row width ({packed_row_width})"
         );
 
-        command_buffer.push_debug_group("qkv norm");
-
-        let kv = self.num_kv_heads;
         let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
         for (head, head_offset, head_count) in heads {
             let Some(head) = head else {
@@ -178,10 +146,6 @@ impl<B: Backend> QKVNorm<B> {
                 command_buffer,
             );
         }
-
-        command_buffer.pop_debug_group();
-
-        Ok(())
     }
 }
 

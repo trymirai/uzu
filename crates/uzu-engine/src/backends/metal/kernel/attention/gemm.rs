@@ -2,16 +2,16 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
+use super::FullPrecisionInput;
 use crate::{
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding,
-            gpu_types::AttnParams,
             kernel::{AttentionArguments, AttentionKernelConfig},
         },
         metal::{
             Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
-            kernel::AttentionGemmMetalKernel,
+            gpu_types::attention::AttnParams, kernel::AttentionGemmMetalKernel,
         },
     },
     data_type::DataType,
@@ -55,7 +55,7 @@ fn retile_params(
 
 impl AttentionGemm {
     pub fn is_supported(config: &AttentionKernelConfig) -> bool {
-        matches!(config.head_dim, 64 | 128 | 256) && matches!(config.data_type, DataType::BF16 | DataType::F32)
+        matches!(config.head_dim, 64 | 128 | 256) && config.data_type == DataType::BF16
     }
 
     pub fn new(config: &AttentionKernelConfig) -> Self {
@@ -113,23 +113,19 @@ impl AttentionGemm {
 
     pub fn encode(
         &self,
-        arguments: AttentionArguments<
-            '_,
-            Metal,
-            impl BufferRef<Backend = Metal>,
+        input: FullPrecisionInput<
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
+        arguments: AttentionArguments<'_, Metal, impl BufferRef<Backend = Metal>, impl BufferRef<Backend = Metal>>,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[arguments.suffix_length, self.num_q_heads, self.head_dim], self.data_type)?;
 
-        let use_mxu = arguments.suffix_length >= 64
-            && matches!(self.data_type, DataType::BF16)
-            && matches!(self.head_dim, 64 | 128)
-            && command_buffer.context().supports_mxu;
+        let use_mxu =
+            arguments.suffix_length >= 64 && matches!(self.head_dim, 64 | 128) && command_buffer.context().supports_mxu;
         let (bq, bk) = if use_mxu {
             (64, 32)
         } else {
@@ -163,9 +159,9 @@ impl AttentionGemm {
         };
         let kernel = self.get_or_create(command_buffer.context(), key)?;
         kernel.encode(
-            arguments.queries,
-            arguments.keys,
-            arguments.values,
+            input.queries,
+            input.keys,
+            input.values,
             &mut output,
             params,
             arguments.cache.ring_params(),

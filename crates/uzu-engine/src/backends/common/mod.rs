@@ -1,6 +1,7 @@
 pub(super) mod allocator;
 mod backend;
 mod buffer;
+pub mod capture_matcher;
 mod command_buffer;
 mod context;
 mod device_capabilities;
@@ -13,7 +14,7 @@ pub use buffer::{
     constant::ConstantBuffer,
     cpu_accessible::BufferCpuAccessible,
     global::GlobalBuffer,
-    reference::{BufferMut, BufferRef, Subbuffer},
+    reference::{BufferMut, BufferRef},
     scratch::ScratchBuffer,
     sparse::SparseBuffer,
 };

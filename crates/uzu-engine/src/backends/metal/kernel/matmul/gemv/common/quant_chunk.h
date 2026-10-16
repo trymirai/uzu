@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../common/quant_unpack.h"
+#include "../../../common/conversion.h"
 
 namespace uzu {
 namespace gemm {
@@ -8,17 +9,11 @@ namespace gemm {
 template <uint BITS>
 struct QuantChunk {
   UZU_CONST uint VALUES = 8;
-  UZU_CONST uint FLOAT_MANTISSA_BITS = 23;
-  UZU_CONST uint FLOAT_EXPONENT_BIAS = 127;
-  UZU_CONST uint MANTISSA_BASE_BITS = (FLOAT_EXPONENT_BIAS + FLOAT_MANTISSA_BITS) << FLOAT_MANTISSA_BITS;
-  UZU_CONST float MANTISSA_BASE = float(1u << FLOAT_MANTISSA_BITS);
   UZU_CONST uint BITS_PER_BYTE = 8;
   UZU_CONST uint WORD_BITS = 32;
   UZU_CONST uint WORD_LANES = 4;
   UZU_CONST uint WORD_BYTES = WORD_BITS / BITS_PER_BYTE;
   UZU_CONST uint VECTOR_BYTES = WORD_BYTES * WORD_LANES;
-  UZU_CONST uint BF16_BITS = 16;
-  UZU_CONST uint BF16_VALUES_PER_WORD = WORD_BITS / BF16_BITS;
 
   template <uint WORDS>
   static METAL_FUNC void decode(
@@ -69,21 +64,20 @@ private:
       bool signed_codes
   ) {
     constexpr uint CODES_PER_WORD = WORD_BITS / BITS;
-    constexpr uint W8_SIGN_BITS = 0x80808080u;
     if constexpr (BITS == 4) {
       word0 ^= signed_codes ? W4_SIGN_MASK : 0u;
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < VALUES; i++) {
-        values[i] = as_type<float>(extract_bits(word0, BITS * i, BITS) | MANTISSA_BASE_BITS) - origin;
+        values[i] = float_with_offset(extract_bits(word0, BITS * i, BITS)) - origin;
       }
     } else {
-      const uint mask = signed_codes ? W8_SIGN_BITS : 0u;
+      const uint mask = signed_codes ? W8_SIGN_MASK : 0u;
       word0 ^= mask;
       word1 ^= mask;
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < CODES_PER_WORD; i++) {
-        values[i] = as_type<float>(extract_bits(word0, BITS * i, BITS) | MANTISSA_BASE_BITS) - origin;
-        values[CODES_PER_WORD + i] = as_type<float>(extract_bits(word1, BITS * i, BITS) | MANTISSA_BASE_BITS) - origin;
+        values[i] = float_with_offset(extract_bits(word0, BITS * i, BITS)) - origin;
+        values[CODES_PER_WORD + i] = float_with_offset(extract_bits(word1, BITS * i, BITS)) - origin;
       }
     }
   }
@@ -91,12 +85,12 @@ private:
   template <bool BOUNDED, bool EXPANDS_BF16, typename AT>
   static METAL_FUNC void load_values(const device AT* source, thread float (&values)[VALUES], uint valid) {
     if constexpr (!BOUNDED && EXPANDS_BF16) {
-      constexpr uint BF16_UPPER_BITS = 0xffff0000u;
       const uint4 packed = *reinterpret_cast<const device uint4*>(source);
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < WORD_LANES; i++) {
-        values[BF16_VALUES_PER_WORD * i] = as_type<float>(packed[i] << BF16_BITS);
-        values[BF16_VALUES_PER_WORD * i + 1] = as_type<float>(packed[i] & BF16_UPPER_BITS);
+        const float2 widened = unpack_bfloat(packed[i]);
+        values[2 * i] = widened.x;
+        values[2 * i + 1] = widened.y;
       }
     } else {
       METAL_PRAGMA_UNROLL

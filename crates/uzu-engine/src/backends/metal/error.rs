@@ -1,11 +1,6 @@
-use std::{error::Error as StdError, sync::mpsc::RecvError};
+use std::sync::mpsc::RecvError;
 
 use thiserror::Error;
-
-use crate::backends::{
-    common::kernel::matmul::MatmulError,
-    metal::{Metal, kernel::matmul::gemm::GemmSpecializationError},
-};
 
 #[derive(Debug, Error)]
 pub enum MetalError {
@@ -13,12 +8,10 @@ pub enum MetalError {
     CannotOpenDevice,
     #[error("Cannot create residency set: {0}")]
     CannotCreateResidencySet(String),
-    #[error("Cannot start gpu capture {0}")]
+    #[error("Cannot start GPU capture: {0}")]
     CannotStartGpuCapture(String),
     #[error("Cannot create library: {0}")]
     CannotCreateLibrary(String),
-    #[error("Cannot create compiler: {0}")]
-    CannotCreateCompiler(String),
     #[error("Cannot create command queue")]
     CannotCreateCommandQueue,
     #[error("Cannot create event")]
@@ -35,26 +28,11 @@ pub enum MetalError {
     CommandBufferWait(RecvError),
     #[error("Command buffer execution failed: {0}")]
     CommandBufferExecution(String),
+    #[error("Cannot create function: {0}")]
+    CannotCreateFunction(String),
     #[error("Cannot create pipeline state for {function_name}: {error}")]
     CannotCreatePipelineState {
         function_name: String,
         error: String,
     },
-    #[error("Kernel dispatch failed: {0}")]
-    KernelDispatchFailed(#[source] Box<dyn StdError + Send + Sync + 'static>),
-}
-
-impl From<MatmulError<Metal>> for MetalError {
-    fn from(value: MatmulError<Metal>) -> Self {
-        match value {
-            MatmulError::BackendError(e) => e,
-            other => MetalError::KernelDispatchFailed(Box::new(other)),
-        }
-    }
-}
-
-impl From<GemmSpecializationError> for MetalError {
-    fn from(value: GemmSpecializationError) -> Self {
-        MetalError::KernelDispatchFailed(Box::new(value))
-    }
 }

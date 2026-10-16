@@ -5,14 +5,14 @@ use num_traits::Float;
 use uzu_engine_macros::kernel;
 
 use crate::{
-    array::ArrayElement,
+    data_type::DataTypeRepr,
     encodable_block::sampling::{gumbel_float, revidx},
 };
 
 // NOTE: top_k + top_p combination is not exactly matching lalamo ("parallel" here, should be top-k then top-p)
 #[kernel(UnifiedSampling)]
 #[variants(T, f32, bf16)]
-pub fn unified_sampling<T: ArrayElement + Float>(
+pub fn unified_sampling<T: DataTypeRepr + Float>(
     logits: *const T,
     output: *mut u32,
     #[optional(is_stochastic)] seeds: Option<*const u64>,

@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
-        gpu_types::ActivationType,
+        gpu_types::activation_type::ActivationType,
         kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::ActivationFormat},
     },
     config::{activation::AnyActivation, clipping::ClippingBounds},
@@ -21,13 +21,13 @@ pub struct MlpGateActMulEncodable<B: Backend> {
 
 impl<B: Backend> MlpGateActMulEncodable<B> {
     pub fn new(
-        context: &B::Context,
+        hidden_dim: u32,
         data_type: DataType,
         activation: AnyActivation,
         gate_clipping: ClippingBounds,
         value_clipping: ClippingBounds,
-        hidden_dim: u32,
         input_preparation: Option<LinearInputPreparation<B>>,
+        context: &B::Context,
     ) -> Result<Self, B::Error> {
         let (hadamard_factors, activation_quantization) = input_preparation
             .map_or((None, None), |preparation| (Some(preparation.rht_signs), preparation.activation_quantization));
@@ -53,13 +53,11 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
 
     pub fn encode_for_linear(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         fused_up: impl BufferRef<Backend = B>,
         batch_dim: u32,
         act_format: ActivationFormat,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
-        command_buffer.push_debug_group("gate act mul");
-
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
         }
@@ -114,8 +112,6 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             );
             LinearInput::FullPrecision(hidden)
         };
-
-        command_buffer.pop_debug_group();
 
         Ok(input)
     }

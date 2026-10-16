@@ -9,7 +9,7 @@ use super::{
     variant_combinations::constrained_combinations,
 };
 use crate::common::{
-    constraints::Constraints, enum_paths::EnumPaths, identifiers::KernelName, mangling::static_mangle,
+    constraints::Constraints, gpu_type_paths::GpuTypePaths, identifiers::KernelName, mangling::static_mangle,
 };
 
 pub type SpecializeBaseIndices = HashMap<KernelName, usize>;
@@ -27,7 +27,7 @@ pub struct KernelWrappers {
 
 pub fn wrappers(
     kernels: &[MetalKernelInfo],
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
 ) -> anyhow::Result<(Box<[KernelWrappers]>, SpecializeBaseIndices)> {
     let mut all_wrappers = Vec::new();
     let mut base_indices = SpecializeBaseIndices::new();
@@ -42,7 +42,7 @@ pub fn wrappers(
             next_index += specialize_count;
         }
 
-        all_wrappers.push(kernel_wrappers(kernel, base_indices.get(&kernel.name), enum_paths)?);
+        all_wrappers.push(kernel_wrappers(kernel, base_indices.get(&kernel.name), gpu_type_paths)?);
     }
 
     Ok((all_wrappers.into_boxed_slice(), base_indices))
@@ -81,7 +81,7 @@ impl SpecializeBinding<'_> {
 
 fn specialize_bindings<'a>(
     kernel: &'a MetalKernelInfo,
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
 ) -> Vec<SpecializeBinding<'a>> {
     kernel
         .arguments
@@ -89,7 +89,7 @@ fn specialize_bindings<'a>(
         .filter(|a| matches!(&a.argument_type, MetalArgumentType::Specialize(_)))
         .map(|argument| {
             let name_suffix = format!("{}_{}", kernel.name, argument.name);
-            let enum_type = is_enum_c_type(enum_paths, &argument.c_type)
+            let enum_type = is_enum_c_type(gpu_type_paths, &argument.c_type)
                 .then(|| argument.c_type.trim_start_matches("const ").trim().to_string());
             SpecializeBinding {
                 argument,
@@ -148,10 +148,10 @@ fn kernel_footer(bindings: &[SpecializeBinding<'_>]) -> String {
 fn kernel_wrappers(
     kernel: &MetalKernelInfo,
     base_index: Option<&usize>,
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
 ) -> anyhow::Result<KernelWrappers> {
     let mut variants = Vec::new();
-    let bindings = specialize_bindings(kernel, enum_paths);
+    let bindings = specialize_bindings(kernel, gpu_type_paths);
 
     let header = base_index.map(|&base| kernel_header(&bindings, base).into_boxed_str());
     let parameters = kernel.variants.as_deref();

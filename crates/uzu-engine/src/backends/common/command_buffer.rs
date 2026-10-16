@@ -3,9 +3,9 @@ use std::{mem::size_of_val, time::Duration};
 use bytemuck::{AnyBitPattern, NoUninit};
 
 use crate::{
-    array::size_for_shape,
     backends::common::{Backend, BufferMut, BufferRef},
     data_type::DataType,
+    utils::size_for_shape::size_for_shape,
 };
 
 pub trait CommandBuffer {
@@ -73,12 +73,16 @@ pub trait CommandBufferEncoding {
         value: u8,
     );
 
-    fn push_debug_group(
+    #[must_use]
+    fn debug_group(
+        &mut self,
+        name: &str,
+    ) -> <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DebugGroupSpan<'_>;
+
+    fn debug_point(
         &mut self,
         name: &str,
     );
-
-    fn pop_debug_group(&mut self);
 
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }

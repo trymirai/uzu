@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
 
 // Multi-token causal conv1d with SiLU for DeltaNet.
 // Reads from conv_padded (Conv1dPack output), writes conv'd+SiLU'd values
@@ -15,7 +15,7 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 // state_out: [conv_dim, state_stride]
 #[kernel(DeltaNetConvScan)]
 #[variants(T, f32, bf16)]
-pub fn delta_net_conv_scan<T: ArrayElement + Float>(
+pub fn delta_net_conv_scan<T: DataTypeRepr + Float>(
     conv_padded: *const f32,
     conv_weight: *const f32,
     #[optional(has_bias)] bias: Option<*const f32>,

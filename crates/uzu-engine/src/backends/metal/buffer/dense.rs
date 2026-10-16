@@ -4,7 +4,7 @@ use metal::{MTLBuffer, MTLDevice, MTLDeviceExt, MTLResidencySet, MTLResourceOpti
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
 
-use crate::backends::metal::{MetalContext, error::MetalError};
+use crate::backends::metal::{context::MetalContext, error::MetalError};
 
 pub struct MetalDenseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,

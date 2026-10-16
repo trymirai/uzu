@@ -5,14 +5,14 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE, kernel::ActivationTransform,
+            gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE, kernel::ActivationTransform,
         },
         cpu::Cpu,
     },
+    data_type::DataTypeRepr,
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
 };
 
@@ -22,7 +22,7 @@ enum TransformOrder {
     Output,
 }
 
-fn run<T: ArrayElement + Float + Debug, B: Backend>(
+fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
     data: &[T],
     factors: &[i32],
     channel_count: usize,
@@ -59,7 +59,7 @@ fn run<T: ArrayElement + Float + Debug, B: Backend>(
     })
 }
 
-fn check<T: ArrayElement + Float + Debug>(tolerance: f64) {
+fn check<T: DataTypeRepr + Float + Debug>(tolerance: f64) {
     for (order, in_place) in [
         (TransformOrder::Input, false),
         (TransformOrder::Input, true),

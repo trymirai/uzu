@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
-        gpu_types::{EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, d4s4},
+        gpu_types::{d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::InputEmbeddingLookupKernel,
     },
     config::weight_matrix::{
@@ -14,7 +14,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 type LookupKernel<B> = <<B as Backend>::Kernels as Kernels>::InputEmbeddingLookupKernel;
@@ -90,11 +90,11 @@ pub struct EmbeddingTable<B: Backend> {
 
 impl<B: Backend> EmbeddingTable<B> {
     pub fn load(
-        context: &B::Context,
-        tree: &ParameterTree<B>,
         vocab_size: u32,
         embedding_dim: u32,
         data_type: DataType,
+        tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, EmbeddingTableError<B>> {
         if !matches!(data_type, DataType::F32 | DataType::BF16) {
             return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
@@ -102,7 +102,7 @@ impl<B: Backend> EmbeddingTable<B> {
             )));
         }
         let load_matrix = |tree: &ParameterTree<B>, spec| {
-            WeightMatrix::load(tree, spec, Layout::InputOutput, embedding_dim, vocab_size, data_type)
+            WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, tree)
         };
         let (storage, output_hadamard_factors) = match tree.metadata::<AnyWeightMatrixSpec>("spec")? {
             AnyWeightMatrixSpec::D4S4Spec(spec) => {
@@ -111,7 +111,6 @@ impl<B: Backend> EmbeddingTable<B> {
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
-                adapter_spec: None,
                 incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
                 incoherence_processing_mode: IncoherenceProcessingMode::Output,
                 ..
@@ -208,7 +207,7 @@ fn load_d4s4<B: Backend>(
             "{spec:?} with {data_type:?} and embedding dim {embedding_dim}"
         )));
     }
-    let read = |name: &str, shape: &[u32], data_type| tree.leaf(name)?.validate(shape, data_type)?.read_buffer();
+    let read = |name: &str, shape: &[u32], data_type| tree.read_buffer(name, shape, data_type);
     let table = D4S4Table {
         codes: read("codes", &[vocab_size, embedding_dim / d4s4::VALUES_PER_CODE], DataType::U8)?,
         row_scales: read("row_scales", &[vocab_size], data_type)?,
@@ -229,5 +228,5 @@ pub(super) fn read_output_signs<B: Backend>(
     embedding_dim: u32,
 ) -> Result<B::GlobalBuffer, EmbeddingTableError<B>> {
     let signs = tree.subtree("incoherence_signs");
-    Ok(signs.leaf("output_signs")?.validate(&[embedding_dim], DataType::I32)?.read_buffer()?)
+    Ok(signs.read_buffer("output_signs", &[embedding_dim], DataType::I32)?)
 }

@@ -11,14 +11,20 @@ using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
-#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant)
+#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
+#define GEMM_K_PARTIAL_ELEMENTS                                                                                        \
+  (gemm_tiling_simdgroups_per_k(GEMM_TILING) == 1                                                                      \
+       ? 1                                                                                                             \
+       : (gemm_tiling_simdgroups_per_k(GEMM_TILING) - 1) * gemm_tiling_block_m(GEMM_TILING) *                          \
+             gemm_tiling_block_n(GEMM_TILING) * uint(sizeof(float) / sizeof(BT)))
 // The A8 MXU route reads its scales into registers, so it asks for no
 // threadgroup B memory.
 #define GEMM_TGB_ELEMENTS                                                                                              \
-  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT)))) : 1)    \
+  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT))))         \
+                               : GEMM_K_PARTIAL_ELEMENTS)                                                              \
              : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
 template <
@@ -45,6 +51,7 @@ VARIANTS(
     GemmTiling::Tile64x64x32_Simdgroups2x2,
     GemmTiling::Tile32x32x32_Simdgroups2x2,
     GemmTiling::Tile16x32x256_Simdgroups1x1,
+    GemmTiling::Tile16x32x256_Simdgroups1x1x4,
     GemmTiling::Tile16x128x256_Simdgroups1x4,
     GemmTiling::Tile32x64x256_Simdgroups2x2,
     GemmTiling::Tile64x32x256_Simdgroups4x1,
@@ -68,6 +75,7 @@ VARIANTS(A_GROUP_SIZE, 0, 128)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
+     GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1x4 ||
      GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4 ||
      GEMM_TILING == GemmTiling::Tile32x64x256_Simdgroups2x2 ||
      GEMM_TILING == GemmTiling::Tile64x32x256_Simdgroups4x1 ||
@@ -94,13 +102,16 @@ CONSTRAINT(
      (B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
       A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)))
 CONSTRAINT(
+    GEMM_TILING != GemmTiling::Tile16x32x256_Simdgroups1x1x4 ||
+    A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
+CONSTRAINT(
     GEMM_TILING != GemmTiling::Tile16x128x256_Simdgroups1x4 ||
     (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
     (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
-CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || (AT == "bfloat" && DT == "bfloat"))
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || AT == "bfloat")
 CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (A_GROUP_SIZE == 0))
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
@@ -126,6 +137,7 @@ KERNEL(Gemm)(
     const GemmDTransform output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
     const bool signed_codes SPECIALIZE,
+    const GemmBLayout gemm_b_layout SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
     const uint group_x GROUPS(group_count_x),
@@ -133,7 +145,7 @@ KERNEL(Gemm)(
     const uint group_z GROUPS(group_count_z),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
     const uint thread_y THREADS(gemm_tiling_simdgroups_per_column(GEMM_TILING)),
-    const uint thread_z THREADS(gemm_tiling_simdgroups_per_row(GEMM_TILING)),
+    const uint thread_z THREADS(gemm_tiling_simdgroups_per_row(GEMM_TILING) * gemm_tiling_simdgroups_per_k(GEMM_TILING)),
     const ThreadContext thread_context
 ) {
   (void)group_x;
@@ -151,7 +163,8 @@ KERNEL(Gemm)(
       "kernel bindings and operand correction policy must agree"
   );
   const auto left_storage = operands::pack_left<LeftOperand, AT>(a, a_int8, a_scales, a_group_sums);
-  const auto right_storage = operands::pack_right<RightOperand, BT>(b, scales, biases, zero_points, signed_codes);
+  const auto right_storage =
+      operands::pack_right<RightOperand, BT>(b, scales, biases, zero_points, signed_codes, gemm_b_layout);
 
   if constexpr (USE_MXU) {
     using Core = MxuMmaCore<DT, GEMM_TILING, TRANSPOSE_B, LeftOperand, RightOperand>;

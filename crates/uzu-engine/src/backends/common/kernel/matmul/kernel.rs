@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
@@ -14,13 +16,15 @@ use crate::{
 
 pub trait MatmulKernel: Sized + Send + Sync {
     type Backend: Backend<Kernels: Kernels<MatmulKernel = Self>>;
+    type Error: Error + 'static;
+    type WeightsLayout: Copy + Default + PartialEq + Send + Sync;
 
     fn new(
         context: &<Self::Backend as Backend>::Context,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
-    ) -> Result<Self, <Self::Backend as Backend>::Error>;
+    ) -> Result<Self, Self::Error>;
 
     fn encode(
         &mut self,
@@ -33,7 +37,7 @@ pub trait MatmulKernel: Sized + Send + Sync {
             impl BufferRef<Backend = Self::Backend>,
         >,
         command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), <Self::Backend as Backend>::Error>;
+    ) -> Result<(), Self::Error>;
 
     fn select_activation_quantization(
         &self,
@@ -46,8 +50,18 @@ pub trait MatmulKernel: Sized + Send + Sync {
     fn select_activation_format(
         &self,
         _bf16_shape: &MatmulShape,
+        _weights_layout: Self::WeightsLayout,
         _context: &<Self::Backend as Backend>::Context,
     ) -> ActivationFormat {
         ActivationFormat::Bf16
+    }
+
+    fn optimize_weights_layout(
+        &self,
+        _a8_shape: &MatmulShape,
+        _weights: &mut <Self::Backend as Backend>::GlobalBuffer,
+        _context: &<Self::Backend as Backend>::Context,
+    ) -> Result<Self::WeightsLayout, <Self::Backend as Backend>::Error> {
+        Ok(Self::WeightsLayout::default())
     }
 }

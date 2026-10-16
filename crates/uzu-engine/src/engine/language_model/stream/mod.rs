@@ -4,7 +4,7 @@ use thiserror::Error;
 #[cfg(grammar)]
 use crate::engine::language_model::grammar::{Grammar, GrammarError};
 use crate::{
-    backends::common::Backend,
+    backends::common::{Backend, capture_matcher::CaptureError},
     encodable_block::decoder::DecoderError,
     engine::language_model::{LanguageModel, state::LanguageModelState},
     speculators::dflash_tfm::DFlashTreeError,
@@ -25,6 +25,8 @@ pub struct LanguageModelStreamOptions {
 pub enum LanguageModelStreamError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error("Capture error: {0}")]
+    Capture(#[from] CaptureError<B>),
     #[error("Decoder error: {0}")]
     Decoder(#[from] DecoderError<B>),
     #[cfg(grammar)]

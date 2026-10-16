@@ -9,7 +9,7 @@ use super::super::{
     ast::{MetalArgumentType, MetalKernelInfo},
     enum_path_rewrite::{gpu_type_kind_for_c_type, rewrite_for_rust},
 };
-use crate::common::enum_paths::{EnumPaths, GpuTypeKind};
+use crate::common::gpu_type_paths::{GpuTypeKind, GpuTypePaths};
 
 enum SpecializeLowering {
     Direct,
@@ -39,7 +39,7 @@ pub fn parse(
     kernel: &MetalKernelInfo,
     base_function_constant_index: Option<usize>,
     kernel_name: &str,
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
 ) -> Result<SpecializeEmission> {
     let mut presence_checks = Vec::new();
     let arguments = kernel
@@ -52,17 +52,18 @@ pub fn parse(
         .enumerate()
         .map(|(offset, (argument, rust_type_text))| -> Result<SpecializeArgument> {
             let name = format_ident!("{}", argument.name.as_ref());
-            let rust_type: Type = syn::parse_str(rust_type_text).with_context(|| {
+            let rust_type = gpu_type_paths.resolve_type(rust_type_text).with_context(|| {
                 format!("specialize type `{}` in kernel `{}` cannot be parsed", rust_type_text, kernel_name)
             })?;
             let function_constant_index = base_function_constant_index.unwrap_or(0) + offset;
-            let lowering = match gpu_type_kind_for_c_type(enum_paths, &argument.c_type) {
+            let lowering = match gpu_type_kind_for_c_type(gpu_type_paths, &argument.c_type) {
                 Some(GpuTypeKind::Enum) => SpecializeLowering::Enum,
                 Some(GpuTypeKind::OptionSet) => SpecializeLowering::OptionSet,
+                Some(GpuTypeKind::Struct) => anyhow::bail!("cannot specialize struct argument `{name}` in kernel `{kernel_name}`"),
                 None => SpecializeLowering::Direct,
             };
             if let Some(condition) = argument.condition.as_deref() {
-                let condition = rewrite_for_rust(enum_paths, condition)?;
+                let condition = rewrite_for_rust(gpu_type_paths, condition)?;
                 presence_checks.push(quote! {
                     assert_eq!(#name.is_some(), #condition, concat!("invalid presence for specialization ", stringify!(#name)));
                 });

@@ -20,7 +20,7 @@ using namespace uzu::matmul;
 // prefix: [B, T, HV] path log-decay prefix from BuildTreePrefix
 // qkd:    [B, HV, T, T] from BuildTreeGram
 // u:      [B, HV, T, V]
-// h0:     [H0, HV, V, K]
+// h0:     [B, HV, V, K]
 //
 // o[row, value] = exp(prefix[row]) * scale * dot(q[row], h0[value])
 //                 + sum_j qkd[row, j] * u[j, value]
@@ -36,7 +36,6 @@ PUBLIC KERNEL(BuildTreeOut)(
     const device float* qkd,
     const device float* u,
     const device float* h0 OPTIONAL(use_h0),
-    const device int* h0_indices OPTIONAL(use_h0),
     device OutputT* o,
     constant const float& scale,
     constant const uint& batch_size,
@@ -83,10 +82,9 @@ PUBLIC KERNEL(BuildTreeOut)(
   AccFragment acc;
   acc.clear();
 
-  const int h0_index = use_h0 ? h0_indices[batch_idx] : -1;
-  if (use_h0 && h0_index >= 0) {
+  if (use_h0) {
     const uint q_base = (batch_idx * tree_size * qk_heads + row_base * qk_heads + qk_head_idx) * head_k_dim;
-    const uint h0_base = ((uint(h0_index) * value_heads + value_head_idx) * head_v_dim + value_base) * head_k_dim;
+    const uint h0_base = ((batch_idx * value_heads + value_head_idx) * head_v_dim + value_base) * head_k_dim;
     for (uint k0 = 0; k0 < head_k_dim; k0 += ROWS) {
       const short valid_k = short(min(uint(ROWS), head_k_dim - k0));
       QFragment q_frag;

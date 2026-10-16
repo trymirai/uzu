@@ -1,6 +1,9 @@
 use super::MaskKind;
 use crate::{
-    backends::{common::kernel::AttentionKernelConfig, metal::context::MetalContext},
+    backends::{
+        common::{gpu_types::kv_layout, kernel::AttentionKernelConfig},
+        metal::context::MetalContext,
+    },
     data_type::DataType,
 };
 
@@ -8,8 +11,9 @@ const GEMM_GROUPED_HEAD_DIMS: [u32; 2] = [128, 256];
 const GEMM_GROUPED_DECODE_SUFFIX_MIN: u32 = 2;
 const GEMM_GROUPED_DECODE_SUFFIX_MAX: u32 = 64;
 const GEMM_GROUPED_PREFILL_SUFFIX_MAX: u32 = 1024;
-const GEMM_GROUPED_MIN_KV_LENGTH: u32 = 1024;
 pub const MAX_TRIE_SUFFIX: u32 = 64;
+const SMALL_SUFFIX_MAX: u32 = 4;
+const SMALL_SUFFIX_MAX_SPLITS: u32 = 16;
 
 pub fn is_supported(
     arguments: &AttentionKernelConfig,
@@ -31,7 +35,6 @@ pub fn should_encode(
     head_dim: u32,
     mask: MaskKind,
     suffix_length: u32,
-    kv_length: u32,
 ) -> bool {
     let decode = (GEMM_GROUPED_DECODE_SUFFIX_MIN..=GEMM_GROUPED_DECODE_SUFFIX_MAX).contains(&suffix_length);
     // The grouped prefill path is only tuned for head_dim 256.
@@ -39,9 +42,7 @@ pub fn should_encode(
     let causal_prefill = prefill_tuned
         && mask == MaskKind::Causal
         && (GEMM_GROUPED_DECODE_SUFFIX_MAX + 1..=GEMM_GROUPED_PREFILL_SUFFIX_MAX).contains(&suffix_length);
-    // Trie (tree-structured) attention is fastest on the grouped kernel at any KV length.
-    let enough_kv = mask == MaskKind::Trie || kv_length >= GEMM_GROUPED_MIN_KV_LENGTH;
-    enough_kv && (decode || causal_prefill)
+    decode || causal_prefill
 }
 
 type MeasuredSplits = (u32, u32, &'static [(u32, u32)]);
@@ -73,7 +74,7 @@ pub struct SplitGeometry {
     pub head_dim: u32,
     pub num_q_heads: u32,
     pub num_groups: u32,
-    pub block_rows: u32,
+    pub query_rows_per_threadgroup: u32,
     pub block_k: u32,
 }
 
@@ -118,14 +119,14 @@ pub fn choose_splits(
     gpu_core_count: u32,
 ) -> u32 {
     let threadgroups_per_kv_split = (geometry.num_q_heads / geometry.num_groups * suffix_length)
-        .div_ceil(geometry.block_rows)
+        .div_ceil(geometry.query_rows_per_threadgroup)
         * geometry.num_groups;
     let max_splits = kv_length.div_ceil(geometry.block_k).max(1);
 
     if suffix_length > GEMM_GROUPED_DECODE_SUFFIX_MAX && kv_length >= PREFILL_SPLIT_MIN_KV {
         // Each padded row has head_dim partial values, one max, and one sum, all F32.
         let bytes_per_split = threadgroups_per_kv_split as u64
-            * geometry.block_rows as u64
+            * geometry.query_rows_per_threadgroup as u64
             * (geometry.head_dim as u64 + PARTIAL_STATS_PER_ROW)
             * DataType::F32.size_in_bytes() as u64;
         let requested_splits = kv_length.div_ceil(PREFILL_SPLIT_KEYS).min(max_splits);
@@ -143,6 +144,37 @@ pub fn choose_splits(
         None => splits_for_ratio(TENTHS_PER_RATIO * TG_PER_CORE_FALLBACK, gpu_core_count, threadgroups_per_kv_split),
     };
     splits.clamp(1, max_splits)
+}
+
+pub fn int8_splits(
+    split_rows: u32,
+    head_dim: u32,
+    suffix_length: u32,
+    kv_length: u32,
+) -> u32 {
+    let kv_blocks = kv_length.div_ceil(kv_layout::TILE_KEYS);
+    let splits = if suffix_length <= GEMM_GROUPED_DECODE_SUFFIX_MAX {
+        // Estimate split count using at least 16 query tokens.
+        let query_tokens = suffix_length.max(kv_layout::TILE_QUERIES);
+        let splits = (kv_length as f32 / query_tokens as f32).sqrt().round() as u32;
+        // Tuned on M5 Max.
+        if suffix_length <= SMALL_SUFFIX_MAX {
+            splits.min(SMALL_SUFFIX_MAX_SPLITS)
+        } else {
+            splits
+        }
+    } else if kv_length >= PREFILL_SPLIT_MIN_KV {
+        let row_bytes = head_dim as u64 * DataType::BF16.size_in_bytes() as u64
+            + PARTIAL_STATS_PER_ROW * DataType::F32.size_in_bytes() as u64;
+        let bytes_per_split = split_rows as u64 * row_bytes;
+        let scratch_splits = (PREFILL_SPLIT_SCRATCH_BYTES / bytes_per_split) as u32;
+        // Round to the nearest split count.
+        let requested_splits = (kv_length + PREFILL_SPLIT_KEYS / 2) / PREFILL_SPLIT_KEYS;
+        requested_splits.min(scratch_splits)
+    } else {
+        1
+    };
+    splits.clamp(1, kv_blocks.max(1))
 }
 
 #[cfg(test)]

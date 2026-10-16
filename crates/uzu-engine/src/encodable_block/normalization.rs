@@ -2,14 +2,14 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{Kernels, NormalizationKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
     data_type::DataType,
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
+    utils::size_for_shape::size_for_shape,
 };
 
 // TODO: clean up
@@ -51,10 +51,10 @@ pub struct Normalization<B: Backend> {
 impl<B: Backend> Normalization<B> {
     pub fn new(
         element_count: u32,
+        data_type: DataType,
         hadamard_factors: Option<B::GlobalBuffer>,
         shortcut_mode: ShortcutMode,
         post_layer_scalar: PostLayerScalar,
-        data_type: DataType,
         config: &NormalizationConfig,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
@@ -67,11 +67,11 @@ impl<B: Backend> Normalization<B> {
 
         let scales = config
             .has_scale
-            .then(|| parameter_tree.leaf("scales")?.validate(&[element_count], DataType::F32)?.read_buffer())
+            .then(|| parameter_tree.read_buffer("scales", &[element_count], DataType::F32))
             .transpose()?;
         let biases = config
             .has_biases
-            .then(|| parameter_tree.leaf("biases")?.validate(&[element_count], DataType::F32)?.read_buffer())
+            .then(|| parameter_tree.read_buffer("biases", &[element_count], DataType::F32))
             .transpose()?;
 
         let (scale_residual_sum, scale_output, post_layer_scalar_value) = match post_layer_scalar {
@@ -120,8 +120,6 @@ impl<B: Backend> Normalization<B> {
         shortcut: Option<impl BufferMut<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("normalization");
-
         let row_size = size_for_shape(&[self.element_count], self.data_type);
         let row_offset_bytes = row_offset as usize * row_size;
         let shortcut = shortcut.map(|shortcut| shortcut.subrange_mut(row_offset_bytes..));
@@ -140,8 +138,6 @@ impl<B: Backend> Normalization<B> {
             self.post_layer_scalar_value,
             command_buffer,
         );
-
-        command_buffer.pop_debug_group();
 
         Ok(output)
     }

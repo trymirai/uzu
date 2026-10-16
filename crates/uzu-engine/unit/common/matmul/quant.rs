@@ -3,28 +3,23 @@ use std::mem::{size_of, size_of_val};
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-#[cfg(backend = "metal")]
-use super::harness::TestDispatch;
-#[cfg(backend = "metal")]
-use crate::backends::metal::{Metal, MetalContext};
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
             Context,
-            gpu_types::{QuantizationMethod, QuantizationMode},
+            gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
                     Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
-                    QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection,
+                    QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout,
                 },
             },
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
 };
 
@@ -37,7 +32,7 @@ pub struct PreparedInt8A {
 }
 
 #[derive(Clone)]
-pub struct QuantInput<T: ArrayElement + Float> {
+pub struct QuantInput<T: DataTypeRepr + Float> {
     pub w_packed: Vec<u32>,
     pub scales: Vec<T>,
     pub zero_points: Option<Vec<u8>>,
@@ -62,7 +57,7 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
     }
 }
 
-fn pad<T: ArrayElement>(
+fn pad<T: DataTypeRepr>(
     values: &[T],
     minimum_len: usize,
 ) -> Vec<T> {
@@ -125,7 +120,7 @@ pub fn transpose_metadata(
     }
 }
 
-impl<T: ArrayElement + Float> QuantInput<T> {
+impl<T: DataTypeRepr + Float> QuantInput<T> {
     pub fn new(
         m: u32,
         k: u32,
@@ -288,7 +283,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
     }
 }
 
-pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
+pub struct QuantBuffers<B: Backend, T: DataTypeRepr + Float> {
     pub w: B::GlobalBuffer,
     pub scales: B::GlobalBuffer,
     pub zp: Option<B::GlobalBuffer>,
@@ -298,10 +293,11 @@ pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
     pub prepared_a_scales: Option<B::GlobalBuffer>,
     pub prepared_a_group_sums: Option<B::GlobalBuffer>,
     pub y: B::GlobalBuffer,
+    pub weights_layout: WeightsLayout<B>,
     _t: std::marker::PhantomData<T>,
 }
 
-impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
+impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
     pub fn allocate(
         context: &B::Context,
         input: &QuantInput<T>,
@@ -337,6 +333,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
                 .filter(|prepared| !prepared.group_sums.is_empty())
                 .map(|prepared| create_buffer_with_data::<B, i32>(context, &prepared.group_sums)),
             y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
+            weights_layout: Default::default(),
             _t: std::marker::PhantomData,
         };
         if params_layout == QuantParamsLayout::GroupOutput {
@@ -349,7 +346,15 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
         &'a self,
         input: &QuantInput<T>,
     ) -> MatmulB<&'a B::GlobalBuffer> {
-        quant_b_variant(&self.w, &self.scales, self.zp.as_ref(), self.bias.as_ref(), input.params_layout, input)
+        quant_b_variant(
+            &self.w,
+            &self.scales,
+            self.zp.as_ref(),
+            self.bias.as_ref(),
+            input.params_layout,
+            self.weights_layout,
+            input,
+        )
     }
 
     fn transpose_quant_params(
@@ -383,12 +388,13 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
     }
 }
 
-fn quant_b_variant<TB: BufferRef, T: ArrayElement + Float>(
+fn quant_b_variant<TB: BufferRef, T: DataTypeRepr + Float>(
     w: TB,
     scales: TB,
     zero_points: Option<TB>,
     biases: Option<TB>,
     params_layout: QuantParamsLayout,
+    weights_layout: WeightsLayout<TB::Backend>,
     input: &QuantInput<T>,
 ) -> MatmulB<TB> {
     let params = QuantParams::new(params_layout, input.n, input.k.div_ceil(input.group_size));
@@ -405,10 +411,11 @@ fn quant_b_variant<TB: BufferRef, T: ArrayElement + Float>(
         mode: input.mode,
         group_size: input.group_size,
         signed_codes: input.signed_codes,
+        weights_layout,
     })
 }
 
-pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
+pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
     buffers: &'a mut QuantBuffers<B, T>,
     input: &QuantInput<T>,
 ) -> MatmulArguments<'a, B, &'a B::GlobalBuffer, &'a B::GlobalBuffer, &'a mut B::GlobalBuffer, &'a B::GlobalBuffer> {
@@ -422,9 +429,10 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         prepared_a_scales,
         prepared_a_group_sums,
         y,
+        weights_layout,
         ..
     } = buffers;
-    let b = quant_b_variant(&*w, &*scales, zp.as_ref(), bias.as_ref(), input.params_layout, input);
+    let b = quant_b_variant(&*w, &*scales, zp.as_ref(), bias.as_ref(), input.params_layout, *weights_layout, input);
     let a = match &input.prepared_a {
         Some(prepared) => MatmulA::Int8Symmetric {
             values: prepared_a.as_ref().expect("prepared activation buffer"),
@@ -453,7 +461,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     }
 }
 
-pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
+pub fn run_quant_cpu<T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
     let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
@@ -467,29 +475,4 @@ pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
     matmul.encode(quant_arguments(&mut buffers, input), &mut command_buffer).expect("encode cpu quant");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     buffer_to_vec::<Cpu, T>(&buffers.y)
-}
-
-#[cfg(backend = "metal")]
-pub fn run_quant_metal<T: ArrayElement + Float>(
-    context: &MetalContext,
-    input: &QuantInput<T>,
-    dispatch: TestDispatch,
-) -> Vec<T> {
-    let mut buffers = QuantBuffers::<Metal, T>::allocate(context, input);
-    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
-        context,
-        T::data_type(),
-        T::data_type(),
-        T::data_type(),
-    )
-    .expect("MatmulMetalKernel");
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    let args = quant_arguments(&mut buffers, input);
-    if let Some(engine) = dispatch {
-        matmul.encode_with_gemm_engine(args, engine, &mut command_buffer).expect("forced GEMM engine encode failed");
-    } else {
-        matmul.encode(args, &mut command_buffer).expect("matmul encode failed");
-    }
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-    buffer_to_vec::<Metal, T>(&buffers.y)
 }

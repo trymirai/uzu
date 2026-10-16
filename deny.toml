@@ -26,6 +26,3 @@ allow = [
 
 [bans]
 multiple-versions = "allow"
-
-[sources.allow-org]
-github = ["trymirai"]
