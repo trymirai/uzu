@@ -112,8 +112,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(fixture: &Input<T>) -> Vec<T>
         create_buffer::<B, T>(context.as_ref(), fixture.suffix_length * fixture.num_heads * fixture.head_dim);
     command_buffer.encode_copy(&pooled_output, &mut output_buffer);
     drop(pooled_output);
-    let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    drop(completed);
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     buffer_to_vec::<B, T>(&output_buffer)
 }
@@ -147,8 +146,7 @@ fn get_gemm_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
         create_buffer::<Metal, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
     command_buffer.encode_copy(&pooled, &mut output);
     drop(pooled);
-    let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    drop(completed);
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec::<Metal, T>(&output)
 }
 

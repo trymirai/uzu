@@ -541,19 +541,22 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let mut capture_span = CAPTURE_MATCHER
             .capture::<B>(&self.model.engine.context, &format!("decode:{}", self.metrics.num_decode_forward_passes))?;
 
+        #[allow(clippy::let_and_return)]
         let (input_trie, chain_copy, full_accept) = if let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
                 &self.options.sampling_method,
             )
-            && let (root_token, Some(output_norm)) = prev_output
-                .resolve(
-                    &mut self.model_state.tokens,
-                    #[cfg(grammar)]
-                    self.options.grammar.as_mut(),
-                )
-                .await?
-        {
+            && let (root_token, Some(output_norm)) = {
+                let resolved = prev_output
+                    .resolve(
+                        &mut self.model_state.tokens,
+                        #[cfg(grammar)]
+                        self.options.grammar.as_mut(),
+                    )
+                    .await?;
+                resolved
+            } {
             let trie = speculator
                 .propose_tree(
                     self.model_state.speculator_state.as_mut().unwrap(),
@@ -886,14 +889,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         self.model_state.last_output_token = last_output_token;
 
         Ok(())
-    }
-}
-
-impl<'a, B: Backend> Iterator for LanguageModelStream<'a, B> {
-    type Item = Result<u64, LanguageModelStreamError<B>>;
-
-    fn next(&mut self) -> Option<Result<u64, LanguageModelStreamError<B>>> {
-        block_on(self.generate()).transpose() // TODO
     }
 }
 
