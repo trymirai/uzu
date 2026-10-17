@@ -71,13 +71,26 @@ pub fn grammar_trigger_token_sequence_for_prompt(
         .rposition(|window| window == trigger_token_sequence)
         .map(|start| &prompt[start + trigger_token_sequence.len()..]);
 
-    let trigger_is_in_generation_prompt = trailing_tokens.is_some_and(|trailing_tokens| {
-        let Ok(trailing_tokens) = trailing_tokens.iter().copied().map(u32::try_from).collect::<Result<Vec<_>, _>>()
-        else {
-            return false;
-        };
-        tokenizer.decode(&trailing_tokens, false).is_ok_and(|suffix| suffix.trim().is_empty())
-    });
+    let decode = |tokens: &[u64]| {
+        let token_ids = tokens.iter().copied().map(u32::try_from).collect::<Result<Vec<_>, _>>().ok()?;
+        tokenizer.decode(&token_ids, false).ok()
+    };
+    let trigger_is_in_generation_prompt = trailing_tokens
+        .is_some_and(|trailing_tokens| decode(trailing_tokens).is_some_and(|suffix| suffix.trim().is_empty()))
+        || (|| {
+            // Leading whitespace can merge into a different token in the prompt:
+            // Qwen3.5 encodes "\n</think>" differently from "\n\n</think>".
+            // Match decoded suffixes as a fallback, retaining special tokens and
+            // requiring that only whitespace follows the complete trigger.
+            let trigger = decode(trigger_token_sequence)?;
+            let trigger = trigger.trim_end();
+            if trigger.is_empty() {
+                return Some(false);
+            }
+            let prompt = decode(prompt)?;
+            Some(prompt.trim_end().ends_with(trigger))
+        })()
+        .unwrap_or(false);
 
     (!trigger_is_in_generation_prompt).then(|| trigger_token_sequence.to_vec())
 }
@@ -162,7 +175,7 @@ fn get_custom_sampling_method(method: &ShojiSamplingMethod) -> Result<UzuSamplin
 mod tests {
     use tokenizers::{Tokenizer, decoders::fuse::Fuse, models::wordlevel::WordLevel};
 
-    use super::grammar_trigger_token_sequence_for_prompt;
+    use super::{GrammarError, ShojiGrammar, get_grammar, grammar_trigger_token_sequence_for_prompt};
 
     fn tokenizer() -> Tokenizer {
         let model = WordLevel::builder()
@@ -172,6 +185,12 @@ mod tests {
                     ("</think>".to_string(), 1),
                     ("\n\n".to_string(), 2),
                     ("next".to_string(), 3),
+                    ("\n".to_string(), 4),
+                    ("<think>".to_string(), 5),
+                    ("<|im_start|>assistant".to_string(), 6),
+                    ("{}".to_string(), 7),
+                    ("<eos>".to_string(), 8),
+                    ("</thi".to_string(), 9),
                 ]
                 .into_iter()
                 .collect(),
@@ -195,6 +214,78 @@ mod tests {
         let tokenizer = tokenizer();
 
         assert_eq!(grammar_trigger_token_sequence_for_prompt(Some(&[1]), &[1, 2, 3], &tokenizer), Some(vec![1]));
+    }
+
+    #[test]
+    fn grammar_engages_when_leading_newline_is_merged_in_prompt() {
+        let tokenizer = tokenizer();
+        // Qwen3.5's tag is "\n</think>", but its disabled-thinking prefix
+        // contains "<think>\n\n</think>\n\n". The doubled newline is one token.
+        let trigger = [4, 1];
+        let prompt = [6, 4, 5, 2, 1, 2];
+        assert_eq!(tokenizer.decode(&[4, 1], false).unwrap(), "\n</think>");
+        assert_eq!(tokenizer.decode(&[5, 2, 1, 2], false).unwrap(), "<think>\n\n</think>\n\n");
+        assert_eq!(grammar_trigger_token_sequence_for_prompt(Some(&trigger), &prompt, &tokenizer), None);
+    }
+
+    #[test]
+    fn grammar_checks_current_prefix_even_when_history_has_exact_trigger() {
+        let tokenizer = tokenizer();
+        let prompt = [5, 4, 1, 3, 6, 4, 5, 2, 1, 2];
+        assert_eq!(grammar_trigger_token_sequence_for_prompt(Some(&[4, 1]), &prompt, &tokenizer), None);
+    }
+
+    #[test]
+    fn grammar_keeps_waiting_for_unclosed_or_nontrailing_trigger() {
+        let tokenizer = tokenizer();
+        for prompt in [
+            vec![],
+            vec![6, 4, 5, 4],             // Reasoning remains enabled.
+            vec![5, 2, 1, 2, 6, 4, 5, 4], // Closed reasoning only in history.
+            vec![5, 2, 1, 2, 3],          // Non-whitespace after the marker.
+            vec![5, 2, 9],                // Incomplete marker.
+            vec![5, 3, 1, 2],             // Missing the tag's required leading newline.
+        ] {
+            assert_eq!(
+                grammar_trigger_token_sequence_for_prompt(Some(&[4, 1]), &prompt, &tokenizer),
+                Some(vec![4, 1]),
+                "prompt: {prompt:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn grammar_preserves_missing_empty_and_invalid_triggers() {
+        let tokenizer = tokenizer();
+        assert_eq!(grammar_trigger_token_sequence_for_prompt(None, &[1, 2], &tokenizer), None);
+        assert_eq!(grammar_trigger_token_sequence_for_prompt(Some(&[]), &[1, 2], &tokenizer), None);
+        assert_eq!(
+            grammar_trigger_token_sequence_for_prompt(Some(&[u64::MAX]), &[1, 2], &tokenizer),
+            Some(vec![u64::MAX])
+        );
+        assert_eq!(
+            grammar_trigger_token_sequence_for_prompt(Some(&[4, 1]), &[u64::MAX, 2, 1, 2], &tokenizer),
+            Some(vec![4, 1])
+        );
+    }
+
+    #[test]
+    fn grammar_rejects_plain_text_after_contextually_tokenized_reasoning_close() {
+        let tokenizer = tokenizer();
+        let trigger = grammar_trigger_token_sequence_for_prompt(Some(&[4, 1]), &[6, 4, 5, 2, 1, 2], &tokenizer);
+        let mut grammar = get_grammar(
+            ShojiGrammar::JsonSchema {
+                schema: r#"{"type":"object","additionalProperties":false}"#.into(),
+            },
+            &tokenizer,
+            &[8],
+            trigger,
+        )
+        .unwrap();
+
+        assert!(matches!(grammar.accept_token(3), Err(GrammarError::GrammarReject)));
+        grammar.accept_token(7).unwrap();
+        assert!(grammar.is_terminated());
     }
 }
 
