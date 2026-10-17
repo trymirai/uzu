@@ -40,6 +40,18 @@ runs:
         sudo apt-get install -y libasound2-dev build-essential pkg-config cmake
       shell: bash
 
+    - if: runner.os == 'Linux' && !startsWith(inputs.target, 'wasm')
+      run: |
+        sudo apt-get install -y libclang-dev
+        curl --fail --location --retry 3 --output "$RUNNER_TEMP/slang.tar.gz" \
+          https://github.com/shader-slang/slang/releases/download/v2026.5/slang-2026.5-linux-x86_64.tar.gz
+        echo "3c6fa070257773dfb45ab673336c809fdf1dd8537e86b9424f6363ab55dd3eb9  $RUNNER_TEMP/slang.tar.gz" | sha256sum --check
+        mkdir "$RUNNER_TEMP/slang"
+        tar -xzf "$RUNNER_TEMP/slang.tar.gz" -C "$RUNNER_TEMP/slang"
+        echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
+        echo "LD_LIBRARY_PATH=$RUNNER_TEMP/slang/lib" >> "$GITHUB_ENV"
+      shell: bash
+
     # - if: runner.os == 'Linux'
     #   run: |
     #     sudo mkdir -p /data/cargo
