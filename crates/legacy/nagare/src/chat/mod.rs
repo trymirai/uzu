@@ -308,8 +308,8 @@ impl ChatSession {
                         interrupted = true;
                         break;
                     }
-                    // Token backends produce output from a blocking poll, so this loop never
-                    // pends between tokens and consumers would only see one batch at the end.
+                    // Buffered tokens can be ready without suspending. Let consumers
+                    // process updates between them.
                     tokio::task::yield_now().await;
                     if finish_reason.is_some() {
                         break;
