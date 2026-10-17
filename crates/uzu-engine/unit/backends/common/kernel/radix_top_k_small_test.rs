@@ -136,7 +136,7 @@ fn benchmark_radix_top_k_small() {
             kernel.encode(&input, &mut ids, &mut scores, ROWS as u32, TARGET_K as u32, &mut command_buffer).unwrap();
         }
         let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-        (completed.gpu_execution_time().div_f64(BATCH as f64), start.elapsed().div_f64(BATCH as f64))
+        (completed.gpu_execution_time().unwrap().div_f64(BATCH as f64), start.elapsed().div_f64(BATCH as f64))
     };
     for _ in 0..5 {
         run();

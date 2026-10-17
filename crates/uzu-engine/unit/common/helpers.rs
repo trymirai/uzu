@@ -11,13 +11,13 @@ use crate::{
 /// Invokes `$body` once per available backend, with `$B` bound to each backend type.
 macro_rules! for_each_backend {
     (|$B:ident| $body:expr) => {{
-        {
-            type $B = crate::backends::cpu::Cpu;
-            $body
-        }
         #[cfg(backend = "metal")]
         {
             type $B = crate::backends::metal::Metal;
+            $body
+        }
+        {
+            type $B = crate::backends::cpu::Cpu;
             $body
         }
     }};

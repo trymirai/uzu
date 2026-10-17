@@ -13,9 +13,7 @@ build = "build/main.rs"
 workspace = true
 
 [features]
-default = ["cpu", "metal", "grammar"]
-
-cpu = [] # TODO: move libm here
+default = ["metal", "webgpu", "cpu", "grammar"]
 
 metal = [
     "dep:rayon",
@@ -30,6 +28,20 @@ metal = [
     "dep:metal",
 ]
 
+webgpu = [
+    "dep:rayon",
+    "dep:serde_json",
+    "dep:blake3",
+    "dep:shader-slang",
+    "dep:shader-slang-sys",
+    "dep:regex",
+    "dep:naga",
+    "dep:wgpu",
+    "dep:pollster",
+]
+
+cpu = [] # TODO: move libm here
+
 grammar = ["dep:xgrammar", "dep:schemars"]
 
 [build-dependencies]
@@ -43,14 +55,18 @@ syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
 rhai.workspace = true
+shader-slang = { workspace = true, optional = true }
+shader-slang-sys = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
+naga = { workspace = true, optional = true, features = ["wgsl-in"] }
+blake3 = { workspace = true, optional = true }
+serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
+rayon = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
-rayon = { workspace = true, optional = true }
 clang-ast = { workspace = true, optional = true }
 depfile = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
-serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
-blake3 = { workspace = true, optional = true }
 xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 
 [dependencies]
@@ -70,6 +86,8 @@ num-traits.workspace = true
 libm.workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }

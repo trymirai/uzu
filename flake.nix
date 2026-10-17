@@ -100,6 +100,25 @@
           };
         };
 
+        shader-slang-env = with pkgs; let
+          libenv =
+            {
+              darwin = "DYLD_FALLBACK_LIBRARY_PATH";
+              linux = "LD_LIBRARY_PATH";
+            }.${
+              stdenv.hostPlatform.parsed.kernel.name
+            };
+        in
+          makeSetupHook {
+            name = "shader-slang-env";
+            propagatedBuildInputs = [shader-slang];
+          }
+          (writeText "shader-slang-env.sh" ''
+            export SLANG_INCLUDE_DIR="${lib.getDev shader-slang}/include"
+            export SLANG_LIB_DIR="${lib.getLib shader-slang}/lib"
+            addToSearchPath ${libenv} "${lib.getLib shader-slang}/lib"
+          '');
+
         hostToolchainBuildInputs = with pkgs; (lib.optionals stdenv.hostPlatform.isLinux [alsa-lib]);
         nixToolchainBuildInputs = hostToolchainBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [apple-sdk_26]);
 
@@ -109,6 +128,7 @@
         commonDevshellPackages = with pkgs;
           [
             nil
+            shader-slang-env
             uv
             nodejs
             pnpm_10

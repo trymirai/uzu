@@ -45,9 +45,9 @@ impl Context for CpuContext {
         _name: Option<&str>,
         allocation_pool: Option<Arc<<Cpu as Backend>::AllocationPool>>,
     ) -> Result<CpuCommandBufferEncoding, CpuError> {
-        let constant_allocator = BumpAllocator::new(256 * 1024);
+        let constant_allocator = BumpAllocator::new(256 * 1024, 1);
         let allocation_pool = allocation_pool.unwrap_or_else(|| self.create_allocation_pool());
-        Ok(CpuCommandBufferEncoding::new(constant_allocator, allocation_pool, self.weak_self.upgrade().unwrap()))
+        Ok(CpuCommandBufferEncoding::new(self.weak_self.upgrade().unwrap(), constant_allocator, allocation_pool))
     }
 
     fn create_buffer(
@@ -80,6 +80,6 @@ impl Context for CpuContext {
     }
 
     fn device_capabilities(&self) -> DeviceCapabilities {
-        DeviceCapabilities::empty()
+        DeviceCapabilities::CPU_BUFFER_DIRECT_ACCESS
     }
 }
