@@ -1,5 +1,7 @@
 use std::{mem::size_of, sync::Arc};
 
+use futures::executor::block_on;
+
 use crate::{
     backends::common::{
         Backend, BufferCpuAccessible, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable,
@@ -77,11 +79,12 @@ pub fn buffer_prefix_to_vec<B: Backend, T: DataTypeRepr>(
 }
 
 pub fn create_context<B: Backend>() -> Arc<<B as Backend>::Context> {
-    B::Context::new().unwrap_or_else(|_| panic!("Failed to create context for {}", std::any::type_name::<B>()))
+    block_on(B::Context::new())
+        .unwrap_or_else(|_| panic!("Failed to create context for {}", std::any::type_name::<B>()))
 }
 
 pub fn submit_command_buffer<E: CommandBufferEncoding>(command_buffer: E) {
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 }
 
 pub fn buffer_readback<B: Backend>(

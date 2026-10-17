@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
@@ -108,8 +109,8 @@ fn attention_kernel_matches_cpu() {
     const TRIE_SUFFIX_LENGTH: usize = 31;
     let tokens: Vec<u64> = (0..TRIE_SUFFIX_LENGTH as u64).collect();
     let trie: Vec<GpuTrieNode> = TrieNode::flat(0, &tokens, &PRng::new(0)).linearize().token_subtrie_ranges().collect();
-    let cpu_context = <Cpu as Backend>::Context::new().expect("CPU attention context");
-    let metal_context = <Metal as Backend>::Context::new().expect("Metal attention context");
+    let cpu_context = block_on(<Cpu as Backend>::Context::new()).expect("CPU attention context");
+    let metal_context = block_on(<Metal as Backend>::Context::new()).expect("Metal attention context");
     for &(head_dim, num_q_heads, num_groups, suffix_length, prefix_length, causal, use_trie) in &[
         (512, 8, 8, 9, 0, false, false),
         (128, 8, 2, 16, 1024, false, false),
@@ -145,7 +146,7 @@ fn attention_kernel_reuses_instance_for_flat_and_trie() {
     let shape = (256, 6, 1, 5, 1024, true);
     let trie: Vec<GpuTrieNode> =
         TrieNode::flat(0, &[0, 1, 2, 3, 4], &PRng::new(0)).linearize().token_subtrie_ranges().collect();
-    let context = <Metal as Backend>::Context::new().expect("Metal attention context");
+    let context = block_on(<Metal as Backend>::Context::new()).expect("Metal attention context");
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionKernel::new(
         context.as_ref(),
         super::default_attention_config::<bf16>(shape.0, shape.1, shape.2, shape.5),
@@ -153,7 +154,7 @@ fn attention_kernel_reuses_instance_for_flat_and_trie() {
     .expect("attention kernel");
     let (keys, values) = attention_data(shape);
     let cache = KVCacheView::full(1024);
-    let cpu = <Cpu as Backend>::Context::new().expect("CPU attention context");
+    let cpu = block_on(<Cpu as Backend>::Context::new()).expect("CPU attention context");
     for nodes in [None, Some(trie.as_slice())] {
         let expected = run_attention::<Cpu>(&cpu, shape, nodes, None);
         let actual = run_attention_with_kernel::<Metal>(&context, &kernel, shape, &keys, &values, cache, nodes, None);
@@ -183,7 +184,7 @@ fn attention_kernel_ring_matches_full_on_wrap() {
         }
     }
 
-    let context = <Metal as Backend>::Context::new().expect("Metal attention context");
+    let context = block_on(<Metal as Backend>::Context::new()).expect("Metal attention context");
     let mut config = super::default_attention_config::<bf16>(shape.0, shape.1, shape.2, shape.5);
     config.sliding_window_size = Some(CAPACITY as u32);
     let [full, ring] = [
@@ -256,13 +257,13 @@ fn check_attention_gate<B: Backend>(
 
 #[uzu_test]
 fn attention_gate_matches_standalone_gate_on_cpu() {
-    let context = <Cpu as Backend>::Context::new().expect("CPU attention context");
+    let context = block_on(<Cpu as Backend>::Context::new()).expect("CPU attention context");
     check_attention_gate::<Cpu>(context.as_ref(), 3, 29);
 }
 
 #[uzu_test]
 fn attention_gate_matches_standalone_gate_on_metal() {
-    let context = <Metal as Backend>::Context::new().expect("Metal attention context");
+    let context = block_on(<Metal as Backend>::Context::new()).expect("Metal attention context");
     for (suffix_length, prefix_length) in
         [(1, 100), (1, 2000), (200, 800), (2, 1022), (16, 16368), (65, 959), (65, 16319), (1024, 0)]
     {
@@ -272,7 +273,8 @@ fn attention_gate_matches_standalone_gate_on_metal() {
 
 #[uzu_test]
 fn int8_attention_matches_cpu() {
-    let (metal, cpu) = (<Metal as Backend>::Context::new().unwrap(), <Cpu as Backend>::Context::new().unwrap());
+    let (metal, cpu) =
+        (block_on(<Metal as Backend>::Context::new()).unwrap(), block_on(<Cpu as Backend>::Context::new()).unwrap());
     type Prepare = <<Metal as Backend>::Kernels as Kernels>::AttentionPrepareInt8Kernel;
     let trie: [GpuTrieNode; 3] = bytemuck::cast([0u32, 2, 0, 1, 1, 1, 2, 2, 1]); // (start, end, height) per token
     // (query heads, suffix, prefix, trie, shared KV, unwritten scale bits)

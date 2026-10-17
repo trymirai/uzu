@@ -1,4 +1,5 @@
 use criterion::Bencher;
+use futures::executor::block_on;
 
 use crate::backends::common::{
     Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
@@ -31,7 +32,7 @@ pub fn iter_encode_loop_named<B: Backend, F>(
         for _ in 0..n_iters {
             encode(&mut command_buffer);
         }
-        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         completed.gpu_execution_time()
     });
 }

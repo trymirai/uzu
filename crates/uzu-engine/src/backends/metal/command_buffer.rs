@@ -1,10 +1,11 @@
 use std::{
     ops::{Deref, DerefMut},
     range::Range,
-    sync::{Arc, mpsc},
+    sync::Arc,
     time::Duration,
 };
 
+use futures::channel::mpsc;
 use metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandBufferExt,
     MTL4CommandEncoder, MTL4CommandEncoderExt, MTL4CommandQueue, MTL4CommandQueueExt, MTL4CommitFeedback,
@@ -55,6 +56,8 @@ pub struct MetalCommandBufferEncoding {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     pub(super) context: Arc<MetalContext>,
 }
+
+unsafe impl Send for MetalCommandBufferEncoding {}
 
 impl MetalCommandBufferEncoding {
     pub fn new(
@@ -286,7 +289,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         }
         drop(sparse_state_locked);
 
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::unbounded();
 
         let command_allocator = self.command_allocator.clone();
         let command_buffer = self.command_buffer.clone();
@@ -300,7 +303,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
             } else {
                 Ok(Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()))
             };
-            let _ = sender.send(message);
+            let _ = sender.unbounded_send(message);
             context_clone.command_allocator_cache.lock().push(command_allocator.clone());
             let _keep_alive = (&command_buffer, &constant_allocator, &allocation_pool);
         };
@@ -310,35 +313,32 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         self.context.command_queue.commit_with_options(&[&self.command_buffer], &options);
 
         MetalCommandBufferPending {
-            allocation_pool: self.allocation_pool,
             receiver,
         }
     }
 }
 
 pub struct MetalCommandBufferPending {
-    allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
-    receiver: mpsc::Receiver<Result<Duration, String>>,
+    receiver: mpsc::UnboundedReceiver<Result<Duration, String>>,
 }
 
 impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
 
-    fn wait_until_completed(self) -> Result<MetalCommandBufferCompleted, MetalError> {
+    async fn wait_until_completed(mut self) -> Result<MetalCommandBufferCompleted, MetalError> {
         Ok(MetalCommandBufferCompleted {
             gpu_execution_time: self
                 .receiver
                 .recv()
-                .map_err(MetalError::CommandBufferWait)?
+                .await
+                .map_err(|_| MetalError::CommandBufferWait)?
                 .map_err(MetalError::CommandBufferExecution)?,
-            _allocation_pool: self.allocation_pool,
         })
     }
 }
 
 pub struct MetalCommandBufferCompleted {
     gpu_execution_time: Duration,
-    _allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
 }
 
 impl CommandBufferCompleted for MetalCommandBufferCompleted {

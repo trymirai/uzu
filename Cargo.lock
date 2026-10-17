@@ -7537,6 +7537,7 @@ dependencies = [
  "criterion",
  "depfile",
  "derive_more",
+ "futures",
  "half",
  "is_close",
  "itertools 0.14.0",

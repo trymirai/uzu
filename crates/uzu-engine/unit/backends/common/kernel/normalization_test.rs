@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -33,7 +34,7 @@ fn get_output<
     full_layer: bool,
     hadamard_factors: Option<&[i32]>,
 ) -> Vec<OutputT> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::NormalizationKernel::new(
         &context,
         InputT::data_type(),
@@ -74,7 +75,7 @@ fn get_output<
         1.0,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
     buffer_to_vec::<B, OutputT>(&output_buffer)
 }
@@ -169,7 +170,7 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
 
     let plain = get_output::<Cpu, T, T, T>(&input, Some(&scales), batch_size, element_count, epsilon, true, None);
 
-    let context = <Cpu as Backend>::Context::new().expect("Failed to create Context");
+    let context = block_on(<Cpu as Backend>::Context::new()).expect("Failed to create Context");
     let input_rht = ActivationTransform::<Cpu>::input_rht(context.as_ref(), T::data_type(), false)
         .expect("Failed to create ActivationTransform");
     let plain_buffer = create_buffer_with_data::<Cpu, T>(&context, &plain);
@@ -184,7 +185,7 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
         element_count,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
     let expected = buffer_to_vec::<Cpu, T>(&expected_buffer);
 
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {

@@ -1,5 +1,6 @@
 #![cfg(backend = "metal")]
 
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
@@ -92,7 +93,7 @@ fn run_case<B: Backend, T: DataTypeRepr + Copy>(
     data_type: DataType,
     cast: impl Fn(f32) -> T + Copy,
 ) -> Vec<f32> {
-    let context = B::Context::new().expect("context");
+    let context = block_on(B::Context::new()).expect("context");
     let kernel = <<B as Backend>::Kernels as Kernels>::TreeUpdateSolveKernel::new(&context, data_type, bv, use_h0)
         .expect("kernel");
 
@@ -171,7 +172,7 @@ fn run_case<B: Backend, T: DataTypeRepr + Copy>(
         case.head_v_dim,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     buffer_to_vec(&u)
 }

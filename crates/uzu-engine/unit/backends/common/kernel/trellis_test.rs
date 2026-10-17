@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rstest::rstest;
@@ -44,7 +45,7 @@ fn run<B: Backend>(
     mixing: &[f32],
     input: &[bf16],
 ) -> (Vec<i8>, Vec<f32>, Vec<f32>) {
-    let context = B::Context::new().expect("context");
+    let context = block_on(B::Context::new()).expect("context");
     let transform =
         <B::Kernels as Kernels>::TrellisTransformKernel::new(context.as_ref(), columns).expect("trellis transform");
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
@@ -65,7 +66,7 @@ fn run<B: Backend>(
         batch,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     (
         buffer_to_vec::<B, i8>(&activations),
         buffer_to_vec::<B, f32>(&column_group_sums),

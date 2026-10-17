@@ -1,5 +1,6 @@
 use std::{iter::repeat_with, mem::MaybeUninit};
 
+use futures::executor::block_on;
 use num_traits::{Float, NumCast};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
@@ -75,7 +76,7 @@ fn do_sampling_backend<B: Backend, T: DataTypeRepr + Float>(
     drop(logits_buffer);
     drop(seeds_buffer);
     drop(bitmask_buffer);
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     let sampled = sampled_buffer.copyout::<u32>();
 

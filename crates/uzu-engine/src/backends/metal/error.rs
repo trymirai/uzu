@@ -1,5 +1,3 @@
-use std::sync::mpsc::RecvError;
-
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -24,8 +22,8 @@ pub enum MetalError {
     CannotCreateCommandBuffer,
     #[error("Cannot create argument table: {0}")]
     CannotCreateArgumentTable(String),
-    #[error("Error waiting for command buffer: {0}")]
-    CommandBufferWait(RecvError),
+    #[error("Error waiting for command buffer")]
+    CommandBufferWait,
     #[error("Command buffer execution failed: {0}")]
     CommandBufferExecution(String),
     #[error("Cannot create function: {0}")]

@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
@@ -138,7 +139,7 @@ impl<B: Backend> Runner<B> {
                 &mut command_buffer,
             );
         }
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap().gpu_execution_time()
     }
 }
 

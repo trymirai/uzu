@@ -3,6 +3,7 @@
 use std::{mem::size_of, time::Duration};
 
 use criterion::{BenchmarkId, Criterion};
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_bench;
 
@@ -143,7 +144,7 @@ fn buffers_bytes(
 
 #[uzu_bench]
 fn bench_build_tree_gram(c: &mut Criterion) {
-    let context = <Metal as Backend>::Context::new().expect("metal context");
+    let context = block_on(<Metal as Backend>::Context::new()).expect("metal context");
     let kernel_paths = if context.supports_mxu {
         &[("Simdgroup", false), ("MXU", true)][..]
     } else {

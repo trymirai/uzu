@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use futures::executor::block_on;
 use half::{bf16, f16};
 use num_traits::Float;
 use rstest::rstest;
@@ -53,7 +54,7 @@ fn lookup<B: Backend, T: DataTypeRepr + Float>(
     quantization: Option<Quantization>,
     use_hadamard: bool,
 ) -> Vec<T> {
-    let context = <B as Backend>::Context::new().unwrap();
+    let context = block_on(<B as Backend>::Context::new()).unwrap();
     let context = context.as_ref();
     let bytes = |data: &[u8]| create_buffer_with_data::<B, u8>(context, data);
     let (mut scales, mut zero_points, mut biases) = (None, None, None);

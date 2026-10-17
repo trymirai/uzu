@@ -5,7 +5,7 @@ use crate::backends::common::{Backend, CommandBuffer, DeviceCapabilities};
 pub trait Context: Sized + Send + Sync {
     type Backend: Backend<Context = Self>;
 
-    fn new() -> Result<Arc<Self>, <Self::Backend as Backend>::Error>;
+    fn new() -> impl Future<Output = Result<Arc<Self>, <Self::Backend as Backend>::Error>> + Send;
 
     fn device_name(&self) -> Option<&str>;
 

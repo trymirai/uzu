@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -24,7 +25,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(
     scale: f32,
     soft_cap: Option<f32>,
 ) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel =
         <<B as Backend>::Kernels as Kernels>::LogitTransformKernel::new(&context, T::data_type(), soft_cap.is_some())
             .expect("Failed to create LogitTransformKernel");
@@ -32,7 +33,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(
     let mut logits_buffer = create_buffer_with_data::<B, T>(&context, logits);
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(&mut logits_buffer, logits.len() as u32, scale, soft_cap.unwrap_or(0.0), &mut command_buffer);
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     buffer_to_vec::<B, T>(&logits_buffer)
 }

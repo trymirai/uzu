@@ -3,8 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferPending, Context, Kernels,
+        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
     config::token_mixer::short_conv::ShortConvConfig,
@@ -30,6 +29,7 @@ enum ShortConvStateSuffixStatus<B: Backend> {
 pub struct ShortConvState<B: Backend> {
     conv_state: B::GlobalBuffer,
     suffix_state: Option<ShortConvStateSuffixStatus<B>>,
+    is_empty: bool,
 }
 
 impl<B: Backend> MixerState<B> for ShortConvState<B> {
@@ -285,16 +285,13 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         _max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
-        let mut conv_state =
+        let conv_state =
             context.create_buffer(size_for_shape(&[self.kernel_size - 1, self.hidden_dim], self.data_type))?;
-
-        let mut zero_command_buffer = context.create_command_buffer(None, None)?;
-        zero_command_buffer.encode_fill(&mut conv_state, 0);
-        zero_command_buffer.end_encoding().submit().wait_until_completed()?;
 
         Ok(Box::new(ShortConvState {
             conv_state,
             suffix_state: None,
+            is_empty: true,
         }))
     }
 
@@ -317,6 +314,11 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
         };
 
         assert!(state.suffix_state.is_none(), "short conv called with state with unaccepted tokens");
+
+        if state.is_empty {
+            command_buffer.encode_fill(&mut state.conv_state, 0);
+            state.is_empty = false;
+        }
 
         let in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
 

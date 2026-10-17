@@ -29,8 +29,9 @@ impl BackendSelection for ChatTokenInstanceSelection {
     type Output = Box<dyn ChatTokenInstance>;
     type Error = BackendError;
 
-    fn select<B: Backend>(self) -> Result<Self::Output, Self::Error> {
+    async fn select<B: Backend>(self) -> Result<Self::Output, Self::Error> {
         UzuChatTokenBackendInstance::<B>::new(self.reference, self.config)
+            .await
             .map(|instance| Box::new(instance) as Box<dyn ChatTokenInstance>)
     }
 }
@@ -43,8 +44,9 @@ impl BackendSelection for ClassificationInstanceSelection {
     type Output = Box<dyn ClassificationInstance>;
     type Error = BackendError;
 
-    fn select<B: Backend>(self) -> Result<Self::Output, Self::Error> {
+    async fn select<B: Backend>(self) -> Result<Self::Output, Self::Error> {
         UzuClassificationBackendInstance::<B>::new(self.reference)
+            .await
             .map(|instance| Box::new(instance) as Box<dyn ClassificationInstance>)
     }
 }
@@ -88,7 +90,8 @@ impl ChatTokenBackend for UzuLlmBackend {
                     config,
                 },
                 BackendError::from("Unable to open any backend"),
-            )?;
+            )
+            .await?;
             Ok(instance)
         })
     }
@@ -106,7 +109,8 @@ impl ClassificationBackend for UzuLlmBackend {
                     reference,
                 },
                 BackendError::from("Unable to open any backend"),
-            )?;
+            )
+            .await?;
             Ok(instance)
         })
     }

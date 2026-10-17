@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
@@ -20,7 +21,7 @@ struct Output {
 }
 
 fn run<B: Backend>() -> Output {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::AttentionPrepareKernel::new(
         &context,
         DataType::BF16,
@@ -56,7 +57,7 @@ fn run<B: Backend>() -> Output {
         2,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
     Output {
         queries: buffer_to_vec(&queries),
@@ -79,7 +80,7 @@ fn assert_output(
 }
 
 fn run_query_only<B: Backend>() -> Vec<bf16> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::AttentionPrepareKernel::new(
         &context,
         DataType::BF16,
@@ -110,7 +111,7 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
         2,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
     buffer_to_vec(&queries)
 }
@@ -143,7 +144,7 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
     const CACHE_TOKENS: usize = 64;
     let code_bytes = CACHE_TOKENS * DIM;
     let rows: Vec<bf16> = (0..3 * DIM).map(|i| bf16::from_f32((i as f32 * 0.37).sin())).collect();
-    let context = B::Context::new().unwrap();
+    let context = block_on(B::Context::new()).unwrap();
     let qkvg = create_buffer_with_data::<B, bf16>(&context, &rows[(1 - num_q_heads) as usize * DIM..]);
     let mut q_codes = create_buffer_with_data::<B, i8>(&context, &[0; DIM]);
     let mut q_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO]);
@@ -182,7 +183,7 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
         num_q_heads,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     Int8Output {
         codes: [&q_codes, &k_codes, &v_codes].map(buffer_to_vec::<B, u8>),

@@ -3,8 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferPending, Context, Kernels,
+        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         kernel::{
             Conv1dPackKernel, ConvTreeScanKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel,
             DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
@@ -51,6 +50,7 @@ pub struct DeltaNetState<B: Backend> {
     ssm_state: B::GlobalBuffer,
     suffix_status: Option<DeltaNetSuffixStatus<B>>,
     state_advance: <B::Kernels as Kernels>::StateAdvanceKernel,
+    is_empty: bool,
 }
 
 impl<B: Backend> MixerState<B> for DeltaNetState<B> {
@@ -447,16 +447,10 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         _max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
-        let mut conv_state =
+        let conv_state =
             context.create_buffer(size_for_shape(&[self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE))?;
-
-        let mut ssm_state = context
+        let ssm_state = context
             .create_buffer(size_for_shape(&[self.num_heads, self.value_head_dim, self.head_dim], INNER_DATA_TYPE))?;
-
-        let mut zero_command_buffer = context.create_command_buffer(None, None)?;
-        zero_command_buffer.encode_fill(&mut conv_state, 0);
-        zero_command_buffer.encode_fill(&mut ssm_state, 0);
-        zero_command_buffer.end_encoding().submit().wait_until_completed()?;
 
         let state_advance = <B::Kernels as Kernels>::StateAdvanceKernel::new(
             context,
@@ -471,6 +465,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             ssm_state,
             suffix_status: None,
             state_advance,
+            is_empty: true,
         }))
     }
 
@@ -493,6 +488,12 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         };
 
         assert!(state.suffix_status.is_none(), "delta net called with state with an unaccepted suffix");
+
+        if state.is_empty {
+            command_buffer.encode_fill(&mut state.conv_state, 0);
+            command_buffer.encode_fill(&mut state.ssm_state, 0);
+            state.is_empty = false;
+        }
 
         let mut in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
 

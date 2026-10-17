@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -42,7 +43,7 @@ fn make_data<T: DataTypeRepr + Float>(
 }
 
 fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::KVCacheUpdateKernel::new(&context, T::data_type())
         .expect("Failed to create KVCacheUpdateKernel");
 
@@ -58,7 +59,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         input.element_dim,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     (buffer_to_vec(&keys), buffer_to_vec(&values))
 }
@@ -260,7 +261,7 @@ fn get_int8_output<B: Backend>() -> ([Vec<u8>; 2], [Vec<bf16>; 2]) {
         source: 40,
         destination: 5,
     }];
-    let context = B::Context::new().unwrap();
+    let context = block_on(B::Context::new()).unwrap();
     let mut keys = create_buffer_with_data::<B, i8>(&context, &k_codes);
     let mut values = create_buffer_with_data::<B, u8>(&context, &v_codes);
     let mut key_scales = create_buffer_with_data::<B, bf16>(&context, &k_scales);
@@ -277,6 +278,6 @@ fn get_int8_output<B: Backend>() -> ([Vec<u8>; 2], [Vec<bf16>; 2]) {
         copies.len() as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     ([&keys, &values].map(buffer_to_vec::<B, u8>), [&key_scales, &value_scales].map(buffer_to_vec::<B, bf16>))
 }

@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 
@@ -203,7 +204,7 @@ fn gemv_gemm_route_boundaries_are_preserved() {
 
 #[uzu_test]
 fn int8_activations_require_mxu_tiled_weights() {
-    let context = MetalContext::new().expect("Metal context");
+    let context = block_on(MetalContext::new()).expect("Metal context");
     if !context.supports_mxu {
         return;
     }

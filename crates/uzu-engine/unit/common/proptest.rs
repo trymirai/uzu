@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use futures::executor::block_on;
 use proptest::prelude::*;
 
 #[cfg(backend = "metal")]
@@ -25,9 +26,9 @@ pub struct TestContextes {
 impl TestContextes {
     pub fn new() -> TestContextes {
         TestContextes {
-            cpu: <Cpu as Backend>::Context::new().expect("Failed to create Cpu context"),
+            cpu: block_on(<Cpu as Backend>::Context::new()).expect("Failed to create Cpu context"),
             #[cfg(backend = "metal")]
-            metal: <Metal as Backend>::Context::new().expect("Failed to create Metal context"),
+            metal: block_on(<Metal as Backend>::Context::new()).expect("Failed to create Metal context"),
         }
     }
 }

@@ -129,7 +129,7 @@ impl<B: Backend> ClassifierModel<B> {
         }
     }
 
-    pub fn classify(
+    pub async fn classify(
         &self,
         input: &[u64],
     ) -> Result<ClassifierOutput, ClassifierModelClassifyError<B>> {
@@ -164,7 +164,12 @@ impl<B: Backend> ClassifierModel<B> {
         drop(logits);
         drop(token_ids);
 
-        command_buffer.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
+        command_buffer
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .await
+            .map_err(ClassifierModelClassifyError::Backend)?;
 
         assert!(self.data_type == DataType::BF16);
 

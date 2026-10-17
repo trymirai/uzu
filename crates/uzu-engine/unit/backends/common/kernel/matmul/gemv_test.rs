@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use rstest::rstest;
@@ -100,12 +101,12 @@ fn run_gemv<B: Backend, T: DataTypeRepr + Float>(
             &mut command_buffer,
         )
         .expect("encode failed");
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec::<B, T>(&d)
 }
 
 fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let a = create_buffer_with_data::<B, T>(&context, &input.a);
     let weights = create_buffer_with_data::<B, T>(&context, &input.b);
     let ids = input.ids.as_ref().map(|ids| create_buffer_with_data::<B, u32>(&context, ids));
@@ -162,7 +163,7 @@ fn group_major_gemv_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    let context = <Metal as Backend>::Context::new().expect("Metal context");
+    let context = block_on(<Metal as Backend>::Context::new()).expect("Metal context");
     let input = QuantInput::<bf16>::new(1, 256, 72, 32, bits, method, 0).with_group_output();
     let reference = run_quant_cpu::<bf16>(&input);
 
@@ -267,7 +268,7 @@ fn quant_gather_case(
     let ids: Vec<u32> = (0..m * ids_per_row).map(|i| ((i * 37 + 11) % vocab) as u32).collect();
     // K_SPLIT == 1 keeps dense and gathered accumulation order identical.
     check_gather!(m, vocab, ids, ids_per_row, eps, |B| {
-        let context = <B as Backend>::Context::new().expect("context");
+        let context = block_on(<B as Backend>::Context::new()).expect("context");
         let buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
         let ids_alloc = create_buffer_with_data::<B, u32>(&context, &ids);
         let b = || buffers.matmul_b(&input);

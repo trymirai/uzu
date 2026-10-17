@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
@@ -84,7 +85,7 @@ fn run_top_children<B: Backend>(
         prune_noise_scale,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec(&frontier)
 }
 

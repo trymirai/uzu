@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::cast;
 use uzu_engine_macros::uzu_test;
@@ -162,14 +163,14 @@ fn run_prefill<T: DataTypeRepr>(
         case.suffix_len as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     (buffer_to_vec::<Metal, T>(&out).into_iter().map(|value| cast(value).unwrap()).collect(), buffer_to_vec(&state))
 }
 
 #[uzu_test]
 fn chunked_prefill_matches_recurrent_prefill() {
-    let context = <Metal as Backend>::Context::new().expect("metal context");
+    let context = block_on(<Metal as Backend>::Context::new()).expect("metal context");
     if <BackendKernels<Metal> as Kernels>::DeltaNetChunkedPrefill::new(
         &context,
         <bf16 as DataTypeRepr>::data_type(),

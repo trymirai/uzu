@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -122,7 +123,7 @@ fn get_output<
 >(
     input: &Input<InputT, ScaleT, OutputT>
 ) -> Vec<OutputT> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
 
     let kernel = <<B as Backend>::Kernels as Kernels>::QKVNormKernel::new(
         &context,
@@ -153,7 +154,7 @@ fn get_output<
         input.full_layer,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
     buffer_to_vec(&qkvg)
 }

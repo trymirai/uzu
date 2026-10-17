@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use num_traits::Float;
 
 use super::Shape;
@@ -151,12 +152,12 @@ pub fn run<B: Backend, T: DataTypeRepr + Float>(
         },
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec::<B, T>(&d_buffer)
 }
 
 pub fn cpu_reference<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
-    let context = <Cpu as Backend>::Context::new().expect("CPU context");
+    let context = block_on(<Cpu as Backend>::Context::new()).expect("CPU context");
     let mut kernel = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         T::data_type(),

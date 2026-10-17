@@ -1,7 +1,9 @@
 use std::{
-    sync::{Arc, mpsc},
+    sync::Arc,
     time::{Duration, Instant},
 };
+
+use futures::channel::oneshot;
 
 use crate::{
     backends::{
@@ -145,7 +147,7 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
     type CommandBuffer = CpuCommandBuffer;
 
     fn submit(self) -> CpuCommandBufferPending {
-        let (return_sender, return_receiver) = mpsc::channel();
+        let (return_sender, return_receiver) = oneshot::channel();
         let allocation_pool = self.allocation_pool.clone();
 
         self.context
@@ -177,15 +179,15 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
 }
 
 pub struct CpuCommandBufferPending {
-    return_receiver: mpsc::Receiver<CpuCommandBufferCompleted>,
+    return_receiver: oneshot::Receiver<CpuCommandBufferCompleted>,
     _allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
 }
 
 impl CommandBufferPending for CpuCommandBufferPending {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn wait_until_completed(self) -> Result<CpuCommandBufferCompleted, CpuError> {
-        Ok(self.return_receiver.recv()?)
+    async fn wait_until_completed(self) -> Result<CpuCommandBufferCompleted, CpuError> {
+        self.return_receiver.await.map_err(|_| CpuError::CommandBufferExecutionFailed)
     }
 }
 

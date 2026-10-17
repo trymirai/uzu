@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion};
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_bench;
@@ -74,7 +75,7 @@ fn make_buffers<T: DataTypeRepr + Float>(
 
 #[uzu_bench]
 fn bench_build_tree_out(c: &mut Criterion) {
-    let context = <Metal as Backend>::Context::new().expect("metal context");
+    let context = block_on(<Metal as Backend>::Context::new()).expect("metal context");
     bench_build_tree_out_type::<bf16>(c, &context, "BF16");
     bench_build_tree_out_type::<f32>(c, &context, "F32");
 }

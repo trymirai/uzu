@@ -3,6 +3,7 @@
 use std::time::{Duration, Instant};
 
 use criterion::Criterion;
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_bench;
 
@@ -31,7 +32,7 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         head_k_dim: HEAD_DIM as u32,
         head_v_dim: HEAD_DIM as u32,
     };
-    let context = <Metal as Backend>::Context::new().unwrap();
+    let context = block_on(<Metal as Backend>::Context::new()).unwrap();
     let started = Instant::now();
     let tree_verify =
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetTreeVerify::new(context.as_ref(), &arguments).unwrap();
