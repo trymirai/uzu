@@ -26,3 +26,6 @@ allow = [
 
 [bans]
 multiple-versions = "allow"
+
+[sources]
+allow-git = ["https://github.com/FloatyMonkey/slang-rs"]

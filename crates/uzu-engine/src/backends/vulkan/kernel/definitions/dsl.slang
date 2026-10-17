@@ -1,18 +1,19 @@
 implementing definitions;
 
-// Specialization constant annotations
-
-[[__AttributeUsage(_AttributeTargets.Var)]]
-struct ThreadgroupSizeAttribute;
-
-[[__AttributeUsage(_AttributeTargets.Var)]]
-struct SimdgroupSizeAttribute;
-
-
 // Kernel annotations
 
 [[__AttributeUsage(_AttributeTargets.Function)]]
 struct KernelAttribute;
+
+[[__AttributeUsage(_AttributeTargets.Function)]]
+struct PublicAttribute;
+
+// The subgroup size, a host expression over the kernel's specializations, its pipelines require in full subgroups
+// instead of the device's policy.
+[[__AttributeUsage(_AttributeTargets.Function)]]
+struct RequiredSubgroupSizeAttribute {
+    string size;
+};
 
 
 // Kernel parameter annotation
@@ -32,3 +33,21 @@ struct GroupsAttribute {
 struct ThreadsAttribute {
     string threads;
 };
+
+[[__AttributeUsage(_AttributeTargets.Param)]]
+struct OptionalAttribute {
+    string condition;
+};
+
+[[__AttributeUsage(_AttributeTargets.Param)]]
+struct SpecializeAttribute;
+
+// A read-only pointer to a canonical GPU struct that the binding takes as a host slice, like the CPU kernel, and uploads
+// when it records the dispatch.
+[[__AttributeUsage(_AttributeTargets.Param)]]
+struct HostSliceAttribute;
+
+// A uniform canonical enum for which the binding builds one pipeline per enum value, passed as a specialization constant
+// instead of a push constant; the kernel signature keeps it a uniform, chosen at encode.
+[[__AttributeUsage(_AttributeTargets.Param)]]
+struct PipelineVariantsAttribute;

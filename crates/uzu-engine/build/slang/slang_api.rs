@@ -12,7 +12,7 @@ use shader_slang_sys::{
     spReflectionType_GetName, spReflectionVariable_GetName,
 };
 
-use super::{Error, ModuleWithDiagnostics, TypeParameterInfo};
+use super::{Error, TypeParameterInfo};
 
 unsafe fn blob_to_string(blob: *mut ISlangBlob) -> String {
     unsafe {
@@ -29,10 +29,11 @@ unsafe fn blob_to_string(blob: *mut ISlangBlob) -> String {
         message
     }
 }
+/// Loads a module, relaying its diagnostics as build warnings.
 pub fn load_module(
     session: &Session,
     name: &str,
-) -> Result<ModuleWithDiagnostics, Error> {
+) -> Result<Module, Error> {
     let name_cstr = CString::new(name)?;
     let mut diagnostics: *mut ISlangBlob = null_mut();
 
@@ -50,6 +51,9 @@ pub fn load_module(
         }
         bail!("slang compilation failed (no diagnostics)");
     }
+    for line in diagnostics_str.iter().flat_map(|diagnostics| diagnostics.lines()) {
+        println!("cargo::warning={line}");
+    }
 
     unsafe {
         let vtable = *(module_ptr as *const *const ISlangUnknown__bindgen_vtable);
@@ -57,13 +61,7 @@ pub fn load_module(
     }
 
     let module: Module = unsafe { std::mem::transmute(std::ptr::NonNull::new(module_ptr).unwrap()) };
-
-    let component = module.clone().into();
-    Ok(ModuleWithDiagnostics {
-        module,
-        component,
-        diagnostics: diagnostics_str,
-    })
+    Ok(module)
 }
 pub fn create_specialized_generic<'a>(
     component: &'a ComponentType,

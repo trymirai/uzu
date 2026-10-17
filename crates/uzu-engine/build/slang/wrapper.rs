@@ -1,18 +1,71 @@
+use std::collections::HashSet;
+
 use anyhow::{Context, bail};
 use itertools::Itertools;
+use quote::{ToTokens, format_ident};
 use shader_slang::ComponentType;
+use syn::{Expr, parse_quote};
 
 use super::{Error, SlangArgumentType, SlangKernelInfo, slang_api};
+use crate::common::expr_rewrite::rewrite_paths_with;
 
 pub fn generate_wrappers(
     kernel: &SlangKernelInfo,
     component: &ComponentType,
-) -> Result<Vec<String>, Error> {
-    let mut wrappers = Vec::new();
+    module_globals: &HashSet<&str>,
+) -> Result<(Vec<String>, Vec<(String, Vec<&'static str>)>), Error> {
+    // A `[[PipelineVariants]]` argument travels as a specialization constant instead of a push constant.
+    let mut variant_arguments = Vec::new();
+    for argument in kernel.arguments() {
+        if argument.pipeline_variants()? {
+            variant_arguments.push(argument.name()?.to_owned());
+        }
+    }
+    if variant_arguments.len() > 1 {
+        bail!("kernel '{}' marks {variant_arguments:?} PipelineVariants; at most one argument may be", kernel.name());
+    }
+    let variant_argument = variant_arguments.first().map(String::as_str);
+    let mut size_parameters = HashSet::new();
+    for argument in kernel.arguments() {
+        let kind = argument.argument_type()?;
+        let size = match &kind {
+            SlangArgumentType::Axis(_, size) | SlangArgumentType::Threads(size) => size,
+            _ => continue,
+        };
+        let mut expression = syn::parse_str::<Expr>(size)?;
+        rewrite_paths_with(&mut expression, |path| {
+            if let Some(name) = path.get_ident() {
+                size_parameters.insert(name.to_string());
+            }
+            None
+        });
+    }
+    let mut wrappers = kernel
+        .arguments()
+        .map(|a| {
+            let specialized =
+                matches!(a.argument_type()?, SlangArgumentType::Specialize(_)) || Some(a.name()?) == variant_argument;
+            let name = specialization_name(kernel.name(), a.name()?);
+            Ok(match specialized && !module_globals.contains(name.as_str()) {
+                true => Some(format!(
+                    "[[SpecializationConstant]] const {} {name}{};",
+                    specialization_wire_type(&a.slang_type()?),
+                    if size_parameters.contains(a.name()?) {
+                        " = 1"
+                    } else {
+                        ""
+                    }
+                )),
+                false => None,
+            })
+        })
+        .filter_map(Result::transpose)
+        .collect::<Result<Vec<_>, Error>>()?;
 
-    let type_params = kernel.type_parameters();
+    let type_params = kernel.type_parameters().collect::<Vec<_>>();
 
-    let specialization_variants: Vec<Option<Vec<&str>>> = if type_params.is_empty() {
+    let mut entry_points = Vec::new();
+    let specialization_variants: Vec<Option<Vec<&'static str>>> = if type_params.is_empty() {
         vec![None]
     } else {
         type_params.iter().map(|p| p.iter().copied()).multi_cartesian_product().map(Some).collect()
@@ -48,18 +101,23 @@ pub fn generate_wrappers(
             .collect::<Result<_, Error>>()?;
 
         let has_axis = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Axis(_, _)));
-        let has_groups = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Groups));
+        let has_groups = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Groups(_)));
         let has_threads = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Threads(_)));
 
         if has_axis && (has_groups || has_threads) {
             bail!("mixing groups/threads and axis is not supported");
         }
+        if has_groups != has_threads || !(has_axis || has_groups) {
+            bail!("kernel '{}' needs either Axis or both Groups and Threads", kernel.name());
+        }
 
         let mut wrapper_arguments: Vec<String> = arguments
             .iter()
             .filter_map(|(name, arg_type, slang_type)| match arg_type {
-                SlangArgumentType::Ptr => Some(format!("{} {}", slang_type, name)),
-                SlangArgumentType::Constant => Some(format!("uniform {} {}", slang_type, name)),
+                SlangArgumentType::Ptr(_) => Some(format!("{} {}", slang_type, name)),
+                SlangArgumentType::Constant(_) if Some(name.as_str()) != variant_argument => {
+                    Some(format!("uniform {} {}", slang_type, name))
+                },
                 _ => None,
             })
             .collect();
@@ -83,13 +141,22 @@ pub fn generate_wrappers(
 
             arguments
                 .iter()
-                .map(|(name, arg_type, _)| {
+                .map(|(name, arg_type, slang_type)| {
+                    let variant = Some(name.as_str()) == variant_argument;
                     Ok(match arg_type {
-                        SlangArgumentType::Ptr | SlangArgumentType::Constant => name.clone(),
+                        SlangArgumentType::Ptr(_) => name.clone(),
+                        SlangArgumentType::Constant(_) if !variant => name.clone(),
+                        // Enum specializations travel as `uint` and convert back at the call.
+                        SlangArgumentType::Specialize(_) | SlangArgumentType::Constant(_) => {
+                            match specialization_wire_type(slang_type) {
+                                wire if wire == slang_type => specialization_name(kernel.name(), name),
+                                _ => format!("{slang_type}({})", specialization_name(kernel.name(), name)),
+                            }
+                        },
                         SlangArgumentType::Axis(_, _) => {
                             format!("__dsl_axis_idx.{}", axis_letters.next().context("more than three Axis arguments")?)
                         },
-                        SlangArgumentType::Groups => {
+                        SlangArgumentType::Groups(_) => {
                             format!(
                                 "__dsl_group_idx.{}",
                                 group_letters.next().context("more than three Groups arguments")?
@@ -107,7 +174,7 @@ pub fn generate_wrappers(
                 .join(", ")
         };
 
-        let numthreads = calculate_numthreads(&arguments)?;
+        let numthreads = calculate_numthreads(kernel.name(), &arguments)?;
 
         let guards = arguments
             .iter()
@@ -118,7 +185,16 @@ pub fn generate_wrappers(
             .zip(["x", "y", "z"])
             .map(|(total, axis)| format!("if (__dsl_axis_idx.{axis} >= ({total})) return;"))
             .join("\n  ");
-        let body = format!("{guards}\n  {underlying_call}({underlying_arguments});");
+        // Round to nearest even and preserve signed zeros, infinities and NaNs like the CPU; Vulkan leaves both open.
+        let rounding = format!(
+            "spirv_asm {{\n    OpCapability RoundingModeRTE;\n    OpCapability SignedZeroInfNanPreserve;\n    \
+             OpExtension \"SPV_KHR_float_controls\";\n    \
+             OpExecutionMode ${wrapper_name} RoundingModeRTE 16;\n    \
+             OpExecutionMode ${wrapper_name} RoundingModeRTE 32;\n    \
+             OpExecutionMode ${wrapper_name} SignedZeroInfNanPreserve 16;\n    \
+             OpExecutionMode ${wrapper_name} SignedZeroInfNanPreserve 32;\n  }};"
+        );
+        let body = format!("{rounding}\n  {guards}\n  {underlying_call}({underlying_arguments});");
 
         let wrapper = format!(
             "[shader(\"compute\")]\n[numthreads({})]\nvoid {wrapper_name}({wrapper_arguments_str}) {{\n  {body}\n}}",
@@ -126,9 +202,10 @@ pub fn generate_wrappers(
         );
 
         wrappers.push(wrapper);
+        entry_points.push((wrapper_name, specialization_variant.unwrap_or_default()));
     }
 
-    Ok(wrappers)
+    Ok((wrappers, entry_points))
 }
 
 fn mangle_name(
@@ -142,22 +219,56 @@ fn mangle_name(
     result
 }
 
-fn calculate_numthreads(arguments: &[(String, SlangArgumentType, String)]) -> Result<String, Error> {
-    let threads: Vec<&str> = arguments
+/// Slang type of a specialization constant: Vulkan specializes only scalars, so enums are `uint`.
+pub fn specialization_wire_type(slang_type: &str) -> &str {
+    match slang_type {
+        "bool" => "bool",
+        _ => "uint",
+    }
+}
+
+pub fn specialization_name(
+    kernel_name: &str,
+    argument_name: &str,
+) -> String {
+    format!("__dsl_{kernel_name}_{argument_name}")
+}
+
+fn calculate_numthreads(
+    kernel_name: &str,
+    arguments: &[(String, SlangArgumentType, String)],
+) -> Result<String, Error> {
+    let threads = arguments
         .iter()
         .filter_map(|(_, arg_type, _)| match arg_type {
             SlangArgumentType::Axis(_, threads_per_group) => Some(threads_per_group.as_ref()),
             SlangArgumentType::Threads(threads) => Some(threads.as_ref()),
             _ => None,
         })
-        .collect();
+        .map(|text| {
+            let mut expression = syn::parse_str::<Expr>(text)?;
+            rewrite_paths_with(&mut expression, |path| {
+                let name = path.get_ident()?;
+                arguments
+                    .iter()
+                    .any(|(argument, kind, _)| {
+                        argument == &name.to_string() && matches!(kind, SlangArgumentType::Specialize(_))
+                    })
+                    .then(|| {
+                        let name = format_ident!("{}", specialization_name(kernel_name, &name.to_string()));
+                        parse_quote! { #name }
+                    })
+            });
+            Ok::<_, Error>(expression.into_token_stream().to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     if threads.is_empty() {
         Ok("1, 1, 1".to_string())
     } else {
-        let mut result = threads.to_vec();
+        let mut result = threads;
         while result.len() < 3 {
-            result.push("1");
+            result.push("1".to_owned());
         }
         Ok(result.join(", "))
     }

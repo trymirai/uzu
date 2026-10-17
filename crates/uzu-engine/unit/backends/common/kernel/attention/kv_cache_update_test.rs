@@ -5,12 +5,13 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::common::kernel::{KVCacheUpdateInt8Kernel, kv_layout::Int8KVLayout};
 use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::kv_cache_update::Copy,
-            kernel::{KVCacheUpdateInt8Kernel, KVCacheUpdateKernel, kv_layout::Int8KVLayout},
+            gpu_types::kv_cache_update::Copy, kernel::KVCacheUpdateKernel,
         },
         cpu::Cpu,
     },
@@ -241,6 +242,7 @@ fn test_large_bf16() {
     test_large_internal::<bf16>();
 }
 
+#[cfg(backend = "metal")]
 #[uzu_test]
 fn test_int8_copy() {
     let expected = get_int8_output::<Cpu>();
@@ -249,6 +251,7 @@ fn test_int8_copy() {
     });
 }
 
+#[cfg(backend = "metal")]
 fn get_int8_output<B: Backend>() -> ([Vec<u8>; 2], [Vec<bf16>; 2]) {
     let layout = Int8KVLayout::new(256, 2);
     let scale_count = 64 * layout.num_kv_heads as usize;

@@ -118,30 +118,22 @@ jobs:
 
   vulkan:
     name: vulkan
-    runs-on: ubuntu-24.04
-    env:
-      UZU_BACKEND: cpu
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
-      - name: Install Vulkan and Slang
+      - name: Install Vulkan
         run: |
-          sudo apt-get install -y libclang-dev mesa-vulkan-drivers vulkan-validationlayers vulkan-tools
-          curl --fail --location --retry 3 --output "$RUNNER_TEMP/slang.tar.gz" \
-            https://github.com/shader-slang/slang/releases/download/v2026.2/slang-2026.2-linux-x86_64.tar.gz
-          echo "b123968a40ee74404ffaccee2a6c6ae17cf02e76d9f26d4940c7132a19aec8a8  $RUNNER_TEMP/slang.tar.gz" | sha256sum --check
-          mkdir "$RUNNER_TEMP/slang"
-          tar -xzf "$RUNNER_TEMP/slang.tar.gz" -C "$RUNNER_TEMP/slang"
-          echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/slang/lib" >> "$GITHUB_ENV"
+          sudo add-apt-repository -y --no-update ppa:kisak/kisak-mesa
+          sudo apt-get -o APT::Architecture-Variants= update
+          sudo apt-get -o APT::Architecture-Variants= install -y mesa-vulkan-drivers vulkan-validationlayers vulkan-tools
+          dpkg --compare-versions "$(dpkg-query -W -f='${Version}' mesa-vulkan-drivers)" ge 26.2.0
           drivers=(/usr/share/vulkan/icd.d/lvp_icd*.json)
           test "${#drivers[@]}" -eq 1 && test -f "${drivers[0]}"
           echo "VK_DRIVER_FILES=${drivers[0]}" >> "$GITHUB_ENV"
           rustup component add clippy --toolchain stable
-      - name: Build and lint Vulkan
-        run: |
-          cargo +stable build -p uzu-engine --no-default-features --features cpu,vulkan --example vulkan --locked
-          cargo +stable clippy -p uzu-engine --no-default-features --features cpu,vulkan --lib --example vulkan --locked -- -D warnings
+      - name: Lint Vulkan
+        run: cargo +stable clippy -p uzu-engine --no-default-features --features cpu,vulkan --lib --example vulkan --locked -- -D warnings
       - name: Test CPU and Vulkan contracts
         run: |
           cargo +nightly test -p uzu-engine --no-default-features --features cpu,vulkan --lib --locked

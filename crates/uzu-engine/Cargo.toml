@@ -17,15 +17,17 @@ default = ["cpu", "metal", "grammar"]
 
 cpu = [] # TODO: move libm here
 
-vulkan = ["dep:ash", "dep:vk-mem", "dep:shader-slang", "dep:shader-slang-sys", "dep:blake3", "dep:serde_json"]
+vulkan = ["cpu", "dep:ash", "dep:vk-mem", "dep:shader-slang", "dep:shader-slang-sys", "dep:blake3", "dep:serde_json"]
 
 metal = [
     "dep:rayon",
     "dep:clang-ast",
     "dep:depfile",
     "dep:tempfile",
+    "dep:serde_json",
     "dep:objc2",
     "dep:obfstr",
+    "dep:blake3",
     "dep:xxhash-rust",
     "dep:metal",
 ]
@@ -45,19 +47,15 @@ itertools.workspace = true
 rhai.workspace = true
 shader-slang = { workspace = true, optional = true }
 shader-slang-sys = { workspace = true, optional = true }
+blake3 = { workspace = true, optional = true }
+serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
-blake3.workspace = true
-serde_json = { workspace = true, features = ["unbounded_depth"] }
 rayon = { workspace = true, optional = true }
 clang-ast = { workspace = true, optional = true }
 depfile = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
-
-[target.'cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos")))'.build-dependencies]
-blake3 = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 
 [dependencies]
 uzu-engine-macros.workspace = true

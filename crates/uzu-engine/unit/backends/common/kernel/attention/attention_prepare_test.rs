@@ -2,11 +2,13 @@ use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::common::kernel::AttentionPrepareInt8Kernel;
 use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::{AttentionPrepareInt8Kernel, AttentionPrepareKernel},
+            kernel::AttentionPrepareKernel,
         },
         cpu::Cpu,
     },
@@ -133,12 +135,14 @@ fn test_attention_prepare_uses_query_gate_row_stride() {
     });
 }
 
+#[cfg(backend = "metal")]
 #[derive(Debug, PartialEq)]
 struct Int8Output {
     codes: [Vec<u8>; 3],
     scales: [Vec<bf16>; 3],
 }
 
+#[cfg(backend = "metal")]
 fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
     const DIM: usize = 256;
     const CACHE_TOKENS: usize = 64;
@@ -191,6 +195,7 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
     }
 }
 
+#[cfg(backend = "metal")]
 #[uzu_test]
 fn test_attention_prepare_int8() {
     for num_q_heads in [0, 1] {

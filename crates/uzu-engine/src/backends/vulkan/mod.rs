@@ -1,37 +1,102 @@
 mod error;
+mod gpu_types;
+mod vk_attention_kernel;
 mod vk_buffer;
-mod vk_buffer_create_info;
 mod vk_buffer_error;
-mod vk_command_buffers;
+mod vk_command_buffer;
+mod vk_command_buffer_completed;
+mod vk_command_buffer_encoding;
+mod vk_command_buffer_executable;
+mod vk_command_buffer_pending;
+mod vk_command_buffer_resources;
 mod vk_compute_pipeline;
-mod vk_compute_shader_layout_buffer;
-mod vk_compute_shader_layout_set;
+mod vk_compute_pipeline_key;
 mod vk_context;
 mod vk_context_create_info;
 mod vk_context_error;
+mod vk_cooperative_matrix2_features;
+mod vk_debug_group_span;
+mod vk_delta_net_chunked_prefill;
+mod vk_delta_net_tree_verify;
+mod vk_delta_net_update_kernel;
+mod vk_device_capabilities;
+#[macro_use]
+mod vk_kernels;
+mod vk_gemv_tile;
 mod vk_logger;
+mod vk_matmul_kernel;
 mod vk_physical_device;
 mod vk_physical_device_features;
 mod vk_physical_device_subgroup_properties;
 mod vk_println_logger;
+mod vk_radix_top_k_small;
 mod vk_shader;
-mod vk_timestamp_query_pool;
+mod vk_shader_bfloat16_features;
+mod vk_sparse_buffer;
+mod vulkan;
+mod vulkan_kernels;
 
 pub use error::Error;
+pub use vk_attention_kernel::VkAttentionKernel;
 pub use vk_buffer::VkBuffer;
-pub use vk_buffer_create_info::VkBufferCreateInfo;
 pub use vk_buffer_error::VkBufferError;
-pub use vk_command_buffers::VkCommandBuffers;
+pub use vk_command_buffer::VkCommandBuffer;
+pub use vk_command_buffer_completed::VkCommandBufferCompleted;
+pub use vk_command_buffer_encoding::VkCommandBufferEncoding;
+pub use vk_command_buffer_executable::VkCommandBufferExecutable;
+pub use vk_command_buffer_pending::VkCommandBufferPending;
+pub use vk_command_buffer_resources::VkCommandBufferResources;
 pub use vk_compute_pipeline::VkComputePipeline;
-pub use vk_compute_shader_layout_buffer::VkComputeShaderLayoutBuffer;
-pub use vk_compute_shader_layout_set::VkComputeShaderLayoutSet;
+pub use vk_compute_pipeline_key::VkComputePipelineKey;
 pub use vk_context::VkContext;
 pub use vk_context_create_info::VkContextCreateInfo;
 pub use vk_context_error::VkContextError;
+pub use vk_cooperative_matrix2_features::VkCooperativeMatrix2Features;
+pub use vk_debug_group_span::VkDebugGroupSpan;
+pub use vk_delta_net_chunked_prefill::VkDeltaNetChunkedPrefill;
+pub use vk_delta_net_tree_verify::VkDeltaNetTreeVerify;
+pub use vk_delta_net_update_kernel::VkDeltaNetUpdateKernel;
+pub use vk_device_capabilities::VkDeviceCapabilities;
+pub use vk_gemv_tile::{NVIDIA_VENDOR_ID, VkGemvTile};
+pub use vk_kernels::{
+    ActivationTransformVulkanKernel, ActivationVulkanKernel, AncestorAttentionVulkanKernel,
+    AttentionPrepareVulkanKernel, AttentionSinglePassVulkanKernel, AttentionTwoPass1VulkanKernel,
+    AttentionTwoPass2VulkanKernel, BuildTreeGramVulkanKernel, BuildTreeOutVulkanKernel, BuildTreePrefixVulkanKernel,
+    ContextRingUpdateVulkanKernel, Conv1dPackVulkanKernel, ConvTreeScanVulkanKernel,
+    DeltaNetChunkedADiagInvVulkanKernel, DeltaNetChunkedCausalInvVulkanKernel, DeltaNetChunkedCumsumVulkanKernel,
+    DeltaNetChunkedGramVulkanKernel, DeltaNetChunkedOutputAndStateVulkanKernel, DeltaNetConvScanVulkanKernel,
+    DeltaNetConvUpdateVulkanKernel, DeltaNetNormGateVulkanKernel, DeltaNetPrefillPrepVulkanKernel,
+    DeltaNetPrefillVulkanKernel, DeltaNetUpdateVulkanKernel, GatedActMulVulkanKernel, GemmInt8K16VulkanKernel,
+    GemmInt8NvVulkanKernel, GemmInt8VulkanKernel, GemmPrepareBLayoutVulkanKernel, GemmTensorVulkanKernel,
+    GemmVulkanKernel, GemvInt8Native128VulkanKernel, GemvInt8VulkanKernel, GemvVulkanKernel,
+    InputEmbeddingLookupVulkanKernel, KVCacheUpdateVulkanKernel, LogitTransformVulkanKernel, NormalizationVulkanKernel,
+    PoolingMeanVulkanKernel, QKVNormVulkanKernel, RadixTopKSmallVulkanKernel, RepetitionPenaltyVulkanKernel,
+    SeparableCausalConvVulkanKernel, ShortConvDecodeVulkanKernel, ShortConvPackVulkanKernel,
+    ShortConvPrefillVulkanKernel, ShortConvTrieVulkanKernel, SigmoidGateVulkanKernel, SoftmaxVulkanKernel,
+    StateAdvanceVulkanKernel, TensorAddBiasVulkanKernel, TensorAddScaleVulkanKernel, TestKernelAxisFloatVulkanKernel,
+    TreeUpdateSolveVulkanKernel, TrellisGemvVulkanKernel, TrellisTransformVulkanKernel, UnifiedSamplingVulkanKernel,
+    WeaverFrontierSelectVulkanKernel, WeaverTopChildrenVulkanKernel,
+};
 pub use vk_logger::VkLogger;
+pub use vk_matmul_kernel::VkMatmulKernel;
 pub use vk_physical_device::VkPhysicalDevice;
 pub use vk_physical_device_features::VkPhysicalDeviceFeatures;
 pub use vk_physical_device_subgroup_properties::VkPhysicalDeviceSubgroupProperties;
 pub use vk_println_logger::VkPrintlnLogger;
+pub use vk_radix_top_k_small::VkRadixTopKSmall;
 pub use vk_shader::VkShader;
-pub use vk_timestamp_query_pool::VkTimestampQueryPool;
+pub use vk_shader_bfloat16_features::VkShaderBfloat16Features;
+pub use vk_sparse_buffer::VkSparseBuffer;
+pub use vulkan::Vulkan;
+pub use vulkan_kernels::VulkanKernels;
+
+/// B's prologue: its scheme, code mode, stored sign and group size.
+type GemmBPrologue = (
+    crate::backends::common::gpu_types::gemm::GemmBPrologueKind,
+    crate::backends::common::gpu_types::quantization::QuantizationMode,
+    bool,
+    u32,
+);
+
+// The common traits of the public Vulkan types, for callers outside the crate.
+pub use crate::backends::common::{CommandBufferCompleted, CommandBufferExecutable, CommandBufferPending, Context};
