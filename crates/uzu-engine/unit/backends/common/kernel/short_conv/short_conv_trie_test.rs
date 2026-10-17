@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -33,7 +34,7 @@ struct Input<T: DataTypeRepr + Float> {
 }
 
 fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
 
     let has_bias = input.b.is_some();
     let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(
@@ -82,7 +83,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         input.model_dim,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     (buffer_to_vec(&out), buffer_to_vec(&suffix_state))
 }

@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use futures::executor::block_on;
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -59,7 +60,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(
     input: &Input<T>,
     in_place: bool,
 ) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
 
     let kernel = <<B as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
         &context,
@@ -86,7 +87,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(
         input.length,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     buffer_to_vec::<B, T>(&output_buffer)
 }

@@ -29,8 +29,8 @@ pub enum EngineNewError<B: Backend> {
 }
 
 impl<B: Backend> Engine<B> {
-    pub fn new() -> Result<Arc<Self>, EngineNewError<B>> {
-        let context = <B::Context as Context>::new().map_err(EngineNewError::Backend)?;
+    pub async fn new() -> Result<Arc<Self>, EngineNewError<B>> {
+        let context = <B::Context as Context>::new().await.map_err(EngineNewError::Backend)?;
         let capture_span = CAPTURE_MATCHER.capture::<B>(&context, "")?;
 
         Ok(Arc::new(Self {

@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -29,7 +30,7 @@ fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
     order: TransformOrder,
     in_place: bool,
 ) -> Vec<T> {
-    let context = B::Context::new().expect("context");
+    let context = block_on(B::Context::new()).expect("context");
     let kernel = match order {
         TransformOrder::Input => ActivationTransform::<B>::input_rht(context.as_ref(), T::data_type(), in_place),
         TransformOrder::Output => {
@@ -48,7 +49,7 @@ fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
     } else {
         kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut command_buffer);
     }
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     if !in_place {
         assert_eq!(buffer_to_vec::<B, T>(&input), data);
     }
@@ -111,7 +112,7 @@ fn input_and_output_rht_bf16() {
 #[uzu_test]
 fn output_rht_fused_bias_matches_separate_mixed_dtype() {
     for_each_backend!(|B| {
-        let context = <B as Backend>::Context::new().expect("context");
+        let context = block_on(<B as Backend>::Context::new()).expect("context");
         let channels = 2 * BLOCK_SIZE as usize;
         let data: Vec<bf16> = (0..2 * channels).map(|i| bf16::from_f32((i as f32 * 0.17).sin() * 2.0)).collect();
         let bias_data: Vec<f32> = (0..channels).map(|i| (i as f32 * 0.31).cos() * 0.03).collect();
@@ -137,13 +138,14 @@ fn output_rht_fused_bias_matches_separate_mixed_dtype() {
         ActivationTransform::<B>::output_rht(context.as_ref(), bf16::data_type(), Some(f32::data_type()), true)
             .expect("fused transform")
             .encode_fp_in_place(&mut fused, &factors, Some(&bias), 2, channels as u32, &mut command_buffer);
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         assert_eq!(buffer_to_vec::<B, bf16>(&fused), expected);
     });
 }
 
 mod quantize {
 
+    use futures::executor::block_on;
     use rand::{RngExt, SeedableRng, rngs::SmallRng};
     use uzu_engine_macros::uzu_test;
 
@@ -172,7 +174,7 @@ mod quantize {
     ) -> (Vec<i8>, Vec<f32>, Option<Vec<i32>>) {
         let scale_groups = columns / scale_group_size;
         let sum_groups = sum_group_size.map_or(0, |group_size| columns / group_size);
-        let context = B::Context::new().expect("context");
+        let context = block_on(B::Context::new()).expect("context");
         let input = create_buffer_with_data::<B, f32>(context.as_ref(), input_data);
         let factors = create_buffer_with_data::<B, i32>(context.as_ref(), factors_data);
         let mut values = create_buffer::<B, i8>(context.as_ref(), (rows * columns) as usize);
@@ -202,7 +204,7 @@ mod quantize {
             columns,
             &mut command_buffer,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
         (buffer_to_vec(&values), buffer_to_vec(&scales), group_sums.as_ref().map(buffer_to_vec))
     }

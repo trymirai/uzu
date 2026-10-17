@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use uzu_engine_macros::uzu_test;
 
 use super::{Head, QKVNorm};
@@ -73,7 +74,7 @@ fn run_key_value_row_stride_test<B: Backend>() {
     let mut key_value = create_buffer_with_data::<B, f32>(&context, &input);
     let mut command_buffer = context.create_command_buffer(None, None).expect("failed to create command buffer");
     norm.encode_key_value(&mut key_value, BATCH_SIZE, &mut command_buffer);
-    command_buffer.end_encoding().submit().wait_until_completed().expect("failed to execute key/value norm");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("failed to execute key/value norm");
 
     let output = buffer_to_vec::<B, f32>(&key_value);
     assert_eq_float(&expected, &output, 1e-5, "key/value norm row stride mismatch");

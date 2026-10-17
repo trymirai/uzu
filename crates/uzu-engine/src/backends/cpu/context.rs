@@ -21,7 +21,7 @@ pub struct CpuContext {
 impl Context for CpuContext {
     type Backend = Cpu;
 
-    fn new() -> Result<Arc<Self>, CpuError> {
+    async fn new() -> Result<Arc<Self>, CpuError> {
         let (command_queue_sender, command_queue_receiever) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
 
         thread::spawn(|| {

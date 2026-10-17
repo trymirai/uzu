@@ -6946,6 +6946,7 @@ dependencies = [
  "clang-ast",
  "depfile",
  "derive_more",
+ "futures",
  "half",
  "itertools",
  "libm",

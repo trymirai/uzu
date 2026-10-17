@@ -1,5 +1,7 @@
 use std::collections::{HashMap, hash_map::Entry};
 
+use futures::executor::block_on;
+
 use crate::{
     backends::{
         common::{
@@ -123,7 +125,7 @@ impl GemmKernel {
             rows / 32,
             &mut command_buffer,
         );
-        command_buffer.end_encoding().submit().wait_until_completed()?;
+        block_on(command_buffer.end_encoding().submit().wait_until_completed())?;
         Ok(())
     }
 

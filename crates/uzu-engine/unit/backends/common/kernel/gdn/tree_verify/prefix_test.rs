@@ -1,5 +1,6 @@
 #![cfg(backend = "metal")]
 
+use futures::executor::block_on;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
@@ -18,7 +19,7 @@ use crate::{
 
 fn run<B: Backend>(tree_size: usize) -> Vec<f32> {
     const HEADS: usize = 5;
-    let context = B::Context::new().unwrap();
+    let context = block_on(B::Context::new()).unwrap();
     let trie = (0..tree_size as u32).flat_map(|node| [node, tree_size as u32 - 1, node]).collect::<Vec<_>>();
     let log_decay = (0..tree_size * HEADS).map(|i| -0.001 - i as f32 * 0.0001).collect::<Vec<_>>();
     let trie = create_buffer_with_data::<B, u32>(&context, &trie);
@@ -27,7 +28,7 @@ fn run<B: Backend>(tree_size: usize) -> Vec<f32> {
     let kernel = <B::Kernels as Kernels>::BuildTreePrefixKernel::new(&context).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(&trie, &log_decay, &mut prefix, 1, tree_size as u32, HEADS as u32, &mut command_buffer);
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec(&prefix)
 }
 

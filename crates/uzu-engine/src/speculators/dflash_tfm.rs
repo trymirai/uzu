@@ -209,7 +209,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         Some(shape)
     }
 
-    pub fn propose_tree(
+    pub async fn propose_tree(
         &self,
         state: &mut DFlashState<B>,
         target_output_norm: impl BufferRef<Backend = B>,
@@ -285,8 +285,12 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         &mut command_buffer,
                     )
                     .map_err(DFlashTreeError::Backend)?;
-                let completed =
-                    command_buffer.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
+                let completed = command_buffer
+                    .end_encoding()
+                    .submit()
+                    .wait_until_completed()
+                    .await
+                    .map_err(DFlashTreeError::Backend)?;
                 let tokens = sampled.copyout::<u32>();
                 drop(completed);
                 nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
@@ -360,8 +364,12 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     },
                     &mut command_buffer,
                 )?;
-                let completed =
-                    command_buffer.end_encoding().submit().wait_until_completed().map_err(DFlashTreeError::Backend)?;
+                let completed = command_buffer
+                    .end_encoding()
+                    .submit()
+                    .wait_until_completed()
+                    .await
+                    .map_err(DFlashTreeError::Backend)?;
                 let nodes = tree.read_nodes();
                 drop(completed);
                 nodes

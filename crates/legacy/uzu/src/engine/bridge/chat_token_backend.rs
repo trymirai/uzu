@@ -55,11 +55,11 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
 }
 
 impl<B: Backend> UzuChatTokenBackendInstance<B> {
-    pub fn new(
+    pub async fn new(
         model_path: String,
         config: ChatConfig,
     ) -> Result<Self, BackendError> {
-        let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
+        let engine = Engine::<B>::new().await.map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).map_err(|err| err.to_string())?;
 

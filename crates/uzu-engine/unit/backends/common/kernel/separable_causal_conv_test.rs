@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
@@ -32,7 +33,7 @@ fn run_kernel<B: Backend>() -> Vec<bf16> {
     .map(bf16::from_f32);
     let coefficient_deltas = [1.0, 2.0, 99.0, 99.0, 5.0, 6.0, 99.0, 99.0].map(bf16::from_f32);
 
-    let context = B::Context::new().expect("create context");
+    let context = block_on(B::Context::new()).expect("create context");
     let kernel = <<B as Backend>::Kernels as Kernels>::SeparableCausalConvKernel::new(
         &context,
         bf16::data_type(),
@@ -59,7 +60,7 @@ fn run_kernel<B: Backend>() -> Vec<bf16> {
         COEFFICIENT_ROW_STRIDE,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     buffer_to_vec::<B, bf16>(&output)
 }

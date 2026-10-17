@@ -1,5 +1,6 @@
 use std::mem::{size_of, size_of_val};
 
+use futures::executor::block_on;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
@@ -226,7 +227,7 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
         if let Some(group_size) = sum_group_size {
             assert!(columns.is_multiple_of(group_size));
         }
-        let context = <Cpu as Backend>::Context::new().expect("CPU context");
+        let context = block_on(<Cpu as Backend>::Context::new()).expect("CPU context");
         let input = create_buffer_with_data::<Cpu, T>(&context, &self.x);
         let factors = create_buffer_with_data::<Cpu, i32>(&context, &vec![1; columns as usize]);
         let element_count = rows * columns;
@@ -254,7 +255,7 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             columns,
             &mut command_buffer,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().expect("CPU activation quantization");
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("CPU activation quantization");
 
         self.prepared_a = Some(PreparedInt8A {
             values: buffer_to_vec(&values),
@@ -462,7 +463,7 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
 }
 
 pub fn run_quant_cpu<T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {
-    let context = <Cpu as Backend>::Context::new().expect("Cpu context");
+    let context = block_on(<Cpu as Backend>::Context::new()).expect("Cpu context");
     let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
     let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
@@ -473,6 +474,6 @@ pub fn run_quant_cpu<T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {
     .expect("MatmulCpuKernel");
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     matmul.encode(quant_arguments(&mut buffers, input), &mut command_buffer).expect("encode cpu quant");
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec::<Cpu, T>(&buffers.y)
 }

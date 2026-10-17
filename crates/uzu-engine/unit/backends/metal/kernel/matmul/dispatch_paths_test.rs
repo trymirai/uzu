@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use rstest::rstest;
@@ -68,7 +69,7 @@ fn run_matrix<T: DataTypeRepr + Float + Debug + Display>(
     case_for_shape: impl Fn(crate::tests::matmul::Shape) -> Case,
     tolerance: f32,
 ) {
-    let context = MetalContext::new().expect("Metal context");
+    let context = block_on(MetalContext::new()).expect("Metal context");
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         T::data_type(),
@@ -115,7 +116,7 @@ fn rht_shapes() -> impl Iterator<Item = crate::tests::matmul::Shape> {
 
 #[uzu_test]
 fn rht_parity_bf16() {
-    let context = MetalContext::new().expect("Metal context");
+    let context = block_on(MetalContext::new()).expect("Metal context");
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -140,7 +141,7 @@ fn rht_parity_bf16() {
 #[uzu_test]
 fn bias_parity_bf16() {
     use crate::tests::matmul::Shape;
-    let context = MetalContext::new().expect("Metal context");
+    let context = block_on(MetalContext::new()).expect("Metal context");
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -159,7 +160,7 @@ fn bias_parity_bf16() {
 
 #[uzu_test]
 fn gemv_fp_partial_output_block_bf16() {
-    let context = MetalContext::new().expect("Metal context");
+    let context = block_on(MetalContext::new()).expect("Metal context");
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -176,7 +177,7 @@ fn gemv_fp_partial_output_block_bf16() {
 #[uzu_test]
 fn gemv_fp_output_transforms_bf16() {
     use crate::tests::matmul::Shape;
-    let context = MetalContext::new().expect("Metal context");
+    let context = block_on(MetalContext::new()).expect("Metal context");
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -199,7 +200,7 @@ fn gemv_fp_output_transforms_bf16() {
 #[uzu_test]
 fn small_m_square_tile_parity() {
     use crate::tests::matmul::Shape;
-    let context = MetalContext::new().expect("Metal context");
+    let context = block_on(MetalContext::new()).expect("Metal context");
     let mut bf16_kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),

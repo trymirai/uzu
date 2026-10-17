@@ -1,7 +1,6 @@
 use std::{path::PathBuf, pin::Pin, sync::Arc};
 
 use futures::{StreamExt, stream};
-use parking_lot::Mutex;
 use shoji::{
     traits::{
         State as ShojiState,
@@ -24,16 +23,16 @@ use uzu_engine::{
 };
 
 pub struct UzuClassificationBackendInstance<B: Backend> {
-    model: Arc<Mutex<ClassifierModel<B>>>,
+    model: Arc<ClassifierModel<B>>,
 }
 
 impl<B: Backend> UzuClassificationBackendInstance<B> {
-    pub fn new(model_path: String) -> Result<Self, BackendError> {
-        let engine = Engine::<B>::new().map_err(|err| err.to_string())?;
+    pub async fn new(model_path: String) -> Result<Self, BackendError> {
+        let engine = Engine::<B>::new().await.map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
         let model = engine.load_classifier_model(&model_path).map_err(|err| err.to_string())?;
         Ok(Self {
-            model: Arc::new(Mutex::new(model)),
+            model: Arc::new(model),
         })
     }
 }
@@ -62,10 +61,9 @@ impl<B: Backend> BackendInstance for UzuClassificationBackendInstance<B> {
         >,
     > {
         Box::pin(NoMetricsStream::new(
-            stream::once(async move {
-                let model_guard = self.model.lock();
-                model_guard.classify(input).map_err(|err| BackendError::from(err.to_string()))
-            })
+            stream::once(
+                async move { self.model.classify(input).await.map_err(|err| BackendError::from(err.to_string())) },
+            )
             .take_until(cancel_token.cancelled_owned()),
         ))
     }
@@ -77,11 +75,11 @@ impl<B: Backend> BackendInstance for UzuClassificationBackendInstance<B> {
 
 impl<B: Backend> ClassificationInstance for UzuClassificationBackendInstance<B> {
     fn tokenizer(&self) -> Arc<Tokenizer> {
-        self.model.lock().tokenizer().clone()
+        self.model.tokenizer().clone()
     }
 
     fn token_codec_config(&self) -> TokenCodecConfig {
-        self.model.lock().token_codec_config()
+        self.model.token_codec_config()
     }
 }
 

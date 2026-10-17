@@ -17,7 +17,7 @@ pub trait CommandBuffer {
     type Completed: CommandBufferCompleted<CommandBuffer = Self>;
 }
 
-pub trait CommandBufferEncoding {
+pub trait CommandBufferEncoding: Send {
     type CommandBuffer: CommandBuffer<Encoding = Self>;
 
     fn context(&self) -> &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Context;
@@ -98,10 +98,12 @@ pub trait CommandBufferPending: Send {
 
     fn wait_until_completed(
         self
-    ) -> Result<
-        <Self::CommandBuffer as CommandBuffer>::Completed,
-        <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error,
-    >;
+    ) -> impl Future<
+        Output = Result<
+            <Self::CommandBuffer as CommandBuffer>::Completed,
+            <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error,
+        >,
+    > + Send;
 }
 
 pub trait CommandBufferCompleted: Send {

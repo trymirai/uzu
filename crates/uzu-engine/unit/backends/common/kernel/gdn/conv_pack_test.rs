@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -51,7 +52,7 @@ fn get_input<T: DataTypeRepr + Float>(
 }
 
 fn get_output<B: Backend, T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, T::data_type(), T::data_type())
         .expect("Failed to create Conv1dPackKernel");
 
@@ -73,7 +74,7 @@ fn get_output<B: Backend, T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
         input.num_channels,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
     buffer_to_vec(&padded)
 }

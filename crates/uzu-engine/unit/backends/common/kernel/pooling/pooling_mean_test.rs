@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -46,7 +47,7 @@ fn get_test_data<T: DataTypeRepr + Float>(
 }
 
 fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
 
     let kernel = <<B as Backend>::Kernels as Kernels>::PoolingMeanKernel::new(&context, T::data_type())
         .expect("Failed to create PoolingMeanKernel");
@@ -58,7 +59,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(&input_buffer, &mut output, input.seq_len, input.hidden_dim, input.batch_size, &mut command_buffer);
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     buffer_to_vec(&output)
 }

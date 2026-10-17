@@ -1,5 +1,6 @@
 #![cfg(backend = "metal")]
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -63,7 +64,7 @@ fn get_output<B: Backend, T: DataTypeRepr + Float>(
     scale: f32,
     use_mxu: bool,
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel =
         <<B as Backend>::Kernels as Kernels>::BuildTreeGramKernel::new(&context, T::data_type(), use_mxu, true)
             .expect("Failed to create BuildTreeGramKernel");
@@ -107,7 +108,7 @@ fn get_output<B: Backend, T: DataTypeRepr + Float>(
         HEAD_V_DIM as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     (buffer_to_vec(&a_packed), buffer_to_vec(&qkd), buffer_to_vec(&a_inv), buffer_to_vec(&kh0))
 }
@@ -132,7 +133,7 @@ fn check_type<T: DataTypeRepr + Float>(
         assert_eq_float::<f32>(&expected.3, &actual.3, 2e-4, &format!("kh0 {msg}"));
     });
 
-    if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu {
+    if block_on(<Metal as Backend>::Context::new()).expect("Failed to create Context").supports_mxu {
         let actual = get_output::<Metal, T>(
             &q,
             &k,

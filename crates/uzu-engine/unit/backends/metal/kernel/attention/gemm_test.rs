@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -81,7 +82,7 @@ fn get_test_data<T: DataTypeRepr + Float>(
 }
 
 fn get_output<T: DataTypeRepr + Float, B: Backend>(fixture: &Input<T>) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
 
     let config = attention_config(fixture);
 
@@ -111,14 +112,14 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(fixture: &Input<T>) -> Vec<T>
         create_buffer::<B, T>(context.as_ref(), fixture.suffix_length * fixture.num_heads * fixture.head_dim);
     command_buffer.encode_copy(&pooled_output, &mut output_buffer);
     drop(pooled_output);
-    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     drop(completed);
 
     buffer_to_vec::<B, T>(&output_buffer)
 }
 
 fn get_gemm_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
-    let context = <Metal as Backend>::Context::new().expect("Failed to create Metal context");
+    let context = block_on(<Metal as Backend>::Context::new()).expect("Failed to create Metal context");
     let config = attention_config(input);
     let queries = create_buffer_with_data::<Metal, T>(context.as_ref(), &input.queries);
     let keys = create_buffer_with_data::<Metal, T>(context.as_ref(), &input.keys);
@@ -146,7 +147,7 @@ fn get_gemm_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
         create_buffer::<Metal, T>(context.as_ref(), input.suffix_length * input.num_heads * input.head_dim);
     command_buffer.encode_copy(&pooled, &mut output);
     drop(pooled);
-    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     drop(completed);
     buffer_to_vec::<Metal, T>(&output)
 }

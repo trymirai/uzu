@@ -115,7 +115,7 @@ impl MetalContext {
 impl Context for MetalContext {
     type Backend = Metal;
 
-    fn new() -> Result<Arc<Self>, MetalError> {
+    async fn new() -> Result<Arc<Self>, MetalError> {
         if CAPTURE_MATCHER.enabled() {
             unsafe {
                 std::env::set_var("METAL_CAPTURE_ENABLED", "1");

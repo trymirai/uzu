@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
@@ -69,7 +70,7 @@ fn select<B: Backend>() -> Vec<u32> {
         3,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     [frontier, tree, slot_ancestors, token, metadata, ancestors, valid, candidate_ids]
         .iter()
         .flat_map(buffer_to_vec)

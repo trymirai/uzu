@@ -4,6 +4,7 @@ use std::{mem::size_of, time::Duration};
 
 #[cfg(backend = "metal")]
 use criterion::Criterion;
+use futures::executor::block_on;
 #[cfg(backend = "metal")]
 use half::bf16;
 #[cfg(backend = "metal")]
@@ -61,7 +62,7 @@ fn run<B: Backend>(
     shape: &str,
     perturb: bool,
 ) -> (Vec<f32>, Vec<f32>) {
-    let context = B::Context::new().expect("context");
+    let context = block_on(B::Context::new()).expect("context");
     let kernel = <<B as Backend>::Kernels as Kernels>::ConvTreeScanKernel::new(
         &context,
         DataType::F32,
@@ -99,7 +100,7 @@ fn run<B: Backend>(
         CONV_DIM as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     assert_eq_float(&base_state, &buffer_to_vec(&base_state_buffer), 0.0, &format!("base state {shape} T={tree_size}"));
     (buffer_to_vec(&output), buffer_to_vec(&suffix_state))
 }

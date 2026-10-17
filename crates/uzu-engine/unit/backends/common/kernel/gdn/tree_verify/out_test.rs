@@ -1,5 +1,6 @@
 #![cfg(backend = "metal")]
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
@@ -69,7 +70,7 @@ fn run_build_tree_out<B: Backend, T: DataTypeRepr + Float>(
     use_mxu: bool,
     transposed_h0: bool,
 ) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::BuildTreeOutKernel::new(
         &context,
         T::data_type(),
@@ -104,7 +105,7 @@ fn run_build_tree_out<B: Backend, T: DataTypeRepr + Float>(
         shape.head_v_dim as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec(&o)
 }
 
@@ -136,7 +137,7 @@ fn check_shape<T: DataTypeRepr + Float + std::fmt::Display>(
             }
         });
 
-        if <Metal as Backend>::Context::new().expect("Failed to create Context").supports_mxu {
+        if block_on(<Metal as Backend>::Context::new()).expect("Failed to create Context").supports_mxu {
             for &(path, use_mxu, transposed_h0) in BUILD_TREE_OUT_PATHS {
                 if !use_mxu || transposed_h0 && !use_h0 {
                     continue;

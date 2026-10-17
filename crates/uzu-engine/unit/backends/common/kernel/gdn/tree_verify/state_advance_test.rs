@@ -3,6 +3,7 @@ use std::time::Duration;
 
 #[cfg(backend = "metal")]
 use criterion::Criterion;
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 #[cfg(backend = "metal")]
@@ -37,7 +38,7 @@ const TEST_NUM_V_HEADS: usize = 6;
 const TEST_NUM_K_HEADS: usize = 2;
 
 fn run<B: Backend, T: DataTypeRepr + Float>(accepted_indices: &[u32]) -> Vec<f32> {
-    let context = B::Context::new().expect("context");
+    let context = block_on(B::Context::new()).expect("context");
     let kernel = <<B as Backend>::Kernels as Kernels>::StateAdvanceKernel::new(
         &context,
         T::data_type(),
@@ -75,7 +76,7 @@ fn run<B: Backend, T: DataTypeRepr + Float>(accepted_indices: &[u32]) -> Vec<f32
         accepted_len as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec(&committed_state)
 }
 
