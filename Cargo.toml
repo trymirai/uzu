@@ -1,8 +1,12 @@
 [workspace]
 members = [
+    # -- core
     "crates/uzu-engine",
     "crates/uzu-engine-macros",
+    # -- benches
     "scripts/benchmarks/engine-uzu",
+    # -- apps
+    "apps/mirai-gui/desktop",
     # --- to be rewritten
     "crates/legacy/bindings-types",
     "crates/legacy/bindings",
@@ -63,149 +67,155 @@ kanka = { path = "crates/legacy/kanka", default-features = false }
 kiban = { path = "crates/legacy/kiban", default-features = false }
 uzu = { path = "crates/legacy/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", version = "0.2.8", features = ["tokenizers"] }
-half = { version = "2.7", features = ["bytemuck", "num-traits"] }
-ndarray = "0.17"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-monostate = "0.1"
-thiserror = "2.0"
-tokenizers = { version = "0.22", features = [
+half = { version = "2.7.1", features = ["bytemuck", "num-traits"] }
+ndarray = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+monostate = "1.0.3"
+thiserror = "2.0.21"
+tokenizers = { version = "0.22.2", features = [
     "fancy-regex",
 ], default-features = false }
-objc2 = "0.6.4"
+objc2 = "0.6.5"
 objc2-foundation = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-io-kit = { version = "0.3.2", default-features = false, features = ["libc", "ps"] }
-obfstr = "0.4.4"
-metal = { package = "mtl-rs", version = "0.2.2" }
-block2 = "0.6"
-bytemuck = "1.23"
-bytesize = "2"
-xxhash-rust = "0.8.15"
-num-traits = "0.2"
-regex = "1.12"
-fancy-regex = "0.17.0"
-libc = "0.2"
+obfstr = "0.4.6"
+metal = { package = "mtl-rs", version = "0.3.0" }
+block2 = "0.6.2"
+bytemuck = "1.25.2"
+bytesize = "2.7.0"
+xxhash-rust = "0.8.19"
+num-traits = "0.2.19"
+regex = "1.13.1"
+fancy-regex = "0.19.2"
+libc = "0.2.191"
 libm = "0.2.16"
-minijinja = { version = "2.17.0", features = ["json", "preserve_order"] }
-minijinja-contrib = { version = "2.17.0", features = ["pycompat"] }
-clap = { version = "4.6", features = ["derive"] }
-rand = "0.10"
+minijinja = { version = "3.0.1", features = ["json", "preserve_order", "serde"] }
+minijinja-contrib = { version = "3.0.1", features = ["pycompat"] }
+clap = { version = "4.6.7", features = ["derive"] }
+rand = "0.10.3"
 rand_distr = "0.6.0"
-sysinfo = "0.38"
-itertools = "0.14"
-schemars = { version = "1.2", features = ["derive", "preserve_order"] }
-is_close = "0.1"
-anyhow = "1.0.102"
+sysinfo = "0.39.6"
+itertools = "0.15.0"
+schemars = { version = "1.2.3", features = ["derive", "preserve_order"] }
+is_close = "0.1.3"
+anyhow = "1.0.104"
 async-trait = "0.1.92"
 rayon = "1.12.0"
-derive_more = { version = "2", features = ["from", "deref", "as_ref", "display"] }
-walkdir = "2.5"
-depfile = "0.1"
-tempfile = "3.24"
-clang-ast = "0.1"
-rangemap = "1.7.1"
-parking_lot = "0.12"
-futures = "0.3"
-tokio = "1.49"
-tokio-stream = { version = "0.1.18", features = ["sync"] }
-tokio-util = { version = "0.7.17", default-features = false, features = ["rt"] }
-blake3 = "1.8"
-quote = "1.0"
-proc-macro2 = "1.0"
-proc-macro-crate = "3.5"
-syn = { version = "2.0", features = ["full", "fold", "visit-mut"] }
-prettyplease = "0.2"
-rhai = "1.24.0"
-indicatif = "0.18"
-rocket = { version = "0.5", features = ["json"] }
-uuid = { version = "1.20", features = ["serde", "v4", "v5"] }
-comfy-table = { version = "7.2", default-features = false }
-test-tag = "0.1"
-rstest = "0.26"
-wiremock = "0.6"
-proptest = { version = "1.10", default-features = false, features = ["std"] }
+derive_more = { version = "2.1.1", features = ["from", "deref", "as_ref", "display"] }
+walkdir = "2.5.0"
+depfile = "0.1.1"
+tempfile = "3.27.0"
+clang-ast = "0.1.35"
+rangemap = "1.8.0"
+parking_lot = "0.12.5"
+futures = "0.3.34"
+tokio = "1.53.3"
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+tokio-util = { version = "0.7.20", default-features = false, features = ["rt"] }
+blake3 = "1.8.7"
+quote = "1.0.47"
+proc-macro2 = "1.0.107"
+proc-macro-crate = "3.5.0"
+syn = { version = "3.0.9", features = ["full", "fold", "visit-mut", "extra-traits"] }
+prettyplease = "0.3.0"
+rhai = "1.26.1"
+indicatif = "0.18.6"
+rocket = { version = "0.5.1", features = ["json"] }
+uuid = { version = "1.28.0", features = ["serde", "v4", "v5"] }
+comfy-table = { version = "8.0.1", default-features = false }
+test-tag = "0.1.6"
+rstest = "0.27.0"
+wiremock = "0.6.5"
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 criterion = { version = "0.8.2", default-features = false }
 libtest-mimic = "0.8.2"
-indexmap = { version = "2.13.0", features = ["serde"] }
+indexmap = { version = "2.14.2", features = ["serde"] }
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tracing-tree = "0.4.1"
-tracing-appender = "0.2.4"
-llm_json = "1.0.2"
-futures-util = "0.3.31"
-http = "1.4.0"
+tracing-appender = "0.2.5"
+llm_json = "1.0.3"
+futures-util = "0.3.34"
+http = "1.5.0"
 httparse = "1.10.1"
 stream_throttle = "0.5.1"
-reqwest = { version = "0.13.2", features = [
+reqwest = { version = "0.13.5", features = [
     "json",
     "stream",
     "blocking",
     "query",
 ] }
 crc32c = "0.6.8"
-base64 = "0.22.1"
-bitflags = "2.11.1"
-bon = "3.10.0"
-chrono = { version = "0.4.42", features = ["serde"] }
-jsonschema = "0.46.0"
+base64 = "0.23.1"
+bitflags = "2.13.2"
+bon = "3.10.2"
+chrono = { version = "0.4.45", features = ["serde"] }
+jsonschema = "0.59.0"
 # Please make sure to use compatible versions of the cargo-swift / uniffi pair.
 # See: https://github.com/antoniusnaumann/cargo-swift?tab=readme-ov-file#installing-for-a-different-uniffi-version
-uniffi = { version = "0.31.1", features = ["tokio"] }
-napi = { version = "3.8.3", features = [
+uniffi = { version = "0.31.2", features = ["tokio"] }
+napi = { version = "3.14.2", features = [
     "napi10",
     "object_indexmap",
     "tokio_rt",
 ] }
-napi-derive = "3.5.2"
-napi-build = "2.3.1"
-pyo3 = { version = "0.28.3", features = [
+napi-derive = "3.6.12"
+napi-build = "2.6.0"
+pyo3 = { version = "0.29.3", features = [
     "extension-module",
     "abi3-py312",
     "experimental-async",
     "multiple-pymethods",
 ] }
-pyo3-build-config = "0.28.3"
-pyo3-async-runtimes = { version = "0.28.0", features = ["tokio-runtime"] }
-pyo3-stub-gen = "0.22.1"
-inventory = "0.3.24"
-wasm-bindgen = { version = "0.2.114", features = ["serde-serialize"] }
+pyo3-build-config = "0.29.3"
+pyo3-async-runtimes = { version = "0.29.0", features = ["tokio-runtime"] }
+pyo3-stub-gen = "0.23.1"
+inventory = "0.3.25"
+wasm-bindgen = { version = "0.2.129", features = ["serde-serialize"] }
 serde-wasm-bindgen = "0.6.5"
-wasm-bindgen-futures = "0.4.64"
-tsify = { version = "0.5.6", features = ["js"] }
+wasm-bindgen-futures = "0.4.79"
+tsify = { version = "0.5.8", features = ["js"] }
 openai-harmony = "0.0.8"
-dirs = "6.0.0"
+dirs = "7.0.0"
 dotenvy = "0.15.7"
 ratatui = "0.30.2"
 crossterm = "0.29.0"
-async-openai = { version = "0.35.0", features = [
+async-openai = { version = "0.42.2", features = [
     "chat-completion",
     "model",
     "byot",
     "responses",
 ] }
 hound = "3.5.1"
-ignore = "0.4.25"
+ignore = "0.4.33"
 heck = "0.5.0"
 confy = "2.0.0"
-keyring-core = "1.0.0"
-apple-native-keyring-store = { version = "1.0.0", features = [
+keyring-core = "1.0.1"
+apple-native-keyring-store = { version = "1.0.2", features = [
     "keychain",
     "protected",
 ] }
-toml = "1.1.2"
-toml_edit = "0.25.11"
+toml = "1.1.8"
+toml_edit = "0.25.17"
 colored = "3.1.1"
-iocraft = "0.8.2"
-indoc = "2.0.7"
-unicode-segmentation = "1.13.2"
+iocraft = "0.9.3"
+indoc = "2.0.8"
+unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
-rodio = { version = "0.22.2", default-features = false, features = [
+rodio = { version = "0.23.0", default-features = false, features = [
     "playback",
     "wav",
 ] }
-web-sys = "0.3"
-web-time = "1.1"
+web-sys = "0.3.106"
+web-time = "1.1.0"
+tauri = "2.12.4"
+tauri-build = "2.7.3"
+tauri-plugin-dialog = "2.8.3"
+tauri-plugin-notification = "2.7.0"
+tauri-plugin-updater = "2.14.0"
+plist = "1.10.1"
 
 [workspace.lints.clippy]
 # TODO: add large_stack_frames, large_stack_arrays, trivially_copy_pass_by_ref, needless_pass_by_value, map_err_ignore, use_self, cloned_instead_of_copied, manual_let_else, semicolon_if_nothing_returned, uninlined_format_args, lossy_float_literal

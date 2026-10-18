@@ -23,7 +23,7 @@
   "cpu": [
     "arm64"
   ],
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@12.14.0",
   "pi": {
     "extensions": [
       "./src/index.ts"

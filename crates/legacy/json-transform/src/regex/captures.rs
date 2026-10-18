@@ -21,7 +21,7 @@ impl RegexCaptures {
         }
     }
 
-    pub fn from_extended(captures: &fancy_regex::Captures) -> Self {
+    pub fn from_extended(captures: &fancy_regex::Captures<str>) -> Self {
         let groups = (0..captures.len())
             .map(|index| {
                 captures.get(index).map(|matched| RegexMatch {

@@ -1,8 +1,4 @@
-use comfy_table::{
-    ContentArrangement, Table,
-    modifiers::{UTF8_ROUND_CORNERS, UTF8_SOLID_INNER_BORDERS},
-    presets::UTF8_FULL,
-};
+use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 use shoji::types::basic::ReasoningEffort;
 use tokio_stream::StreamExt;
 use uzu::engine::{Engine, EngineConfig};
@@ -49,9 +45,7 @@ pub async fn run_list_models() -> anyhow::Result<()> {
     let families = get_families(&models);
     let mut table = Table::new();
     table
-        .load_preset(UTF8_FULL)
-        .apply_modifier(UTF8_ROUND_CORNERS)
-        .apply_modifier(UTF8_SOLID_INNER_BORDERS)
+        .load_style(UTF8_FULL.with_rounded_corners().with_solid_inner_borders())
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec!["Name", "ID"]);
 
@@ -74,9 +68,7 @@ pub async fn run_list_checkpoints(model_id: String) -> anyhow::Result<()> {
 
     let mut table = Table::new();
     table
-        .load_preset(UTF8_FULL)
-        .apply_modifier(UTF8_ROUND_CORNERS)
-        .apply_modifier(UTF8_SOLID_INNER_BORDERS)
+        .load_style(UTF8_FULL.with_rounded_corners().with_solid_inner_borders())
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec!["Name", "ID"]);
 

@@ -29,7 +29,7 @@ inputs:
   node-version:
     description: "Node.js version for bindings and apps"
     required: false
-    default: '20'
+    default: '26'
 
 runs:
   using: composite
@@ -59,11 +59,11 @@ runs:
         targets: ${{ inputs.target }}
         components: ${{ inputs.linters == 'true' && 'rustfmt,clippy' || '' }}
 
-    # TODO: drop wasi when pure wasm is done and switch to latest
+    # Wasmtime 47 removed WASI threads; use the maintained 36.x LTS line.
     - if: inputs.target == 'wasm32-wasip1-threads'
       uses: bytecodealliance/actions/wasmtime/setup@v1
       with:
-        version: "46.0.0"
+        version: "36.0.18"
 
     - if: inputs.linters == 'true'
       run: |
@@ -80,7 +80,7 @@ runs:
       uses: taiki-e/install-action@nextest
 
     - if: inputs.test_data == 'true' || inputs.bindings == 'true'
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v10.3.0
       with:
         enable-cache: true
 
@@ -92,12 +92,12 @@ runs:
       shell: bash
 
     - if: inputs.bindings == 'true'
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: ${{ inputs.node-version }}
         registry-url: "https://registry.npmjs.org"
 
     - if: inputs.bindings == 'true'
-      uses: pnpm/action-setup@v4
+      uses: pnpm/action-setup@v6
       with:
-        version: 10.33.0
+        version: 12.14.0

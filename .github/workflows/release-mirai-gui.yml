@@ -28,7 +28,7 @@ jobs:
       version: ${{ steps.decide.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
 
@@ -88,7 +88,7 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -127,7 +127,7 @@ jobs:
         working-directory: .
         run: |
           set -euo pipefail
-          uv run --no-project --python 3.12 python - <<'PY'
+          uv run --no-project --python 3.15 python - <<'PY'
           import os
           import subprocess
           import tomllib
@@ -201,7 +201,7 @@ jobs:
           VENV_DIR="${RUNNER_TEMP}/dmgbuild-venv"
           python3 -m venv "${VENV_DIR}"
           "${VENV_DIR}/bin/pip" install --quiet dmgbuild
-          BUNDLE_DIR="${PWD}/desktop/target/aarch64-apple-darwin/release/bundle"
+          BUNDLE_DIR="${GITHUB_WORKSPACE}/target/aarch64-apple-darwin/release/bundle"
           PRODUCT="$(node -p "require('./desktop/tauri.conf.json').productName")"
           APP_PATH="${BUNDLE_DIR}/macos/${PRODUCT}.app"
           for p in "${APP_PATH}" "${APP_PATH}.tar.gz" "${APP_PATH}.tar.gz.sig"; do
@@ -259,7 +259,7 @@ jobs:
           cp "${TARGZ_PATH}" "${RUNNER_TEMP}/mirai-gui-artifacts/mirai-${APP_VERSION}.app.tar.gz"
           cp "${SIG_PATH}" "${RUNNER_TEMP}/mirai-gui-artifacts/mirai-${APP_VERSION}.app.tar.gz.sig"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         id: artifacts
         with:
           name: mirai-macos-${{ github.sha }}-${{ github.run_attempt }}
@@ -291,7 +291,7 @@ jobs:
       TARGZ_NAME: mirai-${{ needs.decide.outputs.version }}.app.tar.gz
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           artifact-ids: ${{ needs.build.outputs.artifact-id }}
           merge-multiple: true

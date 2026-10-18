@@ -56,9 +56,6 @@ fn expand_tool_closure(tool: ToolClosure) -> syn::Result<TokenStream2> {
     if let Some(constness) = &closure.constness {
         return Err(Error::new_spanned(constness, "uzu_tool_closure! does not support `const` closures"));
     }
-    if let Some(movability) = &closure.movability {
-        return Err(Error::new_spanned(movability, "uzu_tool_closure! does not support `static` closures"));
-    }
     if let Some(lifetimes) = &closure.lifetimes {
         return Err(Error::new_spanned(lifetimes, "uzu_tool_closure! does not support `for<...>` binders"));
     }

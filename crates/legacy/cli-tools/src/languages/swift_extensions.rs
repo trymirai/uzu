@@ -240,7 +240,7 @@ fn extract_box_fn_inputs(ty: &syn::Type) -> Option<Vec<syn::Type>> {
         let syn::PathArguments::Parenthesized(paren) = &segment.arguments else {
             continue;
         };
-        return Some(paren.inputs.iter().cloned().collect());
+        return Some(paren.inputs.iter().map(|input| input.ty.clone()).collect());
     }
     None
 }

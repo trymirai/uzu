@@ -1,5 +1,4 @@
 mod binaries;
-mod mirai_gui;
 mod platform;
 mod version;
 
@@ -14,7 +13,7 @@ use crate::{
         LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
     },
     sync::run_sync,
-    types::Language,
+    types::{Command, Language},
 };
 
 pub fn run_release(
@@ -25,7 +24,10 @@ pub fn run_release(
 
     bump_workspace_version(version)?;
     run_sync(false)?;
-    mirai_gui::update_lock(&paths)?;
+    Command::new("cargo")
+        .with_arguments(["update", "--workspace", "--manifest-path"].map(String::from).to_vec())
+        .with_argument(&paths.workspace_manifest_path().to_string_lossy())
+        .run()?;
 
     let platforms = PlatformsConfig::load()?;
     let workspace = WorkspaceManifest::load()?;
