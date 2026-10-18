@@ -210,7 +210,8 @@ async fn mirai_publishes_healthy_models_before_a_stalled_resolution() -> Result<
             .cache_path(directory.path().to_path_buf())
             .registry_url(mirai.uri())
             .hugging_face_url(hugging_face.uri())
-            .build()?,
+            .build()
+            .await?,
     )));
     assert!(registry.cached_listing().is_none());
     let (updates, mut received) = tokio::sync::mpsc::unbounded_channel();
@@ -277,7 +278,8 @@ async fn mirai_serves_disk_cache_and_keeps_it_when_new_metadata_fails() -> Resul
         .cache_path(directory.path().to_path_buf())
         .registry_url(mirai.uri())
         .hugging_face_url(hugging_face.uri())
-        .build()?;
+        .build()
+        .await?;
 
     assert_eq!(registry.models().await?, vec![previous.clone()]);
     assert!(mirai.received_requests().await.unwrap().is_empty());
@@ -444,7 +446,8 @@ async fn mirai_registry_resolves_pinned_models_once() -> Result<(), Box<dyn std:
             .cache_path(directory.path().to_path_buf())
             .registry_url(mirai.uri())
             .hugging_face_url(hugging_face.uri())
-            .build()?;
+            .build()
+            .await?;
         let (models, complete) = registry.refresh_listing(Arc::new(|| {})).await?;
         assert!(!complete);
         assert_eq!(

@@ -2,6 +2,7 @@ mod config;
 mod context;
 mod error;
 pub mod hanashi;
+#[cfg(not(target_family = "wasm"))]
 pub mod harmony;
 mod state;
 
@@ -12,21 +13,22 @@ pub use hanashi::renderer::strftime_now;
 use shoji::types::{basic::TokenId, session::chat::ChatMessage};
 pub use state::{State, SynchronizationError, SynchronizationResult};
 
-use crate::{
-    Encoding as EncodingTrait,
-    chat::{hanashi::HanashiEncodingImpl, harmony::HarmonyEncodingImpl},
-};
+#[cfg(not(target_family = "wasm"))]
+use crate::chat::harmony::HarmonyEncodingImpl;
+use crate::{Encoding as EncodingTrait, chat::hanashi::HanashiEncodingImpl};
 
 macro_rules! dispatch {
     ($self:expr, $method:ident $(, $arg:expr)*) => {
         match $self {
             Encoding::Hanashi(inner) => inner.$method($($arg),*).map_err(Into::into),
+            #[cfg(not(target_family = "wasm"))]
             Encoding::Harmony(inner) => inner.$method($($arg),*).map_err(Into::into),
         }
     };
     (infallible $self:expr, $method:ident $(, $arg:expr)*) => {
         match $self {
             Encoding::Hanashi(inner) => inner.$method($($arg),*),
+            #[cfg(not(target_family = "wasm"))]
             Encoding::Harmony(inner) => inner.$method($($arg),*),
         }
     };
@@ -34,6 +36,7 @@ macro_rules! dispatch {
 
 pub enum Encoding {
     Hanashi(HanashiEncodingImpl),
+    #[cfg(not(target_family = "wasm"))]
     Harmony(HarmonyEncodingImpl),
 }
 
@@ -44,6 +47,7 @@ impl Encoding {
     ) -> Result<Option<Vec<TokenId>>, Error> {
         match self {
             Self::Hanashi(inner) => inner.try_append(messages).map_err(Into::into),
+            #[cfg(not(target_family = "wasm"))]
             Self::Harmony(_) => Ok(None),
         }
     }

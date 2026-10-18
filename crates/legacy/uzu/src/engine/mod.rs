@@ -19,6 +19,7 @@ use std::{
     },
 };
 
+#[cfg(not(target_family = "wasm"))]
 use backend_remote::openai::Backend as OpenAIBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
@@ -29,11 +30,9 @@ use futures_util::stream::FuturesUnordered;
 use indexmap::IndexSet;
 use kiban::rt::RuntimeHandle;
 pub use model_info::ChatModelInfo;
-use nagare::{
-    chat::{ChatInstance, ChatSession},
-    classification::ClassificationSession,
-    text_to_speech::TextToSpeechSession,
-};
+use nagare::chat::{ChatInstance, ChatSession};
+#[cfg(not(target_family = "wasm"))]
+use nagare::{classification::ClassificationSession, text_to_speech::TextToSpeechSession};
 use shoji::{
     traits::{Backend, Registry},
     types::{
@@ -41,30 +40,31 @@ use shoji::{
         session::chat::ChatConfig,
     },
 };
-use sysinfo::System;
 use tokio::sync::{broadcast, oneshot, watch};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
     device::Device,
     engine::bridge::UzuLlmBackend,
-    helpers::{SharedAccess, is_endpoint_reachable},
-    logs,
+    helpers::SharedAccess,
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
         mirai::{Backend as MiraiBackend, HUGGING_FACE_URL, Registry as MiraiRegistry},
-        openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
         unique_model,
     },
-    settings::Settings,
     storage::{BearerToken, Config as StorageConfig, DownloadPhase, DownloadState, Storage},
+};
+#[cfg(not(target_family = "wasm"))]
+use crate::{
+    helpers::is_endpoint_reachable,
+    logs,
+    registry::openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
 };
 
 #[bindings::export(Class)]
 #[derive(Clone)]
 pub struct Engine {
-    settings: SharedAccess<Option<Settings>>,
     registry: SharedAccess<MergedRegistry>,
     storage: Arc<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
@@ -81,16 +81,6 @@ impl Engine {
             message: error.to_string(),
         })?;
 
-        let settings = if let Some(application_identifier) = &config.application_identifier {
-            Some(Settings::new(application_identifier.clone())?)
-        } else {
-            None
-        };
-        let mut config = config;
-        if let Some(settings) = &settings {
-            config.synchronize_with_settings(settings)?;
-        }
-
         let device = Device::new()?;
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
@@ -104,11 +94,11 @@ impl Engine {
             huggingface_api_key.clone(),
         );
         let storage_cache_path = Storage::cache_path(&storage_config);
+        #[cfg(not(target_family = "wasm"))]
         logs::start(storage_cache_path.clone(), &format!("{}.log", storage_config.name), false);
         let storage = Arc::new(Storage::new(runtime_handle, storage_config).await?);
 
         let engine = Self {
-            settings: SharedAccess::new(settings),
             storage,
             registry,
             backends: SharedAccess::new(HashMap::new()),
@@ -136,7 +126,8 @@ impl Engine {
                         version: uzu_backend_version.clone(),
                     }])
                     .cache_path(storage_cache_path)
-                    .build()?,
+                    .build()
+                    .await?,
             );
 
             engine.add_backend(Arc::new(uzu_backend) as Arc<dyn Backend>).await;
@@ -147,47 +138,51 @@ impl Engine {
                     uzu_backend_identifier.clone(),
                     uzu_backend_version.clone(),
                     local_path,
-                ))?;
+                ))
+                .await?;
                 initializations.push(engine.start_registry(Box::new(local_registry)).await?);
             }
         }
 
-        let mut openai_configs: Vec<OpenAIConfig> = vec![];
-        if config.allow_ollama_usage {
-            let ollama_config = OpenAIConfig::ollama();
-            if is_endpoint_reachable(&ollama_config.api_endpoint).await {
-                openai_configs.push(ollama_config);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let mut openai_configs: Vec<OpenAIConfig> = vec![];
+            if config.allow_ollama_usage {
+                let ollama_config = OpenAIConfig::ollama();
+                if is_endpoint_reachable(&ollama_config.api_endpoint).await {
+                    openai_configs.push(ollama_config);
+                }
             }
-        }
-        if config.allow_lmstudio_usage {
-            let lmstudio_config = OpenAIConfig::lmstudio();
-            if is_endpoint_reachable(&lmstudio_config.api_endpoint).await {
-                openai_configs.push(lmstudio_config);
+            if config.allow_lmstudio_usage {
+                let lmstudio_config = OpenAIConfig::lmstudio();
+                if is_endpoint_reachable(&lmstudio_config.api_endpoint).await {
+                    openai_configs.push(lmstudio_config);
+                }
             }
-        }
-        if let Some(openai_api_key) = config.openai_api_key {
-            openai_configs.push(OpenAIConfig::openai(openai_api_key));
-        }
-        if let Some(anthropic_api_key) = config.anthropic_api_key {
-            openai_configs.push(OpenAIConfig::anthropic(anthropic_api_key));
-        }
-        if let Some(gemini_api_key) = config.gemini_api_key {
-            openai_configs.push(OpenAIConfig::gemini(gemini_api_key));
-        }
-        if let Some(xai_api_key) = config.xai_api_key {
-            openai_configs.push(OpenAIConfig::xai(xai_api_key));
-        }
-        if let Some(baseten_api_key) = config.baseten_api_key {
-            openai_configs.push(OpenAIConfig::baseten(baseten_api_key));
-        }
-        if let Some(openrouter_api_key) = config.openrouter_api_key {
-            openai_configs.push(OpenAIConfig::openrouter(openrouter_api_key));
-        }
-        for config in openai_configs {
-            let registry = OpenAIRegistry::new(config.clone())?;
-            let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
-            initializations.push(engine.start_registry(Box::new(registry)).await?);
-            engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
+            if let Some(openai_api_key) = config.openai_api_key {
+                openai_configs.push(OpenAIConfig::openai(openai_api_key));
+            }
+            if let Some(anthropic_api_key) = config.anthropic_api_key {
+                openai_configs.push(OpenAIConfig::anthropic(anthropic_api_key));
+            }
+            if let Some(gemini_api_key) = config.gemini_api_key {
+                openai_configs.push(OpenAIConfig::gemini(gemini_api_key));
+            }
+            if let Some(xai_api_key) = config.xai_api_key {
+                openai_configs.push(OpenAIConfig::xai(xai_api_key));
+            }
+            if let Some(baseten_api_key) = config.baseten_api_key {
+                openai_configs.push(OpenAIConfig::baseten(baseten_api_key));
+            }
+            if let Some(openrouter_api_key) = config.openrouter_api_key {
+                openai_configs.push(OpenAIConfig::openrouter(openrouter_api_key));
+            }
+            for config in openai_configs {
+                let registry = OpenAIRegistry::new(config.clone())?;
+                let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
+                initializations.push(engine.start_registry(Box::new(registry)).await?);
+                engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
+            }
         }
 
         let mut last_error = None;
@@ -493,7 +488,7 @@ impl Engine {
         &self,
         identifier: String,
     ) -> Result<Option<Model>, EngineError> {
-        let is_directory = Path::new(&identifier).is_dir();
+        let is_directory = kiban::fs::asyn::is_dir(&identifier).await;
         let matches = |model: &Model| model.identifier == identifier || model.repo_ids().contains(&identifier);
         let registered = if is_directory {
             unique_model(&identifier, self.models().await?.into_iter().filter(matches))?
@@ -514,9 +509,18 @@ impl Engine {
         }
 
         let models = self.models().await?;
-        let mut system = System::new();
-        system.refresh_memory();
-        Ok(shorthand::resolve_model_shorthand(&models, &identifier, system.total_memory())?.cloned())
+        #[cfg(not(target_family = "wasm"))]
+        let memory_total = {
+            let mut system = sysinfo::System::new();
+            system.refresh_memory();
+            system.total_memory()
+        };
+        #[cfg(target_family = "wasm")]
+        let memory_total = match Device::new()?.memory_total {
+            0 => u64::MAX,
+            memory => memory as u64,
+        };
+        Ok(shorthand::resolve_model_shorthand(&models, &identifier, memory_total)?.cloned())
     }
 
     #[bindings::export(Method)]
@@ -555,9 +559,10 @@ impl Engine {
         if let Some(model) = unique_model(&path, matches.into_iter())? {
             return Ok(Some(model));
         }
-        if Path::new(&path).is_dir() {
+        if kiban::fs::asyn::is_dir(&path).await {
             let backend = UzuLlmBackend::new();
             return LocalRegistry::model_at_path(Path::new(&path), backend.identifier(), backend.version())
+                .await
                 .map(Some)
                 .map_err(EngineError::from);
         }
@@ -659,6 +664,7 @@ impl Engine {
         Ok(session)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     #[bindings::export(Method)]
     pub async fn classification(
         &self,
@@ -675,6 +681,7 @@ impl Engine {
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     #[bindings::export(Method)]
     pub async fn text_to_speech(
         &self,
@@ -689,14 +696,6 @@ impl Engine {
         } else {
             Err(EngineError::BackendNotFound {})
         }
-    }
-}
-
-#[bindings::export(Implementation)]
-impl Engine {
-    #[bindings::export(Method)]
-    pub async fn settings(&self) -> Result<Settings, EngineError> {
-        self.settings.lock().await.clone().ok_or(EngineError::SettingsNotAvailable)
     }
 }
 

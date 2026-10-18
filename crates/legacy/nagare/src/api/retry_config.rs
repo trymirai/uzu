@@ -1,7 +1,7 @@
 use std::{future::Future, time::Duration};
 
+use kiban::time::{Instant, sleep};
 use reqwest::{Response, header::HeaderMap};
-use tokio::time::{Instant, sleep, timeout};
 
 use crate::api::{Error, IsTransient};
 
@@ -42,8 +42,9 @@ impl RetryConfig {
             if remaining.is_zero() {
                 return Err(Error::Timeout);
             }
-            let Ok(result) = timeout(remaining, send_request()).await else {
-                return Err(Error::Timeout);
+            let result = tokio::select! {
+                result = send_request() => result,
+                _ = sleep(remaining) => return Err(Error::Timeout),
             };
 
             let transient = match &result {

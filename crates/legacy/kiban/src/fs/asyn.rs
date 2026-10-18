@@ -6,6 +6,30 @@ use std::{
 
 use crate::time::SystemTime;
 
+pub async fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
+    #[cfg(target_family = "wasm")]
+    return crate::fs::asyn_opfs::canonicalize(path.as_ref().to_str().unwrap()).await;
+
+    #[cfg(not(target_family = "wasm"))]
+    tokio::fs::canonicalize(path).await
+}
+
+pub async fn is_dir(path: impl AsRef<Path>) -> bool {
+    #[cfg(target_family = "wasm")]
+    return crate::fs::asyn_opfs::is_dir(path.as_ref().to_str().unwrap()).await;
+
+    #[cfg(not(target_family = "wasm"))]
+    tokio::fs::metadata(path).await.is_ok_and(|metadata| metadata.is_dir())
+}
+
+pub async fn is_dir_no_follow(path: impl AsRef<Path>) -> bool {
+    #[cfg(target_family = "wasm")]
+    return is_dir(path).await;
+
+    #[cfg(not(target_family = "wasm"))]
+    tokio::fs::symlink_metadata(path).await.is_ok_and(|metadata| metadata.is_dir())
+}
+
 pub async fn create_dir_all(path: impl AsRef<Path>) -> Result<(), io::Error> {
     #[cfg(target_family = "wasm")]
     return super::asyn_opfs::dir_create_all(path.as_ref().to_str().unwrap()).await;

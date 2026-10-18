@@ -1,0 +1,17 @@
+{
+    "extends": "./tsconfig.json",
+    "include": ["examples/browser/*.ts"],
+    "exclude": [],
+    "compilerOptions": {
+        "target": "es2022",
+        "lib": ["es2022", "dom", "esnext.disposable"],
+        "module": "es2022",
+        "moduleResolution": "bundler",
+        "paths": {
+            "@trymirai/uzu/browser": ["./dist-wasm/index.d.ts"]
+        },
+        "rootDir": "examples/browser",
+        "outDir": "dist-wasm/example",
+        "noEmit": false
+    }
+}

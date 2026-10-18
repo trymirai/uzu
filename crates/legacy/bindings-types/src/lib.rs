@@ -8,3 +8,5 @@ pub struct PyClassRegistration {
 
 #[cfg(feature = "bindings-pyo3")]
 ::inventory::collect!(PyClassRegistration);
+#[cfg(feature = "bindings-wasm")]
+pub use js_sys;

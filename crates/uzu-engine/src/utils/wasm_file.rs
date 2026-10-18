@@ -4,8 +4,9 @@ use std::{
 };
 
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 use web_sys::{DomException, FileSystemDirectoryHandle, FileSystemFileHandle, js_sys::Uint8Array};
+
+use crate::utils::wasm_future::JsFuture;
 
 pub struct File(web_sys::File);
 

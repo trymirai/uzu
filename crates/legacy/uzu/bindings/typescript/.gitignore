@@ -2,6 +2,7 @@ node_modules
 Brewfile.lock.json
 dist
 dist-deno
+dist-wasm
 /*.tgz
 .idea/
 tmp

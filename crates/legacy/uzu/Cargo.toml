@@ -70,7 +70,26 @@ bindings.workspace = true
 uzu-engine.workspace = true
 kiban.workspace = true
 shoji.workspace = true
+nagare.workspace = true
+hanashi.workspace = true
+bon.workspace = true
+download-manager.workspace = true
+reqwest.workspace = true
+indexmap.workspace = true
+uuid.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["sync", "macros", "rt"] }
+tokio-stream.workspace = true
 anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+tokio-util.workspace = true
+parking_lot = { workspace = true, features = ["send_guard"] }
+tokenizers.workspace = true
+rand.workspace = true
+tracing.workspace = true
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
@@ -83,57 +102,34 @@ serde-wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 tsify = { workspace = true, optional = true }
 
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { workspace = true, features = ["wasm_js"] }
+uuid = { workspace = true, features = ["js"] }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = ["Navigator", "Window"] }
+
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 backend-remote.workspace = true
-bon.workspace = true
-nagare.workspace = true
-hanashi.workspace = true
-download-manager.workspace = true
 rodio.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-futures.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true, features = ["full"] }
-tokio-util.workspace = true
-parking_lot = { workspace = true, features = ["send_guard"] }
-tokenizers.workspace = true
-rand.workspace = true
 dirs.workspace = true
 sysinfo.workspace = true
-reqwest.workspace = true
-indexmap.workspace = true
-tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
-uuid.workspace = true
-futures-util.workspace = true
 async-openai.workspace = true
 fancy-regex.workspace = true
-confy.workspace = true
-keyring-core.workspace = true
-chrono.workspace = true
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true
 objc2-foundation.workspace = true
-
-[target.'cfg(target_os = "macos")'.dependencies]
-apple-native-keyring-store = { workspace = true, features = [
-    "protected",
-    "keychain",
-] }
-
-[target.'cfg(all(target_vendor = "apple", not(target_os = "macos")))'.dependencies]
-apple-native-keyring-store = { workspace = true, features = ["protected"] }
 
 [dev-dependencies]
 tempfile.workspace = true
 indicatif.workspace = true
 dotenvy.workspace = true
 schemars.workspace = true
-serde_json.workspace = true
 mock-registry.workspace = true
 rstest.workspace = true
 wiremock.workspace = true

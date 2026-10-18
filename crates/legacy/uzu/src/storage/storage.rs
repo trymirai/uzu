@@ -124,7 +124,7 @@ impl Storage {
         keep_paths: &[PathBuf],
     ) {
         for model_path in fs::asyn::read_dir(self.models_path()).await.unwrap_or_default() {
-            if !tokio::fs::symlink_metadata(&model_path).await.is_ok_and(|metadata| metadata.is_dir()) {
+            if !fs::asyn::is_dir_no_follow(&model_path).await {
                 continue;
             }
             let candidates = if keep_paths.iter().any(|path| path.starts_with(&model_path)) {
@@ -134,7 +134,7 @@ impl Storage {
             };
             for path in candidates {
                 if keep_paths.iter().any(|keep| keep.starts_with(&path))
-                    || !tokio::fs::symlink_metadata(&path).await.is_ok_and(|metadata| metadata.is_dir())
+                    || !fs::asyn::is_dir_no_follow(&path).await
                     || DestinationLock::held_within(&path).await
                 {
                     continue;

@@ -1,16 +1,13 @@
-use std::{
-    pin::Pin,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use futures::{Stream, StreamExt, stream};
 use hanashi::{
     Encoding as EncodingTrait,
-    chat::{Encoding, EncodingConfig, TokenizerLocation, hanashi::HanashiEncodingImpl, harmony::HarmonyEncodingImpl},
+    chat::{Encoding, EncodingConfig, hanashi::HanashiEncodingImpl},
 };
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use keisoku::KeisokuError;
+use kiban::time::Instant;
 use shoji::{
     traits::{
         State,
@@ -61,7 +58,7 @@ impl Session {
 
     pub async fn with_instance(
         instance: Arc<dyn ChatTokenBackendInstance>,
-        reference: String,
+        _reference: String,
         model: &Model,
     ) -> Result<Self, ChatSessionError> {
         let encoding_config: Option<EncodingConfig> = model
@@ -73,8 +70,9 @@ impl Session {
                 message: format!("Failed to parse encoding config: {error}"),
             })?;
 
-        let tokenizer_location = TokenizerLocation::Directory {
-            path: reference,
+        #[cfg(not(target_family = "wasm"))]
+        let tokenizer_location = hanashi::chat::TokenizerLocation::Directory {
+            path: _reference,
             name: None,
         };
 
@@ -86,13 +84,14 @@ impl Session {
                     message: format!("can not create harmony encoding: {err}"),
                 }
             }),
+            #[cfg(not(target_family = "wasm"))]
             Some(EncodingConfig::Harmony {
                 config,
-            }) => HarmonyEncodingImpl::new(config, tokenizer_location).map(Encoding::Harmony).map_err(|err| {
-                ChatSessionError::Loading {
+            }) => hanashi::chat::harmony::HarmonyEncodingImpl::new(config, tokenizer_location)
+                .map(Encoding::Harmony)
+                .map_err(|err| ChatSessionError::Loading {
                     message: format!("can not create harmony encoding: {err}"),
-                }
-            }),
+                }),
             None => Err(ChatSessionError::Loading {
                 message: "can not get encoding config".to_string(),
             }),

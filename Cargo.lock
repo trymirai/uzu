@@ -159,17 +159,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
-name = "apple-native-keyring-store"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7be2f067ccd8d4b4d4a66ddafe0f32a5dff31732f32dbff85fefc40929b1f72"
-dependencies = [
- "keyring-core",
- "log",
- "security-framework",
-]
-
-[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -610,6 +599,7 @@ name = "bindings-types"
 version = "0.6.9"
 dependencies = [
  "inventory",
+ "js-sys",
  "napi",
  "napi-build",
  "napi-derive",
@@ -2592,8 +2582,8 @@ dependencies = [
 name = "hanashi"
 version = "0.6.9"
 dependencies = [
+ "chrono",
  "indexmap 2.14.0",
- "libc",
  "minijinja",
  "minijinja-contrib",
  "openai-harmony",
@@ -3395,15 +3385,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyring-core"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb1e621458ca9c51aa110bd0339d4751a056b9576bf1253aee1aa560dda0fc9d"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3951,6 +3932,7 @@ dependencies = [
  "indexmap 2.14.0",
  "inventory",
  "keisoku",
+ "kiban",
  "nagare-macros",
  "napi",
  "napi-build",
@@ -7891,25 +7873,22 @@ name = "uzu"
 version = "0.6.9"
 dependencies = [
  "anyhow",
- "apple-native-keyring-store",
  "async-openai",
  "backend-remote",
  "bindings",
  "bindings-types",
  "bon",
- "chrono",
- "confy",
  "dirs",
  "dotenvy",
  "download-manager",
  "fancy-regex 0.17.0",
  "futures",
  "futures-util",
+ "getrandom 0.4.3",
  "hanashi",
  "indexmap 2.14.0",
  "indicatif",
  "inventory",
- "keyring-core",
  "kiban",
  "mock-registry",
  "nagare",
@@ -7949,6 +7928,7 @@ dependencies = [
  "uzu-engine",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "wiremock",
 ]
 

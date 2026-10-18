@@ -4,6 +4,7 @@ mod os;
 pub use error::DeviceError;
 pub(crate) use os::home_path;
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_family = "wasm"))]
 use sysinfo::System;
 
 #[bindings::export(Structure(Class))]
@@ -17,6 +18,7 @@ pub struct Device {
 }
 
 impl Device {
+    #[cfg(not(target_family = "wasm"))]
     pub fn new() -> Result<Self, DeviceError> {
         let mut system_info = System::new_all();
         system_info.refresh_all();
@@ -31,6 +33,20 @@ impl Device {
             cpu_name,
             memory_total: memory_total as i64,
             home_path: home_path.to_string_lossy().to_string(),
+        })
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub fn new() -> Result<Self, DeviceError> {
+        let window = web_sys::window().ok_or(DeviceError::UnsupportedDevice {})?;
+        let navigator = window.navigator();
+        let memory_gib =
+            web_sys::js_sys::Reflect::get(&navigator, &"deviceMemory".into()).ok().and_then(|value| value.as_f64());
+        Ok(Self {
+            os_name: None,
+            cpu_name: None,
+            memory_total: memory_gib.map_or(0, |memory| (memory * 1024.0_f64.powi(3)) as i64),
+            home_path: home_path().unwrap().to_string_lossy().into_owned(),
         })
     }
 }
