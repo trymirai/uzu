@@ -54,7 +54,7 @@ fn bindgen_kernel(
 
     struct SpecializationConstant {
         index: usize,
-        name: Ident,
+        value: TokenStream,
     }
 
     let (
@@ -115,6 +115,16 @@ fn bindgen_kernel(
                     .unwrap()
                     .offset(ParameterCategory::SpecializationConstant);
                 let name = format_ident!("{}", argument.name.as_str());
+                let scalar = if gpu_type_map.contains_key(&argument.slang_type) || argument.slang_type == "bool" {
+                    quote! { value as i64 as f64 }
+                } else {
+                    quote! { value as f64 }
+                };
+                let value = if condition.is_some() {
+                    quote! { #name.map_or(0.0, |value| #scalar) }
+                } else {
+                    quote! { { let value = #name; #scalar } }
+                };
                 let ty: Type = argument.rust_type(gpu_type_map).and_then(|ty| {
                     syn::parse_str(&ty).with_context(|| format!("cannot parse the type of argument {}", argument.name))
                 })?;
@@ -130,7 +140,7 @@ fn bindgen_kernel(
                     Some(quote! { #name }),
                     Some(SpecializationConstant {
                         index: wgsl_idx,
-                        name,
+                        value,
                     }),
                 )))
             } else {
@@ -673,8 +683,8 @@ fn bindgen_kernel(
 
                 Ok(used.then(|| {
                     let wgsl_idx = specialization_constant.index.to_string();
-                    let name = &specialization_constant.name;
-                    quote! { (#wgsl_idx, #name.into()) }
+                    let value = &specialization_constant.value;
+                    quote! { (#wgsl_idx, #value) }
                 }))
             })
             .collect::<anyhow::Result<Vec<_>>>()?

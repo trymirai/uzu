@@ -1,20 +1,16 @@
-use crate::{
-    backends::{
-        common::{
-            Backend, BufferMut, BufferRef, CommandBufferEncoding, Kernels,
-            kernel::{
-                AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, Unsupported,
-                matmul::{MatmulArguments, MatmulKernel},
-                radix_top_k_small::RadixTopKSmall,
-            },
-        },
-        webgpu::{
-            WebGPU, buffer::binding_parts, command_buffer::WebGPUCommandBufferEncoding, context::WebGPUContext,
-            error::WebGPUError,
-        },
+use crate::backends::{
+    common::{
+        BufferMut, BufferRef, CommandBufferEncoding, Kernels,
+        kernel::{Unsupported, radix_top_k_small::RadixTopKSmall},
     },
-    data_type::DataType,
+    webgpu::{
+        WebGPU, buffer::binding_parts, command_buffer::WebGPUCommandBufferEncoding, context::WebGPUContext,
+        error::WebGPUError,
+    },
 };
+
+mod attention;
+mod matmul;
 
 include!(concat!(env!("OUT_DIR"), "/webgpu.rs"));
 
@@ -22,66 +18,11 @@ impl Kernels for WebGPUKernels {
     type Backend = WebGPU;
 
     autogen_kernels!();
-    type AttentionKernel = Unsupported<WebGPU>;
+    type AttentionKernel = attention::WebGPUAttention;
     type DeltaNetChunkedPrefill = Unsupported<WebGPU>;
     type DeltaNetTreeVerify = Unsupported<WebGPU>;
-    type MatmulKernel = Unsupported<WebGPU>;
+    type MatmulKernel = matmul::WebGPUMatmul;
     type RadixTopKSmall = Unsupported<WebGPU>;
-}
-
-impl AttentionKernel for Unsupported<WebGPU> {
-    type Backend = WebGPU;
-    type Error = WebGPUError;
-
-    fn new(
-        _context: &WebGPUContext,
-        _config: AttentionKernelConfig,
-    ) -> Result<Self, WebGPUError> {
-        Err(WebGPUError::NotSupported)
-    }
-
-    fn encode(
-        &self,
-        _input: AttentionInput<
-            impl BufferRef<Backend = WebGPU>,
-            impl BufferRef<Backend = WebGPU>,
-            impl BufferRef<Backend = WebGPU>,
-        >,
-        _arguments: AttentionArguments<'_, WebGPU, impl BufferRef<Backend = WebGPU>, impl BufferRef<Backend = WebGPU>>,
-        _command_buffer: &mut WebGPUCommandBufferEncoding,
-    ) -> Result<<WebGPU as Backend>::ScratchBuffer, WebGPUError> {
-        Err(WebGPUError::NotSupported)
-    }
-}
-
-impl MatmulKernel for Unsupported<WebGPU> {
-    type Backend = WebGPU;
-    type Error = WebGPUError;
-    type WeightsLayout = ();
-
-    fn new(
-        _context: &WebGPUContext,
-        _weights_data_type: DataType,
-        _input_data_type: DataType,
-        _output_data_type: DataType,
-    ) -> Result<Self, WebGPUError> {
-        Err(WebGPUError::NotSupported)
-    }
-
-    fn encode(
-        &mut self,
-        _arguments: MatmulArguments<
-            '_,
-            WebGPU,
-            impl BufferRef<Backend = WebGPU>,
-            impl BufferRef<Backend = WebGPU>,
-            impl BufferMut<Backend = WebGPU>,
-            impl BufferRef<Backend = WebGPU>,
-        >,
-        _command_buffer: &mut WebGPUCommandBufferEncoding,
-    ) -> Result<(), WebGPUError> {
-        Err(WebGPUError::NotSupported)
-    }
 }
 
 impl RadixTopKSmall for Unsupported<WebGPU> {

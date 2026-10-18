@@ -114,11 +114,13 @@ pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
                 SlangArgumentType::Constant {
                     ..
                 } => {
-                    wrapper.push(format!(
-                        "  uniform {} {},",
-                        specializer.specialize(&argument.slang_type),
-                        argument.name
-                    ));
+                    let ty = specializer.specialize(&argument.slang_type);
+                    let ty = if ty == "bool" {
+                        "uint"
+                    } else {
+                        ty.as_ref()
+                    };
+                    wrapper.push(format!("  uniform {} {},", ty, argument.name));
                 },
                 SlangArgumentType::Axis {
                     ..
@@ -186,6 +188,11 @@ pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
             .arguments
             .iter()
             .map(|argument| match &argument.argument_type {
+                SlangArgumentType::Constant {
+                    ..
+                } if argument.slang_type == "bool" => {
+                    format!("({} != 0)", argument.name)
+                },
                 SlangArgumentType::Buffer {
                     ..
                 }
@@ -231,8 +238,9 @@ pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
 }
 
 fn slang_axis_expr(expr: &str) -> String {
+    let expr = rewrite_slang_method(expr, "unwrap_or", |receiver, _| receiver.to_string());
     let expr =
-        rewrite_slang_method(expr, "saturating_mul", |receiver, argument| format!("(({receiver}) * ({argument}))"));
+        rewrite_slang_method(&expr, "saturating_mul", |receiver, argument| format!("(({receiver}) * ({argument}))"));
 
     rewrite_slang_method(&expr, "saturating_sub", |receiver, argument| {
         format!("(({receiver}) > ({argument}) ? ({receiver}) - ({argument}) : 0)")
