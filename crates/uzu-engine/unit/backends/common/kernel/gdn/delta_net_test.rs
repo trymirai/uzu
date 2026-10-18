@@ -3,10 +3,12 @@ use half::bf16;
 use uzu_engine_macros::uzu_test;
 
 #[cfg(backend = "metal")]
+use crate::backends::metal::Metal;
+#[cfg(any(backend = "metal", backend = "webgpu"))]
 use crate::{
-    backends::{
-        common::kernel::{DeltaNetConvPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel},
-        metal::Metal,
+    backends::common::{
+        BufferMut, GlobalBufferInitializer,
+        kernel::{DeltaNetConvPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel},
     },
     tests::helpers::buffer_prefix_to_vec,
 };
@@ -22,7 +24,7 @@ use crate::{
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
 };
 
-#[cfg(backend = "metal")]
+#[cfg(any(backend = "metal", backend = "webgpu"))]
 fn run_conv_update<B: Backend>(
     in_proj: &[f32],
     w: &[f32],
@@ -151,10 +153,11 @@ fn test_delta_net_conv_update_small() {
 
 // DeltaNetConvPack + DeltaNetConvScan
 
-#[cfg(backend = "metal")]
+#[cfg(any(backend = "metal", backend = "webgpu"))]
 fn test_delta_net_conv_scan_impl<B: Backend>(
     suffix_len: usize,
     tile_tokens: usize,
+    has_bias: bool,
 ) {
     let conv_dim = 32;
     let kernel_size: usize = 4;
@@ -163,7 +166,15 @@ fn test_delta_net_conv_scan_impl<B: Backend>(
     let total_proj_dim = conv_dim + extra_dim;
 
     let w: Vec<f32> = (0..conv_dim * kernel_size).map(|i| ((i % 11) as f32) * 0.05 - 0.2).collect();
-    let b: Vec<f32> = (0..conv_dim).map(|i| ((i % 5) as f32) * 0.01).collect();
+    let b: Vec<f32> = (0..conv_dim)
+        .map(|i| {
+            if has_bias {
+                ((i % 5) as f32) * 0.01
+            } else {
+                0.0
+            }
+        })
+        .collect();
     let init_state: Vec<f32> = (0..conv_dim * tap_count).map(|i| ((i % 13) as f32) * 0.02 - 0.1).collect();
     let in_proj: Vec<bf16> =
         (0..suffix_len * total_proj_dim).map(|i| bf16::from_f32(((i % 37) as f32) * 0.02 - 0.3)).collect();
@@ -189,11 +200,19 @@ fn test_delta_net_conv_scan_impl<B: Backend>(
     let ref_outputs: Vec<f32> = ref_outputs.iter().copied().map(|value| f32::from(bf16::from_f32(value))).collect();
 
     // Test: DeltaNetConvPack + DeltaNetConvScan on backend B
+    fn initialized<B: Backend, T: DataTypeRepr>(
+        context: &B::Context,
+        data: &[T],
+    ) -> B::GlobalBuffer {
+        let mut buffer = context.create_buffer_initializer(std::mem::size_of_val(data)).unwrap();
+        buffer.copyin(data);
+        buffer.end_initialization()
+    }
     let context = block_on(B::Context::new()).expect("context");
-    let mut state_array = create_buffer_with_data::<B, f32>(&context, &init_state);
-    let mut in_proj_array = create_buffer_with_data::<B, bf16>(&context, &in_proj);
-    let w_array = create_buffer_with_data::<B, f32>(&context, &w);
-    let b_array = create_buffer_with_data::<B, f32>(&context, &b);
+    let mut state_array = initialized::<B, f32>(&context, &init_state);
+    let mut in_proj_array = initialized::<B, bf16>(&context, &in_proj);
+    let w_array = initialized::<B, f32>(&context, &w);
+    let b_array = initialized::<B, f32>(&context, &b);
 
     let num_tiles = suffix_len.div_ceil(tile_tokens);
     let mut packed_array = create_buffer::<B, f32>(&context, num_tiles * tap_count * conv_dim);
@@ -205,7 +224,7 @@ fn test_delta_net_conv_scan_impl<B: Backend>(
         &context,
         DataType::BF16,
         kernel_size as u32,
-        true,
+        has_bias,
     )
     .expect("scan");
 
@@ -223,7 +242,7 @@ fn test_delta_net_conv_scan_impl<B: Backend>(
     scan_kernel.encode(
         &packed_array,
         &w_array,
-        Some(&b_array),
+        has_bias.then_some(&b_array),
         &mut in_proj_array,
         &mut state_array,
         suffix_len as u32,
@@ -234,7 +253,7 @@ fn test_delta_net_conv_scan_impl<B: Backend>(
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let in_proj_result: Vec<bf16> = buffer_to_vec(&in_proj_array);
+    let in_proj_result = block_on(context.copyout::<bf16>(&in_proj_array)).unwrap();
     let in_proj_result: Vec<f32> = in_proj_result.into_iter().map(f32::from).collect();
     let mut scan_outputs = vec![0.0f32; suffix_len * conv_dim];
     for t in 0..suffix_len {
@@ -246,7 +265,7 @@ fn test_delta_net_conv_scan_impl<B: Backend>(
             in_proj_f32[t * total_proj_dim + conv_dim..(t + 1) * total_proj_dim],
         );
     }
-    let scan_state: Vec<f32> = buffer_to_vec(&state_array);
+    let scan_state = block_on(context.copyout::<f32>(&state_array)).unwrap();
 
     assert_close(&ref_outputs, &scan_outputs, 1e-4, 1e-3, "ConvScan output");
     assert_close(&ref_state, &scan_state, 1e-5, 1e-4, "ConvScan state");
@@ -257,7 +276,17 @@ fn test_delta_net_conv_scan_impl<B: Backend>(
 fn test_delta_net_conv_scan() {
     // single partial tile, shorter than the conv window, exact tiles, several tiles with a partial last one
     for (suffix_len, tile_tokens) in [(2, 32), (96, 32), (100, 32), (70, 8)] {
-        for_each_backend!(|B| test_delta_net_conv_scan_impl::<B>(suffix_len, tile_tokens));
+        for_each_backend!(|B| test_delta_net_conv_scan_impl::<B>(suffix_len, tile_tokens, true));
+    }
+}
+
+#[cfg(backend = "webgpu")]
+#[uzu_test]
+fn test_delta_net_conv_scan_webgpu() {
+    for (suffix_len, tile_tokens) in [(2, 32), (96, 32), (100, 32), (70, 8)] {
+        for has_bias in [false, true] {
+            test_delta_net_conv_scan_impl::<crate::backends::webgpu::WebGPU>(suffix_len, tile_tokens, has_bias);
+        }
     }
 }
 
