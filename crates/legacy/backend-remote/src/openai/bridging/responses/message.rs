@@ -35,6 +35,8 @@ pub fn build(message: &ChatMessage) -> Result<Vec<InputItem>, Error> {
                         name: tool_call.name,
                         id: None,
                         status: None,
+                        caller: None,
+                        r#async: None,
                     })));
                 }
             }
@@ -45,10 +47,13 @@ pub fn build(message: &ChatMessage) -> Result<Vec<InputItem>, Error> {
                     message: error.to_string(),
                 })?;
                 items.push(InputItem::Item(Item::FunctionCallOutput(FunctionCallOutputItemParam {
-                    call_id: call_id.unwrap_or_default(),
+                    call_id: Some(call_id.unwrap_or_default()),
                     output: FunctionCallOutput::Text(content),
                     id: None,
                     status: None,
+                    name: None,
+                    namespace: None,
+                    caller: None,
                 })));
             }
         },

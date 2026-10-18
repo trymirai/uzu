@@ -22,6 +22,7 @@ impl GpuTypeConstant {
         let Type::Path(TypePath {
             qself: None,
             path,
+            attrs: _,
         }) = ty
         else {
             bail!("GPU constant element type must be a path, found {ty:?}");

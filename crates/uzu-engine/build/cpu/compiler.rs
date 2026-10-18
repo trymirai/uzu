@@ -640,7 +640,7 @@ impl CpuCompiler {
 
     fn parse_type(ty: Type) -> anyhow::Result<FunctionArgumentType> {
         Ok(match ty {
-            Type::Ptr(ty) => FunctionArgumentType::Buffer(if ty.mutability.is_some() {
+            Type::Ptr(ty) => FunctionArgumentType::Buffer(if matches!(ty.mutability, syn::PointerMutability::Mut(_)) {
                 KernelBufferAccess::ReadWrite
             } else {
                 KernelBufferAccess::Read

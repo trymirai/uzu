@@ -25,7 +25,7 @@ jobs:
       build: ${{ steps.decide.outputs.build }}
       version: ${{ steps.decide.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
       - id: decide
@@ -62,7 +62,7 @@ jobs:
     env:
       APP_VERSION: ${{ needs.decide.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -70,7 +70,7 @@ jobs:
         with:
           metal: true
           bindings: true
-          node-version: '24'
+          node-version: '26'
 
       - name: Wait for matching npm release
         if: ${{ github.event_name == 'release' }}
@@ -106,7 +106,7 @@ jobs:
           npm install --ignore-scripts --omit=dev
           node --input-type=module -e 'import { Engine, ChatModelInfo, ToolCallArgumentStream } from "@trymirai/uzu"; if (!Engine.prototype.chatModelInfo || !Engine.prototype.refreshModels || !ChatModelInfo || !ToolCallArgumentStream) throw new Error("Released Uzu lacks the required API"); await import("./index.js");'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         id: artifacts
         with:
           name: uzu-pi-extension-${{ needs.decide.outputs.version }}
@@ -119,13 +119,13 @@ jobs:
     if: ${{ github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           artifact-ids: ${{ needs.build.outputs.artifact-id }}
           merge-multiple: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '26'
           registry-url: 'https://registry.npmjs.org'
       - name: Publish
         env:

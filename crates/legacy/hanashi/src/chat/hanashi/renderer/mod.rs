@@ -6,7 +6,7 @@ pub use config::{JinjaFunction, RendererConfig};
 pub use error::Error;
 pub use functions::{raise_exception, strftime_now, to_json};
 use indexmap::IndexMap;
-use minijinja::Environment;
+use minijinja::{Environment, value::Serde};
 use minijinja_contrib::pycompat::unknown_method_callback;
 use shoji::types::{
     basic::{ReasoningEffort, Token},
@@ -60,10 +60,10 @@ impl Renderer {
         for message in messages {
             let rendered = RenderedMessage::from_message(message, &self.config.canonization, &self.config.rendering)?;
             for (key, value) in &rendered.context {
-                insert_into_context(&mut jinja_context, key.clone(), minijinja::Value::from_serialize(value))?;
+                insert_into_context(&mut jinja_context, key.clone(), minijinja::Value::from(Serde(value)))?;
             }
             if !rendered.message.is_empty() {
-                jinja_messages.push(minijinja::Value::from_serialize(&rendered.message));
+                jinja_messages.push(minijinja::Value::from(Serde(&rendered.message)));
             }
         }
         insert_into_context(&mut jinja_context, "messages".to_string(), minijinja::Value::from(jinja_messages))?;
@@ -90,7 +90,7 @@ impl Renderer {
                     insert_into_context(
                         &mut jinja_context,
                         field_name.clone(),
-                        minijinja::Value::from_serialize(default_value),
+                        minijinja::Value::from(Serde(default_value)),
                     )?;
                 }
             }
@@ -118,13 +118,13 @@ impl Renderer {
         }
         if let Some(additional_context) = additional_context {
             for (key, value) in additional_context {
-                insert_into_context(&mut jinja_context, key.clone(), minijinja::Value::from_serialize(value))?;
+                insert_into_context(&mut jinja_context, key.clone(), minijinja::Value::from(Serde(value)))?;
             }
         }
 
         let template = environment.get_template(TEMPLATE_NAME).map_err(|_| Error::InvalidTemplate)?;
         let result = template
-            .render(minijinja::Value::from_serialize(&jinja_context))
+            .render(Serde(&jinja_context))
             .map_err(|error| Error::RenderFailed {
                 reason: error.to_string(),
             })?

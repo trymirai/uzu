@@ -2,7 +2,7 @@
 
 Run local language models in Pi with uzu engine.
 
-Requires Apple Silicon macOS, Pi 1.1 or later, and Node.js 22.19.0 or newer.
+Requires Apple Silicon macOS, Pi 1.1 or later, and Node.js 26 or newer.
 
 ## Install
 

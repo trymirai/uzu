@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result, anyhow};
-use minijinja::{Environment, context};
+use minijinja::{Environment, context, value::Serde};
 use serde::Serialize;
 
 use crate::{
@@ -114,14 +114,14 @@ impl SyncTask for ReadmeSyncTask {
 
         let rendered = template.render(context! {
             title => "uzu",
-            version => workspace.workspace.package.version,
+            version => &workspace.workspace.package.version,
             image_url => metadata.image_url,
             badges => badges,
             has_multiple_languages => self.languages.len() > 1,
             intro => intro,
-            languages => language_contexts,
-            examples => example_entries,
-            targets => targets,
+            languages => Serde(language_contexts),
+            examples => Serde(example_entries),
+            targets => Serde(targets),
             backends => backends,
         })?;
 

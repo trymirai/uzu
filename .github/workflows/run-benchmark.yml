@@ -50,11 +50,11 @@ jobs:
       UPLOAD_METRICS: ${{ inputs.upload_metrics }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.15"
 
       - name: Trigger benchmark and collect Prefect logs
         env:
@@ -76,7 +76,7 @@ jobs:
 
       - name: Upload Prefect benchmark artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: prefect-benchmark-${{ github.run_id }}
           path: ${{ runner.temp }}/prefect-benchmark

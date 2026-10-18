@@ -34,6 +34,7 @@ pub fn build(
     let reasoning = messages.reasoning_effort().map(|effort| Reasoning {
         effort: Some(reasoning_effort::build(effort)),
         summary: Some(ReasoningSummary::Auto),
+        ..Default::default()
     });
 
     let (temperature, top_p) = match &config.sampling_policy {
@@ -65,7 +66,7 @@ pub fn build(
     };
     if !tools.is_empty() {
         request.tools = Some(tools);
-        request.tool_choice = Some(ToolChoiceParam::Mode(ToolChoiceOptions::Auto));
+        request.tool_choice = Some(ToolChoiceParam::Option(ToolChoiceOptions::Auto));
     }
 
     Ok(request)

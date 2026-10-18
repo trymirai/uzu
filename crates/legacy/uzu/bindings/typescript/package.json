@@ -8,7 +8,7 @@
     "type": "commonjs",
     "repository": "https://github.com/trymirai/uzu",
     "license": "MIT",
-    "packageManager": "pnpm@10.18.1",
+    "packageManager": "pnpm@12.14.0",
     "os": [
         "darwin"
     ],
