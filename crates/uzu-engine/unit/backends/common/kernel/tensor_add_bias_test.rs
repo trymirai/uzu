@@ -94,7 +94,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(
 
 fn test<T: DataTypeRepr + Float + Debug>(in_place: bool) {
     let (input, expected) = get_test_data::<T>(in_place);
-    for_each_backend!(|B| {
+    for_each_backend!(webgpu, |B| {
         let output = get_output::<T, B>(&input, in_place);
         assert_eq!(output, expected, "Results are not equals for backend {}", std::any::type_name::<B>());
     });

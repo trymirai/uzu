@@ -3,22 +3,13 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{
-            Backend, BufferRef, CommandBufferEncoding, Context, Kernels,
-            gpu_types::trie::TrieNode,
-            kernel::{
-                AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
-            },
-        },
+        common::{Backend, gpu_types::trie::TrieNode, kernel::AttentionKernelConfig},
         cpu::Cpu,
         metal::{Metal, gpu_types::kv_layout::KVLayout, kernel::attention::tests::default_attention_config},
     },
-    data_type::{DataType, DataTypeRepr},
-    encodable_block::mixer::attention::{KVCache, KVCacheView},
-    tests::{
-        assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, submit_command_buffer},
-    },
+    data_type::DataTypeRepr,
+    encodable_block::mixer::attention::KVCacheView,
+    tests::assert::assert_eq_float,
 };
 
 fn run<B: Backend, T: DataTypeRepr>(
@@ -27,111 +18,14 @@ fn run<B: Backend, T: DataTypeRepr>(
     nodes: &[TrieNode],
     is_trie: bool,
 ) -> (Vec<T>, f32) {
-    let context = create_context::<B>();
-    let suffix = nodes.len() as u32;
-    let prefix = cache.prefix_len();
-    let dim = config.head_dim;
-    let stride = (config.num_q_heads + 2 * config.num_groups) * dim;
-    let values: Vec<T> =
-        (0..(prefix + suffix) * stride).map(|i| T::from(((i * 17 % 251) as f32 - 125.0) / 128.0).unwrap()).collect();
-    let data = create_buffer_with_data::<B, T>(&context, &values);
-    let kernel = <B::Kernels as Kernels>::AttentionKernel::new(&context, config).unwrap();
-    let mut command = context.create_command_buffer(None, None).unwrap();
-    let mut kv = KVCache::<B>::allocate_scratch(kernel.kv_layout(), prefix + suffix, &mut command).unwrap();
-    let mut q = create_buffer::<B, i8>(&context, (config.num_q_heads * suffix * dim) as usize);
-    let mut qs = create_buffer::<B, bf16>(&context, (config.num_q_heads * suffix) as usize);
-    let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
-        &context,
-        config.data_type,
-        DataType::F32,
-        dim,
-        false,
-        config.num_groups,
-        kernel.kv_layout().backend_opaque_layout,
-        true,
-        false,
-        false,
-        false,
-    )
-    .unwrap();
-    command.encode_fill(kv.k_codes.as_mut(), 0x7f);
-    command.encode_fill(kv.v_codes.as_mut(), 0xff);
-    command.encode_fill(kv.k_scales.as_mut(), 0xff);
-    command.encode_fill(kv.v_scales.as_mut(), 0xff);
-    for (start, length, heads) in [(0, prefix, 0), (prefix, suffix, config.num_q_heads)] {
-        if length == 0 {
-            continue;
-        }
-        let offset = (start * stride
-            + if heads == 0 {
-                config.num_q_heads * dim
-            } else {
-                0
-            }) as usize
-            * config.data_type.size_in_bytes();
-        prepare.encode(
-            data.subrange(offset..),
-            &mut q,
-            &mut qs,
-            Some(kv.k_codes.as_mut()),
-            Some(kv.k_scales.as_mut()),
-            Some(kv.v_codes.as_mut()),
-            Some(kv.v_scales.as_mut()),
-            None::<&B::GlobalGpuBuffer>,
-            None::<&B::GlobalGpuBuffer>,
-            None::<&B::GlobalGpuBuffer>,
-            None::<&B::GlobalGpuBuffer>,
-            None::<&B::GlobalGpuBuffer>,
-            Default::default(),
-            heads,
-            None,
-            start,
-            stride,
-            length,
-            heads / config.num_groups * length,
-            &mut command,
-        );
-    }
-    let trie = create_buffer_with_data::<B, u32>(&context, bytemuck::cast_slice(nodes));
-    let sinks = config
-        .has_sinks
-        .then(|| create_buffer_with_data::<B, T>(&context, &vec![T::from(1.5).unwrap(); config.num_q_heads as usize]));
-    let gate = config.gate_row_stride.map(|stride| {
-        create_buffer_with_data::<B, T>(
-            &context,
-            &(0..suffix * stride).map(|i| T::from((i % 37) as f32 / 17.0 - 1.0).unwrap()).collect::<Vec<_>>(),
-        )
-    });
-    let result = kernel
-        .encode(
-            AttentionInput {
-                query_codes: &q,
-                query_scales: &qs,
-                k_codes: kv.k_codes.as_ref(),
-                k_scales: kv.k_scales.as_ref(),
-                v_codes: kv.v_codes.as_ref(),
-                v_scales: kv.v_scales.as_ref(),
-            },
-            AttentionArguments {
-                suffix_length: suffix,
-                trie: is_trie.then_some(&trie),
-                sinks: sinks.as_ref(),
-                cache,
-                gate: gate.as_ref(),
-            },
-            &mut command,
-        )
-        .unwrap();
-    let mut output = create_buffer::<B, T>(&context, (suffix * config.num_q_heads * dim) as usize);
-    command.encode_copy(&result, &mut output);
-    submit_command_buffer(command);
+    let (output, layout) = crate::tests::attention::run_attention::<B, T>(config, cache, nodes, is_trie);
     // MXU also quantizes attention probabilities to u8.
-    let tolerance = if kernel.kv_layout().backend_opaque_layout == KVLayout::MxuTiled as u32 {
+    let tolerance = if layout.backend_opaque_layout == KVLayout::MxuTiled as u32 {
         1.5e-2
     } else {
         5e-3
     };
-    (buffer_to_vec::<B, T>(&context, &output), tolerance)
+    (output, tolerance)
 }
 
 #[uzu_test]

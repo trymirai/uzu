@@ -623,7 +623,11 @@ fn bindgen_kernel(
                 quote! {
                     wgpu::BindGroupEntry {
                         binding: #binding,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: #buffer_name_ident.0, offset: #buffer_name_ident.1 as u64, size: Some(std::num::NonZero::new(#buffer_name_ident.2 as u64).unwrap()) }),
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: #buffer_name_ident.0,
+                            offset: #buffer_name_ident.1 as u64,
+                            size: Some(std::num::NonZero::new((#buffer_name_ident.2 as u64).next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)).unwrap()),
+                        }),
                     }
                 }
             )

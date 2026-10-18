@@ -186,12 +186,12 @@ fn check_sampling<B: Backend, T: DataTypeRepr + Float + Debug>() {
 
 #[uzu_test]
 fn repetition_penalty_f32() {
-    for_each_backend!(|B| check_kernel::<B, f32>());
+    for_each_backend!(webgpu, |B| check_kernel::<B, f32>());
 }
 
 #[uzu_test]
 fn repetition_penalty_bf16() {
-    for_each_backend!(|B| check_kernel::<B, bf16>());
+    for_each_backend!(webgpu, |B| check_kernel::<B, bf16>());
 }
 
 #[uzu_test]

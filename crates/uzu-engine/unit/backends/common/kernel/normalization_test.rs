@@ -117,7 +117,7 @@ fn test_internal<
         1e-5
     };
 
-    for_each_non_cpu_backend!(|B| {
+    for_each_non_cpu_backend!(webgpu, |B| {
         let actual = get_output::<B, InputT, AffineT, OutputT>(
             &input,
             scales.as_deref(),
@@ -194,7 +194,7 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
         1e-5
     };
 
-    for_each_backend!(|B| {
+    for_each_backend!(webgpu, |B| {
         let actual = get_output::<B, T, T, T>(
             &input,
             Some(&scales),

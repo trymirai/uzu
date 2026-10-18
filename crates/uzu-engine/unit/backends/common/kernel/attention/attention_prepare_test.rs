@@ -154,7 +154,7 @@ fn test_attention_prepare_fused_norm() {
                         affine,
                     };
                     for rope in [false, true] {
-                        for_each_backend!(|B| {
+                        for_each_backend!(webgpu, |B| {
                             let separate = run_prepare::<B, DIM>(queries, case, false, rope);
                             let fused = run_prepare::<B, DIM>(queries, case, true, rope);
                             assert_eq!(
